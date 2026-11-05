@@ -116,12 +116,12 @@ has acked. pending's count is one `XLEN`; `--list` reads the stream with
 `XRANGE`, 1000 entries at a time, and is O(entries waiting).
 
 A stream written by an older build, whose acks did not delete, may still hold
-acked history. A hook clears it once: the first entry it is handed is the
-oldest unacked one (pending entries come first, and every pending id is below
-every undelivered id), so it trims everything older (`XTRIM MINID <that id>`)
-before printing. Until a hook has run on such a stream, pending counts that
-history too. A stream with history and nothing waiting is trimmed when its
-next message arrives.
+acked history. That history is removed the first time a hook finds unacked
+entries pending: the first pending entry is the oldest unacked one, so the hook
+trims everything older (`XTRIM MINID <that id>`) before printing. A new
+(undelivered) entry is never the trim point, because another hook, paused
+past its TTL, may hold an older entry it has been handed and not yet printed.
+Until then pending counts that history too.
 
 ## Presence
 

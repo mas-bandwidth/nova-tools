@@ -382,8 +382,8 @@ func TestHelp(t *testing.T) {
 	assert.Contains(t, out, "nova-bus pending --as <name> [--list]")
 }
 
-// Streams from an older build hold acked history: the hook trims everything
-// older than the first entry it is handed, once.
+// Streams from an older build hold acked history: it is removed the first
+// time a hook finds unacked entries pending, below the first of them.
 func TestHookTrimsAckedHistoryOnce(t *testing.T) {
 	t.Parallel()
 	f := newFake()
@@ -400,9 +400,9 @@ func TestHookTrimsAckedHistoryOnce(t *testing.T) {
 	for _, s := range []string{"one", "two", "three"} {
 		send(t, g, s, "b")
 	}
-	g.delivered["bus:beta"] = 2 // nothing pending: the first new entry is the oldest unacked
+	g.delivered["bus:beta"] = 2 // nothing pending: nothing is trimmed
 	_, _ = runHookOnce(t, g, "beta")
-	assert.Equal(t, []string{"bus:beta 3-0"}, g.trims)
+	assert.Empty(t, g.trims, "a new entry is never the trim point")
 }
 
 func TestHookAcksEachLineAfterPrintingIt(t *testing.T) {

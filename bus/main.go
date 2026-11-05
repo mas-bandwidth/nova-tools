@@ -329,10 +329,10 @@ func hook(ctx context.Context, store Store, name, value string, clk Clock, out, 
 		if pending && len(msgs) == 0 {
 			pending = false
 		}
-		// The first entry handed is the oldest unacked one (pending ids are
-		// below every undelivered id): what is older is acked history an
-		// older build left, as acks did not delete.
-		if !trimmed && len(msgs) > 0 {
+		// The first pending entry is the oldest unacked: older is acked history
+		// from an older build. Never a new entry: a paused hook may hold an
+		// older one, handed and not yet printed.
+		if pending && !trimmed && len(msgs) > 0 {
 			if err := store.Trim(ctx, stream, msgs[0].ID); err != nil {
 				return err
 			}
