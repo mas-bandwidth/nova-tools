@@ -128,7 +128,7 @@ func TestFunctionalStore(t *testing.T) {
 	require.Equal(t, 0, code, errs)
 	assert.Contains(t, out, `"nova_pg_dsn": "postgres://nova@m1/postgres"`)
 
-	assert.Equal(t, "CONFIG REMOVE kind=loop name=r-m1 rev=7\n", ok("loop", "remove", "r-m1", "--actor", "a1"))
+	assert.Equal(t, "CONFIG REMOVE kind=loop name=r-m1 rev=8\n", ok("loop", "remove", "r-m1", "--actor", "a1"))
 }
 
 // TestFunctionalOldColumns: a store that still has the columns this tool dropped

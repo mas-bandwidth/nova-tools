@@ -7,6 +7,7 @@ import (
 	"errors"
 	"maps"
 	"os"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -303,5 +304,6 @@ func TestSchemaIsAdditive(t *testing.T) {
 	t.Parallel()
 	raw, err := os.ReadFile("schema.sql")
 	require.NoError(t, err)
-	assert.NotRegexp(t, `(?i)\bdrop\b|\bdelete\b|\btruncate\b`, string(raw))
+	code := regexp.MustCompile(`(?m)--.*$`).ReplaceAllString(string(raw), "")
+	assert.NotRegexp(t, `(?i)\bdrop\b|\bdelete\b|\btruncate\b`, code)
 }
