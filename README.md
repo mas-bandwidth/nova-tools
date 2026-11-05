@@ -21,19 +21,13 @@ Give a machine the `runner` role and it joins the inventory's runner group. Your
 
 ## 4. Deploy secrets to the fleet
 
-`nova-secrets` keeps secrets in git, encrypted with sops and age, one file per seat. `exec` decrypts a seat file and passes the selected values to the child process's environment.
-
-The tool keeps values out of its arguments and progress lines. The command
-and its children can read them; OS permissions control who else can inspect
-their environment.
+**Every AI gets exactly the secrets its job needs, and nothing else ever sees them.**
+`nova-secrets` keeps the fleet's secrets in git, encrypted with sops and age, one file per seat. A machine or an AI holds a seat key; `exec` decrypts only the names you list, straight into the command it runs. No value ever appears on a command line, in a log, or in `ps`.
 
 ## 5. Run untrusted work behind a wall
 
 **Declare the paths and network a command may touch; the kernel refuses the rest.**
-
-`nova-sandbox` uses Landlock on Linux and sandbox-exec on macOS. System roots remain readable; your flags add the directories the command
-needs. On Linux, `--net-deny` restricts TCP, not UDP. Read the sandbox spec for
-the limits on each OS.
+`nova-sandbox` walls a command on Linux and macOS. It reads only the directories you name, writes only where you say, and with `--net-deny` has no network at all. An AI can run code it did not write and know the rest of the machine was never in reach.
 
 ## 6. Share machines without stepping on each other
 
