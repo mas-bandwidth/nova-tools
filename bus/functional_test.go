@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -128,4 +129,59 @@ func TestAHookKilledAndRestarted(t *testing.T) {
 	send("four", "fourth")
 	assert.True(t, strings.HasSuffix(second.next(t), "\tfour\tfourth"), "then the new one; one and two are never printed again")
 	require.Eventually(t, func() bool { return pending() == 0 }, wait, 20*time.Millisecond, "all acked")
+}
+
+// TestPresenceWhoAndPending runs who and pending against a real Redis while a
+// hook process runs, then stops it cleanly (SIGTERM: presence deleted) and by
+// SIGKILL (presence left to lapse by its TTL).
+func TestPresenceWhoAndPending(t *testing.T) {
+	t.Parallel()
+	addr := startRedis(t)
+	bin := filepath.Join(t.TempDir(), "nova-bus")
+	build := exec.Command("go", "build", "-o", bin, ".")
+	build.Stderr = os.Stderr
+	require.NoError(t, build.Run())
+	ctx := context.Background()
+	c := redis.NewClient(&redis.Options{Addr: addr})
+	t.Cleanup(func() { _ = c.Close() }) // ignored: closing a test client
+	bus := func(args ...string) string {
+		t.Helper()
+		cmd := exec.Command(bin, args...)
+		cmd.Env = append(os.Environ(), "NOVA_BUS_REDIS="+addr)
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, string(out))
+		return string(out)
+	}
+
+	assert.Equal(t, "0\n", bus("pending", "--as", "beta"), "no stream yet")
+	one := strings.Fields(bus("send", "--as", "alpha", "--to", "beta", "one", "1"))[1]
+	two := strings.Fields(bus("send", "--as", "alpha", "--to", "beta", "two", "2"))[1]
+	assert.Equal(t, "2\n", bus("pending", "--as", "beta"), "no group yet: the whole stream waits")
+	_, err := c.XGroupCreateMkStream(ctx, "bus:beta", group, "0").Result()
+	require.NoError(t, err)
+	_, err = c.XReadGroup(ctx, &redis.XReadGroupArgs{Group: group, Consumer: group, Streams: []string{"bus:beta", ">"}, Count: 1, Block: -1}).Result()
+	require.NoError(t, err, "one handed, not acked")
+	assert.Equal(t, "2\n"+one+"\tone\n"+two+"\ttwo\n", bus("pending", "--as", "beta", "--list"))
+	assert.Equal(t, "2\n", bus("pending", "--as", "beta"), "pending consumed nothing")
+	assert.Empty(t, bus("who"))
+
+	h := startHook(t, bin, addr)
+	h.next(t)
+	h.next(t)
+	require.Eventually(t, func() bool { return bus("pending", "--as", "beta") == "0\n" }, wait, 20*time.Millisecond)
+	assert.Regexp(t, `^beta\t\d+s\n$`, bus("who"))
+	ttl, err := c.TTL(ctx, "bus:presence:beta").Result()
+	require.NoError(t, err)
+	assert.True(t, ttl > 0 && ttl <= presenceTTL, ttl)
+	require.NoError(t, h.cmd.Process.Signal(syscall.SIGTERM))
+	require.NoError(t, h.cmd.Wait(), "a clean exit")
+	assert.Empty(t, bus("who"), "a clean exit deletes presence")
+
+	k := startHook(t, bin, addr)
+	require.Eventually(t, func() bool { return bus("who") != "" }, wait, 20*time.Millisecond)
+	k.kill()
+	assert.Regexp(t, `^beta\t`, bus("who"), "a crashed hook stays present until the TTL")
+	ttl, err = c.TTL(ctx, "bus:presence:beta").Result()
+	require.NoError(t, err)
+	assert.True(t, ttl > 0 && ttl <= presenceTTL, "and then lapses: %v", ttl)
 }
