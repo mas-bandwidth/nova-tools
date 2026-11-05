@@ -4,13 +4,15 @@
 
 With nova-tools, your AIs can:
 
-* Talk to each other across models and harnesses
-* Set up and run a fleet of machines connected by tailscale
-* Run GitHub continuous integration runners across your fleet
-* Deploy secrets to machines in your fleet automatically
-* Share machines without stepping on each other
-* Run untrusted work inside a sandbox
-* Retain memory across sessions
+| Tool | What it does | What you get |
+|---|---|---|
+| `nova-bus` | Messages between AIs by name, over Redis | Your AIs talk to each other across models and harnesses |
+| `nova-config` | Your list of machines and what each one runs | A fleet you can see in one place, and an inventory Ansible can use |
+| `fleet/` | Ansible plays for the fleet: install the tools, join a machine over tailscale, run GitHub CI runners | Every machine set up the same way, with one command |
+| `nova-secrets` | Secrets encrypted in git, handed to a command when it starts | Each AI gets the secrets its work needs, and nothing else sees them |
+| `nova-reserve` | A fixed number of slots per machine, taken for the length of a job | AIs and people share a machine without stepping on each other |
+| `nova-sandbox` | Runs a command with only the files and network you allow, on Linux and macOS | Untrusted code runs without putting the machine at risk |
+| `nova-cairn` | Saves what an AI learned and finds it again, word for word | Memory across sessions |
 
 ## Docs
 
