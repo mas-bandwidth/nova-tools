@@ -352,6 +352,7 @@ func TestSetRefusedWhileHeld(t *testing.T) {
 	assert.Equal(t, "nova-reserve set: capacity in use: slot1 held by pid 102933 since 2026-11-05T22:03:32Z (why: ci); retry when free\n", h.err.String())
 	c, _, _ := readCapacity(h.dir)
 	assert.Equal(t, 2, c.n)
+	assert.NoFileExists(t, filepath.Join(h.dir, "slot3"), "the refusal made no lock file past the capacity")
 }
 
 func TestSetWritesWhenFree(t *testing.T) {

@@ -485,7 +485,7 @@ func setCapacity(o options, w world) error {
 		return err
 	}
 	if free == nil {
-		in := holders(w, o.dir, max(c.n, o.slots))
+		in := holders(w, o.dir, c.n) // probing creates a lock file; none past the capacity
 		if len(in) == 0 {
 			in = []string{"a taker mid-take"}
 		}
