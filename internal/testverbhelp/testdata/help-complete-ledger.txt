@@ -51,3 +51,10 @@ nova-update report example
 nova-update status example
 nova-update version description,example
 nova-update watch example
+nova-version diff example
+nova-version example example
+nova-version moved example
+nova-version report example
+nova-version send example
+nova-version snapshot example
+nova-version version example
