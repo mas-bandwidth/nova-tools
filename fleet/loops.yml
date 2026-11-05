@@ -3,7 +3,7 @@
 # inventory` prints them (nova_loops on each host); the units are the templates
 # under templates/: nova-loop.plist.j2 on darwin (launchd), nova-loop.service.j2
 # on linux (systemd) with nova-loop.timer.j2 beside it for a loop that runs
-# every n seconds. Every value is the record's or the host layout's
+# every n seconds (a row with no `every` is kept alive; `enabled` defaults true). Every value is the record's or the host layout's
 # (group_vars/all.yml).
 #
 #   ansible-playbook -i ./nova-inventory fleet/loops.yml --check --diff </dev/null 2>&1 | cat
@@ -65,7 +65,12 @@
       {%- set raw = nova_loop_restart | default([]) -%}
       {{ ((raw.split(',') if raw is string else raw) | map('trim') | reject('equalto', '') | list) if raw else [] }}
     loop_records: >-
-      {{ (nova_loops | selectattr('name', 'in', loop_only) | list) if loop_only else nova_loops }}
+      {%- set all = [] -%}
+      {%- for r in nova_loops -%}
+      {%- set base = {'enabled': true, 'every': 0, 'keepalive': (r.every | default(0) | int == 0), 'seat': '', 'keys': []} -%}
+      {%- set _ = all.append(base | combine(r)) -%}
+      {%- endfor -%}
+      {{ (all | selectattr('name', 'in', loop_only) | list) if loop_only else all }}
     loop_names: "{{ loop_records | map(attribute='name') | list }}"
     loop_scope: "{{ 'system' if loop_system else 'user' }}"
     loop_runtime: { XDG_RUNTIME_DIR: "/run/user/{{ ansible_facts['user_uid'] }}" }
@@ -127,24 +132,6 @@
       ansible.builtin.file: { path: "{{ ansible_facts['env']['HOME'] }}/Library/Logs", state: directory, mode: "0755" }
       when: loop_darwin
 
-    - name: the sops binary (nova_sops, else the first of nova_sops_candidates on the machine)
-      ansible.builtin.stat: { path: "{{ item }}" }
-      loop: "{{ nova_sops_candidates }}"
-      register: loop_sops
-      when: nova_sops is not defined
-
-    - name: the sops a loop with keys opens its seat with
-      ansible.builtin.set_fact:
-        nova_sops: >-
-          {{ nova_sops if nova_sops is defined else (loop_sops.results | selectattr('stat', 'defined')
-             | selectattr('stat.exists') | map(attribute='item') | first | default('')) }}
-
-    - name: a machine with a loop that opens secrets has sops
-      ansible.builtin.assert:
-        that: nova_sops != '' or loop_records | selectattr('keys') | list | length == 0
-        fail_msg: "{{ inventory_hostname }} has no sops at any of {{ nova_sops_candidates | join(', ') }}; install it or set nova_sops in host_vars"
-        quiet: true
-
     - name: one unit per record
       ansible.builtin.template:
         src: "{{ 'templates/nova-loop.plist.j2' if loop_darwin else 'templates/nova-loop.service.j2' }}"
@@ -160,9 +147,8 @@
           {{ [((nova_bin_dir ~ '/' ~ item.argv[0]) if '/' not in item.argv[0] else item.argv[0]) | regex_replace('^~/', nova_home ~ '/')]
              + (item.argv[1:] | map('regex_replace', '^~/', nova_home ~ '/') | list) }}
         loop_secrets: >-
-          {{ ([nova_bin_dir ~ '/nova-secrets', 'exec', '--store', nova_secrets_store, '--as', item.seat,
-               '--key', nova_secrets_key_dir ~ '/' ~ item.seat ~ '.key', '--sops', nova_sops, '--only', item['keys'] | join(',')]
-              + (item['keys'] | map('regex_replace', '^', '--require=') | list) + ['--']) if item['keys'] else [] }}
+          {{ ([nova_bin_dir ~ '/nova-secrets', 'exec', '--only', item['keys'] | join(','), '--as', item.seat, '--'])
+             if item['keys'] | default([]) | length > 0 else [] }}
         loop_exec: "{{ loop_secrets + loop_argv }}"
         loop_log: "{{ item.log | regex_replace('^~/', nova_home ~ '/') }}"
       loop: "{{ loop_records }}"

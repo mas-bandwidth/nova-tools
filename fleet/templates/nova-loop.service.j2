@@ -24,9 +24,6 @@ User={{ ansible_user_id }}
 WorkingDirectory={{ nova_home }}
 Environment="HOME={{ nova_home }}"
 Environment="PATH={{ nova_loop_path }}"
-{% if nova_bus_addr is defined and nova_bus_addr | length > 0 %}
-Environment="NOVA_BUS_REDIS={{ nova_bus_addr }}"
-{% endif %}
 ExecStart={% for w in loop_exec %}"{{ w | replace('\\', '\\\\') | replace('"', '\\"') | replace('%', '%%') | replace('$', '$$') }}"{{ ' ' if not loop.last else '' }}{% endfor %}
 
 StandardOutput=append:{{ loop_log }}

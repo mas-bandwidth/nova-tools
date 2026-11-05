@@ -36,9 +36,3 @@ nova_loop_only: []
 # restarted through the play, never by hand. Empty restarts nothing extra.
 nova_loop_restart: []
 
-# The nova-secrets layout a loop with keys opens its secrets through: the
-# store, the directory of seat keys (<seat>.key) and the sops binary: nova_sops
-# when a host sets it, else the first of these that exists on the machine.
-nova_secrets_store: "{{ nova_home }}/nova-bench/secrets"
-nova_secrets_key_dir: "{{ nova_home }}/.config/nova-secrets"
-nova_sops_candidates: ["{{ nova_home }}/.local/bin/sops", /opt/homebrew/bin/sops, /usr/local/bin/sops]
