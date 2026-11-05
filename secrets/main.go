@@ -436,7 +436,7 @@ func (t tool) sopsRun(o opts, stdin io.Reader, args ...string) ([]byte, error) {
 	defer func() { _ = os.RemoveAll(home) }() // ignored: an empty directory of our own; failing leaves only it
 	out, err := t.run(stdin, t.sopsEnv(o.key, home), o.store, o.sops, args...)
 	if err != nil {
-		return nil, sopsFailure{refuse(2, "sops %s failed (%v); its output is withheld; ran: cd %s && SOPS_AGE_KEY_FILE=%s %s %s", args[0], exitOf(err), q(o.store), q(o.key), q(o.sops), quoteAll(args))}
+		return nil, sopsFailure{refusal{2, fmt.Sprintf("sops %s failed (%v); its output is withheld; ran: cd %s && SOPS_AGE_KEY_FILE=%s %s %s", args[0], exitOf(err), q(o.store), q(o.key), q(o.sops), quoteAll(args))}}
 	}
 	return out, nil
 }
