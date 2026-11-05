@@ -2,7 +2,7 @@
 // non-ephemeral configuration: it owns Postgres (schema `config`, its
 // migrations, its history) and every registry of the fleet, and it applies
 // that configuration into Redis so Redis is always a rebuildable copy. The
-// runtime tools (nova-friend, nova-sprint) read configuration and never
+// runtime tools (nova-sprint) read configuration and never
 // write it. The contract is docs/SPEC-CONFIG.md; the guide is
 // docs/nova-config/README.md.
 //

@@ -33,7 +33,6 @@ Each tool is judged by one test: would someone with no nova-sprint use it as it 
 | nova-ci | stays (borderline) | slowtests is general; `github receipt` writes a receipt into the sprint's store through `internal/nsprint/store`; the rest is this repository's own CI |
 | nova-swarm | stays (borderline) | `native`, `step`, `verify`, `lint`, `template`, `slots` and `disk-guard` stand on their own. `member` is the sprint member: it talks to the sprint server over `pkg/sprintwire`, with `lint --decide`, `--member-injects` and `--base-check` beside it. The maintainer's line: the execution stays, and the sprint-specific dealing glue (the wire verbs take, beat and report, plus the brief the member injects) moves. A split would give `member` a general work-server client, with nova-sprint as one server |
 | nova-decide | stays (borderline; maintainer: stays) | `ask`, `outcome`, `calibrate` and `findings` are general. `read`, `score`, `attempt`, `grade`, `gate` and `brief` are the sprint's card questions. A split would keep them as schemas the sprint supplies, not as verbs built into nova-decide |
-| nova-friend | stays | session wake, a building block; it uses `pkg/sprintwire` for a friend's beat and take, which is the same glue as nova-swarm `member` |
 
 **Moved in this cut:** nova-sprint, nova-card and nova-work, plus the sprint dashboard. The dashboard is already a verb of
 the binary (`nova-sprint dashboard`, `internal/sprintdash`), not a program of its own. **Borderline cases, left in place
@@ -68,7 +67,7 @@ From the dependency graph, these are used by nova-sprint, nova-card or nova-work
   uses it, and the dead-code rule counts from cmd roots. It comes back when a nova-tools tool exposes it, for example
   `nova-config route balance`.
 - `pkg/ci/shrinkonly` is used only by nova-card. Its home is nova-tools' CI, so it is copied, not moved.
-- The graph agrees with the brief: nova-swarm, nova-bus, nova-friend and nova-decide use no sprint-only package. Their
+- The graph agrees with the brief: nova-swarm, nova-bus and nova-decide use no sprint-only package. Their
   only sprint link is the shared `pkg/sprintwire`.
 
 ## (b) Shared packages: copied into nova-sprint `internal/`, later imported from a public nova-tools API

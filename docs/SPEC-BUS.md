@@ -111,7 +111,7 @@ token makes one logical message however often it is retried (below).
 A message delivered to a recipient is pending until
 that recipient acks it, and its reader keeps it for fifteen minutes (`ClaimAfter`,
 the budget one `--exec` delivery gets: longer than the longest delivery any
-reader makes, nova-friend's ten minute turn and the kill that ends it, so a
+reader makes, a ten minute turn and the kill that ends it, so a
 live reader mid-turn is never handed its message twice). `recv` first claims
 the recipient's pending entries that have been idle for at least that long
 (`XAUTOCLAIM` with min-idle 900 s, from `0-0`): what a reader that died or

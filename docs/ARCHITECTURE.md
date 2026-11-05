@@ -87,7 +87,6 @@ names it opens, and whether it runs every n seconds or is kept alive
 | `nova-config` | the fleet's machines and AI friends as rows in Postgres, applied into Redis | [SPEC-CONFIG.md](SPEC-CONFIG.md) |
 | `nova-decide` | typed decisions with probabilities, recorded so each one can be calibrated against its outcome | [SPEC-NOVA-DECIDE.md](SPEC-NOVA-DECIDE.md) |
 | `nova-doctor` | says what is missing for the tools to work here and, for each thing, the one line that fixes it | [SPEC-DOCTOR.md](SPEC-DOCTOR.md) |
-| `nova-friend` | what a friend runs to be part of the team: the wake loop, the beat and the proof of life, as one daemon | [SPEC-FRIEND.md](SPEC-FRIEND.md) |
 | `nova-fuse` | a recorded decision to stop reading an untrusted source, checked before every read | [SPEC.md](SPEC.md) |
 | `nova-local` | run local models: what an engine has, one model served at a chosen context, and a worker description `nova-swarm` accepts | [SPEC-LOCAL.md](SPEC-LOCAL.md) |
 | `nova-memory` | search your own markdown notes, and check a draft against what they already say | [SPEC.md](SPEC.md) |

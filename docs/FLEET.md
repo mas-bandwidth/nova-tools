@@ -137,28 +137,18 @@ server seeing only the puller, the far vantage's p99 recorded beside it) is v1.0
 record [acceptance/v1.0.0/public-dashboard-load.md](acceptance/v1.0.0/public-dashboard-load.md),
 with the raw numbers and the kernel settings it was measured under.
 
-A friend's working directory, how her jobs arrive and are reported, and how
-their clones are removed once done, is docs/FRIENDS.md. The friends are
-nova-config's friend rows: `nova-sprint friend sync --actor ada`
-copies their names into the sprint's friends table, and whether each friend
-is there is the nova-hook record's alone: `nova-hook serve` challenges her once
-a minute and only her model's `nova-hook prove` answers (`where` shows `up` while
-she is hooked in, `down` without it, and `held` while `nova-sprint friend down
-<friend>` holds it; docs/SPEC-HOOK.md). Her daemon's beat, every second (`sprint.FriendBeatEvery`), is
-recorded and never makes her up. The same sync
-reads each friend's working directory, `<root>/ai/<friend>/working` (`--root
-<dir>`, else `HOME`, so it runs on the machine that holds them), and writes her
-job cards, which `where` counts as the fleet's columns but load: `ready`,
-`working`, `width` (1), `done`, `ok%`, `status`. A job is the inbox/outbox
-standard: the coordinator delivers `inbox/<job>/` (with its `BRIEF.md`) and
-only the coordinator reaches out; the friend makes `outbox/<job>/` when she
-starts and writes `outbox/<job>/REPORT.md` when done, with a `Verdict:` line
-(any word but HOLD, FAIL, FAILED or BROKEN is ok; no line is ok). A brief to a
-friend says so. The sync reads and never writes a friend's directory; run it
-after a job is delivered or collected, or every minute from the coordinator's
-loop. No loop beats for a friend: the shell beat loops a wrapper once started
-beside her harness are retired with no replacement (docs/FRIENDS.md, "The beat loops
-are retired, with no replacement").
+A friend's working directory is docs/FRIENDS.md. The friends are
+nova-config's friend rows: `nova-sprint friend sync --actor ada` copies their
+names into the sprint's friends table, and whether each friend is there is the
+nova-hook record's alone: `nova-hook serve` challenges her once a minute and
+only her model's `nova-hook prove` answers (`where` shows `up` while she is
+hooked in, `down` without it, and `held` while `nova-sprint friend down
+<friend>` holds it; docs/SPEC-HOOK.md). A friend runs her own loop
+(`nova-sprint take --as friend.<name>`, work, `nova-sprint finish --as
+friend.<name>`; docs/SPEC-FRIEND.md), and her `working` column is the count of
+the cards she holds. No loop beats for a friend: the shell beat loops a wrapper
+once started beside her harness are retired with no replacement (docs/FRIENDS.md,
+"The beat loops are retired, with no replacement").
 
 The inventory reads the store `NOVA_SPRINT_REDIS` names (or `--redis`); export
 it, and `NOVA_MACHINE` when the machine running the play is a row, before the

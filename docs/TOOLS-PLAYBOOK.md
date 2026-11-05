@@ -23,7 +23,7 @@ another friend's name, `<seat>` is a nova-secrets seat.
 
 The rule: find the verb first. Every tool answers `<tool> help` with its whole banner and
 `<tool> <verb> -h` with one verb. The tools already do the work the model is tempted to do by
-hand: the friend daemon runs lanes and delivery, nova-hook proves liveness, nova-secrets hands
+hand: nova-hook proves liveness, nova-secrets hands
 a secret to one command, nova-doctor names what is missing and the line that fixes it, and the
 release verbs cut, build and install.
 
