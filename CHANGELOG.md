@@ -1,5 +1,36 @@
 # nova-tools changelog
 
+## v1.6.29 — 2026-11-05
+
+Cut from c4d5385075d247f55e22a62f1a108c0ad6891715. 3 pull requests since v1.6.27.
+
+What changed:
+
+- Version in step with nova-sprint v1.6.29; this build ships the nova-sprint, nova-card and nova-work tools of that version.
+- Writing a file atomically no longer leaks its open descriptor into a process forked at the same moment, so a freshly written script never fails to start with "text file busy".
+- The secrets gate tests no longer fail when git's background maintenance runs while they copy their base store.
+
+Security read of the one sensitive path in range (a test file under pkg/secrets/): cold read by a separate Opus reader, 2026-11-05, clear.
+
+SHA256SUMS digest: 19278585fab49ff205cd3dbeaf3c0309f15d446f375d971e2d6c5f022fc10fe3
+
+Adopt this release with `--expect-sums 19278585fab49ff205cd3dbeaf3c0309f15d446f375d971e2d6c5f022fc10fe3`.
+
+Recovery journeys incomplete, gate waived: point release in step with nova-sprint v1.6.29; the journey gate needs the release installed at its own revision and this cut precedes the install, and the spend readout needs provider keys the release worker does not hold; nothing in this range changes hook recovery or spend recording
+
+- TestASilentClientIsUnhookedAfterExactlyTwoAnnouncedOnce: not-run (no --journeys evidence)
+- TestNoServerOrNoAnswerIsNoEvidence: not-run (no --journeys evidence)
+- TestTheGateRefusesEveryoneWhileTheServerIsStale: not-run (no --journeys evidence)
+- TestAStaleAnswerIsDownWithAFreshServer: not-run (no --journeys evidence)
+- TestALostAnswerIsNeverToldTwice: not-run (no --journeys evidence)
+
+Spend gate waived: point release in step with nova-sprint v1.6.29; the journey gate needs the release installed at its own revision and this cut precedes the install, and the spend readout needs provider keys the release worker does not hold; nothing in this range changes hook recovery or spend recording (window 2026-10-27T00:00:00Z..2026-11-05T17:36:49Z)
+- unread: --spend-store <addr> names no sprint store, so the recorded spend cannot be read
+
+- #6094 changelog: v1.6.27
+- #6098 atomicfile: hold ForkLock while the temp file is open, so a fresh script never execs as text file busy
+- #6099 secrets tests: turn git auto maintenance off in the shared gate base
+
 ## v1.6.27 — 2026-10-27
 
 Cut from 6697d8c0ef0b6ec793f01019ce509e89fdb9daf8. 4 pull requests since v1.6.13.
