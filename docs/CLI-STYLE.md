@@ -4,7 +4,7 @@ The command-line contract, written so a cold AI can predict any nova tool. SPEC.
 
 ## Grammar and help
 
-**(a) Grammar.** `<tool> <verb path> [flags] [positionals]`. A verb path may be nested (`nova-fuse lift quarantine`, `nova-ci github receipt`). Flags come before positionals. A late flag is refused by name, except a literal after `--`.
+**(a) Grammar.** `<tool> <verb path> [flags] [positionals]`. A verb path may be nested (`nova-secrets seat add`). Flags come before positionals. A late flag is refused by name, except a literal after `--`.
 
 **(b) Help.** `<tool> help` prints the banner. `<tool> help <verb>` and `<tool> <verb> -h|--help` print that verb's help and exit 0, with no side effects.
 
@@ -27,17 +27,16 @@ The command-line contract, written so a cold AI can predict any nova tool. SPEC.
 | `--max` | displayed items; default 20, 0 means all |
 | `--timeout` | a Go duration |
 
-A resource limit keeps its unit or scope in its name; these spellings stand: nova-check kernel `--max-bytes`, `--max-tokens`. A resource budget of 0 is a refusal, not "all"; help states each zero. A storage-shape noun (`--bus`, `--box`) stays; help names the shape.
+A resource limit keeps its unit or scope in its name; A resource budget of 0 is a refusal, not "all"; help states each zero. A storage-shape noun (`--bus`, `--box`) stays; help names the shape.
 
 ## Exits and output
 
 **(d) Exits.** 0 passed or done. 1 ran and said NO. 2 could not run. A wrapper may pass through its program's code; no tool invents another. The protocol exceptions:
-- nova-fuse's write verbs (SPEC.md's table).
 
 **(e) Output: events and payloads.**
-- EVENT output is one line per event, `<TOKEN> OK|FAILED key=value ...`; OK to stdout, FAILED and REFUSED to stderr. One exception, per SPEC.md: nova-self-talk's `SELFTALK FAIL files=...` summary count line goes to stdout beside its advisory note.
+- EVENT output is one line per event, `<TOKEN> OK|FAILED key=value ...`; OK to stdout, FAILED and REFUSED to stderr.
 - Item OK events may precede a later failure; the closing status is then FAILED, exit not 0.
-- PAYLOAD output: a verb documented to emit a payload names its format in help and emits exactly that payload on stdout and nothing else; its events go to stderr. The documented case: nova-fuse path (a bare value). A payload is never capped like a listing.
+- PAYLOAD output: a verb documented to emit a payload names its format in help and emits exactly that payload on stdout and nothing else; its events go to stderr. A payload is never capped like a listing.
 - A remedy is a command, printed shell-quoted so it pastes.
 
 **(e2) Token and escaping grammar.** SPEC.md's oneline escaping, whitespace-safe `key=value` fields and the `VERB STATUS` token shape govern. The caller knows which tool it ran, so the token does not repeat it, and a field needs no quoted-string parser.
@@ -49,7 +48,6 @@ A resource limit keeps its unit or scope in its name; these spellings stand: nov
 - It names every missing required flag at once, never in rounds.
 - An unknown flag is named. An unknown verb is named, lists the verbs, and points at the root `<tool> help`, since it has no verb help.
 - A RUNTIME failure (an unreachable store, a refused login, a missing input file, a lost reply) keeps the one-line shape, and its remedy is the concrete next command for that failure, not `-h`.
-- nova-check's hints stand: each missing required flag gets its own refusal line and one hint line from a fixed set the binary ships, saying what the flag is and what a first run puts there. Its refusals point at the root `nova-check help`; they move to `nova-check <verb> -h` with the rest. nova-dev's hints stand the same way, and its refusals point at `nova-dev help`.
 
 **(g) No silent success.** Three cases:
 - A missing INPUT (a required path, root, store, session, machine, friend or seat that must exist and be readable) is a refusal, exit 2, never `count=0 OK`.
@@ -69,9 +67,6 @@ An ignored flag is a refusal; a stale checker (`last=` past its bound) is FAILED
 
 ## First run and use
 
-**(j) First run.**
-- Every verb has a `### First run` in docs/CLI.md, produced by running the tool; its first line states the local prerequisites (a throwaway store, a scratch dir).
-- The class test (`internal/ci/onboarding_test.go`) runs each CLI.md First run in fixtures it owns.
 
 **(k) A remedy preserves the effective inputs.** It keeps the failed operation's inputs (target, identity, login, selections, explicit empty and default overrides) unless it names an intended change. It carries only flags the target verb accepts, and names password VARIABLES, never a value. A test runs the printed remedy through the real CLI.
 
