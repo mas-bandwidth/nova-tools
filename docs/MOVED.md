@@ -35,7 +35,7 @@ Nothing is left on main because a kept tool imports it: the kept tools import no
 - cmd/nova-bus, pkg/bus/bustest, pkg/buswire/cmd/bus-driver: replaced by bus/
 - cmd/nova-ci, internal/ci, internal/cireceipt, internal/scaffold, internal/shippedsmoke, internal/docs, internal/ghevent, pkg/ci, pkg/tlc, pkg/secretcheck, pkg/roadmap, pkg/sexp: the repository's own CI machinery
 - tools/: agentsmap, analyzers, benchstandard, ci, clidoc, fardelay, functionalrun, newrule, newverb, notes20261002, preflight, roadmap, sandboxcheck, sessiontrace, testmanifest, tlacheck
-- Makefile, AGENTS.md maps, the certification, nightly-slow, revert-on-red and tlc workflows: replaced by one plain ci.yml (TESTING.md)
+- Makefile, AGENTS.md maps, the certification, nightly-slow, revert-on-red and tlc workflows: replaced by one plain ci.yml (docs/TESTING.md)
 - pkg/pkgselect: CI's package selection
 - the models whose code is gone: FuseBox, and the TLC run records (RUNS.tsv, RUNS-HISTORY.tsv, COVERAGE.tsv)
 - docs and ledgers that described only removed tools: the specs, release notes, ratings, research, audits, RESOLUTIONS.md, docs/roadmap.sexp and docs/fixes.sexp

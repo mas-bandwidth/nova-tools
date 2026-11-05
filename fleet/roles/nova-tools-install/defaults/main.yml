@@ -3,9 +3,9 @@
 # default, so a run never installs "latest" by accident.
 nova_tools_version: ""
 
-# The tools to install, by name. Each is a release asset
-# <tool>_<tag>_<os>_<arch>[.exe] listed in the release's SHA256SUMS.
-nova_tools_names: [nova-bus, nova-config, nova-sandbox, nova-secrets, nova-reserve]
+# The tools to install, by name: nova_tools_names, in group_vars/all.yml (loops.yml
+# reads it too). Each is a release asset <tool>_<tag>_<os>_<arch>[.exe] listed in
+# the release's SHA256SUMS.
 
 # Where the release assets live: <base>/<tag>/<asset> and <base>/<tag>/SHA256SUMS.
 nova_tools_release_url: https://github.com/mas-bandwidth/nova-tools/releases/download
@@ -24,30 +24,27 @@ nova_tools_restart_commands: []
 # Retired binaries. When nova_tools_remove_enabled is true (default false), each
 # name in nova_tools_remove found in the bin directory is moved, after a
 # successful install, into <bin dir>/retired-<date>/ rather than deleted. Unix
-# machines only. A name also in nova_tools_names is refused. The list is the
-# tools nova-tools shipped and ships no more (fleet/retired-tools.txt).
+# machines only. A name also in nova_tools_names is refused. The default list is
+# the rows of fleet/retired-tools.txt that say "retired" or "rowan-tools": tools
+# nova-tools shipped and ships no more. Another product's binaries are not in
+# it; an operator who wants more gone names them:
+#   -e nova_tools_remove='["nova-sprint","nova-card"]'
 nova_tools_remove_enabled: false
 nova_tools_remove:
   - nova-cairn
-  - nova-card
-  - nova-work
-  - nova-sprint
   - nova-check
   - nova-ci
   - nova-decide
   - nova-doctor
-  - nova-friend
   - nova-fuse
-  - nova-hook
   - nova-local
+  - nova-loop
   - nova-memory
   - nova-redis
-  - nova-slot
   - nova-self-talk
-  - nova-swarm
+  - nova-slot
   - nova-table
   - nova-tokens
   - nova-up
   - nova-update
   - nova-version
-  - nova-loop
