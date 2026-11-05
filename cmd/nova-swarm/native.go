@@ -32,7 +32,6 @@ import (
 	"github.com/mas-bandwidth/nova-tools/pkg/decide"
 	"github.com/mas-bandwidth/nova-tools/pkg/gitrun"
 	"github.com/mas-bandwidth/nova-tools/pkg/harness"
-	"github.com/mas-bandwidth/nova-tools/pkg/member"
 	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
 	"github.com/mas-bandwidth/nova-tools/pkg/safepath"
 	"github.com/mas-bandwidth/nova-tools/pkg/sandbox"
@@ -58,7 +57,6 @@ type nativeRunConfig struct {
 	model          string                                 // provider/model, one slash, both sides nonempty
 	label          string                                 // the --title this run is labelled with
 	card           []byte                                 // the card text, passed as the message, byte-for-byte
-	prompt         string                                 // a one-shot friend's identity prompt, prepended to the message (member.WithIdentity); "" for none
 	slotDir        string                                 // the slot directory; HOME is a data dir beneath it
 	root           string                                 // the configured root the slot directory must sit under
 	authFile       string                                 // optional: an auth file to copy one entry out of
@@ -2925,13 +2923,11 @@ func nativeLaunchArgv(bin string, cfg nativeRunConfig, provider string) ([]strin
 
 // nativePrompt is the card as the harness is handed it: a framed card's prompt begins with
 // its JOB.md (docs/SPEC-CARD-CONTRACT.md section 2), any other is the card as written.
-// A one-shot friend's identity prompt (--prompt) is prepended to either, so the card is worked
-// as that friend (member.WithIdentity).
 func nativePrompt(cfg nativeRunConfig) string {
 	if cfg.frame == nil {
-		return member.WithIdentity(cfg.prompt, swarm.CardPrompt(cfg.card))
+		return swarm.CardPrompt(cfg.card)
 	}
-	return member.WithIdentity(cfg.prompt, cardcontract.Prompt(filepath.Join(cfg.slotDir, "jobs", cfg.label), swarm.CardPrompt(cfg.card)))
+	return cardcontract.Prompt(filepath.Join(cfg.slotDir, "jobs", cfg.label), swarm.CardPrompt(cfg.card))
 }
 
 // writeStageOK names the command phases of staging (docs/SPEC-CARD-CONTRACT.md,

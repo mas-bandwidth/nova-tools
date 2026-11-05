@@ -40,7 +40,7 @@ const (
 
 // ClaimAfter is how long a delivered message stays with its reader before
 // recv hands it to another. It is longer than the longest delivery a reader
-// makes (nova-friend's ten minute turn and the kill that ends it), so a live
+// makes (a ten minute turn and the kill that ends it), so a live
 // reader mid-turn is never handed its message a second time; a dead one's
 // is claimed after this (SPEC-BUS.md, the semantics; tla/Bus2.tla
 // HeldStaysHeld).
