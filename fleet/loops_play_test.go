@@ -11,14 +11,12 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// loops_play_test.go pins fleet/loops.yml's Linux unit state (docs/FLEET.md, "loops.yml"). The state of
-// ansible.builtin.systemd_service was one folded scalar holding a parenthesised
-// ternary chained to a second `if ... else`; the ansible-core templar stops at
-// the `else` with "expected token ')', got 'else'", the task never reaches
-// systemd, and every Linux host keeps running the old unit. The value is built
-// before the module call instead: loop_unit_changed, loop_unit_wants_restart and
-// loop_unit_state are task vars, the module reads `state: "{{ loop_unit_state }}"`,
-// and the same four outcomes hold.
+// loops_play_test.go pins fleet/loops.yml's Linux unit state (docs/FLEET.md, "loops.yml").
+// The state of ansible.builtin.systemd_service is built before the module call,
+// because the ansible-core templar stops at a parenthesised ternary chained to a
+// second `if ... else` ("expected token ')', got 'else'"): loop_unit_changed,
+// loop_unit_wants_restart and loop_unit_state are task vars, and the module
+// reads `state: "{{ loop_unit_state }}"`.
 
 // loopsPlays reads fleet/loops.yml as the list of plays it holds.
 func loopsPlays(t *testing.T) []map[string]any {
@@ -142,19 +140,48 @@ func TestFleetFilesNameNoRetiredTool(t *testing.T) {
 	}
 }
 
-// The install role's defaults: the five tools, and retiring off until asked.
+// The install defaults: the five tools, and retiring off until asked.
 func TestInstallRoleDefaults(t *testing.T) {
 	t.Parallel()
 	b, err := os.ReadFile("roles/nova-tools-install/defaults/main.yml")
 	require.NoError(t, err)
 	var d map[string]any
 	require.NoError(t, yaml.Unmarshal(b, &d))
-	assert.Equal(t, []any{"nova-bus", "nova-config", "nova-sandbox", "nova-secrets", "nova-reserve"}, d["nova_tools_names"])
+	g, err := os.ReadFile("group_vars/all.yml")
+	require.NoError(t, err)
+	var gv map[string]any
+	require.NoError(t, yaml.Unmarshal(g, &gv))
+	assert.Equal(t, []any{"nova-bus", "nova-config", "nova-sandbox", "nova-secrets", "nova-reserve"}, gv["nova_tools_names"])
 	assert.Equal(t, false, d["nova_tools_remove_enabled"])
-	assert.Len(t, d["nova_tools_remove"], 23)
-	names, _ := d["nova_tools_names"].([]any)
+	names, _ := gv["nova_tools_names"].([]any)
 	for _, r := range d["nova_tools_remove"].([]any) {
 		assert.NotContains(t, names, r)
+	}
+}
+
+// The default retire list is the rows of retired-tools.txt that say "retired"
+// or "rowan-tools", and no other row: another product's binaries are never in it.
+func TestRetireListIsOnlyRetiredAndRowanTools(t *testing.T) {
+	t.Parallel()
+	b, err := os.ReadFile("roles/nova-tools-install/defaults/main.yml")
+	require.NoError(t, err)
+	var d map[string]any
+	require.NoError(t, yaml.Unmarshal(b, &d))
+	var want []any
+	txt, err := os.ReadFile("retired-tools.txt")
+	require.NoError(t, err)
+	for _, line := range strings.Split(string(txt), "\n") {
+		f := strings.Split(line, "\t")
+		if len(f) < 3 || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if strings.HasPrefix(f[2], "retired") || f[2] == "rowan-tools" {
+			want = append(want, f[0])
+		}
+	}
+	assert.ElementsMatch(t, want, d["nova_tools_remove"])
+	for _, other := range []string{"nova-sprint", "nova-card", "nova-work", "nova-swarm", "nova-hook", "nova-friend"} {
+		assert.NotContains(t, d["nova_tools_remove"], other)
 	}
 }
 
