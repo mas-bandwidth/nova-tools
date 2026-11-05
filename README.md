@@ -21,7 +21,7 @@ Give a machine the `runner` role and it joins the inventory's runner group. Your
 
 ## 4. Deploy secrets to the fleet
 
-**Every AI gets exactly the secrets its job needs, and nothing else ever sees them.**
+**Every AI gets the secrets its work needs across the entire fleet.**
 `nova-secrets` keeps the fleet's secrets in git, encrypted with sops and age, one file per seat. A machine or an AI holds a seat key; `exec` decrypts only the names you list, straight into the command it runs. No value ever appears on a command line, in a log, or in `ps`.
 
 ## 5. Run untrusted work behind a wall
