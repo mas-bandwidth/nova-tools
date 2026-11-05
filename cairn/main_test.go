@@ -516,3 +516,33 @@ func TestALateFlagIsRefused(t *testing.T) {
 	assert.Equal(t, 0, code, "after -- a word may start with -")
 	assert.Contains(t, out, `query="-lantern"`)
 }
+
+// TestAppendRefusesBytesThatAreNotUTF8: the entry file is JSON, which would replace
+// them, so they are refused and nothing is written; what is accepted round-trips exactly.
+func TestAppendRefusesBytesThatAreNotUTF8(t *testing.T) {
+	t.Parallel()
+	store := t.TempDir()
+	do(t, "", "open", "--store", store, "--session", "s1", "--publish", "never")
+	bad := filepath.Join(store, "latin1.txt")
+	require.NoError(t, os.WriteFile(bad, []byte("caf\xe9!"), 0o644))
+	code, out, errs := do(t, "", "append", "--store", store, "--session", "s1", "--entry", "e1", "--file", bad)
+	assert.Equal(t, 2, code)
+	assert.Empty(t, out)
+	assert.Equal(t, "nova-cairn append: text is not valid UTF-8 at byte 3; convert it first (iconv -f <its encoding> -t UTF-8); run: file "+bad+"\n", errs)
+	code, _, errs = do(t, "ab\xff", "append", "--store", store, "--session", "s1", "--entry", "e1", "--file", "-")
+	assert.Equal(t, 2, code)
+	assert.Contains(t, errs, "at byte 2;")
+	code, _, errs = do(t, "", "append", "--store", store, "--session", "s1", "--entry", "e1", "--text", "x", "--source", "p\xfe")
+	assert.Equal(t, 2, code)
+	assert.Contains(t, errs, "--source is not valid UTF-8 at byte 1")
+	assert.False(t, validID("s\xff"))
+	_, err := os.Stat(filepath.Join(store, "entries"))
+	assert.True(t, os.IsNotExist(err), "nothing was written")
+
+	words := "café — 日本   tab\tend\n"
+	code, _, _ = do(t, words, "append", "--store", store, "--session", "s1", "--entry", "e2", "--file", "-")
+	require.Equal(t, 0, code)
+	_, out, _ = do(t, "", "receipt", "--store", store, "--session", "s1", "--entry", "e2", "--text")
+	assert.Contains(t, out, "bytes="+strconv.Itoa(len(words))+" ")
+	assert.Contains(t, out, "text="+strconv.Quote(words))
+}

@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 )
 
 // A store is a directory of plain files. open and append write the nested shape:
@@ -32,7 +33,7 @@ import (
 
 var policies = []string{"never", "manual", "deferred", "immediate"}
 
-const idRule = "an id names exactly one file or directory inside the store on every platform: nonempty, at most 128 bytes, " +
+const idRule = "an id names exactly one file or directory inside the store on every platform: valid UTF-8, nonempty, at most 128 bytes, " +
 	"no whitespace or control characters, none of / \\ : * ? \" < > |, not only dots, no `..`, no trailing dot, " +
 	"and not a Windows device name (CON, PRN, AUX, NUL, COM1-9, LPT1-9)"
 
@@ -49,7 +50,7 @@ func validID(s string) bool {
 		}
 	}
 	base, _, _ := strings.Cut(s, ".")
-	return !devices.MatchString(base)
+	return utf8.ValidString(s) && !devices.MatchString(base)
 }
 
 // refusal is a failed run: code 1 for a conflict (it ran and said no), 2 for
@@ -124,6 +125,18 @@ func sessionFile(store, s string) string   { return filepath.Join(store, "sessio
 func flatFile(store, s string) string      { return filepath.Join(store, s+".md") }
 func entryPath(store, s, id string) string { return filepath.Join(store, "entries", s, id+".json") }
 func logFile(store string) string          { return filepath.Join(store, "log.jsonl") }
+
+// badUTF8 is the offset of the first byte of s that is not valid UTF-8, or -1.
+func badUTF8(s string) int {
+	for i := 0; i < len(s); {
+		r, n := utf8.DecodeRuneInString(s[i:])
+		if r == utf8.RuneError && n == 1 {
+			return i
+		}
+		i += n
+	}
+	return -1
+}
 
 // indexCmd is the remedy that lists what a store, or one session, holds.
 func indexCmd(store, session string) string {
@@ -614,6 +627,9 @@ func runStore(verb string, args []string, stdin io.Reader, stdout, stderr io.Wri
 			problems = append(problems, fmt.Sprintf("--%s %s is not an id: %s", id.name, strconv.Quote(id.v), idRule))
 		}
 	}
+	if at := badUTF8(*source); at >= 0 {
+		problems = append(problems, fmt.Sprintf("--source is not valid UTF-8 at byte %d", at))
+	}
 	if *publish != "" && !slices.Contains(policies, *publish) {
 		problems = append(problems, fmt.Sprintf("--publish %s is not a policy; it is one of %s", strconv.Quote(*publish), strings.Join(policies, ", ")))
 	}
@@ -669,6 +685,15 @@ func runStore(verb string, args []string, stdin io.Reader, stdout, stderr io.Wri
 				return fail(err)
 			}
 			words = b
+		}
+		// The entry file is JSON, which can hold only UTF-8: anything else would not
+		// be kept byte for byte, so it is refused before anything is written.
+		if at := badUTF8(string(words)); at >= 0 {
+			next := shell("file", *file)
+			if !given["file"] || *file == "-" {
+				next = "nova-cairn append -h"
+			}
+			return fail(refuse(next, "text is not valid UTF-8 at byte %d; convert it first (iconv -f <its encoding> -t UTF-8)", at))
 		}
 		r, dup, err := appendEntry(*store, *session, *entry, string(words), *source, now, *publish)
 		if err != nil {
