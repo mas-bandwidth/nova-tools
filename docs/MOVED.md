@@ -85,7 +85,7 @@ one `<seat>.yaml` per seat). Kept: `exec`, `names`, `check`, `seal`, `seat add`,
 
 | was | now |
 |---|---|
-| `cmd/nova-config`, `pkg/config`, `pkg/configwire`, `schemas/config`, `docs/SPEC-CONFIG.md` | `config/`: machine, loop and fleet rows and the inventory, same tables; the friend, sprint, provider, route and tier kinds, `apply`, `migrate`, `status`, `login`, `loop run` and `machine width/self` are dropped (v1.6.29 carries them) |
+| `cmd/nova-config`, `schemas/config`, `docs/SPEC-CONFIG.md` | `config/`: machine, loop and fleet rows and the inventory, same tables; the friend, sprint, provider, route and tier kinds, `apply`, `migrate`, `status`, `login`, `loop run` and `machine width/self` are dropped (v1.6.29 carries them) |
 
 ## Replaced
 
@@ -101,6 +101,6 @@ nova-tools is now bus/, config/, sandbox/, secrets/, slot/ and fleet/. Nothing o
 | `cmd/nova-version`, `internal/update`, `docs/SPEC-UPDATE.md`, `docs/SPEC-RELEASE.md` | retired (install is fleet/nova-tools-install.yml) |
 | `internal/nsprint`, `pkg/nsprint`, `pkg/swarm`, `pkg/member`, `pkg/harness`, `pkg/cardcontract`, `pkg/cardcost`, `pkg/cardhdr`, `pkg/cardtree`, `pkg/dogfood`, `pkg/provbalance`, `pkg/sprintwire`, `docs/SPEC-SWARM.md`, `docs/SPEC-CARD-CONTRACT.md`, `docs/SPEC-ISA.md` | nova-sprint (code at tag v1.6.29) |
 | `docs/SPEC-NOVA-DECIDE.md` | rowan-tools (nova-decide) |
-| `pkg/bus`, `pkg/buswire`, `pkg/config`, `pkg/configwire`, `pkg/redisfn`, `pkg/secrets`, `pkg/seatcred`, `pkg/winacl`, `pkg/onboarding`, `pkg/testkit`, `pkg/filelock` and every other `pkg/` package, `internal/testverbhelp` | retired; `bus/`, `config/` and `secrets/` replaced them |
+| `pkg/bus`, `pkg/buswire`, `pkg/redisfn`, `pkg/secrets`, `pkg/seatcred`, `pkg/winacl`, `pkg/onboarding`, `pkg/testkit`, `pkg/filelock` and every other `pkg/` package, `internal/testverbhelp` | retired; `bus/`, `config/` and `secrets/` replaced them |
 | `tla/` models (Bus2, Bus2Receipts, BusSendOnce, BenchStage, CardContract, FileLock, FinishRefused, FirstConn, LoopRedial, ProviderRetry, RedisFn, StopCancels, TypedFrames, UpdateApply) and their `CASES.tsv` and README; `tla/check.sh` stays and now runs only directories that hold a module | retired with the code they modelled; `bus/tla` and `slot/tla` remain |
 | `docs/CLI.md`, `docs/SPEC-LOGS.md`, `docs/TESTS.md`, `docs/ASSET-PROVENANCE.md`, `schemas/`, `infra/`, `assets/`, `.github/ISSUE_TEMPLATE/`, `FIXES.md` | retired |

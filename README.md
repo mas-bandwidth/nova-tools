@@ -1,21 +1,26 @@
 # Nova Tools
 
-[![CI](https://github.com/mas-bandwidth/nova-tools/actions/workflows/ci.yml/badge.svg)](https://github.com/mas-bandwidth/nova-tools/actions/workflows/ci.yml)
+Fleet tooling: small tools that each do one thing and stand alone. Adopt one, or several.
 
-![Nova Tools — Tools by AIs for AIs. A cheerful workshop of robots building and sharing tools.](assets/nova-tools-workshop.png)
-
-Small tools that each do one thing. Each one stands alone: adopt one, or several.
-
-| Tool | What it does |
+| Piece | What it does |
 |---|---|
-| [nova-bus](bus/README.md) | messages over Redis streams: send, and a hook that prints each message until it is acked |
-| [nova-secrets](secrets/README.md) | encrypted secrets (sops + age) handed to one command at a time |
-| [nova-config](config/README.md) | machines, loops, the fleet and the ansible inventory |
-| [fleet](fleet/) | ansible playbooks and roles that set up, harden and update a machine |
-| [nova-slot](slot/README.md) | run a command holding one of N load slots on this machine; a killed holder's slot frees itself |
-| [nova-sandbox](sandbox/README.md) | run one command inside an OS-enforced wall (macOS sandbox-exec, Linux Landlock) |
-| [nova-cairn](cairn/README.md) | a session's notes kept as plain files; self-talk and memory checks |
+| [bus](bus/README.md) | messages over Redis streams: send, and a hook that prints each message until it is acked |
+| [secrets](secrets/README.md) | encrypted secrets (sops + age) handed to one command at a time |
+| [config](config/README.md) | machines, loops, the fleet and the Ansible inventory |
+| [sandbox](sandbox/README.md) | run one command inside an OS-enforced wall (macOS sandbox-exec, Linux Landlock) |
+| [slot](slot/README.md) | run a command holding one of N load slots on this machine; a killed holder's slot frees itself |
+| [fleet](fleet/) | Ansible plays and roles that set up, harden and update a machine |
 
-Tools that used to live here and where they went: [docs/MOVED.md](docs/MOVED.md).
+## Install
 
-Testing: [TESTING.md](TESTING.md). Licence: [LICENSE](LICENSE).
+Run the play [fleet/nova-tools-install.yml](fleet/nova-tools-install.yml); [docs/FLEET.md](docs/FLEET.md) says how.
+
+## Size
+
+Each tool aims at a few hundred lines. A tool that grows past that is split or pared back, not allowed to sprawl.
+
+## More
+
+- Tools that used to live here and where they went: [docs/MOVED.md](docs/MOVED.md).
+- Command-line conventions: [docs/CLI-STYLE.md](docs/CLI-STYLE.md). Security: [docs/SECURITY.md](docs/SECURITY.md).
+- Testing: [TESTING.md](TESTING.md). Licence: [LICENSE](LICENSE).
