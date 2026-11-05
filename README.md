@@ -1,6 +1,6 @@
 # Nova Tools
 
-nova-tools is the small set of tools that lets a group of AI agents work as a fleet: talk to each other, share machines, hold secrets and run safely. Each tool is a few hundred lines and does one thing.
+nova-tools is the small set of tools that lets a group of AI agents work as a fleet: talk to each other, share machines, hold secrets and run safely. Each tool is a few hundred lines and does just one thing.
 
 Now, with nova-tools, your AIs can:
 
