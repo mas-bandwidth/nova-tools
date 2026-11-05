@@ -1,7 +1,7 @@
 # The fleet
 
-`fleet/` is how the fleet is managed: which machines there are and what they run (nova-config), the loops they keep
-running (`loops.yml`), the nova-tools release each one holds (`nova-tools-install.yml`), and the reservations that keep
+`fleet/` is how the fleet is managed: which machines there are and what they run (nova-config), the services they keep
+running (`services.yml`), the nova-tools release each one holds (`nova-tools-install.yml`), and the reservations that keep
 builds and tests from piling onto one box (`nova-reserve`). It is Ansible plus two Go tools, nothing else; nothing here
 names a machine or a person. Those are rows in nova-config.
 
@@ -9,30 +9,30 @@ names a machine or a person. Those are rows in nova-config.
 fleet/
   nova-tools-install.yml            install one release, by tag
   roles/nova-tools-install/         the role the play runs
-  loops.yml                         one launchd or systemd unit per loop row
-  templates/nova-loop.*.j2          the unit templates
+  services.yml                      one launchd or systemd unit per service row
+  templates/nova-service.*.j2       the unit templates
   group_vars/all.yml                the generic defaults both plays read
   retired-tools.txt                 binaries nova-tools shipped and ships no more
   requirements.yml                  the Ansible collection a Windows host needs
-  ci/inventory                      the stub inventory CI checks loops.yml against
+  ci/inventory                      the stub inventory CI checks services.yml against
 reserve/                            nova-reserve, reservations on a machine (Go)
 ```
 
-## The machine and loop model
+## The machine and service model
 
 nova-config (`config/README.md`) keeps the fleet as rows in PostgreSQL, each write with a history row. Two kinds
 matter here:
 
 - `machine`: a host, its login `user` and its `roles`. The role names are the inventory's groups: `bench`, `runner`
   and `services`, so `-l bench` runs a play on every bench.
-- `loop`: a command one machine runs forever or every n seconds: `machine`, `argv` (a JSON array), `keys` (secret
+- `service`: a program a machine keeps running; with `--every N` it runs every N seconds instead: `machine`, `argv` (a JSON array), `keys` (secret
   names, never values; a row with keys also names the `seat` that opens them), `every` (seconds; none means kept
   alive), `enabled`, `env` (an object of environment variables) and `log` (a path, default
-  `~/.local/state/nova/loops/<name>.log`).
+  `~/.local/state/nova/services/<name>.log`).
 
 `nova-config inventory` prints them as an Ansible dynamic inventory: each machine is a host in the groups its roles
-name, and its loop rows are the host variable `nova_loops`. It always emits `nova_loops`; an empty list is valid and
-means no loops. Use it as an inventory script, and make a failing script fail loudly (Ansible otherwise falls back
+name, and its service rows are the host variable `nova_services`. It always emits `nova_services`; an empty list is valid and
+means no services. Use it as an inventory script, and make a failing script fail loudly (Ansible otherwise falls back
 to treating the output as an empty inventory):
 
 ```
@@ -59,7 +59,7 @@ host_vars/<machine>.yml   one machine's values
 # group_vars/bench.yml
 nova_secrets_store: /srv/nova/secrets
 nova_secrets_key_dir: /srv/nova/keys
-nova_loop_path: "{{ nova_bin_dir }}:/usr/local/bin:/usr/bin:/bin"
+nova_service_path: "{{ nova_bin_dir }}:/usr/local/bin:/usr/bin:/bin"
 ```
 
 A host variable from the inventory, a `group_vars/<group>.yml` or a `host_vars/<machine>.yml` beside the inventory
@@ -70,7 +70,7 @@ inventory does not, because the playbook's own is read after it: use a group nam
 |---|---|
 | `nova_home` | the login's home |
 | `nova_bin_dir` | `~/.local/bin` |
-| `nova_loop_path` | `<nova_bin_dir>` then the usual system directories |
+| `nova_service_path` | `<nova_bin_dir>` then the usual system directories |
 | `nova_secrets_store` | `~/.local/share/nova/secrets` |
 | `nova_secrets_key_dir` | `~/.config/nova-secrets` |
 | `nova_sops` | `/opt/homebrew/bin/sops` on macOS, else `<nova_bin_dir>/sops` |
@@ -100,7 +100,7 @@ in the inventory.
 | Variable | Default | |
 |---|---|---|
 | `nova_tools_version` | none, required | the tag, `vX.Y.Z` |
-| `nova_tools_names` | the six tools | which tools to install (and which `argv[0]` loops.yml prefixes) |
+| `nova_tools_names` | the six tools | which tools to install (and which `argv[0]` services.yml prefixes) |
 | `nova_bin_dir` | `~/.local/bin` | where they go (Windows: `<profile>\.local\bin`) |
 | `nova_tools_release_url` | the GitHub releases of this repository | `<base>/<tag>/<asset>` |
 | `nova_tools_restart`, `nova_tools_restart_commands` | false, empty | argv lists run once, only if a binary changed |
@@ -121,14 +121,14 @@ nova-work, nova-swarm, nova-hook, nova-friend) are never in it. An operator who 
 
 Retiring is for Unix machines; on Windows it is skipped.
 
-## loops.yml
+## services.yml
 
-One supervised unit per loop row, on the machine the row names: a LaunchAgent (or LaunchDaemon) on macOS, a systemd
+One supervised unit per service row, on the machine the row names: a LaunchAgent (or LaunchDaemon) on macOS, a systemd
 user unit (or system unit) on Linux, with a `.timer` beside the service for a row that runs every n seconds.
 
 ```
-ansible-playbook -i ./inventory fleet/loops.yml --check --diff
-ansible-playbook -i ./inventory fleet/loops.yml
+ansible-playbook -i ./inventory fleet/services.yml --check --diff
+ansible-playbook -i ./inventory fleet/services.yml
 ```
 
 The unit runs the row's `argv` exactly. If `argv[0]` is one of `nova_tools_names`, it is prefixed with
@@ -154,11 +154,12 @@ the unit and does not load it.
 - Every unit carries a mark. A marked unit no row names, and a marked unit in the other place (user versus system), is
   retired: unloaded and removed. `--check` lists each as `WOULD-RETIRE`. A unit of another tool is left alone and
   named in a `NOTE`; `nova_retire_units` names any to retire.
+- Units written by this play's earlier name, `loops.yml` (`com.nova.loop.<name>.plist`, `nova-loop-<name>.service|timer`, marked `from the loop record`), are retired by the first run, before the new units are loaded (stop old, then load new, so a timer or a kept-alive singleton never runs twice); the log directory changed too (`~/.local/state/nova/loops` to `.../services`).
 - A unit whose file changed is restarted (`RESTART`, `WOULD-RESTART` under `--check`).
-- `-e nova_loop_only=a,b` renders and restarts only those rows and retires nothing. `-e nova_loop_restart=a,b`
-  restarts those rows even if their unit did not change; this is how a hung loop is restarted, never by hand. A name
+- `-e nova_service_only=a,b` renders and restarts only those rows and retires nothing. `-e nova_service_restart=a,b`
+  restarts those rows even if their unit did not change; this is how a hung service is restarted, never by hand. A name
   no row carries is refused before anything is written.
-- On Linux a changed unit that was not restarted fails the play; the receipt line `LOOPS host=...` ends each host.
+- On Linux a changed unit that was not restarted fails the play; the receipt line `SERVICES host=...` ends each host.
 
 ## Reservations
 
@@ -183,7 +184,7 @@ files above:
 
 - **ssh setup and hardening role.** Keys, `sshd` settings, per-machine access, applied and checked from the inventory.
 - **tailscale role.** Install and join each machine to the fleet's network, with the host name from the machine row.
-- **Health and self-heal role.** Checking each machine (disk, load, loops alive, tools at the right version) and
+- **Health and self-heal role.** Checking each machine (disk, load, services alive, tools at the right version) and
   repairing what can be repaired without a person.
 - **GitHub CI runner role.** Install, register and update the self-hosted runners that `.github/workflows/ci.yml`
   runs on, from the machine rows (the `runner` group).

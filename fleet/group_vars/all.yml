@@ -1,21 +1,21 @@
-# The defaults of the fleet plays (loops.yml, nova-tools-install.yml). Override
+# The defaults of the fleet plays (services.yml, nova-tools-install.yml). Override
 # any of them from the inventory: a host variable from `nova-config inventory`,
 # or a group_vars/<group>.yml or host_vars/<machine>.yml beside it (docs/FLEET.md,
 # "Overriding the defaults"). A group_vars/all.yml beside the inventory does not
 # override these: this file is read after it.
 
 # The tools nova-tools ships, by name: nova-tools-install.yml installs them and
-# loops.yml prefixes argv[0] with nova_bin_dir when it is one of them.
+# services.yml prefixes argv[0] with nova_bin_dir when it is one of them.
 nova_tools_names: [nova-bus, nova-cairn, nova-config, nova-sandbox, nova-secrets, nova-reserve]
 
 # Where a machine keeps the tools: its login's home.
 nova_home: "{{ ansible_env.HOME }}"
 nova_bin_dir: "{{ nova_home }}/.local/bin"
 
-# The PATH a loop unit runs with; a loop row's env may set its own.
-nova_loop_path: "{{ nova_bin_dir }}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+# The PATH a service unit runs with; a service row's env may set its own.
+nova_service_path: "{{ nova_bin_dir }}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
-# A darwin machine's loops are LaunchAgents in the login's GUI domain (gui) or
+# A darwin machine's services are LaunchAgents in the login's GUI domain (gui) or
 # LaunchDaemons dropped to the login (system, which needs sudo); auto asks
 # launchd whether the login has a GUI domain and takes system when it has not.
 # A linux machine's are systemd user units (user, with linger) or system units
@@ -23,21 +23,21 @@ nova_loop_path: "{{ nova_bin_dir }}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/b
 nova_launchd_domain: auto
 nova_systemd_scope: user
 
-# Units of another tool's (com.nova.loop.<name>.plist, nova-loop-<name>.service
-# not written by loops.yml) to retire by name; every other such unit is left
+# Units of another tool's (com.nova.service.<name>.plist, nova-service-<name>.service
+# not written by services.yml) to retire by name; every other such unit is left
 # alone and listed.
 nova_retire_units: []
 
-# The loop records loops.yml renders and restarts, by name (a list, or one
+# The service records services.yml renders and restarts, by name (a list, or one
 # comma-separated word); empty is every record of the machine. Under it every
 # other unit is left as it is and nothing is retired.
-nova_loop_only: []
+nova_service_only: []
 
-# The loop records a run restarts even when their unit file did not change, by
+# The service records a run restarts even when their unit file did not change, by
 # name (a list, or one comma-separated word). Empty restarts nothing extra.
-nova_loop_restart: []
+nova_service_restart: []
 
-# The nova-secrets layout a loop with keys opens its secrets through: the
+# The nova-secrets layout a service with keys opens its secrets through: the
 # store, the directory of seat keys (<seat>.key) and the sops binary
 # (nova-secrets exec requires --store and --key and takes --sops).
 nova_secrets_store: "{{ nova_home }}/.local/share/nova/secrets"

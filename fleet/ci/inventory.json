@@ -7,12 +7,12 @@
       "localhost": {
         "ansible_connection": "local",
         "ansible_system": "Linux",
-        "nova_loops": [
+        "nova_services": [
           {
             "name": "bus-hook",
             "argv": ["nova-bus", "hook", "--as", "reader"],
             "env": { "NOVA_BUS_REDIS": "redis-host:6379" },
-            "log": "~/.local/state/nova/loops/bus-hook.log",
+            "log": "~/.local/state/nova/services/bus-hook.log",
             "seat": "",
             "keys": [],
             "every": 0,

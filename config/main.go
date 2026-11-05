@@ -1,4 +1,4 @@
-// Command nova-config keeps a fleet's machines and loops as rows in PostgreSQL,
+// Command nova-config keeps a fleet's machines and services as rows in PostgreSQL,
 // each write with a history row, and prints them as an Ansible inventory.
 package main
 
@@ -245,19 +245,19 @@ func runKind(ctx context.Context, k *kind, verb string, args []string, d deps, s
 	case op != "add" && !found:
 		return refused("%s %s not found; run: nova-config %s list", k.name, name, k.name)
 	case op == "show":
-		var loops []string
+		var services []string
 		if k.name == "machine" {
-			ls, err := st.List(ctx, kinds["loop"])
+			ls, err := st.List(ctx, kinds["service"])
 			for _, l := range ls {
 				if l.F["machine"] == name {
-					loops = append(loops, l.Name)
+					services = append(services, l.Name)
 				}
 			}
 			if err != nil {
 				return err
 			}
 		}
-		printRows(stdout, k, verb, []Row{cur}, loops, str(fs, "json") == "true")
+		printRows(stdout, k, verb, []Row{cur}, services, str(fs, "json") == "true")
 		return nil
 	}
 	before, after := cur, Row{}

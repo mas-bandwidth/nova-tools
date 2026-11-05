@@ -30,12 +30,12 @@ func TestInventory(t *testing.T) {
 	_, out, _ = h.run(t, "inventory", "--host", "bench-b")
 	assert.JSONEq(t, `{
 		"ansible_host": "bench-b.tail", "ansible_user": "nova", "cores": 12, "runners": 2, "nova_os": "linux", "nova_arch": "amd64",
-		"nova_loops": [{"name": "member-b", "argv": ["/usr/bin/env", "A=b", "prog"],
+		"nova_services": [{"name": "member-b", "argv": ["/usr/bin/env", "A=b", "prog"],
 			"seat": "s-b", "keys": ["A_KEY", "B_KEY"], "every": 0, "keepalive": true, "enabled": true,
-			"env": {}, "log": "~/.local/state/nova/loops/member-b.log"}]}`, out)
+			"env": {}, "log": "~/.local/state/nova/services/member-b.log"}]}`, out)
 
 	_, out, _ = h.run(t, "inventory", "--host", "bench-a")
-	assert.Contains(t, out, `"nova_loops": []`, "a machine with no loops has an empty list, never none")
+	assert.Contains(t, out, `"nova_services": []`, "a machine with no services has an empty list, never none")
 	assert.NotContains(t, out, "ansible_connection")
 	assert.NotContains(t, out, "cores", "an unknown fact is left out")
 }

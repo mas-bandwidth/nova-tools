@@ -17,14 +17,14 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// loops_play_functional_test.go renders fleet/loops.yml's Linux unit state
+// services_play_functional_test.go renders fleet/services.yml's Linux unit state
 // through ansible-core's own templar. It carries //go:build functional
 // (docs/STANDARD.md section 8) so the unit tier does not compile the ansible
 // render.
 //
 // The render runs the task as the play holds it: its own vars block and its
 // module state argument, copied into a one-task localhost playbook, fed the
-// inputs the play feeds it (loop_units, loop_timers, loop_restart, item). The
+// inputs the play feeds it (service_units, service_timers, service_restart, item). The
 // four truth-table inputs are held to restarted, restarted, started and stopped.
 
 // stateRenderPlay is a one-task localhost playbook that prints what the Linux
@@ -65,14 +65,14 @@ func renderState(t *testing.T, playbook, extraVars string) (string, error) {
 	return string(out), err
 }
 
-func TestLoopsPlayStateExpressionRendersThroughTheTemplar(t *testing.T) {
+func TestServicesPlayStateExpressionRendersThroughTheTemplar(t *testing.T) {
 	t.Parallel()
 	if _, err := exec.LookPath("ansible-playbook"); err != nil {
-		t.Skip("ansible-core is not installed on this machine; the structural test TestLoopsPlayStateExpressionIsBuiltOutsideTheModuleArgs still runs")
+		t.Skip("ansible-core is not installed on this machine; the structural test TestServicesPlayStateExpressionIsBuiltOutsideTheModuleArgs still runs")
 	}
 
 	playbook := filepath.Join(t.TempDir(), "render.yml")
-	require.NoError(t, os.WriteFile(playbook, stateRenderPlay(t, linuxStateTask(t, loopsPlays(t))), 0o644))
+	require.NoError(t, os.WriteFile(playbook, stateRenderPlay(t, linuxStateTask(t, servicesPlays(t))), 0o644))
 
 	result := func(name string, changed bool) map[string]any {
 		return map[string]any{"item": map[string]any{"name": name}, "changed": changed}
@@ -86,20 +86,20 @@ func TestLoopsPlayStateExpressionRendersThroughTheTemplar(t *testing.T) {
 	}{
 		{"disabled", false, true, true, "stopped"},
 		{"enabled and changed", true, true, false, "restarted"},
-		{"enabled and named by nova_loop_restart", true, false, true, "restarted"},
+		{"enabled and named by nova_service_restart", true, false, true, "restarted"},
 		{"enabled, unchanged and not restarted", true, false, false, "started"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			restart := []string{}
 			if tc.named {
-				restart = append(restart, "loop-a")
+				restart = append(restart, "service-a")
 			}
 			extra, err := json.Marshal(map[string]any{
-				"item":         map[string]any{"name": "loop-a", "enabled": tc.enabled},
-				"loop_restart": restart,
-				"loop_units":   map[string]any{"results": []any{result("loop-a", tc.changed), result("loop-b", true)}},
-				"loop_timers":  map[string]any{"results": []any{}},
+				"item":            map[string]any{"name": "service-a", "enabled": tc.enabled},
+				"service_restart": restart,
+				"service_units":   map[string]any{"results": []any{result("service-a", tc.changed), result("service-b", true)}},
+				"service_timers":  map[string]any{"results": []any{}},
 			})
 			require.NoError(t, err)
 			out, err := renderState(t, playbook, string(extra))
@@ -110,10 +110,10 @@ func TestLoopsPlayStateExpressionRendersThroughTheTemplar(t *testing.T) {
 	}
 }
 
-// timerTask is the task that writes a loop's timer.
+// timerTask is the task that writes a service's timer.
 func timerTask(t *testing.T) map[string]any {
 	t.Helper()
-	for _, play := range loopsPlays(t) {
+	for _, play := range servicesPlays(t) {
 		for _, task := range flattenTasks(t, tasksOf(t, play)) {
 			if _, ok := task["ansible.builtin.template"].(map[string]any); ok &&
 				asText(task["name"]) == "one timer per record that runs every n seconds (linux)" {
@@ -126,8 +126,8 @@ func timerTask(t *testing.T) map[string]any {
 }
 
 // A kept-alive row renders no timer and an `every` row renders exactly one: the
-// timer task's loop, templated by ansible-core over both kinds of row.
-func TestLoopsPlayTimersOnlyForEveryRows(t *testing.T) {
+// timer task's service, templated by ansible-core over both kinds of row.
+func TestServicesPlayTimersOnlyForEveryRows(t *testing.T) {
 	t.Parallel()
 	if _, err := exec.LookPath("ansible-playbook"); err != nil {
 		t.Skip("ansible-core is not installed on this machine")
@@ -143,13 +143,13 @@ func TestLoopsPlayTimersOnlyForEveryRows(t *testing.T) {
 	require.NoError(t, err)
 	playbook := filepath.Join(t.TempDir(), "timers.yml")
 	require.NoError(t, os.WriteFile(playbook, b, 0o644))
-	extra, err := json.Marshal(map[string]any{"loop_records": []any{
+	extra, err := json.Marshal(map[string]any{"service_records": []any{
 		map[string]any{"name": "kept", "keepalive": true, "every": 0},
 		map[string]any{"name": "periodic", "keepalive": false, "every": 60},
 	}})
 	require.NoError(t, err)
 	out, err := renderState(t, playbook, string(extra))
-	require.NoErrorf(t, err, "ansible refused the timer loop:\n%s", out)
+	require.NoErrorf(t, err, "ansible refused the timer service:\n%s", out)
 	assert.Contains(t, out, `TIMERS=periodic"`, out)
 	assert.NotContains(t, out, "kept", out)
 }
