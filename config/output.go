@@ -116,8 +116,8 @@ func rowLine(k *kind, r Row, cut bool) string {
 	return line
 }
 
-// printRows prints list (loops nil) or show lines, or one JSON object with typed values.
-func printRows(w io.Writer, k *kind, verb string, rows []Row, loops []string, asJSON bool) {
+// printRows prints list (services nil) or show lines, or one JSON object with typed values.
+func printRows(w io.Writer, k *kind, verb string, rows []Row, services []string, asJSON bool) {
 	list := strings.HasSuffix(verb, " list")
 	var items []string
 	for _, r := range rows {
@@ -126,7 +126,7 @@ func printRows(w io.Writer, k *kind, verb string, rows []Row, loops []string, as
 			if !list {
 				line += " created=" + value(r.Created) + " updated=" + value(r.Updated)
 				if k.name == "machine" {
-					line += " loops=" + value(strings.Join(loops, ","))
+					line += " services=" + value(strings.Join(services, ","))
 				}
 			}
 			fmt.Fprintln(w, line)
@@ -139,7 +139,7 @@ func printRows(w io.Writer, k *kind, verb string, rows []Row, loops []string, as
 		if !list {
 			pairs = append(pairs, `"created":`+jsonString(r.Created), `"updated":`+jsonString(r.Updated))
 			if k.name == "machine" {
-				pairs = append(pairs, `"loops":`+marshal(append([]string{}, loops...)))
+				pairs = append(pairs, `"services":`+marshal(append([]string{}, services...)))
 			}
 		}
 		items = append(items, `{"kind":`+jsonString(k.name)+`,"fields":{`+strings.Join(pairs, ",")+`}}`)

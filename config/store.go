@@ -119,13 +119,13 @@ func connectError(cfg *pgx.ConnConfig, err error) error {
 
 // diagnose is the refusal of a write the store's constraints turned down (an
 // SQLSTATE 23xxx error): one line that says what to do. machines are the
-// machine rows' names and loops the loops on the machine a remove names.
-func diagnose(pe *pgconn.PgError, k *kind, op, name string, after Row, machines, loops []string) error {
+// machine rows' names and services the services on the machine a remove names.
+func diagnose(pe *pgconn.PgError, k *kind, op, name string, after Row, machines, services []string) error {
 	switch {
-	case pe.Code == "23503" && k.name == "loop" && op != "remove":
+	case pe.Code == "23503" && k.name == "service" && op != "remove":
 		return refused("no machine %s; the machines are %s", after.F["machine"], cmp.Or(strings.Join(machines, ","), "(none)"))
-	case pe.Code == "23503" && k.name == "machine" && op == "remove" && len(loops) > 0:
-		return refused("machine %s still runs loops %s; remove them first: nova-config loop remove %s --actor <you>", name, strings.Join(loops, ","), loops[0])
+	case pe.Code == "23503" && k.name == "machine" && op == "remove" && len(services) > 0:
+		return refused("machine %s still runs services %s; remove them first: nova-config service remove %s --actor <you>", name, strings.Join(services, ","), services[0])
 	case pe.Code == "23505":
 		return refused("%s %s exists; use: nova-config %s set", k.name, name, k.name)
 	}
@@ -212,7 +212,7 @@ func (p pgStore) List(ctx context.Context, k *kind) ([]Row, error) {
 // (” for any), $3 a time or NULL.
 const historySQL = `SELECT id::text, to_char(at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), actor, kind, name, op, coalesce(before::text, ''), coalesce(after::text, '')
  FROM config.history
- WHERE ($1::text = '' OR kind = $1::text) AND ($2::text = '' OR name = $2::text) AND ($3::timestamptz IS NULL OR at >= $3::timestamptz)
+ WHERE ($1::text = '' OR kind = $1::text OR ($1::text = 'service' AND kind = 'loop')) AND ($2::text = '' OR name = $2::text) AND ($3::timestamptz IS NULL OR at >= $3::timestamptz)
  ORDER BY at DESC, id DESC LIMIT $4::int`
 
 func (p pgStore) History(ctx context.Context, q HistoryQuery) ([]HistoryEntry, error) {
@@ -310,8 +310,8 @@ func (p pgStore) Write(ctx context.Context, k *kind, op string, before, after Ro
 		if errors.As(err, &pe) && strings.HasPrefix(pe.Code, "23") { // integrity: unique, foreign key, check
 			_ = tx.Rollback(ctx) // ignored: the failed statement aborted it; the lists below need the connection
 			machines := p.names(ctx, "SELECT name FROM config.machines ORDER BY name")
-			loops := p.names(ctx, "SELECT name FROM config.loops WHERE machine = $1 ORDER BY name", name)
-			return 0, diagnose(pe, k, op, name, after, machines, loops)
+			services := p.names(ctx, "SELECT name FROM config.services WHERE machine = $1 ORDER BY name", name)
+			return 0, diagnose(pe, k, op, name, after, machines, services)
 		}
 		return 0, storeError(err, p.user, op)
 	}

@@ -12,8 +12,8 @@ import (
 	"strings"
 )
 
-// loopLogDir is where a loop's log goes when its row names no log.
-const loopLogDir = "~/.local/state/nova/loops"
+// serviceLogDir is where a service's log goes when its row names no log.
+const serviceLogDir = "~/.local/state/nova/services"
 
 type group struct {
 	Hosts []string `json:"hosts"`
@@ -30,7 +30,7 @@ type inventory struct {
 	Services group `json:"services"`
 }
 
-type invLoop struct {
+type invService struct {
 	Name      string            `json:"name"`
 	Argv      []string          `json:"argv"`
 	Seat      string            `json:"seat"`
@@ -63,7 +63,7 @@ func runInventory(ctx context.Context, args []string, d deps, stdout io.Writer) 
 	}
 	defer st.Close()
 	rows := map[string][]Row{}
-	for _, k := range []string{"machine", "loop"} {
+	for _, k := range []string{"machine", "service"} {
 		if rows[k], err = st.List(ctx, kinds[k]); err != nil {
 			return err
 		}
@@ -75,7 +75,7 @@ func runInventory(ctx context.Context, args []string, d deps, stdout io.Writer) 
 	if h, err := d.hostname(); local == "" && err == nil {
 		local = strings.ToLower(strings.Split(h, ".")[0])
 	}
-	inv := build(rows["machine"], rows["loop"], local)
+	inv := build(rows["machine"], rows["service"], local)
 	var out any = inv
 	if host != "" {
 		hv, ok := inv.Meta.Hostvars[host]
@@ -93,14 +93,14 @@ func runInventory(ctx context.Context, args []string, d deps, stdout io.Writer) 
 }
 
 // build is the inventory of the rows: every machine in all, grouped by its
-// roles and its runners, with its row facts and its loops as host variables.
+// roles and its runners, with its row facts and its services as host variables.
 // A fact the row leaves empty is left out.
-func build(machines []Row, loops []Row, local string) *inventory {
+func build(machines []Row, services []Row, local string) *inventory {
 	inv := &inventory{}
 	inv.Meta.Hostvars = map[string]map[string]any{}
-	byMachine := map[string][]invLoop{}
-	for _, l := range loops {
-		il := invLoop{Name: l.Name, Seat: l.F["seat"], Keys: []string{}, Env: map[string]string{}, Log: cmp.Or(l.F["log"], loopLogDir+"/"+l.Name+".log")}
+	byMachine := map[string][]invService{}
+	for _, l := range services {
+		il := invService{Name: l.Name, Seat: l.F["seat"], Keys: []string{}, Env: map[string]string{}, Log: cmp.Or(l.F["log"], serviceLogDir+"/"+l.Name+".log")}
 		_ = json.Unmarshal([]byte(l.F["argv"]), &il.Argv) // ignored: the row's argv was canonical when written
 		_ = json.Unmarshal([]byte(l.F["env"]), &il.Env)   // ignored: likewise
 		if l.F["keys"] != "" {
@@ -116,7 +116,7 @@ func build(machines []Row, loops []Row, local string) *inventory {
 		m, v := r.Name, r.F
 		all = append(all, m)
 		runners, _ := strconv.Atoi(v["runners"])
-		hv := map[string]any{"ansible_host": m, "runners": runners, "nova_loops": append([]invLoop{}, byMachine[m]...)}
+		hv := map[string]any{"ansible_host": m, "runners": runners, "nova_services": append([]invService{}, byMachine[m]...)}
 		if cores, err := strconv.Atoi(v["cores"]); err == nil {
 			hv["cores"] = cores
 		}

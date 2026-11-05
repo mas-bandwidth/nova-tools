@@ -3,7 +3,7 @@
 # default, so a run never installs "latest" by accident.
 nova_tools_version: ""
 
-# The tools to install, by name: nova_tools_names, in group_vars/all.yml (loops.yml
+# The tools to install, by name: nova_tools_names, in group_vars/all.yml (services.yml
 # reads it too). Each is a release asset <tool>_<tag>_<os>_<arch>[.exe] listed in
 # the release's SHA256SUMS.
 
