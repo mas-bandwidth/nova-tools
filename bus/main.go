@@ -18,13 +18,14 @@ import (
 	"time"
 )
 
-const usage = `nova-bus: messages between named inboxes, kept in Redis.
-
-  nova-bus send --as <me> --to <name>[,<name>] [--re <id>] <subject> <body | ->
+// verbUsage is each verb's usage block; the banner is all of them in order.
+var verbUsage = map[string]string{
+	"send": `  nova-bus send --as <me> --to <name>[,<name>] [--re <id>] <subject> <body | ->
       Append one message to each recipient's inbox; prints "<name> <id>" for each.
       A body of - is read from stdin. A failed send prints SEND FAILED and exits 1;
       it is never retried.
-  nova-bus hook --as <name>
+`,
+	"hook": `  nova-bus hook --as <name>
       Print every waiting message for <name>, then each new one as it arrives,
       one line each: id<TAB>from<TAB>re<TAB>subject<TAB>body (re is - when none;
       \n, \r, \t and \\ escaped). A message is marked handled only after its line
@@ -34,19 +35,35 @@ const usage = `nova-bus: messages between named inboxes, kept in Redis.
       One hook per name: a hook that finds the name held waits up to 40 s for
       it to lapse (a restart after a crash), then claims it or, if it is still
       held, exits 1 "name already hooked".
-  nova-bus who
+`,
+	"who": `  nova-bus who
       Print each name whose hook is running and how long it has been up, one
       per line, name<TAB>uptime, sorted by name. A crashed hook drops out
       within 30 seconds.
-  nova-bus pending --as <name> [--list]
+`,
+	"pending": `  nova-bus pending --as <name> [--list]
       Print how many messages wait for <name> that no hook has handled; with
       --list, then id<TAB>subject for each, oldest first. Nothing is consumed.
-  nova-bus help | -h | --help
-      Print this.
+`,
+	"help": `  nova-bus help [<verb>] | <verb> -h
+      Print this, or one verb's usage.
+`,
+}
 
+var verbOrder = []string{"send", "hook", "who", "pending", "help"}
+
+const usageFooter = `
 Names may not contain ':'. Exit 0 ok, 1 refused or failed, 2 usage error.
 Environment: NOVA_BUS_REDIS=host:port (required), NOVA_BUS_PASSWORD (optional).
 `
+
+func usage() string {
+	b := "nova-bus: messages between named inboxes, kept in Redis.\n\n"
+	for _, v := range verbOrder {
+		b += verbUsage[v]
+	}
+	return b + usageFooter
+}
 
 // verbs maps each verb to the flags it takes.
 var verbs = map[string][]string{"send": {"as", "to", "re"}, "hook": {"as"}, "who": {}, "pending": {"as", "list"}}
@@ -125,27 +142,35 @@ func main() {
 }
 
 func run(ctx context.Context, args []string, env func(string) string, stdin io.Reader, stdout, stderr io.Writer, dial func(addr, password string) Store, clk Clock) int {
-	if len(args) == 0 || args[0] == "help" || args[0] == "-h" || args[0] == "--help" {
-		fmt.Fprint(stdout, usage)
+	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" || (args[0] == "help" && len(args) == 1) {
+		fmt.Fprint(stdout, usage())
 		return 0
 	}
 	verb := args[0]
+	if verb == "help" {
+		verb = args[1]
+	}
 	takes, ok := verbs[verb]
-	if !ok {
-		return misuse(stderr, "unknown verb %q (send, hook, who, pending, help)", verb)
+	if !ok && verb != "help" {
+		fmt.Fprintf(stderr, "nova-bus: unknown verb %q; verbs: %s; run: nova-bus help\n", verb, strings.Join(verbOrder, ", "))
+		return 2
+	}
+	if args[0] == "help" {
+		fmt.Fprint(stdout, verbUsage[verb]+usageFooter)
+		return 0
 	}
 	fs := flag.NewFlagSet("nova-bus "+verb, flag.ContinueOnError)
-	fs.SetOutput(stderr)
+	fs.SetOutput(io.Discard)
 	fs.Usage = func() {}
 	as := fs.String("as", "", "")
 	to := fs.String("to", "", "")
 	re := fs.String("re", "", "")
 	list := fs.Bool("list", false, "")
 	if err := fs.Parse(args[1:]); errors.Is(err, flag.ErrHelp) {
-		fmt.Fprint(stdout, usage)
+		fmt.Fprint(stdout, verbUsage[verb]+usageFooter)
 		return 0
 	} else if err != nil {
-		return 2
+		return misuse(stderr, verb, "%s", flagError(err))
 	}
 	var bad []string
 	fs.Visit(func(f *flag.Flag) {
@@ -153,27 +178,39 @@ func run(ctx context.Context, args []string, env func(string) string, stdin io.R
 			bad = append(bad, "--"+f.Name)
 		}
 	})
+	if len(bad) > 0 {
+		return misuse(stderr, verb, "unknown flag %s", strings.Join(bad, ", "))
+	}
+	var missing []string
+	if verb != "who" && strings.TrimSpace(*as) == "" {
+		missing = append(missing, "--as <name>")
+	}
+	if verb == "send" && *to == "" {
+		missing = append(missing, "--to <name>")
+	}
+	if verb == "send" && fs.NArg() < 2 {
+		missing = append(missing, []string{"<subject> <body>", "<body>"}[fs.NArg()])
+	}
+	if env("NOVA_BUS_REDIS") == "" {
+		missing = append(missing, "NOVA_BUS_REDIS (host:port)")
+	}
 	names := strings.Split(*to, ",")
 	for i := range names {
 		names[i] = strings.TrimSpace(names[i])
 	}
 	switch {
-	case len(bad) > 0:
-		return misuse(stderr, "%s does not take %s", verb, strings.Join(bad, ", "))
-	case verb != "who" && strings.TrimSpace(*as) == "":
-		return misuse(stderr, "no name: give --as <name>")
+	case len(missing) > 0:
+		return misuse(stderr, verb, "missing %s", strings.Join(missing, ", "))
 	case strings.Contains(*as+*to, ":"):
-		return misuse(stderr, "a name may not contain ':'")
+		return misuse(stderr, verb, "a name may not contain ':'")
 	case *re == "-":
-		return misuse(stderr, "--re wants a message id (as hook prints it), not -")
+		return misuse(stderr, verb, "--re wants a message id (as hook prints it), not -")
 	case verb != "send" && fs.NArg() != 0:
-		return misuse(stderr, "%s takes no arguments", verb)
-	case verb == "send" && (fs.NArg() != 2 || *to == ""):
-		return misuse(stderr, "usage: nova-bus send --as <me> --to <name>[,<name>] [--re <id>] <subject> <body | ->")
+		return misuse(stderr, verb, "%s takes no arguments", verb)
+	case verb == "send" && fs.NArg() > 2:
+		return misuse(stderr, verb, "send takes one subject and one body, not %d arguments", fs.NArg())
 	case verb == "send" && slices.Contains(names, ""):
-		return misuse(stderr, "empty name in --to %q", *to)
-	case env("NOVA_BUS_REDIS") == "":
-		return fail(stderr, "NOVA_BUS_REDIS is not set: give the Redis address as host:port")
+		return misuse(stderr, verb, "empty name in --to %q", *to)
 	}
 	store := dial(env("NOVA_BUS_REDIS"), env("NOVA_BUS_PASSWORD"))
 	switch verb {
@@ -371,7 +408,23 @@ func fail(stderr io.Writer, format string, a ...any) int {
 	return 1
 }
 
-func misuse(stderr io.Writer, format string, a ...any) int {
-	fail(stderr, format, a...)
+// misuse refuses a malformed invocation in one line, exit 2.
+func misuse(stderr io.Writer, verb, format string, a ...any) int {
+	fmt.Fprintf(stderr, "nova-bus %s: %s; run: nova-bus %s -h\n", verb, fmt.Sprintf(format, a...), verb)
 	return 2
+}
+
+// flagError rewords the flag package's parse error, naming the flag as --x.
+func flagError(err error) string {
+	msg, name := err.Error(), "--?"
+	if i := strings.LastIndex(msg, " -"); i >= 0 {
+		name = "--" + strings.TrimLeft(strings.TrimRight(strings.Fields(msg[i+1:])[0], ":"), "-")
+	}
+	switch {
+	case strings.HasPrefix(msg, "flag provided but not defined"):
+		return "unknown flag " + name
+	case strings.HasPrefix(msg, "flag needs an argument"):
+		return name + " needs a value"
+	}
+	return "bad value for " + name
 }

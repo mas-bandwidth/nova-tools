@@ -292,31 +292,38 @@ func TestRefusals(t *testing.T) {
 		name string
 		env  map[string]string
 		args []string
-		code int
 		want string
 	}{
-		{"missing NOVA_BUS_REDIS", map[string]string{}, []string{"hook", "--as", "beta"}, 1, "NOVA_BUS_REDIS is not set"},
-		{"send without --as", testEnv, []string{"send", "--to", "beta", "s", "b"}, 2, "give --as <name>"},
-		{"hook without --as", testEnv, []string{"hook"}, 2, "give --as <name>"},
-		{"re of -", testEnv, []string{"send", "--as", "a", "--to", "beta", "--re", "-", "s", "b"}, 2, "--re wants a message id"},
-		{"send without a body", testEnv, []string{"send", "--as", "a", "--to", "beta", "s"}, 2, "usage: nova-bus send"},
-		{"send without --to", testEnv, []string{"send", "--as", "a", "s", "b"}, 2, "usage: nova-bus send"},
-		{"empty name", testEnv, []string{"send", "--as", "a", "--to", "a,,b", "s", "b"}, 2, "empty name"},
-		{"unknown verb", testEnv, []string{"recv"}, 2, "unknown verb"},
-		{"ack is not a verb", testEnv, []string{"ack", "--as", "beta"}, 2, "unknown verb"},
-		{"unknown flag", testEnv, []string{"hook", "--as", "beta", "--nope"}, 2, "flag provided but not defined"},
-		{"colon in a name", testEnv, []string{"send", "--as", "a", "--to", "presence:x", "s", "b"}, 2, "may not contain ':'"},
-		{"hook with --to", testEnv, []string{"hook", "--as", "beta", "--to", "x"}, 2, "hook does not take --to"},
-		{"who with --as", testEnv, []string{"who", "--as", "beta"}, 2, "who does not take --as"},
-		{"pending without --as", testEnv, []string{"pending"}, 2, "give --as <name>"},
-		{"pending with an argument", testEnv, []string{"pending", "--as", "beta", "x"}, 2, "pending takes no arguments"},
+		{"missing everything", map[string]string{}, []string{"send"}, "nova-bus send: missing --as <name>, --to <name>, <subject> <body>, NOVA_BUS_REDIS (host:port); run: nova-bus send -h\n"},
+		{"missing NOVA_BUS_REDIS", map[string]string{}, []string{"hook", "--as", "beta"}, "nova-bus hook: missing NOVA_BUS_REDIS (host:port); run: nova-bus hook -h\n"},
+		{"send without --as", testEnv, []string{"send", "--to", "beta", "s", "b"}, "nova-bus send: missing --as <name>; run: nova-bus send -h\n"},
+		{"hook without --as", testEnv, []string{"hook"}, "nova-bus hook: missing --as <name>; run: nova-bus hook -h\n"},
+		{"re of -", testEnv, []string{"send", "--as", "a", "--to", "beta", "--re", "-", "s", "b"}, "--re wants a message id"},
+		{"send without a body", testEnv, []string{"send", "--as", "a", "--to", "beta", "s"}, "missing <body>;"},
+		{"send with three arguments", testEnv, []string{"send", "--as", "a", "--to", "beta", "s", "b", "c"}, "not 3 arguments"},
+		{"send without --to", testEnv, []string{"send", "--as", "a", "s", "b"}, "missing --to <name>;"},
+		{"empty name", testEnv, []string{"send", "--as", "a", "--to", "a,,b", "s", "b"}, "empty name"},
+		{"unknown verb", testEnv, []string{"recv"}, "nova-bus: unknown verb \"recv\"; verbs: send, hook, who, pending, help; run: nova-bus help\n"},
+		{"ack is not a verb", testEnv, []string{"ack", "--as", "beta"}, "unknown verb \"ack\""},
+		{"help for an unknown verb", testEnv, []string{"help", "ack"}, "unknown verb \"ack\""},
+		{"unknown flag", testEnv, []string{"hook", "--as", "beta", "--nope"}, "nova-bus hook: unknown flag --nope; run: nova-bus hook -h\n"},
+		{"flag without a value", testEnv, []string{"hook", "--as"}, "nova-bus hook: --as needs a value; run: nova-bus hook -h\n"},
+		{"bad bool", testEnv, []string{"pending", "--as", "b", "--list=x"}, "nova-bus pending: bad value for --list; run: nova-bus pending -h\n"},
+		{"colon in a name", testEnv, []string{"send", "--as", "a", "--to", "presence:x", "s", "b"}, "may not contain ':'"},
+		{"hook with --to", testEnv, []string{"hook", "--as", "beta", "--to", "x"}, "nova-bus hook: unknown flag --to; run: nova-bus hook -h\n"},
+		{"who with --as", testEnv, []string{"who", "--as", "beta"}, "unknown flag --as"},
+		{"pending without --as", testEnv, []string{"pending"}, "missing --as <name>"},
+		{"pending with an argument", testEnv, []string{"pending", "--as", "beta", "x"}, "pending takes no arguments"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			f := newFake()
-			code, _, errOut := call(t, f, tc.env, "", tc.args...)
-			assert.Equal(t, tc.code, code)
+			code, out, errOut := call(t, f, tc.env, "", tc.args...)
+			assert.Equal(t, 2, code)
+			assert.Empty(t, out)
 			assert.Contains(t, errOut, tc.want)
+			assert.Equal(t, 1, strings.Count(errOut, "\n"), "one line")
+			assert.NotContains(t, errOut, "flag provided", "no flag-package text")
 			assert.Empty(t, f.entries, "a refused send writes nothing")
 		})
 	}
@@ -347,14 +354,25 @@ func TestSendFailedIsNotRetried(t *testing.T) {
 
 func TestHelp(t *testing.T) {
 	t.Parallel()
-	for _, args := range [][]string{{"help"}, {"-h"}, {"--help"}, {}, {"send", "-h"}} {
-		code, out, _ := call(t, newFake(), nil, "", args...)
+	for _, args := range [][]string{{"help"}, {"-h"}, {"--help"}, {}} {
+		code, out, errOut := call(t, newFake(), nil, "", args...)
 		assert.Equal(t, 0, code, args)
-		assert.Contains(t, out, "nova-bus hook --as <name>", args)
+		assert.Empty(t, errOut)
+		for _, v := range verbOrder {
+			assert.Contains(t, out, "  nova-bus "+v, args)
+		}
+	}
+	for _, v := range []string{"send", "hook", "who", "pending"} {
+		for _, args := range [][]string{{v, "-h"}, {v, "--help"}, {"help", v}} {
+			code, out, errOut := call(t, newFake(), nil, "", args...)
+			assert.Equal(t, 0, code, args)
+			assert.Empty(t, errOut, args)
+			assert.True(t, strings.HasPrefix(out, "  nova-bus "+v+" ") || strings.HasPrefix(out, "  nova-bus "+v+"\n"), "%v: %q", args, out)
+			assert.Equal(t, 1, strings.Count(out, "  nova-bus "), "only that verb: %v", args)
+		}
 	}
 	_, out, _ := call(t, newFake(), nil, "", "help")
 	assert.Contains(t, out, "One hook per name: a hook that finds the name held waits up to 40 s")
-	assert.Contains(t, out, "nova-bus who\n")
 	assert.Contains(t, out, "nova-bus pending --as <name> [--list]")
 }
 

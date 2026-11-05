@@ -136,6 +136,9 @@ func TestAHookKilledAndRestarted(t *testing.T) {
 	send("four", "fourth")
 	assert.True(t, strings.HasSuffix(second.next(t), "\tfour\tfourth"), "then the new one; one and two are never printed again")
 	require.Eventually(t, func() bool { return pending() == 0 }, wait, 20*time.Millisecond, "all acked")
+	n, err := c.XLen(ctx, "bus:beta").Result()
+	require.NoError(t, err)
+	assert.Zero(t, n, "each acked entry is deleted: the inbox holds only what waits")
 }
 
 // TestPresenceWhoAndPending runs who and pending against a real Redis while a

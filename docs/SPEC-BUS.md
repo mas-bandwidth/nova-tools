@@ -14,7 +14,7 @@ nova-bus send --as <me> --to <name>[,<name>] [--re <id>] <subject> <body | ->
 nova-bus hook --as <name>
 nova-bus who
 nova-bus pending --as <name> [--list]
-nova-bus help | -h | --help
+nova-bus help [<verb>] | -h | --help | <verb> -h
 ```
 
 - **send** appends one message to the inbox of each recipient, in the order
@@ -29,8 +29,9 @@ nova-bus help | -h | --help
 - **pending** prints the number of messages waiting for `<name>` that no hook
   has acked; with `--list`, then `<id><TAB><subject>` for each, oldest first.
   It consumes nothing.
-- **help**, `-h`, `--help`, no arguments, or `-h` after a verb print the usage
-  to stdout.
+- **help**, `-h`, `--help` or no arguments print the whole usage to stdout;
+  `help <verb>`, `<verb> -h` and `<verb> --help` print that verb's usage.
+  Help exits 0 and writes nothing to stderr.
 
 There is no ack verb: hook acks each message after printing its line, and that
 is the one way a message is marked handled.
@@ -40,15 +41,21 @@ is the one way a message is marked handled.
 | Code | When |
 |---|---|
 | 0 | done; help; a hook stopped by SIGINT or SIGTERM |
-| 1 | refused or failed: `NOVA_BUS_REDIS` unset, a Redis error, `SEND FAILED`, `name already hooked`, stdout failing |
-| 2 | a flag or usage error |
+| 1 | refused or failed: a Redis error, `SEND FAILED`, `name already hooked`, stdout failing |
+| 2 | a malformed invocation |
 
-Usage errors (exit 2), each named on stderr: an unknown verb (`ack` is one); an
-unknown flag, or a flag the verb does not take; a missing `--as` (every verb
-but who); a name containing `:`; `--re -`; an empty name in `--to` (`a,,b`);
-send without `--to` or without exactly a subject and a body; an argument to
-hook, who or pending ("takes no arguments"). A refused command touches
-nothing in Redis.
+A malformed invocation is refused in one stderr line,
+`nova-bus <verb>: <what is wrong>; run: nova-bus <verb> -h`, with nothing on
+stdout and nothing done in Redis. Missing inputs are named all at once
+(`missing --as <name>, --to <name>, <subject> <body>, NOVA_BUS_REDIS
+(host:port)`). Each other case is named on its own: an unknown flag, or a flag
+the verb does not take (`unknown flag --x`); a flag without a value; a bad
+`--list` value; a name containing `:`; `--re -`; an empty name in `--to`
+(`a,,b`); more than a subject and a body; an argument to hook, who or pending
+("takes no arguments"). An unknown verb (`ack` is one) gets
+`nova-bus: unknown verb "<verb>"; verbs: send, hook, who, pending, help; run:
+nova-bus help`. go-redis's own logging is silenced: every message on stderr is
+nova-bus's.
 
 ## Environment
 
@@ -85,7 +92,8 @@ client never retries a command by itself.
 
 A hook reads its pending entries first (`XREADGROUP ... 0`: handed to a hook
 and never acked), then new ones (`XREADGROUP ... >`, up to 100 at a time). For
-each entry it writes the line, then acks it (`XACK`). The ack runs to the end
+each entry it writes the line, then acks it and deletes it (`XACK` and `XDEL`
+in one `MULTI`), so an inbox holds only what is waiting. The ack runs to the end
 even if a signal arrives after the write, and no further line is written once
 one has. So:
 
@@ -158,7 +166,7 @@ that exited or crashed is absent within the TTL; a waiting hook whose rival
 crashed sees the name claimed; and every wait ends in a claim or a refusal. A stuck hook is allowed to
 drop out, and `PresenceStuckStrict.cfg` shows that it does. The reversed
 witnesses remove the TTL, the refresh, the claim's check, the release's check
-and the wait, one each. `bus/tla/Bus.tla` models delivery. `bus/tla/CASES.tsv` names
+and the wait, one each. `Presence.cfg` checks two hooks; `PresenceThree.cfg` checks three (about 3.9M states, minutes on many workers, so it is run by hand rather than by `tla/check.sh`). `bus/tla/Bus.tla` models delivery. `bus/tla/CASES.tsv` names
 every case with the outcome TLC must reach; `tla/check.sh JAR bus/tla` runs
 them.
 

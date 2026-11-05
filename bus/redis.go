@@ -12,10 +12,16 @@ import (
 
 type redisStore struct{ c *redis.Client }
 
+// quiet drops go-redis's own log lines: nova-bus reports its errors itself.
+type quiet struct{}
+
+func (quiet) Printf(context.Context, string, ...any) {}
+
 // dialRedis keeps one connection: every command in a process runs in turn.
 // The client never retries a command: a retried XADD can send a message
 // twice, and a retried XREADGROUP > can strand a batch in the pending list.
 func dialRedis(addr, password string) Store {
+	redis.SetLogger(quiet{})
 	return redisStore{redis.NewClient(&redis.Options{Addr: addr, Password: password, PoolSize: 1, MaxRetries: -1})}
 }
 
@@ -71,8 +77,15 @@ func toMsgs(xs []redis.XMessage) []Msg {
 	return msgs
 }
 
+// Ack acks the entry and deletes it from the stream in one MULTI, so an inbox
+// holds only what is waiting.
 func (r redisStore) Ack(ctx context.Context, stream, id string) error {
-	return r.c.XAck(ctx, stream, group, id).Err()
+	_, err := r.c.TxPipelined(ctx, func(p redis.Pipeliner) error {
+		p.XAck(ctx, stream, group, id)
+		p.XDel(ctx, stream, id)
+		return nil
+	})
+	return err
 }
 
 // Count is the group's pending count plus its lag (Redis 7); the stream's
