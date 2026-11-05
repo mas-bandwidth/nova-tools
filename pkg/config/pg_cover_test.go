@@ -101,11 +101,11 @@ func unexpected(q string) ([]string, [][]driver.Value, error) {
 
 // friendCols and friendRow are the columns(k), created_at, updated_at scanRow
 // reads for the friend kind.
-var friendCols = []string{"name", "tiers", "roles", "width", "mode", "config_dir", "token_cap", "streams", "kinds", "pronouns", "session", "created_at", "updated_at"}
+var friendCols = []string{"name", "tiers", "roles", "width", "streams", "kinds", "pronouns", "created_at", "updated_at"}
 
 func friendRow(name string) []driver.Value {
 	at := time.Unix(0, 0).UTC()
-	return []driver.Value{name, "flash", "", int64(9), "batch", nil, int64(6000000), "", "", "they/them", "live", at, at}
+	return []driver.Value{name, "flash", "", int64(9), "", "", "they/them", at, at}
 }
 
 // TestPgCoverRedact: Redact names the user, host, port and database, and
@@ -178,12 +178,8 @@ func TestPgCoverValues(t *testing.T) {
 	t.Parallel()
 	k, ok := Lookup(KindFriend)
 	require.True(t, ok)
-	row := Row{Name: "f1", Fields: map[string]string{"tiers": "flash", "roles": "", "width": "8", "mode": "one-shot"}}
-	assert.Equal(t, []any{"f1", "flash", "", int64(8), "one-shot", nil, int64(0), "", "", nil, ""}, values(k, row), "an unset config_dir is NULL, an unset token_cap binds as 0, and an unset pronouns is NULL")
-	row.Fields["config_dir"] = "/accounts/heavy-a"
-	assert.Equal(t, []any{"f1", "flash", "", int64(8), "one-shot", "/accounts/heavy-a", int64(0), "", "", nil, ""}, values(k, row))
-	row.Fields["token_cap"] = "6000000"
-	assert.Equal(t, []any{"f1", "flash", "", int64(8), "one-shot", "/accounts/heavy-a", int64(6000000), "", "", nil, ""}, values(k, row))
+	row := Row{Name: "f1", Fields: map[string]string{"tiers": "flash", "roles": "", "width": "8"}}
+	assert.Equal(t, []any{"f1", "flash", "", int64(8), "", "", nil}, values(k, row), "an unset pronouns is NULL")
 }
 
 // TestPgCoverKindOf: a known kind is returned, an unknown one refused.

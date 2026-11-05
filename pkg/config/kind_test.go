@@ -85,8 +85,8 @@ func TestTheMachineRowIsTheDeclaredFactsSomethingReads(t *testing.T) {
 
 // TestTheFriendRowIsWhatSomeoneDecidesForHer: Glenn 2026-09-27, "anything
 // that a friend would just know, is runtime redis data". Her tiers,
-// roles, width (her one capacity number; no slots), mode, config_dir, token
-// cap and optional work restriction; no
+// roles, width (her one capacity number; no slots), optional work restriction
+// and pronouns; no
 // machine, harness, logins, wake or note; and no coordinator role, which is
 // the sprint row's.
 func TestTheFriendRowIsWhatSomeoneDecidesForHer(t *testing.T) {
@@ -94,7 +94,7 @@ func TestTheFriendRowIsWhatSomeoneDecidesForHer(t *testing.T) {
 
 	friend, _ := Lookup(KindFriend)
 	scopedGot97 := strings.Join(friend.FieldNames(), ",")
-	require.Equal(t, "tiers,roles,width,mode,config_dir,token_cap,streams,kinds,pronouns,session", scopedGot97, "friend fields %s, want tiers,roles,width,mode,config_dir,token_cap,streams,kinds,pronouns,session", scopedGot97)
+	require.Equal(t, "tiers,roles,width,streams,kinds,pronouns", scopedGot97, "friend fields %s, want tiers,roles,width,streams,kinds,pronouns", scopedGot97)
 	for _, f := range friend.Fields {
 		scopedWant102 := f.Name == "tiers"
 		assert.Equal(t, scopedWant102, f.Required, "--%s required=%v, want %v", f.Name, f.Required, scopedWant102)
@@ -550,27 +550,6 @@ func TestTheSprintRowHoldsTheJudgmentBar(t *testing.T) {
 	assert.ErrorContains(t, checkSprint(Row{Name: "sprint", Fields: map[string]string{FieldDecideJudgment: "1.5"}}), "want --decide_judgment_bar <p>, a probability")
 }
 
-// A friend row's mode is one-shot: FriendMode reads a row written before
-// migration 0030 (no field) and a row that still says the retired batch as
-// one-shot.
-func TestAFriendRowsModeIsAlwaysOneShot(t *testing.T) {
-	t.Parallel()
-	assert.Equal(t, FriendModeOneShot, FriendMode(Row{Name: "amy", Fields: map[string]string{}}))
-	assert.Equal(t, FriendModeOneShot, FriendMode(Row{Name: "amy", Fields: map[string]string{"mode": "one-shot"}}))
-	assert.Equal(t, FriendModeOneShot, FriendMode(Row{Name: "amy", Fields: map[string]string{"mode": "batch"}}), "the retired batch reads as one-shot")
-	assert.Equal(t, []string{"one-shot"}, FriendModes)
-}
-
-// nova-config friend set --mode batch is refused: only one-shot is a mode.
-func TestAFriendRowRefusesTheRetiredBatchMode(t *testing.T) {
-	t.Parallel()
-	friend, ok := Lookup(KindFriend)
-	require.True(t, ok)
-	_, err := friend.Changes(map[string]string{"mode": "batch"})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "--mode \"batch\": want one of one-shot")
-}
-
 func TestCheckFleetRefusesASpacePaddedPasswordKey(t *testing.T) {
 	t.Parallel()
 
@@ -714,49 +693,6 @@ func TestLoopApplyAloneTakesTheStoresDirectory(t *testing.T) {
 	require.ErrorIs(t, err, ErrInvalid)
 	assert.ErrorContains(t, err, "run: nova-config fleet set --loops_dir <path>")
 	assert.Zero(t, c.Exists(ctx, LoopKey("member-m1")).Val(), "a refused apply writes no hash")
-}
-
-// A friend's token cap defaults to 6000000, and 0 is no cap rather than the default.
-func TestAFriendsTokenCapDefaultsToSixMillionAndZeroIsNone(t *testing.T) {
-	t.Parallel()
-	assert.Equal(t, int64(6000000), FriendTokenCap(Row{}))
-	assert.Equal(t, int64(6000000), FriendTokenCap(Row{Fields: map[string]string{}}))
-	assert.Equal(t, int64(0), FriendTokenCap(Row{Fields: map[string]string{"token_cap": "0"}}))
-	assert.Equal(t, int64(100), FriendTokenCap(Row{Fields: map[string]string{"token_cap": "100"}}))
-	assert.Equal(t, int64(6000000), FriendTokenCap(Row{Fields: map[string]string{"token_cap": "-1"}}))
-	assert.Equal(t, int64(6000000), FriendTokenCap(Row{Fields: map[string]string{"token_cap": "nope"}}))
-	friend, ok := Lookup(KindFriend)
-	require.True(t, ok)
-	row, err := friend.NewRow("amy", map[string]string{"tiers": "flash"})
-	require.NoError(t, err)
-	assert.Equal(t, "6000000", row.Fields["token_cap"], "add with no token_cap stores the default")
-	row, err = friend.NewRow("amy", map[string]string{"tiers": "flash", "token_cap": "0"})
-	require.NoError(t, err)
-	assert.Equal(t, "0", row.Fields["token_cap"], "an explicit 0 is stored, and is no cap")
-	_, err = friend.NewRow("amy", map[string]string{"tiers": "flash", "token_cap": "-1"})
-	require.Error(t, err)
-}
-
-// A friend row's config_dir is optional, and absolute when set: CLAUDE_CONFIG_DIR
-// is read as given, never expanded.
-func TestAFriendRowsConfigDirIsAbsoluteWhenSet(t *testing.T) {
-	t.Parallel()
-	for _, tc := range []struct{ dir, want string }{
-		{"", ""},
-		{"/accounts/heavy-a", ""},
-		{"~/accounts/heavy-a", "want --config_dir <an absolute path>"},
-		{"accounts", "want --config_dir <an absolute path>"},
-	} {
-		t.Run(tc.dir, func(t *testing.T) {
-			t.Parallel()
-			err := checkFriend(Row{Name: "amy", Fields: map[string]string{"config_dir": tc.dir}})
-			if tc.want == "" {
-				assert.NoError(t, err)
-			} else {
-				assert.ErrorContains(t, err, tc.want)
-			}
-		})
-	}
 }
 
 // A friend row's streams restriction is a comma list of globs the matcher reads: a

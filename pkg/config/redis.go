@@ -20,8 +20,7 @@ import (
 // Functions (pkg/nsprint/fn/lua: capacity.lua's ns_capacity_desired
 // for her width, written as the desired slots, and tiers; friend_roles.lua's
 // ns_friend_roles for roles), and her
-// width, delivery mode, config_dir, token_cap and the optional streams and
-// kinds work restriction, plain fields of friend:<f>:desired no function touches. Her
+// width and the optional streams and kinds work restriction, plain fields of friend:<f>:desired no function touches. Her
 // logins and wake path are what she would just know: her own presence
 // writes them, apply never touches friends:login or friend:<f>:wakepath. A
 // machine's ceiling goes through ns_capacity_machine; its registry row has
@@ -75,24 +74,11 @@ func FleetKey(field string) string { return "fleet:" + field }
 // sprint:coordinator.
 func SprintKey(field string) string { return "sprint:" + field }
 
-// FriendBeatKey is a friend's own heartbeat (nova-friend): its host field
-// is the machine she runs on now, what her desired hash is recorded with;
+// FriendBeatKey is the friend heartbeat the retired nova-friend daemon wrote; nothing
+// writes it since 2026-11-05, so a read finds no host. Its host field was
+// the machine she ran on, what her desired hash is recorded with;
 // no machine caps a friend (her width is her one capacity number).
 func FriendBeatKey(f string) string { return "friend:" + f + ":beat" }
-
-// FriendDesiredKey is the hash apply writes a friend row's desired fields to; its
-// session field (FriendSessionWords) is what nova-bus reads to refuse a send to a
-// one-shot friend.
-func FriendDesiredKey(f string) string { return "friend:" + f + ":desired" }
-
-// friendSessionView is the session a desired hash holds, live when it holds none (a
-// hash written before the field).
-func friendSessionView(s string) string {
-	if s == "" {
-		return DefaultFriendSession
-	}
-	return s
-}
 
 // BeatKey is the machine's own heartbeat, written by the bench that runs on
 // it (nova-sprint bench beat): host, at (unix ms), load1, ncpu, cpu today;
@@ -261,7 +247,7 @@ func (a *RedisApplier) readFriends(ctx context.Context) (map[string]View, int64,
 	roles := make([]*redis.StringCmd, len(names))
 	beats := make([]*redis.StringCmd, len(names))
 	for i, f := range names {
-		desired[i] = pipe.HMGet(ctx, "friend:"+f+":desired", "tiers", "width", "mode", "config_dir", "token_cap", "streams", "kinds", "pronouns", "slots", "session")
+		desired[i] = pipe.HMGet(ctx, "friend:"+f+":desired", "tiers", "width", "streams", "kinds", "pronouns", "slots")
 		roles[i] = pipe.HGet(ctx, "friend:"+f+":roles", "roles")
 		beats[i] = pipe.HGet(ctx, FriendBeatKey(f), "host")
 	}
@@ -282,20 +268,13 @@ func (a *RedisApplier) readFriends(ctx context.Context) (map[string]View, int64,
 		views[f] = View{
 			"tiers": sortedList(str(d, 0)),
 			"roles": sortedList(roles[i].Val()),
-			"width": friendWidthView(str(d, 1), str(d, 8)),
-			"mode":  str(d, 2),
-			// her claude lanes' CLAUDE_CONFIG_DIR, "" when unset
-			"config_dir": str(d, 3),
-			// her per-card token cap; a missing field reads as 0, and apply writes the row's
-			"token_cap": intText(str(d, 4)),
+			"width": friendWidthView(str(d, 1), str(d, 5)),
 			// her optional work restriction, "" for none
-			"streams": str(d, 5),
-			"kinds":   str(d, 6),
+			"streams": str(d, 2),
+			"kinds":   str(d, 3),
 			// the pronouns the friend goes by. Empty is unstated and must stay
 			// empty, so apply does not rewrite it into a stated they/them.
-			"pronouns": str(d, 7),
-			// live or one-shot; a hash from before the field reads live
-			"session": friendSessionView(str(d, 9)),
+			"pronouns": str(d, 4),
 		}
 	}
 	return views, revValue(rev), nil
@@ -449,8 +428,7 @@ func tiersArg(tiers string) string {
 // writeFriend applies one friend row: her width (as the desired hash's
 // slots, every reader of friend:<f>:desired slots reads it) and tiers through
 // ns_capacity_desired, recorded with the machine her beat reports or the
-// fleet's coordinator machine, then her width field, delivery mode, config
-// directory, token cap, work restriction and roles (docs/SPEC-CONFIG.md,
+// fleet's coordinator machine, then her width field, work restriction and roles (docs/SPEC-CONFIG.md,
 // "friend"). A friend's width is her one capacity number: nothing caps it
 // against a machine.
 func (a *RedisApplier) writeFriend(ctx context.Context, row Row, prev View, actor, idem string) error {
@@ -489,15 +467,11 @@ func (a *RedisApplier) writeFriend(ctx context.Context, row Row, prev View, acto
 	// the role here, derived by Kind.Derive): each only when it differs,
 	// both in one round trip, after slots registered her.
 	writeWidth := prev == nil || prev["width"] != row.Fields["width"]
-	writeMode := prev == nil || prev["mode"] != row.Fields["mode"]
-	writeConfigDir := prev == nil || prev["config_dir"] != row.Fields["config_dir"]
-	writeTokenCap := prev == nil || prev["token_cap"] != row.Fields["token_cap"]
 	writeStreams := prev == nil || prev["streams"] != row.Fields["streams"]
 	writeKinds := prev == nil || prev["kinds"] != row.Fields["kinds"]
 	writePronouns := prev == nil || prev["pronouns"] != row.Fields["pronouns"]
-	writeSession := prev == nil || prev["session"] != FriendSession(row)
 	writeRoles := prev == nil && row.Fields["roles"] != "" || prev != nil && prev["roles"] != row.Fields["roles"]
-	if !writeWidth && !writeMode && !writeConfigDir && !writeTokenCap && !writeStreams && !writeKinds && !writePronouns && !writeSession && !writeRoles {
+	if !writeWidth && !writeStreams && !writeKinds && !writePronouns && !writeRoles {
 		return nil
 	}
 	pipe := a.Client.Pipeline()
@@ -505,16 +479,7 @@ func (a *RedisApplier) writeFriend(ctx context.Context, row Row, prev View, acto
 	if writeWidth {
 		pipe.HSet(ctx, "friend:"+f+":desired", "width", row.Fields["width"])
 	}
-	if writeMode { // her delivery mode, a plain field beside width (nova-friend run reads it through friend beat)
-		pipe.HSet(ctx, "friend:"+f+":desired", "mode", row.Fields["mode"])
-	}
-	if writeConfigDir { // her claude lanes' CLAUDE_CONFIG_DIR, a plain field beside mode; "" when unset
-		pipe.HSet(ctx, "friend:"+f+":desired", "config_dir", row.Fields["config_dir"])
-	}
-	if writeTokenCap { // her per-card token cap, a plain field beside config_dir; 0 is no cap
-		pipe.HSet(ctx, "friend:"+f+":desired", "token_cap", row.Fields["token_cap"])
-	}
-	if writeStreams { // her optional stream restriction, plain desired fields beside the cap
+	if writeStreams { // her optional stream restriction, plain desired fields beside width
 		pipe.HSet(ctx, "friend:"+f+":desired", "streams", row.Fields["streams"])
 	}
 	if writeKinds { // her optional KIND restriction, a plain field beside streams
@@ -522,9 +487,6 @@ func (a *RedisApplier) writeFriend(ctx context.Context, row Row, prev View, acto
 	}
 	if writePronouns { // the configured pronouns mirrored in the desired hash; sprint sync reads the config store and supplies row_pronouns on beats
 		pipe.HSet(ctx, "friend:"+f+":desired", "pronouns", row.Fields["pronouns"])
-	}
-	if writeSession { // live or one-shot: nova-bus refuses a send to a one-shot at once (FriendDesiredKey)
-		pipe.HSet(ctx, FriendDesiredKey(f), "session", FriendSession(row))
 	}
 	if writeRoles {
 		roles = pipe.FCall(ctx, "ns_friend_roles", nil, f, row.Fields["roles"], actor, idem)

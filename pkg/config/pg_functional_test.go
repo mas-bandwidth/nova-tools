@@ -571,11 +571,10 @@ func columnOf(t *testing.T, st *PG, column string) map[string]string {
 	return out
 }
 
-// 0030 gives every friend a delivery mode (docs/SPEC-FRIEND.md, one-shot
-// lanes): each friend row there before it is batch, what every daemon did
-// before, a row added after takes batch, a mode that is neither is refused by
-// the column's CHECK, and the file run again keeps a mode set since.
-func TestMigrationThirtyGivesEveryFriendTheBatchMode(t *testing.T) {
+// 0048 removes the friend one-shot mode's columns (mode, config_dir, token_cap, session):
+// every friend row there before it is kept with its name, width and pronouns, the four
+// columns are gone, and the file run again changes nothing.
+func TestMigrationFortyEightDropsTheOneShotColumnsAndKeepsEveryFriend(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	st, err := OpenPG(ctx, server.Database(t))
@@ -583,28 +582,27 @@ func TestMigrationThirtyGivesEveryFriendTheBatchMode(t *testing.T) {
 	defer st.Close()
 	all, err := Migrations()
 	require.NoError(t, err)
-	var thirty Migration
+	var fortyEight Migration
 	for _, m := range all {
-		if m.Version == 30 {
-			thirty = m
+		if m.Version == 48 {
+			fortyEight = m
 			break
 		}
 		require.NoError(t, st.applyOne(ctx, m), "migration %s", m.Name)
 	}
-	require.Equal(t, "0030_friend_mode.sql", thirty.Name)
+	require.Equal(t, "0048_friend_one_shot_removed.sql", fortyEight.Name)
 	for _, f := range []string{"f1", "f2"} {
-		_, err = st.db.ExecContext(ctx, `INSERT INTO config.friends (name, slots, tiers, roles) VALUES ($1, 2, 'flash', '')`, f)
+		_, err = st.db.ExecContext(ctx, `INSERT INTO config.friends (name, slots, tiers, roles, width, mode, session) VALUES ($1, 2, 'flash', '', 3, 'one-shot', 'one-shot')`, f)
 		require.NoError(t, err, f)
 	}
-	require.NoError(t, st.applyOne(ctx, thirty))
-	assert.Equal(t, map[string]string{"f1": "batch", "f2": "batch"}, columnOf(t, st, "mode"), "every friend there before 0030 is batch")
-	_, err = st.db.ExecContext(ctx, `UPDATE config.friends SET mode = 'one-shot' WHERE name = 'f2'`)
-	require.NoError(t, err)
-	_, err = st.db.ExecContext(ctx, `UPDATE config.friends SET mode = 'lanes' WHERE name = 'f1'`)
-	require.Error(t, err, "a mode that is neither is refused by the CHECK")
-	_, err = st.db.ExecContext(ctx, thirty.SQL)
+	require.NoError(t, st.applyOne(ctx, fortyEight))
+	assert.Equal(t, map[string]string{"f1": "3", "f2": "3"}, columnOf(t, st, "width"), "every friend there before 0048 is kept")
+	var left int
+	require.NoError(t, st.db.QueryRowContext(ctx, `SELECT count(*) FROM information_schema.columns WHERE table_schema = 'config' AND table_name = 'friends' AND column_name IN ('mode', 'config_dir', 'token_cap', 'session')`).Scan(&left))
+	assert.Zero(t, left, "the one-shot columns are gone")
+	_, err = st.db.ExecContext(ctx, fortyEight.SQL)
 	require.NoError(t, err, "the file runs again")
-	assert.Equal(t, map[string]string{"f1": "batch", "f2": "one-shot"}, columnOf(t, st, "mode"), "a mode set since is kept")
+	assert.Equal(t, map[string]string{"f1": "3", "f2": "3"}, columnOf(t, st, "width"))
 }
 
 // TestFriendPronounsUnstatedDropsTheConstraintAndRewritesNoRow applies every
