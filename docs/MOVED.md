@@ -90,3 +90,7 @@ one `<seat>.yaml` per seat). Kept: `exec`, `names`, `check`, `seal`, `seat add`,
 | was | now |
 |---|---|
 | `cmd/nova-config`, `pkg/config`, `pkg/configwire`, `schemas/config`, `docs/SPEC-CONFIG.md` | `config/`: machine, loop and fleet rows and the inventory, same tables; the friend, sprint, provider, route and tier kinds, `apply`, `migrate`, `status`, `login`, `loop run` and `machine width/self` are dropped (v1.6.29 carries them) |
+
+## Replaced
+
+- nova-update: replaced by the Ansible role fleet/roles/nova-tools-install (play fleet/nova-tools-install.yml)

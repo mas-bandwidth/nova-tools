@@ -39,7 +39,7 @@ func buildTreeBinaries(t *testing.T) string {
 			return
 		}
 		treeDir = dir
-		pkg := "./cmd/nova-update"
+		pkg := "./cmd/nova-version"
 		build := exec.Command("go", "build", "-buildvcs=false", "-o", filepath.Join(dir, exeName(filepath.Base(pkg))), pkg)
 		build.Dir = filepath.Join("..", "..")
 		build.Env = goenv.Clean(os.Environ())

@@ -15,7 +15,6 @@ Small tools that each do one thing. Each one stands alone: adopt one, or several
 | [nova-slot](slot/README.md) | run a command holding one of N load slots on this machine; a killed holder's slot frees itself |
 | [nova-sandbox](sandbox/README.md) | run one command inside an OS-enforced wall (macOS sandbox-exec, Linux Landlock) |
 | [nova-cairn](cairn/README.md) | a session's notes kept as plain files; self-talk and memory checks |
-| [nova-update](cmd/nova-update/README.md) | install the latest release of a tool on a machine |
 
 Tools that used to live here and where they went: [docs/MOVED.md](docs/MOVED.md).
 
