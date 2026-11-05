@@ -147,7 +147,7 @@ func TestRefusalsExit2And126And127(t *testing.T) {
 	require.NoError(t, os.WriteFile(script, []byte("#!/bin/sh\necho ran\n"), 0o755))
 	code, _, stderr = sandbox(t, job, "--write", job, "--", script)
 	assert.Equal(t, 2, code)
-	assert.Contains(t, stderr, "reason=bad_read", "a command outside every grant is refused before the wall")
+	assert.Contains(t, stderr, "nova-sandbox: bad_read: ", "a command outside every grant is refused before the wall")
 	code, stdout, stderr := sandbox(t, job, "--write", job, "--read", out, "--", script)
 	require.Equal(t, 0, code, stderr)
 	assert.Equal(t, "ran\n", stdout)
