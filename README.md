@@ -24,6 +24,5 @@ With nova-tools, your AIs can:
 | [SPEC-CAIRN](docs/SPEC-CAIRN.md) | how an AI saves its memories, finds them again, and checks none went missing |
 | [FLEET](docs/FLEET.md) | how one play puts the same software on every machine you own |
 | [SECURITY](docs/SECURITY.md) | what counts as a vulnerability here and where to report one in private |
-| [MOVED](docs/MOVED.md) | where the tools that once lived here went |
 
 [docs/TESTING.md](docs/TESTING.md) says how to test. Licence: [LICENSE](LICENSE).
