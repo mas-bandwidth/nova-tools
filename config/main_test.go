@@ -305,5 +305,28 @@ func TestSchemaIsAdditive(t *testing.T) {
 	raw, err := os.ReadFile("schema.sql")
 	require.NoError(t, err)
 	code := regexp.MustCompile(`(?m)--.*$`).ReplaceAllString(string(raw), "")
-	assert.NotRegexp(t, `(?i)\bdrop\b|\bdelete\b|\btruncate\b`, code)
+	assert.NotRegexp(t, `(?i)\bdrop\s+(column|table|schema|index)\b|\bdelete\b|\btruncate\b`, code)
+}
+
+func TestSchemaVerbPrintsTheSchema(t *testing.T) {
+	t.Parallel()
+	raw, err := os.ReadFile("schema.sql")
+	require.NoError(t, err)
+	h := newHarness()
+	h.env = map[string]string{} // no store needed
+	assert.Equal(t, string(raw), h.ok(t, "schema"))
+}
+
+// An old row's role the tool no longer knows is read, listed and put in no group; it never fails a read.
+func TestUnknownOldRoleIsRead(t *testing.T) {
+	t.Parallel()
+	h := fleet(t)
+	r := h.st.rows["machine"]["bench-a"]
+	r.F["roles"] = "bench,coordination"
+	h.st.rows["machine"]["bench-a"] = r
+	assert.Contains(t, h.ok(t, "machine", "list"), "roles=bench,coordination")
+	assert.Contains(t, h.ok(t, "machine", "show", "bench-a"), "roles=bench,coordination")
+	assert.Contains(t, h.ok(t, "inventory"), `"benches": {`+"\n"+`    "hosts": [`+"\n"+`      "bench-a"`)
+	h.ok(t, "machine", "set", "bench-a", "--note", "n", "--actor", "a")
+	assert.Equal(t, "bench,coordination", h.st.rows["machine"]["bench-a"].F["roles"], "a set that leaves roles alone keeps them")
 }

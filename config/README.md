@@ -4,6 +4,12 @@ nova-config keeps a fleet's machines and loops as rows in PostgreSQL, every writ
 them as an Ansible dynamic inventory. The tables, verbs and inventory format are in `docs/SPEC-CONFIG.md`;
 `nova-config help` prints the verbs.
 
+## Schema
+
+`nova-config schema` prints the embedded `schema.sql`; a fresh or older store is made current with
+`nova-config schema | psql "$DSN"`. Apply it before running this binary against an older store: nothing migrates
+on start, and a read fails on the columns the old store lacks. It drops no column.
+
 ## Build and test
 
 ```

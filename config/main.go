@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	_ "embed"
 	"errors"
 	"flag"
 	"fmt"
@@ -25,6 +26,7 @@ const usage = `nova-config: a fleet's machines and loops, kept as rows in Postgr
   nova-config fleet show [--json]
   nova-config fleet set --<field> <value> ... --actor <name> [--reason <line>] [--dry-run]
   nova-config inventory [--list | --host <name>]
+  nova-config schema
 
 machine  a machine, named by its tailnet host: user (required), address (what ssh dials, else
          the name), os, arch, cores (default unsets it), runners, roles (bench,runner,services), note
@@ -40,9 +42,13 @@ the script is: #!/bin/sh followed by: exec nova-config inventory "$@".
 Store: --pg <dsn> or NOVA_PG_DSN, postgres://user@host:port/db with no password; the password
 is read from the variable NOVA_PG_PASSWORD_ENV names, else NOVA_PG_PASSWORD. NOVA_MACHINE names
 the machine inventory runs on (else the host name's first label).
-A fresh store is made with: psql <dsn> -f schema.sql
+A fresh or older store is made current with: nova-config schema | psql <dsn>
+Apply it before running this binary against an older store; nothing migrates on start.
 Exit codes: 0 done, 1 refused, 2 could not run.
 `
+
+//go:embed schema.sql
+var schemaSQL string
 
 // deps is what run reaches outside the process through.
 type deps struct {
@@ -80,6 +86,9 @@ func run(ctx context.Context, args []string, d deps, stdout, stderr io.Writer) i
 		return 0
 	}
 	switch verb {
+	case "schema":
+		fmt.Fprint(stdout, schemaSQL)
+		return 0
 	case "inventory":
 		if err := runInventory(ctx, rest, d, stdout, stderr); err != nil {
 			return fail(stderr, verb, err)

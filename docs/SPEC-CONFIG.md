@@ -6,7 +6,7 @@ no reports from the machines. A fact about a machine is a field someone set.
 
 ## Tables
 
-All in the schema `config` (`config/schema.sql`; a fresh store: `psql <dsn> -f schema.sql`). Every kind has
+All in the schema `config` (`config/schema.sql`; `nova-config schema` prints it, so a fresh or older store is made current with `nova-config schema | psql "$DSN"`). Every kind has
 `name`, `created_at`, `updated_at` besides the fields below.
 
 | table | fields |
@@ -30,6 +30,7 @@ nova-config machine|loop remove <name> --actor <name> [--reason <line>] [--dry-r
 nova-config fleet show [--json]
 nova-config fleet set --pg_dsn <dsn> --actor <name>
 nova-config inventory [--list | --host <name>]
+nova-config schema
 nova-config help
 ```
 
@@ -65,10 +66,17 @@ script: `#!/bin/sh` then `exec nova-config inventory "$@"`.
 
 ## Old columns
 
+Apply the schema before running this binary against an older store (`nova-config schema | psql "$DSN"`); nothing
+migrates on start, and a read of an unmigrated store fails on the missing columns.
+
 An older store has columns this tool no longer knows: on `machines` `seat`, `slots`, `width`, `gates_only`, `tla`;
-on `fleet` `store`, `coordinator`, `redis_port`, `bus`, `loops_dir`. They are ignored: every statement names its
-columns and none reads `*`, so they are neither read nor written, and they may be dropped by hand later
-(`ALTER TABLE config.machines DROP COLUMN seat`, and so on). `schema.sql` drops nothing; run on an older store it
-only adds the machine columns `address`, `os`, `arch` and `cores`. Until an old column that is `NOT NULL` without a
-default (`machines.seat`) is dropped or given one, `machine add` is refused by the store; `set`, `remove`, `list`
-and `show` are not affected.
+on `fleet` `store`, `coordinator`, `redis_port`, `bus`, `loops_dir`. They stay, with their values, and are ignored:
+every statement names its columns and none reads `*`. They may be dropped by hand later
+(`ALTER TABLE config.machines DROP COLUMN seat`, and so on). The schema drops no column. It adds the machine
+columns `address`, `os`, `arch` and `cores`, and lifts two constraints that would block work on the new rows: the
+foreign keys `fleet_store_fkey` and `fleet_coordinator_fkey` (so a machine the old fleet row names can be removed)
+and `NOT NULL` on `machines.seat` (so `machine add` works). The schema is idempotent: run it twice and nothing changes.
+
+An old `roles` value the tool no longer knows (`coordination`) is read, listed and ignored by the inventory. A
+`set --roles` checks only the value it is given against `bench`, `runner` and `services`, and replaces the whole
+list, so setting roles on such a row drops the old role; leave `--roles` out of a `set` to keep it.
