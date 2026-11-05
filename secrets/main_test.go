@@ -227,7 +227,7 @@ func TestExecRefusalsAre125AndNeverRun(t *testing.T) {
 		})
 	}
 	h := newHarness(t)
-	assert.Equal(t, 125, h.main("exec", "--", "true"))
+	assert.Equal(t, 125, h.main("exec", "--store", h.store, "--key", h.key, "--", "true"))
 	assert.Contains(t, h.stderr.String(), "missing --only")
 }
 

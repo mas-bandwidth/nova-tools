@@ -72,7 +72,7 @@ func TestARealStore(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(store, "recovery.pub"), recPub, 0o644))
 	ada := filepath.Join(keys, "ada.key")
 	adaPub := keygen("ada")
-	require.NoError(t, os.WriteFile(filepath.Join(store, ".sops.yaml"), []byte("creation_rules:\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(store, ".sops.yaml"), []byte("creation_rules: []\n"), 0o644))
 	run("", 0, "seat", "add", "ada", adaPub, "--store", store)
 	git("init", "-q", "-b", "main")
 	git("add", "-A")
