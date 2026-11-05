@@ -92,6 +92,7 @@ func TestFunctionalStore(t *testing.T) {
 	}
 	assert.Equal(t, "CONFIG ADD kind=machine name=m1 rev=1\n", ok("machine", "add", "m1", "--user", "nova", "--actor", "a1"))
 	ok("service", "add", "r-m1", "--machine", "m1", "--argv", `["prog","a b"]`, "--keepalive", "true", "--actor", "a1")
+	assert.Equal(t, "CONFIG SET kind=machine name=m1 changed=none rev=unchanged\n", ok("machine", "set", "m1", "--user", "nova", "--actor", "a1"), "a no-op set")
 	assert.Equal(t, "CONFIG SET kind=service name=r-m1 rev=3 changed=enabled\n", ok("service", "set", "r-m1", "--enabled", "false", "--actor", "a1", "--reason", "why"))
 	assert.Equal(t, `SERVICE name=r-m1 machine=m1 argv=["prog","a b"] seat=- keys=- every=0 keepalive=true enabled=false env={} log=-`+"\nCONFIG LIST kind=service rows=1\n", ok("service", "list"))
 	assert.Equal(t, "MACHINE name=m1 address=- user=nova os=- arch=- cores=- roles=bench runners=0 note=-\nCONFIG LIST kind=machine rows=1\n", ok("machine", "list"))

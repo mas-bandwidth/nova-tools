@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -82,7 +83,7 @@ type harness struct {
 func newHarness(t *testing.T) *harness {
 	h := &harness{f: newFake(), c: &clock{t: epoch}, dead: map[int]bool{}, dir: t.TempDir()}
 	h.w = world{
-		env:     func(k string) string { return map[string]string{"NOVA_RESERVE_DIR": h.dir}[k] },
+		env:     func(k string) string { return map[string]string{"NOVA_RESERVE_DIR": h.dir, "PATH": "/usr/bin:/bin"}[k] },
 		lock:    h.f.lock,
 		now:     h.c.now,
 		sleep:   h.c.sleep,
@@ -429,7 +430,7 @@ func TestCapacityRewriteCannotLeaveItEmpty(t *testing.T) {
 	c, have, err := readCapacity(h.dir)
 	require.NoError(t, err)
 	assert.True(t, have)
-	assert.Equal(t, capacity{4, "pid 9 at 2026-11-05T22:03:32Z"}, c)
+	assert.Equal(t, capacity{n: 4, pid: "9", at: "2026-11-05T22:03:32Z"}, c)
 }
 
 // --- hold ---------------------------------------------------------------------
@@ -526,7 +527,7 @@ func TestStatusNamesHoldersAndCapacity(t *testing.T) {
 	h.setCap(t, 2)
 	// a slot file from an older, larger capacity
 	require.NoError(t, os.WriteFile(filepath.Join(h.dir, "slot3"), nil, 0o644))
-	assert.Equal(t, `capacity=2 set_by=pid\s7\sat\s2026-11-05T22:03:32Z
+	assert.Equal(t, `capacity=2 set_by_pid=7 set_at=2026-11-05T22:03:32Z
 slot1 held pid=42 since=2026-11-05T22:03:32Z why=nightly cmd=sleep\s9
 slot2 free
 slot3 free # beyond capacity, from an older one; no new holder takes it
@@ -667,22 +668,71 @@ func TestVerbHelp(t *testing.T) {
 func TestCommandIsResolvedBeforeTaking(t *testing.T) {
 	t.Parallel()
 	for _, c := range []struct {
+		name string
 		err  error
 		code int
 		line string
 	}{
-		{&exec.Error{Name: "mkae", Err: exec.ErrNotFound}, 127, "nova-reserve: mkae: command not found\n"},
-		{&exec.Error{Name: "mkae", Err: fs.ErrPermission}, 126, "nova-reserve: mkae: not executable\n"},
+		{"mkae", &exec.Error{Name: "mkae", Err: exec.ErrNotFound}, 127, "nova-reserve: mkae: command not found on PATH=/usr/bin:/bin\n"},
+		{"./mkae", &exec.Error{Name: "./mkae", Err: fs.ErrNotExist}, 127, "nova-reserve: ./mkae: no such file\n"},
+		{"mkae", &exec.Error{Name: "mkae", Err: fs.ErrPermission}, 126, "nova-reserve: mkae: not executable\n"},
 	} {
 		h := newHarness(t)
 		h.dir = filepath.Join(h.dir, "never")
 		h.w.resolve = func(string) (string, error) { return "", c.err }
-		assert.Equal(t, c.code, run([]string{"--", "mkae", "-j4"}, h.w))
+		assert.Equal(t, c.code, run([]string{"--", c.name, "-j4"}, h.w))
 		assert.Equal(t, c.line, h.err.String())
 		assert.Nil(t, h.ran)
 		assert.NoDirExists(t, h.dir, "nothing taken, nothing made")
 		assert.True(t, h.f.idle())
 	}
+}
+
+// TestCapacityFieldsNeedNoEscaping: who set the capacity is two plain fields;
+// a file with no such line says so.
+func TestCapacityFieldsNeedNoEscaping(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	require.NoError(t, os.WriteFile(filepath.Join(h.dir, "capacity"), []byte("3\n"), 0o644))
+	require.Equal(t, 0, run([]string{"status"}, h.w))
+	assert.True(t, strings.HasPrefix(h.out.String(), "capacity=3 set_by_pid=? set_at=?\n"), h.out.String())
+	assert.Equal(t, 2, run([]string{"--slots", "4", "--", "x"}, h.w))
+	assert.Contains(t, h.err.String(), "capacity is 3 (set by an unknown taker); you asked 4")
+}
+
+func TestMissingDirParentIsRefused(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	gone := filepath.Join(h.dir, "no", "x")
+	assert.Equal(t, 2, run([]string{"--dir", gone, "--why", "a b", "--", "make"}, h.w))
+	assert.Equal(t, "nova-reserve: --dir "+gone+": parent "+filepath.Dir(gone)+" does not exist; run: mkdir -p "+
+		shellQuote(filepath.Dir(gone))+" && nova-reserve --dir "+shellQuote(gone)+" --why 'a b' -- make\n", h.err.String())
+	assert.Nil(t, h.ran)
+	assert.NoDirExists(t, filepath.Dir(gone))
+}
+
+// TestMissingParentNamesTheEnvironment: a directory from $NOVA_RESERVE_DIR is
+// named as that, not as a --dir the caller never gave.
+func TestMissingParentNamesTheEnvironment(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.dir = filepath.Join(h.dir, "no", "x")
+	assert.Equal(t, 2, run([]string{"hold", "--for", "1m"}, h.w))
+	assert.Equal(t, "nova-reserve hold: NOVA_RESERVE_DIR "+h.dir+": parent "+filepath.Dir(h.dir)+" does not exist; run: mkdir -p "+
+		shellQuote(filepath.Dir(h.dir))+" && nova-reserve hold --for 1m\n", h.err.String())
+}
+
+func TestUnwritableDirParentIsRefused(t *testing.T) {
+	t.Parallel()
+	if os.Geteuid() == 0 || runtime.GOOS == "windows" {
+		t.Skip("needs a directory this user cannot write")
+	}
+	h := newHarness(t)
+	ro := filepath.Join(h.dir, "ro")
+	require.NoError(t, os.Mkdir(ro, 0o500))
+	t.Cleanup(func() { _ = os.Chmod(ro, 0o700) })
+	assert.Equal(t, 2, run([]string{"hold", "--for", "1m", "--dir", filepath.Join(ro, "r")}, h.w))
+	assert.Equal(t, "nova-reserve hold: --dir "+filepath.Join(ro, "r")+": parent "+ro+" is not writable by this user; run: ls -ld "+shellQuote(ro)+"\n", h.err.String())
 }
 
 func TestRunPassesTheStatusAndFrees(t *testing.T) {
