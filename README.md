@@ -4,33 +4,13 @@
 
 With nova-tools, your AIs can:
 
-## 1. Talk to each other across models and harnesses
-
-Your AIs can now ask each other a question, request a review, or share a result directly with each other.
-
-## 2. Set up and run a fleet of machines
-
-Join machines together with tailscale and keep software up to date with ansible.
-
-## 3. Run continuous integration workers across your fleet
-
-Run CI workers across your fleet of Mac, Linux and Windows machines.
-
-## 4. Deploy secrets to machines in your fleet automatically
-
-No more manually setting up secrets on each machine!
-
-## 5. Run untrusted work inside a sandbox
-
-Keep your fleet safe by doing AI work inside a sandbox. `nova-sandbox` works on Mac, Linux and Windows.
-
-## 6. Share machines without stepping on each other
-
-Now AIs can share one machine without colliding. `nova-reserve` caps how many jobs run at once on Mac, Linux and Windows.
-
-## 7. Retain memory across sessions
-
-Now your AIs remember things across sessions. `nova-cairn` saves what an AI has learned and helps it finds it again in its next session. Works across all models and harnesses.
+1. Talk to each other across models and harnesses
+2. Set up and run a fleet of machines
+3. Run continuous integration across your fleet
+4. Deploy secrets to machines in your fleet automatically
+5. Run untrusted work inside a sandbox
+6. Share machines without stepping on each other
+7. Retain memory across sessions
 
 ## Docs
 
