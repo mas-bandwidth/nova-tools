@@ -10,7 +10,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"testing"
 	"time"
 
@@ -66,36 +65,12 @@ func startPG(t *testing.T) string {
 	return dsn
 }
 
-func startRedis(t *testing.T) string {
-	t.Helper()
-	server, err := exec.LookPath("redis-server")
-	if err != nil {
-		t.Skip("redis-server not on PATH")
-	}
-	port := freePort(t)
-	cmd := exec.Command(server, "--port", port, "--bind", "127.0.0.1", "--save", "", "--appendonly", "no", "--dir", t.TempDir(), "--requirepass", "pw")
-	require.NoError(t, cmd.Start())
-	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() }) // ignored: the server is ours and disposable
-	addr := "127.0.0.1:" + port
-	require.Eventually(t, func() bool { _, err := redisDo(addr, []string{"AUTH", "pw"}); return err == nil }, wait, 20*time.Millisecond)
-	return addr
-}
-
-func redisDo(addr string, cmds ...[]string) ([]any, error) {
-	c, err := net.Dial("tcp", addr)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = c.Close() }() // ignored: every reply has been read
-	return pipeline(c, cmds)
-}
-
 func realRun(t *testing.T, env map[string]string, args ...string) (int, string, string) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), wait)
 	defer cancel()
 	var out, errs bytes.Buffer
-	d := deps{getenv: func(k string) string { return env[k] }, hostname: func() (string, error) { return "m1", nil }, openPG: openPG, beats: redisBeats}
+	d := deps{getenv: func(k string) string { return env[k] }, hostname: func() (string, error) { return "m1", nil }, openPG: openPG}
 	code := run(ctx, args, d, &out, &errs)
 	return code, out.String(), errs.String()
 }
@@ -109,17 +84,17 @@ func TestFunctionalStore(t *testing.T) {
 		require.Equal(t, 0, code, "%v: %s", args, errs)
 		return out
 	}
-	assert.Equal(t, "CONFIG ADD kind=machine name=m1 rev=1\n", ok("machine", "add", "m1", "--user", "nova", "--seat", "s1", "--slots", "8", "--actor", "a1"))
+	assert.Equal(t, "CONFIG ADD kind=machine name=m1 rev=1\n", ok("machine", "add", "m1", "--user", "nova", "--actor", "a1"))
 	ok("loop", "add", "r-m1", "--machine", "m1", "--argv", `["prog","a b"]`, "--keepalive", "true", "--actor", "a1")
 	assert.Equal(t, "CONFIG SET kind=loop name=r-m1 rev=3 changed=enabled\n", ok("loop", "set", "r-m1", "--enabled", "false", "--actor", "a1", "--reason", "why"))
 	assert.Equal(t, `LOOP name=r-m1 machine=m1 argv=["prog","a\x20b"] seat=- keys=- every=0 keepalive=true enabled=false`+"\nCONFIG LIST kind=loop rows=1\n", ok("loop", "list"))
-	assert.Equal(t, "MACHINE name=m1 user=nova seat=s1 slots=8 runners=0 roles=bench width=- gates_only=- tla=false note=-\nCONFIG LIST kind=machine rows=1\n", ok("machine", "list"))
+	assert.Equal(t, "MACHINE name=m1 user=nova address=- os=- arch=- cores=- runners=0 roles=bench note=-\nCONFIG LIST kind=machine rows=1\n", ok("machine", "list"))
 	show := ok("machine", "show", "m1")
 	assert.Regexp(t, `created=20\d\d-\d\d-\d\dT\d\d:\d\d:\d\dZ updated=20\d\d-.*Z loops=r-m1\n$`, show)
-	ok("machine", "set", "m1", "--width", "4", "--note", "a note", "--actor", "a1")
-	ok("machine", "set", "m1", "--width", "default", "--actor", "a1")
-	ok("fleet", "set", "--store", "m1", "--coordinator", "m1", "--redis_port", "6380", "--pg_dsn", "postgres://nova@m1/postgres", "--actor", "a1")
-	ok("machine", "set", "m1", "--roles", "bench,coordination,services", "--actor", "a1")
+	ok("machine", "set", "m1", "--cores", "4", "--note", "a note", "--actor", "a1")
+	ok("machine", "set", "m1", "--cores", "default", "--actor", "a1")
+	ok("machine", "set", "m1", "--cores", "16", "--os", "linux", "--arch", "amd64", "--roles", "bench,services", "--actor", "a1")
+	ok("fleet", "set", "--pg_dsn", "postgres://nova@m1/postgres", "--actor", "a1")
 
 	c, err := pgx.Connect(context.Background(), env["NOVA_PG_DSN"])
 	require.NoError(t, err)
@@ -129,36 +104,62 @@ func TestFunctionalStore(t *testing.T) {
 	assert.JSONEq(t, `{"argv":"[\"prog\",\"a b\"]","enabled":"true","every":"0","keepalive":"true","keys":"","machine":"m1","seat":""}`, before)
 	assert.JSONEq(t, `{"argv":"[\"prog\",\"a b\"]","enabled":"false","every":"0","keepalive":"true","keys":"","machine":"m1","seat":"","reason":"why"}`, after)
 	assert.Equal(t, "a1", actor)
-	var width *int
-	require.NoError(t, c.QueryRow(context.Background(), "SELECT width FROM config.machines WHERE name = 'm1'").Scan(&width))
-	assert.Nil(t, width, "width default is NULL")
+	var cores *int
+	require.NoError(t, c.QueryRow(context.Background(), "SELECT cores FROM config.machines WHERE name = 'm1'").Scan(&cores))
+	require.NotNil(t, cores)
+	assert.Equal(t, 16, *cores)
 
 	for _, refusal := range [][]string{
 		{"loop", "add", "r-x", "--machine", "nope", "--argv", `["p"]`, "--every", "5", "--actor", "a1"},
 		{"machine", "remove", "m1", "--actor", "a1"},
-		{"machine", "add", "m1", "--user", "u", "--seat", "s", "--slots", "1", "--actor", "a1"},
+		{"machine", "add", "m1", "--user", "u", "--actor", "a1"},
 	} {
 		code, _, errs := realRun(t, env, refusal...)
 		assert.Equal(t, 1, code, "%v: %s", refusal, errs)
 		assert.Contains(t, errs, "REFUSED")
 	}
 
-	addr := startRedis(t)
-	_, err = redisDo(addr, []string{"AUTH", "pw"}, []string{"HSET", "bench:m1:beat", "os", "linux", "arch", "amd64", "ncpu", "4", "at", "1"},
-		[]string{"SET", "sprint:beat:m1", `{"at":"2026-11-05T00:00:00Z","cores":16}`})
-	require.NoError(t, err)
-	env["NOVA_SPRINT_REDIS"], env["NOVA_SPRINT_REDIS_PASSWORD_ENV"], env["RPW"] = addr, "RPW", "pw"
 	code, out, errs := realRun(t, env, "inventory", "--host", "m1")
 	require.Equal(t, 0, code, errs)
-	assert.Empty(t, errs)
-	for _, want := range []string{`"cores": 16`, `"slots_share": 8`, `"nova_os": "linux"`, `"ansible_connection": "local"`, `"log": "~/nova-bench/loops/r-m1.log"`} {
+	for _, want := range []string{`"cores": 16`, `"nova_os": "linux"`, `"ansible_connection": "local"`, `"log": "~/nova-bench/loops/r-m1.log"`} {
 		assert.Contains(t, out, want)
 	}
-	env["RPW"] = "wrong"
-	code, _, errs = realRun(t, env, "inventory")
-	assert.Equal(t, 2, code)
-	assert.True(t, strings.Contains(errs, "WRONGPASS") || strings.Contains(errs, "invalid"), errs)
-	assert.NotContains(t, errs, "wrong ")
+	code, out, errs = realRun(t, env, "inventory", "--list")
+	require.Equal(t, 0, code, errs)
+	assert.Contains(t, out, `"nova_pg_dsn": "postgres://nova@m1/postgres"`)
 
-	assert.Equal(t, "CONFIG REMOVE kind=loop name=r-m1 rev=8\n", ok("loop", "remove", "r-m1", "--actor", "a1"))
+	assert.Equal(t, "CONFIG REMOVE kind=loop name=r-m1 rev=7\n", ok("loop", "remove", "r-m1", "--actor", "a1"))
+}
+
+// TestFunctionalOldColumns: a store that still has the columns this tool dropped
+// is read, written and printed as before, and schema.sql runs on it.
+func TestFunctionalOldColumns(t *testing.T) {
+	t.Parallel()
+	env := map[string]string{"NOVA_PG_DSN": startPG(t)}
+	c, err := pgx.Connect(context.Background(), env["NOVA_PG_DSN"])
+	require.NoError(t, err)
+	defer func() { _ = c.Close(context.Background()) }() // ignored: closing the check connection
+	for _, q := range []string{
+		`ALTER TABLE config.machines ADD COLUMN seat text NOT NULL DEFAULT 's', ADD COLUMN slots integer NOT NULL DEFAULT 4, ADD COLUMN width integer, ADD COLUMN tla boolean NOT NULL DEFAULT false, ADD COLUMN gates_only text NOT NULL DEFAULT ''`,
+		`ALTER TABLE config.fleet ADD COLUMN store text, ADD COLUMN redis_port integer, ADD COLUMN bus text NOT NULL DEFAULT '', ADD COLUMN loops_dir text NOT NULL DEFAULT 'x'`,
+		`INSERT INTO config.machines (name, "user", seat, slots, width, tla, gates_only) VALUES ('old1', 'nova', 'seat1', 8, 2, true, 'g')`,
+	} {
+		_, err = c.Exec(context.Background(), q)
+		require.NoError(t, err, q)
+	}
+	schema, err := os.ReadFile("schema.sql")
+	require.NoError(t, err)
+	_, err = c.Exec(context.Background(), string(schema))
+	require.NoError(t, err, "schema.sql runs on a store with the old columns")
+	for _, args := range [][]string{{"machine", "list"}, {"machine", "show", "old1"}, {"fleet", "show"}, {"inventory"}} {
+		code, out, errs := realRun(t, env, args...)
+		require.Equal(t, 0, code, "%v: %s", args, errs)
+		assert.NotContains(t, out, "seat1", "%v", args)
+	}
+	code, out, errs := realRun(t, env, "machine", "set", "old1", "--cores", "8", "--actor", "a1")
+	require.Equal(t, 0, code, errs)
+	assert.Equal(t, "CONFIG SET kind=machine name=old1 rev=1 changed=cores\n", out)
+	var seat string
+	require.NoError(t, c.QueryRow(context.Background(), "SELECT seat FROM config.machines WHERE name = 'old1'").Scan(&seat))
+	assert.Equal(t, "seat1", seat, "an old column is left as it was")
 }

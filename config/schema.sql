@@ -1,6 +1,7 @@
 -- The tables nova-config reads and writes, in the schema config: for a fresh
--- store, psql <dsn> -f schema.sql. Every statement is IF NOT EXISTS, so a
--- store that has them already is left as it is.
+-- store, psql <dsn> -f schema.sql. Every statement is idempotent, so a store
+-- that has them already is left as it is; the ALTERs only add the columns an
+-- older store lacks and drop nothing.
 CREATE SCHEMA IF NOT EXISTS config;
 
 -- One row per write of any row: before and after are the row's fields as
@@ -17,34 +18,32 @@ CREATE TABLE IF NOT EXISTS config.history (
 );
 CREATE INDEX IF NOT EXISTS history_kind_name ON config.history (kind, name, id);
 
--- A machine, named by its tailnet host. width NULL is unset.
+-- A machine, named by its tailnet host. cores NULL is unknown.
 CREATE TABLE IF NOT EXISTS config.machines (
     name       text PRIMARY KEY CONSTRAINT machines_name_pattern CHECK (name ~ '^[a-z0-9][a-z0-9-]*$'),
     "user"     text NOT NULL,
-    seat       text NOT NULL,
-    slots      integer NOT NULL DEFAULT 0 CHECK (slots >= 0),
     runners    integer NOT NULL DEFAULT 0 CHECK (runners >= 0),
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
-    width      integer CHECK (width >= 0),
     note       text NOT NULL DEFAULT '',
-    tla        boolean NOT NULL DEFAULT false,
     roles      text NOT NULL DEFAULT 'bench'
-               CHECK (roles = '' OR roles ~ '^(bench|coordination|runner|services)(,(bench|coordination|runner|services))*$'),
-    gates_only text NOT NULL DEFAULT ''
+               CHECK (roles = '' OR roles ~ '^(bench|runner|services)(,(bench|runner|services))*$'),
+    address    text NOT NULL DEFAULT '',
+    os         text NOT NULL DEFAULT '',
+    arch       text NOT NULL DEFAULT '',
+    cores      integer CHECK (cores >= 0)
 );
+ALTER TABLE config.machines ADD COLUMN IF NOT EXISTS address text NOT NULL DEFAULT '';
+ALTER TABLE config.machines ADD COLUMN IF NOT EXISTS os text NOT NULL DEFAULT '';
+ALTER TABLE config.machines ADD COLUMN IF NOT EXISTS arch text NOT NULL DEFAULT '';
+ALTER TABLE config.machines ADD COLUMN IF NOT EXISTS cores integer CHECK (cores >= 0);
 
--- The one fleet row: store and coordinator name machines, or are NULL.
+-- The one fleet row.
 CREATE TABLE IF NOT EXISTS config.fleet (
-    name        text PRIMARY KEY CHECK (name = 'fleet'),
-    store       text REFERENCES config.machines (name),
-    coordinator text REFERENCES config.machines (name),
-    created_at  timestamptz NOT NULL DEFAULT now(),
-    updated_at  timestamptz NOT NULL DEFAULT now(),
-    redis_port  integer CHECK (redis_port BETWEEN 1 AND 65535),
-    pg_dsn      text NOT NULL DEFAULT '',
-    bus         text NOT NULL DEFAULT '',
-    loops_dir   text NOT NULL DEFAULT '~/nova-bench/loops'
+    name       text PRIMARY KEY CHECK (name = 'fleet'),
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    pg_dsn     text NOT NULL DEFAULT ''
 );
 INSERT INTO config.fleet (name) VALUES ('fleet') ON CONFLICT (name) DO NOTHING;
 

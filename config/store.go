@@ -21,8 +21,6 @@ type Store interface {
 	// Write adds (before empty), sets or removes (after empty) one row and
 	// appends its history row, in one transaction; it returns the history id.
 	Write(ctx context.Context, k *kind, op string, before, after Row, actor, reason string) (int64, error)
-	// Revs is each kind's revision: the greatest history id of its writes.
-	Revs(ctx context.Context) (map[string]int64, error)
 	Close()
 }
 
@@ -47,22 +45,29 @@ func (p pgStore) Close() { _ = p.c.Close(context.Background()) } // ignored: the
 
 func ident(s string) string { return `"` + s + `"` }
 
-func (p pgStore) List(ctx context.Context, k *kind) ([]Row, error) {
+// listSQL names every column it reads, never *, so a store that carries
+// columns this tool no longer knows is read as it is; the columns are the
+// name, the kind's fields and the two stamps.
+func listSQL(k *kind) string {
 	cols := []string{"name"}
 	for _, f := range k.fields {
 		cols = append(cols, "coalesce("+ident(f.name)+"::text, '')")
 	}
 	stamp := `to_char(%s AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')`
 	cols = append(cols, fmt.Sprintf(stamp, "created_at"), fmt.Sprintf(stamp, "updated_at"))
-	rows, err := p.c.Query(ctx, "SELECT "+strings.Join(cols, ", ")+" FROM config."+k.table+" ORDER BY name")
+	return "SELECT " + strings.Join(cols, ", ") + " FROM config." + k.table + " ORDER BY name"
+}
+
+func (p pgStore) List(ctx context.Context, k *kind) ([]Row, error) {
+	rows, err := p.c.Query(ctx, listSQL(k))
 	if err != nil {
 		return nil, fmt.Errorf("postgres: list %s: %w", k.name, err)
 	}
 	defer rows.Close()
 	var out []Row
 	for rows.Next() {
-		vals := make([]string, len(cols))
-		dest := make([]any, len(cols))
+		vals := make([]string, len(k.fields)+3)
+		dest := make([]any, len(vals))
 		for i := range vals {
 			dest[i] = &vals[i]
 		}
@@ -96,6 +101,25 @@ func arg(f field, v string) any {
 	return v
 }
 
+// writeSQL is the statement of a write and its arguments: the fields are
+// named, so a column this tool does not know keeps its default.
+func writeSQL(k *kind, op, name string, after Row) (string, []any) {
+	args := []any{name}
+	var cols, marks, sets []string
+	for _, f := range k.fields {
+		args = append(args, arg(f, after.F[f.name]))
+		n := "$" + strconv.Itoa(len(args))
+		cols, marks, sets = append(cols, ident(f.name)), append(marks, n), append(sets, ident(f.name)+" = "+n)
+	}
+	switch op {
+	case "add":
+		return "INSERT INTO config." + k.table + " (name, " + strings.Join(cols, ", ") + ") VALUES ($1, " + strings.Join(marks, ", ") + ")", args
+	case "set":
+		return "UPDATE config." + k.table + " SET " + strings.Join(sets, ", ") + ", updated_at = now() WHERE name = $1", args
+	}
+	return "DELETE FROM config." + k.table + " WHERE name = $1", args[:1]
+}
+
 func (p pgStore) Write(ctx context.Context, k *kind, op string, before, after Row, actor, reason string) (int64, error) {
 	tx, err := p.c.Begin(ctx)
 	if err != nil {
@@ -106,22 +130,7 @@ func (p pgStore) Write(ctx context.Context, k *kind, op string, before, after Ro
 	if name == "" {
 		name = before.Name
 	}
-	args := []any{name}
-	var cols, marks, sets []string
-	for _, f := range k.fields {
-		args = append(args, arg(f, after.F[f.name]))
-		n := "$" + strconv.Itoa(len(args))
-		cols, marks, sets = append(cols, ident(f.name)), append(marks, n), append(sets, ident(f.name)+" = "+n)
-	}
-	q := "DELETE FROM config." + k.table + " WHERE name = $1"
-	switch op {
-	case "add":
-		q = "INSERT INTO config." + k.table + " (name, " + strings.Join(cols, ", ") + ") VALUES ($1, " + strings.Join(marks, ", ") + ")"
-	case "set":
-		q = "UPDATE config." + k.table + " SET " + strings.Join(sets, ", ") + ", updated_at = now() WHERE name = $1"
-	default:
-		args = args[:1]
-	}
+	q, args := writeSQL(k, op, name, after)
 	if _, err := tx.Exec(ctx, q, args...); err != nil {
 		var pe *pgconn.PgError
 		if errors.As(err, &pe) && strings.HasPrefix(pe.Code, "23") { // integrity: unique, foreign key, check
@@ -156,22 +165,4 @@ func jsonb(m map[string]string) any {
 	}
 	b, _ := json.Marshal(m) // ignored: a map of strings always encodes
 	return string(b)
-}
-
-func (p pgStore) Revs(ctx context.Context) (map[string]int64, error) {
-	rows, err := p.c.Query(ctx, "SELECT kind, max(id) FROM config.history GROUP BY kind")
-	if err != nil {
-		return nil, fmt.Errorf("postgres: revisions: %w", err)
-	}
-	defer rows.Close()
-	out := map[string]int64{}
-	for rows.Next() {
-		var k string
-		var id int64
-		if err := rows.Scan(&k, &id); err != nil {
-			return nil, fmt.Errorf("postgres: revisions: %w", err)
-		}
-		out[k] = id
-	}
-	return out, rows.Err()
 }

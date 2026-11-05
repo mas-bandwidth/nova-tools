@@ -70,22 +70,13 @@ func (f *fake) Write(_ context.Context, k *kind, op string, before, after Row, a
 	return int64(len(f.history)), nil
 }
 
-func (f *fake) Revs(context.Context) (map[string]int64, error) {
-	out := map[string]int64{}
-	for i, c := range f.history {
-		out[c.kind] = int64(i + 1)
-	}
-	return out, nil
-}
-
 func (f *fake) Close() {}
 
 // harness runs nova-config against one fake store, with NOVA_PG_DSN set.
 type harness struct {
-	st    *fake
-	env   map[string]string
-	host  string
-	beats map[string]*Beat
+	st   *fake
+	env  map[string]string
+	host string
 }
 
 func newHarness() *harness {
@@ -99,9 +90,6 @@ func (h *harness) run(t *testing.T, args ...string) (int, string, string) {
 		getenv:   func(k string) string { return h.env[k] },
 		hostname: func() (string, error) { return h.host, nil },
 		openPG:   func(context.Context, string, string) (Store, error) { return h.st, nil },
-		beats: func(_ context.Context, addr, user, password string, names []string) (map[string]*Beat, error) {
-			return h.beats, nil
-		},
 	}
 	code := run(context.Background(), args, d, &out, &errs)
 	return code, out.String(), errs.String()
@@ -114,31 +102,31 @@ func (h *harness) ok(t *testing.T, args ...string) string {
 	return out
 }
 
-// fleet is a store with two machines, a loop, and the fleet row naming them.
+// fleet is a store with two machines, a loop, and the fleet row.
 func fleet(t *testing.T) *harness {
 	h := newHarness()
-	h.ok(t, "machine", "add", "bench-a", "--user", "nova", "--seat", "s-a", "--slots", "8", "--roles", "coordination,bench,services", "--actor", "t")
-	h.ok(t, "machine", "add", "bench-b", "--user", "nova", "--seat", "s-b", "--slots", "16", "--runners", "2", "--tla", "true", "--actor", "t")
+	h.ok(t, "machine", "add", "bench-a", "--user", "nova", "--roles", "services,bench", "--actor", "t")
+	h.ok(t, "machine", "add", "bench-b", "--user", "nova", "--address", "bench-b.tail", "--os", "linux", "--arch", "amd64", "--cores", "12", "--runners", "2", "--actor", "t")
 	h.ok(t, "loop", "add", "member-b", "--machine", "bench-b", "--keepalive", "true", "--seat", "s-b", "--keys", "B_KEY,A_KEY",
-		"--argv", `["/usr/bin/env","NOVA_SPRINT_REDIS=x:1","A=b","nova-swarm","member","--as","b"]`, "--actor", "t")
-	h.ok(t, "fleet", "set", "--store", "bench-a", "--coordinator", "bench-a", "--redis_port", "6380", "--pg_dsn", "postgres://u@bench-a/x", "--actor", "t")
+		"--argv", `["/usr/bin/env","A=b","prog"]`, "--actor", "t")
+	h.ok(t, "fleet", "set", "--pg_dsn", "postgres://u@bench-a/x", "--actor", "t")
 	return h
 }
 
 func TestListAndShowLines(t *testing.T) {
 	t.Parallel()
 	h := fleet(t)
-	h.ok(t, "machine", "set", "bench-b", "--note", strings.Repeat("ab ", 30)+"=", "--width", "4", "--actor", "t")
+	h.ok(t, "machine", "set", "bench-b", "--note", strings.Repeat("ab ", 30)+"=", "--cores", "4", "--actor", "t")
 	out := h.ok(t, "machine", "list")
-	assert.Equal(t, "MACHINE name=bench-a user=nova seat=s-a slots=8 runners=0 roles=bench,coordination,services width=- gates_only=- tla=false note=-\n"+
-		"MACHINE name=bench-b user=nova seat=s-b slots=16 runners=2 roles=bench width=4 gates_only=- tla=true note="+
+	assert.Equal(t, "MACHINE name=bench-a user=nova address=- os=- arch=- cores=- runners=0 roles=bench,services note=-\n"+
+		"MACHINE name=bench-b user=nova address=bench-b.tail os=linux arch=amd64 cores=4 runners=2 roles=bench note="+
 		strings.ReplaceAll(strings.Repeat("ab ", 20), " ", `\x20`)+"...\n"+
 		"CONFIG LIST kind=machine rows=2\n", out)
 	out = h.ok(t, "machine", "show", "bench-b")
 	assert.Contains(t, out, `\x20\x3d created=2026-01-01T00:00:00Z updated=2026-01-02T00:00:00Z loops=member-b`+"\n", "show does not cut the note")
 	out = h.ok(t, "loop", "list")
-	assert.Equal(t, `LOOP name=member-b machine=bench-b argv=["/usr/bin/env","NOVA_SPRINT_REDIS\x3dx:1","A\x3db","nova-swarm","member","--as","b"] seat=s-b keys=A_KEY,B_KEY every=0 keepalive=true enabled=true`+"\nCONFIG LIST kind=loop rows=1\n", out)
-	assert.Equal(t, "FLEET name=fleet store=bench-a coordinator=bench-a redis_port=6380 pg_dsn=postgres://u@bench-a/x bus=- loops_dir=~/nova-bench/loops created=2026-01-01T00:00:00Z updated=2026-01-02T00:00:00Z\n", h.ok(t, "fleet", "show"))
+	assert.Equal(t, `LOOP name=member-b machine=bench-b argv=["/usr/bin/env","A\x3db","prog"] seat=s-b keys=A_KEY,B_KEY every=0 keepalive=true enabled=true`+"\nCONFIG LIST kind=loop rows=1\n", out)
+	assert.Equal(t, "FLEET name=fleet pg_dsn=postgres://u@bench-a/x created=2026-01-01T00:00:00Z updated=2026-01-02T00:00:00Z\n", h.ok(t, "fleet", "show"))
 }
 
 func TestJSONShapes(t *testing.T) {
@@ -161,8 +149,8 @@ func TestJSONShapes(t *testing.T) {
 	assert.Empty(t, got.Facts)
 	require.Len(t, got.Items, 1)
 	assert.Equal(t, []any{"member-b"}, got.Items[0].Fields["loops"])
-	assert.Equal(t, "", got.Items[0].Fields["gates_only"])
-	assert.Equal(t, "16", got.Items[0].Fields["slots"])
+	assert.Equal(t, "12", got.Items[0].Fields["cores"])
+	assert.NotContains(t, got.Items[0].Fields, "seat", "the old columns are not fields")
 	out := h.ok(t, "loop", "list", "--json")
 	assert.True(t, strings.HasPrefix(out, `{"result":{"verb":"loop list","status":"ok","exit":0},"facts":{"kind":"loop","rows":1},"items":[{"kind":"loop","fields":{"name":"member-b","machine":"bench-b","argv":"[\"/usr/bin/env\"`), out)
 	assert.NotContains(t, out, "created", "a list item carries no stamps")
@@ -183,7 +171,7 @@ func TestWritesRecordHistory(t *testing.T) {
 	c = h.st.history[n+1]
 	assert.Nil(t, c.after)
 	assert.Equal(t, "gone", c.before["reason"])
-	assert.Equal(t, "CONFIG ADD kind=machine name=m3 rev=7\n", h.ok(t, "machine", "add", "m3", "--user", "u", "--seat", "s", "--slots", "1", "--actor", "a1"))
+	assert.Equal(t, "CONFIG ADD kind=machine name=m3 rev=7\n", h.ok(t, "machine", "add", "m3", "--user", "u", "--actor", "a1"))
 	assert.Nil(t, h.st.history[n+2].before)
 	assert.Equal(t, "bench", h.st.history[n+2].after["roles"], "an add writes every field, the defaults too")
 }
@@ -195,7 +183,7 @@ func TestDryRunWritesNothing(t *testing.T) {
 	assert.Equal(t, "CONFIG DRY-RUN op=set kind=loop name=member-b actor=a1 wrote=nothing reason=a\\x20b every=0>5 keepalive=true>false\n",
 		h.ok(t, "loop", "set", "member-b", "--every", "5", "--keepalive", "false", "--actor", "a1", "--reason", "a b", "--dry-run"))
 	out := h.ok(t, "machine", "remove", "bench-b", "--actor", "a1", "--dry-run")
-	assert.Equal(t, "CONFIG DRY-RUN op=remove kind=machine name=bench-b actor=a1 wrote=nothing gates_only=- note=- roles=bench runners=2 seat=s-b slots=16 tla=true user=nova width=-\n", out)
+	assert.Equal(t, "CONFIG DRY-RUN op=remove kind=machine name=bench-b actor=a1 wrote=nothing address=bench-b.tail arch=amd64 cores=12 note=- os=linux roles=bench runners=2 user=nova\n", out)
 	assert.Len(t, h.st.history, n)
 }
 
@@ -209,14 +197,16 @@ func TestRefusals(t *testing.T) {
 	}{
 		{1, []string{"loop", "set", "member-b", "--every", "5", "--actor", "a"}, "has --every 5 and --keepalive true"},
 		{1, []string{"loop", "set", "nope", "--every", "5", "--actor", "a"}, "loop nope not found"},
-		{1, []string{"machine", "add", "bench-a", "--user", "u", "--seat", "s", "--slots", "1", "--actor", "a"}, "machine bench-a exists"},
-		{1, []string{"machine", "add", "Bad_Name", "--user", "u", "--seat", "s", "--slots", "1", "--actor", "a"}, "want lower-case letters"},
-		{1, []string{"machine", "add", "m9", "--user", "u", "--seat", "s", "--actor", "a"}, "--slots is required"},
+		{1, []string{"machine", "add", "bench-a", "--user", "u", "--actor", "a"}, "machine bench-a exists"},
+		{1, []string{"machine", "add", "Bad_Name", "--user", "u", "--actor", "a"}, "want lower-case letters"},
+		{1, []string{"machine", "add", "m9", "--actor", "a"}, "--user is required"},
+		{1, []string{"machine", "set", "bench-a", "--roles", "coordination", "--actor", "a"}, `--roles "coordination"`},
+		{2, []string{"machine", "set", "bench-a", "--slots", "4", "--actor", "a"}, "flag provided but not defined"},
+		{2, []string{"version"}, `unknown verb "version"`},
 		{1, []string{"machine", "set", "bench-a", "--roles", "bench,chef", "--actor", "a"}, `--roles "chef"`},
 		{1, []string{"loop", "set", "member-b", "--argv", "prog", "--actor", "a"}, "want the command as a JSON array"},
 		{1, []string{"loop", "set", "member-b", "--seat", "", "--actor", "a"}, "names secrets (--keys A_KEY,B_KEY) and no --seat"},
 		{1, []string{"fleet", "set", "--pg_dsn", "postgres://u:hunter2@h/x", "--actor", "a"}, "carries a password"},
-		{1, []string{"fleet", "set", "--redis_port", "70000", "--actor", "a"}, "--redis_port wants"},
 		{1, []string{"machine", "show", "nope"}, "machine nope not found"},
 		{2, []string{"loop", "set", "member-b", "--every", "5"}, "--actor is required"},
 		{2, []string{"loop", "set", "member-b", "--actor", "a"}, "set names no field"},
@@ -245,21 +235,20 @@ func TestRefusals(t *testing.T) {
 	assert.Contains(t, errs, "postgres: down")
 }
 
-func TestWidthDefaultUnsets(t *testing.T) {
+func TestCoresDefaultUnsets(t *testing.T) {
 	t.Parallel()
 	h := fleet(t)
-	h.ok(t, "machine", "set", "bench-a", "--width", "3", "--actor", "a")
-	assert.Equal(t, "3", h.st.rows["machine"]["bench-a"].F["width"])
-	h.ok(t, "machine", "set", "bench-a", "--width", "default", "--actor", "a")
-	assert.Equal(t, "", h.st.rows["machine"]["bench-a"].F["width"])
+	h.ok(t, "machine", "set", "bench-a", "--cores", "3", "--actor", "a")
+	assert.Equal(t, "3", h.st.rows["machine"]["bench-a"].F["cores"])
+	h.ok(t, "machine", "set", "bench-a", "--cores", "default", "--actor", "a")
+	assert.Equal(t, "", h.st.rows["machine"]["bench-a"].F["cores"])
 }
 
-func TestHelpAndVersion(t *testing.T) {
+func TestHelp(t *testing.T) {
 	t.Parallel()
 	h := newHarness()
 	assert.Equal(t, usage, h.ok(t, "help"))
 	assert.Equal(t, usage, h.ok(t))
-	assert.True(t, strings.HasPrefix(h.ok(t, "version"), "nova-config "))
 	code, _, errs := h.run(t, "apply", "--kind", "loop")
 	assert.Equal(t, 2, code)
 	assert.Contains(t, errs, `unknown verb "apply --kind"`)
@@ -280,4 +269,39 @@ func TestSchemaHoldsEveryField(t *testing.T) {
 			assert.Regexp(t, `\n    "?`+f.name+`"? +`, body, "%s.%s", k.table, f.name)
 		}
 	}
+}
+
+// TestSQLNamesItsColumns holds the SQL to the fields it knows: no *, none of
+// the old columns, so a store that still has them is read and written as is.
+func TestSQLNamesItsColumns(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, `SELECT name, coalesce("pg_dsn"::text, ''), to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') FROM config.fleet ORDER BY name`, listSQL(kinds["fleet"]))
+	for _, k := range kinds {
+		q := listSQL(k)
+		assert.NotContains(t, q, "*")
+		for _, old := range []string{"seat", "slots", "width", "gates_only", "tla", "redis_port", "bus", "store", "coordinator", "loops_dir"} {
+			if old == "seat" && k.name == "loop" {
+				continue // a loop still carries its seat
+			}
+			assert.NotRegexp(t, `"`+old+`"`, q, "%s reads %s", k.name, old)
+		}
+	}
+	row := Row{Name: "m1", F: map[string]string{"user": "u", "address": "", "os": "linux", "arch": "", "cores": "", "runners": "2", "roles": "bench", "note": ""}}
+	q, args := writeSQL(kinds["machine"], "add", "m1", row)
+	assert.Equal(t, `INSERT INTO config.machines (name, "user", "address", "os", "arch", "cores", "runners", "roles", "note") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`, q)
+	assert.Equal(t, []any{"m1", "u", "", "linux", "", nil, int64(2), "bench", ""}, args)
+	q, args = writeSQL(kinds["machine"], "set", "m1", row)
+	assert.True(t, strings.HasPrefix(q, `UPDATE config.machines SET "user" = $2, `) && strings.HasSuffix(q, `, updated_at = now() WHERE name = $1`), q)
+	assert.Len(t, args, 9)
+	q, args = writeSQL(kinds["machine"], "remove", "m1", Row{})
+	assert.Equal(t, "DELETE FROM config.machines WHERE name = $1", q)
+	assert.Equal(t, []any{"m1"}, args)
+}
+
+// TestSchemaIsAdditive: schema.sql never drops a column, a table or a row.
+func TestSchemaIsAdditive(t *testing.T) {
+	t.Parallel()
+	raw, err := os.ReadFile("schema.sql")
+	require.NoError(t, err)
+	assert.NotRegexp(t, `(?i)\bdrop\b|\bdelete\b|\btruncate\b`, string(raw))
 }
