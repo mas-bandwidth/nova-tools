@@ -40,7 +40,7 @@ nova-secrets seat add <seat> <age-public-key> --store <dir>
   The seat is letters, digits, - and _.
 
 nova-secrets seat list --store <dir>
-  List the seats the rules in .sops.yaml name and the seat files present, one "<seat> file=yes|no" per line.
+  List the seats the rules in .sops.yaml name and the seat files present, one "<seat> file=yes|no rule=yes|no" per line.
 
 nova-secrets set NAME --store <dir> --key <file> [--as <seat>] [--sops <path>]
   Read one value from stdin (one non-empty line, never a terminal), set NAME in <seat>.yaml and commit that

@@ -38,6 +38,6 @@ func become(argv, env []string) error {
 
 // isTerminal is whether f is a terminal; /dev/null and pipes are not.
 func isTerminal(f *os.File) bool {
-	_, err := unix.IoctlGetTermios(int(f.Fd()), termiosGet)
+	_, err := unix.IoctlGetWinsize(int(f.Fd()), unix.TIOCGWINSZ)
 	return err == nil
 }

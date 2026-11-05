@@ -74,12 +74,14 @@ func TestARealStore(t *testing.T) {
 	git("log", "--oneline")
 	assert.Contains(t, run("", 2, "init", "--store", filepath.Join(store, "sub"), "--recovery", recPub), "is inside the git work tree")
 	assert.Contains(t, run("", 0, "seat", "add", "ada", adaPub, "--store", store), "SECRETS SEAT ADD OK seat=ada committed")
-	assert.Contains(t, run("v\n", 2, "set", "X", "--store", "/nonexistent-store", "--key", ada, "--as", "ada", "--sops", sops), "not a git repository")
+	assert.Contains(t, run("v\n", 2, "set", "X", "--store", plain, "--key", ada, "--as", "ada", "--sops", sops), "not a git repository")
 
 	seat := []string{"--store", store, "--as", "ada", "--key", ada, "--sops", sops}
 	rules, err := os.ReadFile(filepath.Join(store, ".sops.yaml"))
 	require.NoError(t, err)
 	assert.Contains(t, string(rules), "creation_rules:\n  - path_regex: ^ada\\.yaml$\n    age: "+adaPub, "block style, 2-space indent")
+	plain := filepath.Join(dir, "plain")
+	require.NoError(t, os.Mkdir(plain, 0o755))
 	assert.Contains(t, run("", 0, "seat", "list", "--store", store), "ada file=no rule=yes\n")
 	eve := filepath.Join(keys, "eve.key")
 	keygen("eve")

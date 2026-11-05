@@ -373,7 +373,7 @@ func TestRequireIsAHiddenAliasOfOnly(t *testing.T) {
 	require.Equal(t, 0, h.main(h.seat("exec", "--require=API_KEY", "--", "true")...), h.stderr.String())
 	assert.Equal(t, 125, h.main(h.seat("exec", "--require", "NOPE", "--", "true")...))
 	h.main("help")
-	assert.NotContains(t, h.stdout.String(), "require", "hidden")
+	assert.NotContains(t, h.stdout.String(), "--require", "hidden")
 }
 
 const catchAllRules = "creation_rules:\n  - age: " + pubA + "\n"
