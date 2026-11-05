@@ -331,7 +331,7 @@ func TestRefusals(t *testing.T) {
 		{"missing NOVA_BUS_REDIS", map[string]string{}, []string{"hook", "--as", "beta"}, "nova-bus hook: missing NOVA_BUS_REDIS (host:port); run: nova-bus hook -h\n"},
 		{"send without --as", testEnv, []string{"send", "--to", "beta", "s", "b"}, "nova-bus send: missing --as <name>; run: nova-bus send -h\n"},
 		{"hook without --as", testEnv, []string{"hook"}, "nova-bus hook: missing --as <name>; run: nova-bus hook -h\n"},
-		{"re of -", testEnv, []string{"send", "--as", "a", "--to", "beta", "--re", "-", "s", "b"}, "--re wants a message id"},
+		{"re of -", testEnv, []string{"send", "--as", "a", "--to", "beta", "--re", "-", "s", "b"}, `--re "-" is not a message id`},
 		{"send without a body", testEnv, []string{"send", "--as", "a", "--to", "beta", "s"}, "missing <body>;"},
 		{"send with three arguments", testEnv, []string{"send", "--as", "a", "--to", "beta", "s", "b", "c"}, "not 3 arguments"},
 		{"send without --to", testEnv, []string{"send", "--as", "a", "s", "b"}, "missing --to <name>;"},
