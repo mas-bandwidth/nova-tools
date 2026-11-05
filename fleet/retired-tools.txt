@@ -1,17 +1,28 @@
-# The tools nova-tools once shipped and ships no more, one name per line.
-# fleet/tools.yml removes exactly these names from a machine's bin directory,
-# and nothing else: a nova-* nova-tools never shipped (a credential helper, a
-# wrapper of the fleet's own, a .prev or .new copy) is never touched. A tool
-# leaves cmd/ and gains its line here in the same change; a name here is never
-# also a cmd/ directory (TestFleetPlaysReadOnlyTheInventory).
-nova-board
-nova-merge
-nova-message-bus
-nova-play
-nova-post
-nova-pulse
-nova-review
-nova-test
-nova-wake
-# nova-bus (git) retired 2026-10-04, replaced by the Redis bus, which takes the name:
-# the line is a comment because nova-bus is a cmd/ directory again.
+# The tools nova-tools once shipped and ships no more: name, date retired, where
+# it went (nova-sprint, rowan-tools, or retired: no successor). The install play
+# moves exactly these names aside (nova_tools_remove in
+# roles/nova-tools-install/defaults/main.yml) when nova_tools_remove_enabled is
+# true, and nothing else: a nova-* nova-tools never shipped is never touched.
+# A name here is never also a binary this repository builds.
+nova-card	2026-11-05	sprint
+nova-work	2026-11-05	sprint
+nova-sprint	2026-11-05	sprint
+nova-swarm	2026-11-05	sprint
+nova-hook	2026-11-05	sprint
+nova-friend	2026-11-05	sprint
+nova-cairn	2026-11-05	rowan-tools
+nova-memory	2026-11-05	rowan-tools
+nova-self-talk	2026-11-05	rowan-tools
+nova-decide	2026-11-05	rowan-tools
+nova-doctor	2026-11-05	rowan-tools
+nova-tokens	2026-11-05	rowan-tools
+nova-ci	2026-11-05	retired
+nova-check	2026-11-05	retired
+nova-up	2026-11-05	retired
+nova-loop	2026-11-05	retired
+nova-fuse	2026-11-05	retired
+nova-local	2026-11-05	retired
+nova-redis	2026-11-05	retired
+nova-table	2026-11-05	retired
+nova-update	2026-11-05	retired
+nova-version	2026-11-05	retired

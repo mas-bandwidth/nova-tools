@@ -22,14 +22,14 @@ import (
 
 const usage = `nova-slot: run a command holding one of N load slots on this machine.
 
-  nova-slot [--slots N] [--wait D] [--exclusive] [--card ID] [--dir DIR] -- <cmd> [args...]
+  nova-slot [--slots N] [--wait D] [--exclusive] [--dir DIR] -- <cmd> [args...]
       Wait for a free slot, run the command, free the slot when it exits; exit
       with its status. --exclusive runs alone: it waits for every holder and
       keeps new ones out. --wait bounds the wait (default none; past it, exit 3).
       The command dies with nova-slot on Linux and Windows; on macOS and the
       BSDs a SIGKILL of nova-slot leaves it running without its slot.
   nova-slot hold [same flags]     take a slot, print HELD..., hold it until stdin closes (--dir ignored)
-  nova-slot status [--dir DIR]   each slot: free, or held by pid, card and command
+  nova-slot status [--dir DIR]   each slot: free, or held by pid and command
 
 N defaults to the CPU count / 4 (at least 1). DIR defaults to $NOVA_SLOT_DIR,
 else /tmp/nova-slot (C:\ProgramData\nova-slot on Windows); every caller on a
@@ -45,7 +45,7 @@ type options struct {
 	slots     int
 	wait      time.Duration
 	exclusive bool
-	card, dir string
+	dir       string
 	argv      []string
 }
 
@@ -138,7 +138,7 @@ func (t *taker) name() string {
 
 func (t *taker) describe() string {
 	mode := map[bool]string{false: "shared", true: "exclusive"}[t.o.exclusive]
-	return fmt.Sprintf("mode=%s slot=%s/%d card=%s pid=%d", mode, strings.TrimPrefix(t.name(), "slot"), t.o.slots, t.o.card, os.Getpid())
+	return fmt.Sprintf("mode=%s slot=%s/%d pid=%d", mode, strings.TrimPrefix(t.name(), "slot"), t.o.slots, os.Getpid())
 }
 
 func defaultDir(env func(string) string) string { return cmp.Or(env("NOVA_SLOT_DIR"), systemDir) }
@@ -151,7 +151,6 @@ func parse(verb string, args []string, env func(string) string, stderr io.Writer
 	fs.IntVar(&o.slots, "slots", max(1, runtime.NumCPU()/4), "")
 	fs.DurationVar(&o.wait, "wait", 0, "")
 	fs.BoolVar(&o.exclusive, "exclusive", false, "")
-	fs.StringVar(&o.card, "card", "-", "")
 	fs.StringVar(&o.dir, "dir", defaultDir(env), "")
 	if err := fs.Parse(args); err != nil {
 		return o, err
@@ -205,7 +204,7 @@ func run(args []string, w world) int {
 		return 2
 	}
 	if verb == "hold" {
-		o.dir = defaultDir(w.env) // winlock's --dir named its holder files, never the count
+		o.dir = defaultDir(w.env) // hold takes the machine's directory, never --dir
 	}
 	if err := os.MkdirAll(o.dir, 0o777); err != nil {
 		return fail(w, err)
@@ -223,8 +222,8 @@ func run(args []string, w world) int {
 	holder := t.path(t.name() + ".holder")
 	// ignored: the holder file is for status to read; the lock is the slot either way
 	_ = os.Remove(holder)
-	_ = os.WriteFile(holder, []byte(fmt.Sprintf("pid=%d card=%s start=%s cmd=%s\n",
-		os.Getpid(), o.card, w.now().UTC().Format(time.RFC3339), strings.Join(o.argv, " "))), 0o666)
+	_ = os.WriteFile(holder, []byte(fmt.Sprintf("pid=%d start=%s cmd=%s\n",
+		os.Getpid(), w.now().UTC().Format(time.RFC3339), strings.Join(o.argv, " "))), 0o666)
 	// ignored: a leftover holder file names a pid whose lock is gone; status probes the lock
 	defer os.Remove(holder)
 	if verb == "hold" {
