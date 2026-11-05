@@ -215,10 +215,7 @@ func TestExecRefusalsAre125AndNeverRun(t *testing.T) {
 	for name, args := range map[string][]string{
 		"unknown name":        {"--only", "API_KEY,NOPE", "--", "true"},
 		"require not present": {"--only", "API_KEY", "--require", "NOPE", "--", "true"},
-		"no command":          {"--only", "API_KEY", "--"},
-		"no dash dash":        {"--only", "API_KEY", "true"},
 		"unknown command":     {"--only", "API_KEY", "--", "no-such-program-here"},
-		"argument before --":  {"--only", "API_KEY", "stray", "--", "true"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -230,8 +227,38 @@ func TestExecRefusalsAre125AndNeverRun(t *testing.T) {
 			h.noLeak("sk-sealed-two", "sealed-three")
 		})
 	}
+}
+
+// A malformed exec is a usage error: exit 2, one line, the command never runs.
+func TestExecUsageErrorsAre2AndNameEveryMissingFlag(t *testing.T) {
+	t.Parallel()
+	for name, args := range map[string][]string{
+		"no command":         {"--only", "API_KEY", "--"},
+		"no dash dash":       {"--only", "API_KEY", "true"},
+		"argument before --": {"--only", "API_KEY", "stray", "--", "true"},
+		"unknown flag":       {"--only", "API_KEY", "--x", "--", "true"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			h := newHarness(t)
+			h.seed("ada", map[string]string{"API_KEY": "sk-sealed-two"})
+			assert.Equal(t, 2, h.main(h.seat("exec", args...)...))
+			assert.Nil(t, h.became)
+			assert.Regexp(t, `^nova-secrets exec: .*; run: nova-secrets exec -h\n$`, h.stderr.String())
+			assert.NotContains(t, h.stderr.String(), "flag provided")
+		})
+	}
 	h := newHarness(t)
-	assert.Equal(t, 125, h.main("exec", "--store", h.store, "--key", h.key, "--", "true"))
+	assert.Equal(t, 2, h.main("exec", "--x"))
+	assert.Equal(t, "nova-secrets exec: unknown flag --x; run: nova-secrets exec -h\n", h.stderr.String())
+	assert.Equal(t, 2, h.main("exec"))
+	for _, w := range []string{"--only", "--store", "--key", "command"} {
+		assert.Contains(t, h.stderr.String(), w)
+	}
+	assert.Len(t, strings.Split(strings.TrimSpace(h.stderr.String()), "\n"), 1)
+	assert.Equal(t, 2, h.main("no-such-verb"))
+	assert.Contains(t, h.stderr.String(), "run: nova-secrets help")
+	assert.Equal(t, 2, h.main("exec", "--store", h.store, "--key", h.key, "--", "true"))
 	assert.Contains(t, h.stderr.String(), "missing --only")
 }
 

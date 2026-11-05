@@ -112,14 +112,20 @@ func runProgram(stdin io.Reader, env []string, dir, name string, args ...string)
 }
 
 type refusal struct {
-	code int
-	msg  string
+	code  int
+	msg   string
+	usage bool // a malformed invocation: printed as "nova-secrets <verb>: <msg>; run: nova-secrets <verb> -h"
 }
 
 func (r refusal) Error() string { return r.msg }
 
 func refuse(code int, format string, a ...any) error {
-	return refusal{code, fmt.Sprintf(format, a...)}
+	return refusal{code, fmt.Sprintf(format, a...), false}
+}
+
+// bad is a malformed invocation: exit 2, even for exec.
+func bad(format string, a ...any) error {
+	return refusal{2, fmt.Sprintf(format, a...), true}
 }
 
 func (t tool) main(args []string) int {
@@ -128,8 +134,8 @@ func (t tool) main(args []string) int {
 		return 0
 	}
 	verb, rest := args[0], args[1:]
-	if verb == "seat" && len(rest) > 0 && rest[0] == "add" {
-		verb, rest = "seat add", rest[1:]
+	if verb == "seat" && (len(rest) > 0 && rest[0] == "add" || wantsHelp(verb, rest)) {
+		verb, rest = "seat add", slices.DeleteFunc(slices.Clone(rest), func(a string) bool { return a == "add" })
 	}
 	if verb == "help" {
 		if len(rest) == 0 {
@@ -164,9 +170,11 @@ func (t tool) main(args []string) int {
 	case "seat add":
 		err = t.seatAdd(rest)
 	case "seat":
-		err = refuse(2, "the seat verb is: seat add <seat> <age-public-key> --store <dir>; run: nova-secrets seat add -h")
+		err = bad("the seat verb is: seat add <seat> <age-public-key> --store <dir>")
+		verb = "seat add"
 	default:
-		err = refuse(2, "unknown verb %q (init, seat add, set, names, exec); run: nova-secrets help", verb)
+		fmt.Fprintf(t.stderr, "nova-secrets: unknown verb %q (init, seat add, set, names, exec); run: nova-secrets help\n", verb)
+		return 2
 	}
 	if err == nil {
 		return 0
@@ -175,6 +183,10 @@ func (t tool) main(args []string) int {
 	var r refusal
 	if errors.As(err, &r) {
 		code = r.code
+	}
+	if r.usage {
+		fmt.Fprintf(t.stderr, "nova-secrets %s: %s; run: nova-secrets %s -h\n", verb, r.msg, verb)
+		return 2
 	}
 	if verb == "exec" {
 		code = 125
@@ -201,7 +213,7 @@ func (l *list) Set(v string) error { *l = append(*l, v); return nil }
 
 // parse reads flags after the verb's positional arguments (npos of them) and
 // fills in the defaults. require is --require, kept for existing units (exec only).
-func (t tool) parse(verb string, args []string, npos int, needKey bool) (o opts, pos, require []string, err error) {
+func (t tool) parse(verb string, args []string, npos int, needKey bool, also ...string) (o opts, pos, require []string, err error) {
 	for len(pos) < npos && len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		pos, args = append(pos, args[0]), args[1:]
 	}
@@ -212,15 +224,24 @@ func (t tool) parse(verb string, args []string, npos int, needKey bool) (o opts,
 	}
 	fs.Var((*list)(&require), "require", "")
 	if err = fs.Parse(args); err != nil {
-		return o, nil, nil, refuse(2, "%v; run: nova-secrets help", err)
+		msg := err.Error()
+		if n, ok := strings.CutPrefix(msg, "flag provided but not defined: "); ok {
+			msg = "unknown flag --" + strings.TrimLeft(n, "-")
+		} else if n, ok := strings.CutPrefix(msg, "flag needs an argument: "); ok {
+			msg = "--" + strings.TrimLeft(n, "-") + " needs a value"
+		}
+		return o, nil, nil, bad("%s", msg)
 	}
 	if pos = append(pos, fs.Args()...); len(pos) != npos {
-		return o, nil, nil, refuse(2, "%s takes %d argument(s) before its flags; run: nova-secrets %s -h", verb, npos, verb)
+		return o, nil, nil, bad("takes %d argument(s) before its flags, got %d", npos, len(pos))
 	}
 	if o.store == "" {
 		o.store = envValue(t.environ, "NOVA_SECRETS_STORE")
 	}
 	var missing []string
+	if verb == "exec" && o.only == "" && len(require) == 0 {
+		missing = append(missing, "--only NAME[,NAME]")
+	}
 	if o.store == "" {
 		missing = append(missing, "--store <dir> (or NOVA_SECRETS_STORE)")
 	}
@@ -232,8 +253,8 @@ func (t tool) parse(verb string, args []string, npos int, needKey bool) (o opts,
 			missing = append(missing, "--key <file> (or NOVA_SECRETS_KEY)")
 		}
 	}
-	if len(missing) > 0 {
-		return o, nil, nil, refuse(2, "%s: missing %s; there is no default, the current directory is never assumed; run: nova-secrets %s -h", verb, strings.Join(missing, ", "), verb)
+	if missing = append(missing, also...); len(missing) > 0 {
+		return o, nil, nil, bad("missing %s (no default; the current directory is never assumed)", strings.Join(missing, ", "))
 	}
 	if o.sops == "" {
 		o.sops = "sops"
@@ -245,7 +266,7 @@ func (t tool) parse(verb string, args []string, npos int, needKey bool) (o opts,
 		}
 	}
 	if o.as != "" && !seatName.MatchString(o.as) || o.as == "" && !noSeat(verb) {
-		return o, nil, nil, refuse(2, "seat name %q: letters, digits, - and _ only", o.as)
+		return o, nil, nil, bad("seat name %q: letters, digits, - and _ only", o.as)
 	}
 	if needKey {
 		// Absolute before the mode check and before sops (which runs in the store).
@@ -279,18 +300,18 @@ func envValue(env []string, name string) string {
 func (o opts) file(seat string) string { return filepath.Join(o.store, seat+".yaml") }
 
 func (t tool) exec(args []string) error {
-	i := slices.Index(args, "--")
-	if i < 0 || i == len(args)-1 {
-		return refuse(2, "no command: nova-secrets exec --only NAME -- <cmd> [args...]")
+	flags, argv := args, []string(nil)
+	if i := slices.Index(args, "--"); i >= 0 {
+		flags, argv = args[:i], args[i+1:]
 	}
-	o, _, require, err := t.parse("exec", args[:i], 0, true)
+	var also []string
+	if len(argv) == 0 {
+		also = []string{"a command after --"}
+	}
+	o, _, require, err := t.parse("exec", flags, 0, true, also...)
 	if err != nil {
 		return err
 	}
-	if o.only == "" && len(require) == 0 {
-		return refuse(2, "exec: missing --only NAME[,NAME]; run: nova-secrets exec -h")
-	}
-	argv := args[i+1:]
 	if _, err := t.lookPath(argv[0]); err != nil {
 		return refuse(2, "command not found: %s", argv[0])
 	}
@@ -338,7 +359,7 @@ func (t tool) set(args []string) error {
 	}
 	name := pos[0]
 	if !envName.MatchString(name) {
-		return refuse(2, "NAME %q is not an environment variable name", name)
+		return bad("NAME %q is not an environment variable name", name)
 	}
 	if !inRepo(o.store) {
 		return refuse(2, "%s is not a git repository; run: nova-secrets init --store %s --recovery <age-public-key>", o.store, q(o.store))
@@ -382,7 +403,7 @@ func (t tool) seatAdd(args []string) error {
 	}
 	seat, pub := pos[0], pos[1]
 	if !seatName.MatchString(seat) || !agePub.MatchString(pub) {
-		return refuse(2, "usage: seat add <seat> <age1...>; the seat is letters, digits, - and _")
+		return bad("usage: seat add <seat> <age1...>; the seat is letters, digits, - and _")
 	}
 	b, err := os.ReadFile(filepath.Join(o.store, "recovery.pub"))
 	rec := strings.TrimSpace(string(b))
@@ -436,7 +457,7 @@ func (t tool) sopsRun(o opts, stdin io.Reader, args ...string) ([]byte, error) {
 	defer func() { _ = os.RemoveAll(home) }() // ignored: an empty directory of our own; failing leaves only it
 	out, err := t.run(stdin, t.sopsEnv(o.key, home), o.store, o.sops, args...)
 	if err != nil {
-		return nil, sopsFailure{refusal{2, fmt.Sprintf("sops %s failed (%v); its output is withheld; ran: cd %s && SOPS_AGE_KEY_FILE=%s %s %s", args[0], exitOf(err), q(o.store), q(o.key), q(o.sops), quoteAll(args))}}
+		return nil, sopsFailure{refusal{2, fmt.Sprintf("sops %s failed (%v); its output is withheld; ran: cd %s && SOPS_AGE_KEY_FILE=%s %s %s", args[0], exitOf(err), q(o.store), q(o.key), q(o.sops), quoteAll(args)), false}}
 	}
 	return out, nil
 }
@@ -773,7 +794,7 @@ func (t tool) initStore(args []string) error {
 	}
 	rec := strings.TrimSpace(o.recovery)
 	if !agePub.MatchString(rec) {
-		return refuse(2, "--recovery wants an age public key (age1...), not a private key or a file; make one: age-keygen -o recovery.key, then: age-keygen -y recovery.key")
+		return bad("--recovery wants an age public key (age1...), not a private key or a file; make one: age-keygen -o recovery.key, then: age-keygen -y recovery.key")
 	}
 	for _, f := range []string{".sops.yaml", "recovery.pub"} {
 		if _, err := os.Stat(filepath.Join(o.store, f)); err == nil {
