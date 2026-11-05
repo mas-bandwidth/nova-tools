@@ -107,3 +107,16 @@ jobs:
       - *checkout
       - name: TLC over every model case
         run: tla/check.sh "${{ vars.TLC_JAR }}"
+
+  ci-ok:
+    if: always()
+    needs: [lint, unit, functional, tlc]
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 5
+    steps:
+      - name: every job succeeded
+        shell: bash
+        run: |
+          case "${{ join(needs.*.result, ' ') }}" in
+            *failure*|*cancelled*|*skipped*) echo "a job did not succeed: ${{ join(needs.*.result, ' ') }}" >&2; exit 1 ;;
+          esac
