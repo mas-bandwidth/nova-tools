@@ -5,7 +5,6 @@ package main
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"runtime"
 	"strconv"
 	"syscall"
@@ -153,17 +152,4 @@ func addPath(rulesetFd int, ru rule, abi int) error {
 		return errno
 	}
 	return nil
-}
-
-// resolverDirOf is the directory the resolver config at conf resolves to, or "": some
-// distributions keep it outside every static root.
-func resolverDirOf(conf string) string {
-	resolved, err := filepath.EvalSymlinks(conf)
-	if err != nil {
-		return ""
-	}
-	if dir := filepath.Dir(resolved); dir != "/" && dir != "." {
-		return dir
-	}
-	return ""
 }

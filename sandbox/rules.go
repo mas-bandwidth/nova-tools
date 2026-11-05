@@ -1,6 +1,7 @@
 package main
 
 import (
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -170,4 +171,17 @@ func portList(ports []uint16) string {
 		s = append(s, strconv.Itoa(int(p)))
 	}
 	return strings.Join(s, ",")
+}
+
+// resolverDirOf is the directory the resolver config at conf resolves to, or "": some
+// distributions keep it outside every static root.
+func resolverDirOf(conf string) string {
+	resolved, err := filepath.EvalSymlinks(conf)
+	if err != nil {
+		return ""
+	}
+	if dir := filepath.Dir(resolved); dir != "/" && dir != "." {
+		return dir
+	}
+	return ""
 }
