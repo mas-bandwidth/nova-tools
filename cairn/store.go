@@ -33,7 +33,7 @@ import (
 
 var policies = []string{"never", "manual", "deferred", "immediate"}
 
-const idRule = "an id names exactly one file or directory inside the store on every platform: valid UTF-8, nonempty, at most 128 bytes, " +
+const idRule = "an id names exactly one file or directory inside the store on every platform: nonempty, at most 128 bytes, " +
 	"no whitespace or control characters, none of / \\ : * ? \" < > |, not only dots, no `..`, no trailing dot, " +
 	"and not a Windows device name (CON, PRN, AUX, NUL, COM1-9, LPT1-9)"
 
@@ -50,8 +50,13 @@ func validID(s string) bool {
 		}
 	}
 	base, _, _ := strings.Cut(s, ".")
-	return utf8.ValidString(s) && !devices.MatchString(base)
+	return !devices.MatchString(base)
 }
+
+// writableID is validID and valid UTF-8: an id written now goes into JSON, which
+// holds only UTF-8. The read verbs take validID alone, so a store an older build
+// wrote with other bytes in its ids still lists and reads.
+func writableID(s string) bool { return validID(s) && utf8.ValidString(s) }
 
 // refusal is a failed run: code 1 for a conflict (it ran and said no), 2 for
 // anything that could not run. remedy is the command to run next ("" is help).
@@ -510,7 +515,9 @@ func receipt(store, session, id string) (row, string, error) {
 	}
 	if !flat {
 		ef, t, err := readEntry(store, session, id)
-		return ef.row(t), ef.Text, err
+		r := ef.row(t)
+		r.session, r.id = session, id // the file names, as index prints them
+		return r, ef.Text, err
 	}
 	rows, bodies, err := flatRows(path, session)
 	if err != nil {
@@ -570,7 +577,9 @@ func index(store, session string) ([]row, []string, error) {
 				if err != nil {
 					return nil, nil, err
 				}
-				rows = append(rows, ef.row(t))
+				r := ef.row(t)
+				r.session, r.id = d.Name(), id // the names receipt takes, also for ids an older build wrote that are not UTF-8
+				rows = append(rows, r)
 			}
 		}
 	}
@@ -625,6 +634,8 @@ func runStore(verb string, args []string, stdin io.Reader, stdout, stderr io.Wri
 	for _, id := range []struct{ name, v string }{{"session", *session}, {"entry", *entry}} {
 		if id.v != "" && !validID(id.v) {
 			problems = append(problems, fmt.Sprintf("--%s %s is not an id: %s", id.name, strconv.Quote(id.v), idRule))
+		} else if id.v != "" && (verb == "open" || verb == "append") && !writableID(id.v) {
+			problems = append(problems, fmt.Sprintf("--%s %s is not valid UTF-8 at byte %d: an id written now must be valid UTF-8", id.name, strconv.Quote(id.v), badUTF8(id.v)))
 		}
 	}
 	if at := badUTF8(*source); at >= 0 {
@@ -682,7 +693,11 @@ func runStore(verb string, args []string, stdin io.Reader, stdout, stderr io.Wri
 		if given["file"] {
 			b, err := input(*file, stdin)
 			if err != nil {
-				return fail(err)
+				next := shell("ls", "-l", *file)
+				if *file == "-" {
+					next = "nova-cairn append -h"
+				}
+				return fail(refuse(next, "cannot read --file %s: %v", *file, err))
 			}
 			words = b
 		}

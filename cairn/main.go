@@ -34,8 +34,8 @@ var groups = []struct {
 	{"Keep a session's words (a store is a directory you name):", `
       Every write is synced to disk before OK. An entry is never overwritten: the same id
       with the same words is duplicate=true (exit 0), with other words a conflict (exit 1).
-      The words, ids and source must be valid UTF-8, so what is accepted is kept byte for
-      byte. receipt takes --store, --session and --entry (no stamp) and reads that entry
+      The words, new ids and source must be valid UTF-8, so what is accepted is kept
+      byte for byte. receipt takes --store, --session and --entry (no stamp) and reads that entry
       back as stored. --publish records a policy for later: nothing is sent, and append and
       receipt say published=false. --max <n> caps each kind index lists (default 20, 0
       lists all); a capped kind ends with one MORE line for that kind.`, [][2]string{

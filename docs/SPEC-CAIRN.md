@@ -52,8 +52,9 @@ nova-cairn append --store ~/cairn --session 2026-11-05 --entry lesson-1 --text "
 The words come from exactly one of `--text` or `--file <path>` (`--file -`
 reads stdin), kept byte for byte. They must be valid UTF-8, because the entry
 file is JSON: anything else is refused (exit 2) naming the first bad byte,
-so everything accepted is kept exactly. Ids and `--source` must be valid
-UTF-8 too. The entry takes the session's source and
+so everything accepted is kept exactly. A new id (on `open` and `append`)
+and `--source` must be valid UTF-8 too; the read verbs still take ids an older
+build wrote with other bytes, and memory leaves such entries out with a WARN. The entry takes the session's source and
 policy unless the line names them. The same line again prints
 `duplicate=true` with the first stamp and writes nothing. The same id with
 other words, or a retry whose `--source` names another source than the
