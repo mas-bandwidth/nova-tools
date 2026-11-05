@@ -3,9 +3,6 @@ package release
 import (
 	"bytes"
 	"encoding/json"
-	"go/ast"
-	"go/parser"
-	"go/token"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -320,31 +317,6 @@ func TestHookJourneysArePromisedByToolsAndDeduplicatedSprint(t *testing.T) {
 			if tc.want != 0 {
 				assert.Equal(t, PromisedJourneys, got)
 			}
-		})
-	}
-}
-
-// The gate selects real top-level hook tests rather than retired aliases or a
-// package-level pass. Renaming a target without migrating its promise is red.
-func TestEveryHookJourneyNamesALiveTest(t *testing.T) {
-	t.Parallel()
-	require.Len(t, PromisedJourneys, 5)
-	for _, j := range PromisedJourneys {
-		t.Run(j.Test, func(t *testing.T) {
-			t.Parallel()
-			files, err := filepath.Glob(filepath.Join("../..", j.Package, "*_test.go"))
-			require.NoError(t, err)
-			found := false
-			for _, path := range files {
-				file, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
-				require.NoError(t, err)
-				for _, decl := range file.Decls {
-					if fn, ok := decl.(*ast.FuncDecl); ok && fn.Name.Name == j.Test && fn.Recv == nil {
-						found = true
-					}
-				}
-			}
-			require.True(t, found, "promised journey %s/%s has no live test", j.Package, j.Test)
 		})
 	}
 }

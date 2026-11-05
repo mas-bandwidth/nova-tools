@@ -24,7 +24,7 @@ Still on main for now, because a kept tool imports them; each goes when that
 tool's rewrite drops it: pkg/swarm, pkg/member, pkg/harness, pkg/cardcontract,
 pkg/cardcost, pkg/cardhdr, pkg/cardtree, pkg/dogfood, pkg/provbalance,
 pkg/sprintwire, pkg/nsprint, internal/nsprint, pkg/onboarding, pkg/bus,
-pkg/buswire.
+pkg/buswire. cmd/nova-version stays with internal/update, which implements it.
 
 ## To rowan-tools
 
@@ -37,7 +37,6 @@ pkg/buswire.
 
 - cmd/nova-redis, pkg/redisacl (pkg/redisfn still imported by pkg/config)
 - cmd/nova-bus, pkg/bus/bustest, pkg/buswire/cmd/bus-driver: replaced by bus/
-- cmd/nova-version: nova-update reports installed versions
 - cmd/nova-ci, internal/ci, internal/cireceipt, internal/scaffold, internal/shippedsmoke, internal/docs, internal/ghevent, pkg/ci, pkg/tlc, pkg/secretcheck, pkg/roadmap, pkg/sexp: the repository's own CI machinery
 - tools/: agentsmap, analyzers, benchstandard, ci, clidoc, fardelay, functionalrun, newrule, newverb, notes20261002, preflight, roadmap, sandboxcheck, sessiontrace, testmanifest, tlacheck
 - Makefile, AGENTS.md maps, the certification, nightly-slow, revert-on-red and tlc workflows: replaced by one plain ci.yml (TESTING.md)

@@ -85,10 +85,6 @@ var specAllowlist = []allowlistEntry{
 var driftAllowlist = []allowlistEntry{
 	{file: "pkg/swarm/stage.go", fn: "ReadCardBase", record: "SPEC-CARD", since: "5778de35",
 		reason: "the card's REPO: header for staging (#3711), read before any RESULT exists"},
-	{file: "tools/ci/revertonred.go", fn: "land", record: "git-refspec", since: "a1f1f62c1",
-		reason: "the git push refspec HEAD:main, not a RESULT parser"},
-	{file: "internal/docs/ratings_form.go", fn: "ratingFormParts", record: "heading", since: "861ec8bc45",
-		reason: "the words of the rating form the docs/ratings README must state (TestRatingFileIsInForm), checked as plain substrings; not a RESULT parser"},
 }
 
 var allowlist = append(append([]allowlistEntry{}, specAllowlist...), driftAllowlist...)
