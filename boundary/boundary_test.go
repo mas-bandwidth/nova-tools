@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -36,6 +37,14 @@ var libraryDirs = map[string]bool{"pkg": true, "internal": true, "cmd": true}
 // this module.
 var mainTools = []string{"bus", "config", "sandbox", "secrets", "slot"}
 
+// allowedTools is the exact set of tool directives permitted in go.mod.
+var allowedTools = []string{
+	"github.com/kisielk/errcheck",
+	"golang.org/x/exp/cmd/txtar",
+	"golang.org/x/tools/cmd/deadcode",
+	"honnef.co/go/tools/cmd/staticcheck",
+}
+
 // allowedRequires is the exact set of direct dependencies in go.mod.
 var allowedRequires = []string{
 	"github.com/jackc/pgx/v5",
@@ -55,12 +64,17 @@ func root(t *testing.T) string {
 }
 
 func TestTopLevelShape(t *testing.T) {
-	entries, err := os.ReadDir(root(t))
+	base := root(t)
+	entries, err := os.ReadDir(base)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, e := range entries {
 		name := e.Name()
+		if fi, err := os.Lstat(filepath.Join(base, name)); err != nil || fi.Mode()&os.ModeSymlink != 0 {
+			t.Errorf("%s: top-level entries must not be symlinks; see docs/BOUNDARY.md", name)
+			continue
+		}
 		if allowedTop[name] {
 			continue
 		}
@@ -72,48 +86,191 @@ func TestTopLevelShape(t *testing.T) {
 	}
 }
 
+func TestNoSymlinks(t *testing.T) {
+	base := root(t)
+	entries, _ := os.ReadDir(base)
+	for _, e := range entries {
+		if !e.IsDir() || e.Name() == ".git" {
+			continue
+		}
+		filepath.WalkDir(filepath.Join(base, e.Name()), func(p string, d fs.DirEntry, err error) error {
+			if err != nil {
+				t.Errorf("%s: %v", p, err)
+				return nil
+			}
+			if d.Type()&fs.ModeSymlink != 0 {
+				rel, _ := filepath.Rel(base, p)
+				t.Errorf("%s is a symlink: no symlinks anywhere in the repository; see docs/BOUNDARY.md", rel)
+			}
+			return nil
+		})
+	}
+}
+
+// goFiles returns every .go file under dir (symlinks are not followed).
+func goFiles(dir string) []string {
+	var out []string
+	filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if err == nil && d.Type().IsRegular() && strings.HasSuffix(p, ".go") {
+			out = append(out, p)
+		}
+		return nil
+	})
+	return out
+}
+
+// imports parses a file's package name and import paths.
+func imports(t *testing.T, f string) (string, []string) {
+	t.Helper()
+	af, err := parser.ParseFile(token.NewFileSet(), f, nil, parser.ImportsOnly)
+	if err != nil {
+		t.Errorf("%s: %v", f, err)
+		return "", nil
+	}
+	var out []string
+	for _, imp := range af.Imports {
+		p, _ := strconv.Unquote(imp.Path.Value)
+		out = append(out, p)
+	}
+	return af.Name.Name, out
+}
+
+func isOwn(p string) bool { return p == modulePath || strings.HasPrefix(p, modulePath+"/") }
+
 func TestToolsAreIndependentMains(t *testing.T) {
 	base := root(t)
 	for _, tool := range mainTools {
-		dir := filepath.Join(base, tool)
-		files, err := filepath.Glob(filepath.Join(dir, "*.go"))
-		if err != nil {
-			t.Fatal(err)
-		}
+		files := goFiles(filepath.Join(base, tool))
 		if len(files) == 0 {
-			t.Errorf("%s: no Go files", tool)
+			t.Errorf("%s: no Go files (is it a symlink or missing?)", tool)
 		}
-		fset := token.NewFileSet()
 		for _, f := range files {
-			af, err := parser.ParseFile(fset, f, nil, parser.ImportsOnly)
-			if err != nil {
-				t.Errorf("%s: %v", f, err)
-				continue
+			rel, _ := filepath.Rel(base, f)
+			pkg, imps := imports(t, f)
+			if pkg != "main" {
+				t.Errorf("%s: package %s, want main", rel, pkg)
 			}
-			if af.Name.Name != "main" {
-				t.Errorf("%s: package %s, want main", f, af.Name.Name)
-			}
-			for _, imp := range af.Imports {
-				p, _ := strconv.Unquote(imp.Path.Value)
-				if p == modulePath || strings.HasPrefix(p, modulePath+"/") {
-					t.Errorf("%s imports %s: tools do not import each other or any shared package; see docs/BOUNDARY.md", filepath.Join(tool, filepath.Base(f)), p)
+			for _, p := range imps {
+				if isOwn(p) {
+					t.Errorf("%s imports %s: tools do not import each other or any shared package; see docs/BOUNDARY.md", rel, p)
 				}
 			}
 		}
 	}
 }
 
+// fleet holds Ansible plays; its Go files are doc.go and tests only.
+func TestFleetHasNoCode(t *testing.T) {
+	base := root(t)
+	files := goFiles(filepath.Join(base, "fleet"))
+	if len(files) == 0 {
+		t.Error("fleet: no Go files (is it a symlink or missing?)")
+	}
+	for _, f := range files {
+		rel, _ := filepath.Rel(base, f)
+		pkg, imps := imports(t, f)
+		if pkg == "main" {
+			t.Errorf("%s: fleet holds plays, not a program: no package main", rel)
+		}
+		for _, p := range imps {
+			if isOwn(p) {
+				t.Errorf("%s imports %s: fleet imports nothing from this module", rel, p)
+			}
+		}
+	}
+}
+
+// parseGoMod returns the require entries (module, marked indirect), replace
+// directives and tool entries of a go.mod.
+func parseGoMod(gomod string) (reqs map[string]bool, replaces, tools []string) {
+	reqs = map[string]bool{}
+	block := ""
+	for _, line := range strings.Split(gomod, "\n") {
+		line = strings.TrimSpace(line)
+		if block != "" {
+			if line == ")" {
+				block = ""
+				continue
+			}
+		} else if i := strings.Index(line, " ("); line != "" && i > 0 && strings.HasSuffix(line, "(") {
+			block = line[:i]
+			continue
+		}
+		verb, spec := block, line
+		if block == "" {
+			f := strings.SplitN(line, " ", 2)
+			if len(f) < 2 {
+				continue
+			}
+			verb, spec = f[0], f[1]
+		}
+		if spec == "" || strings.HasPrefix(spec, "//") {
+			continue
+		}
+		f := strings.Fields(spec)
+		switch verb {
+		case "require":
+			if len(f) >= 2 {
+				reqs[f[0]] = strings.Contains(spec, "// indirect")
+			}
+		case "replace":
+			replaces = append(replaces, spec)
+		case "tool":
+			tools = append(tools, f[0])
+		}
+	}
+	return
+}
+
 func TestDirectDependencies(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join(root(t), "go.mod"))
+	base := root(t)
+	data, err := os.ReadFile(filepath.Join(base, "go.mod"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := directRequires(string(data))
+	reqs, replaces, tools := parseGoMod(string(data))
+	for _, r := range replaces {
+		t.Errorf("go.mod has a replace directive (%s): replace is not allowed; see docs/BOUNDARY.md", r)
+	}
+	okTool := map[string]bool{}
+	for _, m := range allowedTools {
+		okTool[m] = true
+	}
+	for _, m := range tools {
+		if !okTool[m] {
+			t.Errorf("go.mod tool %s is not in allowedTools in boundary_test.go: add it in the same PR and say why in docs/BOUNDARY.md", m)
+		}
+	}
+	// A module imported by any .go file is direct whatever its comment says.
+	imported := map[string]bool{}
+	for _, f := range goFiles(base) {
+		_, imps := imports(t, f)
+		for _, p := range imps {
+			imported[p] = true
+		}
+	}
+	direct := map[string]bool{}
+	for m, indirect := range reqs {
+		direct[m] = !indirect
+		for p := range imported {
+			if p == m || strings.HasPrefix(p, m+"/") {
+				direct[m] = true
+			}
+		}
+	}
 	want := map[string]bool{}
 	for _, m := range allowedRequires {
 		want[m] = true
 	}
-	for _, m := range got {
+	var mods []string
+	for m := range direct {
+		mods = append(mods, m)
+	}
+	sort.Strings(mods)
+	for _, m := range mods {
+		if !direct[m] {
+			continue
+		}
 		if !want[m] {
 			t.Errorf("new direct dependency %s: add it to the list in boundary_test.go in the same PR and say why in docs/BOUNDARY.md", m)
 		}
@@ -129,37 +286,7 @@ func TestDirectDependencies(t *testing.T) {
 	}
 }
 
-// directRequires returns the modules in require directives not marked indirect.
-func directRequires(gomod string) []string {
-	var out []string
-	inBlock := false
-	for _, line := range strings.Split(gomod, "\n") {
-		line = strings.TrimSpace(line)
-		switch {
-		case line == "require (":
-			inBlock = true
-			continue
-		case inBlock && line == ")":
-			inBlock = false
-			continue
-		}
-		var spec string
-		if inBlock {
-			spec = line
-		} else if strings.HasPrefix(line, "require ") {
-			spec = strings.TrimPrefix(line, "require ")
-		} else {
-			continue
-		}
-		if spec == "" || strings.HasPrefix(spec, "//") || strings.Contains(spec, "// indirect") {
-			continue
-		}
-		if f := strings.Fields(spec); len(f) >= 2 {
-			out = append(out, f[0])
-		}
-	}
-	return out
-}
+var budgetLine = regexp.MustCompile(`^([A-Za-z0-9_-]+) +([0-9]+)$`)
 
 func TestBudgets(t *testing.T) {
 	base := root(t)
@@ -168,20 +295,16 @@ func TestBudgets(t *testing.T) {
 		t.Fatal(err)
 	}
 	budgets := map[string]int{}
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
+	lines := strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
+	for _, line := range lines {
+		m := budgetLine.FindStringSubmatch(line)
+		if m == nil {
+			t.Fatalf("BUDGET: want exactly \"name  max-lines\" per line (no comments, no blank lines), got %q", line)
 		}
-		f := strings.Fields(line)
-		if len(f) != 2 {
-			t.Fatalf("BUDGET: want \"name  max-lines\", got %q", line)
+		if _, dup := budgets[m[1]]; dup {
+			t.Fatalf("BUDGET: duplicate name %s", m[1])
 		}
-		n, err := strconv.Atoi(f[1])
-		if err != nil {
-			t.Fatalf("BUDGET: %q: %v", line, err)
-		}
-		budgets[f[0]] = n
+		budgets[m[1]], _ = strconv.Atoi(m[2])
 	}
 	entries, err := os.ReadDir(base)
 	if err != nil {
@@ -189,7 +312,7 @@ func TestBudgets(t *testing.T) {
 	}
 	for _, e := range entries {
 		name := e.Name()
-		if !e.IsDir() || !hasNonTestGo(filepath.Join(base, name)) || name == "boundary" {
+		if !e.IsDir() || name == ".git" || len(goFiles(filepath.Join(base, name))) == 0 {
 			continue
 		}
 		if _, ok := budgets[name]; !ok {
@@ -203,35 +326,26 @@ func TestBudgets(t *testing.T) {
 			continue
 		}
 		if n > b {
-			t.Errorf("%s is %d lines, budget %d: a tool over budget means the spec is not minimal; raise the budget only in a PR that says why", tool, n, b)
+			t.Errorf("%s is %d non-test .go lines, budget %d: a tool over budget means the spec is not minimal; raise the budget only in a PR that says why", tool, n, b)
 		}
 	}
-}
-
-func hasNonTestGo(dir string) bool {
-	n, err := countLines(dir)
-	return err == nil && n > 0
 }
 
 // countLines counts the lines of the non-test .go files under dir.
 func countLines(dir string) (int, error) {
-	if _, err := os.Stat(dir); err != nil {
-		return 0, err
+	if fi, err := os.Lstat(dir); err != nil || !fi.IsDir() {
+		return 0, os.ErrNotExist
 	}
 	total := 0
-	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return err
-		}
-		if !strings.HasSuffix(p, ".go") || strings.HasSuffix(p, "_test.go") {
-			return nil
+	for _, p := range goFiles(dir) {
+		if strings.HasSuffix(p, "_test.go") {
+			continue
 		}
 		b, err := os.ReadFile(p)
 		if err != nil {
-			return err
+			return 0, err
 		}
 		total += bytes.Count(b, []byte("\n"))
-		return nil
-	})
-	return total, err
+	}
+	return total, nil
 }

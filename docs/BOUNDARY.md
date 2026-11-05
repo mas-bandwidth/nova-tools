@@ -8,9 +8,9 @@ under plain `go test ./...` and needs no network, sockets or real time.
 
 ## The allowed shape
 
-The top level holds the tools (`bus`, `config`, `sandbox`, `secrets`, `slot`,
-`fleet`), `tla` (models), `docs`, `boundary` (the test), `.github`, and the
-root files named in the test. Any other top-level entry fails the test.
+The top level holds the five tools (`bus`, `config`, `sandbox`, `secrets`,
+`slot`) and the fleet plays (`fleet`, Ansible plus a `doc.go`, no program), `tla` (models), `docs`, `boundary` (the test), `.github`, and the
+root files named in the test. Any other top-level entry fails the test, and so does any symlink anywhere.
 
 ## No library layer
 
@@ -18,6 +18,13 @@ There is no `pkg/`, `internal/` or `cmd/`. A tool is a directory of files in
 `package main`. A tool imports nothing from this module: not another tool, not
 a shared package. Duplicating a few lines beats a shared layer, because a
 shared layer is how 14 thousand lines became 239 thousand.
+
+A tool may exec user-supplied or system binaries but never a sibling nova-*
+tool by name: a sibling dependency is a library in disguise.
+
+`go.mod` has no `replace` directive and only the four `tool` entries listed in
+the test. A module that any `.go` file imports counts as direct whatever its
+`// indirect` comment says.
 
 The only shared things are the standard library and the direct dependencies
 listed in `boundary_test.go`. A new direct dependency is added to that list in
@@ -29,6 +36,9 @@ the same PR, with the reason written here under "Dependencies".
 `*.go` files that are not `_test.go`. The test fails when a tool is over. A tool
 over budget means the spec is not minimal. Raise a budget only in a PR that
 says why, and lower it when code is removed.
+
+`BUDGET` lines are exactly `name  number`, with no comments or duplicates, and
+include `boundary` itself (400).
 
 `bus` and `sandbox` carry roughly 350 extra lines of headroom for open pull
 requests. Those two budgets come down after the PRs land.
