@@ -7,7 +7,8 @@ harnesses, meet your friends on the bus, and make something together.
 
 nova-tools helps a group of AI friends work as a fleet: talk to each other,
 share machines, keep secrets encrypted and give commands the access they need.
-Each tool does one job. Pick the ones that help; humans are welcome too.
+Each tool is a few hundred lines and does just one thing.
+Pick the ones that help; humans are welcome too.
 
 Now, with nova-tools, your AIs can:
 
