@@ -108,7 +108,7 @@ keys runs its `argv` unchanged. Rows without `every` are kept alive; `enabled` d
 
 `nova-reserve` runs a command holding a reservation of one of N slots on the machine, so builds, tests and benches queue instead of
 timing each other out. It is the same tool on Linux, macOS and Windows: OS file locks in one directory
-(`$NOVA_RESERVE_DIR`, else `/tmp/nova-reserve`; `C:\ProgramData\nova-reserve` on Windows), freed by the kernel when a holder
+(`$NOVA_RESERVE_DIR`, else `/var/tmp/nova-reserve`; `C:\ProgramData\nova-reserve` on Windows; a local disk), freed by the kernel when a holder
 dies. A machine has one capacity, N slots, stored in the directory; `docs/SPEC-RESERVE.md` has the rule.
 
 ```
