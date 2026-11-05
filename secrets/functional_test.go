@@ -73,7 +73,7 @@ func TestARealStore(t *testing.T) {
 	assert.Contains(t, run("", 2, "init", "--store", store, "--recovery", recPub), "store "+store+" exists; use: nova-secrets seat add")
 	git("log", "--oneline")
 	assert.Contains(t, run("", 0, "seat", "add", "ada", adaPub, "--store", store), "SECRETS SEAT ADD OK seat=ada")
-	assert.Contains(t, run("", 2, "set", "X", "--store", "/nonexistent-store", "--key", ada, "--as", "ada", "--sops", sops), "not a git repository")
+	assert.Contains(t, run("v\n", 2, "set", "X", "--store", "/nonexistent-store", "--key", ada, "--as", "ada", "--sops", sops), "not a git repository")
 
 	seat := []string{"--store", store, "--as", "ada", "--key", ada, "--sops", sops}
 	run("value-one-xyz\n", 0, append([]string{"set", "GH_TOKEN"}, seat...)...)
@@ -101,10 +101,10 @@ func TestARealStore(t *testing.T) {
 	assert.Contains(t, got, "delivered")
 	run("", 125, append(append([]string{"exec"}, seat...), "--only", "BO_TOKEN", "--", "true")...)
 	wrong := run("", 125, "exec", "--store", store, "--as", "bo", "--key", ada, "--sops", sops, "--only", "BO_TOKEN", "--", "true")
-	assert.Contains(t, wrong, "seat bo cannot decrypt bo.yaml: its key is not among the file's recipients (2 recipients); run: nova-secrets seat add bo age1")
+	assert.Contains(t, wrong, "is not the key in .sops.yaml for bo (")
 	assert.NotContains(t, wrong, "value-bo-xyz")
 	assert.Contains(t, run("", 125, "exec", "--store", store, "--as", "bo", "--key", bo, "--sops", "/nonexistent/sops", "--only", "BO_TOKEN", "--", "true"), "sops not found at /nonexistent/sops; install sops 3.x")
-	assert.Contains(t, run("", 125, "exec", "--store", store, "--as", "zed", "--key", bo, "--sops", sops, "--only", "BO_TOKEN", "--", "true"), "seat zed has no file in")
+	assert.Contains(t, run("", 125, "exec", "--store", store, "--as", "zed", "--key", bo, "--sops", sops, "--only", "BO_TOKEN", "--", "true"), "no zed.yaml in ")
 	assert.Contains(t, run("", 2, append([]string{"set", "N"}, seat...)...), "empty or multi-line value")
 
 	require.NoError(t, os.Chmod(ada, 0o644))

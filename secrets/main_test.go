@@ -728,6 +728,8 @@ func TestVerbHelp(t *testing.T) {
 			assert.Empty(t, h.calls)
 		}
 	}
+	h.stdout.Reset()
+	h.main("exec", "-h")
 	assert.Contains(t, h.stdout.String(), "kept for existing units; same as --only")
 	h.seed("ada", map[string]string{"X": "v"})
 	h.stdout.Reset()
