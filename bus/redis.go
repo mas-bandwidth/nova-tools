@@ -20,9 +20,14 @@ func (quiet) Printf(context.Context, string, ...any) {}
 // dialRedis keeps one connection: every command in a process runs in turn.
 // The client never retries a command: a retried XADD can send a message
 // twice, and a retried XREADGROUP > can strand a batch in the pending list.
-func dialRedis(addr, password string) Store {
+func dialRedis(addr, user, password string) Store {
 	redis.SetLogger(quiet{})
-	return redisStore{redis.NewClient(&redis.Options{Addr: addr, Password: password, PoolSize: 1, MaxRetries: -1})}
+	return redisStore{redis.NewClient(redisOptions(addr, user, password))}
+}
+
+// redisOptions AUTHs as user when one is given, else as Redis's default user.
+func redisOptions(addr, user, password string) *redis.Options {
+	return &redis.Options{Addr: addr, Username: user, Password: password, PoolSize: 1, MaxRetries: -1}
 }
 
 func (r redisStore) Add(ctx context.Context, stream string, fields map[string]string) (string, error) {
@@ -120,16 +125,15 @@ func (r redisStore) Trim(ctx context.Context, stream, id string) error {
 // OnlyOwnerDeletes).
 var (
 	claim = redis.NewScript(`local v = redis.call('GET', KEYS[1])
-if v and v ~= ARGV[1] then return 0 end
+if v and v ~= ARGV[1] then return v end
 redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[2])
-return 1`)
+return ''`)
 	release = redis.NewScript(`if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) end
 return 0`)
 )
 
-func (r redisStore) Claim(ctx context.Context, name, value string, ttl time.Duration) (bool, error) {
-	n, err := claim.Run(ctx, r.c, []string{presenceKey(name)}, value, ttl.Milliseconds()).Int()
-	return n == 1, err
+func (r redisStore) Claim(ctx context.Context, name, value string, ttl time.Duration) (string, error) {
+	return claim.Run(ctx, r.c, []string{presenceKey(name)}, value, ttl.Milliseconds()).Text()
 }
 
 func (r redisStore) Release(ctx context.Context, name, value string) error {

@@ -155,11 +155,19 @@ the unit and does not load it.
   retired: unloaded and removed. `--check` lists each as `WOULD-RETIRE`. A unit of another tool is left alone and
   named in a `NOTE`; `nova_retire_units` names any to retire.
 - Units written by this play's earlier name, `loops.yml` (`com.nova.loop.<name>.plist`, `nova-loop-<name>.service|timer`, marked `from the loop record`), are retired by the first run, before the new units are loaded (stop old, then load new, so a timer or a kept-alive singleton never runs twice); the log directory changed too (`~/.local/state/nova/loops` to `.../services`).
+- **A host with no rows retires nothing by itself.** An empty `nova_services` is valid, but a run that would retire
+  every unit it ever wrote on that host (all the marked `nova-service-*` and `nova-loop-*` units) refuses instead,
+  naming the units. If the empty list is what you mean, say so with `-e nova_service_retire_all=true`; otherwise
+  check the inventory (`nova-config service list`) first. Units named in `nova_retire_units` are explicit and do not
+  count.
 - A unit whose file changed is restarted (`RESTART`, `WOULD-RESTART` under `--check`).
 - `-e nova_service_only=a,b` renders and restarts only those rows and retires nothing. `-e nova_service_restart=a,b`
   restarts those rows even if their unit did not change; this is how a hung service is restarted, never by hand. A name
   no row carries is refused before anything is written.
-- On Linux a changed unit that was not restarted fails the play; the receipt line `SERVICES host=...` ends each host.
+- On Linux a changed unit that was not restarted fails the play; the receipt ends each host. The receipt is one line,
+  `SERVICES host=<machine> place=<unit directory> records=<rows> enabled=<rows enabled> written=<unit files created or
+  changed> retired=<units retired>`, then ` only=<names>` when `nova_service_only` was given and
+  ` (check: nothing changed)` under `--check`.
 
 ## Reservations
 
