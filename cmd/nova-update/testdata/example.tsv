@@ -1,2 +1,0 @@
-name	kind	installed	latest	apply	owner
-go	tool	go version	local:go version	none	caller
