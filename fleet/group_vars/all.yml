@@ -37,6 +37,10 @@ nova_service_only: []
 # name (a list, or one comma-separated word). Empty restarts nothing extra.
 nova_service_restart: []
 
+# A host with no service rows retires the units this play wrote only when asked:
+# otherwise the run refuses and names them (-e nova_service_retire_all=true).
+nova_service_retire_all: false
+
 # The nova-secrets layout a service with keys opens its secrets through: the
 # store, the directory of seat keys (<seat>.key) and the sops binary
 # (nova-secrets exec requires --store and --key and takes --sops).
