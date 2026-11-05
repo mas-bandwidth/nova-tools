@@ -8,9 +8,18 @@ under plain `go test ./...` and needs no network, sockets or real time.
 
 ## The allowed shape
 
-The top level holds the five tools (`bus`, `config`, `sandbox`, `secrets`,
-`reserve`) and the fleet plays (`fleet`, Ansible plus a `doc.go`, no program), `tla` (models), `docs`, `boundary` (the test), `.github`, and the
-root files named in the test. Any other top-level entry fails the test, and so does any symlink anywhere.
+The top level holds seven tools: `bus`, `config`, `sandbox`, `secrets`,
+`reserve`, `cairn` (each a `package main`) and the fleet plays (`fleet`, Ansible
+plus a `doc.go`, no program). Beside them are `tla` (models), `docs`,
+`boundary` (the test) and `.github`.
+
+The root files are exactly README.md, LICENSE, go.mod, go.sum, .gitignore,
+.gitattributes and BUDGET. The root holds README.md only; every other document
+(changelog, roadmap, testing notes, specs) goes in `docs/`. Any other top-level
+entry fails the test, and so does any symlink.
+
+The test never looks inside `docs/`: it may hold assets (images) and anything
+else.
 
 ## No library layer
 

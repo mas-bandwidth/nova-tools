@@ -20,14 +20,13 @@ const modulePath = "github.com/mas-bandwidth/nova-tools"
 // Anything else fails the test; see docs/BOUNDARY.md before extending it.
 var allowedTop = map[string]bool{
 	// tools and support directories
-	"bus": true, "config": true, "sandbox": true, "secrets": true, "reserve": true,
+	"bus": true, "config": true, "sandbox": true, "secrets": true, "reserve": true, "cairn": true,
 	"fleet": true, "tla": true, "docs": true, "boundary": true, ".github": true,
 	// version control
 	".git": true,
-	// root files
-	"README.md": true, "CHANGELOG.md": true, "ROADMAP.md": true, "TESTING.md": true,
-	"LICENSE": true, "go.mod": true, "go.sum": true, ".gitignore": true,
-	".gitattributes": true, "BUDGET": true,
+	// root files: exactly these, nothing else
+	"README.md": true, "LICENSE": true, "go.mod": true, "go.sum": true,
+	".gitignore": true, ".gitattributes": true, "BUDGET": true,
 }
 
 // libraryDirs are named in the failure message when present.
@@ -35,7 +34,7 @@ var libraryDirs = map[string]bool{"pkg": true, "internal": true, "cmd": true}
 
 // mainTools are the tools that are one package main and import nothing from
 // this module.
-var mainTools = []string{"bus", "config", "sandbox", "secrets", "reserve"}
+var mainTools = []string{"bus", "config", "sandbox", "secrets", "reserve", "cairn"}
 
 // allowedTools is the exact set of tool directives permitted in go.mod.
 var allowedTools = []string{
@@ -82,6 +81,10 @@ func TestTopLevelShape(t *testing.T) {
 			t.Errorf("%s: nova-tools has no library layer: each tool is one top-level package main; see docs/BOUNDARY.md", name)
 			continue
 		}
+		if strings.HasSuffix(name, ".md") {
+			t.Errorf("%s: root holds README.md only; docs go in docs/", name)
+			continue
+		}
 		t.Errorf("%s: not an allowed top-level entry; see docs/BOUNDARY.md", name)
 	}
 }
@@ -90,7 +93,7 @@ func TestNoSymlinks(t *testing.T) {
 	base := root(t)
 	entries, _ := os.ReadDir(base)
 	for _, e := range entries {
-		if !e.IsDir() || e.Name() == ".git" {
+		if !e.IsDir() || e.Name() == ".git" || e.Name() == "docs" {
 			continue
 		}
 		filepath.WalkDir(filepath.Join(base, e.Name()), func(p string, d fs.DirEntry, err error) error {
@@ -108,9 +111,13 @@ func TestNoSymlinks(t *testing.T) {
 }
 
 // goFiles returns every .go file under dir (symlinks are not followed).
+// docs/ is never looked inside: it may hold assets and anything else.
 func goFiles(dir string) []string {
 	var out []string
 	filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if err == nil && d.IsDir() && d.Name() == "docs" {
+			return fs.SkipDir
+		}
 		if err == nil && d.Type().IsRegular() && strings.HasSuffix(p, ".go") {
 			out = append(out, p)
 		}
@@ -312,7 +319,7 @@ func TestBudgets(t *testing.T) {
 	}
 	for _, e := range entries {
 		name := e.Name()
-		if !e.IsDir() || name == ".git" || len(goFiles(filepath.Join(base, name))) == 0 {
+		if !e.IsDir() || name == ".git" || name == "docs" || len(goFiles(filepath.Join(base, name))) == 0 {
 			continue
 		}
 		if _, ok := budgets[name]; !ok {
