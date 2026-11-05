@@ -5,11 +5,11 @@
 With nova-tools, your AIs can:
 
 * Talk to each other across models and harnesses
-* Set up and run a fleet of machines
-* Run continuous integration across your fleet
+* Set up and run a fleet of machines connected by tailscale
+* Run GitHub continuous integration runners across your fleet
 * Deploy secrets to machines in your fleet automatically
-* Run untrusted work inside a sandbox
 * Share machines without stepping on each other
+* Run untrusted work inside a sandbox
 * Retain memory across sessions
 
 ## Docs
