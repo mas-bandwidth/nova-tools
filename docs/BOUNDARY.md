@@ -14,7 +14,8 @@ plus a `doc.go`, no program). Beside them are `tla` (models), `docs`,
 `boundary` and `contract` (test-only packages) and `.github`.
 
 The root files are exactly README.md, LICENSE, go.mod, go.sum, .gitignore,
-.gitattributes and BUDGET. The root holds README.md only; every other document
+.gitattributes. Nothing lives in the root unless a user cares about it, so the
+budgets are in `boundary/BUDGET`. The root holds README.md only; every other document
 (changelog, roadmap, testing notes, specs) goes in `docs/`. Any other top-level
 entry fails the test, and so does any symlink.
 
@@ -41,7 +42,7 @@ the same PR, with the reason written here under "Dependencies".
 
 ## The budget rule
 
-`BUDGET` has one line per tool, `name  max-non-test-go-lines`, counting the
+`boundary/BUDGET` has one line per tool, `name  max-non-test-go-lines`, counting the
 `*.go` files that are not `_test.go`. The test fails when a tool is over. Each
 budget is the size the tool reached when its spec was settled, plus 50. A tool
 over budget means the spec is not minimal; raising one is a PR that says why.
@@ -61,7 +62,7 @@ include `boundary` itself (400).
 
 1. Make a new top-level directory with `package main` files.
 2. Add its name to the allowed list in `boundary_test.go` (and to `mainTools`).
-3. Add a line to `BUDGET`.
+3. Add a line to `boundary/BUDGET`.
 4. Keep it to a few hundred lines, with a spec in `docs/`.
 
 ## What goes elsewhere

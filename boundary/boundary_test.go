@@ -24,9 +24,9 @@ var allowedTop = map[string]bool{
 	"fleet": true, "tla": true, "docs": true, "boundary": true, "contract": true, ".github": true,
 	// version control
 	".git": true,
-	// root files: exactly these, nothing else
+	// root files: exactly these, nothing else (nothing in root unless a user cares about it)
 	"README.md": true, "LICENSE": true, "go.mod": true, "go.sum": true,
-	".gitignore": true, ".gitattributes": true, "BUDGET": true,
+	".gitignore": true, ".gitattributes": true,
 }
 
 // libraryDirs are named in the failure message when present.
@@ -297,7 +297,7 @@ var budgetLine = regexp.MustCompile(`^([A-Za-z0-9_-]+) +([0-9]+)$`)
 
 func TestBudgets(t *testing.T) {
 	base := root(t)
-	data, err := os.ReadFile(filepath.Join(base, "BUDGET"))
+	data, err := os.ReadFile(filepath.Join(base, "boundary", "BUDGET"))
 	if err != nil {
 		t.Fatal(err)
 	}
