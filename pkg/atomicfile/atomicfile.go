@@ -119,6 +119,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"syscall"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
 )
@@ -366,6 +367,19 @@ func validate(path string, perm os.FileMode, h *hooks, opts []Option) (opt optio
 // publish is Write after validate: the temporary file, its sync, and the rename
 // or the exclusive link.
 func publish(path string, data []byte, perm os.FileMode, h *hooks, opt options, dir, base string) (err error) {
+	// THE TEMPORARY FILE IS OPEN FOR WRITING ONLY UNDER syscall.ForkLock (read side). A fork
+	// by another goroutine in that window inherits the write descriptor until its exec, and an
+	// exec of the published file (a script written, then run) fails with ETXTBSY, "text file
+	// busy". Holding the read side keeps every fork out until the descriptor is closed.
+	syscall.ForkLock.RLock()
+	forkLocked := true
+	unlockFork := func() {
+		if forkLocked {
+			forkLocked = false
+			syscall.ForkLock.RUnlock()
+		}
+	}
+	defer unlockFork()
 	f, err := h.createTemp(dir, base, perm)
 	if err != nil {
 		return wrapErr(fmt.Sprintf("atomicfile: create temporary file for %q", path), err)
@@ -407,6 +421,7 @@ func publish(path string, data []byte, perm os.FileMode, h *hooks, opt options, 
 		_ = f.Close()
 		return wrapErr(fmt.Sprintf("atomicfile: close %q", path), err)
 	}
+	unlockFork()
 
 	var publishedErr error
 	if opt.noReplace {

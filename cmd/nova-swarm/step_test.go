@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/pkg/testbin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -147,7 +148,7 @@ func TestTheStepVerbRunsAScriptCardInItsWallAndPrintsTheRemainder(t *testing.T) 
 	// the step hands its wall is asserted without a kernel wall in a unit test
 	log := filepath.Join(t.TempDir(), "wall.log")
 	wall := filepath.Join(t.TempDir(), "wall")
-	require.NoError(t, os.WriteFile(wall, []byte("#!/bin/sh\nprintf '%s\\n' \"$*\" >> '"+log+"'\nwhile [ \"$1\" != -- ]; do shift; done\nshift\nexec \"$@\"\n"), 0o755))
+	require.NoError(t, testbin.WriteExecutable(wall, []byte("#!/bin/sh\nprintf '%s\\n' \"$*\" >> '"+log+"'\nwhile [ \"$1\" != -- ]; do shift; done\nshift\nexec \"$@\"\n"), 0o755))
 
 	cwd, err := os.Getwd()
 	require.NoError(t, err)

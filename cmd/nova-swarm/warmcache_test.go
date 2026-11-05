@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/swarm"
+	"github.com/mas-bandwidth/nova-tools/pkg/testbin"
 )
 
 // envValue is the value of name in one environment, "" when absent.
@@ -72,8 +73,7 @@ func TestTheGoShimBuildsTrimpath(t *testing.T) {
 		t.Skip("the go shim is a POSIX script, written on unix benches only")
 	}
 	goBin := t.TempDir()
-	write(t, filepath.Join(goBin, "go"), "#!/bin/sh\necho \"GOFLAGS=[$GOFLAGS] args=[$*]\"\n")
-	require.NoError(t, os.Chmod(filepath.Join(goBin, "go"), 0o755))
+	require.NoError(t, testbin.WriteExecutable(filepath.Join(goBin, "go"), []byte("#!/bin/sh\necho \"GOFLAGS=[$GOFLAGS] args=[$*]\"\n"), 0o755))
 	shim := t.TempDir()
 	require.NoError(t, writeNativeGoShim(shim, goBin))
 	for _, tc := range []struct{ name, goflags, want string }{
