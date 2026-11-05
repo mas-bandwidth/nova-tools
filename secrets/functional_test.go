@@ -72,6 +72,7 @@ func TestARealStore(t *testing.T) {
 	assert.Contains(t, run("", 0, "init", "--store", store, "--recovery", recPub), "SECRETS INIT OK store="+store+" next: nova-secrets seat add")
 	assert.Contains(t, run("", 2, "init", "--store", store, "--recovery", recPub), "store "+store+" exists; use: nova-secrets seat add")
 	git("log", "--oneline")
+	assert.Contains(t, run("", 2, "init", "--store", filepath.Join(store, "sub"), "--recovery", recPub), "is inside the git work tree")
 	assert.Contains(t, run("", 0, "seat", "add", "ada", adaPub, "--store", store), "SECRETS SEAT ADD OK seat=ada")
 	assert.Contains(t, run("v\n", 2, "set", "X", "--store", "/nonexistent-store", "--key", ada, "--as", "ada", "--sops", sops), "not a git repository")
 

@@ -197,11 +197,6 @@ func beforeDashes(verb string, args []string) []string {
 // opts is the flags the verbs share.
 type opts struct{ store, as, key, sops, only, recovery string }
 
-type list []string
-
-func (l *list) String() string     { return strings.Join(*l, ",") }
-func (l *list) Set(v string) error { *l = append(*l, v); return nil }
-
 // parse reads flags after the verb's positional arguments (npos of them) and
 // fills in the defaults. require is --require, kept for existing units (exec only);
 // also names inputs the caller found missing, so one refusal names them all.
@@ -214,7 +209,7 @@ func (t tool) parse(verb string, args []string, npos int, needKey bool, also ...
 	for name, p := range map[string]*string{"store": &o.store, "as": &o.as, "key": &o.key, "sops": &o.sops, "only": &o.only, "recovery": &o.recovery} {
 		fs.StringVar(p, name, "", "")
 	}
-	fs.Var((*list)(&require), "require", "")
+	fs.Func("require", "", func(v string) error { require = append(require, v); return nil })
 	if err = fs.Parse(args); err != nil {
 		msg := err.Error()
 		if n, ok := strings.CutPrefix(msg, "flag provided but not defined: "); ok {
