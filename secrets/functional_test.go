@@ -14,7 +14,7 @@ import (
 )
 
 // TestARealStore runs the built binary against real sops, age-keygen and git, on a
-// store and keys made in the test's own directory: seat add, a first set, exec with
+// store and keys made in the test's own directory: init, seat add, set, names, exec with
 // its exit status passed through, and the refusals.
 func TestARealStore(t *testing.T) {
 	t.Parallel()
@@ -66,17 +66,14 @@ func TestARealStore(t *testing.T) {
 		require.NoError(t, err)
 		return strings.TrimSpace(string(pub))
 	}
-	keygen("recovery")
-	recPub, err := exec.Command(ageKeygen, "-y", filepath.Join(keys, "recovery.key")).Output()
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(store, "recovery.pub"), recPub, 0o644))
+	recPub := keygen("recovery")
 	ada := filepath.Join(keys, "ada.key")
 	adaPub := keygen("ada")
-	require.NoError(t, os.WriteFile(filepath.Join(store, ".sops.yaml"), []byte("creation_rules: []\n"), 0o644))
-	run("", 0, "seat", "add", "ada", adaPub, "--store", store)
-	git("init", "-q", "-b", "main")
-	git("add", "-A")
-	git("commit", "-qm", "a new store")
+	assert.Contains(t, run("", 0, "init", "--store", store, "--recovery", recPub), "SECRETS INIT OK store="+store+" next: nova-secrets seat add")
+	assert.Contains(t, run("", 2, "init", "--store", store, "--recovery", recPub), "store "+store+" exists; use: nova-secrets seat add")
+	git("log", "--oneline")
+	assert.Contains(t, run("", 0, "seat", "add", "ada", adaPub, "--store", store), "SECRETS SEAT ADD OK seat=ada")
+	assert.Contains(t, run("", 2, "set", "X", "--store", "/nonexistent-store", "--key", ada, "--as", "ada", "--sops", sops), "not a git repository")
 
 	seat := []string{"--store", store, "--as", "ada", "--key", ada, "--sops", sops}
 	run("value-one-xyz\n", 0, append([]string{"set", "GH_TOKEN"}, seat...)...)
@@ -86,6 +83,8 @@ func TestARealStore(t *testing.T) {
 	assert.NotContains(t, string(sealedFile), "value-one-xyz")
 	assert.Contains(t, string(sealedFile), "ENC[")
 
+	assert.Equal(t, "GH_TOKEN\nAPI_KEY\n", run("", 0, "names", "--store", store, "--as", "ada"), "names in the order set; no key needed")
+	assert.NotContains(t, run("", 0, "names", "--store", store), "value-")
 	got := run("", 0, append(append([]string{"exec"}, seat...), "--only", "GH_TOKEN", "--require=GH_TOKEN", "--",
 		"sh", "-c", `test "$GH_TOKEN" = value-one-xyz && test -z "$API_KEY" && echo delivered`)...)
 	assert.Contains(t, got, "delivered")
@@ -101,7 +100,12 @@ func TestARealStore(t *testing.T) {
 	got = run("", 0, append(append([]string{"exec"}, boSeat...), "--only", "BO_TOKEN", "--", "sh", "-c", `test "$BO_TOKEN" = value-bo-xyz && echo delivered`)...)
 	assert.Contains(t, got, "delivered")
 	run("", 125, append(append([]string{"exec"}, seat...), "--only", "BO_TOKEN", "--", "true")...)
-	run("", 125, "exec", "--store", store, "--as", "bo", "--key", ada, "--sops", sops, "--only", "BO_TOKEN", "--", "true")
+	wrong := run("", 125, "exec", "--store", store, "--as", "bo", "--key", ada, "--sops", sops, "--only", "BO_TOKEN", "--", "true")
+	assert.Contains(t, wrong, "seat bo cannot decrypt bo.yaml: its key is not among the file's recipients (2 recipients); run: nova-secrets seat add bo age1")
+	assert.NotContains(t, wrong, "value-bo-xyz")
+	assert.Contains(t, run("", 125, "exec", "--store", store, "--as", "bo", "--key", bo, "--sops", "/nonexistent/sops", "--only", "BO_TOKEN", "--", "true"), "sops not found at /nonexistent/sops; install sops 3.x")
+	assert.Contains(t, run("", 125, "exec", "--store", store, "--as", "zed", "--key", bo, "--sops", sops, "--only", "BO_TOKEN", "--", "true"), "seat zed has no file in")
+	assert.Contains(t, run("", 2, append([]string{"set", "N"}, seat...)...), "empty or multi-line value")
 
 	require.NoError(t, os.Chmod(ada, 0o644))
 	run("", 125, append(append([]string{"exec"}, seat...), "--only", "API_KEY", "--", "true")...)
