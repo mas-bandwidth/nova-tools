@@ -49,6 +49,14 @@ over budget means the spec is not minimal; raising one is a PR that says why.
 `BUDGET` lines are exactly `name  number`, with no comments or duplicates, and
 include `boundary` itself (400).
 
+### Raised budgets
+
+- `bus` 600 -> 700 (2026-11-05): a named ACL user (`NOVA_BUS_USER`) and the
+  cold reviews' fixes, each a rule the spec now states: name and `--re`
+  shapes, deduped recipients, empty-subject refusal, VERB STATUS lines
+  (`HOOK OK`, `WHO OK`, `PENDING OK`), the holder and budget in `HOOK WAIT`,
+  and an unreachable server said plainly with the reconnect log rate-limited.
+
 ## Adding a tool
 
 1. Make a new top-level directory with `package main` files.

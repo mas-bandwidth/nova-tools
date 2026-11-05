@@ -22,8 +22,9 @@ import (
 var verbUsage = map[string]string{
 	"send": `  nova-bus send --as <me> --to <name>[,<name>] [--re <id>] <subject> <body | ->
       Append one message to each recipient's inbox; prints "<name> <id>" for each.
-      A body of - is read from stdin. A failed send prints SEND FAILED and exits 1;
-      it is never retried.
+      Recipients are sent to once each. A body of - is read from stdin, less one
+      trailing newline. --re takes an id as hook prints it. A failed send prints
+      SEND FAILED and exits 1; it is never retried.
 `,
 	"hook": `  nova-bus hook --as <name>
       Print every waiting message for <name>, then each new one as it arrives,
@@ -34,16 +35,18 @@ var verbUsage = map[string]string{
       <name> is present (see who). Runs until killed; exits 0 on SIGINT/SIGTERM.
       One hook per name: a hook that finds the name held waits up to 40 s for
       it to lapse (a restart after a crash), then claims it or, if it is still
-      held, exits 1 "name already hooked".
+      held, exits 1 "name already hooked". On stderr: HOOK WAIT while waiting,
+      HOOK OK name=<name> waiting=<n> once claimed.
 `,
 	"who": `  nova-bus who
-      Print each name whose hook is running and how long it has been up, one
-      per line, name<TAB>uptime, sorted by name. A crashed hook drops out
-      within 30 seconds.
+      Print WHO OK present=<n>, then each name whose hook is running and how
+      long it has been up, one per line, name<TAB>uptime, sorted by name. A
+      crashed hook drops out within 30 seconds.
 `,
 	"pending": `  nova-bus pending --as <name> [--list]
-      Print how many messages wait for <name> that no hook has handled; with
-      --list, then id<TAB>subject for each, oldest first. Nothing is consumed.
+      Print PENDING OK waiting=<n>, the messages for <name> no hook has handled;
+      with --list, then id<TAB>from<TAB>subject for each, oldest first. Nothing
+      is consumed.
 `,
 	"help": `  nova-bus help [<verb>] | <verb> -h
       Print this, or one verb's usage.
@@ -53,8 +56,9 @@ var verbUsage = map[string]string{
 var verbOrder = []string{"send", "hook", "who", "pending", "help"}
 
 const usageFooter = `
-Names may not contain ':'. Exit 0 ok, 1 refused or failed, 2 usage error.
-Environment: NOVA_BUS_REDIS=host:port (required), NOVA_BUS_PASSWORD (optional).
+A name is letters, digits, '.', '_' and '-'. Exit 0 ok, 1 refused or failed,
+2 usage error. Environment: NOVA_BUS_REDIS=host:port (required),
+NOVA_BUS_USER and NOVA_BUS_PASSWORD (optional; AUTH as that user, else default).
 `
 
 func usage() string {
@@ -108,8 +112,9 @@ type Store interface {
 	Waiting(ctx context.Context, stream string) ([]Msg, error)
 	Trim(ctx context.Context, stream, id string) error
 	// Claim sets name's presence to value for ttl unless another value is
-	// present (false); Release deletes it only if it still holds value.
-	Claim(ctx context.Context, name, value string, ttl time.Duration) (bool, error)
+	// present, which it returns ("" when claimed); Release deletes it only if
+	// it still holds value.
+	Claim(ctx context.Context, name, value string, ttl time.Duration) (string, error)
 	Release(ctx context.Context, name, value string) error
 	// Presence returns every present name and its value ("" if unreadable).
 	Presence(ctx context.Context) (map[string]string, error)
@@ -128,7 +133,10 @@ func (realClock) After(d time.Duration) <-chan time.Time { return time.After(d) 
 
 type writeError struct{ error }
 
-var errHooked = errors.New("name already hooked")
+var (
+	errHooked = errors.New("name already hooked")
+	errTaken  = errors.New("name taken by another hook")
+)
 
 // main stops a hook cleanly on SIGINT or SIGTERM, releasing its presence, and
 // ignores SIGPIPE so a closed stdout is a write error (EPIPE) and the same
@@ -143,7 +151,7 @@ func main() {
 	os.Exit(code)
 }
 
-func run(ctx context.Context, args []string, env func(string) string, stdin io.Reader, stdout, stderr io.Writer, dial func(addr, password string) Store, clk Clock) int {
+func run(ctx context.Context, args []string, env func(string) string, stdin io.Reader, stdout, stderr io.Writer, dial func(addr, user, password string) Store, clk Clock) int {
 	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" || (args[0] == "help" && len(args) == 1) {
 		fmt.Fprint(stdout, usage())
 		return 0
@@ -196,66 +204,118 @@ func run(ctx context.Context, args []string, env func(string) string, stdin io.R
 	if env("NOVA_BUS_REDIS") == "" {
 		missing = append(missing, "NOVA_BUS_REDIS (host:port)")
 	}
-	names := strings.Split(*to, ",")
-	for i := range names {
-		names[i] = strings.TrimSpace(names[i])
+	var names []string // --to, trimmed, each once, in order
+	for _, n := range strings.Split(*to, ",") {
+		if n = strings.TrimSpace(n); !slices.Contains(names, n) {
+			names = append(names, n)
+		}
+	}
+	bad = nil // the names this verb uses that are not a name's shape
+	if verb == "send" {
+		bad = slices.DeleteFunc(slices.Clone(names), validName)
+	}
+	if verb != "who" && !validName(*as) {
+		bad = append([]string{*as}, bad...)
 	}
 	switch {
 	case len(missing) > 0:
 		return misuse(stderr, verb, "missing %s", strings.Join(missing, ", "))
-	case strings.Contains(*as+*to, ":"):
-		return misuse(stderr, verb, "a name may not contain ':'")
-	case *re == "-":
-		return misuse(stderr, verb, "--re wants a message id (as hook prints it), not -")
+	case env("NOVA_BUS_USER") != "" && env("NOVA_BUS_PASSWORD") == "":
+		return misuse(stderr, verb, "NOVA_BUS_USER is set but NOVA_BUS_PASSWORD is empty: a named user needs its password")
+	case verb == "send" && slices.Contains(names, ""):
+		return misuse(stderr, verb, "empty name in --to %q", *to)
+	case len(bad) > 0:
+		return misuse(stderr, verb, "bad name %q: a name is letters, digits, '.', '_' and '-'", bad[0])
+	case *re != "" && !idShape(*re):
+		return misuse(stderr, verb, "--re %q is not a message id like 1730800000000-0 (as hook prints it)", *re)
 	case verb != "send" && fs.NArg() != 0:
 		return misuse(stderr, verb, "%s takes no arguments", verb)
 	case verb == "send" && fs.NArg() > 2:
 		return misuse(stderr, verb, "send takes one subject and one body, not %d arguments", fs.NArg())
-	case verb == "send" && slices.Contains(names, ""):
-		return misuse(stderr, verb, "empty name in --to %q", *to)
+	case verb == "send" && strings.TrimSpace(fs.Arg(0)) == "":
+		return misuse(stderr, verb, "empty subject")
 	}
-	store := dial(env("NOVA_BUS_REDIS"), env("NOVA_BUS_PASSWORD"))
+	addr := env("NOVA_BUS_REDIS")
+	store := dial(addr, env("NOVA_BUS_USER"), env("NOVA_BUS_PASSWORD"))
 	switch verb {
 	case "hook":
-		return runHook(ctx, store, *as, clk, stdout, stderr)
+		return runHook(ctx, store, *as, addr, clk, stdout, stderr)
 	case "who":
-		return who(ctx, store, clk.Now(), stdout, stderr)
+		return who(ctx, store, addr, clk.Now(), stdout, stderr)
 	case "pending":
-		return pending(ctx, store, *as, *list, stdout, stderr)
+		return pending(ctx, store, *as, addr, *list, stdout, stderr)
 	}
 	body := fs.Arg(1)
 	if body == "-" {
 		b, err := io.ReadAll(stdin)
 		if err != nil {
-			return fail(stderr, "reading body from stdin: %v", err)
+			return fail(stderr, verb, "reading body from stdin: %v", err)
 		}
-		body = string(b)
+		body = strings.TrimSuffix(string(b), "\n")
 	}
-	msg := map[string]string{"from": *as, "to": *to, "subject": fs.Arg(0), "body": body, "re": *re}
+	msg := map[string]string{"from": *as, "to": strings.Join(names, ","), "subject": fs.Arg(0), "body": body, "re": *re}
 	for _, name := range names {
 		id, err := store.Add(ctx, "bus:"+name, msg)
 		if err != nil {
-			return fail(stderr, "SEND FAILED to %s: %v", name, err)
+			return fail(stderr, verb, "SEND FAILED to %s: %s", name, describe(err, addr))
 		}
 		fmt.Fprintf(stdout, "%s %s\n", name, id)
 	}
 	return 0
 }
 
+// validName is a name's shape: letters, digits, '.', '_' and '-'.
+func validName(n string) bool {
+	return n != "" && strings.Trim(n, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-") == ""
+}
+
+// idShape is a stream id as hook prints it: <ms>-<seq>.
+func idShape(id string) bool {
+	ms, seq, ok := strings.Cut(id, "-")
+	digits := func(s string) bool { return s != "" && strings.Trim(s, "0123456789") == "" }
+	return ok && digits(ms) && digits(seq)
+}
+
+// describe names a Redis error, saying an unreachable or lost server plainly.
+func describe(err error, addr string) string {
+	for _, c := range [][2]string{{"connection refused", "connection refused"}, {"no such host", "no such host"}, {"timeout", "timed out"},
+		{"connection reset", "connection lost"}, {"broken pipe", "connection lost"}, {io.EOF.Error(), "connection lost"}} {
+		if strings.Contains(err.Error(), c[0]) {
+			return fmt.Sprintf("cannot reach redis at %s (NOVA_BUS_REDIS): %s", addr, c[1])
+		}
+	}
+	return err.Error()
+}
+
 // runHook runs hook, reconnecting after an error, until ctx ends (exit 0) or
 // stdout fails (exit 1), releasing presence either way; or until the name is
 // found hooked by another process (exit 1, its presence left alone)
 // (tla/Presence.tla Exit, Claim: OnlyOwnerDeletes, GoneAfterExit).
-func runHook(ctx context.Context, store Store, name string, clk Clock, stdout, stderr io.Writer) int {
+// A reconnect is logged once, then at most once a minute.
+func runHook(ctx context.Context, store Store, name, addr string, clk Clock, stdout, stderr io.Writer) int {
 	value := clk.Now().UTC().Format(time.RFC3339) + "\t" + rand.Text()
+	var logged time.Time
+	announced := false
+	onClaim := func(waiting int64) { // HOOK OK once, not on each reconnect
+		if !announced {
+			fmt.Fprintf(stderr, "HOOK OK name=%s waiting=%d\n", name, waiting)
+			announced = true
+		}
+	}
 	for {
-		err := hook(ctx, store, name, value, clk, stdout, stderr)
+		err := hook(ctx, store, name, value, clk, stdout, stderr, onClaim)
 		var we writeError
 		if errors.Is(err, errHooked) {
-			return fail(stderr, "name already hooked: %s", name)
+			return fail(stderr, "hook", "name already hooked: %s after %s; run: nova-bus who", name, presenceTTL+presenceRefresh)
+		}
+		if errors.Is(err, errTaken) {
+			return fail(stderr, "hook", "name taken by another hook while this one lapsed: %s; run: nova-bus who", name)
 		}
 		if ctx.Err() == nil && !errors.As(err, &we) {
-			fmt.Fprintf(stderr, "nova-bus: %v; reconnecting\n", err)
+			if t := clk.Now(); logged.IsZero() || t.Sub(logged) >= time.Minute {
+				fmt.Fprintf(stderr, "nova-bus hook: %s; reconnecting\n", describe(err, addr))
+				logged = t
+			}
 			select {
 			case <-ctx.Done():
 			case <-clk.After(time.Second):
@@ -264,13 +324,13 @@ func runHook(ctx context.Context, store Store, name string, clk Clock, stdout, s
 		}
 		rel, cancel := context.WithTimeout(context.WithoutCancel(ctx), cleanupTimeout)
 		if rerr := store.Release(rel, name, value); rerr != nil {
-			fmt.Fprintf(stderr, "nova-bus: releasing presence: %v\n", rerr)
+			fmt.Fprintf(stderr, "nova-bus hook: releasing presence: %s\n", describe(rerr, addr))
 		}
 		cancel()
 		if ctx.Err() != nil {
 			return 0
 		}
-		return fail(stderr, "writing stdout: %v", err)
+		return fail(stderr, "hook", "writing stdout: %v", err)
 	}
 }
 
@@ -281,26 +341,32 @@ func runHook(ctx context.Context, store Store, name string, clk Clock, stdout, s
 // It claims again whenever presenceRefresh has passed, and a read waits no
 // longer than that is due (tla/Presence.tla Start, Refresh: StartOnlyWhenFree,
 // LiveIsPresent). An ack is not cut short by a signal: a printed line is acked.
-func hook(ctx context.Context, store Store, name, value string, clk Clock, out, stderr io.Writer) error {
+func hook(ctx context.Context, store Store, name, value string, clk Clock, out, stderr io.Writer, onClaim func(waiting int64)) error {
 	stream := "bus:" + name
-	ok, err := store.Claim(ctx, name, value, presenceTTL)
-	if err == nil && !ok {
-		fmt.Fprintf(stderr, "HOOK WAIT name=%s ttl=%d\n", name, int(presenceTTL.Seconds()))
-		for end := clk.Now().Add(presenceTTL + presenceRefresh); err == nil && !ok && clk.Now().Before(end); {
+	held, err := store.Claim(ctx, name, value, presenceTTL)
+	if err == nil && held != "" {
+		since, _, _ := strings.Cut(held, "\t")
+		fmt.Fprintf(stderr, "HOOK WAIT name=%s held_since=%s ttl=%s budget=%s\n", name, since, presenceTTL, presenceTTL+presenceRefresh)
+		for end := clk.Now().Add(presenceTTL + presenceRefresh); err == nil && held != "" && clk.Now().Before(end); {
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
 			case <-clk.After(claimPoll):
 			}
-			ok, err = store.Claim(ctx, name, value, presenceTTL)
+			held, err = store.Claim(ctx, name, value, presenceTTL)
 		}
 	}
-	if err == nil && !ok {
+	if err == nil && held != "" {
 		err = errHooked
 	}
 	if err != nil {
 		return err
 	}
+	waiting, err := store.Count(ctx, stream)
+	if err != nil {
+		return err
+	}
+	onClaim(waiting)
 	due := clk.Now().Add(presenceRefresh)
 	refresh := func() error {
 		t := clk.Now()
@@ -308,9 +374,9 @@ func hook(ctx context.Context, store Store, name, value string, clk Clock, out, 
 			return nil
 		}
 		due = t.Add(presenceRefresh)
-		ok, err := store.Claim(ctx, name, value, presenceTTL)
-		if err == nil && !ok {
-			err = errHooked
+		held, err := store.Claim(ctx, name, value, presenceTTL)
+		if err == nil && held != "" {
+			err = errTaken
 		}
 		return err
 	}
@@ -355,13 +421,14 @@ func hook(ctx context.Context, store Store, name, value string, clk Clock, out, 
 	}
 }
 
-// who prints name<TAB>uptime for every present name, sorted by name; ? when
-// the value is not a start time.
-func who(ctx context.Context, store Store, now time.Time, stdout, stderr io.Writer) int {
+// who prints WHO OK present=<n>, then name<TAB>uptime for every present name,
+// sorted by name; ? when the value is not a start time.
+func who(ctx context.Context, store Store, addr string, now time.Time, stdout, stderr io.Writer) int {
 	present, err := store.Presence(ctx)
 	if err != nil {
-		return fail(stderr, "who: %v", err)
+		return fail(stderr, "who", "%s", describe(err, addr))
 	}
+	fmt.Fprintf(stdout, "WHO OK present=%d\n", len(present))
 	names := make([]string, 0, len(present))
 	for n := range present {
 		names = append(names, n)
@@ -378,23 +445,21 @@ func who(ctx context.Context, store Store, now time.Time, stdout, stderr io.Writ
 	return 0
 }
 
-// pending prints the count of entries no hook has acked, then with list each
-// id<TAB>subject.
-func pending(ctx context.Context, store Store, name string, list bool, stdout, stderr io.Writer) int {
+// pending prints PENDING OK waiting=<n>, the entries no hook has acked, then
+// with list each id<TAB>from<TAB>subject.
+func pending(ctx context.Context, store Store, name, addr string, list bool, stdout, stderr io.Writer) int {
+	var msgs []Msg
 	n, err := store.Count(ctx, "bus:"+name)
+	if list && err == nil {
+		msgs, err = store.Waiting(ctx, "bus:"+name)
+		n = int64(len(msgs))
+	}
 	if err != nil {
-		return fail(stderr, "pending: %v", err)
+		return fail(stderr, "pending", "%s", describe(err, addr))
 	}
-	fmt.Fprintln(stdout, n)
-	if !list {
-		return 0
-	}
-	msgs, err := store.Waiting(ctx, "bus:"+name)
-	if err != nil {
-		return fail(stderr, "pending: %v", err)
-	}
+	fmt.Fprintf(stdout, "PENDING OK waiting=%d\n", n)
 	for _, m := range msgs {
-		fmt.Fprintf(stdout, "%s\t%s\n", m.ID, escaper.Replace(m.Fields["subject"]))
+		fmt.Fprintf(stdout, "%s\t%s\t%s\n", m.ID, escaper.Replace(m.Fields["from"]), escaper.Replace(m.Fields["subject"]))
 	}
 	return 0
 }
@@ -414,8 +479,9 @@ func line(m Msg) string {
 	return strings.Join(parts, "\t") + "\n"
 }
 
-func fail(stderr io.Writer, format string, a ...any) int {
-	fmt.Fprintf(stderr, "nova-bus: "+format+"\n", a...)
+// fail reports a refusal or a runtime failure in one line, exit 1.
+func fail(stderr io.Writer, verb, format string, a ...any) int {
+	fmt.Fprintf(stderr, "nova-bus %s: %s\n", verb, fmt.Sprintf(format, a...))
 	return 1
 }
 
