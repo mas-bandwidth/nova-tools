@@ -21,7 +21,7 @@
           },
           {
             "name": "secret-sweep",
-            "argv": ["nova-secrets", "list"],
+            "argv": ["nova-secrets", "names"],
             "env": {},
             "log": "~/.cache/nova/secret-sweep.log",
             "seat": "reader",
