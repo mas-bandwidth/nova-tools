@@ -6,7 +6,7 @@
 (* server's lane records (nova-sprint internal/sprint/lane_hold.go,        *)
 (* steps_work.go takeOne) and the client inside the friend's supervised    *)
 (* hook service (nova-tools internal/friend/client.go, cmd/nova-hook       *)
-(* lanes.go). The lane rules themselves are the server's (nova-sprint      *)
+(* lanes.go). ServerLane.tla is the server's lane protocol (nova-sprint    *)
 (* internal/sprint/lane_hold.go); this module is who holds the state, and  *)
 (* what a restart, a dead client and a dead model do to it.                *)
 (*                                                                         *)
