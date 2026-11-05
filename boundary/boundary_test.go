@@ -20,7 +20,7 @@ const modulePath = "github.com/mas-bandwidth/nova-tools"
 // Anything else fails the test; see docs/BOUNDARY.md before extending it.
 var allowedTop = map[string]bool{
 	// tools and support directories
-	"bus": true, "config": true, "sandbox": true, "secrets": true, "slot": true,
+	"bus": true, "config": true, "sandbox": true, "secrets": true, "reserve": true,
 	"fleet": true, "tla": true, "docs": true, "boundary": true, ".github": true,
 	// version control
 	".git": true,
@@ -35,7 +35,7 @@ var libraryDirs = map[string]bool{"pkg": true, "internal": true, "cmd": true}
 
 // mainTools are the tools that are one package main and import nothing from
 // this module.
-var mainTools = []string{"bus", "config", "sandbox", "secrets", "slot"}
+var mainTools = []string{"bus", "config", "sandbox", "secrets", "reserve"}
 
 // allowedTools is the exact set of tool directives permitted in go.mod.
 var allowedTools = []string{

@@ -9,7 +9,7 @@ under plain `go test ./...` and needs no network, sockets or real time.
 ## The allowed shape
 
 The top level holds the five tools (`bus`, `config`, `sandbox`, `secrets`,
-`slot`) and the fleet plays (`fleet`, Ansible plus a `doc.go`, no program), `tla` (models), `docs`, `boundary` (the test), `.github`, and the
+`reserve`) and the fleet plays (`fleet`, Ansible plus a `doc.go`, no program), `tla` (models), `docs`, `boundary` (the test), `.github`, and the
 root files named in the test. Any other top-level entry fails the test, and so does any symlink anywhere.
 
 ## No library layer

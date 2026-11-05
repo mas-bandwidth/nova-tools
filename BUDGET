@@ -3,5 +3,5 @@ config  950
 fleet  50
 sandbox  1550
 secrets  650
-slot  500
+reserve  500
 boundary  400
