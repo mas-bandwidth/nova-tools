@@ -1,26 +1,9 @@
 package main
 
 // The seccomp-bpf program, built for one architecture from the wall's options. It is
-// pure (no syscall), so it is built and interpreted in unit tests on every OS and for
-// every architecture it supports. seccomp_linux.go installs it.
-//
-// Landlock does not path-check a unix-domain connect, so a command inside the wall could
-// reach any same-uid socket: /proc/net/unix lists the paths. The only fence without a
-// path check is to stop the command making a unix socket that can be pointed at a path.
-// So by default socket(AF_UNIX) and every socketpair(AF_UNIX) except SOCK_STREAM are
-// refused. A stream pair is connected to its twin: connect and sendto elsewhere fail
-// with EISCONN, so it is allowed, and event loops (Python asyncio, Go, libuv) need one.
-// A DGRAM pair can reconnect or sendto any datagram path, and a SEQPACKET pair was
-// measured to sendto a datagram path too, so both are refused.
-//
-// Landlock fences TCP only. Under --net-deny the filter closes the rest by socket
-// family: with no --net-allow only AF_UNIX (as above) and AF_NETLINK may be created, so
-// there is no UDP, raw, packet or TCP socket at all; with --net-allow AF_INET and
-// AF_INET6 are also allowed, but only as SOCK_STREAM with protocol 0 or IPPROTO_TCP,
-// which is what Landlock checks. Every other family (SCTP, MPTCP, ICMP, SMC, TIPC,
-// vsock, AF_ALG and the rest) is refused. ptrace and io_uring (whose queue runs
-// operations seccomp does not see) are refused at any argument. The filter is inherited
-// across fork and execve beside the Landlock ruleset.
+// pure, so unit tests build and interpret it on every OS for every architecture.
+// seccomp_linux.go installs it. What each rule is for, and what was measured, is in
+// docs/SPEC-SANDBOX.md; the rule names below are what show prints.
 
 const (
 	// An action the kernel does not know is treated as a kill, so KILL_PROCESS is safe
@@ -49,17 +32,20 @@ const (
 	offArg0 = 16
 	offArg1 = 24
 	offArg2 = 32
+	offArg3 = 40
 )
 
 // Linux values, written out so the program is the same whatever OS builds it.
 const (
-	afUnix      = 1
-	afInet      = 2
-	afInet6     = 10
-	afNetlink   = 16
-	sockStream  = 1
-	sockTypeMsk = 0xf // SOCK_TYPE_MASK: drops SOCK_NONBLOCK and SOCK_CLOEXEC
-	ipprotoTCP  = 6
+	afUnix       = 1
+	afInet       = 2
+	afInet6      = 10
+	afNetlink    = 16
+	netlinkRoute = 0 // NETLINK_ROUTE: interfaces and addresses; sock_diag (4) lists other processes' sockets
+	msgFastopen  = 0x20000000
+	sockStream   = 1
+	sockTypeMsk  = 0xf // SOCK_TYPE_MASK: drops SOCK_NONBLOCK and SOCK_CLOEXEC
+	ipprotoTCP   = 6
 )
 
 // archNums is one architecture's AUDIT_ARCH and the syscall numbers the filter names.
@@ -69,11 +55,17 @@ type archNums struct {
 	ptrace                 uint32
 	uringSetup, uringEnter uint32
 	uringRegister          uint32
+	sendto, sendmsg        uint32
+	sendmmsg               uint32
+	listen, accept         uint32
+	accept4                uint32
 }
 
 var archTable = map[string]archNums{
-	"amd64": {audit: 0xc000003e, socket: 41, socketpair: 53, ptrace: 101, uringSetup: 425, uringEnter: 426, uringRegister: 427},
-	"arm64": {audit: 0xc00000b7, socket: 198, socketpair: 199, ptrace: 117, uringSetup: 425, uringEnter: 426, uringRegister: 427},
+	"amd64": {audit: 0xc000003e, socket: 41, socketpair: 53, ptrace: 101, uringSetup: 425, uringEnter: 426, uringRegister: 427,
+		sendto: 44, sendmsg: 46, sendmmsg: 307, listen: 50, accept: 43, accept4: 288},
+	"arm64": {audit: 0xc00000b7, socket: 198, socketpair: 199, ptrace: 117, uringSetup: 425, uringEnter: 426, uringRegister: 427,
+		sendto: 206, sendmsg: 211, sendmmsg: 269, listen: 201, accept: 202, accept4: 242},
 }
 
 // netRule is what the filter does to network sockets.
@@ -170,7 +162,29 @@ func buildFilter(arch archNums, o filterOpts) ([]sockFilter, []string) {
 		p = append(p, insn{code: bpfJeqK, k: nr, jt: "eperm"})
 	}
 	names = append(names, "eperm: ptrace", "eperm: io_uring_setup, io_uring_enter, io_uring_register")
+	if o.net == netTCPOnly {
+		// TCP Fast Open connects inside sendto/sendmsg/sendmmsg, where Landlock's connect
+		// hook never looks, and listen() without bind() auto-binds a port its bind hook
+		// never sees. So under --net-allow both are refused here.
+		p = append(p,
+			insn{code: bpfJeqK, k: arch.sendto, jt: "flags3"},
+			insn{code: bpfJeqK, k: arch.sendmmsg, jt: "flags3"},
+			insn{code: bpfJeqK, k: arch.sendmsg, jt: "flags2"},
+			insn{code: bpfJeqK, k: arch.listen, jt: "eperm"},
+			insn{code: bpfJeqK, k: arch.accept, jt: "eperm"},
+			insn{code: bpfJeqK, k: arch.accept4, jt: "eperm"})
+		names = append(names, "eperm: sendto, sendmsg, sendmmsg with MSG_FASTOPEN (a connect Landlock does not see)",
+			"eperm: listen, accept, accept4 on every socket, unix ones included (listen auto-binds a port Landlock does not see)")
+	}
 	p = append(p, insn{code: bpfJmpJA, jt: "allow"})
+	if o.net == netTCPOnly {
+		p = append(p,
+			insn{label: "flags3", code: bpfLdWAbs, k: offArg3},
+			insn{code: bpfJmpJA, jt: "fastopen"},
+			insn{label: "flags2", code: bpfLdWAbs, k: offArg2},
+			insn{label: "fastopen", code: bpfAndK, k: msgFastopen},
+			insn{code: bpfJeqK, k: 0, jt: "allow", jf: "eperm"})
+	}
 	if sockets {
 		unixTo := "allow"
 		if o.fenceUnix {
@@ -185,12 +199,12 @@ func buildFilter(arch archNums, o filterOpts) ([]sockFilter, []string) {
 			p = append(p, insn{code: bpfJmpJA, jt: "allow"})
 		case netClosed:
 			p = append(p,
-				insn{code: bpfJeqK, k: afNetlink, jt: "allow"},
+				insn{code: bpfJeqK, k: afNetlink, jt: "netlink"},
 				insn{code: bpfJmpJA, jt: "eperm"})
 			names = append(names, "eperm: socket of every family but AF_UNIX and AF_NETLINK (no TCP, UDP, raw or packet socket)")
 		case netTCPOnly:
 			p = append(p,
-				insn{code: bpfJeqK, k: afNetlink, jt: "allow"},
+				insn{code: bpfJeqK, k: afNetlink, jt: "netlink"},
 				insn{code: bpfJeqK, k: afInet, jt: "inet"},
 				insn{code: bpfJeqK, k: afInet6, jt: "inet", jf: "eperm"},
 				insn{label: "inet", code: bpfLdWAbs, k: offArg1},
@@ -202,6 +216,12 @@ func buildFilter(arch archNums, o filterOpts) ([]sockFilter, []string) {
 			names = append(names,
 				"eperm: socket(AF_INET or AF_INET6) unless SOCK_STREAM with protocol 0 or IPPROTO_TCP (no UDP, raw, ICMP, SCTP or MPTCP)",
 				"eperm: socket of every other family but AF_UNIX and AF_NETLINK (no packet socket)")
+		}
+		if o.net != netOpen {
+			p = append(p,
+				insn{label: "netlink", code: bpfLdWAbs, k: offArg2},
+				insn{code: bpfJeqK, k: netlinkRoute, jt: "allow", jf: "eperm"})
+			names = append(names, "eperm: socket(AF_NETLINK) unless NETLINK_ROUTE (no sock_diag, which lists other processes' connections)")
 		}
 		pairNotUnix := "allow"
 		if o.net != netOpen {

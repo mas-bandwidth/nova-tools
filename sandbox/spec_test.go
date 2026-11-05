@@ -177,7 +177,9 @@ func TestExitCodes(t *testing.T) {
 	assert.Contains(t, errs, "--read")
 	assert.Contains(t, errs, "no_command")
 	assert.Contains(t, oneLine("nova-sandbox show", "show", "--bogus"), "--bogus")
-	assert.Contains(t, oneLine("nova-sandbox show", "show", "--", "no-such-command-here"), "not_found")
+	code, _, errs = exit("show", "--", "no-such-command-here")
+	assert.Equal(t, 127, code, "show exits for a missing command as a run does")
+	assert.Contains(t, errs, "SANDBOX REFUSED reason=not_found")
 
 	// The command alone: 127 and 126, SANDBOX REFUSED lines.
 	code, _, errs = exit("--", "no-such-command-here")

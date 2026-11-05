@@ -8,14 +8,14 @@ import (
 )
 
 // data is the seccomp_data the interpreter evaluates against.
-type data struct{ arch, nr, arg0, arg1, arg2 uint32 }
+type data struct{ arch, nr, arg0, arg1, arg2, arg3 uint32 }
 
 // verdict interprets the classic-BPF program the way the kernel does, for the opcodes
 // the program uses, and returns its return value. A jump out of range or an unknown
 // opcode fails the test: the kernel would reject that program.
 func verdict(t *testing.T, p []sockFilter, d data) uint32 {
 	t.Helper()
-	field := map[uint32]uint32{offArch: d.arch, offNr: d.nr, offArg0: d.arg0, offArg1: d.arg1, offArg2: d.arg2}
+	field := map[uint32]uint32{offArch: d.arch, offNr: d.nr, offArg0: d.arg0, offArg1: d.arg1, offArg2: d.arg2, offArg3: d.arg3}
 	var a uint32
 	for pc := 0; pc < len(p); {
 		in := p[pc]
@@ -131,6 +131,20 @@ func TestSeccompFilter(t *testing.T) {
 			{"socket smc", sock(afSMC, sockStream, 0), [6]uint32{A, A, E, E, E, E}},
 			{"socket vsock", sock(afVsock, sockStream, 0), [6]uint32{A, A, E, E, E, E}},
 			{"socket alg", sock(afAlg, 5, 0), [6]uint32{A, A, E, E, E, E}},
+
+			{"socket netlink sock_diag", sock(afNetlink, sockRaw, 4), [6]uint32{A, A, E, E, E, E}},
+			{"socket netlink uevent", sock(afNetlink, sockDgram, 15), [6]uint32{A, A, E, E, E, E}},
+
+			{"sendto", data{arch: arch.audit, nr: arch.sendto, arg3: 0x40}, [6]uint32{A, A, A, A, A, A}},
+			{"sendto fastopen", data{arch: arch.audit, nr: arch.sendto, arg3: msgFastopen | 0x40}, [6]uint32{A, A, A, A, E, E}},
+			{"sendto fastopen in arg2 only", data{arch: arch.audit, nr: arch.sendto, arg2: msgFastopen}, [6]uint32{A, A, A, A, A, A}},
+			{"sendmsg", data{arch: arch.audit, nr: arch.sendmsg, arg2: 0x4000}, [6]uint32{A, A, A, A, A, A}},
+			{"sendmsg fastopen", data{arch: arch.audit, nr: arch.sendmsg, arg2: msgFastopen}, [6]uint32{A, A, A, A, E, E}},
+			{"sendmmsg fastopen", data{arch: arch.audit, nr: arch.sendmmsg, arg3: msgFastopen}, [6]uint32{A, A, A, A, E, E}},
+			{"sendmmsg", data{arch: arch.audit, nr: arch.sendmmsg, arg2: msgFastopen}, [6]uint32{A, A, A, A, A, A}},
+			{"listen", data{arch: arch.audit, nr: arch.listen}, [6]uint32{A, A, A, A, E, E}},
+			{"accept", data{arch: arch.audit, nr: arch.accept}, [6]uint32{A, A, A, A, E, E}},
+			{"accept4", data{arch: arch.audit, nr: arch.accept4}, [6]uint32{A, A, A, A, E, E}},
 
 			{"pair unix stream", pair(afUnix, sockStream|sockCloexec), [6]uint32{A, A, A, A, A, A}},
 			{"pair unix seqpacket", pair(afUnix, sockSeqpacket|sockNonblock), [6]uint32{A, E, E, A, E, A}},

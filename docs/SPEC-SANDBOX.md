@@ -83,15 +83,29 @@ Without `--net-deny` nothing is promised about the network, on either OS.
 
 DNS therefore works only from `/etc/hosts`. A name outside it fails to resolve.
 
-`AF_NETLINK` stays open. It is kernel-local and reaches no other host. It was measured: glibc `getaddrinfo` of an
-`/etc/hosts` name works without it, with and without `AI_ADDRCONFIG`. But listing interfaces needs it: `if_nameindex(3)`,
-`ip addr` and Go's `net.Interfaces` fail with `EPERM` when it is closed.
+`AF_NETLINK` stays open, but only as `NETLINK_ROUTE`. It is kernel-local and reaches no other host. It was measured:
+glibc `getaddrinfo` of an `/etc/hosts` name works without netlink, with and without `AI_ADDRCONFIG`. But listing
+interfaces needs `NETLINK_ROUTE`: `if_nameindex(3)`, `ip addr` and Go's `net.Interfaces` fail with `EPERM` without it.
+Every other netlink protocol is refused. That includes `NETLINK_SOCK_DIAG`, which lists every process's TCP and UDP
+connections (`ss -tn`), not only the command's own.
 
 **Linux, `--net-deny --net-allow host:port`.** Landlock reopens TCP connect to each named port. The filter then allows
 `AF_INET` and `AF_INET6`, but only as `SOCK_STREAM` with protocol 0 or `IPPROTO_TCP`, which is what Landlock checks.
-UDP, raw, ICMP, SCTP and MPTCP stay closed, and so does every other family. TCP bind stays closed. DNS over UDP does not
-work: name resolution must come from `/etc/hosts`, or from a resolver on an allowed TCP port. A `--net-allow` port is
-open on every address, not only loopback: Landlock filters by port.
+UDP, raw, ICMP, SCTP and MPTCP stay closed, and so does every other family. DNS over UDP does not work: name resolution
+must come from `/etc/hosts`, or from a resolver on an allowed TCP port. A `--net-allow` port is open on every address,
+not only loopback: Landlock filters by port.
+
+Two TCP paths go around Landlock's hooks, so the filter closes them under `--net-allow`:
+
+- **TCP Fast Open.** `sendto`, `sendmsg` and `sendmmsg` with `MSG_FASTOPEN` connect inside the send, and Landlock's
+  connect hook never sees it. They are refused (`EPERM`) when the flags argument carries `MSG_FASTOPEN`.
+- **`listen` without `bind`.** The kernel picks a port on every address, and Landlock's bind hook never sees it. So
+  `listen`, `accept` and `accept4` are refused on every socket. seccomp cannot tell a unix socket from a TCP one, so
+  this covers unix sockets too.
+
+The rule is: under `--net-allow` nothing can serve. A command that serves a unix socket runs with `--unix` and
+`--net-deny` alone, with no `--net-allow`; there no TCP socket exists, so `listen` stays open. An explicit TCP
+`bind` is refused by Landlock in both modes.
 
 **Linux, no seccomp.** `--net-deny` refuses to start (`net_unenforceable`: "net-deny needs seccomp on this kernel").
 Landlock alone fences TCP only, and the wall never stands weaker than it says. The same refusal comes below Landlock
@@ -147,7 +161,8 @@ On both systems, for the command and every process it starts:
 - The wall cannot be lifted from inside. Landlock and the seccomp filter are inherited across `fork` and `execve` and
   `no_new_privs` stops a setuid binary from escaping them; a `sandbox-exec` profile is inherited the same way.
 - Under `--net-deny`, the network is closed as [The network](#the-network) says: on Linux no socket of any family but
-  `AF_UNIX` and `AF_NETLINK` (TCP sockets come back only for a `--net-allow` port); on macOS no outbound IP and no DNS.
+  `AF_UNIX` and `NETLINK_ROUTE` (TCP client sockets come back only for a `--net-allow` port, with no listen, accept or
+  Fast Open); on macOS no outbound IP and no DNS.
 - No tool process stays behind: the command's exit status is its own.
 
 Linux only:
@@ -182,8 +197,9 @@ macOS only:
 - **Network without `--net-deny`.** Nothing is promised. On Linux it is open; on macOS outbound IP and DNS are open.
 - **Which host a `--net-allow` reaches on Linux.** The rule is a port: a connect to that port on any address passes.
 - **UDP to a `--net-allow` port on macOS.** That port is open to `localhost` for UDP too.
-- **Netlink (Linux).** `AF_NETLINK` stays open under `--net-deny`; it is kernel-local. A command can read the interface
-  list and addresses.
+- **Netlink (Linux).** `NETLINK_ROUTE` stays open under `--net-deny`; it is kernel-local. A command can read the interface
+  list and addresses. The other netlink protocols, `sock_diag` among them, are closed. Without `--net-deny` all are
+  open, so `ss -tn` can list other processes' connections.
 - **Unix sockets under `--unix`, or without seccomp (Linux).** With `--unix` the AF_UNIX fence is off and Landlock does not path-check a
   unix `connect`, so the same-uid escape is open again. Keeping the socket's directory outside the grants does not
   help, because the connect is not a filesystem open.
@@ -206,7 +222,7 @@ macOS only:
 `check` says which backend this host has and whether it works. It applies nothing to a command.
 
 ```
-CHECK OK backend=landlock abi=6 net=enforceable note=landlock abi 6: under --net-deny landlock closes TCP and seccomp closes UDP, raw and every other socket family; signals are confined to the wall only at abi 6+; seccomp available: the unix-socket fence is on by default; its cost is that nothing needing socket(AF_UNIX) works (/dev/log and syslog, NSS sockets such as nscd, sssd and systemd-userdb, agents and local daemons); --unix is the opt-out
+CHECK OK backend=landlock abi=6 net=enforceable note=landlock abi 6; seccomp available; net-deny landlock_tcp+seccomp; signals scoped to the wall at abi 6+
 CHECK OK backend=sandbox-exec abi=- net=enforceable note=sandbox-exec is deprecated by Apple; the wall is the profile it applies (/usr/bin/sandbox-exec)
 CHECK FAILED backend=landlock abi=- reason=no landlock in this kernel: below 5.13, not compiled in, or not in the boot-time lsm= list
 ```
@@ -258,6 +274,7 @@ seccomp action=eperm rule=ptrace
 seccomp action=eperm rule="io_uring_setup, io_uring_enter, io_uring_register"
 seccomp action=eperm rule=socket(AF_UNIX)
 seccomp action=eperm rule="socket of every family but AF_UNIX and AF_NETLINK (no TCP, UDP, raw or packet socket)"
+seccomp action=eperm rule="socket(AF_NETLINK) unless NETLINK_ROUTE (no sock_diag, which lists other processes' connections)"
 seccomp action=eperm rule="socketpair of any family but AF_UNIX"
 seccomp action=eperm rule="socketpair(AF_UNIX) unless SOCK_STREAM"
 seccomp action=allow rule="everything else"
@@ -266,7 +283,8 @@ fds close=above_stderr
 ```
 
 Exit 0 when the wall would start here. Exit 1 when it would refuse here: the `SANDBOX REFUSED` lines go to stderr and
-stdout is empty. Exit 2 for a malformed invocation, including a path or command that does not exist.
+stdout is empty. Exit 2 for a malformed invocation, including a path that does not exist. A command that is missing or
+not executable is 127 or 126, as for a run.
 
 ## probe
 
@@ -287,11 +305,19 @@ removes the scratch directory at the end.
 | `net_deny` | `--write in --net-deny`, the same connect | deny |
 | `tcp_allow` | `--write in --net-deny --net-allow` that listener, the same connect | allow |
 | `udp_control` | `--write in`, one datagram to a UDP listener the probe owns | allow |
+| `tcp_other_deny` | `--write in --net-deny --net-allow` that listener, connect to a second listener on another port | deny |
 | `udp_deny` | `--write in --net-deny`, the same datagram | deny |
+| `udp_deny_allowmode` | `--write in --net-deny --net-allow` the TCP listener, the same datagram | deny |
+| `tfo_control` | `--write in`, a TCP Fast Open send to the second listener (Linux only) | allow |
+| `tfo_deny` | `--write in --net-deny --net-allow` the first listener, the same send (Linux only) | deny |
+| `listen_control` | `--write in`, `listen` on a TCP socket never bound (Linux only) | allow |
+| `listen_deny` | `--write in --net-deny --net-allow` the first listener, the same `listen` (Linux only) | deny |
 | `dns_control` | `--write in`, a lookup of `example.com` | allow |
 | `dns_deny` | `--write in --net-deny`, the same lookup | deny |
 
-The UDP steps are judged by the listener: a datagram that arrives was let through, whatever the sender says. The DNS
+The UDP, `tcp_other_deny` and TCP Fast Open steps are judged by the listener as well: a datagram or connection that
+arrives was let through, whatever the sender says. When Fast Open does not work on the host at all (`tfo_control`
+fails), `tfo_deny` reports `got=untested`. The DNS
 steps run only when the probe itself, unwalled, can resolve `example.com`. Otherwise `dns_deny` reports
 `got=untested` with a note and does not fail: a host with no DNS proves nothing.
 
@@ -304,15 +330,21 @@ PROBE OK backend=landlock abi=6
 ```
 
 A step that went the wrong way ends ` FAIL` and the verdict is `PROBE FAILED backend=<b> abi=<n> failed=<count>`.
-Where `--net-deny` cannot be enforced, `net_deny`, `tcp_allow`, `udp_deny` and `dns_deny` report `got=wall_refused`
-with a note and do not fail. A setup
+Where `--net-deny` cannot be enforced, every step that uses it reports `got=wall_refused` with a note and does not fail. A setup
 error is `PROBE FAILED reason=<error>`. Exit 0 on `PROBE OK`, 1 otherwise.
 
-The network steps run this binary's internal client verbs inside the wall, each exit 0 when the act succeeds: `dial`
-(a connect within three seconds: a TCP address, or a unix socket when the argument is an absolute path), `udp` (one
-datagram sent) and `resolve` (a lookup through the system resolver: on macOS that is libSystem's `getaddrinfo`, on Linux
-Go's resolver, which sends the same DNS queries). No shell or tool present on every host can open a connection. Its directory is granted with `--read` for those steps. `unix_allow` runs only on Linux,
-where `--unix` is meaningful.
+The network steps run this binary's hidden verb `probe-client <kind> <arg>` inside the wall, which exits 0 when the act
+succeeds. The kinds:
+
+- `dial`: a connect within three seconds, to a TCP address, or to a unix socket when the argument is an absolute path.
+- `udp`: one datagram sent.
+- `resolve`: a lookup through the system resolver. On macOS that is libSystem's `getaddrinfo`; on Linux, Go's resolver,
+  which sends the same DNS queries.
+- `tfo`: a `MSG_FASTOPEN` send (Linux).
+- `listen`: `listen` on an unbound TCP socket (Linux).
+
+No shell or tool present on every host can open a connection. The binary's directory is granted with `--read` for those
+steps.
 
 ## Refusals and exit codes
 
@@ -399,7 +431,8 @@ each ABI built from a spec; the macOS profile text built from a spec, including 
 only as parameters; the seccomp program, built for both amd64 and arm64 syscall numbers and interpreted against synthetic `seccomp_data`
 for every rule under every flag set, on every OS: the kill for a wrong architecture and an x32 number, each socketpair
 type, and under `--net-deny` and `--net-allow` each socket kind (TCP, UDP, ICMP, raw, SCTP, MPTCP, packet, SMC, vsock,
-`AF_ALG`, netlink); that the native numbers match the kernel headers (Linux); the rule names `show` prints; the
+`AF_ALG`, each netlink protocol), `MSG_FASTOPEN` in each send's flags argument, and `listen`/`accept`/`accept4`;
+that the native numbers match the kernel headers (Linux); the rule names `show` prints; the
 `show` text for both OSes; the Linux plan and its refusals; exit codes and the one-line refusals through `run`,
 2/125/126/127.
 
@@ -409,7 +442,8 @@ named, exit status pass-through, the 125/126/127 refusals, environment and worki
 verbatim through a symlink and a symlinked `#!` script, the fence's cost (`asyncio`, socketpair types, `logger`,
 `gpg-connect-agent`), the AF_UNIX fence and `--unix`, the `systemd-run --user` escape (skipped where systemd
 `--user` is absent), `--keep-fds`, `--net-deny` with `--net-allow`, a UDP datagram under `--net-deny` and
-`--net-allow` (the listener judges), every socket kind from Python under both, DNS through Go and through glibc
+`--net-allow` (the listener judges), every socket kind from Python under both, the TCP Fast Open and `listen`-without-`bind` holes under `--net-allow`
+(with a unix server under `--unix --net-deny` still working), DNS through Go and through glibc
 `getent` under `--net-deny` (with `/etc/hosts` still answering), the `show` block against a snapshot, and the worked
 example above, as written. The macOS wall is covered at unit level by the
 generated profile text only.

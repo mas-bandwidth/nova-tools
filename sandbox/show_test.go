@@ -53,6 +53,7 @@ seccomp action=eperm rule=ptrace
 seccomp action=eperm rule="io_uring_setup, io_uring_enter, io_uring_register"
 seccomp action=eperm rule=socket(AF_UNIX)
 seccomp action=eperm rule="socket of every family but AF_UNIX and AF_NETLINK (no TCP, UDP, raw or packet socket)"
+seccomp action=eperm rule="socket(AF_NETLINK) unless NETLINK_ROUTE (no sock_diag, which lists other processes' connections)"
 seccomp action=eperm rule="socketpair of any family but AF_UNIX"
 seccomp action=eperm rule="socketpair(AF_UNIX) unless SOCK_STREAM"
 seccomp action=allow rule="everything else"
@@ -75,7 +76,8 @@ func TestFormatLinux(t *testing.T) {
 	w = &wall{netDeny: true, netPorts: []uint16{8080, 9}, unix: true, keepFDs: true}
 	p, _ = planLinux(w, linuxHost{landlock: true, abi: 6, seccomp: true})
 	got = formatLinux(w, p, func(string) bool { return true })
-	assert.Contains(t, got, "net rule=tcp_allow tcp_connect=allow ports=8080,9 tcp_bind=deny by=landlock udp=deny")
+	assert.Contains(t, got, "net rule=tcp_allow tcp_connect=allow ports=8080,9 tcp_bind=deny by=landlock listen=deny accept=deny fastopen=deny udp=deny raw=deny packet=deny by=seccomp")
+	assert.Contains(t, got, "seccomp action=eperm rule=\"listen, accept, accept4 on every socket")
 	assert.Contains(t, got, "scope signal=wall abstract_unix=wall\n")
 	assert.Contains(t, got, "fds keep=all")
 	assert.NotContains(t, got, "rule=socket(AF_UNIX)\n", "--unix")

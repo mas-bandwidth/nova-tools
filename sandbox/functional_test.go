@@ -91,7 +91,8 @@ func TestCheckAndProbe(t *testing.T) {
 	assert.Contains(t, out, "name=unix_deny expect=deny got=deny")
 	assert.Contains(t, out, "name=unix_allow expect=allow got=allow")
 	for _, step := range []string{"net_deny expect=deny got=deny", "tcp_allow expect=allow got=allow",
-		"udp_control expect=allow got=allow", "udp_deny expect=deny got=deny"} {
+		"udp_control expect=allow got=allow", "udp_deny expect=deny got=deny", "tcp_other_deny expect=deny got=deny",
+		"udp_deny_allowmode expect=deny got=deny", "listen_control expect=allow got=allow", "listen_deny expect=deny got=deny"} {
 		assert.Contains(t, out, "name="+step+"\n")
 	}
 	if !strings.Contains(out, "name=dns_deny expect=deny got=untested") {
@@ -264,7 +265,7 @@ func TestUnixSocketIsFencedByDefault(t *testing.T) {
 	self := bin(t)
 	read := []string{"--read", filepath.Dir(self)}
 	args := func(extra ...string) []string {
-		return append(append(append([]string{}, read...), extra...), "--write", job, "--", self, "dial", sock)
+		return append(append(append([]string{}, read...), extra...), "--write", job, "--", self, clientVerb, "dial", sock)
 	}
 	code, _, stderr := sandbox(t, job, args()...)
 	assert.NotEqual(t, 0, code, "AF_UNIX is refused, so the connect cannot be made: "+stderr)
@@ -336,7 +337,7 @@ func TestNetDenyRefusesAConnect(t *testing.T) {
 	}()
 	dial := []string{"--read", filepath.Dir(bin(t)), "--write", job}
 	args := func(extra ...string) []string {
-		return append(append(append([]string{}, dial...), extra...), "--", bin(t), "dial", l.Addr().String())
+		return append(append(append([]string{}, dial...), extra...), "--", bin(t), clientVerb, "dial", l.Addr().String())
 	}
 	code, _, stderr := sandbox(t, job, args()...)
 	require.Equal(t, 0, code, "without --net-deny the connect works: "+stderr)
@@ -371,7 +372,7 @@ func TestNetDenyClosesUDP(t *testing.T) {
 	addr, got := udpListener(t)
 	self := bin(t)
 	args := func(extra ...string) []string {
-		return append(append([]string{"--read", filepath.Dir(self), "--write", job}, extra...), "--", self, "udp", addr)
+		return append(append([]string{"--read", filepath.Dir(self), "--write", job}, extra...), "--", self, clientVerb, "udp", addr)
 	}
 	code, _, stderr := sandbox(t, job, args()...)
 	require.Equal(t, 0, code, stderr)
@@ -434,9 +435,9 @@ func TestNetDenyClosesDNS(t *testing.T) {
 	job, _ := scratch(t)
 	self := bin(t)
 	read := []string{"--read", filepath.Dir(self), "--write", job}
-	code, _, stderr := sandbox(t, job, append(read, "--", self, "resolve", "example.com")...)
+	code, _, stderr := sandbox(t, job, append(read, "--", self, clientVerb, "resolve", "example.com")...)
 	require.Equal(t, 0, code, "the control resolves: "+stderr)
-	code, _, _ = sandbox(t, job, append(read, "--net-deny", "--", self, "resolve", "example.com")...)
+	code, _, _ = sandbox(t, job, append(read, "--net-deny", "--", self, clientVerb, "resolve", "example.com")...)
 	assert.Equal(t, 1, code, "DNS is closed under --net-deny")
 	if getent, err := exec.LookPath("getent"); err == nil {
 		code, out, _ := sandbox(t, job, "--write", job, "--net-deny", "--", getent, "ahosts", "example.com")
@@ -490,6 +491,7 @@ seccomp action=eperm rule=ptrace
 seccomp action=eperm rule="io_uring_setup, io_uring_enter, io_uring_register"
 seccomp action=eperm rule=socket(AF_UNIX)
 seccomp action=eperm rule="socket of every family but AF_UNIX and AF_NETLINK (no TCP, UDP, raw or packet socket)"
+seccomp action=eperm rule="socket(AF_NETLINK) unless NETLINK_ROUTE (no sock_diag, which lists other processes' connections)"
 seccomp action=eperm rule="socketpair of any family but AF_UNIX"
 seccomp action=eperm rule="socketpair(AF_UNIX) unless SOCK_STREAM"
 seccomp action=allow rule="everything else"
@@ -550,4 +552,75 @@ func TestSpecWorkedExample(t *testing.T) {
 	home := exec.Command(bin(t), append(wall, "--net-deny", "--", "/bin/ls", os.Getenv("HOME"))...)
 	home.Dir, home.Env = src, cmd.Env
 	assert.Error(t, home.Run(), "anything else is denied")
+}
+
+// TestNetAllowClosesFastOpenAndListen reproduces the two --net-allow holes a reader
+// found: a TCP Fast Open send connects inside sendto, out of Landlock's connect hook,
+// and listen() without bind() auto-binds a port its bind hook never sees, which an
+// outside client could then reach. Both are refused by seccomp under --net-allow.
+func TestNetAllowClosesFastOpenAndListen(t *testing.T) {
+	t.Parallel()
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 is not installed here")
+	}
+	job, _ := scratch(t)
+	allowed, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = allowed.Close() })
+	other, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = other.Close() })
+	got := make(chan string, 4)
+	go func() {
+		for {
+			c, err := other.Accept()
+			if err != nil {
+				return
+			}
+			buf := make([]byte, 16)
+			_ = c.SetReadDeadline(time.Now().Add(2 * time.Second))
+			n, _ := c.Read(buf)
+			got <- string(buf[:n])
+			c.Close()
+		}
+	}()
+	port := other.Addr().(*net.TCPAddr).Port
+	tfo := fmt.Sprintf(`import socket as s
+c = s.socket(s.AF_INET, s.SOCK_STREAM)
+c.sendto(b"leak", s.MSG_FASTOPEN, ("127.0.0.1", %d))
+print("sent")`, port)
+	allow := []string{"--write", job, "--net-deny", "--net-allow", allowed.Addr().String()}
+	code, out, stderr := sandbox(t, job, "--write", job, "--", "python3", "-c", tfo)
+	if code != 0 {
+		t.Skip("TCP Fast Open does not work on this host outside the wall: " + stderr)
+	}
+	assert.Equal(t, "sent\n", out)
+	select {
+	case d := <-got:
+		assert.Equal(t, "leak", d, "the control's data arrives")
+	case <-time.After(3 * time.Second):
+		t.Fatal("the control's connection never arrived")
+	}
+	code, out, stderr = sandbox(t, job, append(allow, "--", "python3", "-c", tfo)...)
+	assert.NotEqual(t, 0, code, out)
+	assert.Contains(t, stderr, "PermissionError", "sendto with MSG_FASTOPEN is refused")
+	select {
+	case d := <-got:
+		t.Fatalf("a Fast Open send reached a port --net-allow did not name: %q", d)
+	case <-time.After(500 * time.Millisecond):
+	}
+
+	// listen() with no bind: the kernel would pick a port on 0.0.0.0.
+	listen := `import socket as s
+l = s.socket(s.AF_INET, s.SOCK_STREAM)
+l.listen(1)
+print("listening", l.getsockname()[1])`
+	code, out, stderr = sandbox(t, job, append(allow, "--", "python3", "-c", listen)...)
+	assert.NotEqual(t, 0, code, out)
+	assert.Contains(t, stderr, "PermissionError")
+	assert.NotContains(t, out, "listening")
+	code, out, _ = sandbox(t, job, "--write", job, "--net-deny", "--unix", "--", "python3", "-c", `import socket as s, os
+p = os.path.join(os.getcwd(), "srv")
+l = s.socket(s.AF_UNIX, s.SOCK_STREAM); l.bind(p); l.listen(1); print("unix listening")`)
+	assert.Equal(t, 0, code, "--net-deny --unix without --net-allow still serves a unix socket: "+out)
 }

@@ -15,21 +15,18 @@ import (
 const runFlags = `  --read <dir>          readable and executable, recursively. Repeatable.
   --write <dir>         readable, writable and executable, recursively. Repeatable.
   --net-deny            the network is closed, or the wall refuses to start. Linux: no
-                        TCP, UDP, raw or packet socket can be made (Landlock and seccomp),
-                        so DNS works only from /etc/hosts. macOS: no outbound IP and no
-                        DNS socket. Without it nothing is promised about the network.
+                        socket but unix and netlink-route (no TCP, UDP or raw); DNS works
+                        only from /etc/hosts. macOS: no outbound IP and no DNS socket.
+                        Without it nothing is promised about the network.
   --net-allow <h:port>  under --net-deny, reopen connect to one loopback port. Linux: TCP
-                        only (UDP and raw stay closed, so DNS needs /etc/hosts or a resolver
-                        on an allowed TCP port), and the port opens on every address.
+                        connect only, on every address with that port; UDP stays closed,
+                        and listen, accept and TCP Fast Open are refused on every socket.
                         macOS: TCP and UDP to localhost on that port. Repeatable.
   --gpu                 macOS: open the Metal and IOSurface IOKit clients and the
                         MTLCompiler, CoreMedia videoencoder and videodecoder services.
-  --unix                Linux: leave AF_UNIX sockets open. This opens the same-uid
-                        escape (a command can reach any local socket by path, which
-                        Landlock does not fence); use only when the command needs a
-                        local socket. Without it socket(AF_UNIX) and every unix socketpair
-                        but SOCK_STREAM are refused, so /dev/log, syslog, NSS sockets
-                        (nscd, sssd, systemd-userdb), agents and local daemons fail.
+  --unix                Linux: leave AF_UNIX sockets open, which reopens the same-uid
+                        escape (any local socket reachable by path). Without it /dev/log,
+                        NSS sockets, agents and local daemons fail.
   --keep-fds            do not close inherited descriptors above stderr before exec.
                         Without it every fd > 2 is closed, so an inherited open socket
                         or file cannot be used inside the wall.
@@ -67,14 +64,12 @@ const showUsage = `nova-sandbox show: print the wall a flag set would apply here
 The flags are the run flags (nova-sandbox -h), checked the same way. The command is
 optional; given, its resolved path and argv are shown too.
 
-Output (a payload on stdout, one block, stable order): a "wall" line naming the backend;
-on Linux the Landlock ABI, every path rule with its access and where it came from
-(root, --read, --write; a root absent here says state=absent), the net rule, the
-seccomp rules by name in the order they apply, the signal scope and the descriptor
-rule; on macOS the -D parameters, the net rule and the generated profile text, verbatim.
+Output: one block on stdout, one rule per line in the order applied: paths, net,
+seccomp rules by name, scope, descriptors; on macOS the generated profile, verbatim.
 
 Exit: 0 the wall would start here; 1 it would refuse here (SANDBOX REFUSED lines on
-stderr say why, stdout is empty); 2 the invocation is malformed.
+stderr say why, stdout is empty); 2 the invocation is malformed; 126 and 127 the
+command is not executable or on no PATH entry, as for a run.
 `
 
 const checkUsage = `nova-sandbox check: say which backend this machine has and whether it works.
@@ -94,9 +89,7 @@ const probeUsage = `nova-sandbox probe: prove the wall on this machine by runnin
 
 It walls children of this binary in a scratch directory and prints one line per step,
 PROBE STEP name=<step> expect=allow|deny got=<what happened>, then PROBE OK or
-PROBE FAILED. The steps: a write inside is allowed; a write and a read outside, and a
-unix-socket connect, are refused; under --net-deny a TCP connect, a UDP send and a DNS
-lookup are refused; under --net-allow a TCP connect to the named port is allowed.
+PROBE FAILED. The steps are listed in docs/SPEC-SANDBOX.md.
 
 Exit: 0 PROBE OK; 1 PROBE FAILED; 2 the invocation is malformed.
 `
@@ -156,8 +149,8 @@ func run(args []string, stdout, stderr io.Writer, env []string) int {
 			return 0
 		}
 		return show(args[1:], stdout, stderr)
-	case "dial", "udp", "resolve": // probe's in-wall clients: exit 0 if the act succeeds
-		return probeClient(v, args[1:])
+	case clientVerb: // hidden: the probe's act inside the wall
+		return probeClient(args[1:])
 	}
 	if !strings.HasPrefix(args[0], "-") {
 		return malformed(stderr, "", fmt.Sprintf("unknown verb %s; the verbs are show check probe help (see nova-sandbox help), or flags then -- <cmd>", args[0]))
@@ -292,8 +285,8 @@ func check(stdout io.Writer) int {
 // show prints the wall the flags would apply here and runs nothing.
 func show(args []string, stdout, stderr io.Writer) int {
 	w, bad := parseAndBuild(args, false)
-	if len(bad) > 0 { // nothing runs, so a missing command is a missing input too: 2
-		return malformed(stderr, "show", texts(bad)...)
+	if len(bad) > 0 { // the same codes as a run: 2 malformed, 126/127 the command alone
+		return report(stderr, "show", bad)
 	}
 	text, bad := describeWall(w)
 	if len(bad) > 0 {

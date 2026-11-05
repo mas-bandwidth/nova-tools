@@ -82,7 +82,7 @@ func formatLinux(w *wall, p *linuxPlan, exists func(string) bool) string {
 	case netClosed:
 		b.WriteString("net rule=closed tcp=deny by=landlock,seccomp udp=deny raw=deny packet=deny by=seccomp dns=/etc/hosts_only\n")
 	case netTCPOnly:
-		fmt.Fprintf(&b, "net rule=tcp_allow tcp_connect=allow ports=%s tcp_bind=deny by=landlock udp=deny raw=deny packet=deny by=seccomp dns=/etc/hosts_or_a_resolver_on_an_allowed_tcp_port note=landlock filters by port: an allowed port is open on every address\n", portList(w.netPorts))
+		fmt.Fprintf(&b, "net rule=tcp_allow tcp_connect=allow ports=%s tcp_bind=deny by=landlock listen=deny accept=deny fastopen=deny udp=deny raw=deny packet=deny by=seccomp dns=/etc/hosts_or_a_resolver_on_an_allowed_tcp_port note=landlock filters by port: an allowed port is open on every address\n", portList(w.netPorts))
 	}
 	if p.seccomp {
 		arch := archTable[runtime.GOARCH]

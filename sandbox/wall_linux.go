@@ -64,13 +64,11 @@ func wallCheck() (abi string, netOK bool, note string, err error) {
 	if !h.landlock {
 		return "-", false, "", fmt.Errorf("no landlock in this kernel: below 5.13, not compiled in, or not in the boot-time lsm= list")
 	}
-	sec := "seccomp available: the unix-socket fence is on by default; its cost is that nothing needing socket(AF_UNIX) works (/dev/log and syslog, NSS sockets such as nscd, sssd and systemd-userdb, agents and local daemons); --unix is the opt-out"
-	net := "under --net-deny landlock closes TCP and seccomp closes UDP, raw and every other socket family"
+	sec, net := "available", "landlock_tcp+seccomp"
 	if !h.seccomp {
-		sec = "seccomp UNAVAILABLE: the unix-socket fence cannot be built, so the wall refuses to start unless --unix is given, and then ptrace and io_uring are not refused either"
-		net = "--net-deny is refused: without seccomp UDP and raw sockets cannot be closed"
+		sec, net = "unavailable: the default wall and --net-deny are refused; only --unix runs, without the filter", "refused_without_seccomp"
 	}
-	note = "landlock abi " + strconv.Itoa(h.abi) + ": " + net + "; signals are confined to the wall only at abi 6+; " + sec
+	note = "landlock abi " + strconv.Itoa(h.abi) + "; seccomp " + sec + "; net-deny " + net + "; signals scoped to the wall at abi 6+"
 	return strconv.Itoa(h.abi), h.abi >= 4 && h.seccomp, note, nil
 }
 
