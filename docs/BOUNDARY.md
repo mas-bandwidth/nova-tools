@@ -42,9 +42,9 @@ the same PR, with the reason written here under "Dependencies".
 ## The budget rule
 
 `BUDGET` has one line per tool, `name  max-non-test-go-lines`, counting the
-`*.go` files that are not `_test.go`. The test fails when a tool is over. A tool
-over budget means the spec is not minimal. Raise a budget only in a PR that
-says why, and lower it when code is removed.
+`*.go` files that are not `_test.go`. The test fails when a tool is over. Each
+budget is the size the tool reached when its spec was settled, plus 50. A tool
+over budget means the spec is not minimal; raising one is a PR that says why.
 
 `BUDGET` lines are exactly `name  number`, with no comments or duplicates, and
 include `boundary` itself (400).
