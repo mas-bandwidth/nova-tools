@@ -12,7 +12,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestSelfContained holds secrets to the standard library and golang.org/x/sys (Windows key checks), so it can
+// TestSelfContained holds secrets to the standard library, golang.org/x/sys (Windows key checks) and
+// gopkg.in/yaml.v3 (seat add's .sops.yaml rewrite), so it can
 // be lifted out of this repository as it is: it reads the imports of every
 // .go file here; the tests may also import testify.
 func TestSelfContained(t *testing.T) {
@@ -27,7 +28,7 @@ func TestSelfContained(t *testing.T) {
 			path, err := strconv.Unquote(imp.Path.Value)
 			require.NoError(t, err)
 			assert.True(t, allowed(path, strings.HasSuffix(name, "_test.go")),
-				"%s imports %s: secrets imports only the standard library and golang.org/x/sys", name, path)
+				"%s imports %s: secrets imports only the standard library, golang.org/x/sys and gopkg.in/yaml.v3", name, path)
 		}
 	}
 }
@@ -35,7 +36,7 @@ func TestSelfContained(t *testing.T) {
 func allowed(path string, test bool) bool {
 	under := func(mod string) bool { return path == mod || strings.HasPrefix(path, mod+"/") }
 	std := !strings.Contains(strings.SplitN(path, "/", 2)[0], ".")
-	return std || under("golang.org/x/sys") || (test && under("github.com/stretchr/testify"))
+	return std || under("golang.org/x/sys") || under("gopkg.in/yaml.v3") || (test && under("github.com/stretchr/testify"))
 }
 
 // TestAllowedRefusesTheRepository is the rule's reversed witness.
