@@ -1,5 +1,5 @@
 # CI for nova-tools: gofmt, vet, the unit tier, the functional tier and TLC.
-# Each job runs one plain command; TESTING.md lists the same commands to run
+# Each job runs one plain command; docs/TESTING.md lists the same commands to run
 # by hand. Pull requests run on the self-hosted runners, and only for branches
 # of this repository: a fork's code never runs on them.
 
@@ -108,9 +108,36 @@ jobs:
       - name: TLC over every model case
         run: tla/check.sh "${{ vars.TLC_JAR }}"
 
+  fleet:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, linux, x64, space]
+    timeout-minutes: 5
+    steps:
+      - *clean
+      - *checkout
+      - name: ansible-core in a fresh venv, and the collections
+        shell: bash
+        run: |
+          python3 -m venv "$RUNNER_TEMP/ansible"
+          "$RUNNER_TEMP/ansible/bin/pip" install --quiet ansible-core
+          "$RUNNER_TEMP/ansible/bin/ansible-galaxy" collection install -r fleet/requirements.yml
+      - name: syntax-check every play
+        shell: bash
+        run: |
+          export PATH="$RUNNER_TEMP/ansible/bin:$PATH"
+          for play in fleet/*.yml; do
+            [ "$play" = fleet/requirements.yml ] && continue
+            ansible-playbook -i fleet/ci/inventory --syntax-check "$play"
+          done
+      - name: loops.yml --check against the stub inventory
+        shell: bash
+        run: |
+          export PATH="$RUNNER_TEMP/ansible/bin:$PATH"
+          ansible-playbook -i fleet/ci/inventory fleet/loops.yml --check --diff </dev/null
+
   ci-ok:
     if: always()
-    needs: [lint, unit, functional, tlc]
+    needs: [lint, unit, functional, tlc, fleet]
     runs-on: [self-hosted, linux, x64]
     timeout-minutes: 5
     steps:

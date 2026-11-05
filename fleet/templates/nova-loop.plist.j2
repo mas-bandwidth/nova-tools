@@ -1,7 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 {# fleet/loops.yml renders this for one loop record l on a darwin machine:
-   every value is the record's (l) or the host layout's (group_vars/all.yml). #}
+   every value is the record's (l) or the host layout's (group_vars/all.yml);
+   the unit's environment is loop_env (HOME, PATH and the record's env) and its
+   log is loop_log. #}
 <!-- {{ loop_dir }}/com.nova.loop.{{ l.name }}.plist: written by fleet/loops.yml from the loop record {{ l.name }} -->
 <plist version="1.0">
 <dict>
@@ -23,10 +25,10 @@
 </array>
 <key>EnvironmentVariables</key>
 <dict>
-<key>HOME</key>
-<string>{{ nova_home | e }}</string>
-<key>PATH</key>
-<string>{{ nova_loop_path | e }}</string>
+{% for k, v in loop_env | dictsort %}
+<key>{{ k | e }}</key>
+<string>{{ v | string | e }}</string>
+{% endfor %}
 </dict>
 <key>WorkingDirectory</key>
 <string>{{ nova_home | e }}</string>
@@ -44,8 +46,8 @@
 <key>AbandonProcessGroup</key>
 <true/>
 <key>StandardOutPath</key>
-<string>{{ nova_home | e }}/Library/Logs/nova-loop-{{ l.name | e }}.log</string>
+<string>{{ loop_log | e }}</string>
 <key>StandardErrorPath</key>
-<string>{{ nova_home | e }}/Library/Logs/nova-loop-{{ l.name | e }}.log</string>
+<string>{{ loop_log | e }}</string>
 </dict>
 </plist>
