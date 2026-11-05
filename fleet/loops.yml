@@ -1,10 +1,16 @@
 # loops.yml: one supervised unit per loop record, on the machine the record
-# names. The records are nova-config's loop kind, applied, as `nova-config
-# inventory` prints them (nova_loops on each host); the units are the templates
-# under templates/: nova-loop.plist.j2 on darwin (launchd), nova-loop.service.j2
-# on linux (systemd) with nova-loop.timer.j2 beside it for a loop that runs
-# every n seconds (a row with no `every` is kept alive; `enabled` defaults true). Every value is the record's or the host layout's
-# (group_vars/all.yml).
+# names. The records are nova-config's loop rows as `nova-config inventory`
+# prints them (nova_loops on each host); the units are the templates under
+# templates/: nova-loop.plist.j2 on darwin (launchd), nova-loop.service.j2 on
+# linux (systemd) with nova-loop.timer.j2 beside it for a loop that runs every
+# n seconds (a row with no `every` is kept alive; `enabled` defaults true).
+#
+# A unit runs the row's argv exactly. Only when argv[0] is one of
+# nova_tools_names is it prefixed with nova_bin_dir; every other word is passed
+# through as written. The row's `env` object is the unit's environment, on top
+# of HOME and a PATH that includes nova_bin_dir. The row's `log` (default
+# ~/.local/state/nova/loops/<name>.log) is where stdout and stderr append.
+# Every other value is the host layout's (group_vars/all.yml).
 #
 #   ansible-playbook -i ./nova-inventory fleet/loops.yml --check --diff </dev/null 2>&1 | cat
 #   ansible-playbook -i ./nova-inventory fleet/loops.yml </dev/null 2>&1 | cat
@@ -32,9 +38,7 @@
 # and its file removed; so is a unit nova_retire_units names. A unit of another
 # tool's of the same shape is left as it is and named in a NOTE; a record of
 # its name takes it over. --check lists each retirement as WOULD-RETIRE with its
-# file and changes nothing. A loop logs to its record's log, under
-# ~/nova-bench/loops (on darwin, launchd agents log under the user's home,
-# ~/Library/Logs/nova-loop-<name>.log).
+# file and changes nothing.
 #
 # A unit whose file (or timer) changed is restarted, said as RESTART (WOULD-RESTART
 # under --check) with why.
@@ -67,7 +71,8 @@
     loop_records: >-
       {%- set all = [] -%}
       {%- for r in nova_loops -%}
-      {%- set base = {'enabled': true, 'every': 0, 'keepalive': (r.every | default(0) | int == 0), 'seat': '', 'keys': []} -%}
+      {%- set base = {'enabled': true, 'every': 0, 'keepalive': (r.every | default(0) | int == 0), 'seat': '', 'keys': [], 'env': {},
+                'log': nova_home ~ '/.local/state/nova/loops/' ~ r.name ~ '.log'} -%}
       {%- set _ = all.append(base | combine(r)) -%}
       {%- endfor -%}
       {{ (all | selectattr('name', 'in', loop_only) | list) if loop_only else all }}
@@ -82,8 +87,9 @@
       ansible.builtin.assert:
         that: nova_loops is defined
         fail_msg: >-
-          {{ inventory_hostname }} has no nova_loops: the loop kind was never applied to the store, and an absent
-          list is not an empty one; run: nova-config apply --kind loop, then print the inventory again
+          {{ inventory_hostname }} has no nova_loops: the inventory is not nova-config's (`nova-config inventory`
+          always emits nova_loops), and an absent list is not an empty one; run: nova-config loop list; an empty
+          list is valid
         quiet: true
 
     - name: every record nova_loop_only names is on one of this run's machines
@@ -125,11 +131,36 @@
       ansible.builtin.file: { path: "{{ loop_dir }}", state: directory, mode: "0755" }
       become: "{{ loop_system }}"
 
-    - name: the log directory
-      ansible.builtin.file: { path: "{{ nova_home }}/nova-bench/loops", state: directory, mode: "0755" }
+    - name: the directory of each record's log
+      ansible.builtin.file: { path: "{{ item }}", state: directory, mode: "0755" }
+      loop: "{{ loop_records | map(attribute='log') | map('regex_replace', '^~/', nova_home ~ '/') | map('dirname') | unique | list }}"
 
-    - name: the launchd log directory (darwin)
-      ansible.builtin.file: { path: "{{ ansible_facts['env']['HOME'] }}/Library/Logs", state: directory, mode: "0755" }
+    # launchd does not search the unit's PATH for a program: a bare argv[0] that
+    # is not one of nova_tools_names is resolved here, with the PATH the unit
+    # gets, and the play fails if it is not found.
+    - name: where a bare program of a record is (darwin)
+      ansible.builtin.command:
+        argv: [sh, -c, 'command -v "$1"', sh, "{{ item.argv[0] }}"]
+      environment:
+        PATH: "{{ ({'PATH': nova_loop_path} | combine(item.env)).PATH }}"
+      loop: "{{ loop_records }}"
+      loop_control: { label: "{{ item.name }}" }
+      register: loop_found
+      changed_when: false
+      # ignored: a non-zero exit is the answer "not found", asserted below
+      failed_when: false
+      check_mode: false
+      when: loop_darwin and '/' not in item.argv[0] and item.argv[0] not in nova_tools_names
+
+    - name: every bare program of a record was found (darwin)
+      ansible.builtin.assert:
+        that: item.rc == 0
+        fail_msg: >-
+          {{ inventory_hostname }}: loop {{ item.item.name }} runs {{ item.item.argv[0] }}, which is not on its unit PATH;
+          launchd does not search PATH, so give an absolute path or a nova-tools name as argv[0]
+        quiet: true
+      loop: "{{ loop_found.results | default([]) | rejectattr('skipped', 'defined') | list }}"
+      loop_control: { label: "{{ item.item.name }}" }
       when: loop_darwin
 
     - name: one unit per record
@@ -139,13 +170,15 @@
         mode: "0644"
       vars:
         l: "{{ item }}"
-        # The command the unit runs: the record's argv, a bare program being the
-        # installed tool and ~/ the login's home, behind nova-secrets exec when
-        # the record names keys (the seat opens them; their values never reach
-        # the unit file).
+        # The command the unit runs: the record's argv exactly, argv[0] taking
+        # nova_bin_dir only when it is one of nova_tools_names (on darwin any
+        # other bare program is replaced by where it was found), behind
+        # nova-secrets exec when the record names keys (the seat opens them;
+        # their values never reach the unit file).
         loop_argv: >-
-          {{ [((nova_bin_dir ~ '/' ~ item.argv[0]) if '/' not in item.argv[0] else item.argv[0]) | regex_replace('^~/', nova_home ~ '/')]
-             + (item.argv[1:] | map('regex_replace', '^~/', nova_home ~ '/') | list) }}
+          {{ ([nova_bin_dir ~ '/' ~ item.argv[0]] if item.argv[0] in nova_tools_names
+               else ([(loop_found.results | selectattr('item.name', 'equalto', item.name) | first).stdout]
+                     if loop_darwin and '/' not in item.argv[0] else [item.argv[0]])) + item.argv[1:] }}
         loop_secrets: >-
           {{ ([nova_bin_dir ~ '/nova-secrets', 'exec', '--store', nova_secrets_store, '--as', item.seat,
                '--key', nova_secrets_key_dir ~ '/' ~ item.seat ~ '.key', '--sops', nova_sops,
@@ -153,6 +186,7 @@
              if item['keys'] | default([]) | length > 0 else [] }}
         loop_exec: "{{ loop_secrets + loop_argv }}"
         loop_log: "{{ item.log | regex_replace('^~/', nova_home ~ '/') }}"
+        loop_env: "{{ {'HOME': nova_home, 'PATH': nova_loop_path} | combine(item.env) }}"
       loop: "{{ loop_records }}"
       loop_control: { label: "{{ item.name }}" }
       become: "{{ loop_system }}"
@@ -280,14 +314,12 @@
     # linux: systemd. A kept-alive loop is its service; a periodic loop is its
     # timer, which starts the oneshot service every n seconds.
     # The state is built before the module call, a short named variable per
-    # branch: the module's args hold no inline conditional. A parenthesised
-    # ternary chained to a second `if ... else` inside the args is where
-    # ansible-core's templar stops at the `else` ("expected token ')', got
-    # 'else'"), so the task never reaches systemd and the host keeps the old
-    # unit. loop_unit_changed is the selectattr chain as a list,
-    # loop_unit_wants_restart is changed-or-named, and loop_unit_state keeps the
-    # same four outcomes: disabled stopped, changed or named restarted, any
-    # other enabled one started.
+    # branch: the module's args hold no inline conditional (ansible-core's
+    # templar rejects a parenthesised ternary chained to a second `if ... else`).
+    # loop_unit_changed is the selectattr chain as a list,
+    # loop_unit_wants_restart is changed-or-named, and loop_unit_state has four
+    # outcomes: disabled stopped, changed or named restarted, any other enabled
+    # one started.
     - name: start the enabled, stop the disabled (linux)
       vars:
         loop_unit_changed: >-
@@ -336,11 +368,10 @@
       when: not loop_darwin and not ansible_check_mode
 
     # The gate: a host whose unit file changed and whose restart did not run is
-    # a failed play, not a green one. The release checklist reads this recap per
-    # host, never the exit code alone: the file on disk may be new while the host
-    # still runs the old argv. A result carries `skipped` only when it was skipped (and `failed` only when it
-    # ran): each is defaulted to false before the test, since ansible-core 2.19+ errors on the missing attribute
-    # (intel's join, 2026-10-19: "object of type 'dict' has no attribute 'skipped'" on every real Linux run).
+    # a failed play, not a green one: the file on disk may be new while the host
+    # still runs the old argv. A result carries `skipped` only when it was
+    # skipped (and `failed` only when it ran), so each is defaulted to false
+    # before the test; ansible-core 2.19+ errors on a missing attribute.
     - name: every changed unit was restarted or started (linux)
       vars:
         loop_changed_units: >-
