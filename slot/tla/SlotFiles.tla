@@ -167,8 +167,10 @@ Next == \E p \in Procs :
 \* Every process keeps taking its own steps; starting, timing out and dying
 \* are never forced.
 Fairness == \A p \in Procs :
-  /\ WF_vars(SGate(p)) /\ WF_vars(SScan(p)) /\ WF_vars(SAll(p)) /\ WF_vars(SFinish(p))
-  /\ WF_vars(XGate(p)) /\ WF_vars(XAll(p)) /\ WF_vars(XFinish(p))
+  /\ WF_vars(SGate(p) /\ Commands) /\ WF_vars(SScan(p) /\ Commands)
+  /\ WF_vars(SAll(p) /\ Commands) /\ WF_vars(SFinish(p) /\ Commands)
+  /\ WF_vars(XGate(p) /\ Commands) /\ WF_vars(XAll(p) /\ Commands)
+  /\ WF_vars(XFinish(p) /\ Commands)
 
 Spec == Init /\ [][Next]_vars /\ Fairness
 
