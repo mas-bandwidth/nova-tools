@@ -245,3 +245,31 @@ func TestOpenPGConnectFailure(t *testing.T) {
 	assert.Contains(t, err.Error(), "cannot reach postgres at "+addr+" (NOVA_PG_DSN): ")
 	assert.NotContains(t, err.Error(), "\n")
 }
+
+// A set that changes nothing writes nothing: no history row, and it says so.
+func TestNoOpSetWritesNothing(t *testing.T) {
+	t.Parallel()
+	h := fleet(t)
+	n := len(h.st.history)
+	assert.Equal(t, "CONFIG SET kind=machine name=bench-a changed=none rev=unchanged\n", h.ok(t, "machine", "set", "bench-a", "--user", "nova", "--actor", "a"))
+	assert.Equal(t, "CONFIG SET kind=machine name=bench-a changed=none rev=unchanged\n", h.ok(t, "machine", "set", "bench-a", "--roles", "services,bench", "--cores", "default", "--actor", "a"), "canonical values compare, not the text given")
+	assert.Len(t, h.st.history, n)
+	out := h.ok(t, "machine", "set", "bench-a", "--user", "nova", "--note", "x", "--actor", "a")
+	assert.Equal(t, "CONFIG SET kind=machine name=bench-a rev=4 changed=note\n", out, "only the field that differs is named")
+	assert.Len(t, h.st.history, n+1)
+}
+
+func TestDSNPasswordRefused(t *testing.T) {
+	t.Parallel()
+	h := fleet(t)
+	h.env["NOVA_PG_DSN"] = "postgres://u:hunter2@db/x"
+	code, out, errs := h.run(t, "machine", "list")
+	assert.Equal(t, 2, code)
+	assert.Empty(t, out)
+	assert.Equal(t, "nova-config machine list: NOVA_PG_DSN carries a password; remove it and set NOVA_PG_PASSWORD; run: nova-config machine list -h\n", errs)
+	h.env["NOVA_PG_DSN"] = "postgres://u@db/x?password=hunter2"
+	code, _, errs = h.run(t, "inventory")
+	assert.Equal(t, 2, code)
+	assert.NotContains(t, errs, "hunter2")
+	assert.Contains(t, errs, "nova-config inventory: NOVA_PG_DSN carries a password")
+}

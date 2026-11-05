@@ -114,8 +114,9 @@ func malformed(stderr io.Writer, verb string, what ...string) int {
 }
 
 func run(args []string, stdout, stderr io.Writer, env []string) int {
-	if len(args) == 0 {
-		return malformed(stderr, "", "no command: nova-sandbox [flags] -- <cmd> <args...>")
+	if len(args) == 0 { // a bare run is a request for help, as for every tool
+		fmt.Fprint(stdout, usage)
+		return 0
 	}
 	switch v := args[0]; v {
 	case "help":
@@ -175,7 +176,7 @@ func beforeDashes(args []string) []string {
 }
 
 // usageReasons are the refusals that mean the invocation itself is malformed.
-var usageReasons = []string{"bad_flag", "no_command", "bad_read", "bad_write", "bad_net", "bad_gpu"}
+var usageReasons = []string{"bad_flag", "bad_value", "no_command", "bad_read", "bad_write", "bad_net", "bad_gpu"}
 
 // report prints the refusals and returns the exit status. A malformed invocation is one
 // CLI-STYLE line naming every problem at once, exit 2. Otherwise each refusal is a
@@ -210,6 +211,9 @@ func report(stderr io.Writer, verb string, bad []refusal) int {
 // once: a bad path is named beside a missing --.
 func parseAndBuild(args []string, needCommand bool) (*wall, []refusal) {
 	s, bad := parseArgs(args, needCommand)
+	if len(bad) == 1 && bad[0].reason == "bad_value" {
+		return nil, bad // a swallowed value: nothing else is reported
+	}
 	w, more := build(s, runtime.GOOS)
 	return w, append(bad, more...)
 }
@@ -256,6 +260,14 @@ func parseArgs(args []string, needCommand bool) (s spec, bad []refusal) {
 			bad = append(bad, refuse("bad_flag", "unknown flag %s; the flags are --read --write --net-deny --net-allow --gpu --unix --keep-fds", a))
 		case i+1 >= len(args):
 			bad = append(bad, refuse("bad_flag", "%s wants a value", a))
+		case strings.HasPrefix(args[i+1], "--"):
+			// The flag swallowed the next flag, or the --: every later complaint would be
+			// a consequence, so this is the only one.
+			want := "an absolute path"
+			if a == "--net-allow" {
+				want = "host:port"
+			}
+			return s, []refusal{refuse("bad_value", "%s wants %s, got %q", a, want, args[i+1])}
 		default:
 			i++
 			*dst = append(*dst, args[i])

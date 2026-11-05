@@ -52,12 +52,12 @@ HISTORY at=2026-01-02T00:00:02Z actor=a1 kind=service name=r-m1 op=add rev=2
 CONFIG HISTORY rows=1
 ```
 
-A write is one transaction, the row and its history row; the printed `rev` is the history id. A printed value is
+A write is one transaction, the row and its history row; the printed `rev` is the history id. A `set` that changes nothing writes nothing: it prints `CONFIG SET ... changed=none rev=unchanged` and adds no history row; `changed=` otherwise names only the fields that differ. A printed value is
 `-` when empty, bare when it is one word of printable characters (`=` is never escaped), and a JSON string
 otherwise; `argv` and `env` are printed as their JSON, and free text (`note`, a `reason`) is always a JSON string, so
 what is printed can be pasted back. `--json` prints one object with typed values (`argv` an array, `env` an object, `every` a number, `keepalive` a boolean, an unset `cores` null). A dry run prints the event line, then one line per field: `field: old -> new`
 for a set (`note: "" -> "the first"`), `field: value` for an add or a remove, values as JSON. `show` adds `created=`, `updated=` and, for a
-machine, `services=`. The store is `--pg <dsn>` or `NOVA_PG_DSN` (no password in it); the password comes from the
+machine, `services=`. The store is `--pg <dsn>` or `NOVA_PG_DSN` (no password in it: a dsn that carries one is refused, exit 2); the password comes from the
 variable `NOVA_PG_PASSWORD_ENV` names, else `NOVA_PG_PASSWORD`. Exit codes: 0 done, 1 refused (the store or the row said no),
 2 could not run (a usage error, no store, a store that cannot be reached).
 
