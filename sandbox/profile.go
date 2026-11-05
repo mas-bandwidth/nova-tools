@@ -3,7 +3,8 @@ package main
 import (
 	_ "embed"
 	"fmt"
-	"net"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 )
@@ -11,11 +12,11 @@ import (
 //go:embed darwin.sb.tmpl
 var darwinTemplate string
 
-// fixedDarwin are the roots the template grants as subpaths; an optional root or PATH
-// directory under one is dropped rather than granted twice.
-var fixedDarwin = []string{"/usr", "/bin", "/sbin", "/System", "/Library", "/private/etc", "/private/var/select", "/dev"}
+// darwinRoots are the roots the template grants read as subpaths: a command under one
+// needs no --read, and an optional root under one is not granted twice.
+var darwinRoots = []string{"/usr", "/bin", "/sbin", "/opt", "/System", "/Library", "/private/etc", "/private/var/select", "/dev"}
 
-// metalGrants is --gpu metal: named IOKit clients and XPC services only, never a
+// metalGrants is --gpu: the Metal IOKit clients and XPC services by name, never a
 // blanket iokit-open or mach-lookup.
 const metalGrants = `
 (allow iokit-open (iokit-user-client-class "AGXDeviceUserClient" "IOSurfaceRootUserClient"))
@@ -23,88 +24,98 @@ const metalGrants = `
 `
 
 // darwinProfile fills the template for one run and returns the text and the -D
-// parameters it names. Every param the text names is passed.
-func darwinProfile(p *policy) (text string, params []string, err error) {
-	var optRoots, anc, reads, noExec, writes, netLines []string
-	for _, r := range p.optRoots {
+// parameters it names. Caller paths enter as parameters, except the ancestor and
+// link literals, which is why badPath refuses profile metacharacters.
+func darwinProfile(w *wall) (text string, params []string, err error) {
+	var optRoots, anc, reads, writes, netLines []string
+	for _, r := range w.optRoots {
 		optRoots = append(optRoots, fmt.Sprintf("(allow file-read* (subpath %q))", r))
 	}
-	paths := slices.Concat(p.reads, p.readsNoExec, p.writes, p.optRoots, []string{p.cwd, p.tmp})
-	for _, d := range ancestors(paths...) {
+	for _, d := range ancestors(slices.Concat(w.reads, w.writes, w.optRoots)...) {
 		anc = append(anc, fmt.Sprintf("(allow file-read-metadata (literal %q))", d))
 	}
-	for i, r := range p.reads {
+	for i, r := range w.reads {
 		reads = append(reads, fmt.Sprintf(`(allow file-read* (subpath (param "READ%d")))`, i))
 		params = append(params, fmt.Sprintf("READ%d=%s", i, r))
 	}
-	for i, r := range p.readsNoExec {
-		noExec = append(noExec,
-			fmt.Sprintf(`(allow file-read* (subpath (param "NOEXEC%d")))`, i),
-			fmt.Sprintf(`(deny process-exec* (subpath (param "NOEXEC%d")) (with no-report))`, i))
-		params = append(params, fmt.Sprintf("NOEXEC%d=%s", i, r))
+	// Following a symlink needs read on the link: the caller's own spelling of a granted
+	// path, and each link among its ancestors, is a literal.
+	for _, l := range linkLiterals(w.linkSpellings) {
+		reads = append(reads, fmt.Sprintf("(allow file-read* (literal %q))", l))
 	}
-	for i, w := range p.writes {
+	for i, d := range w.writes {
 		writes = append(writes,
 			fmt.Sprintf(`(allow file-read* file-write* (subpath (param "WRITE%d")))`, i),
 			fmt.Sprintf(`(allow network-outbound (subpath (param "WRITE%d")))`, i))
-		params = append(params, fmt.Sprintf("WRITE%d=%s", i, w))
+		params = append(params, fmt.Sprintf("WRITE%d=%s", i, d))
 	}
-	// The caller's own spelling of a granted path, and each symlink among its
-	// ancestors, is read as a literal on the link: following a link needs read on it.
-	for _, l := range linkLiterals(p.linkSpellings) {
-		reads = append(reads, fmt.Sprintf("(allow file-read* (literal %q))", l))
-	}
-	params = append(params, "HOME="+p.home)
-	if !p.netDeny {
-		// DNS is the mDNSResponder socket, so it goes with the network and goes with --net-deny.
+	if !w.netDeny {
+		// DNS is the mDNSResponder socket, so it goes with the network.
 		netLines = append(netLines, `(allow network-outbound (remote ip) (literal "/private/var/run/mDNSResponder"))`)
 	}
-	// --net-allow: one loopback port back up. sandbox-exec takes only the literal
-	// "localhost" as the host here, and it admits both 127.0.0.1 and ::1.
-	for _, hp := range p.netAllow {
-		if _, port, err := net.SplitHostPort(hp); err == nil {
-			netLines = append(netLines, fmt.Sprintf(`(allow network-outbound (remote ip "localhost:%s"))`, port))
-		}
+	// sandbox-exec takes only the literal "localhost" as a host here, and it admits
+	// both 127.0.0.1 and ::1.
+	for _, port := range w.netPorts {
+		netLines = append(netLines, fmt.Sprintf(`(allow network-outbound (remote ip "localhost:%d"))`, port))
 	}
 	fill := map[string]string{
 		"@@OPTROOTS@@": strings.Join(optRoots, "\n"), "@@ANCESTORS@@": strings.Join(anc, "\n"),
-		"@@READS@@": strings.Join(reads, "\n"), "@@READSNOEXEC@@": strings.Join(noExec, "\n"),
-		"@@WRITES@@": strings.Join(writes, "\n"), "@@NET@@": strings.Join(netLines, "\n"),
+		"@@READS@@": strings.Join(reads, "\n"), "@@WRITES@@": strings.Join(writes, "\n"),
+		"@@NET@@": strings.Join(netLines, "\n"),
 	}
 	var out strings.Builder
 	used := 0
 	for _, line := range strings.Split(darwinTemplate, "\n") {
-		if body, ok := fill[line]; ok {
-			used++
-			if body != "" {
-				out.WriteString(body + "\n")
-			}
+		body, ok := fill[line]
+		if !ok {
+			out.WriteString(line + "\n")
 			continue
 		}
-		out.WriteString(line + "\n")
+		used++
+		if body != "" {
+			out.WriteString(body + "\n")
+		}
 	}
 	if used != len(fill) {
 		return "", nil, fmt.Errorf("darwin.sb.tmpl and the generator have diverged: %d of %d markers found", used, len(fill))
 	}
 	text = out.String()
-	if p.gpu {
+	if w.gpu {
 		text += metalGrants
 	}
 	return text, params, nil
 }
 
-// linkLiterals is each spelling and every symlink among its ancestors, once, in order.
-func linkLiterals(spellings []string) []string {
+// ancestors is every proper ancestor of paths, "/" excluded, sorted, once each: stat
+// on them is what lets mkdir and stat by absolute path reach a granted directory.
+func ancestors(paths ...string) []string {
 	var out []string
-	for _, s := range spellings {
-		for d := parentOf(s); d != s && parentOf(d) != d; d = parentOf(d) {
-			if isLink(d) && !slices.Contains(out, d) {
+	for _, p := range paths {
+		for d := filepath.Dir(filepath.Clean(p)); filepath.Dir(d) != d; d = filepath.Dir(d) {
+			if !slices.Contains(out, d) {
 				out = append(out, d)
 			}
 		}
-		if !slices.Contains(out, s) {
-			out = append(out, s)
+	}
+	slices.Sort(out)
+	return out
+}
+
+// linkLiterals is each spelling and every symlink among its ancestors, once, in order.
+func linkLiterals(spellings []string) []string {
+	var out []string
+	add := func(p string) {
+		if !slices.Contains(out, p) {
+			out = append(out, p)
 		}
+	}
+	for _, s := range spellings {
+		for d := filepath.Dir(s); filepath.Dir(d) != d; d = filepath.Dir(d) {
+			if fi, err := os.Lstat(d); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+				add(d)
+			}
+		}
+		add(s)
 	}
 	return out
 }

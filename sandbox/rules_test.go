@@ -7,9 +7,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func linuxPolicy() *policy {
-	return &policy{reads: []string{"/r/one"}, readsNoExec: []string{"/n/cache"}, writes: []string{"/w/job", "/w/data"},
-		cwd: "/w/job", tmp: "/w/job/.nova-sandbox-tmp", home: "/w/data"}
+func testWall() *wall {
+	return &wall{reads: []string{"/r/one"}, writes: []string{"/w/job", "/w/data"}}
 }
 
 func find(rs *ruleset, path string) (rule, bool) {
@@ -23,60 +22,40 @@ func find(rs *ruleset, path string) (rule, bool) {
 
 func TestRulesetGrants(t *testing.T) {
 	t.Parallel()
-	rs, err := buildRuleset(linuxPolicy(), 6, "")
-	require.NoError(t, err)
+	rs := buildRuleset(testWall(), 6, "")
 	assert.Equal(t, handledFS(6), rs.fs)
 
 	r, ok := find(rs, "/usr")
 	require.True(t, ok)
 	assert.EqualValues(t, readMask, r.mask)
-	assert.False(t, r.must, "a root is skipped if absent")
+	assert.False(t, r.must, "a system root is skipped if absent")
 
 	r, _ = find(rs, "/r/one")
 	assert.EqualValues(t, readMask, r.mask)
 	assert.True(t, r.must, "a caller path that cannot be added is a refusal")
 
-	r, _ = find(rs, "/w/job")
-	assert.Equal(t, rs.fs, r.mask, "a write root gets every handled right, removal included")
+	r, _ = find(rs, "/w/data")
+	assert.Equal(t, rs.fs, r.mask, "a write gets every handled right, removal included")
 	assert.True(t, r.must)
 
-	r, _ = find(rs, "/n/cache")
-	assert.EqualValues(t, fsReadFile|fsReadDir, r.mask)
-	assert.Zero(t, r.mask&fsExecute)
-
 	r, _ = find(rs, "/dev/null")
-	assert.True(t, r.file)
+	assert.Equal(t, fileMask(6), r.mask)
 	assert.Zero(t, r.mask&fsReadDir, "a file rule carries no directory-only right")
 }
 
-func TestRulesetOutsideTheSetIsNotGranted(t *testing.T) {
+func TestRulesetOutsideTheSpecIsNotGranted(t *testing.T) {
 	t.Parallel()
-	rs, err := buildRuleset(linuxPolicy(), 6, "")
-	require.NoError(t, err)
-	for _, home := range []string{"/home", "/root", "/tmp", "/var", "/mnt"} {
-		_, ok := find(rs, home)
-		assert.False(t, ok, home)
+	rs := buildRuleset(testWall(), 6, "")
+	for _, d := range []string{"/home", "/root", "/tmp", "/var", "/mnt", "/w"} {
+		_, ok := find(rs, d)
+		assert.False(t, ok, d)
 	}
-}
-
-func TestRulesetTmpAndCwdOutsideWritesAreWritable(t *testing.T) {
-	t.Parallel()
-	p := linuxPolicy()
-	p.tmp, p.cwd = "/t/tmp", "/c"
-	rs, err := buildRuleset(p, 6, "")
-	require.NoError(t, err)
-	for _, d := range []string{"/t/tmp", "/c"} {
-		r, ok := find(rs, d)
-		require.True(t, ok, d)
-		assert.Equal(t, rs.fs, r.mask)
-	}
+	assert.Len(t, rs.rules, len(linuxReadRoots)+len(linuxWriteFiles)+3)
 }
 
 func TestRulesetResolverDirectory(t *testing.T) {
 	t.Parallel()
-	rs, err := buildRuleset(linuxPolicy(), 6, "/mnt/wsl")
-	require.NoError(t, err)
-	r, ok := find(rs, "/mnt/wsl")
+	r, ok := find(buildRuleset(testWall(), 6, "/mnt/wsl"), "/mnt/wsl")
 	require.True(t, ok)
 	assert.EqualValues(t, readMask, r.mask)
 }
@@ -89,35 +68,22 @@ func TestRulesetByABI(t *testing.T) {
 	assert.NotZero(t, handledFS(3)&fsTruncate)
 	assert.NotZero(t, handledFS(5)&fsIoctlDev)
 
-	p := linuxPolicy()
-	rs, _ := buildRuleset(p, 6, "")
+	w := testWall()
+	rs := buildRuleset(w, 6, "")
 	assert.Zero(t, rs.net, "without --net-deny the network is not handled")
-	assert.NotZero(t, rs.scope)
-	p.netDeny = true
-	rs, _ = buildRuleset(p, 6, "")
+	assert.EqualValues(t, scopeAbstractUnix|scopeSignal, rs.scope)
+	w.netDeny = true
+	rs = buildRuleset(w, 6, "")
 	assert.EqualValues(t, netBindTCP|netConnectTCP, rs.net, "handling with no rule is how the denial works")
-	rs, _ = buildRuleset(p, 3, "")
+	rs = buildRuleset(w, 3, "")
 	assert.Zero(t, rs.net, "below abi 4 there is no net right; execWall refuses before this")
 	assert.Zero(t, rs.scope)
 }
 
 func TestRulesetNetAllowPorts(t *testing.T) {
 	t.Parallel()
-	p := linuxPolicy()
-	p.netAllow = []string{"localhost:11434"}
-	rs, _ := buildRuleset(p, 6, "")
-	assert.Empty(t, rs.connectPorts, "an open network has nothing to open")
-	p.netDeny = true
-	rs, _ = buildRuleset(p, 6, "")
-	assert.Equal(t, []uint16{11434}, rs.connectPorts)
-}
-
-func TestNoExecUnderAnExecuteRootIsRefused(t *testing.T) {
-	t.Parallel()
-	for _, under := range []string{"/r/one/cache", "/w/job/cache", "/usr/lib/cache"} {
-		p := linuxPolicy()
-		p.readsNoExec = []string{under}
-		_, err := buildRuleset(p, 6, "")
-		assert.Error(t, err, under)
-	}
+	w := testWall()
+	w.netDeny, w.netPorts = true, []uint16{11434}
+	assert.Equal(t, []uint16{11434}, buildRuleset(w, 6, "").connectPorts)
+	assert.Empty(t, buildRuleset(w, 3, "").connectPorts)
 }

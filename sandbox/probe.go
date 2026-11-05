@@ -44,7 +44,7 @@ func probe(stdout io.Writer, env []string) int {
 	walled := func(extra []string, argv ...string) int {
 		args := append([]string{"--write", in}, extra...)
 		cmd := exec.Command(self, append(append(args, "--"), argv...)...)
-		cmd.Env = append(env[:len(env):len(env)], "HOME="+in)
+		cmd.Env, cmd.Dir = env, in
 		if err := cmd.Run(); err != nil {
 			if ee, ok := err.(*exec.ExitError); ok {
 				return ee.ExitCode()
@@ -83,6 +83,9 @@ func probe(stdout io.Writer, env []string) int {
 	rc = walled(nil, "/bin/sh", "-c", "cat "+secret)
 	step("read_outside", "deny", rc != 0, gotOf(rc == 0))
 
+	rc = walled([]string{"--read", out}, "/bin/sh", "-c", "cat "+secret)
+	step("read_named", "allow", rc == 0, gotOf(rc == 0))
+
 	// --net-deny: a listener this process owns must be unreachable from the wall, and
 	// reachable without it.
 	l, err := net.Listen("tcp", "127.0.0.1:0")
@@ -100,7 +103,7 @@ func probe(stdout io.Writer, env []string) int {
 			}
 		}()
 		addr := l.Addr().String()
-		// the dial helper is this binary, so its directory is read wherever it is installed
+		// the in-wall client is this binary, so its directory is read wherever it is installed
 		readSelf := []string{"--read", filepath.Dir(self)}
 		step("net_control", "allow", walled(readSelf, self, "dial", addr) == 0, "allow")
 		switch rc := walled(append(readSelf, "--net-deny"), self, "dial", addr); rc {
@@ -119,7 +122,8 @@ func probe(stdout io.Writer, env []string) int {
 	return 0
 }
 
-// dial exits 0 when a TCP connect to addr succeeds.
+// dial exits 0 when a TCP connect to addr succeeds. It is the probe's client inside the
+// wall: no shell or tool every host has can open a TCP connection.
 func dial(args []string) int {
 	if len(args) != 1 {
 		return 2

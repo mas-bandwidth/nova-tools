@@ -4,7 +4,6 @@ package main
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -67,65 +66,46 @@ func wallCheck() (abi string, netOK bool, note string, err error) {
 }
 
 // execWall applies the wall and execs the command. It returns only on failure.
-func execWall(p *policy, env []string) *refusal {
-	if os.Geteuid() == 0 {
-		r := refuse("sandbox_failed", "this tool does not run as root: the wall is for an ordinary user")
-		return &r
-	}
+func execWall(w *wall, env []string) *refusal {
+	fail := func(reason, format string, a ...any) *refusal { r := refuse(reason, format, a...); return &r }
 	abi, ok := landlockABI()
 	if !ok {
-		r := refuse("no_sandbox", "this kernel has no landlock; this tool does not run a command it cannot contain")
-		return &r
+		return fail("no_sandbox", "this kernel has no landlock; this tool does not run a command it cannot contain")
 	}
 	used := min(abi, maxABI)
-	if p.netDeny && used < 4 {
-		r := refuse("net_unenforceable", "--net-deny needs landlock abi 4 (kernel 6.7) and this kernel reports abi %d", abi)
-		return &r
+	if w.netDeny && used < 4 {
+		return fail("net_unenforceable", "--net-deny needs landlock abi 4 (kernel 6.7) and this kernel reports abi %d", abi)
 	}
-	rs, err := buildRuleset(p, used, resolverDirOf("/etc/resolv.conf"))
-	if err != nil {
-		r := refuse("sandbox_failed", "%v", err)
-		return &r
-	}
+	rs := buildRuleset(w, used, resolverDirOf("/etc/resolv.conf"))
 	attr := rulesetAttr{rs.fs, rs.net, rs.scope}
 	fd, _, errno := syscall.Syscall(sysCreateRuleset, uintptr(unsafe.Pointer(&attr)), attrSize(used), 0)
 	if errno != 0 {
-		r := refuse("sandbox_failed", "the landlock ruleset could not be created at abi %d: %v", used, errno)
-		return &r
+		return fail("sandbox_failed", "the landlock ruleset could not be created at abi %d: %v", used, errno)
 	}
 	defer syscall.Close(int(fd))
 	for _, ru := range rs.rules {
 		if err := addPath(int(fd), ru, used); err != nil && ru.must {
-			r := refuse("sandbox_failed", "%s could not be added to the landlock ruleset: %v", ru.path, err)
-			return &r
+			return fail("sandbox_failed", "%s could not be added to the landlock ruleset: %v", ru.path, err)
 		}
 	}
 	for _, port := range rs.connectPorts {
 		a := netPort{netConnectTCP, uint64(port)}
 		if _, _, errno := syscall.Syscall6(sysAddRule, fd, ruleTypeNetPort, uintptr(unsafe.Pointer(&a)), 0, 0, 0); errno != 0 {
-			r := refuse("sandbox_failed", "--net-allow port %d could not be added: %v", port, errno)
-			return &r
+			return fail("sandbox_failed", "--net-allow port %d could not be added: %v", port, errno)
 		}
-	}
-	if err := os.Chdir(p.cwd); err != nil {
-		r := refuse("sandbox_failed", "cannot enter %s: %v", p.cwd, err)
-		return &r
 	}
 	// Restriction is per thread and Go moves goroutines between threads: pin this one
 	// to the thread that is restricted, so the exec happens on it. It is never
 	// unlocked; the thread dies with the exec.
 	runtime.LockOSThread()
 	if _, _, errno := syscall.RawSyscall(syscall.SYS_PRCTL, 38, 1, 0); errno != 0 { // PR_SET_NO_NEW_PRIVS
-		r := refuse("sandbox_failed", "no_new_privs: %v", errno)
-		return &r
+		return fail("sandbox_failed", "no_new_privs: %v", errno)
 	}
 	if _, _, errno := syscall.Syscall(sysRestrictSelf, fd, 0, 0); errno != 0 {
-		r := refuse("sandbox_failed", "landlock_restrict_self at abi %d: %v", used, errno)
-		return &r
+		return fail("sandbox_failed", "landlock_restrict_self at abi %d: %v", used, errno)
 	}
-	err = syscall.Exec(p.command, p.argv, env)
-	r := refuse("sandbox_failed", "%s could not be started inside the wall: %v", p.command, err)
-	return &r
+	err := syscall.Exec(w.command, w.argv, env)
+	return fail("sandbox_failed", "%s could not be started inside the wall: %v", w.command, err)
 }
 
 // addPath grants mask beneath ru.path. The descriptor is O_PATH, which needs no read
@@ -138,7 +118,7 @@ func addPath(rulesetFd int, ru rule, abi int) error {
 	defer syscall.Close(fd)
 	mask := ru.mask
 	var st syscall.Stat_t
-	if ru.file || (syscall.Fstat(fd, &st) == nil && st.Mode&syscall.S_IFMT != syscall.S_IFDIR) {
+	if syscall.Fstat(fd, &st) == nil && st.Mode&syscall.S_IFMT != syscall.S_IFDIR {
 		mask &= fileMask(abi)
 	}
 	a := pathBeneath{access: mask, fd: int32(fd)}
@@ -148,7 +128,8 @@ func addPath(rulesetFd int, ru rule, abi int) error {
 	return nil
 }
 
-// resolverDirOf is the directory the resolver config at conf resolves to, or "".
+// resolverDirOf is the directory the resolver config at conf resolves to, or "": some
+// distributions keep it outside every static root.
 func resolverDirOf(conf string) string {
 	resolved, err := filepath.EvalSymlinks(conf)
 	if err != nil {
