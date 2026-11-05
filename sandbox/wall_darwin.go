@@ -37,16 +37,10 @@ func wallCheck() (abi string, netOK bool, note string, err error) {
 }
 
 // execWall applies the wall and execs the command. It returns only on failure.
-func execWall(w *wall, env []string) *refusal {
-	bin, ok := sandboxExec()
-	if !ok {
-		r := refuse("no_sandbox", "sandbox-exec is not available; this tool does not run a command it cannot contain")
-		return &r
-	}
-	text, params, err := darwinProfile(w)
-	if err != nil {
-		r := refuse("sandbox_failed", "the profile could not be generated: %v", err)
-		return &r
+func execWall(w *wall, env []string) []refusal {
+	bin, text, params, bad := darwinPlan(w)
+	if len(bad) > 0 {
+		return bad
 	}
 	argv := []string{"sandbox-exec", "-p", text}
 	for _, kv := range params {
@@ -56,7 +50,28 @@ func execWall(w *wall, env []string) *refusal {
 	if !w.keepFDs {
 		closeInheritedFDs()
 	}
-	err = syscall.Exec(bin, argv, env)
-	r := refuse("sandbox_failed", "%s could not be started: %v", bin, err)
-	return &r
+	err := syscall.Exec(bin, argv, env)
+	return []refusal{refuse("sandbox_failed", "%s could not be started: %v", bin, err)}
+}
+
+// darwinPlan is the sandbox-exec binary and the profile execWall would apply.
+func darwinPlan(w *wall) (bin, text string, params []string, bad []refusal) {
+	bin, ok := sandboxExec()
+	if !ok {
+		return "", "", nil, []refusal{refuse("no_sandbox", "sandbox-exec is not available; this tool does not run a command it cannot contain")}
+	}
+	text, params, err := darwinProfile(w)
+	if err != nil {
+		return "", "", nil, []refusal{refuse("sandbox_failed", "the profile could not be generated: %v", err)}
+	}
+	return bin, text, params, nil
+}
+
+// describeWall is show's text: the profile execWall would apply here.
+func describeWall(w *wall) (string, []refusal) {
+	bin, text, params, bad := darwinPlan(w)
+	if len(bad) > 0 {
+		return "", bad
+	}
+	return formatDarwin(w, bin, text, params), nil
 }
