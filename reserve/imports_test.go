@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestSelfContained holds slot to the standard library and golang.org/x/sys, so it can
+// TestSelfContained holds reserve to the standard library and golang.org/x/sys, so it can
 // be lifted out of this repository as it is: it reads the imports of every
 // .go file here; the tests may also import testify.
 func TestSelfContained(t *testing.T) {
@@ -27,7 +27,7 @@ func TestSelfContained(t *testing.T) {
 			path, err := strconv.Unquote(imp.Path.Value)
 			require.NoError(t, err)
 			assert.True(t, allowed(path, strings.HasSuffix(name, "_test.go")),
-				"%s imports %s: slot imports only the standard library and golang.org/x/sys", name, path)
+				"%s imports %s: reserve imports only the standard library and golang.org/x/sys", name, path)
 		}
 	}
 }

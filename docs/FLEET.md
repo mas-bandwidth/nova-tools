@@ -1,8 +1,8 @@
 # The fleet
 
 `fleet/` is how the fleet is managed: which machines there are and what they run (nova-config), the loops they keep
-running (`loops.yml`), the nova-tools release each one holds (`nova-tools-install.yml`), and the load slots that keep
-builds and tests from piling onto one box (`nova-slot`). It is Ansible plus two Go tools, nothing else; nothing here
+running (`loops.yml`), the nova-tools release each one holds (`nova-tools-install.yml`), and the reservations that keep
+builds and tests from piling onto one box (`nova-reserve`). It is Ansible plus two Go tools, nothing else; nothing here
 names a machine, a seat or a person. Those are rows in nova-config.
 
 ```
@@ -13,7 +13,7 @@ fleet/
   templates/nova-loop.*.j2          the unit templates
   group_vars/all.yml                the defaults both plays read
   retired-tools.txt                 binaries nova-tools shipped and ships no more
-slot/                               nova-slot, the load slots (Go)
+reserve/                            nova-reserve, reservations on a machine (Go)
 ```
 
 ## The machine and loop model
@@ -41,9 +41,9 @@ by a play run. Defaults for the plays are in `fleet/group_vars/all.yml`; a host'
 ## Installing a release
 
 A release is a git tag `v*` on this repository. `.github/workflows/release.yml` builds the five tools (nova-bus,
-nova-config, nova-sandbox, nova-secrets, nova-slot) for linux/amd64, linux/arm64, darwin/arm64 and windows/amd64 with
+nova-config, nova-sandbox, nova-secrets, nova-reserve) for linux/amd64, linux/arm64, darwin/arm64 and windows/amd64 with
 `CGO_ENABLED=0 -trimpath`, names each asset `<tool>_<tag>_<os>_<arch>[.exe]` (for example
-`nova-slot_v1.0.0_linux_amd64`), writes one `SHA256SUMS`, and creates the GitHub release with the workflow's own
+`nova-reserve_v1.0.0_linux_amd64`), writes one `SHA256SUMS`, and creates the GitHub release with the workflow's own
 `GITHUB_TOKEN`. Nothing else holds a credential.
 
 ```
@@ -54,7 +54,9 @@ ansible-playbook -i ./inventory fleet/nova-tools-install.yml -e nova_tools_versi
 The role reads the release's `SHA256SUMS`, downloads each asset and checks it against its digest before it is put in
 place. A binary that already holds the digest is left alone, so a second run changes nothing and `--check --diff` is
 clean. There is no default version: a run never installs "latest" by accident. A platform the release does not ship
-is refused before anything is written.
+is refused before anything is written. The Windows tasks are included only for a Windows host, so
+`ansible-galaxy collection install -r fleet/requirements.yml` (ansible.windows) is needed only when a Windows host is
+in the inventory.
 
 | Variable | Default | |
 |---|---|---|
@@ -102,21 +104,21 @@ keys runs its `argv` unchanged. Rows without `every` are kept alive; `enabled` d
   no row carries is refused before anything is written.
 - On Linux a changed unit that was not restarted fails the play; the receipt line `LOOPS host=...` ends each host.
 
-## Load slots
+## Reservations
 
-`nova-slot` runs a command holding one of N load slots on the machine, so builds, tests and benches queue instead of
+`nova-reserve` runs a command holding a reservation of one of N slots on the machine, so builds, tests and benches queue instead of
 timing each other out. It is the same tool on Linux, macOS and Windows: OS file locks in one directory
-(`$NOVA_SLOT_DIR`, else `/tmp/nova-slot`; `C:\ProgramData\nova-slot` on Windows), freed by the kernel when a holder
+(`$NOVA_RESERVE_DIR`, else `/tmp/nova-reserve`; `C:\ProgramData\nova-reserve` on Windows), freed by the kernel when a holder
 dies. N defaults to the CPU count divided by 4; a machine's `slots` row says what it should be.
 
 ```
-nova-slot --slots 3 --wait 15m -- go test ./...
-nova-slot --exclusive -- ./bench
-nova-slot hold --slots 3          # prints HELD, holds until stdin closes
-nova-slot status
+nova-reserve --slots 3 --wait 15m -- go test ./...
+nova-reserve --exclusive -- ./bench
+nova-reserve hold --slots 3          # prints HELD, holds until stdin closes
+nova-reserve status
 ```
 
-Every caller on a machine uses the same directory. `slot/README.md` has the flags, exit codes and the TLA+ models.
+Every caller on a machine uses the same directory. `reserve/README.md` has the flags, exit codes and the TLA+ models.
 
 ## Not yet here
 

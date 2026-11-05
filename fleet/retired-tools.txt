@@ -26,3 +26,4 @@ nova-redis	2026-11-05	retired
 nova-table	2026-11-05	retired
 nova-update	2026-11-05	retired
 nova-version	2026-11-05	retired
+nova-slot	2026-11-05	retired (renamed nova-reserve; was never installed on any machine)
