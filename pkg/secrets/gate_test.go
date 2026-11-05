@@ -48,7 +48,10 @@ func gateStart(t *testing.T) string {
 	gateBase.once.Do(func() {
 		dir := filepath.Join(filepath.Dir(sharedFakeSops), "gate-base")
 		run := func(args ...string) error {
-			out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput()
+			// auto maintenance is off: `git commit` otherwise starts a detached `maintenance run`
+			// that takes and drops .git/objects/maintenance.lock while the tests copy this
+			// directory, and the copy fails with "no such file" on the vanished lock
+			out, err := exec.Command("git", append([]string{"-c", "maintenance.auto=false", "-c", "gc.auto=0", "-C", dir}, args...)...).CombinedOutput()
 			if err != nil {
 				return fmt.Errorf("git %v: %v: %s", args, err, out)
 			}
