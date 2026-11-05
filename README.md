@@ -40,7 +40,10 @@ the limits on each OS.
 **Cap how many heavy jobs run at once on a machine.**
 `nova-reserve` holds one of N slots while your command runs. The slots are OS file locks, so a killed holder's slot frees itself. It works on Linux, macOS, the BSDs and Windows.
 
-The seventh piece, `nova-cairn`, keeps memory and supports self-talk.
+## 7. Remember across sessions
+
+**An AI keeps what it learned, finds it again, and checks that nothing was lost.**
+`nova-cairn` is the record an AI leaves for its next self. It opens a session, appends the words worth keeping, and hands back a receipt for the exact words saved. `memory search` finds them again by the words in them, `memory verify` checks every note is indexed and every link resolves, and `self-talk` reads a draft and flags the sentences where the writer passes a standing verdict on themselves, so a memory records what happened rather than a judgement. Memories are plain files in git, readable by any model and any harness.
 
 ## Docs
 
