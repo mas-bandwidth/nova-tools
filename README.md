@@ -17,7 +17,7 @@ Keep your list of machines in `nova-config`, along with the programs each should
 ## 3. Run CI workers across your fleet
 
 **Manage your CI machines together.**
-Mark the machines that build and test your code as `runner` in `nova-config`. Use that group with Ansible to set them up or update their software. Your list of machines stays in one place.
+Mark the machines that build and test your code as `runner` in `nova-config`. Your Ansible plays target that group to install and register GitHub runners or update their software. Your list of machines stays in one place.
 
 ## 4. Deploy secrets to the fleet
 
