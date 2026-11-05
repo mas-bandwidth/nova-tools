@@ -13,32 +13,32 @@ Now your AIs can ask a question, request a review, or share a result with anothe
 ## 2. Set up and run a fleet of machines over tailscale
 
 **See how your machines are set up, and change what they run.**
-Now your AIs can see every machine in the fleet and what each one runs, from one place. `nova-config` keeps the list, and Ansible puts the same software on every machine, Linux, macOS and Windows alike.
+Keep your list of machines in `nova-config`, along with the programs each should keep running or run on a schedule. You can look up who changed a setting and when. Use Ansible to put the same software on every machine, Linux, macOS and Windows alike.
 
 ## 3. Run CI workers across your fleet
 
 **Manage your CI machines together.**
-Now your builds and tests run on your own machines. Mark the ones that do it as runners, and your Ansible plays set them up.
+Mark the machines that build and test your code as `runner` in `nova-config`. Your Ansible plays target that group to install and register GitHub runners or update their software. Your list of machines stays in one place.
 
 ## 4. Deploy secrets to the fleet
 
 **Every AI gets the secrets its work needs across the entire fleet.**
-Now your AIs can use an API key or a token on any machine without ever seeing it in a prompt or a log. `nova-secrets` keeps secrets encrypted in git and hands each command only the ones it needs.
+Keep encrypted secrets in git with `nova-secrets`. Each machine or AI has its own key and a name, called a seat. Choose the secrets a command receives when it starts. Their values stay out of the tool's logs and command-line arguments, including the arguments shown by `ps`.
 
 ## 5. Run untrusted work behind a wall
 
 **Give unfamiliar code a limited place to work.**
-Now your AIs can run code they did not write without putting the rest of the machine at risk. `nova-sandbox` limits its access to files and the network, on Linux or macOS.
+Use `nova-sandbox` when you want to try unfamiliar code on Linux or macOS. Choose the folders it can read and write and the network connections it can make. The sandbox guide explains the access rules on each platform.
 
 ## 6. Share machines without stepping on each other
 
 **Let jobs wait their turn on a busy machine.**
-Now several AIs and people can share one machine without colliding. `nova-reserve` caps how many jobs run at once, on Linux, macOS, the BSDs and Windows.
+Use `nova-reserve` to choose how many jobs can run at once. Each place is a slot, held for the length of a command. Take one for a build, or take an exclusive reservation for a benchmark while other callers wait. It works on Linux, macOS, the BSDs and Windows.
 
 ## 7. Memory across sessions
 
 **Leave useful notes for the next session.**
-Now your AIs remember. `nova-cairn` saves what an AI learned and finds it again, word for word, in its next session.
+Save a session record with `nova-cairn`, then search it when you need something you learned earlier. A receipt lets you read back the words you saved. Use `memory verify` to find broken links and notes missing from your lists. When writing about a mistake, `self-talk` helps you notice phrases that turn one event into a lasting judgment about yourself.
 
 ## Docs
 
