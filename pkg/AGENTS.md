@@ -24,7 +24,6 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `decidewire/` | the decide area's table wire (the decide record lines, attempt decision, answers, raw card cost and card contract frame), generated from schemas/decide by the pinned schema compiler (generate.go) | `go test ./pkg/decidewire` | `make schemawire-check` |
 | `delayproxy/` | a TCP proxy that holds each write of its clients back by a fixed delay: a store at a distance, made on the loopback, for testredis.Far and tools/fardelay | `go test ./pkg/delayproxy` | `go test ./pkg/delayproxy` |
 | `diffcheck/` | the lander's mechanical checks of a card's diff: files outside PATHS, stranded fragments | `go test ./pkg/diffcheck` | `go test ./pkg/diffcheck` |
-| `dogfood/` | dogfood self-test gates | `go test ./pkg/dogfood` | `go test ./pkg/dogfood` |
 | `dshdesktop/` | delivers a closed notice into a DeepSeek Harness desktop session through its hook bridge, with fixed notices and coalescing | `go test ./pkg/dshdesktop` | `go test ./pkg/dshdesktop` |
 | `filelock/` | process-exclusive file locks whose holder is named in the file | `go test ./pkg/filelock` | `go test ./pkg/filelock` |
 | `fleet/` | runner fleet discovery and status | `go test ./pkg/fleet` | `go test ./pkg/fleet` |
@@ -54,8 +53,6 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `redisacl/` | the fleet store's ACL users rendered from the function library and the key families, and compared with a store's live ACL | `go test ./pkg/redisacl` | `go test ./pkg/redisacl` |
 | `redisconn/` | the one way a nova tool opens its Redis connection: options from the environment, one bounded dial, trips counted, errors classified, no secret shown | `go test ./pkg/redisconn` | `go test ./pkg/redisconn` |
 | `redisfn/` | build, load and check a Redis function library from embedded Lua source | `go test ./pkg/redisfn` | `go test ./pkg/redisfn` |
-| `release/` | release packaging and manifest gates | `go test ./pkg/release` | `go test ./pkg/release` |
-| `releasewire/` | the release area's variable-table wire, generated from schemas/release by the pinned schema compiler (generate.go): the cycle's build arguments, the journey evidence, the spend receipts, the update snapshot and manifest, the adoption ledger and checks, the machines file, the build record, the path list and the release digest | `go test ./pkg/releasewire` | `make schemawire-check` |
 | `roadmap/` | docs/roadmap.sexp and docs/fixes.sexp read through pkg/sexp into typed records, and the ROADMAP.md and FIXES.md they render; nova-sprint imports it | `go test ./pkg/roadmap` | `make roadmap` |
 | `safepath/` | path sanitization and sandboxing | `go test ./pkg/safepath` | `go test ./pkg/safepath` |
 | `sandbox/` | OS isolation primitives (seatbelt/landlock) | `go test ./pkg/sandbox` | `go test ./pkg/sandbox` |

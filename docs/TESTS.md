@@ -739,24 +739,6 @@ SUM OK month=2026-09 days=1 missing=0 pairs=3 models=2 nonutc=0
 ```
 
 
-## nova-update
-
-### First run
-
-With the binary alone, in an empty directory: `example` writes the one-tool Go
-manifest and `report` reads it. This writes `versions.tsv` and performs no update
-or bus action.
-
-```text
-$ nova-update example --out versions.tsv
-EXAMPLE OK wrote=versions.tsv entries=1 unchanged=false
-EXAMPLE NOTE next: nova-update report --file versions.tsv
-$ nova-update report --file versions.tsv
-REPORT OK checked=1 known=1 unknown=0 changed=- sent=- took=23ms file=versions.tsv host=- as=- entries=1 kinds=tool at=2026-10-02T02:55:03Z timeout=5s budget=1m0s max=20 snapshot=-
-REPORT TOOL name=go kind=tool version=1.27.1 raw=go\x20version\x20go1.27.1\x20darwin/arm64 path=/opt/homebrew/bin/go
-```
-
-
 ## nova-version
 
 ### First run
