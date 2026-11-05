@@ -14,8 +14,8 @@ import (
 )
 
 // TestARealStore runs the built binary against real sops, age-keygen and git, on a
-// store and keys made in the test's own directory: keygen, a first seal, exec with
-// its exit status passed through, seat add to a second seat, check and names.
+// store and keys made in the test's own directory: seat add, a first set, exec with
+// its exit status passed through, and the refusals.
 func TestARealStore(t *testing.T) {
 	t.Parallel()
 	sops, err := exec.LookPath("sops")
@@ -58,26 +58,29 @@ func TestARealStore(t *testing.T) {
 		require.NoError(t, err, string(out))
 	}
 
-	run("", 0, "keygen", "--as", "recovery", "--key", filepath.Join(keys, "recovery.key"), "--age-keygen", ageKeygen)
-	out, err := exec.Command(ageKeygen, "-y", filepath.Join(keys, "recovery.key")).Output()
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(store, "recovery.pub"), out, 0o644))
-	ada := filepath.Join(keys, "ada.key")
-	receipt := run("", 0, "keygen", "--as", "ada", "--key", ada, "--age-keygen", ageKeygen, "--store", store)
-	var rule strings.Builder
-	for _, l := range strings.Split(receipt, "\n") {
-		if r, ok := strings.CutPrefix(l, "SECRETS RULE   "); ok {
-			rule.WriteString(r + "\n")
-		}
+	keygen := func(name string) string {
+		key := filepath.Join(keys, name+".key")
+		out, err := exec.Command(ageKeygen, "-o", key).CombinedOutput()
+		require.NoError(t, err, "age-keygen -o: %s", out)
+		pub, err := exec.Command(ageKeygen, "-y", key).Output()
+		require.NoError(t, err)
+		return strings.TrimSpace(string(pub))
 	}
-	require.NoError(t, os.WriteFile(filepath.Join(store, ".sops.yaml"), []byte(rule.String()), 0o644))
+	keygen("recovery")
+	recPub, err := exec.Command(ageKeygen, "-y", filepath.Join(keys, "recovery.key")).Output()
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(store, "recovery.pub"), recPub, 0o644))
+	ada := filepath.Join(keys, "ada.key")
+	adaPub := keygen("ada")
+	require.NoError(t, os.WriteFile(filepath.Join(store, ".sops.yaml"), []byte("creation_rules:\n"), 0o644))
+	run("", 0, "seat", "add", "ada", adaPub, "--store", store)
 	git("init", "-q", "-b", "main")
 	git("add", "-A")
 	git("commit", "-qm", "a new store")
 
 	seat := []string{"--store", store, "--as", "ada", "--key", ada, "--sops", sops}
-	run("value-one-xyz\n", 0, append([]string{"seal", "--name", "GH_TOKEN", "--stdin"}, seat...)...)
-	run("value-two-xyz\n", 0, append([]string{"seal", "--name", "API_KEY", "--stdin", "--no-pr"}, seat...)...)
+	run("value-one-xyz\n", 0, append([]string{"set", "GH_TOKEN"}, seat...)...)
+	run("value-two-xyz\n", 0, append([]string{"set", "API_KEY"}, seat...)...)
 	sealedFile, err := os.ReadFile(filepath.Join(store, "ada.yaml"))
 	require.NoError(t, err)
 	assert.NotContains(t, string(sealedFile), "value-one-xyz")
@@ -87,17 +90,9 @@ func TestARealStore(t *testing.T) {
 		"sh", "-c", `test "$GH_TOKEN" = value-one-xyz && test -z "$API_KEY" && echo delivered`)...)
 	assert.Contains(t, got, "delivered")
 	assert.NotContains(t, got, "value-one-xyz")
-	run("", 7, append(append([]string{"exec"}, seat...), "--only", "all", "--", "sh", "-c", "exit 7")...)
-	run("", 125, append(append([]string{"exec"}, seat...), "--only", "NOPE", "--", "true")...)
-
-	bo := filepath.Join(keys, "bo.key")
-	receipt = run("", 0, "keygen", "--as", "bo", "--key", bo, "--age-keygen", ageKeygen)
-	pub := receipt[strings.Index(receipt, "pub=")+4 : strings.LastIndex(receipt, "\n")]
-	run("", 0, "seat", "add", "--store", store, "--as", "bo", "--pub", pub, "--from", "ada", "--only", "API_KEY", "--key", ada, "--sops", sops)
-	assert.Contains(t, run("", 0, "check", "--store", store, "--as", "bo", "--key", bo, "--sops", sops), "SECRETS CHECK OK as=bo keys=1")
-	assert.Contains(t, run("", 1, "check", "--store", store, "--as", "ada", "--key", bo, "--sops", sops), "withheld")
-	assert.Equal(t, "SECRETS NAME key=API_KEY clear=false\nSECRETS NAMES OK as=bo keys=1\n", run("", 0, "names", "--store", store, "--as", "bo"))
+	run("", 7, append(append([]string{"exec"}, seat...), "--only", "API_KEY", "--", "sh", "-c", "exit 7")...)
+	assert.Contains(t, run("", 125, append(append([]string{"exec"}, seat...), "--only", "NOPE", "--", "true")...), "unknown secret name")
 
 	require.NoError(t, os.Chmod(ada, 0o644))
-	run("", 125, append(append([]string{"exec"}, seat...), "--only", "all", "--", "true")...)
+	run("", 125, append(append([]string{"exec"}, seat...), "--only", "API_KEY", "--", "true")...)
 }
