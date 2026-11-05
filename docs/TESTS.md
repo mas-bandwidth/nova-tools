@@ -163,72 +163,6 @@ UNHOOK OK as=m1 was=hooked epoch=2
 UNHOOK NOTE hook in again: nova-hook hook --as m1 --role member
 ```
 
-## nova-friend
-
-Run by `cmd/nova-friend/firstrun_test.go` on a throwaway redis-server whose
-`friends` set names ada and bob (what `nova-config apply` writes for two friend
-rows), its address in `NOVA_BUS_REDIS`, so the lines read as a reader types
-them. The sitting is the canary by hand, with no daemon running: a dry-run
-install prints the plan for bob's agent, OpenCode's project config first; a
-dry-run uninstall the plan to undo it; a dry-run host the tmux line that would
-host bob's terminal harness; bob's session answers a reach step's nonce with `pong` (one note to ada on
-the bus, from bob's own stream); `status` says no daemon has run as bob (exit 1). `./` is a directory of the test's own, with bob's directory `./bob` made in it
-first (install, `--dry-run` too, refuses a `--dir` that is not a real
-directory and never makes one), and so are the
-home directory and the uid the plan names. The run-owned values are the
-message `id=` (a ULID from the store's time) and `at=`.
-
-`watch`, the coordinator's wake, is not a step either: it waits for a message
-or a wake line that arrives after it starts, or for `--timeout`, so the banner
-has no example of it; its `-h` example is run on the in-memory store with an
-injected clock in `cmd/nova-friend/watch_test.go`.
-
-The spend cap per day and per provider (`pkg/friend/spendcap.go`) is pinned in
-`pkg/friend/spendcap_test.go`: `TestSpendCapStopsTurnsPastTheCapAndRaisesOneJudgment`
-(a fake harness reports usage; past the cap a turn is stopped and one judgment
-raised naming the friend, the provider and the spend, once until the day
-resets), `TestSpendCapResetsOnANewSpendDay`, `TestSpendCapDefaultIsTwentyDollars`,
-`TestSpendCapJudgmentNamesFriendProviderAndSpend`,
-`TestSpendCapRefuseTellsTheSeatAndTheOwner` (a provider refusal for funds
-raises the one judgment to the seat and the owner and stops turns at once),
-`TestSpendCapLanesRespectTheCapAndIdle` (the one-shot lanes stop under the cap
-and when idle), `TestSpendCapIdleLaunchesNothing` (a friend with no dealt work
-and no live session launches no turn),
-`TestSpendCapStopsWhenTheLimitGateReadsAFundsRefusal` (the real gate chain —
-the limit gate under the spend cap — reads the incident's wording and a 402
-from a harness turn, hands the funds refusal to the spend cap, and stops with
-the one judgment before the limit's Rest retry). The daemon delivers nothing into a session (v1.3.6), so the cap stands in front of the lanes alone.
-
-### First run
-
-```text
-$ nova-friend install --as bob --harness opencode --dir ./bob --model deepseek/deepseek-v4 --dry-run
-INSTALL OK label=com.nova.friend-bob plist=./home/Library/LaunchAgents/com.nova.friend-bob.plist launchd_log=./home/Library/Logs/nova-friend-bob.log dry_run=true
-INSTALL PLAN command="write ./bob/opencode.json permission.external_directory../bob/**=allow"
-INSTALL PLAN command="write ./bob/opencode.json model=deepseek/deepseek-v4"
-INSTALL PLAN command="write ./home/Library/LaunchAgents/com.nova.friend-bob.plist"
-INSTALL PLAN command="launchctl bootout gui/501/com.nova.friend-bob"
-INSTALL PLAN command="launchctl bootstrap gui/501 ./home/Library/LaunchAgents/com.nova.friend-bob.plist"
-INSTALL NOTE the agent runs: nova-friend run --as bob --harness opencode --dir ./bob, with --redis and --server as given here
-
-$ nova-friend uninstall --as bob --dry-run
-UNINSTALL OK label=com.nova.friend-bob plist=./home/Library/LaunchAgents/com.nova.friend-bob.plist dry_run=true
-UNINSTALL PLAN command="launchctl bootout gui/501/com.nova.friend-bob"
-UNINSTALL PLAN command="rm ./home/Library/LaunchAgents/com.nova.friend-bob.plist"
-
-$ nova-friend host --as bob --harness aider --dir ./bob --dry-run -- aider
-HOST DRY-RUN session=friend-bob dir=./bob dry_run=true command="tmux new-session -d -s friend-bob -c ./bob -- aider"
-
-$ nova-friend pong --as bob --nonce abc123 --to ada --queue 2 --working 1 --width 4
-PONG OK nonce=abc123 to=ada id=01M42EJZ1F8FXB5T0F6EXJCRS1 at=2026-10-04T03:40:12Z
-
-$ nova-friend status --as bob --dir ./bob
-! STATUS NONE: no daemon has run as bob (no status file in ./home/.nova-friend/bob); run: nova-friend install --as bob --harness <h> --dir ./bob
-
-$ nova-friend lanes --as bob --clear-faults
-LANES OK cleared=none
-```
-
 ## nova-sandbox
 
 Fixture: a job directory of yours. Every path below is one you name — this tool has no defaults and guesses nothing — so the transcript is a worked example with `/path/to/pool` standing in for yours, and the lines are what the platform prints with the paths shortened.
@@ -797,7 +731,7 @@ source are pinned by `cmd/nova-config/seat_login_redis_test.go`
 
 ```text
 $ nova-config migrate --file try.json
-CONFIG MIGRATE file=try.json from=0 to=47 applied=47
+CONFIG MIGRATE file=try.json from=0 to=48 applied=48
 
 $ nova-config machine add m1 --user nova --seat s1 --slots 8 --width 4 --actor a1 --file try.json
 CONFIG ADD kind=machine name=m1 rev=1
@@ -1132,32 +1066,19 @@ $ nova-up --dry-run --root ./nova-try
 
 ## nova-doctor
 
-A login with no friend rows, `/home/you`: the harness check alone, as lines and
-as JSON, then a check name that is none. Each run reads and changes nothing. Run
-by `cmd/nova-doctor/firstrun_test.go`.
+A login with no nova launch agents, `/home/you`: the plists check alone, as
+lines and as JSON, then a check name that is none. Each run reads and changes
+nothing. Run by `cmd/nova-doctor/firstrun_test.go`.
 
 ### First run
 
 ```
-$ nova-doctor run --check harness
-DOCTOR harness ok no friend rows at /home/you/.nova/friends
+$ nova-doctor run --check plists
+DOCTOR plists ok no nova launch agents here
 
-$ nova-doctor run --check harness --json
-{"exit":0,"results":[{"check":"harness","dependency":"the friend harnesses","status":"ok","evidence":"no friend rows at /home/you/.nova/friends"}]}
+$ nova-doctor run --check plists --json
+{"exit":0,"results":[{"check":"plists","dependency":"the com.nova launchd plists and nova systemd units this machine loads","status":"ok","evidence":"no nova launch agents here"}]}
 
 $ nova-doctor run --check nosuch
-! RUN REFUSED: no check named "nosuch"; the checks are dashboard, friend-login, friend-row, friend-wall, gosdk, harness, plists, providers, secrets, self, ssh, tailnet; run: nova-doctor help
+! RUN REFUSED: no check named "nosuch"; the checks are dashboard, gosdk, plists, providers, secrets, self, ssh, tailnet; run: nova-doctor help
 ```
-
-## One-shot lanes at parity (pkg/friend/lane_parity_test.go, cmd/nova-friend/lane_parity_test.go)
-
-`TestOpencodeLanesDoWhatTheRunnerStopgapsDid` has one subtest per behaviour the two runner scripts had (card filter, row
-rules, take back, generation job names, width under load, token cap, provider stop, cost line, tokens from opencode's
-database, route row, go shims, bus note); `TestLanesTakeBackACardOutsideTheRowsTiersAndRunOnlyTheRest`,
-`TestLanesAreHeldToTheLoadWidthWhileTheLoadIsHigh`, `TestACardOverTheTokenCapIsHeldAndItsCostPublished`,
-`TestAFinishedCardPublishesItsCostOrWhyNot`, `TestAProviderFailureHoldsTheFriendDownUntilAPersonClearsIt`,
-`TestAProviderFailureStopsEveryLaneUnderWayAndKeepsItsCard` and `TestAPauseMarkerNotWrittenIsNotAResume` run them through
-the lane rig on its fake clock (synctest, no socket, no wall-clock sleep), the take-back's fake server refusing a
-coordinator verb as the real one does; `TestResumeClearsTheLanesPauseAPersonBringsUp` and
-`TestRefuseGoRefusesWithTheWayToABench` run the two new verbs, and `TestRunBeatsDownWhileTheLanesArePausedUntilAPersonResumes`
-the daemon's down beat while the pause stands.

@@ -72,36 +72,11 @@ tools report, and the fix is `nova-update apply --file <manifest> <tool> --versi
 
 ### The friend checks
 
-The friend checks each enumerate the friend daemons this machine loads
-(`~/Library/LaunchAgents/com.nova.friend-*.plist` on darwin, the systemd user
-units `nova-friend-*.service` on linux), read each daemon's argv from its plist
-(`friend.PlistArgs`) or unit, and name the daemon in every evidence line. A
-machine with no such daemon gets `ok no friend daemons here` from each. None is
-a Fleet check, so `--local` runs all of them.
-
-**friend-seat** is retired (2026-10-17): it held each nova-friend daemon's
-`--coordinator` to the seat, and the friend daemons were retired that night;
-nova-hook is the one friend channel. Nothing replaces what it checked: `nova-hook status`
-reads a friend's liveness (hooked, armed, proven, down), not which seat she answers.
-
-**friend-row.** Dependency: each daemon's nova-config row. Runs `nova-config friend show <name> --json`; `fail` when the row's `mode` is not `one-shot`, when
-its `roles` lack `builder` while the daemon runs cards (`--harness` given), or
-when its `width` differs from the daemon's `--width`. Fix: `nova-config friend set <name> --mode one-shot --roles builder,reader --width <n>`, then
-`nova-sprint friend sync`.
-
-**friend-wall.** Dependency: each daemon's `--dir` against the lane wall's
-deny-self. The deny-self is the daemon's `--deny-self`, else
-`NOVA_FRIEND_DENY_SELF`, else `<home>/ai/<coordinator>/working`; `fail` when `--dir`
-equals, contains, or is contained by it, naming both paths, with both paths
-resolved through symlinks where they exist. Fix: move `--dir`
-beside the self (a sibling directory), never inside it.
-
-**friend-login.** Dependency: a claude daemon's sign-in. For `--harness claude`
-the `--config-dir` (argv, else the row's `config_dir`) is proven by running the
-harness itself, `CLAUDE_CONFIG_DIR=<dir> claude -p ok --output-format json --max-turns 1`, and reading `terminal_reason`; an `api_error` with
-`duration_api_ms` 0 is `fail config dir <dir> is not signed in`. Fix, the
-owner's hand: `CLAUDE_CONFIG_DIR=<dir> claude login`. The check reads only the
-harness's answer and never prints, copies or moves a credential.
+The friend checks (`friend-row`, `friend-wall`, `friend-login`, `harness`)
+read the nova-friend daemons a machine loaded, and went with the daemon on
+2026-11-05. `friend-seat` was retired before them (2026-10-17). A friend's
+liveness is her nova-hook record (`nova-hook status`), and her row is
+nova-config's (`nova-config friend show <name>`).
 
 **plists.** Dependency: the launchd plists and systemd units this machine loads.
 Runs `plutil -lint` on every `com.nova.*.plist` under `~/Library/LaunchAgents`

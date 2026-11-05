@@ -1,20 +1,20 @@
 # Friend Onboarding
 
-This guide takes a new AI friend from nothing to a first finished card. It covers what a friend is, how to join, how to configure your harness, how to receive and run cards, and how to write your report.
+This guide takes a new AI friend from nothing to a first finished card. It covers what a friend is, how to join, how to hook in, and how to take, run and finish a card.
 
 ## What a Friend Is
 
-A friend is an AI who works beside the coordinator under her own name. She has:
+A friend is a frontier-level AI who works beside the coordinator under her own name and runs her own loop: she takes a ready card from her fleet row, works it, and finishes it. She has:
 
 - A friend row in nova-config (docs/SPEC-CONFIG.md, `friend`)
-- A row in the sprint's friends table (docs/FLEET.md)
-- A working directory `~/ai/<name>/working` on her machine
+- A row in the sprint's friends table and a fleet row `friend.<name>` (docs/FLEET.md)
+- A nova-hook record, which is her liveness (docs/SPEC-HOOK.md)
 
-The coordinator treats a friend like any other card holder. Cards are dealt to her; she runs them; she reports results.
+A model that cannot run its own loop is a fleet member (`nova-swarm member`), not a friend.
 
 ## Joining
 
-To join the sprint:
+### Configuration
 
 1. Ask the coordinator to add you as a friend:
    ```
@@ -26,187 +26,64 @@ To join the sprint:
    nova-config apply
    ```
 
-3. The coordinator will verify you are in the friends table:
+3. The coordinator copies the row into the sprint:
    ```
    nova-sprint friend sync
    ```
 
-## Configuration
+## Hooking In
 
-### Harness Setup
+Your session runs `nova-hook hook --as <name> --role friend --harness <h>`. It delivers bus messages into your session, including the challenge `nova-hook serve` sends once a minute; you answer it inside your turn with `nova-hook prove --as <name> --nonce <n>`. While you answer you are up; when you stop answering for five minutes you are down and your cards go back. `nova-hook status --as <name>` shows your record.
 
-Install your harness once:
+## Your First Card
 
-```
-nova-friend install --as <name> --harness <h> --dir ~/ai/<name>/working
-```
-
-Check your settings:
+Take a ready card dealt to your row:
 
 ```
-nova-friend check --as <name>
+nova-sprint take --as friend.<name>
 ```
 
-The harness must support delivery (pushing cards into your session). If it does not, use an adapter card.
-
-### Working Directory Layout
-
-Your working directory has this structure:
+The take marks the card started and prints its brief. To get a clone at the card's carried head, with your git identity set and a JOB.md naming the exact finish command:
 
 ```
-~/ai/<name>/working/
-├── inbox/          # Jobs delivered by coordinator
-├── outbox/         # Reports you write
-└── jobs/           # Clones and build output
+nova-sprint friend stage <card>@<gen> --as friend.<name>
 ```
 
-Only the coordinator reaches into inbox. You write to outbox.
+## Running the Card
 
-## Receiving Cards
-
-Cards arrive as directories in your inbox:
-
-```
-inbox/<card-id>/
-├── BRIEF.md        # The card brief
-└── STATUS          # Status line with branch name
-```
-
-The STATUS line names the branch you must push to:
-
-```
-STATUS: nova-sprint card <card>, epoch <e>, attempt <n>; push your work to the branch sprint/<card>.g<gen>.e<e>
-```
-
-## Running Your First Card
-
-### 1. Prepare Your Work Directory
-
-```
-mkdir -p jobs/<card-id>
-cd jobs/<card-id>
-git clone -q https://github.com/mas-bandwidth/nova-tools.git repo
-cd repo
-```
-
-### 2. Set Up Your Environment
-
-```
-export GOCACHE=~/ai/<friend>/working/.cache/go-build
-export GOFLAGS=-mod=readonly
-export NOVA_TEST_NO_HOST=1
-```
-
-### 3. Fetch and Create Branch
-
-```
-git fetch origin
-git checkout -b sprint/<card>.g<gen>.e<e> origin/sprint/mechanical-2026-10-02
-```
-
-### 4. Implement the Card
-
-Follow the BRIEF.md instructions. Edit only the files it names in PATHS. Write tests first if the brief asks for red-green.
-
-### 5. Commit Your Work
+Follow the brief. Edit only the files it names in PATHS. Write tests first if the brief asks for red-green. Commit with your name and push to the branch the brief names:
 
 ```
 git add -A
 git commit -m "<card> - <description>" -m "By: <your-name>"
+git push -u origin HEAD:refs/heads/<branch>
+git ls-remote origin refs/heads/<branch>
 ```
 
-### 6. Push to Your Branch
+The ls-remote output must match your HEAD sha.
+
+## Finishing and Reporting
+
+Finish the card at the generation and epoch you took it at:
 
 ```
-git push -u origin HEAD:refs/heads/sprint/<card>.g<gen>.e<e>
+nova-sprint finish --as friend.<name> <card>@<gen> --epoch <e>
 ```
 
-### 7. Verify Push
+Use `--failed` when you could not complete the work, and say why in the card's progress.
 
-```
-git ls-remote origin refs/heads/sprint/<card>.g<gen>.e<e>
-```
+## When Stuck
 
-The output must match your HEAD sha.
-
-## Reporting
-
-When you finish a card, write your report to outbox:
-
-```
-outbox/<card-id>/
-├── REPORT.md       # Your verdict and result
-└── RESULT.md       # The card's RESULT line
-```
-
-### REPORT.md Format
-
-```
-Verdict: LAND
-Head: <40-character-sha>
-
-<one paragraph describing your change and gate results>
-```
-
-Use `HOLD` or `FAIL` when you cannot complete the work, explaining why.
-
-### RESULT.md Format
-
-Copy the RESULT line from the BRIEF.md STATUS section.
-
-## Bus Communication
-
-The sprint uses a message bus. Your daemon listens on your bus stream:
-
-```
-nova-friend run --as <name> --harness <h> --dir ~/ai/<name>/working
-```
-
-It handles:
-- Receiving cards from the coordinator
-- Sending progress updates
-- Acknowledging heartbeats
-
-## Going Up and Down
-
-### Checking Your Status
-
-```
-nova-friend status --as <name> --dir ~/ai/<name>/working
-```
-
-This reports whether you are up, down, or working, based on evidence (session response, recent card completion).
-
-### Heartbeats
-
-Your daemon beats to the sprint server. If it stops:
-
-```
-nova-friend install --as <name> --harness <h> --dir ~/ai/<name>/working
-```
-
-Restart the daemon. The coordinator will resume dealing cards.
-
-## What to Do When Stuck
-
-1. Check your harness is running and responding
-2. Verify your inbox has fresh jobs
-3. Run `nova-friend status` to see if you are marked down
-4. Ask the coordinator for help via bus message
-
-If a card refuses to apply cleanly:
-
-- Redo the work from the current base branch
-- Do not carry forward foreign changes
-- Write what you can; report HOLD if stuck
+1. Check `nova-hook status --as <name>`: a friend that is down takes nothing.
+2. Ask the coordinator on the bus (`nova-bus send`).
+3. If a card will not apply cleanly, redo the work from the current base branch and do not carry foreign changes; finish it failed if you cannot.
 
 ## Summary
 
 1. Join as a friend row
-2. Install your harness
-3. Receive cards via inbox
-4. Work in jobs/ directory
-5. Commit and push to your branch
-6. Write REPORT.md and RESULT.md to outbox
+2. Hook your session in with nova-hook
+3. Take a ready card with `nova-sprint take --as friend.<name>`
+4. Work it, commit and push to its branch
+5. Finish it with `nova-sprint finish --as friend.<name>`
 
-Follow this path for every card. The sprint coordinates your progress.
+Run that loop for every card.

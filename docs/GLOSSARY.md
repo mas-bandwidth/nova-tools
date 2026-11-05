@@ -34,8 +34,8 @@ The `Replaces:` clause is the one place a retired word may stand in a glossary.
   Defined: [SPEC-FRIEND.md, Presence](SPEC-FRIEND.md#presence). Replaces: asleep.
 - **friend** — a named participant you exchange notes with, the coordinator included; her
   configuration is a config row. Defined: [SPEC-CONFIG.md, Kinds](SPEC-CONFIG.md#kinds).
-- **lane** — one slot a worker takes to run a Go build or test on a machine, or one sprint-card run of a friend.
-  Defined: [SPEC-FRIEND.md, One-shot lanes](SPEC-FRIEND.md#one-shot-lanes-pkgfriendlanesgo).
+- **lane** — one slot a worker takes to run a Go build or test on a machine, or one card of a friend's row that her hook service takes.
+  Defined: [SPEC-FRIEND.md, The hook's lane client](SPEC-FRIEND.md#the-hooks-lane-client).
 - **ledger** — the shrink-only allowlist under `internal/ci/testdata`, one row per place still short of a rule.
   Defined: [STANDARD.md](STANDARD.md).
 - **OK** — the verdict a successful verb line carries as its second token: `<TOKEN> OK`, on stdout.

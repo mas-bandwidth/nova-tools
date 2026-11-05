@@ -1529,19 +1529,11 @@ done so in its own argv": a directory the caller named in its own `--read` or
 `--write`, and a home that lies inside the caller's own lists, which is what the
 job's data home always is.
 
-### buds-in-the-wall-r.w5 — the lane profile, and the deny list
+### buds-in-the-wall-r.w5 — the deny list and the ports
 
-A nova-friend lane's children run inside a **wall profile** (`LaneProfile`,
-`pkg/sandbox/profile.go`; docs/SPEC-FRIEND.md has the lane side). The
-one profile is `friend` (`LaneProfiles`; any other name is refused):
-
-| | |
-|---|---|
-| writes | the friend's working directory, her job directories outside it, her config directory (`CLAUDE_CONFIG_DIR`), and nothing else |
-| `HOME` | the config directory, else the working directory |
-| reads | the roots, the harness's own directory, and what the caller names |
-| denied | `LaneProfile.Deny`: the coordinator's self as configuration names it (`nova-friend run --deny-self`, e.g. `~/ai/<coordinator>/working/<self>` and its copy on a shared volume), with their `memory/`, `identity/` and `MEMORY-*.md`; `~/` is the profile's HOME; a profile that denies nothing is refused |
-| network | `--net-deny`, with `LaneNetPorts` (TCP 443 and 22) opened outbound |
+The `friend` lane profile (`LaneProfile`) went with the nova-friend daemon on
+2026-11-05; the two fields of the input it filled stay, for any caller that
+names them.
 
 **The deny list is a field of the input** (`Input.Deny`). Both bodies grant
 writing only where they are told to, so a denied path no grant covers is
@@ -1552,8 +1544,7 @@ its symlinks when it is there and compared by name when it is not, with the
 same `Inside` as every other question here. It is a deny of named paths: a
 clone of the self under a granted directory is not one of them. The paths are
 configuration, never names in the code (the `generality` rule,
-docs/SPEC-CI.md), and the profile fails closed: `LaneProfile.Input` refuses
-one whose deny list is empty.
+docs/SPEC-CI.md).
 
 **The network is ports, not hosts.** `Input.NetPorts` is allowed only with
 `--net-deny`, and each port is 1 to 65535 (`reason=bad_net`). On darwin the
@@ -1563,8 +1554,8 @@ host only as `localhost` or `*`, so 443 is open to every host, github.com and
 the harness's provider among them (measured on darwin 27.2 with
 `sandbox-exec -p`: github.com:443 answered 200, example.com:80 did not
 connect, rc=7). On linux Landlock is handled here with no port rule, so the
-ports are not granted and the denial is whole: fail closed, and a lane on a
-linux machine reaches no TCP host. Holding a lane to github.com and the
+ports are not granted and the denial is whole: fail closed, and a wall on a
+linux machine reaches no TCP host. Holding a wall to github.com and the
 benches by host is the egress verbs' kind of wall (nftables, by address),
 not this one's.
 
@@ -1830,7 +1821,7 @@ caller must do unwalled it must do **before** the first `Run`, which is exactly
 why the probe runs `write_outside_control` first.
 
 `sandbox.Run` requires a dedicated process that owns all its children. The bare
-`nova-sandbox` command, its sequential probe steps, and the `nova-friend wall` child
+`nova-sandbox` command, and its sequential probe steps
 use that boundary. Unrelated commands cannot run concurrently in that process:
 Linux's subreaper adopts descendants even before a count observes them, and its
 collector owns every adopted child's wait except the primary command's `exec.Cmd`

@@ -41,39 +41,26 @@ release verbs cut, build and install.
 ## 1. Joining as a friend
 
 **Situation.** An AI is to work sprint cards as a friend: a nova-config row, a hooked-in session,
-and a daemon running the lanes.
+and her own loop of take, work and finish.
 
 **The verbs, in order.**
 
 1. Write the row. usage: `nova-config <kind> set <name> --<field> <value> ... --actor <name> [--dry-run] [--json]`
    (and `add` for a new row). Run
    `nova-config friend set <me> --width <n> --tiers <t,...> --pronouns <she/her|he/him|they/them> --actor <me>`.
-   A claude friend in one-shot mode also needs `--config_dir <absolute dir>`, its
-   `CLAUDE_CONFIG_DIR`; nova-friend run refuses a claude one-shot friend without it
-   (`nova-config friend set -h`). Spec: SPEC-CONFIG.md, "The kinds of this cut".
+   Spec: SPEC-CONFIG.md, "The kinds of this cut".
 2. Hook the session in. usage: `nova-hook hook --as <me> --role <role> [--once] [--harness <name>] [--redis <addr>] [--dry-run]`.
    Run `nova-hook hook --as <me> --role friend --harness <h>` under the session's Monitor.
    `--harness` installs the harness adapter before arming. Answer each `HOOK CHALLENGE` from
    inside your turn with usage `nova-hook prove --as <me> --nonce <n> [--redis <addr>] [--dry-run]`.
    Spec: SPEC-HOOK.md, "Roles and pushes" and "The heartbeat".
-3. Install the daemon. usage: `nova-friend install --as <me> --harness <h> --dir <d> [--session <id>] [--adapter folder --delivery-dir <watched-dir>] [--server <addr>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--config-dir <d>] [--deny-self <d,...>] [--wall-reads <d,...>] --model <provider/model> [--secrets NAME[,NAME] --seat <seat>] [--launchd-log <file>] [--dry-run]`.
-   Run it with `--dry-run` first. It writes the harness's settings and the launchd agent
-   `com.nova.friend-<me>.plist`, then runs the delivery check once. `--secrets NAME[,NAME]
-   --seat <seat>` wraps the daemon in nova-secrets exec. Spec: SPEC-FRIEND.md, "The loop" and
-   "Harness settings".
-4. Leave the loop to launchd. usage: `nova-friend run --as <me> --harness <h> --dir <d> [--session <id>] [--adapter folder --delivery-dir <watched-dir>] [--server <addr>] [--silent-stop <d>] [--broken-after <n>] [--coordinator <seat>] [--state-dir <d>] [--redis <addr>] [--profile <p>] [--config-dir <d>] [--deny-self <d,...>] [--wall-jobs <d,...>] [--wall-reads <d,...>] [--model <provider/model>] [--db <opencode.db>] [--lane-tiers <t,...>] [--lane-streams <p,...>] [--token-cap <n>] [--load-max <n>] [--load-width <n>] [--pause-on funds|any] [--refuse-go] [--dry-run]`.
-   This is the loop launchd runs (install writes it). Its lanes take work only while you are
-   hooked in. Spec: SPEC-FRIEND.md, "One-shot lanes".
-5. Check yourself. usage: `nova-friend status --as <me> --dir <d> [--state-dir <d>]`, then usage
-   `nova-friend check [--as <coordinator>] [<friend>...] [--since <duration>] [--shown <file|->] [--harness codex --dir <d> --session <id> --adapter folder --delivery-dir <watched-dir>] [--json]`.
-   `nova-friend check --settings` compares the harness's settings with what install would write.
+3. Run your loop: take a ready card with `nova-sprint take --as friend.<me>`, work it, and finish
+   it with `nova-sprint finish --as friend.<me>` (nova-sprint's own help). Spec: SPEC-FRIEND.md.
 
-**Success looks like.** `nova-friend status` says `daemon=up` with `hook=proven` and `status=up`,
-and `nova-friend check` gives the verdict ok.
+**Success looks like.** `nova-hook status --as <me>` shows your record proven, and the friends
+table shows your taken cards in your working cell.
 
-**Not by hand.** Do not edit the plist; after changing an argument, run install again (a changed
-argument shows as "plist drift"). Do not take or finish your cards with shell loops, because the
-daemon's lanes do. Do not answer a challenge from a script: only the model answers a challenge,
+**Not by hand.** Do not answer a challenge from a script: only the model answers a challenge,
 with nova-hook prove from inside its own turn (`nova-hook help`).
 
 ## 2. Talking on the bus
@@ -298,31 +285,7 @@ against their sums. Do not delete a tag to withdraw a release; pull does that.
 **Not by hand.** Do not hand-edit `ROADMAP.md`, because the verbs write it from
 `docs/roadmap.sexp` in the same step (`nova-work help`).
 
-## 12. A friend's lanes stopped
-
-**Situation.** A friend is silent, her lanes are faulted, or a provider paused her.
-
-**The verbs, in order.**
-
-1. Reach her. usage: `nova-friend reach --as <coordinator> --to <friend> [--step-timeout <duration>] [--from <bus|push|window>] [--harness <h>] [--dir <d>] [--session <id>] [--state-dir <d>] [--redis <addr>] [--dry-run]`.
-   It climbs the ladder (a bus message, then a push into the session, then her window) and stops
-   at the first proof. Spec: SPEC-FRIEND.md, "Reach".
-2. A faulted lane (the second identical refusal marks it). usage: `nova-friend lanes --as <me> [--clear-faults] [--dir <d>] [--state-dir <d>]`.
-   Without `--clear-faults` it reads and prints the standing fault. Spec: SPEC-FRIEND.md,
-   "One-shot lanes".
-3. A provider pause, once a person has dealt with the provider. usage: `nova-friend resume --as <me> [--dir <d>] [--state-dir <d>] [--dry-run]`.
-   It removes the PAUSED marker, and a running daemon lifts its hold at its next step. A friend a
-   person held with `nova-sprint friend down` stays held until `nova-sprint friend up`
-   (`nova-friend resume -h`).
-
-**Success looks like.** `reach` prints `REACH OK`, and `nova-friend status` shows the lanes taking
-cards again.
-
-**Not by hand.** Do not type into her window; reach's window step does that only when the
-earlier steps found no proof. Do not delete the PAUSED marker or the fault file by hand, because
-resume and lanes do it and say what they cleared.
-
-## 13. Codex child bus communication while the main chat stays responsive
+## 12. Codex child bus communication while the main chat stays responsive
 
 **Situation.** A Codex chat must keep receiving user direction while a child owns
 ongoing bus communication. The core setup needs only nova-bus and Redis: use
