@@ -44,30 +44,23 @@ type Row struct {
 
 var (
 	namePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
-	roleWord    = regexp.MustCompile(`^(bench|coordination|runner|services)$`)
-	gateWord    = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]*$`)
+	roleWord    = regexp.MustCompile(`^(bench|runner|services)$`)
 	keyWord     = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 )
 
 var kinds = map[string]*kind{
 	"machine": {name: "machine", table: "machines", fields: []field{
 		{name: "user", typ: "text", required: true},
-		{name: "seat", typ: "text", required: true},
-		{name: "slots", typ: "int", required: true},
+		{name: "address", typ: "text"},
+		{name: "os", typ: "text"},
+		{name: "arch", typ: "text"},
+		{name: "cores", typ: "int", null: true},
 		{name: "runners", typ: "int"},
 		{name: "roles", typ: "list", def: "bench", word: roleWord},
-		{name: "width", typ: "int", null: true},
-		{name: "gates_only", typ: "list", word: gateWord},
-		{name: "tla", typ: "bool"},
 		{name: "note", typ: "text", cut: true},
 	}},
 	"fleet": {name: "fleet", table: "fleet", one: true, check: checkFleet, fields: []field{
-		{name: "store", typ: "ref"},
-		{name: "coordinator", typ: "ref"},
-		{name: "redis_port", typ: "int", null: true},
 		{name: "pg_dsn", typ: "text"},
-		{name: "bus", typ: "text"},
-		{name: "loops_dir", typ: "text", def: "~/nova-bench/loops"},
 	}},
 	"loop": {name: "loop", table: "loops", check: checkLoop, fields: []field{
 		{name: "machine", typ: "ref", required: true},
@@ -200,12 +193,6 @@ func checkLoop(r Row) error {
 }
 
 func checkFleet(r Row) error {
-	if port, _ := strconv.Atoi(r.F["redis_port"]); r.F["redis_port"] != "" && (port < 1 || port > 65535) {
-		return fmt.Errorf("--redis_port wants an integer from 1 through 65535")
-	}
-	if strings.TrimSpace(r.F["loops_dir"]) == "" {
-		return fmt.Errorf("--loops_dir wants a directory")
-	}
 	if dsnPassword(r.F["pg_dsn"]) {
 		return fmt.Errorf("--pg_dsn carries a password; leave it out")
 	}

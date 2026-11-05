@@ -4,14 +4,13 @@ package main
 
 import (
 	"context"
+	_ "embed"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"maps"
 	"os"
-	"runtime"
-	"runtime/debug"
 	"slices"
 	"strings"
 	"time"
@@ -26,41 +25,40 @@ const usage = `nova-config: a fleet's machines and loops, kept as rows in Postgr
   nova-config machine|loop remove <name> --actor <name> [--reason <line>] [--dry-run]
   nova-config fleet show [--json]
   nova-config fleet set --<field> <value> ... --actor <name> [--reason <line>] [--dry-run]
-  nova-config inventory [--list | --host <name>] [--redis <host:port>]
-  nova-config version
+  nova-config inventory [--list | --host <name>]
+  nova-config schema
 
-machine  a machine, named by its tailnet host (ssh <name> reaches it): user, seat, slots
-         (required), runners, roles (bench,coordination,runner,services), width (default
-         unsets it), gates_only, tla, note
+machine  a machine, named by its tailnet host: user (required), address (what ssh dials, else
+         the name), os, arch, cores (default unsets it), runners, roles (bench,runner,services), note
 loop     a command a machine runs under launchd or systemd: machine, argv (a JSON array,
          required), seat, keys (secret NAMES, never values), every (seconds) or keepalive
          true, enabled
-fleet    the one fleet row: store and coordinator (machine names), redis_port, pg_dsn (no
-         password), bus (host:port), loops_dir (where loop logs go)
+fleet    the one fleet row: pg_dsn (no password)
 
 Every write is one transaction: the row and a history row naming the actor (and the reason).
 inventory prints the Ansible dynamic inventory: use it as ansible-playbook -i <script>, where
-the script is: #!/bin/sh followed by: exec nova-config inventory "$@". --redis (or
-NOVA_SPRINT_REDIS, NOVA_REDIS_ADDR) adds each machine's reported os, arch and cores.
+the script is: #!/bin/sh followed by: exec nova-config inventory "$@".
 
 Store: --pg <dsn> or NOVA_PG_DSN, postgres://user@host:port/db with no password; the password
-is read from the variable NOVA_PG_PASSWORD_ENV names, else NOVA_PG_PASSWORD. Redis login:
-NOVA_SPRINT_REDIS_USER, and the password from the variable NOVA_SPRINT_REDIS_PASSWORD_ENV
-names. NOVA_MACHINE names the machine inventory runs on (else the host name's first label).
-A fresh store is made with: psql <dsn> -f schema.sql
+is read from the variable NOVA_PG_PASSWORD_ENV names, else NOVA_PG_PASSWORD. NOVA_MACHINE names
+the machine inventory runs on (else the host name's first label).
+A fresh or older store is made current with: nova-config schema | psql <dsn>
+Apply it before running this binary against an older store; nothing migrates on start.
 Exit codes: 0 done, 1 refused, 2 could not run.
 `
+
+//go:embed schema.sql
+var schemaSQL string
 
 // deps is what run reaches outside the process through.
 type deps struct {
 	getenv   func(string) string
 	hostname func() (string, error)
 	openPG   func(ctx context.Context, dsn, password string) (Store, error)
-	beats    func(ctx context.Context, addr, user, password string, machines []string) (map[string]*Beat, error)
 }
 
 func main() {
-	d := deps{getenv: os.Getenv, hostname: os.Hostname, openPG: openPG, beats: redisBeats}
+	d := deps{getenv: os.Getenv, hostname: os.Hostname, openPG: openPG}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	code := run(ctx, os.Args[1:], d, os.Stdout, os.Stderr)
 	cancel()
@@ -88,12 +86,8 @@ func run(ctx context.Context, args []string, d deps, stdout, stderr io.Writer) i
 		return 0
 	}
 	switch verb {
-	case "version":
-		v := "(devel)"
-		if bi, ok := debug.ReadBuildInfo(); ok && bi.Main.Version != "" {
-			v = bi.Main.Version
-		}
-		fmt.Fprintf(stdout, "nova-config %s %s/%s %s\n", v, runtime.GOOS, runtime.GOARCH, runtime.Version())
+	case "schema":
+		fmt.Fprint(stdout, schemaSQL)
 		return 0
 	case "inventory":
 		if err := runInventory(ctx, rest, d, stdout, stderr); err != nil {
