@@ -6,17 +6,19 @@ import (
 	"os"
 	"os/exec"
 	"syscall"
+
+	"golang.org/x/sys/unix"
 )
 
 // checkKey refuses a key file that is not a regular file of mode 0600 owned by this user.
 func checkKey(path string) error {
 	fi, err := os.Lstat(path)
 	if err != nil {
-		return refuse(2, "key file %s: %v", path, err)
+		return refuse("key file %s: %v", path, err)
 	}
 	st, ok := fi.Sys().(*syscall.Stat_t)
 	if !fi.Mode().IsRegular() || fi.Mode().Perm() != 0o600 || !ok || int(st.Uid) != os.Getuid() {
-		return refuse(2, "key file %s must be a regular file of mode 0600 owned by you (it is %v); run: chmod 600 %s", path, fi.Mode(), path)
+		return refuse("key file %s must be a regular file of mode 0600 owned by you (it is %v); run: chmod 600 %s", path, fi.Mode(), path)
 	}
 	return nil
 }
@@ -32,4 +34,10 @@ func become(argv, env []string) error {
 		return err
 	}
 	return syscall.Exec(bin, argv, env)
+}
+
+// isTerminal is whether f is a terminal; /dev/null and pipes are not.
+func isTerminal(f *os.File) bool {
+	_, err := unix.IoctlGetTermios(int(f.Fd()), termiosGet)
+	return err == nil
 }
