@@ -87,7 +87,7 @@ func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Contex
 	// nova-config: a member its own machine row's, a reader its machine's (reader-<m>,
 	// sprint.ReaderMachine). It has no width of its own and no --width flag: a loop row or
 	// plist that still passes one is refused before the parse, naming the remedy
-	// (docs/SPEC-SWARM.md, the width; tla/FriendLane.tla RowWidth)
+	// (docs/SPEC-SWARM.md, the width; tla/MemberLaneWidth.tla Read, NoFollow)
 	if why := widthRefusal(args); why != "" {
 		refuse(stderr, " member", why)
 		return 2

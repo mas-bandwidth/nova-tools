@@ -82,7 +82,7 @@ func newWidthRig(width int, cfg Config) *rig {
 // the width its poll answers, on every pass, with no restart and no width of its own.
 // Raised, it takes up to the new width; lowered, it kills nothing and starts nothing until
 // its running cards are under it; 0, it starts nothing and says so once, naming
-// nova-config as the remedy (docs/SPEC-SWARM.md, the width; tla/FriendLane.tla
+// nova-config as the remedy (docs/SPEC-SWARM.md, the width; tla/MemberLaneWidth.tla
 // LanesStartNeverPastWidth, NoLaneKilledOnLower).
 func TestMemberLanesFollowTheConfigWidthUpAndDown(t *testing.T) {
 	t.Parallel()

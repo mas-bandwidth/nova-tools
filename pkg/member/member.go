@@ -1305,8 +1305,9 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 	// The width is the queue answer's on every pass, raised and lowered alike: the server
 	// reads it from nova-config, the one definition of a width, and the worker has none of
 	// its own (docs/SPEC-SWARM.md, the width). Lowered under running cards, none is killed:
-	// nothing new starts until Running() is under it (full, room, lanes; tla/FriendLane.tla
-	// LanesStartNeverPastWidth and NoLaneKilledOnLower hold for these lanes the same way).
+	// nothing new starts until the held cost is under it (full, halves, room, lanes;
+	// tla/MemberLaneWidth.tla Read, LanesStartNeverPastWidth, NothingStartsUnanswered,
+	// NoLaneKilledOnLower, WidthIsFilled).
 	if w := max(q.Width, 0); w != m.width {
 		fmt.Fprintf(m.out, "width %d -> %d (nova-config)\n", m.width, w)
 		m.width = w
