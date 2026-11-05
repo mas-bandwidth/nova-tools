@@ -77,6 +77,9 @@ func (f *fake) History(_ context.Context, q HistoryQuery) ([]HistoryEntry, error
 			continue
 		}
 		out = append(out, HistoryEntry{ID: int64(i + 1), At: at, Actor: c.actor, Kind: c.kind, Name: c.name, Op: c.op, Before: c.before, After: c.after})
+		if q.Limit > 0 && len(out) == q.Limit {
+			break
+		}
 	}
 	return out, nil
 }

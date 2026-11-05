@@ -13,7 +13,7 @@ const verbs = "machine, loop, history, inventory, schema, help"
 
 const writeLine = "--actor <name> [--reason <line>] [--dry-run]"
 
-const historyLine = "nova-config history [<kind> [<name>]] [--since <duration|RFC3339>]"
+const historyLine = "nova-config history [<kind> [<name>]] [--since <duration|RFC3339>] [--max <n>]"
 
 const trailer = `Store: --pg <dsn> or NOVA_PG_DSN (postgres://user@host:port/db, no password; the password is read from the variable
 NOVA_PG_PASSWORD_ENV names, else NOVA_PG_PASSWORD). Exit codes: 0 done, 1 refused, 2 could not run.
@@ -85,7 +85,7 @@ func helpText(path []string) (string, bool) {
 	}
 	switch path[0] {
 	case "history":
-		return "usage: " + historyLine + "\nPrints the writes, newest first; --since is a duration back from now (90m, 24h, 7d) or an RFC 3339 time.\n", true
+		return "usage: " + historyLine + "\nPrints the writes, newest first, --max of them (default 20, 0 for all; more=true says rows were left out); --since is a duration back from now (90m, 24h, 7d) or an RFC 3339 time.\n", true
 	case "inventory":
 		return "usage: nova-config inventory [--list | --host <name>]\nPrints Ansible's dynamic inventory as JSON; the groups are all, bench, runner and services.\n", true
 	case "schema":

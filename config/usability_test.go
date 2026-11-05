@@ -1,10 +1,12 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
+	"os"
 	"strings"
 	"syscall"
 	"testing"
@@ -50,7 +52,7 @@ func TestVerbHelp(t *testing.T) {
 func TestUsageErrorsAreOneLine(t *testing.T) {
 	t.Parallel()
 	h := fleet(t)
-	for _, args := range [][]string{{"machine", "list", "--nope"}, {"inventory", "--nope"}, {"history", "--nope"}, {"schema", "--nope"}, {"machine", "list", "--json", "--max", "3"}, {"history", "--since"}, {"history", "--max", "abc"},
+	for _, args := range [][]string{{"machine", "list", "--nope"}, {"inventory", "--nope"}, {"history", "--nope"}, {"schema", "--nope"}, {"machine", "list", "--json", "--max", "3"}, {"history", "--since"}, {"history", "--max", "abc"}, {"history", "--max", "-1"},
 		{"machine", "add", "x", "--actor", "a"}, {"machine"}, {"loop", "wat"}, {"nonsense"}} {
 		code, out, errs := h.run(t, args...)
 		assert.Equal(t, 2, code, "%v", args)
@@ -128,6 +130,13 @@ func TestHistory(t *testing.T) {
 	assert.Equal(t, 2, strings.Count(h.ok(t, "history", "--since", "2026-01-02T00:00:04Z"), "HISTORY at="), "RFC 3339 since")
 	assert.Equal(t, 5, strings.Count(h.ok(t, "history", "--since", "24h"), "HISTORY at="), "the harness's now is 2026-01-03T00:00:00Z")
 	assert.Equal(t, 0, strings.Count(h.ok(t, "history", "--since", "1m"), "HISTORY at="))
+	out = h.ok(t, "history", "--max", "2")
+	assert.Equal(t, 2, strings.Count(out, "HISTORY at="))
+	assert.Contains(t, out, "CONFIG HISTORY rows=2 more=true")
+	assert.Contains(t, h.ok(t, "history", "--max", "5"), "CONFIG HISTORY rows=5\n")
+	assert.Contains(t, h.ok(t, "history", "--max", "0"), "CONFIG HISTORY rows=5\n")
+	_, _, errs := h.run(t, "history", "--max", "abc")
+	assert.Equal(t, "nova-config history: --max \"abc\": not a valid value; "+historyHint+"; run: nova-config history -h\n", errs)
 	for _, args := range [][]string{{"history", "--since", "yesterday"}, {"history", "friend"}, {"history", "loop", "a", "b"}} {
 		code, _, errs := h.run(t, args...)
 		assert.Equal(t, 2, code, "%v", args)
@@ -173,7 +182,8 @@ func TestStoreErrors(t *testing.T) {
 		var r refusal
 		assert.False(t, errors.As(err, &r))
 	}
-	assert.EqualError(t, storeError(errors.New("line one\n\tline two"), "u", "read"), "postgres: line one line two")
+	assert.EqualError(t, storeError(errors.New("line one\n\tline two"), "u", "read"), "postgres: connect failed")
+	assert.EqualError(t, storeError(pe("42501", ""), "u", "read"), "u may not read the table")
 	assert.NoError(t, storeError(nil, "u", "read"))
 }
 
@@ -211,12 +221,16 @@ func TestDiagnose(t *testing.T) {
 	}
 }
 
-func TestConnectionErrorIsOneLine(t *testing.T) {
+func TestCause(t *testing.T) {
 	t.Parallel()
-	cause := &net.OpError{Op: "dial", Net: "tcp", Err: &net.DNSError{Err: "no such host", Name: "db.invalid"}}
-	err := fmt.Errorf("failed to connect to `user=u database=x`:\n\tdb.invalid:5432 (db.invalid): dial error: %w", cause)
-	assert.Equal(t, "lookup db.invalid: no such host", oneLine(rootCause(err).Error()))
-	assert.Equal(t, "connection refused", rootCause(fmt.Errorf("dial: %w", syscall.ECONNREFUSED)).Error())
+	dial := func(e error) error {
+		return fmt.Errorf("failed to connect to `host=h`: h:5432 (h): dial error: %w", &net.OpError{Op: "dial", Net: "tcp", Err: e})
+	}
+	assert.Equal(t, "connection refused", cause(dial(&os.SyscallError{Syscall: "connect", Err: syscall.ECONNREFUSED})))
+	assert.Equal(t, "no such host", cause(dial(&net.DNSError{Err: "no such host", Name: "h"})))
+	assert.Equal(t, "timed out", cause(dial(os.ErrDeadlineExceeded)))
+	assert.Equal(t, "timed out", cause(context.DeadlineExceeded))
+	assert.Equal(t, "connect failed", cause(errors.New("x\ny")))
 	assert.Equal(t, "a b c", oneLine("a\n  b\tc\n"))
 }
 

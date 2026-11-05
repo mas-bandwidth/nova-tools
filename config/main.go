@@ -11,6 +11,7 @@ import (
 	"io"
 	"maps"
 	"os"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -109,6 +110,8 @@ func fail(stderr io.Writer, verb string, err error) int {
 	return 2
 }
 
+var invalidValue = regexp.MustCompile(`^(?:invalid|parse) .*?(?:value )?("[^"]*") for flag -(\S+):`)
+
 // flags parses a verb's flags around the words before them. A flag it does not
 // have is a usage error that names the flag and, as hint, what the verb takes.
 func flags(verb, hint string, args []string, define func(*flag.FlagSet)) (*flag.FlagSet, []string, error) {
@@ -126,6 +129,8 @@ func flags(verb, hint string, args []string, define func(*flag.FlagSet)) (*flag.
 			msg = "unknown flag --" + m
 		} else if m, ok := strings.CutPrefix(msg, "flag needs an argument: -"); ok {
 			msg = "--" + m + " wants a value"
+		} else if m := invalidValue.FindStringSubmatch(msg); m != nil {
+			msg = fmt.Sprintf("--%s %s: not a valid value", m[2], m[1])
 		}
 		return nil, nil, usagef(verb, hint, "%s", oneLine(msg))
 	}

@@ -9,9 +9,11 @@ import (
 	"maps"
 	"net"
 	"net/url"
+	"os"
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -36,6 +38,7 @@ type Store interface {
 type HistoryQuery struct {
 	Kind, Name string
 	Since      time.Time
+	Limit      int // at most this many rows when above zero
 }
 
 // HistoryEntry is one history row; Before and After are the row's fields as
@@ -52,15 +55,19 @@ const schemaMissing = `store has no current schema; run: nova-config schema | ps
 // oneLine is s on one line, runs of white space as one space.
 func oneLine(s string) string { return strings.Join(strings.Fields(s), " ") }
 
-// rootCause is the innermost error of err.
-func rootCause(err error) error {
-	for {
-		inner := errors.Unwrap(err)
-		if inner == nil {
-			return err
-		}
-		err = inner
+// cause names why a connection failed in a word or two, never Go's text.
+func cause(err error) string {
+	var dns *net.DNSError
+	var op *net.OpError
+	switch {
+	case errors.Is(err, syscall.ECONNREFUSED):
+		return "connection refused"
+	case errors.As(err, &dns):
+		return "no such host"
+	case os.IsTimeout(err) || errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &op) && op.Timeout()):
+		return "timed out"
 	}
+	return "connect failed"
 }
 
 // storeError is a failure of the store as one line, never pgx's text: a store the
@@ -73,13 +80,13 @@ func storeError(err error, user, op string) error {
 	case err == nil:
 		return nil
 	case !errors.As(err, &pe):
-		return fmt.Errorf("postgres: %s", oneLine(rootCause(err).Error()))
+		return fmt.Errorf("postgres: %s", cause(err))
 	case slices.Contains([]string{"42P01", "42703", "3F000"}, pe.Code): // undefined table, undefined column, no such schema
 		return errors.New(schemaMissing)
 	case strings.HasPrefix(pe.Code, "28"):
 		return fmt.Errorf("postgres refused the login for %s: check NOVA_PG_PASSWORD", user)
 	case pe.Code == "42501":
-		words := strings.Fields(strings.Split(pe.Message, "\n")[0])
+		words := append([]string{"the table"}, strings.Fields(strings.Split(pe.Message, "\n")[0])...) // never empty
 		return fmt.Errorf("%s may not %s %s", user, op, cmp.Or(pe.TableName, words[len(words)-1]))
 	}
 	msg, _, _ := strings.Cut(strings.Split(pe.Message, "\n")[0], ". ")
@@ -107,7 +114,7 @@ func connectError(cfg *pgx.ConnConfig, err error) error {
 	case errors.As(err, &pe):
 		return storeError(err, cfg.User, "connect")
 	}
-	return fmt.Errorf("cannot reach postgres at %s (NOVA_PG_DSN): %s", net.JoinHostPort(cfg.Host, strconv.Itoa(int(cfg.Port))), oneLine(rootCause(err).Error()))
+	return fmt.Errorf("cannot reach postgres at %s (NOVA_PG_DSN): %s", net.JoinHostPort(cfg.Host, strconv.Itoa(int(cfg.Port))), cause(err))
 }
 
 // diagnose is the refusal of a write the store's constraints turned down (an
@@ -206,14 +213,17 @@ func (p pgStore) List(ctx context.Context, k *kind) ([]Row, error) {
 const historySQL = `SELECT id::text, to_char(at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), actor, kind, name, op, coalesce(before::text, ''), coalesce(after::text, '')
  FROM config.history
  WHERE ($1::text = '' OR kind = $1::text) AND ($2::text = '' OR name = $2::text) AND ($3::timestamptz IS NULL OR at >= $3::timestamptz)
- ORDER BY at DESC, id DESC`
+ ORDER BY at DESC, id DESC LIMIT $4::int`
 
 func (p pgStore) History(ctx context.Context, q HistoryQuery) ([]HistoryEntry, error) {
-	var since any
+	var since, limit any
 	if !q.Since.IsZero() {
 		since = q.Since
 	}
-	got, err := p.text(ctx, historySQL, q.Kind, q.Name, since)
+	if q.Limit > 0 {
+		limit = q.Limit
+	}
+	got, err := p.text(ctx, historySQL, q.Kind, q.Name, since, limit)
 	var out []HistoryEntry
 	for _, v := range got {
 		id, _ := strconv.ParseInt(v[0], 10, 64) // ignored: the column is a bigint

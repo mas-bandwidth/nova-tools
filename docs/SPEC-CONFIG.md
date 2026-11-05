@@ -26,7 +26,7 @@ nova-config machine|loop show <name> [--json]
 nova-config machine|loop add <name> --<field> <value> ... --actor <name> [--reason <line>] [--dry-run]
 nova-config machine|loop set <name> --<field> <value> ... --actor <name> [--reason <line>] [--dry-run]
 nova-config machine|loop remove <name> --actor <name> [--reason <line>] [--dry-run]
-nova-config history [<kind> [<name>]] [--since <duration|RFC3339>]
+nova-config history [<kind> [<name>]] [--since <duration|RFC3339>] [--max <n>]
 nova-config inventory [--list | --host <name>]
 nova-config schema
 nova-config help [<verb>]
@@ -73,7 +73,7 @@ arch, cores, roles, runners, note; run: nova-config machine add -h`. A refusal i
 | a machine still runs loops | `machine <x> still runs loops l1,l2; remove them first: nova-config loop remove l1 --actor <you>` |
 | a row exists | `machine <x> exists; use: nova-config machine set` |
 | a row is not found | `machine <x> not found; run: nova-config machine list` |
-| postgres cannot be reached | `cannot reach postgres at <host:port> (NOVA_PG_DSN): <one-line cause>` (exit 2) |
+| postgres cannot be reached | `cannot reach postgres at <host:port> (NOVA_PG_DSN): connection refused`, `no such host`, `timed out` or `connect failed` (never Go's dial text) (exit 2) |
 | no such database (3D000) | `database <x> does not exist on <host>` (exit 2) |
 | a refused login (28xxx) | `postgres refused the login for <user>: check NOVA_PG_PASSWORD` (exit 2) |
 | a denied grant (42501) | `<user> may not <op> <table>` (exit 2) |
@@ -88,7 +88,7 @@ pgx's multi-line errors and Go type names are never printed. A flag value the ro
 
 `history [<kind> [<name>]]` reads the `history` table, newest first: `HISTORY at= actor= kind= name= op= rev=`, then the
 fields that changed (a set), or all of them (an add or a remove), and the `reason`. `kind` is `machine`, `loop` or
-`fleet` (a retired kind whose old history still reads). `--since` is a duration back from now (`90m`, `24h`, `7d`) or an RFC 3339 time.
+`fleet` (a retired kind whose old history still reads). `--since` is a duration back from now (`90m`, `24h`, `7d`) or an RFC 3339 time. `--max` is the rows shown (default 20, 0 for all); `more=true` on the closing `CONFIG HISTORY rows=N` line says rows were left out. There is no `--json`.
 
 ## Inventory
 

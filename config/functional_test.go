@@ -230,6 +230,6 @@ func TestFunctionalUnreachable(t *testing.T) {
 	code, out, errs := realRun(t, map[string]string{"NOVA_PG_DSN": "postgres://nova@127.0.0.1:" + port + "/postgres?sslmode=disable"}, "machine", "list")
 	assert.Equal(t, 2, code)
 	assert.Empty(t, out)
-	assert.Contains(t, errs, "nova-config machine list: cannot reach postgres at 127.0.0.1:"+port+" (NOVA_PG_DSN): ")
+	assert.Equal(t, "nova-config machine list: cannot reach postgres at 127.0.0.1:"+port+" (NOVA_PG_DSN): connection refused\n", errs)
 	assert.Equal(t, 1, strings.Count(errs, "\n"), errs)
 }
