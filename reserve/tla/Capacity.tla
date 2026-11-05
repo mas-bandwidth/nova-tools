@@ -9,16 +9,24 @@
 \* process takes once, as one of:
 \*   shared     gate shared; read capFile. Absent: let go of the gate and
 \*              claim (gate exclusive, then all exclusive, both without
-\*              waiting, polled until taken); holding both, write --slots (or Default) if the file
-\*              is still absent; let go; take again. Present: a --slots that
+\*              waiting, polled until taken, until the file appears: then
+\*              back to the gate); holding both, write --slots (or Default)
+\*              if the file is still absent; let go; take again. Present: a --slots that
 \*              differs is refused (exit 2); else scan slot1..slot<capFile>
 \*              and take all shared, as in SlotFiles.tla.
 \*   exclusive  gate exclusive, then all exclusive; capFile is not read.
 \*   set        gate exclusive, then all exclusive, both without waiting;
 \*              holding both, write the new value; else refused (exit 1).
 \* want[p] is a shared taker's --slots (0: none given); ask[p] is set's value.
-\* A process dies anywhere and the kernel lets go of its locks; the file is
-\* written in one write, under the locks, so a crash leaves it whole.
+\* A process dies anywhere and the kernel lets go of its locks. The file is
+\* written under the locks, as a renamed complete file or one write at offset
+\* 0 before the cut to length, so no crash leaves it without its value: one
+\* step here. status and refusals read holder files and take no lock, so the
+\* design's prober has no action; "lockprobe" is the one that locks.
+\*
+\* Mode = "full" lets processes do anything and finish. Mode = "twofirst" is
+\* two first takers asking for every slot whose holders may never finish (a
+\* long build): each must still get a slot.
 \*
 \* Broken = "none" is the design. Reversed witnesses, each must fail:
 \*   "percaller"     a taker counts its own --slots, never the file (the bug
@@ -27,18 +35,25 @@
 \*   "racyfirst"     a first taker writes the file holding only the gate
 \*                   shared, so two first takers both write: OneCapacity fails
 \*   "setwhileheld"  set writes without taking gate and all: OneCapacity fails
+\*   "noseen"        a claimer polls only its claim, which needs all
+\*                   exclusive, never seeing the file the other first taker
+\*                   wrote while it holds a slot (Mode "twofirst"): it waits
+\*                   with a slot free and EveryTakerEnds fails
+\*   "lockprobe"     status probes a slot by locking it; a scanning taker
+\*                   finds its only free slot probed, again and again (Mode
+\*                   "twofirst"): EveryTakerEnds fails
 EXTENDS Naturals, FiniteSets
 
-CONSTANTS Procs, MaxSlots, Default, InitCaps, MaxCrash, Broken
+CONSTANTS Procs, MaxSlots, Default, InitCaps, MaxCrash, Broken, Mode
 
 None == "none"
 Waiting == {"sgate", "sread", "swrite", "sclaim", "sclaim2", "sscan", "sall",
             "xgate", "xall", "tgate", "tall"}
 Run == {"srun", "xrun"}
 
-VARIABLES pc, capFile, slotEx, gateEx, gateSh, allEx, allSh, scan, mine, adm, want, ask, crashes
+VARIABLES pc, capFile, slotEx, gateEx, gateSh, allEx, allSh, scan, mine, adm, want, ask, crashes, probeEx
 
-vars == <<pc, capFile, slotEx, gateEx, gateSh, allEx, allSh, scan, mine, adm, want, ask, crashes>>
+vars == <<pc, capFile, slotEx, gateEx, gateSh, allEx, allSh, scan, mine, adm, want, ask, crashes, probeEx>>
 
 TypeOK ==
   /\ pc \in [Procs -> {"idle", "done"} \cup Waiting \cup Run]
@@ -49,14 +64,14 @@ TypeOK ==
   /\ scan \in [Procs -> 1..MaxSlots + 1] /\ mine \in [Procs -> 0..MaxSlots]
   /\ adm \in [Procs -> 0..MaxSlots]
   /\ want \in [Procs -> 0..MaxSlots] /\ ask \in [Procs -> 0..MaxSlots]
-  /\ crashes \in 0..MaxCrash
+  /\ crashes \in 0..MaxCrash /\ probeEx \in 0..MaxSlots
 
 Init ==
   /\ pc = [p \in Procs |-> "idle"] /\ capFile \in InitCaps
   /\ slotEx = [k \in 1..MaxSlots |-> None]
   /\ gateEx = None /\ gateSh = {} /\ allEx = None /\ allSh = {}
   /\ scan = [p \in Procs |-> 1] /\ mine = [p \in Procs |-> 0] /\ adm = [p \in Procs |-> 0]
-  /\ want = [p \in Procs |-> 0] /\ ask = [p \in Procs |-> 0] /\ crashes = 0
+  /\ want = [p \in Procs |-> 0] /\ ask = [p \in Procs |-> 0] /\ crashes = 0 /\ probeEx = 0
 
 Locks == <<slotEx, gateEx, gateSh, allEx, allSh>>
 
@@ -64,9 +79,11 @@ Locks == <<slotEx, gateEx, gateSh, allEx, allSh>>
 \* exclusive taker, or a set with some value.
 Start(p) ==
   /\ pc[p] = "idle"
-  /\ \/ \E n \in 0..MaxSlots : pc' = [pc EXCEPT ![p] = "sgate"] /\ want' = [want EXCEPT ![p] = n] /\ UNCHANGED ask
-     \/ pc' = [pc EXCEPT ![p] = "xgate"] /\ UNCHANGED <<want, ask>>
-     \/ \E n \in 1..MaxSlots : pc' = [pc EXCEPT ![p] = "tgate"] /\ ask' = [ask EXCEPT ![p] = n] /\ UNCHANGED want
+  /\ IF Mode = "twofirst"
+     THEN pc' = [pc EXCEPT ![p] = "sgate"] /\ want' = [want EXCEPT ![p] = MaxSlots] /\ UNCHANGED ask
+     ELSE \/ \E n \in 0..MaxSlots : pc' = [pc EXCEPT ![p] = "sgate"] /\ want' = [want EXCEPT ![p] = n] /\ UNCHANGED ask
+          \/ pc' = [pc EXCEPT ![p] = "xgate"] /\ UNCHANGED <<want, ask>>
+          \/ \E n \in 1..MaxSlots : pc' = [pc EXCEPT ![p] = "tgate"] /\ ask' = [ask EXCEPT ![p] = n] /\ UNCHANGED want
   /\ UNCHANGED <<capFile, Locks, scan, mine, adm, crashes>>
 
 Stored(p) == IF want[p] = 0 THEN Default ELSE want[p]
@@ -105,13 +122,20 @@ SWrite(p) ==
 ClaimFree == gateEx = None /\ gateSh = {}
 
 SClaimOK(p) ==
-  /\ pc[p] = "sclaim" /\ ClaimFree
+  /\ pc[p] = "sclaim" /\ ClaimFree /\ (capFile = 0 \/ Broken = "noseen")
   /\ gateEx' = p /\ pc' = [pc EXCEPT ![p] = "sclaim2"]
   /\ UNCHANGED <<capFile, slotEx, gateSh, allEx, allSh, scan, mine, adm, want, ask, crashes>>
 
 \* A busy gate leaves the claimer at sclaim: it polls the claim again, never
 \* the gate shared (taker.claiming). Going back to sgate instead lets two
 \* first takers keep each other's claim out forever; TLC found that loop.
+
+\* The file is there now (another first taker wrote it): back to the gate,
+\* never waiting on all, which that taker's hold keeps (taker.claiming).
+SClaimSeen(p) ==
+  /\ Broken # "noseen" /\ pc[p] = "sclaim" /\ capFile # 0
+  /\ pc' = [pc EXCEPT ![p] = "sgate"]
+  /\ UNCHANGED <<capFile, Locks, scan, mine, adm, want, ask, crashes>>
 
 \* all exclusive; if taken, write unless another first taker already did,
 \* then take again; if busy, claim again.
@@ -131,7 +155,7 @@ SScan(p) ==
      IF k > adm[p] THEN
         /\ gateSh' = gateSh \ {p} /\ pc' = [pc EXCEPT ![p] = "sgate"]
         /\ UNCHANGED <<scan, mine, slotEx>>
-     ELSE IF slotEx[k] = None THEN
+     ELSE IF slotEx[k] = None /\ probeEx # k THEN
         /\ slotEx' = [slotEx EXCEPT ![k] = p] /\ mine' = [mine EXCEPT ![p] = k]
         /\ pc' = [pc EXCEPT ![p] = "sall"] /\ UNCHANGED <<scan, gateSh>>
      ELSE
@@ -191,6 +215,16 @@ TAll(p) ==
   /\ gateEx' = None /\ pc' = [pc EXCEPT ![p] = "done"]
   /\ UNCHANGED <<slotEx, gateSh, allEx, allSh, scan, mine, adm, want, ask, crashes>>
 
+\* --- a prober (status, a refusal) that locks: "lockprobe" only -------------
+
+ProbeTake(k) ==
+  /\ Broken = "lockprobe" /\ probeEx = 0 /\ slotEx[k] = None /\ probeEx' = k
+  /\ UNCHANGED <<pc, capFile, Locks, scan, mine, adm, want, ask, crashes>>
+
+ProbeDrop ==
+  /\ probeEx # 0 /\ probeEx' = 0
+  /\ UNCHANGED <<pc, capFile, Locks, scan, mine, adm, want, ask, crashes>>
+
 \* --- the kernel -----------------------------------------------------------
 
 Crash(p) ==
@@ -201,18 +235,26 @@ Crash(p) ==
   /\ allEx' = (IF allEx = p THEN None ELSE allEx) /\ allSh' = allSh \ {p}
   /\ UNCHANGED <<capFile, scan, want, ask>>
 
-Next == \E p \in Procs :
-  \/ Start(p) \/ SGate(p) \/ SRead(p) \/ SWrite(p) \/ SClaimOK(p)
-  \/ SClaim2(p) \/ SScan(p) \/ SAll(p) \/ SFinish(p)
-  \/ XGate(p) \/ XAll(p) \/ XFinish(p) \/ TGate(p) \/ TAll(p) \/ Crash(p)
+\* Every process step leaves the prober alone.
+Q(A) == A /\ UNCHANGED probeEx
+
+Next ==
+  \/ \E p \in Procs : Q(
+       \/ Start(p) \/ SGate(p) \/ SRead(p) \/ SWrite(p) \/ SClaimOK(p) \/ SClaimSeen(p)
+       \/ SClaim2(p) \/ SScan(p) \/ SAll(p) \/ SFinish(p)
+       \/ XGate(p) \/ XAll(p) \/ XFinish(p) \/ TGate(p) \/ TAll(p) \/ Crash(p))
+  \/ \E k \in 1..MaxSlots : ProbeTake(k)
+  \/ ProbeDrop
 
 \* A lock that is free again and again is taken at last (strong fairness): a
-\* poller tries once a second, and holders come and go.
+\* poller tries once a second, and holders come and go. In Mode "twofirst"
+\* a holder need never finish. The prober is never forced.
 Fairness == \A p \in Procs :
-  /\ SF_vars(SGate(p)) /\ SF_vars(SClaimOK(p)) /\ SF_vars(XGate(p)) /\ SF_vars(XAll(p))
-  /\ WF_vars(SRead(p)) /\ WF_vars(SWrite(p)) /\ WF_vars(SClaim2(p))
-  /\ WF_vars(SScan(p)) /\ WF_vars(SAll(p)) /\ WF_vars(SFinish(p)) /\ WF_vars(XFinish(p))
-  /\ WF_vars(TGate(p)) /\ WF_vars(TAll(p))
+  /\ SF_vars(Q(SGate(p))) /\ SF_vars(Q(SClaimOK(p))) /\ SF_vars(Q(XGate(p))) /\ SF_vars(Q(XAll(p)))
+  /\ WF_vars(Q(SRead(p))) /\ WF_vars(Q(SWrite(p))) /\ WF_vars(Q(SClaim2(p))) /\ WF_vars(Q(SClaimSeen(p)))
+  /\ WF_vars(Q(SScan(p))) /\ WF_vars(Q(SAll(p)))
+  /\ WF_vars(Q(TGate(p))) /\ WF_vars(Q(TAll(p)))
+  /\ Mode = "full" => WF_vars(Q(SFinish(p))) /\ WF_vars(Q(XFinish(p)))
 
 Spec == Init /\ [][Next]_vars /\ Fairness
 

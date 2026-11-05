@@ -26,8 +26,8 @@ import (
 
 const banner = `nova-reserve: reservations on a machine's shared resources so people and AIs can coordinate
 
-A machine has one capacity: N slots, kept in DIR/capacity. A reservation holds
-one slot, or with --exclusive all of them, while a command runs or a hold lasts.
+A machine has one capacity, N slots, kept in DIR/capacity. A reservation holds one
+slot, or with --exclusive every slot, while a command runs or a hold lasts.
 
   nova-reserve [run] [--slots N | --exclusive] [--wait D] [--why TEXT] [--dir DIR] -- <cmd> [args...]
   nova-reserve hold [--for D] [--slots N | --exclusive] [--wait D] [--why TEXT] [--dir DIR]
@@ -35,58 +35,41 @@ one slot, or with --exclusive all of them, while a command runs or a hold lasts.
   nova-reserve set --slots N [--dir DIR]
   nova-reserve help [run|hold|status|set]
 
-DIR defaults to $NOVA_RESERVE_DIR, else /tmp/nova-reserve (C:\ProgramData\nova-reserve
-on Windows). Every caller on a machine uses the same DIR.
-
-Exit: 0 done; 1 refused (no slot within --wait, capacity in use); 2 could not run
-(a bad flag or value, a --slots that differs from the machine's capacity);
-126 the command is not executable; 127 the command is not found; else the
-command's own status (128+signal when a signal ended it).
+DIR: --dir, else $NOVA_RESERVE_DIR, else /var/tmp/nova-reserve (C:\ProgramData\nova-reserve
+on Windows); one per machine, on a local disk. Exit: 0 done; 1 refused (no slot within
+--wait, capacity in use); 2 could not run; 126 the command cannot be executed; 127 the
+command is not found; else the command's status. docs/SPEC-RESERVE.md has the rest.
 `
 
 var verbHelp = map[string]string{
 	"run": `nova-reserve [run] [--slots N | --exclusive] [--wait D] [--why TEXT] [--dir DIR] -- <cmd> [args...]
 
-Wait for a free slot, hold it while the command runs, free it when the command
-exits; exit with the command's status. Before the command starts, one line goes
-to stderr: nova-reserve: HELD mode=shared slot=2/4 pid=1234
-
-  --slots N     the capacity you expect (1..1024); refused (exit 2) if the machine's
-                differs; the first taker on a machine sets it (CAPACITY SET slots=N);
-                with no --slots the stored capacity is used, or CPU count / 4 when none
-  --exclusive   take every slot: wait for every holder, keep new ones out
-  --wait D      the longest wait, a Go duration (90s, 15m); default no bound; past it, exit 1
-  --why TEXT    a label, shown by status and in refusals
-  --dir DIR     the reservation directory
-
-The command is found on PATH before any slot is taken (127 not found, 126 not
-executable). It dies with nova-reserve on Linux and Windows; on macOS and the
-BSDs a SIGKILL of nova-reserve leaves it running without its slot.
+Wait for a slot, run the command, free the slot; exit with the command's status.
+  --slots N    the capacity you expect, 1..1024; refused (exit 2) if the machine's differs.
+               The first taker stores it (CAPACITY SET); with none, the stored one, else CPU/4
+  --exclusive  take every slot: wait for every holder and keep new ones out
+  --wait D     give up after D (above 0: 90s, 15m), exit 1; default no bound
+  --why TEXT   a label for status and refusals
+The command is found before a slot is taken (127, 126). It dies with nova-reserve on
+Linux and Windows; on macOS and the BSDs a SIGKILL of nova-reserve leaves it running.
 `,
 	"hold": `nova-reserve hold [--for D] [--slots N | --exclusive] [--wait D] [--why TEXT] [--dir DIR]
 
-Take a reservation, print HELD ... to stdout, and hold it until SIGTERM or
-SIGINT (or SIGHUP), or until --for has passed. Stdin is never read. On exit it prints
-RELEASED reason=signal signal=SIGTERM held_for=12m3s, or RELEASED reason=for held_for=30m0s.
-
-  --for D       release after D (a Go duration > 0); default: hold until a signal
-  --why TEXT    a label; default the parent's command line, where it can be read
-  --slots, --exclusive, --wait, --dir   as for run
-
-A caller with no terminal starts it in the background and kills it when done:
-  nova-reserve hold --for 2h --why "bench" & ... ; kill %1
+Take a reservation, print HELD, keep it until SIGTERM, SIGINT or SIGHUP, or for D.
+Stdin is never read. With no --for it also ends when its parent exits (or has exited
+before it starts); give --for to outlive the shell that started it. On exit it prints
+RELEASED reason=signal|for|parent_exit held_for=D.
 `,
 	"status": `nova-reserve status [--dir DIR]
 
-Print the capacity, then one line per slot (free, or held with the holder's
-pid, since, why and cmd), the gate and all locks, and free=<n>/<capacity>.
-"all" is the exclusive lock: held only by an --exclusive run. "gate" is held by
-an --exclusive run while it waits, so no new shared holder passes it.
+The capacity; each slot, free or held (pid= since= why= cmd=); gate and all; free=n/N.
+An --exclusive run holds gate from when it starts waiting until it ends, and all while
+it runs, when free=0. A holder is read from <lock>.holder, if its pid is alive.
 `,
 	"set": `nova-reserve set --slots N [--dir DIR]
 
-Store this machine's capacity: N slots (1..1024). Prints CAPACITY SET slots=N.
-Refused (exit 1) while any slot is held: capacity in use by pid ...; retry when free.
+Store this machine's capacity, N slots (1..1024); prints CAPACITY SET slots=N.
+Refused (exit 1) while any slot is held.
 `,
 }
 
@@ -101,14 +84,14 @@ var verbFlags = map[string][]string{
 // wants is what a flag's value must be, for the one-line refusal.
 var wants = map[string]string{
 	"slots": "1..1024",
-	"wait":  "a duration like 90s or 15m",
-	"for":   "a duration like 30m, more than 0",
+	"wait":  "a duration above 0, like 90s or 15m",
+	"for":   "a duration above 0, like 30m",
 	"why":   "text",
 	"dir":   "a directory",
 }
 
 // exitError is a refusal with its exit code: 1 the tool said no, 2 could not run,
-// 126 and 127 the command could not be started.
+// 126 and 127 the command could not be started; an empty msg passes a code on.
 type exitError struct {
 	code int
 	msg  string
@@ -125,8 +108,8 @@ type options struct {
 	help      bool
 	slots     int // 0: no --slots
 	exclusive bool
-	wait      time.Duration
-	hold      time.Duration // hold --for; 0: until a signal
+	wait      time.Duration // 0: no bound
+	hold      time.Duration // hold --for; 0: until a signal or the parent's exit
 	why       string
 	dir       string
 	dirSet    bool
@@ -138,11 +121,11 @@ func (o options) remedy(args ...string) string {
 	if o.dirSet {
 		args = append(args, "--dir", o.dir)
 	}
-	q := make([]string, len(args))
-	for i, a := range args {
-		q[i] = shellQuote(a)
+	q := []string{"nova-reserve"}
+	for _, a := range args {
+		q = append(q, shellQuote(a))
 	}
-	return strings.Join(append([]string{"nova-reserve"}, q...), " ")
+	return strings.Join(q, " ")
 }
 
 // helpFor is a malformed invocation's remedy (CLI-STYLE (f)).
@@ -234,7 +217,7 @@ func parse(args []string, env func(string) string) (options, error) {
 			i++
 			val = args[i]
 		}
-		if err := o.set(name, val); err != nil {
+		if !o.set(name, val) {
 			return o, refuse(2, "--%s wants %s, not %q; run: %s", name, wants[name], val, hint)
 		}
 	}
@@ -254,37 +237,27 @@ func parse(args []string, env func(string) string) (options, error) {
 	return o, nil
 }
 
-func (o *options) set(name, val string) error {
-	bad := errors.New("bad value")
+// set stores one flag's value; false when the value is not what it wants.
+func (o *options) set(name, val string) bool {
 	switch name {
 	case "slots":
 		n, err := strconv.Atoi(val)
-		if err != nil || n < 1 || n > 1024 {
-			return bad
-		}
 		o.slots = n
+		return err == nil && n >= 1 && n <= 1024
 	case "wait", "for":
 		d, err := time.ParseDuration(val)
-		if err != nil || d < 0 || (name == "for" && d == 0) {
-			return bad
-		}
 		if name == "wait" {
 			o.wait = d
 		} else {
 			o.hold = d
 		}
+		return err == nil && d > 0
 	case "why":
-		if val == "" {
-			return bad
-		}
 		o.why = val
 	case "dir":
-		if val == "" {
-			return bad
-		}
 		o.dir, o.dirSet = val, true
 	}
-	return nil
+	return val != ""
 }
 
 // tryLock takes the OS lock on path, shared or exclusive, without waiting.
@@ -299,8 +272,8 @@ type world struct {
 	sleep          func(d time.Duration)
 	resolve        func(name string) (string, error) // exec.LookPath
 	exec           func(path string, argv []string) int
-	hold           func(d time.Duration) (signal string) // blocks; "" when d passed
-	parent         func() string                         // the parent's command line, or ""
+	hold           func(d time.Duration) (reason string) // blocks: "for", "parent_exit", "signal signal=SIGTERM"
+	running        func(pid int) bool
 	pid            int
 	cpus           int
 	stdout, stderr io.Writer
@@ -312,7 +285,7 @@ const poll = time.Second
 
 func main() {
 	os.Exit(run(os.Args[1:], world{os.Getenv, osLock, time.Now, time.Sleep,
-		exec.LookPath, runCommand, waitHold, parentCommand, os.Getpid(), runtime.NumCPU(), os.Stdout, os.Stderr}))
+		exec.LookPath, runCommand, waitHold, running, os.Getpid(), runtime.NumCPU(), os.Stdout, os.Stderr}))
 }
 
 func run(args []string, w world) int {
@@ -376,46 +349,24 @@ func do(o options, w world) error {
 		return err
 	}
 	defer t.release()
-	out := w.stderr
-	prefix := "nova-reserve: "
+	t.mark(t.name())
+	out, lead := w.stderr, "nova-reserve: "
 	if o.verb == "hold" {
-		out, prefix = w.stdout, ""
-		if o.why == "" {
-			o.why = w.parent()
-		}
+		out, lead = w.stdout, ""
 	}
 	if t.capSet > 0 {
-		fmt.Fprintf(out, "%sCAPACITY SET slots=%d\n", prefix, t.capSet)
+		fmt.Fprintf(out, "%sCAPACITY SET slots=%d\n", lead, t.capSet)
 	}
-	since := w.now()
-	f := []string{"pid=" + strconv.Itoa(w.pid), "since=" + since.UTC().Format(time.RFC3339)}
-	if o.why != "" {
-		f = append(f, "why="+esc(o.why))
-	}
+	fmt.Fprintf(out, "%sHELD %s\n", lead, t.describe())
 	if o.verb == "run" {
-		f = append(f, "cmd="+esc(strings.Join(o.argv, " ")))
-	}
-	holder := filepath.Join(o.dir, t.name()+".holder")
-	// ignored: the holder file is for status to read; the lock is the slot either way
-	_ = os.Remove(holder)
-	_ = os.WriteFile(holder, []byte(strings.Join(f, " ")+"\n"), 0o666)
-	_ = os.Chmod(holder, 0o666)
-	// ignored: a leftover holder file names a pid whose lock is gone; status probes the lock
-	defer os.Remove(holder)
-	fmt.Fprintf(out, "%sHELD %s\n", prefix, t.describe(w.pid))
-	if o.verb == "run" {
-		code := w.exec(path, o.argv)
-		if code != 0 {
-			return &exitError{code: code, msg: ""}
+		if code := w.exec(path, o.argv); code != 0 {
+			return &exitError{code: code}
 		}
 		return nil
 	}
-	sig := w.hold(o.hold)
-	reason := "reason=for"
-	if sig != "" {
-		reason = "reason=signal signal=" + sig
-	}
-	fmt.Fprintf(out, "RELEASED %s held_for=%s\n", reason, w.now().Sub(since).Round(time.Millisecond))
+	since := w.now()
+	reason := w.hold(o.hold)
+	fmt.Fprintf(out, "RELEASED reason=%s held_for=%s\n", reason, w.now().Sub(since).Round(time.Millisecond))
 	return nil
 }
 
@@ -426,6 +377,11 @@ type capacity struct {
 	n   int
 	who string // "pid 123 at 2026-11-05T22:03:32Z"
 }
+
+// corrupt is a capacity file that holds no capacity: refused, never guessed.
+type corrupt string
+
+func (c corrupt) Error() string { return string(c) }
 
 func readCapacity(dir string) (capacity, bool, error) {
 	b, err := os.ReadFile(filepath.Join(dir, "capacity"))
@@ -438,20 +394,46 @@ func readCapacity(dir string) (capacity, bool, error) {
 	first, rest, _ := strings.Cut(string(b), "\n")
 	n, err := strconv.Atoi(strings.TrimSpace(first))
 	if err != nil || n < 1 || n > 1024 {
-		return capacity{}, false, refuse(2, "%s holds %q, not a capacity of 1..1024; run: nova-reserve set --slots N",
-			filepath.Join(dir, "capacity"), strings.TrimSpace(first))
+		return capacity{}, false, corrupt(fmt.Sprintf("%s holds %q, not a capacity of 1..1024",
+			filepath.Join(dir, "capacity"), strings.TrimSpace(first)))
 	}
-	return capacity{n, strings.TrimSpace(rest)}, true, nil
+	who, _, _ := strings.Cut(rest, "\n")
+	return capacity{n, strings.TrimSpace(who)}, true, nil
 }
 
-// writeCapacity writes in place, under the gate and all held exclusive (no
-// reader is past the gate); the file is world-writable because a sticky
-// directory lets no other user replace it.
+// writeCapacity is called with gate and all held exclusive. A new file is a
+// complete, synced temporary file renamed into place. An existing one (maybe
+// another user's, which a sticky directory forbids replacing) is rewritten
+// by one write at offset 0 and then cut to length: a kill between the two
+// leaves the record followed by old bytes, which readCapacity ignores, so no
+// kill leaves it empty (tla/Capacity.tla writes it in one step).
 func writeCapacity(dir string, n, pid int, at time.Time) error {
 	path := filepath.Join(dir, "capacity")
-	err := os.WriteFile(path, fmt.Appendf(nil, "%d\npid %d at %s\n", n, pid, at.UTC().Format(time.RFC3339)), 0o666)
+	rec := fmt.Appendf(nil, "%d\npid %d at %s\n", n, pid, at.UTC().Format(time.RFC3339))
+	target := path
+	if _, err := os.Lstat(path); errors.Is(err, fs.ErrNotExist) {
+		target = path + "." + strconv.Itoa(pid) + ".tmp"
+	}
+	f, err := os.OpenFile(target, os.O_RDWR|os.O_CREATE, 0o666)
+	if err != nil {
+		return err
+	}
+	_, err = f.WriteAt(rec, 0)
+	err = errors.Join(err, f.Truncate(int64(len(rec))), f.Sync(), f.Close())
 	// ignored: only the file's owner may widen it, and only a new file needs it
-	_ = os.Chmod(path, 0o666)
+	_ = os.Chmod(target, 0o666)
+	if err == nil && target != path {
+		err = os.Rename(target, path)
+		if d, derr := os.Open(dir); derr == nil {
+			// ignored: Windows syncs no directory; the rename is the record elsewhere
+			_ = d.Sync()
+			_ = d.Close()
+		}
+	}
+	if err != nil && target != path {
+		// ignored: a temporary file that is already gone
+		_ = os.Remove(target)
+	}
 	return err
 }
 
@@ -472,8 +454,8 @@ func locksFree(w world, dir string) (func(), error) {
 
 func setCapacity(o options, w world) error {
 	c, have, err := readCapacity(o.dir)
-	var e *exitError
-	if err != nil && !errors.As(err, &e) {
+	var bad corrupt
+	if err != nil && !errors.As(err, &bad) {
 		return err
 	}
 	if have && c.n == o.slots {
@@ -485,11 +467,8 @@ func setCapacity(o options, w world) error {
 		return err
 	}
 	if free == nil {
-		in := holders(w, o.dir, c.n) // probing creates a lock file; none past the capacity
-		if len(in) == 0 {
-			in = []string{"a taker mid-take"}
-		}
-		return refuse(1, "capacity in use: %s; retry when free", strings.Join(in, ", "))
+		in := cmp.Or(strings.Join(holders(w, o.dir, c.n), ", "), "a taker mid-take")
+		return refuse(1, "capacity in use (%s); retry when free; run: %s", in, o.remedy("status"))
 	}
 	defer free()
 	if err := writeCapacity(o.dir, o.slots, w.pid, w.now()); err != nil {
@@ -505,21 +484,41 @@ func setCapacity(o options, w world) error {
 // shared taker passes the gate (held shared only while it reads the capacity
 // and takes its own locks), one free slot<k> of the stored capacity, and "all"
 // shared; an exclusive taker holds the gate exclusive, so no new shared taker
-// passes, then "all" exclusive, which waits for every shared holder.
+// passes, then "all" exclusive, which waits for every shared holder; it keeps
+// both until it ends.
 type taker struct {
 	w      world
 	o      options
-	held   []func() // what release lets go of; an exclusive waiter's gate too
+	held   []func() // released last to first: locks, and the holder files on them
 	slot   int      // 0 until a shared hold; an exclusive hold names no slot
 	cap    int      // the capacity the shared hold was taken under
 	capSet int      // the capacity this taker stored, if it was the first
-	// claiming: this taker found no capacity and retries storing it without
-	// passing the gate shared again, so two first takers cannot keep each
-	// other's claim out forever (tla/Capacity.tla EveryTakerEnds)
+	// claiming: this taker found no capacity and polls its claim, never the
+	// gate shared, which would keep another first taker's claim out
+	// (tla/Capacity.tla SClaimOK); once the file exists it goes back to the
+	// gate (SClaimSeen), since the claim waits on all, which a holder keeps.
 	claiming bool
 }
 
 func (t *taker) path(name string) string { return filepath.Join(t.o.dir, name) }
+
+// mark writes <name>.holder for status to read, and takes it away on release
+// before the lock it names. A holder is believed only while its pid lives.
+func (t *taker) mark(name string) {
+	f := []string{"pid=" + strconv.Itoa(t.w.pid), "since=" + t.w.now().UTC().Format(time.RFC3339)}
+	if t.o.why != "" {
+		f = append(f, "why="+esc(t.o.why))
+	}
+	if len(t.o.argv) > 0 {
+		f = append(f, "cmd="+esc(strings.Join(t.o.argv, " ")))
+	}
+	p := t.path(name + ".holder")
+	// ignored: the holder file is for status to read; the lock is the slot either way
+	_ = os.Remove(p)
+	_ = os.WriteFile(p, []byte(strings.Join(f, " ")+"\n"), 0o666)
+	_ = os.Chmod(p, 0o666)
+	t.held = append(t.held, func() { _ = os.Remove(p) })
+}
 
 // step makes one attempt without waiting; it reports true once held.
 func (t *taker) step() (bool, error) {
@@ -530,6 +529,7 @@ func (t *taker) step() (bool, error) {
 				return false, err
 			}
 			t.held = []func(){gate}
+			t.mark("gate")
 		}
 		all, ok, err := t.w.lock(t.path("all"), true)
 		if ok {
@@ -537,34 +537,44 @@ func (t *taker) step() (bool, error) {
 		}
 		return ok, err
 	}
-	for range 2 { // a first taker stores the capacity, then takes under it
-		if !t.claiming {
-			gate, ok, err := t.w.lock(t.path("gate"), false)
-			if !ok || err != nil {
+	for range 3 { // read (no file), store it, read again and take under it
+		if t.claiming {
+			if _, have, err := readCapacity(t.o.dir); have || err != nil {
+				t.claiming = false // another first taker stored it: SClaimSeen
+				continue
+			}
+			if ok, err := t.storeCapacity(); !ok || err != nil {
 				return false, err
 			}
-			c, have, err := readCapacity(t.o.dir)
-			if err != nil || have {
-				defer gate()
-				if err != nil {
-					return false, err
-				}
-				return t.scan(c)
-			}
-			gate()
-			t.claiming = true
+			t.claiming = false
 		}
-		if ok, err := t.storeCapacity(); !ok || err != nil {
+		gate, ok, err := t.w.lock(t.path("gate"), false)
+		if !ok || err != nil {
 			return false, err
 		}
-		t.claiming = false
+		c, have, err := readCapacity(t.o.dir)
+		if err != nil || have {
+			defer gate()
+			if bad := (corrupt("")); errors.As(err, &bad) {
+				return false, refuse(2, "%s; run: %s", bad,
+					t.o.remedy("set", "--slots", strconv.Itoa(cmp.Or(t.o.slots, t.defaultSlots()))))
+			}
+			if err != nil {
+				return false, err
+			}
+			return t.scan(c)
+		}
+		gate()
+		t.claiming = true
 	}
 	return false, nil
 }
 
+func (t *taker) defaultSlots() int { return max(1, t.w.cpus/4) }
+
 // storeCapacity is the first taker's write of --slots, or of CPU count / 4:
 // under gate and all exclusive, and only if no capacity is there by then
-// (tla/Capacity.tla ClaimAll; "racyfirst" is the witness without the locks).
+// (tla/Capacity.tla SClaim2; "racyfirst" is the witness without the locks).
 func (t *taker) storeCapacity() (bool, error) {
 	free, err := locksFree(t.w, t.o.dir)
 	if free == nil || err != nil {
@@ -574,7 +584,7 @@ func (t *taker) storeCapacity() (bool, error) {
 	if _, have, err := readCapacity(t.o.dir); have || err != nil {
 		return err == nil, err
 	}
-	n := cmp.Or(t.o.slots, max(1, t.w.cpus/4))
+	n := cmp.Or(t.o.slots, t.defaultSlots())
 	if err := writeCapacity(t.o.dir, n, t.w.pid, t.w.now()); err != nil {
 		return false, err
 	}
@@ -628,15 +638,9 @@ func acquire(w world, o options) (*taker, error) {
 		if err == nil && o.wait > 0 && !w.now().Before(deadline) {
 			t.release()
 			c, _, _ := readCapacity(o.dir)
-			in := holders(w, o.dir, c.n)
-			if len(in) == 0 {
-				in = []string{"every slot busy"}
-			}
-			what := "slot"
-			if o.exclusive {
-				what = "exclusive hold"
-			}
-			return nil, refuse(1, "no %s within %s: %s; run: %s", what, o.wait, strings.Join(in, ", "), o.remedy("status"))
+			what := map[bool]string{false: "slot", true: "exclusive hold"}[o.exclusive]
+			return nil, refuse(1, "no %s within %s: %s; run: %s", what, o.wait,
+				cmp.Or(strings.Join(holders(w, o.dir, c.n), ", "), "every slot busy"), o.remedy("status"))
 		}
 		if err != nil {
 			t.release()
@@ -658,123 +662,106 @@ func (t *taker) name() string {
 	return "slot" + strconv.Itoa(t.slot)
 }
 
-func (t *taker) describe(pid int) string {
+func (t *taker) describe() string {
 	if t.o.exclusive {
-		return fmt.Sprintf("mode=exclusive slot=all pid=%d", pid)
+		return fmt.Sprintf("mode=exclusive slot=all pid=%d", t.w.pid)
 	}
-	return fmt.Sprintf("mode=shared slot=%d/%d pid=%d", t.slot, t.cap, pid)
+	return fmt.Sprintf("mode=shared slot=%d/%d pid=%d", t.slot, t.cap, t.w.pid)
 }
 
 // --- who holds what --------------------------------------------------------
 
-// probe says whether a lock is held, by trying it (exclusive for a slot,
-// shared for all and gate, which only an exclusive run holds).
-func probe(w world, path string, exclusive bool) (bool, error) {
-	rel, ok, err := w.lock(path, exclusive)
-	if ok {
-		rel()
-	}
-	return !ok && err == nil, err
-}
-
-// holderFields reads <name>.holder: pid=.. since=.. why=.. cmd=.., escaped.
-func holderFields(dir, name string) map[string]string {
-	b, _ := os.ReadFile(filepath.Join(dir, name+".holder"))
-	m := map[string]string{}
-	for _, f := range strings.Fields(string(b)) {
-		if k, v, ok := strings.Cut(f, "="); ok {
-			m[k] = unesc(v)
+// holderOf reads <name>.holder. It takes no lock, so it can never be seen as
+// a holder or make a scanning taker skip a free slot (tla/Capacity.tla
+// "lockprobe"); a file is believed only while the pid in it is alive, so a
+// SIGKILLed holder's leftover file reads as free.
+func holderOf(w world, dir, name string) (string, bool) {
+	b, err := os.ReadFile(filepath.Join(dir, name+".holder"))
+	line := strings.TrimSpace(string(b))
+	for _, f := range strings.Fields(line) {
+		if v, ok := strings.CutPrefix(f, "pid="); ok && err == nil {
+			pid, err := strconv.Atoi(v)
+			return line, err == nil && pid > 0 && w.running(pid)
 		}
 	}
-	return m
+	return "", false
 }
 
-// holders names, in prose, each held slot1..slot<n> and an exclusive run.
+// holders is each held lock (the slots, gate and all) as status prints it.
 func holders(w world, dir string, n int) []string {
 	var in []string
-	say := func(name string) {
-		m := holderFields(dir, name)
-		s := name + " held"
-		if m["pid"] != "" {
-			s += " by pid " + m["pid"]
+	for _, name := range append(slots(dir, n), "gate", "all") {
+		if line, held := holderOf(w, dir, name); held {
+			in = append(in, name+" held "+line)
 		}
-		if m["since"] != "" {
-			s += " since " + m["since"]
-		}
-		if m["why"] != "" {
-			s += " (why: " + m["why"] + ")"
-		}
-		in = append(in, s)
-	}
-	for k := 1; k <= n; k++ {
-		if held, _ := probe(w, filepath.Join(dir, "slot"+strconv.Itoa(k)), true); held {
-			say("slot" + strconv.Itoa(k))
-		}
-	}
-	if held, _ := probe(w, filepath.Join(dir, "all"), false); held {
-		say("all")
-	} else if held, _ := probe(w, filepath.Join(dir, "gate"), false); held {
-		in = append(in, "gate held by an --exclusive run waiting for every holder")
 	}
 	return in
 }
 
-// status probes each lock in dir: a lock it can take is free.
-func status(o options, w world) error {
-	c, have, err := readCapacity(o.dir)
-	if err != nil {
-		return err
-	}
-	out := bufio.NewWriter(w.stdout)
-	if have {
-		fmt.Fprintf(out, "capacity=%d set_by=%s\n", c.n, esc(c.who))
-	} else {
-		fmt.Fprintf(out, "capacity=unset # the first run stores its --slots (or CPU count / 4); or: %s\n",
-			o.remedy("set", "--slots", "N"))
-	}
+// slots is slot1..slot<n> and any other slot file on disk, in order.
+func slots(dir string, n int) []string {
 	nums := map[int]bool{}
-	for k := 1; k <= c.n; k++ {
+	for k := 1; k <= n; k++ {
 		nums[k] = true
 	}
-	names, _ := filepath.Glob(filepath.Join(o.dir, "slot*"))
-	for _, p := range names {
-		if k, err := strconv.Atoi(strings.TrimPrefix(filepath.Base(p), "slot")); err == nil && k > 0 {
+	files, _ := filepath.Glob(filepath.Join(dir, "slot*"))
+	for _, p := range files {
+		num := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(p), "slot"), ".holder")
+		if k, err := strconv.Atoi(num); err == nil && k > 0 {
 			nums[k] = true
 		}
 	}
+	var s []string
+	for _, k := range slices.Sorted(maps.Keys(nums)) {
+		s = append(s, "slot"+strconv.Itoa(k))
+	}
+	return s
+}
+
+func status(o options, w world) error {
+	c, have, err := readCapacity(o.dir)
+	var bad corrupt
+	out := bufio.NewWriter(w.stdout)
+	switch {
+	case errors.As(err, &bad):
+		fmt.Fprintf(out, "capacity=? # corrupt: %s; %s\n", bad,
+			o.remedy("set", "--slots", strconv.Itoa(max(1, w.cpus/4))))
+	case err != nil:
+		return err
+	case have:
+		fmt.Fprintf(out, "capacity=%d set_by=%s\n", c.n, esc(c.who))
+	default:
+		fmt.Fprintf(out, "capacity=unset # the first run stores its --slots (or CPU count / 4); or: %s\n",
+			o.remedy("set", "--slots", "N"))
+	}
 	free := 0
-	line := func(name string, exclusive bool, note string) {
-		held, err := probe(w, filepath.Join(o.dir, name), exclusive)
-		switch {
-		case err != nil:
-			fmt.Fprintf(out, "%s unknown error=%s", name, esc(err.Error()))
-		case held:
-			b, _ := os.ReadFile(filepath.Join(o.dir, name+".holder"))
-			fmt.Fprintf(out, "%s held %s", name, strings.TrimSpace(string(b)))
-		default:
-			fmt.Fprintf(out, "%s free", name)
-			if strings.HasPrefix(name, "slot") && note == "" {
-				free++
-			}
+	line := func(name, note string) bool {
+		holder, held := holderOf(w, o.dir, name)
+		parts := []string{name, "free"}
+		if held {
+			parts = []string{name, "held", holder}
 		}
 		if note != "" {
-			fmt.Fprintf(out, " # %s", note)
+			parts = append(parts, "#", note)
 		}
-		fmt.Fprintln(out)
+		fmt.Fprintln(out, strings.Join(parts, " "))
+		return held
 	}
-	for _, k := range slices.Sorted(maps.Keys(nums)) {
-		note := ""
-		if k > c.n {
-			note = "beyond capacity, from an older one; no new holder takes it"
+	for i, name := range slots(o.dir, c.n) {
+		if have && i >= c.n {
+			line(name, "beyond capacity, from an older one; no new holder takes it")
+		} else if !line(name, "") {
+			free++
 		}
-		line("slot"+strconv.Itoa(k), true, note)
 	}
-	line("gate", false, "held by an --exclusive run while it waits, so no new holder passes")
-	line("all", false, "the exclusive lock; held only by an --exclusive run")
+	line("gate", "held by an --exclusive run from when it starts waiting until it ends")
+	if line("all", "the exclusive lock: held by an --exclusive run while it runs") {
+		free = 0
+	}
 	if have {
 		fmt.Fprintf(out, "free=%d/%d\n", free, c.n)
 	} else {
-		fmt.Fprintln(out, "free=unset")
+		fmt.Fprintln(out, "free=?")
 	}
 	return out.Flush()
 }
@@ -804,87 +791,50 @@ func esc(s string) string {
 	return b.String()
 }
 
-func unesc(s string) string {
-	var b strings.Builder
-	for i := 0; i < len(s); i++ {
-		if s[i] != '\\' || i+1 == len(s) {
-			b.WriteByte(s[i])
-			continue
-		}
-		i++
-		switch s[i] {
-		case 's':
-			b.WriteByte(' ')
-		case 't':
-			b.WriteByte('\t')
-		case 'n':
-			b.WriteByte('\n')
-		case 'x':
-			if v, err := strconv.ParseUint(s[i+1:min(i+3, len(s))], 16, 8); err == nil && i+3 <= len(s) {
-				b.WriteByte(byte(v))
-				i += 2
-				continue
-			}
-			b.WriteString(`\x`)
-		default:
-			b.WriteByte(s[i])
-		}
-	}
-	return b.String()
-}
-
-// joinArgs turns NUL-separated arguments (/proc/<pid>/cmdline) into one line.
-func joinArgs(b []byte) string {
-	return strings.Join(strings.FieldsFunc(string(b), func(r rune) bool { return r == 0 }), " ")
-}
-
-// procArgs reads macOS's kern.procargs2: argc (4 bytes, little-endian), the
-// executable path, NUL padding, then argc NUL-terminated arguments.
-func procArgs(b []byte) string {
-	if len(b) < 4 {
-		return ""
-	}
-	argc := int(b[0]) | int(b[1])<<8 | int(b[2])<<16 | int(b[3])<<24
-	rest := b[4:]
-	i := slices.Index(rest, 0)
-	if i < 0 {
-		return ""
-	}
-	for rest = rest[i:]; len(rest) > 0 && rest[0] == 0; rest = rest[1:] {
-	}
-	var args []string
-	for len(args) < argc && len(rest) > 0 {
-		a, after, _ := strings.Cut(string(rest), "\x00")
-		args, rest = append(args, a), []byte(after)
-	}
-	return strings.Join(args, " ")
-}
-
 var signalNames = map[os.Signal]string{os.Interrupt: "SIGINT", syscall.SIGTERM: "SIGTERM", syscall.SIGHUP: "SIGHUP"}
 
-// waitHold blocks until SIGINT, SIGTERM or SIGHUP, or until d (0: no bound)
-// has passed; it names the signal, or returns "" for d.
+// waitHold blocks until SIGINT, SIGTERM or SIGHUP, or until d has passed;
+// with no d, until its parent exits, which it polls: a changed parent pid
+// (reparented) or a parent no longer running. A parent that is already init
+// when the hold starts has exited. Parent pid 0 (a parent outside this pid
+// namespace) cannot be watched.
 func waitHold(d time.Duration) string {
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer signal.Stop(sigs)
-	var timeout <-chan time.Time
+	var timeout, tick <-chan time.Time
+	ppid := os.Getppid()
+	gone := func() bool { return ppid != 0 && (ppid == 1 || os.Getppid() != ppid || !running(ppid)) }
 	if d > 0 {
 		timer := time.NewTimer(d)
 		defer timer.Stop()
 		timeout = timer.C
+	} else {
+		if gone() {
+			return "parent_exit"
+		}
+		ticker := time.NewTicker(poll)
+		defer ticker.Stop()
+		tick = ticker.C
 	}
-	select {
-	case s := <-sigs:
-		return signalNames[s]
-	case <-timeout:
-		return ""
+	for {
+		select {
+		case s := <-sigs:
+			return "signal signal=" + signalNames[s]
+		case <-timeout:
+			return "for"
+		case <-tick:
+			if gone() {
+				return "parent_exit"
+			}
+		}
 	}
 }
 
 // runCommand runs the resolved path with argv and this process's stdio, tied
 // to this process so it cannot outlive the slot (tie, per OS), forwards
-// interrupts to it, and returns its exit status (128+signal when a signal ended it).
+// interrupts to it, and returns its exit status (128+signal when a signal
+// ended it; 126 when it was found but could not be started).
 func runCommand(path string, argv []string) int {
 	cmd := exec.Command(path, argv[1:]...)
 	cmd.Args[0] = argv[0]
@@ -892,7 +842,7 @@ func runCommand(path string, argv []string) int {
 	untie, err := tie(cmd)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "nova-reserve:", err)
-		return 127
+		return 126
 	}
 	defer untie()
 	sigs := make(chan os.Signal, 1)
@@ -906,7 +856,7 @@ func runCommand(path string, argv []string) int {
 	signal.Stop(sigs)
 	if cmd.ProcessState == nil {
 		fmt.Fprintln(os.Stderr, "nova-reserve:", err)
-		return 127
+		return 126
 	}
 	if ws, ok := cmd.ProcessState.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
 		return 128 + int(ws.Signal())

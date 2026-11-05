@@ -58,8 +58,6 @@ type clock struct {
 
 var epoch = time.Date(2026, 11, 5, 22, 3, 32, 0, time.UTC)
 
-func newClock() *clock { return &clock{t: epoch} }
-
 func (c *clock) now() time.Time { return c.t }
 func (c *clock) sleep(d time.Duration) {
 	c.slept = append(c.slept, d)
@@ -73,6 +71,7 @@ func (c *clock) sleep(d time.Duration) {
 type harness struct {
 	f        *fakeLocks
 	c        *clock
+	dead     map[int]bool
 	dir      string
 	ran      []string
 	code     int
@@ -81,7 +80,7 @@ type harness struct {
 }
 
 func newHarness(t *testing.T) *harness {
-	h := &harness{f: newFake(), c: newClock(), dir: t.TempDir()}
+	h := &harness{f: newFake(), c: &clock{t: epoch}, dead: map[int]bool{}, dir: t.TempDir()}
 	h.w = world{
 		env:     func(k string) string { return map[string]string{"NOVA_RESERVE_DIR": h.dir}[k] },
 		lock:    h.f.lock,
@@ -92,19 +91,19 @@ func newHarness(t *testing.T) *harness {
 			h.ran = argv
 			return h.code
 		},
-		hold:   func(time.Duration) string { return "SIGTERM" },
-		parent: func() string { return "" },
-		pid:    42,
-		cpus:   8,
-		stdout: &h.out,
-		stderr: &h.err,
+		hold:    func(time.Duration) string { return "signal signal=SIGTERM" },
+		running: func(pid int) bool { return !h.dead[pid] },
+		pid:     42,
+		cpus:    8,
+		stdout:  &h.out,
+		stderr:  &h.err,
 	}
 	return h
 }
 
 // sibling is a second caller on the same machine: same locks, dir and clock.
 func (h *harness) sibling(pid int) *harness {
-	s := &harness{f: h.f, c: h.c, dir: h.dir}
+	s := &harness{f: h.f, c: h.c, dead: h.dead, dir: h.dir}
 	s.w = h.w
 	s.w.pid, s.w.stdout, s.w.stderr = pid, &s.out, &s.err
 	s.w.exec = func(_ string, argv []string) int { s.ran = argv; return s.code }
@@ -113,6 +112,15 @@ func (h *harness) sibling(pid int) *harness {
 
 func (h *harness) opts(slots int, exclusive bool, wait time.Duration) options {
 	return options{verb: "run", slots: slots, exclusive: exclusive, wait: wait, dir: h.dir}
+}
+
+// take acquires as do does, holder file included.
+func (h *harness) take(t *testing.T, o options) *taker {
+	t.Helper()
+	tk, err := acquire(h.w, o)
+	require.NoError(t, err)
+	tk.mark(tk.name())
+	return tk
 }
 
 func (h *harness) setCap(t *testing.T, n int) {
@@ -124,17 +132,15 @@ func TestSharedTakesFirstFreeSlot(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	h.setCap(t, 3)
-	a, err := acquire(h.w, h.opts(0, false, 0))
-	require.NoError(t, err)
-	b, err := acquire(h.w, h.opts(3, false, 0))
-	require.NoError(t, err)
+	a := h.take(t, h.opts(0, false, 0))
+	b := h.take(t, h.opts(3, false, 0))
 	assert.Equal(t, 1, a.slot)
 	assert.Equal(t, 2, b.slot)
 	assert.Equal(t, 2, h.f.sh[filepath.Join(h.dir, "all")])
 	assert.Equal(t, 0, h.f.sh[filepath.Join(h.dir, "gate")], "a shared taker drops the gate once it holds")
 	a.release()
-	c, err := acquire(h.w, h.opts(0, false, 0))
-	require.NoError(t, err)
+	assert.NoFileExists(t, filepath.Join(h.dir, "slot1.holder"))
+	c := h.take(t, h.opts(0, false, 0))
 	assert.Equal(t, 1, c.slot, "a freed slot is taken again")
 	assert.Empty(t, h.c.slept)
 }
@@ -143,13 +149,12 @@ func TestFullSlotsTimeOutNamingTheHolder(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	s := h.sibling(102933)
-	require.Equal(t, 0, run([]string{"--slots", "1", "--why", "bench x", "--", "true"}, s.w))
 	s.w.exec = func(_ string, _ []string) int {
 		assert.Equal(t, 1, run([]string{"--wait", "1s", "--", "make"}, h.w))
 		return 0
 	}
-	require.Equal(t, 0, run([]string{"--why", "bench x", "--", "sleep", "9"}, s.w))
-	assert.Equal(t, "nova-reserve: no slot within 1s: slot1 held by pid 102933 since 2026-11-05T22:03:32Z (why: bench x); run: nova-reserve status\n", h.err.String())
+	require.Equal(t, 0, run([]string{"--slots", "1", "--why", "bench x", "--", "sleep", "9"}, s.w))
+	assert.Equal(t, `nova-reserve: no slot within 1s: slot1 held pid=102933 since=2026-11-05T22:03:32Z why=bench\sx cmd=sleep\s9; run: nova-reserve status`+"\n", h.err.String())
 	assert.Nil(t, h.ran)
 	assert.True(t, h.f.idle())
 }
@@ -160,30 +165,27 @@ func TestWaitIsABound(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	h.setCap(t, 1)
-	_, err := acquire(h.w, h.opts(0, false, 0))
-	require.NoError(t, err)
-	_, err = acquire(h.w, h.opts(0, false, 100*time.Millisecond))
+	h.take(t, h.opts(0, false, 0))
+	_, err := acquire(h.w, h.opts(0, false, 100*time.Millisecond))
 	var e *exitError
 	require.ErrorAs(t, err, &e)
 	assert.Equal(t, 1, e.code)
 	assert.Equal(t, []time.Duration{100 * time.Millisecond}, h.c.slept)
 	assert.Equal(t, epoch.Add(100*time.Millisecond), h.c.now())
-	assert.Contains(t, e.msg, "no slot within 100ms: slot1 held")
+	assert.Contains(t, e.msg, "no slot within 100ms: slot1 held pid=42")
 }
 
 func TestWaiterRunsWhenAHolderEnds(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	h.setCap(t, 1)
-	a, err := acquire(h.w, h.opts(1, false, 0))
-	require.NoError(t, err)
+	a := h.take(t, h.opts(1, false, 0))
 	h.c.onSleep = func(n int) {
 		if n == 3 {
 			a.release()
 		}
 	}
-	b, err := acquire(h.w, h.opts(1, false, 0))
-	require.NoError(t, err)
+	b := h.take(t, h.opts(1, false, 0))
 	assert.Equal(t, 1, b.slot)
 	assert.Equal(t, []time.Duration{poll, poll, poll}, h.c.slept)
 }
@@ -192,33 +194,33 @@ func TestExclusiveWaitsForSharedAndBarsNewShared(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	h.setCap(t, 4)
-	a, err := acquire(h.w, h.opts(0, false, 0))
-	require.NoError(t, err)
+	a := h.take(t, h.opts(0, false, 0))
 	var during error
 	h.c.onSleep = func(n int) {
 		if n == 1 {
 			// the exclusive taker holds the gate now: a shared taker with free slots waits
-			other := newHarness(t)
-			other.w.lock, other.dir = h.f.lock, h.dir
-			o := other.opts(0, false, time.Second)
-			o.dir = h.dir
-			_, during = acquire(other.w, o)
+			other := h.sibling(9)
+			other.c = &clock{t: epoch}
+			other.w.now, other.w.sleep = other.c.now, other.c.sleep
+			_, during = acquire(other.w, h.opts(0, false, time.Second))
 		}
 		if n == 2 {
 			a.release()
 		}
 	}
-	x, err := acquire(h.w, h.opts(0, true, 0))
-	require.NoError(t, err)
+	x := h.take(t, h.opts(0, true, 0))
 	var e *exitError
 	require.ErrorAs(t, during, &e)
-	assert.Contains(t, e.msg, "gate held by an --exclusive run")
+	assert.Contains(t, e.msg, "slot1 held pid=42")
+	assert.Contains(t, e.msg, "gate held pid=42")
 	assert.True(t, h.f.ex[filepath.Join(h.dir, "all")])
-	assert.Equal(t, "mode=exclusive slot=all pid=42", x.describe(42))
+	assert.Equal(t, "mode=exclusive slot=all pid=42", x.describe())
 	h.c.onSleep = nil
-	_, err = acquire(h.w, h.opts(0, false, time.Second))
+	_, err := acquire(h.w, h.opts(0, false, time.Second))
 	assert.ErrorAs(t, err, &e, "no shared taker while an exclusive one runs")
 	x.release()
+	assert.NoFileExists(t, filepath.Join(h.dir, "gate.holder"))
+	assert.NoFileExists(t, filepath.Join(h.dir, "all.holder"))
 	_, err = acquire(h.w, h.opts(0, false, 0))
 	assert.NoError(t, err)
 }
@@ -227,13 +229,13 @@ func TestExclusiveTimeoutGivesBackTheGate(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	h.setCap(t, 2)
-	_, err := acquire(h.w, h.opts(0, false, 0))
-	require.NoError(t, err)
-	_, err = acquire(h.w, h.opts(0, true, 3*time.Second))
+	h.take(t, h.opts(0, false, 0))
+	_, err := acquire(h.w, h.opts(0, true, 3*time.Second))
 	var e *exitError
 	require.ErrorAs(t, err, &e)
 	assert.Equal(t, 1, e.code)
-	assert.True(t, strings.HasPrefix(e.msg, "no exclusive hold within 3s: slot1 held"), e.msg)
+	assert.True(t, strings.HasPrefix(e.msg, "no exclusive hold within 3s: slot1 held pid=42"), e.msg)
+	assert.NotContains(t, e.msg, "gate held", "the gate is given back before the holders are read")
 	assert.False(t, h.f.ex[filepath.Join(h.dir, "gate")])
 	_, err = acquire(h.w, h.opts(0, false, 0))
 	assert.NoError(t, err, "shared takers pass again")
@@ -262,9 +264,22 @@ func TestFirstTakerSetsCapacity(t *testing.T) {
 	b, err := os.ReadFile(filepath.Join(h.dir, "capacity"))
 	require.NoError(t, err)
 	assert.Equal(t, "2\npid 42 at 2026-11-05T22:03:32Z\n", string(b))
+	assert.NoFileExists(t, filepath.Join(h.dir, "capacity.42.tmp"))
 	h.err.Reset()
 	require.Equal(t, 0, run([]string{"--", "make"}, h.w))
 	assert.Equal(t, "nova-reserve: HELD mode=shared slot=1/2 pid=42\n", h.err.String(), "the second taker stores nothing")
+}
+
+func TestNoSlotsStoresTheDefault(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.w.cpus = 12
+	require.Equal(t, 0, run([]string{"--", "make"}, h.w))
+	assert.Contains(t, h.err.String(), "CAPACITY SET slots=3\n")
+	c, have, err := readCapacity(h.dir)
+	require.NoError(t, err)
+	assert.True(t, have)
+	assert.Equal(t, 3, c.n)
 }
 
 // TestFirstTakerRetriesTheClaimNotTheGate: a first taker whose claim is busy
@@ -295,16 +310,28 @@ func TestFirstTakerRetriesTheClaimNotTheGate(t *testing.T) {
 	assert.Equal(t, []time.Duration{poll, poll}, h.c.slept)
 }
 
-func TestNoSlotsStoresTheDefault(t *testing.T) {
+// TestClaimerSeesTheStoredCapacity: a first taker whose claim waits on all,
+// while another first taker stored the capacity and holds slot1, goes back to
+// the gate and takes slot2 (tla/Capacity.tla SClaimSeen; without it, it was
+// refused while slots were free).
+func TestClaimerSeesTheStoredCapacity(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
-	h.w.cpus = 12
-	require.Equal(t, 0, run([]string{"--", "make"}, h.w))
-	assert.Contains(t, h.err.String(), "CAPACITY SET slots=3\n")
-	c, have, err := readCapacity(h.dir)
+	gate := filepath.Join(h.dir, "gate")
+	release, ok, _ := h.f.lock(gate, false) // the other first taker, mid-read
+	require.True(t, ok)
+	h.c.onSleep = func(n int) {
+		if n == 1 {
+			release()
+			s := h.sibling(77)
+			s.take(t, s.opts(8, false, 0)) // stores 8, holds slot1 and all shared
+		}
+	}
+	tk, err := acquire(h.w, h.opts(8, false, 3*time.Second))
 	require.NoError(t, err)
-	assert.True(t, have)
-	assert.Equal(t, 3, c.n)
+	assert.Equal(t, 2, tk.slot)
+	assert.Zero(t, tk.capSet)
+	assert.Equal(t, []time.Duration{poll}, h.c.slept)
 }
 
 // TestOtherCapacityIsRefused is the per-caller bug: a --slots 1 holder and a
@@ -330,8 +357,7 @@ func TestPerCallerCountingIsTheBug(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	h.setCap(t, 1)
-	a, err := acquire(h.w, h.opts(1, false, 0))
-	require.NoError(t, err)
+	a := h.take(t, h.opts(1, false, 0))
 	b := &taker{w: h.w, o: h.opts(4, false, 0)}
 	ok, err := b.scan(capacity{n: 4}) // the old code: N is the caller's own
 	require.NoError(t, err)
@@ -345,14 +371,14 @@ func TestSetRefusedWhileHeld(t *testing.T) {
 	h.setCap(t, 2)
 	s := h.sibling(102933)
 	s.w.exec = func(_ string, _ []string) int {
-		assert.Equal(t, 1, run([]string{"set", "--slots", "4"}, h.w))
+		assert.Equal(t, 1, run([]string{"set", "--slots", "4", "--dir", h.dir}, h.w))
 		return 0
 	}
 	require.Equal(t, 0, run([]string{"--why", "ci", "--", "make"}, s.w))
-	assert.Equal(t, "nova-reserve set: capacity in use: slot1 held by pid 102933 since 2026-11-05T22:03:32Z (why: ci); retry when free\n", h.err.String())
+	assert.Equal(t, "nova-reserve set: capacity in use (slot1 held pid=102933 since=2026-11-05T22:03:32Z why=ci cmd=make); retry when free; run: nova-reserve status --dir "+shellQuote(h.dir)+"\n", h.err.String())
 	c, _, _ := readCapacity(h.dir)
 	assert.Equal(t, 2, c.n)
-	assert.NoFileExists(t, filepath.Join(h.dir, "slot3"), "the refusal made no lock file past the capacity")
+	assert.NoFileExists(t, filepath.Join(h.dir, "slot3"), "the refusal made no lock file")
 }
 
 func TestSetWritesWhenFree(t *testing.T) {
@@ -369,15 +395,40 @@ func TestSetWritesWhenFree(t *testing.T) {
 	assert.True(t, h.f.idle())
 }
 
-func TestCorruptCapacityIsRefused(t *testing.T) {
+func TestCorruptCapacityIsRefusedWithARemedy(t *testing.T) {
+	t.Parallel()
+	for _, body := range []string{"", "0\n", "lots\n"} {
+		h := newHarness(t)
+		path := filepath.Join(h.dir, "capacity")
+		require.NoError(t, os.WriteFile(path, []byte(body), 0o644))
+		assert.Equal(t, 2, run([]string{"--dir", h.dir, "--", "make"}, h.w))
+		assert.Equal(t, "nova-reserve: "+path+" holds \""+strings.TrimSpace(body)+"\", not a capacity of 1..1024; run: nova-reserve set --slots 2 --dir "+shellQuote(h.dir)+"\n", h.err.String())
+		assert.Nil(t, h.ran)
+		assert.True(t, h.f.idle())
+		h.err.Reset()
+		require.Equal(t, 0, run([]string{"set", "--slots", "2"}, h.w), "set repairs it")
+		c, _, err := readCapacity(h.dir)
+		require.NoError(t, err)
+		assert.Equal(t, 2, c.n)
+	}
+}
+
+// TestCapacityRewriteCannotLeaveItEmpty: a rewrite is one write at offset 0,
+// then a cut; a kill between leaves the record and old bytes, read as the record.
+func TestCapacityRewriteCannotLeaveItEmpty(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
-	require.NoError(t, os.WriteFile(filepath.Join(h.dir, "capacity"), []byte("lots\n"), 0o644))
-	assert.Equal(t, 2, run([]string{"--", "make"}, h.w))
-	assert.Contains(t, h.err.String(), `holds "lots", not a capacity of 1..1024; run: nova-reserve set --slots N`)
-	assert.Nil(t, h.ran)
-	h.err.Reset()
-	require.Equal(t, 0, run([]string{"set", "--slots", "2"}, h.w), "set repairs it")
+	path := filepath.Join(h.dir, "capacity")
+	require.NoError(t, os.WriteFile(path, []byte("1024\npid 1 at 2026-01-01T00:00:00Z\nmore old bytes\n"), 0o644))
+	require.NoError(t, writeCapacity(h.dir, 4, 9, epoch))
+	b, _ := os.ReadFile(path)
+	assert.Equal(t, "4\npid 9 at 2026-11-05T22:03:32Z\n", string(b))
+	// the state a kill between the write and the cut leaves
+	require.NoError(t, os.WriteFile(path, []byte("4\npid 9 at 2026-11-05T22:03:32Z\n:00:00Z\nmore old bytes\n"), 0o644))
+	c, have, err := readCapacity(h.dir)
+	require.NoError(t, err)
+	assert.True(t, have)
+	assert.Equal(t, capacity{4, "pid 9 at 2026-11-05T22:03:32Z"}, c)
 }
 
 // --- hold ---------------------------------------------------------------------
@@ -389,7 +440,7 @@ func TestHoldUntilFor(t *testing.T) {
 	h.w.hold = func(d time.Duration) string {
 		asked = d
 		h.c.t = h.c.t.Add(d)
-		return ""
+		return "for"
 	}
 	require.Equal(t, 0, run([]string{"hold", "--for", "30m", "--slots", "8"}, h.w))
 	assert.Equal(t, 30*time.Minute, asked)
@@ -398,33 +449,34 @@ func TestHoldUntilFor(t *testing.T) {
 	assert.True(t, h.f.idle())
 }
 
-func TestHoldUntilSignal(t *testing.T) {
+func TestHoldUntilSignalOrParentExit(t *testing.T) {
 	t.Parallel()
-	h := newHarness(t)
-	h.w.hold = func(d time.Duration) string {
-		assert.Zero(t, d, "no --for: no bound")
-		h.c.t = h.c.t.Add(90 * time.Second)
-		return "SIGINT"
+	for _, reason := range []string{"signal signal=SIGINT", "parent_exit"} {
+		h := newHarness(t)
+		h.w.hold = func(d time.Duration) string {
+			assert.Zero(t, d, "no --for: no bound")
+			h.c.t = h.c.t.Add(90 * time.Second)
+			return reason
+		}
+		require.Equal(t, 0, run([]string{"hold", "--exclusive"}, h.w))
+		assert.Equal(t, "HELD mode=exclusive slot=all pid=42\nRELEASED reason="+reason+" held_for=1m30s\n", h.out.String())
+		assert.True(t, h.f.idle())
 	}
-	require.Equal(t, 0, run([]string{"hold", "--exclusive"}, h.w))
-	assert.Equal(t, "HELD mode=exclusive slot=all pid=42\nRELEASED reason=signal signal=SIGINT held_for=1m30s\n", h.out.String())
-	assert.True(t, h.f.idle())
 }
 
-func TestHoldHonoursDirAndLabelsWithTheParent(t *testing.T) {
+func TestHoldHonoursDir(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	other := filepath.Join(t.TempDir(), "jobs")
-	h.w.parent = func() string { return "agent --tool bench" }
 	var status bytes.Buffer
 	h.w.hold = func(time.Duration) string {
 		s := h.sibling(9)
 		require.Equal(t, 0, run([]string{"status", "--dir", other}, s.w))
 		status.WriteString(s.out.String())
-		return "SIGTERM"
+		return "for"
 	}
-	require.Equal(t, 0, run([]string{"hold", "--dir", other, "--slots", "2"}, h.w))
-	assert.Contains(t, status.String(), "slot1 held pid=42 since=2026-11-05T22:03:32Z why=agent\\s--tool\\sbench\n")
+	require.Equal(t, 0, run([]string{"hold", "--dir", other, "--slots", "2", "--why", "bench sweep"}, h.w))
+	assert.Contains(t, status.String(), "slot1 held pid=42 since=2026-11-05T22:03:32Z why=bench\\ssweep\n")
 	assert.Contains(t, status.String(), "free=1/2\n")
 	assert.NoFileExists(t, filepath.Join(h.dir, "capacity"), "the default directory is untouched")
 	assert.FileExists(t, filepath.Join(other, "capacity"))
@@ -432,26 +484,79 @@ func TestHoldHonoursDirAndLabelsWithTheParent(t *testing.T) {
 
 // --- status -------------------------------------------------------------------
 
+// statusDuring runs status from another caller while h's command runs.
+func statusDuring(t *testing.T, h *harness, args ...string) string {
+	t.Helper()
+	var got string
+	h.w.exec = func(_ string, _ []string) int {
+		s := h.sibling(9)
+		touched := false
+		s.w.lock = func(string, bool) (func(), bool, error) { touched = true; return nil, false, nil }
+		require.Equal(t, 0, run([]string{"status"}, s.w))
+		assert.False(t, touched, "status takes no lock, so it is never seen as a holder")
+		got = s.out.String()
+		return 0
+	}
+	require.Equal(t, 0, run(args, h.w))
+	return got
+}
+
 func TestStatusNamesHoldersAndCapacity(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	h.setCap(t, 2)
 	// a slot file from an older, larger capacity
 	require.NoError(t, os.WriteFile(filepath.Join(h.dir, "slot3"), nil, 0o644))
-	h.w.exec = func(_ string, _ []string) int {
-		s := h.sibling(9)
-		require.Equal(t, 0, run([]string{"status"}, s.w))
-		h.out.WriteString(s.out.String())
-		return 0
-	}
-	require.Equal(t, 0, run([]string{"--why", "nightly", "--", "sleep", "9"}, h.w))
 	assert.Equal(t, `capacity=2 set_by=pid\s7\sat\s2026-11-05T22:03:32Z
 slot1 held pid=42 since=2026-11-05T22:03:32Z why=nightly cmd=sleep\s9
 slot2 free
 slot3 free # beyond capacity, from an older one; no new holder takes it
-gate free # held by an --exclusive run while it waits, so no new holder passes
-all free # the exclusive lock; held only by an --exclusive run
+gate free # held by an --exclusive run from when it starts waiting until it ends
+all free # the exclusive lock: held by an --exclusive run while it runs
 free=1/2
+`, statusDuring(t, h, "--why", "nightly", "--", "sleep", "9"))
+}
+
+func TestStatusDuringAnExclusiveRun(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.setCap(t, 3)
+	got := statusDuring(t, h, "--exclusive", "--", "bench")
+	assert.Contains(t, got, "slot1 free\nslot2 free\nslot3 free\n")
+	assert.Contains(t, got, "gate held pid=42 since=2026-11-05T22:03:32Z cmd=bench # held by")
+	assert.Contains(t, got, "all held pid=42 since=2026-11-05T22:03:32Z cmd=bench # the exclusive lock")
+	assert.Contains(t, got, "free=0/3\n")
+	assert.NotContains(t, got, "  ")
+}
+
+// TestStatusIgnoresADeadHoldersFile: a SIGKILLed holder leaves its file; its
+// pid is gone, so the slot reads as free.
+func TestStatusIgnoresADeadHoldersFile(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.setCap(t, 1)
+	require.NoError(t, os.WriteFile(filepath.Join(h.dir, "slot1.holder"), []byte("pid=555 since=2026-11-05T21:00:00Z\n"), 0o644))
+	h.dead[555] = true
+	require.Equal(t, 0, run([]string{"status"}, h.w))
+	assert.Contains(t, h.out.String(), "slot1 free\n")
+	assert.Contains(t, h.out.String(), "free=1/1\n")
+}
+
+func TestStatusWithACorruptCapacityStillShowsTheSlots(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.setCap(t, 2)
+	got := statusDuring(t, h, "--", "sleep", "9")
+	require.Contains(t, got, "slot1 held pid=42")
+	require.NoError(t, os.WriteFile(filepath.Join(h.dir, "capacity"), nil, 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(h.dir, "slot1.holder"), []byte("pid=42 since=x\n"), 0o644))
+	h.out.Reset()
+	require.Equal(t, 0, run([]string{"status"}, h.w))
+	assert.Equal(t, "capacity=? # corrupt: "+filepath.Join(h.dir, "capacity")+` holds "", not a capacity of 1..1024; nova-reserve set --slots 2
+slot1 held pid=42 since=x
+gate free # held by an --exclusive run from when it starts waiting until it ends
+all free # the exclusive lock: held by an --exclusive run while it runs
+free=?
 `, h.out.String())
 }
 
@@ -460,7 +565,7 @@ func TestStatusWithNoCapacity(t *testing.T) {
 	h := newHarness(t)
 	require.Equal(t, 0, run([]string{"status"}, h.w))
 	assert.Contains(t, h.out.String(), "capacity=unset # the first run stores its --slots (or CPU count / 4); or: nova-reserve set --slots N\n")
-	assert.Contains(t, h.out.String(), "free=unset\n")
+	assert.Contains(t, h.out.String(), "free=?\n")
 }
 
 func TestStatusRefusesAMissingDir(t *testing.T) {
@@ -479,19 +584,21 @@ func TestRefusals(t *testing.T) {
 	t.Parallel()
 	for _, c := range []struct {
 		args []string
-		line string // the whole stderr, or "" to check only the code
+		line string
 	}{
 		{[]string{}, "nova-reserve: no command: nova-reserve [flags] -- <cmd> [args...]; run: nova-reserve -h"},
 		{[]string{"--slots", "abc", "--", "x"}, `nova-reserve: --slots wants 1..1024, not "abc"; run: nova-reserve -h`},
 		{[]string{"--slots", "0", "--", "x"}, `nova-reserve: --slots wants 1..1024, not "0"; run: nova-reserve -h`},
-		{[]string{"--wait", "-1s", "--", "x"}, `nova-reserve: --wait wants a duration like 90s or 15m, not "-1s"; run: nova-reserve -h`},
+		{[]string{"--wait", "-1s", "--", "x"}, `nova-reserve: --wait wants a duration above 0, like 90s or 15m, not "-1s"; run: nova-reserve -h`},
+		{[]string{"--wait", "0", "--", "x"}, `nova-reserve: --wait wants a duration above 0, like 90s or 15m, not "0"; run: nova-reserve -h`},
+		{[]string{"--wait=0s", "--", "x"}, `nova-reserve: --wait wants a duration above 0, like 90s or 15m, not "0s"; run: nova-reserve -h`},
 		{[]string{"--bogus", "--", "x"}, "nova-reserve: unknown flag --bogus; run: nova-reserve -h"},
 		{[]string{"hold", "--no-such-flag"}, "nova-reserve hold: unknown flag --no-such-flag; run: nova-reserve hold -h"},
 		{[]string{"status", "--slots", "2"}, "nova-reserve status: status takes no --slots; it takes --dir; run: nova-reserve status -h"},
 		{[]string{"status", "--wait", "1s"}, "nova-reserve status: status takes no --wait; it takes --dir; run: nova-reserve status -h"},
 		{[]string{"--for", "1m", "--", "x"}, "nova-reserve: run takes no --for; it takes --slots, --exclusive, --wait, --why, --dir; run: nova-reserve -h"},
 		{[]string{"hold", "--slots"}, "nova-reserve hold: --slots wants 1..1024; run: nova-reserve hold -h"},
-		{[]string{"hold", "--for", "0s"}, `nova-reserve hold: --for wants a duration like 30m, more than 0, not "0s"; run: nova-reserve hold -h`},
+		{[]string{"hold", "--for", "0s"}, `nova-reserve hold: --for wants a duration above 0, like 30m, not "0s"; run: nova-reserve hold -h`},
 		{[]string{"--exclusive", "--slots", "2", "--", "x"}, "nova-reserve: --exclusive takes every slot; --slots does not apply; run: nova-reserve -h"},
 		{[]string{"--exclusive=yes", "--", "x"}, `nova-reserve: --exclusive takes no value, not "yes"; run: nova-reserve -h`},
 		{[]string{"--slots", "1", "--slots", "2", "--", "x"}, "nova-reserve: --slots given twice; run: nova-reserve -h"},
@@ -577,21 +684,10 @@ func TestRunPassesTheStatusAndFrees(t *testing.T) {
 
 // --- helpers --------------------------------------------------------------------
 
-func TestEscRoundTrips(t *testing.T) {
+func TestEsc(t *testing.T) {
 	t.Parallel()
-	for _, s := range []string{"", "plain", "two words", `back\slash`, "tab\tnl\nbell\x07", `\s literal`, "trailing\\", `\x4`} {
-		e := esc(s)
-		assert.NotContains(t, e, " ")
-		assert.Equal(t, s, unesc(e), "%q via %q", s, e)
-	}
-}
-
-func TestProcArgs(t *testing.T) {
-	t.Parallel()
-	b := append([]byte{3, 0, 0, 0}, []byte("/usr/bin/agent\x00\x00\x00agent\x00--tool\x00bench x\x00HOME=/h\x00")...)
-	assert.Equal(t, "agent --tool bench x", procArgs(b))
-	assert.Equal(t, "", procArgs([]byte{1}))
-	assert.Equal(t, "make -j4", joinArgs([]byte("make\x00-j4\x00")))
+	assert.Equal(t, `two\swords\ttab\nnl\x07\\`, esc("two words\ttab\nnl\x07\\"))
+	assert.Equal(t, "plain", esc("plain"))
 }
 
 func TestShellQuote(t *testing.T) {

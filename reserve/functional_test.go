@@ -140,6 +140,37 @@ func TestHoldEndsOnSIGTERMNotStdin(t *testing.T) {
 	assert.Contains(t, string(status), "slot1 free")
 }
 
+// TestOrphanedHoldEnds: a hold with no --for whose shell exits lets go.
+func TestOrphanedHoldEnds(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("no sh on Windows")
+	}
+	t.Parallel()
+	bin, dir := build(t), t.TempDir()
+	out := filepath.Join(t.TempDir(), "hold.out")
+	require.NoError(t, exec.Command("sh", "-c", shellQuote(bin)+" hold --dir "+shellQuote(dir)+" >"+shellQuote(out)+" 2>&1 & sleep 0.5").Run())
+	require.Eventually(t, func() bool {
+		b, _ := os.ReadFile(out)
+		return strings.Contains(string(b), "RELEASED reason=parent_exit held_for=")
+	}, patience, 50*time.Millisecond)
+	status, _ := exec.Command(bin, "status", "--dir", dir).Output()
+	assert.Contains(t, string(status), "slot1 free")
+}
+
+func TestStatusDuringAnExclusiveRun(t *testing.T) {
+	t.Parallel()
+	bin, dir := build(t), t.TempDir()
+	require.NoError(t, exec.Command(bin, "set", "--slots", "3", "--dir", dir).Run())
+	x := startHolder(t, bin, dir, "--exclusive")
+	var out []byte
+	require.Eventually(t, func() bool {
+		out, _ = exec.Command(bin, "status", "--dir", dir).Output()
+		return strings.Contains(string(out), "all held pid="+strconv.Itoa(x.Process.Pid))
+	}, patience, 50*time.Millisecond)
+	assert.Contains(t, string(out), "free=0/3\n")
+	assert.NotContains(t, string(out), "  ")
+}
+
 func TestHoldEndsAfterFor(t *testing.T) {
 	t.Parallel()
 	bin, dir := build(t), t.TempDir()
@@ -181,7 +212,7 @@ func TestWaitIsABoundOnRealLocks(t *testing.T) {
 	require.ErrorAs(t, err, &ee)
 	assert.Equal(t, 1, ee.ExitCode())
 	assert.Less(t, took, 700*time.Millisecond)
-	assert.Contains(t, stderr.String(), "nova-reserve: no slot within 100ms: slot1 held by pid ")
+	assert.Contains(t, stderr.String(), "nova-reserve: no slot within 100ms: slot1 held pid=")
 }
 
 func TestMissingCommandNeverHolds(t *testing.T) {
@@ -212,7 +243,7 @@ func TestSetRefusedWhileHeldOnRealLocks(t *testing.T) {
 	var ee *exec.ExitError
 	require.ErrorAs(t, err, &ee)
 	assert.Equal(t, 1, ee.ExitCode())
-	assert.Contains(t, string(out), "nova-reserve set: capacity in use: slot1 held by pid "+strconv.Itoa(h.Process.Pid))
+	assert.Contains(t, string(out), "nova-reserve set: capacity in use (slot1 held pid="+strconv.Itoa(h.Process.Pid))
 	require.NoError(t, h.Process.Kill())
 	_ = h.Wait()
 	require.Eventually(t, func() bool {
