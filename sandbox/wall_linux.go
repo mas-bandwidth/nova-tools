@@ -4,7 +4,7 @@ package main
 
 import (
 	"fmt"
-	"path/filepath"
+	"os"
 	"runtime"
 	"strconv"
 	"syscall"
@@ -16,10 +16,6 @@ import (
 // thread and then execs the command in place: no tool process stays behind, signals go
 // straight to the command, and its exit status is the tool's.
 const backendName = "landlock"
-
-// maxABI is the highest Landlock ABI this tool knows; a newer kernel accepts a ruleset
-// built for an older one.
-const maxABI = 6
 
 const (
 	sysCreateRuleset = 444
@@ -55,47 +51,54 @@ func landlockABI() (int, bool) {
 	return int(n), errno == 0 && int(n) >= 1
 }
 
+// host is what this kernel offers the wall.
+func host() linuxHost {
+	abi, ok := landlockABI()
+	return linuxHost{landlock: ok, abi: abi, seccomp: seccompAvailable(), resolverDir: resolverDirOf("/etc/resolv.conf")}
+}
+
 // wallCheck says whether the wall can be built here: abi, whether --net-deny is
 // enforceable, a note, and a non-nil error if the backend is not usable.
 func wallCheck() (abi string, netOK bool, note string, err error) {
-	n, ok := landlockABI()
-	if !ok {
+	h := host()
+	if !h.landlock {
 		return "-", false, "", fmt.Errorf("no landlock in this kernel: below 5.13, not compiled in, or not in the boot-time lsm= list")
 	}
-	sec := "seccomp available: the unix-socket fence is on by default; its cost is that nothing needing socket(AF_UNIX) works (/dev/log and syslog, NSS sockets such as nscd, sssd and systemd-userdb, agents and local daemons); --unix is the opt-out"
-	if !seccompAvailable() {
-		sec = "seccomp UNAVAILABLE: the unix-socket fence cannot be built, so the wall refuses to start unless --unix is given, and then ptrace and io_uring are not refused either"
+	sec, net := "available", "landlock_tcp+seccomp"
+	if !h.seccomp {
+		sec, net = "unavailable: the default wall and --net-deny are refused; only --unix runs, without the filter", "refused_without_seccomp"
 	}
-	note = "landlock abi " + strconv.Itoa(n) + ": net is TCP bind/connect only (abi 4+), udp is unrestricted; signals are confined to the wall only at abi 6+; " + sec
-	return strconv.Itoa(n), n >= 4, note, nil
+	note = "landlock abi " + strconv.Itoa(h.abi) + "; seccomp " + sec + "; net-deny " + net + "; signals scoped to the wall at abi 6+"
+	return strconv.Itoa(h.abi), h.abi >= 4 && h.seccomp, note, nil
 }
 
+// describeWall is show's text: the plan execWall would apply here.
+func describeWall(w *wall) (string, []refusal) {
+	p, bad := planLinux(w, host())
+	if len(bad) > 0 {
+		return "", bad
+	}
+	return formatLinux(w, p, exists), nil
+}
+
+func exists(p string) bool { _, err := os.Stat(p); return err == nil }
+
 // execWall applies the wall and execs the command. It returns only on failure.
-func execWall(w *wall, env []string) *refusal {
-	fail := func(reason, format string, a ...any) *refusal { r := refuse(reason, format, a...); return &r }
-	abi, ok := landlockABI()
-	if !ok {
-		return fail("no_sandbox", "this kernel has no landlock; this tool does not run a command it cannot contain")
+func execWall(w *wall, env []string) []refusal {
+	fail := func(reason, format string, a ...any) []refusal { return []refusal{refuse(reason, format, a...)} }
+	p, bad := planLinux(w, host())
+	if len(bad) > 0 {
+		return bad
 	}
-	used := min(abi, maxABI)
-	if w.netDeny && used < 4 {
-		return fail("net_unenforceable", "--net-deny needs landlock abi 4 (kernel 6.7) and this kernel reports abi %d", abi)
-	}
-	// The unix-socket escape (Landlock does not path-check a unix connect) is closed by
-	// a seccomp filter. Without seccomp the wall cannot close it, and it refuses rather
-	// than stand weaker than it says, unless --unix opts into leaving the socket open.
-	if !w.unix && !seccompAvailable() {
-		return fail("no_seccomp", "this kernel has no seccomp filter mode, so the same-uid unix-socket escape cannot be closed; pass --unix to run without that fence")
-	}
-	rs := buildRuleset(w, used, resolverDirOf("/etc/resolv.conf"))
+	rs := p.rs
 	attr := rulesetAttr{rs.fs, rs.net, rs.scope}
-	fd, _, errno := syscall.Syscall(sysCreateRuleset, uintptr(unsafe.Pointer(&attr)), attrSize(used), 0)
+	fd, _, errno := syscall.Syscall(sysCreateRuleset, uintptr(unsafe.Pointer(&attr)), attrSize(p.abi), 0)
 	if errno != 0 {
-		return fail("sandbox_failed", "the landlock ruleset could not be created at abi %d: %v", used, errno)
+		return fail("sandbox_failed", "the landlock ruleset could not be created at abi %d: %v", p.abi, errno)
 	}
 	defer syscall.Close(int(fd))
 	for _, ru := range rs.rules {
-		if err := addPath(int(fd), ru, used); err != nil && ru.must {
+		if err := addPath(int(fd), ru, p.abi); err != nil && ru.must {
 			return fail("sandbox_failed", "%s could not be added to the landlock ruleset: %v", ru.path, err)
 		}
 	}
@@ -116,15 +119,12 @@ func execWall(w *wall, env []string) *refusal {
 		return fail("sandbox_failed", "no_new_privs: %v", errno)
 	}
 	if _, _, errno := syscall.Syscall(sysRestrictSelf, fd, 0, 0); errno != 0 {
-		return fail("sandbox_failed", "landlock_restrict_self at abi %d: %v", used, errno)
+		return fail("sandbox_failed", "landlock_restrict_self at abi %d: %v", p.abi, errno)
 	}
 	// seccomp after Landlock and on the same locked thread, so it too is in force at
-	// exec. --unix still blocks io_uring and ptrace; it only leaves AF_UNIX open.
-	// With seccomp, --unix still installs the filter, minus the AF_UNIX rules, so ptrace
-	// and io_uring stay refused. Without seccomp only --unix gets here, and nothing is
-	// installed: the caller accepted a wall without those fences.
-	if seccompAvailable() {
-		if err := installSeccomp(!w.unix); err != nil {
+	// exec.
+	if p.seccomp {
+		if err := installSeccomp(p.filter); err != nil {
 			return fail("sandbox_failed", "the seccomp filter could not be installed: %v", err)
 		}
 	}
@@ -150,17 +150,4 @@ func addPath(rulesetFd int, ru rule, abi int) error {
 		return errno
 	}
 	return nil
-}
-
-// resolverDirOf is the directory the resolver config at conf resolves to, or "": some
-// distributions keep it outside every static root.
-func resolverDirOf(conf string) string {
-	resolved, err := filepath.EvalSymlinks(conf)
-	if err != nil {
-		return ""
-	}
-	if dir := filepath.Dir(resolved); dir != "/" && dir != "." {
-		return dir
-	}
-	return ""
 }
