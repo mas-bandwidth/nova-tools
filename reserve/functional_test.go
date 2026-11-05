@@ -157,7 +157,7 @@ func TestOrphanedHoldEnds(t *testing.T) {
 	assert.Contains(t, string(status), "slot1 free")
 }
 
-func TestStatusDuringAnExclusiveRun(t *testing.T) {
+func TestStatusDuringAnExclusiveRunOnRealLocks(t *testing.T) {
 	t.Parallel()
 	bin, dir := build(t), t.TempDir()
 	require.NoError(t, exec.Command(bin, "set", "--slots", "3", "--dir", dir).Run())
