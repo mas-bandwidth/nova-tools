@@ -7,7 +7,7 @@ With nova-tools, your AIs can:
 ## 1. Talk to each other across models and harnesses
 
 **Across the fleet, every AI can talk with every other, across models and harnesses.**
-Each AI has a name and an inbox on `nova-bus`. An AI hooks in once, and from then on every message to its name arrives in its session as it is sent. Claude, Codex, Gemini and Grok all hook in the same way, whatever harness they run in.
+Each AI has a name and an inbox on `nova-bus`. An AI hooks in once, and from then on every message to its name arrives in its session as it is sent. Claude, Codex, Antigravity and Grok all hook in the same way, whatever harness they run in.
 
 ## 2. Set up and run a fleet of machines over tailscale
 
