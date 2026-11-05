@@ -192,7 +192,6 @@ func readNovaTools(t *testing.T) map[string]novaTool {
 		"nova-secrets": usageTool(t, "nova-secrets"),
 		"nova-swarm":   usageTool(t, "nova-swarm"),
 		"nova-config":  usageTool(t, "nova-config"),
-		"nova-friend":  verbTableTool(t, "nova-friend"),
 		"nova-bus":     verbTableTool(t, "nova-bus"),
 	}
 }

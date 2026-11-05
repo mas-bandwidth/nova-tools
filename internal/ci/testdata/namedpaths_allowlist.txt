@@ -84,3 +84,13 @@ internal/workfile nova-sprint's path, in mas-bandwidth/nova-sprint since v1.2.3 
 internal/workgh nova-sprint's path, in mas-bandwidth/nova-sprint since v1.2.3 (split layer L6/L7); the comments, specs and dated records here that name it say where the code lived
 internal/worklang nova-sprint's path, in mas-bandwidth/nova-sprint since v1.2.3 (split layer L6/L7); the comments, specs and dated records here that name it say where the code lived
 tools/sprintsize nova-sprint's path, in mas-bandwidth/nova-sprint since v1.2.3 (split layer L6/L7); the comments, specs and dated records here that name it say where the code lived
+# The friend daemon (cmd/nova-friend, and pkg/friend's daemon files) was removed on 2026-11-05 (the owner: "Let's remove one shot, lest we switch back to it again for no reason."); the stranger runs and dogfood records that name its files are records of their day, and cmd/nova-friend stays named by the retiredpresence rule, whose verb rows refuse it coming back.
+cmd/nova-friend the friend daemon, removed 2026-11-05; the retiredpresence rule (docs/SPEC-CI.md) names it so its verbs never come back
+cmd/nova-friend/check.go a file of the friend daemon, removed 2026-11-05; the stranger run that names it is a record of its day
+cmd/nova-friend/check_test.go a file of the friend daemon, removed 2026-11-05; the stranger run that names it is a record of its day
+cmd/nova-friend/dryrun_test.go a file of the friend daemon, removed 2026-11-05; the stranger run that names it is a record of its day
+cmd/nova-friend/pushproof_test.go a file of the friend daemon, removed 2026-11-05; the stranger run that names it is a record of its day
+pkg/friend/adapter.go a file of the friend daemon, removed 2026-11-05; the stranger run that names it is a record of its day
+pkg/friend/check.go a file of the friend daemon, removed 2026-11-05; the dogfood record that names it is a record of its day
+cmd/nova-friend/main.go a file of the friend daemon, removed 2026-11-05; the dogfood record that names it is a record of its day
+pkg/friend/daemon.go a file of the friend daemon, removed 2026-11-05; the push-not-poll audit that names it is a record of its day

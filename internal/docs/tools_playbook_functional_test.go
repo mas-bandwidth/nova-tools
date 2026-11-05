@@ -40,7 +40,7 @@ func TestToolsPlaybookNamesOnlyRealVerbsAndUsageLines(t *testing.T) {
 	page := string(raw)
 	require.Contains(t, page, "## Before you do anything by hand", "the playbook opens with the rule")
 
-	tools := map[string]bool{"nova-friend": true, "nova-doctor": true} // the witnesses' tools
+	tools := map[string]bool{"nova-hook": true, "nova-doctor": true} // the witnesses' tools
 	for _, s := range playbookSpanRe.FindAllStringSubmatch(page, -1) {
 		if w := strings.Fields(s[1]); len(w) > 0 && strings.HasPrefix(w[0], "nova-") && !slices.Contains(builtElsewhere, w[0]) {
 			tools[w[0]] = true
@@ -75,13 +75,13 @@ func TestToolsPlaybookNamesOnlyRealVerbsAndUsageLines(t *testing.T) {
 		t.Errorf("%s %s", toolsPlaybookPath, p)
 	}
 
-	good := "usage: `nova-friend lanes --as <me> [--clear-faults] [--dir <d>] [--state-dir <d>]`\n" +
-		"run `nova-friend lanes --as <me> --clear-faults` and `nova-doctor run --check harness`\n"
+	good := "usage: `nova-hook prove --as <me> --nonce <n> [--redis <addr>] [--dry-run]`\n" +
+		"run `nova-hook prove --as <me> --nonce <n>` and `nova-doctor run --check plists`\n"
 	assert.Empty(t, checkToolsPlaybook(t, h, good), "real usage lines and verbs are refused")
 	for text, want := range map[string]string{
-		"usage: `nova-friend lanes --fly`":                              "usage line not in nova-friend's help",
-		"usage: `nova-doctor version`\n`nova-friend fly --as <me>`":     "nova-friend has no verb fly",
-		"usage: `nova-doctor version`\n`nova-friend lanes --fly`":       "nova-friend lanes has no flag --fly",
+		"usage: `nova-hook prove --fly`":                                "usage line not in nova-hook's help",
+		"usage: `nova-doctor version`\n`nova-hook fly --as <me>`":       "nova-hook has no verb fly",
+		"usage: `nova-doctor version`\n`nova-hook prove --fly`":         "nova-hook prove has no flag --fly",
 		"no usage line at all, only `nova-sprint where` from elsewhere": "quotes no usage line of a tool built here",
 	} {
 		ps := checkToolsPlaybook(t, h, text)

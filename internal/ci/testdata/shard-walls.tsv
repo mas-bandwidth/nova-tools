@@ -28,7 +28,6 @@ cmd/nova-ci	5.3	@run37518625834	self-hosted
 cmd/nova-config	4.5	@run37518625834	self-hosted
 cmd/nova-decide	0.0	@run37517528825	self-hosted
 cmd/nova-doctor	0.0	@run37518625834	self-hosted
-cmd/nova-friend	24.8	@run37518625834	self-hosted
 cmd/nova-fuse	0.0	@run37411066588	self-hosted
 cmd/nova-hook	0.0	@local	-
 cmd/nova-local	0.0	@run37518625834	self-hosted
@@ -86,7 +85,6 @@ pkg/filelock	0.5	@run37411066588	self-hosted
 pkg/fleet	0.0	@run37411066588	self-hosted
 internal/friend	0.3	@local	-
 pkg/friend	2.6	@run37518625834	self-hosted
-pkg/friendfilewire	1.0	@local	-
 internal/fuse	0.0	@run37411066588	self-hosted
 internal/ghevent	0.0	@run37411066588	self-hosted
 internal/ghevent/wire	0.0	@local	-

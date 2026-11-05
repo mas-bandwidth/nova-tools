@@ -9,7 +9,7 @@
 # Shrink-only: a file not listed, or a count that rises, is red; fixing a site means
 # lowering its row in the same change. NOVA_CI_UPDATE=1 lowers counts and drops rows
 # at zero; it never adds a row or raises a count.
-# ceiling: 43
+# ceiling: 40
 cmd/nova-check/cli_examples_test.go 3 predates the rule; route its commits through testgit.Environ
 cmd/nova-check/dogfood_test.go 1 predates the rule; route its commits through testgit.Environ
 cmd/nova-check/hygiene_test.go 10 predates the rule; route its commits through testgit.Environ

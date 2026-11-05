@@ -3,14 +3,13 @@ package friend
 import (
 	"fmt"
 	"strings"
-	"sync/atomic"
 )
 
 // Pronouns are the pronouns a friend goes by: the friend row's `pronouns`
 // setting (pkg/config/kind.go, "friend"), one of the three sets below. Pronouns
 // are read, never inferred: a friend whose pronouns are not stated goes by
-// they/them, and no text a daemon writes calls a friend "it". The zero value is
-// they/them, so a Daemon or a text built without them is already right.
+// they/them, and no text calls a friend "it". The zero value is they/them, so
+// a text built without them is already right.
 type Pronouns string
 
 // The pronoun sets a friend row may name, and the default a row without one
@@ -75,60 +74,11 @@ func (p Pronouns) Say(s string) string {
 
 func capital(s string) string { return strings.ToUpper(s[:1]) + s[1:] }
 
-// RowPronouns reads the friend row's pronouns off the beat's answer
-// (row_pronouns=she/her, beside row_mode and row_width); ok is false when the
-// answer carries none or names a set that is not one of the three.
-func RowPronouns(answer string) (Pronouns, bool) {
-	for _, w := range strings.Fields(answer) {
-		if v, found := strings.CutPrefix(w, "row_pronouns="); found {
-			p, ok := ParsePronouns(v)
-			return p, ok && v != ""
-		}
-	}
-	return DefaultPronouns, false
-}
-
-// PronounsRef holds a daemon's pronouns where several goroutines read them and
-// a beat's answer may change them: the flag's (or the plist's) first, the row's
-// once the beat names them. A nil ref and a ref never set are they/them.
-type PronounsRef struct{ v atomic.Pointer[Pronouns] }
-
-// NewPronounsRef is a ref holding p.
-func NewPronounsRef(p Pronouns) *PronounsRef {
-	r := &PronounsRef{}
-	r.Set(p)
-	return r
-}
-
-// Get is the pronouns held, they/them when none were set.
-func (r *PronounsRef) Get() Pronouns {
-	if r == nil {
-		return DefaultPronouns
-	}
-	if p := r.v.Load(); p != nil {
-		return *p
-	}
-	return DefaultPronouns
-}
-
-// Set replaces the pronouns held.
-func (r *PronounsRef) Set(p Pronouns) {
-	if r != nil {
-		r.v.Store(&p)
-	}
-}
-
 // Sprintf is fmt.Sprintf of the format with its pronoun words said for p
 // (Say), so a text that carries {their} and the like is written once.
 func (p Pronouns) Sprintf(format string, a ...any) string {
 	return fmt.Sprintf(p.Say(format), a...)
 }
-
-// say and sayf are Say and Sprintf with the pronouns the daemon holds (Pro):
-// the friend row's, as the flag or the beat last named them, else they/them.
-func (d *Daemon) say(s string) string { return d.Pro.Get().Say(s) }
-
-func (d *Daemon) sayf(format string, a ...any) string { return d.Pro.Get().Sprintf(format, a...) }
 
 // PronounList is the three sets a row may name, for a flag's help and refusal.
 func PronounList() string {

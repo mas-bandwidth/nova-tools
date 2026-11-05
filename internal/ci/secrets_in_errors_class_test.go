@@ -125,25 +125,10 @@ var secretOpeners = map[string]any{
 	"pkg/dogfood.ParseReference":                  dogfood.ParseReference,
 	"pkg/filelock.ParseStamp":                     filelock.ParseStamp,
 	"pkg/fleet.ParseWorkload":                     fleet.ParseWorkload,
-	"pkg/friend.NewClaude":                        friend.NewClaude,
-	"pkg/friend.NewCodex":                         friend.NewCodex,
-	"pkg/friend.NewDeliverer":                     friend.NewDeliverer,
 	"pkg/friend.NewestConversation":               friend.NewestConversation,
-	"pkg/friend.NewestDSHSession":                 friend.NewestDSHSession,
 	"pkg/friend.ParseHeld":                        friend.ParseHeld,
-	"pkg/friend.ParseJob":                         friend.ParseJob,
-	"pkg/friend.ParseLaneCaps":                    friend.ParseLaneCaps,
-	"pkg/friend.ParseLimit":                       friend.ParseLimit,
-	"pkg/friend.ParsePong":                        friend.ParsePong,
 	"pkg/friend.ParsePronouns":                    friend.ParsePronouns,
-	"pkg/friend.ParseProfile":                     friend.ParseProfile,
-	"pkg/friend.ParseMachine":                     friend.ParseMachine,
-	"pkg/friend.ParseReadQueue":                   friend.ParseReadQueue,
-	"pkg/friend.ParseReadQueueAll":                friend.ParseReadQueueAll,
 	"pkg/friend.ParseLaneHold":                    friend.ParseLaneHold,
-	"pkg/friend.ParseReadSlots":                   friend.ParseReadSlots,
-	"pkg/friend.ParseRow":                         friend.ParseRow,
-	"pkg/friend.ParseView":                        friend.ParseView,
 	"pkg/gitrun.ParseGitIdentity":                 gitrun.ParseGitIdentity,
 	"pkg/hostload.ParseProcStat":                  hostload.ParseProcStat,
 	"pkg/hostload.ParseTopCPU":                    hostload.ParseTopCPU,
@@ -211,8 +196,6 @@ pkg/decide.ParseJudgmentBar echoes the rejected bar with %q (pkg/decide/judgment
 pkg/dogfood.ParseAuthors wraps the os.ReadFile error, which names the path argument (pkg/dogfood/authors.go:28)
 pkg/dogfood.ParseCLI wraps the os.ReadFile error, which names the path argument (pkg/dogfood/cli.go:97)
 pkg/fleet.ParseWorkload echoes its source argument (pkg/fleet/certify.go:184)
-pkg/friend.NewDeliverer echoes an unknown harness with %q (pkg/friend/adapter.go:253)
-pkg/friend.NewestDSHSession echoes its dir argument (pkg/friend/adapter_dsh.go:65)
 pkg/ntable.ParseColumn echoes the rejected column name with %q (pkg/ntable/ntable.go:405)
 pkg/ntable.ParseColumns echoes the rejected column name with %q (pkg/ntable/ntable.go:405)
 pkg/ntable.ParseFormula echoes the rejected projection with %q (pkg/ntable/ntable.go:133)

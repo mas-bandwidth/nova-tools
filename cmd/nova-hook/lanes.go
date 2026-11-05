@@ -78,8 +78,8 @@ func sprintAsk(ctx context.Context, addr string, argv []string) (string, error) 
 // under the session's Monitor), else nil (--once, a dry run, another role). Before
 // 2026-10-24 only the service carried lanes, so a friend hooked in the foreground (two of
 // them that day) took nothing: the friend daemons that took cards were retired on 10-17 and nothing
-// took their place. A coordinator's service works her own friend row too, as nova-friend's
-// daemon joins her hook; her session's own hook does not (the coordinator deals, she does
+// took their place. A coordinator's service works her own friend row too;
+// her session's own hook does not (the coordinator deals, she does
 // not take from the foreground). Its width is
 // her canonical nova-config row's, fetched by the loop every friend.ConfigEvery (Apply).
 // A service installed with an explicit --lanes 0 takes nothing: that install said no lanes,
@@ -114,7 +114,7 @@ func (w world) laneClient(c *tool.Call, as string, role hook.Role) *friend.Clien
 }
 
 // laneRole is whether a role's service carries the friend lanes: a friend's, and the
-// coordinator's, who works her own friend row too (as nova-friend's daemon joins her hook).
+// coordinator's, who works her own friend row too.
 func laneRole(role hook.Role) bool { return role == hook.Friend || role == hook.Coordinator }
 
 // configPass is the loop's tick of the friend's configuration: the canonical row fetched and

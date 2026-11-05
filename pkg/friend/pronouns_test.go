@@ -3,10 +3,8 @@ package friend
 import (
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/pkg/config"
 )
@@ -61,20 +59,6 @@ func TestParsePronounsReadsTheThreeSetsAndNeverGuesses(t *testing.T) {
 	}
 }
 
-func TestTheBeatsAnswerNamesTheRowsPronouns(t *testing.T) {
-	t.Parallel()
-	p, ok := RowPronouns("BEAT OK row_mode=one-shot row_width=2 row_pronouns=he/him row_config_dir=/x")
-	assert.True(t, ok)
-	assert.Equal(t, HeHim, p)
-	_, ok = RowPronouns("BEAT OK row_mode=one-shot row_width=2")
-	assert.False(t, ok, "an answer that names none leaves the flag's")
-	_, ok = RowPronouns("BEAT OK row_pronouns=")
-	assert.False(t, ok, "an empty word names none")
-	p, ok = RowPronouns("BEAT OK row_pronouns=it/its")
-	assert.False(t, ok, "a set that is not one of the three is not read")
-	assert.Equal(t, TheyThem, p)
-}
-
 // TestPronounSetsMatchConfig holds the two lists equal: the sets nova-config
 // accepts on a friend row and the sets this package renders.
 func TestPronounSetsMatchConfig(t *testing.T) {
@@ -86,19 +70,6 @@ func TestPronounSetsMatchConfig(t *testing.T) {
 	assert.Equal(t, config.FriendPronounSets, got)
 	assert.Equal(t, config.DefaultFriendPronouns, string(DefaultPronouns))
 	assert.Equal(t, strings.Join(config.FriendPronounSets, ", "), PronounList())
-}
-
-func TestAPronounsRefIsTheDefaultUntilSetAndNilSafe(t *testing.T) {
-	t.Parallel()
-	var nilRef *PronounsRef
-	assert.Equal(t, TheyThem, nilRef.Get())
-	nilRef.Set(HeHim) // a nil ref sets nothing and does not panic
-	assert.Equal(t, TheyThem, nilRef.Get())
-	var r PronounsRef
-	assert.Equal(t, TheyThem, r.Get())
-	r.Set(SheHer)
-	assert.Equal(t, SheHer, r.Get())
-	assert.Equal(t, HeHim, NewPronounsRef(HeHim).Get())
 }
 
 // pronounWords are every pronoun word a text about a friend must not carry
@@ -115,80 +86,6 @@ func wordsOf(s string) map[string]bool {
 		m[w] = true
 	}
 	return m
-}
-
-// TestTheTextsAboutAFriendSayTheFriendsPronouns holds every judgment text the
-// daemon tells the seat: for each set (and the default, a row that names none)
-// the text carries that set's words, never another set's, and no
-// placeholder is left unsaid.
-func TestTheTextsAboutAFriendSayTheFriendsPronouns(t *testing.T) {
-	t.Parallel()
-	until := time.Date(2026, 10, 12, 9, 0, 0, 0, time.UTC)
-	texts := map[string]func(p Pronouns) (string, string){
-		"limit down":   func(p Pronouns) (string, string) { return LimitDownText("pat", p, until, "usage limit") },
-		"limit unread": func(p Pronouns) (string, string) { return LimitUnreadText("pat", p, time.Hour, "some words") },
-		"limit alike":  func(p Pronouns) (string, string) { return LimitAlikeText("pat", p, "same error") },
-		"limit up":     func(p Pronouns) (string, string) { return LimitUpText("pat", p) },
-		"rate":         func(p Pronouns) (string, string) { return RateJudgmentText("pat", p, 1, 2, "429") },
-		"funds":        func(p Pronouns) (string, string) { return FundsJudgmentText("pat", p, "402") },
-		"spend cap":    func(p Pronouns) (string, string) { return SpendCapJudgmentText("pat", p, "deepseek", 21, 20) },
-		"fault down":   func(p Pronouns) (string, string) { return FaultDownText("pat", p, "env", until) },
-		"lane fault":   func(p Pronouns) (string, string) { return LaneFaultText("pat", p, "lane-fault=2") },
-	}
-	for _, set := range []Pronouns{SheHer, HeHim, TheyThem, ""} {
-		want := set
-		if want == "" {
-			want = TheyThem
-		}
-		for name, text := range texts {
-			t.Run(string(set)+"/"+name, func(t *testing.T) {
-				subject, body := text(set)
-				all := subject + "\n" + body
-				assert.NotContains(t, all, "{", "no placeholder is left unsaid")
-				words := wordsOf(all)
-				for other, forms := range pronounWords {
-					if other == want {
-						continue
-					}
-					for _, w := range forms {
-						assert.False(t, words[w], "%s: another set's word %q in %s", name, w, all)
-					}
-				}
-			})
-		}
-	}
-	// the he/him and default cases name the friend's own words, not she/her's
-	_, body := LimitDownText("pat", HeHim, until, "usage limit")
-	assert.Contains(t, body, "His daemon beats down")
-	assert.Contains(t, body, "on his row")
-	_, body = LimitDownText("pat", "", until, "usage limit")
-	assert.Contains(t, body, "Their daemon beats down")
-	assert.Contains(t, body, "on their row")
-	_, body = LimitDownText("pat", SheHer, until, "usage limit")
-	assert.Contains(t, body, "Her daemon beats down")
-	subject, _ := LimitDownText("pat", HeHim, until, "usage limit")
-	assert.Contains(t, subject, "his harness is at its limit")
-}
-
-func TestADaemonSaysItsPronounsThroughTheOneHelper(t *testing.T) {
-	t.Parallel()
-	d := &Daemon{Friend: "pat"}
-	assert.Equal(t, "their row", d.say("{their} row"), "no pronouns held: they/them")
-	d.Pro = NewPronounsRef(HeHim)
-	assert.Equal(t, "his row for him", d.sayf("{their} row for %s", "him"))
-	d.Pro.Set(SheHer)
-	assert.Equal(t, "on her row", d.say("on {their} row"), "a beat that names other pronouns changes the next text")
-}
-
-func TestTheLaunchdAgentCarriesThePronounsOnlyWhenSet(t *testing.T) {
-	t.Parallel()
-	a := Agent{Friend: "pat", Harness: "claude", Dir: "/d"}
-	assert.NotContains(t, strings.Join(a.Args(), " "), "--pronouns")
-	a.Pronouns = "he/him"
-	args := a.Args()
-	i := indexOf(args, "--pronouns")
-	require.GreaterOrEqual(t, i, 0, "%v", args)
-	assert.Equal(t, "he/him", args[i+1])
 }
 
 func indexOf(s []string, v string) int {

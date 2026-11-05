@@ -31,7 +31,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/pkg/friend"
 	"github.com/mas-bandwidth/nova-tools/pkg/schemaread"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -162,14 +161,14 @@ func toJSON(v *Pong) []byte {
 }
 
 // loadLegacy reads today's pong line, `pong <nonce> queue=N working=N width=N`
-// (pkg/friend PongLine), strictly: the line must be exactly what PongLine
+// (pongLine), strictly: the line must be exactly what PongLine
 // writes for the values it carries, or it is refused as legacy_shape. The
 // friend and the send time come from the bus message around the line.
 func loadLegacy(v *Pong, text string, env envelope) schemaread.Report {
 	var nonce string
 	var queue, working, width int
 	n, err := fmt.Sscanf(text, "pong %s queue=%d working=%d width=%d", &nonce, &queue, &working, &width)
-	if err != nil || n != 4 || friend.PongLine(nonce, queue, working, width) != text ||
+	if err != nil || n != 4 || pongLine(nonce, queue, working, width) != text ||
 		queue < 0 || working < 0 || width < 0 || queue > 1<<32-1 || working > 1<<32-1 || width > 1<<32-1 {
 		return schemaread.Report{Reason: "legacy_shape"}
 	}
@@ -347,7 +346,7 @@ func TestLayer1Pong(t *testing.T) {
 			// the legacy line
 			{"a legacy pong without its numbers", []byte("pong abc123"), "legacy_shape"},
 			{"a legacy pong with a bad number", []byte("pong abc123 queue=x working=3 width=8"), "legacy_shape"},
-			{"a legacy pong with trailing junk", []byte(friend.PongLine("abc123", 5, 3, 8) + " junk"), "legacy_shape"},
+			{"a legacy pong with trailing junk", []byte(pongLine("abc123", 5, 3, 8) + " junk"), "legacy_shape"},
 		}
 		for _, tc := range cases {
 			got, _, err := r.Read(tc.in)
@@ -415,8 +414,8 @@ func TestLayer1Pong(t *testing.T) {
 			{strings.Repeat("z", 32), 1, 1, 1},
 		} {
 			// before the switch: old writers, old and new readers
-			line := friend.PongLine(tc.nonce, tc.queue, tc.working, tc.width)
-			n, q, w, wd, ok := friend.ParsePong(line)
+			line := pongLine(tc.nonce, tc.queue, tc.working, tc.width)
+			n, q, w, wd, ok := parsePong(line)
 			require.True(t, ok, "the old reader reads the old writer")
 			assert.Equal(t, []any{tc.nonce, tc.queue, tc.working, tc.width}, []any{n, q, w, wd})
 			legacy, res, err := r.Read([]byte(line))
@@ -435,7 +434,7 @@ func TestLayer1Pong(t *testing.T) {
 				// an old reader meets a new pong only if a writer switched
 				// before every reader: it does not read it as a pong (never as
 				// a pong of zeros), which is why readers go first
-				_, _, _, _, ok := friend.ParsePong(string(out))
+				_, _, _, _, ok := parsePong(string(out))
 				assert.False(t, ok, "the old reader does not misread a %s table pong", form)
 			}
 		}
