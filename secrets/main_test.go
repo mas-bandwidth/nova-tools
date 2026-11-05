@@ -40,6 +40,7 @@ type harness struct {
 	became  []string // argv
 	env     []string // the environment exec handed the command
 	failEnc bool
+	failDec bool
 }
 
 const pubA = "age1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqa"
@@ -50,7 +51,7 @@ func newHarness(t *testing.T) *harness {
 	t.Helper()
 	dir := t.TempDir()
 	h := &harness{t: t, store: filepath.Join(dir, "store"), key: filepath.Join(dir, "keys", "ada.key")}
-	require.NoError(t, os.MkdirAll(h.store, 0o700))
+	require.NoError(t, os.MkdirAll(filepath.Join(h.store, ".git"), 0o700))
 	require.NoError(t, os.MkdirAll(filepath.Dir(h.key), 0o700))
 	require.NoError(t, os.WriteFile(h.key, []byte("not a real key: the fake sops never reads it\n"), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(h.store, "recovery.pub"), []byte(pubRec+"\n"), 0o644))
@@ -104,6 +105,9 @@ func (h *harness) run(stdin io.Reader, env []string, dir, name string, args ...s
 	h.calls = append(h.calls, c)
 	switch {
 	case name == "sops" && args[0] == "-d":
+		if h.failDec {
+			return nil, exitErr(128)
+		}
 		data, err := os.ReadFile(filepath.Join(dir, args[len(args)-1]))
 		if err != nil {
 			return nil, exitErr(128)
@@ -210,7 +214,6 @@ func TestExecRefusalsAre125AndNeverRun(t *testing.T) {
 	for name, args := range map[string][]string{
 		"unknown name":        {"--only", "API_KEY,NOPE", "--", "true"},
 		"require not present": {"--only", "API_KEY", "--require", "NOPE", "--", "true"},
-		"require not in only": {"--only", "API_KEY", "--require", "OTHER", "--", "true"},
 		"no command":          {"--only", "API_KEY", "--"},
 		"no dash dash":        {"--only", "API_KEY", "true"},
 		"unknown command":     {"--only", "API_KEY", "--", "no-such-program-here"},
@@ -311,12 +314,20 @@ func TestSetLeavesNoPlaintextOnDisk(t *testing.T) {
 	}
 }
 
-func TestSealIsAHiddenAliasOfSet(t *testing.T) {
+func TestSealIsGone(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
-	h.stdin = "old-caller\n"
-	require.Equal(t, 0, h.main(h.seat("seal", "--name", "NEW", "--stdin", "--no-pr")...), h.stderr.String())
-	assert.Equal(t, map[string]string{"NEW": "old-caller"}, h.open("ada"))
+	assert.Equal(t, 2, h.main(h.seat("seal", "--name", "NEW")...))
+	assert.Contains(t, h.stderr.String(), `unknown verb "seal"`)
+}
+
+func TestRequireIsOnlyUnderAnotherName(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.seed("ada", map[string]string{"API_KEY": "sk-sealed-two", "OTHER": "sealed-three"})
+	require.Equal(t, 0, h.main(h.seat("exec", "--only", "API_KEY", "--require", "OTHER", "--", "true")...), h.stderr.String())
+	assert.Equal(t, "sealed-three", envMap(h.env)["OTHER"])
+	require.Equal(t, 0, h.main(h.seat("exec", "--require", "API_KEY", "--", "true")...), h.stderr.String())
 }
 
 const catchAllRules = "creation_rules:\n  - age: " + pubA + "\n"
@@ -476,7 +487,170 @@ func TestVerbs(t *testing.T) {
 	h := newHarness(t)
 	assert.Equal(t, 0, h.main("help"))
 	assert.Contains(t, h.stdout.String(), "nova-secrets exec")
-	for _, args := range [][]string{{"get"}, {"names"}, {"check"}, {"keygen"}, {"seat"}, {"seat", "inject"}, {"set", "--bogus"}, {"set", "X", "--as", "../x"}} {
+	for _, args := range [][]string{{"get"}, {"check"}, {"keygen"}, {"seat"}, {"seat", "inject"}, {"set", "--bogus"}, {"set", "X", "--as", "../x"}} {
 		assert.Equal(t, 2, h.main(args...), "%v", args)
 	}
+}
+
+func (h *harness) gitCalls() [][]string {
+	var out [][]string
+	for _, c := range h.calls {
+		if c.name == "git" {
+			out = append(out, c.args)
+		}
+	}
+	return out
+}
+
+func TestInitCreatesTheStore(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	store := filepath.Join(t.TempDir(), "new")
+	require.Equal(t, 0, h.main("init", "--store", store, "--recovery", pubRec), h.stderr.String())
+	assert.Equal(t, "SECRETS INIT OK store="+store+" next: nova-secrets seat add <seat> <age-pubkey> --store "+store+"\n", h.stdout.String())
+	b, err := os.ReadFile(filepath.Join(store, ".sops.yaml"))
+	require.NoError(t, err)
+	assert.Equal(t, "creation_rules: []\n", string(b))
+	b, err = os.ReadFile(filepath.Join(store, "recovery.pub"))
+	require.NoError(t, err)
+	assert.Equal(t, pubRec+"\n", string(b))
+	b, err = os.ReadFile(filepath.Join(store, "README.md"))
+	require.NoError(t, err)
+	assert.Contains(t, string(b), "seat add")
+	assert.Contains(t, string(b), "nova-secrets set")
+	files := []string{".sops.yaml", "recovery.pub", "README.md"}
+	assert.Equal(t, [][]string{{"init", "-q"}, append([]string{"add", "--"}, files...),
+		append([]string{"commit", "-q", "-m", "init secrets store", "--"}, files...)}, h.gitCalls(), "git init, since it is no repository")
+	// The rule list it wrote is one seat add accepts.
+	h.calls = nil
+	require.Equal(t, 0, h.main("seat", "add", "bo", pubB, "--store", store), h.stderr.String())
+}
+
+func TestInitInAnExistingRepositoryDoesNotGitInit(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	store := filepath.Join(t.TempDir(), "new")
+	require.NoError(t, os.MkdirAll(filepath.Join(store, ".git"), 0o755))
+	require.Equal(t, 0, h.main("init", "--store", store, "--recovery", pubRec), h.stderr.String())
+	assert.Len(t, h.gitCalls(), 2)
+}
+
+func TestInitRefusals(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	assert.Equal(t, 2, h.main("init", "--store", h.store, "--recovery", pubRec))
+	assert.Contains(t, h.stderr.String(), "store "+h.store+" exists; use: nova-secrets seat add")
+	assert.Equal(t, 2, h.main("init"))
+	assert.Contains(t, h.stderr.String(), "--store <dir>")
+	assert.Contains(t, h.stderr.String(), "--recovery <age-public-key>", "every missing flag at once")
+	assert.Equal(t, 2, h.main("init", "--store", filepath.Join(t.TempDir(), "a", "b"), "--recovery", pubRec), "never a parent tree")
+	assert.Equal(t, 2, h.main("init", "--store", filepath.Join(t.TempDir(), "n"), "--recovery", "AGE-SECRET-KEY-1ABC"))
+	assert.Contains(t, h.stderr.String(), "age public key")
+	assert.Empty(t, h.calls)
+}
+
+func TestNamesListsKeysNeverValues(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	body := "GH_TOKEN: ENC[AES256_GCM,data:sealed-needle,tag:x,type:str]\nnested:\n    inner: ENC[AES256_GCM,data:y]\n" +
+		"API_KEY: ENC[AES256_GCM,data:z]\n" + markKey + ": x\nsops:\n    age:\n        - recipient: " + pubA + "\n          enc: |\n            -----BEGIN AGE ENCRYPTED FILE-----\n    version: 3.9.0\n"
+	require.NoError(t, os.WriteFile(filepath.Join(h.store, "ada.yaml"), []byte(body), 0o600))
+	h.seed("bo", map[string]string{"B_ONE": "v"})
+	require.Equal(t, 0, h.main("names", "--store", h.store, "--as", "ada"), h.stderr.String())
+	assert.Equal(t, "GH_TOKEN\nnested\nAPI_KEY\n", h.stdout.String(), "top-level keys only, no sops block")
+	assert.Equal(t, 0, h.main("names", "--store", h.store))
+	assert.Equal(t, "ada GH_TOKEN\nada nested\nada API_KEY\nbo B_ONE\n", h.stdout.String())
+	assert.Contains(t, h.stderr.String(), "SECRETS NAMES OK")
+	assert.Empty(t, h.calls, "no program runs, no key is read")
+	h.noLeak("sealed-needle")
+	assert.Equal(t, 2, h.main("names", "--store", h.store, "--as", "nobody"))
+	assert.Contains(t, h.stderr.String(), "seat nobody has no file in "+h.store+"; run: nova-secrets set NAME --as nobody")
+	assert.Equal(t, 2, h.main("names", "--store", filepath.Join(h.store, "nope")))
+}
+
+func TestWrongKeyIsDiagnosed(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	require.NoError(t, os.WriteFile(filepath.Join(h.store, "ada.yaml"), []byte("A: ENC[x]\nsops:\n    age:\n        - recipient: "+pubA+"\n        - recipient: "+pubRec+"\n"), 0o600))
+	h.failDec = true
+	assert.Equal(t, 125, h.main(h.seat("exec", "--only", "A", "--", "true")...))
+	assert.Equal(t, "SECRETS EXEC REFUSED: seat ada cannot decrypt ada.yaml: its key is not among the file's recipients (2 recipients); run: nova-secrets seat add ada "+pubB+" --store "+h.store+"\n", h.stderr.String())
+	// When the key is a recipient, the failure is sops's own and the command that ran is shown.
+	require.NoError(t, os.WriteFile(filepath.Join(h.store, "ada.yaml"), []byte("A: ENC[x]\nsops:\n    age:\n        - recipient: "+pubB+"\n"), 0o600))
+	assert.Equal(t, 125, h.main(h.seat("exec", "--only", "A", "--", "true")...))
+	assert.Contains(t, h.stderr.String(), "sops -d failed (exit 128); its output is withheld; ran: cd "+h.store)
+	assert.Contains(t, h.stderr.String(), "sops -d --output-type json ada.yaml")
+}
+
+func TestOtherDiagnoses(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.seed("ada", map[string]string{"A": "v"})
+	assert.Equal(t, 125, h.main(h.seat("exec", "--only", "A", "--", "true")[:0:0]...) == 0 && false, false)
+	args := append(h.seat("exec", "--only", "A"), "--", "true")
+	args[len(args)-6] = "no-such-sops-here" // the --sops value
+	h2 := newHarness(t)
+	h2.seed("ada", map[string]string{"A": "v"})
+	h2.sopsMissing = true
+	assert.Equal(t, 125, h2.main(h2.seat("exec", "--only", "A", "--", "true")...))
+	assert.Contains(t, h2.stderr.String(), "sops not found at sops; install sops 3.x")
+
+	h3 := newHarness(t)
+	require.NoError(t, os.RemoveAll(filepath.Join(h3.store, ".git")))
+	h3.stdin = "v\n"
+	assert.Equal(t, 2, h3.main(h3.set("NEW")...))
+	assert.Contains(t, h3.stderr.String(), h3.store+" is not a git repository; run: nova-secrets init --store "+h3.store)
+	assert.Empty(t, h3.calls)
+
+	h4 := newHarness(t)
+	assert.Equal(t, 125, h4.main(h4.seat("exec", "--only", "A", "--", "true")...))
+	assert.Contains(t, h4.stderr.String(), "seat ada has no file in "+h4.store+"; run: nova-secrets set NAME --as ada")
+
+	h5 := newHarness(t)
+	require.NoError(t, os.Remove(filepath.Join(h5.store, "recovery.pub")))
+	assert.Equal(t, 2, h5.main("seat", "add", "bo", pubB, "--store", h5.store))
+	assert.Contains(t, h5.stderr.String(), "run: nova-secrets init --store "+h5.store)
+
+	h6 := newHarness(t) // no rule matches the new seat: sops cannot create the file
+	h6.sopsYAML("creation_rules: []\n")
+	h6.failEnc = true
+	h6.stdin = "v\n"
+	assert.Equal(t, 2, h6.main(h6.set("NEW")...))
+	assert.Contains(t, h6.stderr.String(), "seat ada has no rule in")
+	assert.Contains(t, h6.stderr.String(), "run: nova-secrets seat add ada <age-public-key> --store "+h6.store)
+}
+
+func TestSetFromDevNullIsAnEmptyValueNotATerminal(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	f, err := os.Open(os.DevNull)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, f.Close()) }()
+	tl := tool{stdin: f, stdout: &h.stdout, stderr: &h.stderr, environ: h.environ, run: h.run}
+	assert.Equal(t, 2, tl.main(h.set("NEW")))
+	assert.Contains(t, h.stderr.String(), "empty or multi-line value on stdin")
+	assert.NotContains(t, h.stderr.String(), "terminal")
+}
+
+func TestVerbHelp(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	for verb, want := range map[string][]string{"init": {"init"}, "names": {"names"}, "set": {"set"}, "exec": {"exec", "kept for existing units; same as --only"}, "seat add": {"seat add"}} {
+		for _, flag := range []string{"-h", "--help"} {
+			args := append(strings.Fields(verb), flag)
+			if verb == "exec" {
+				args = []string{"exec", flag, "--only", "X"}
+			}
+			assert.Equal(t, 0, h.main(args...), "%v", args)
+			for _, w := range want {
+				assert.Contains(t, h.stdout.String(), "nova-secrets "+w, "%v", args)
+			}
+			assert.Empty(t, h.calls)
+		}
+		assert.Equal(t, 0, h.main(append([]string{"help"}, strings.Fields(verb)...)...))
+	}
+	assert.Equal(t, 0, h.main("exec", "--only", "X", "--", "true", "-h"), "-h after -- belongs to the command")
+	assert.NotContains(t, h.stdout.String(), "kept for existing")
+	assert.Equal(t, 2, h.main("help", "bogus"))
+	assert.Equal(t, 2, h.main("seat"))
 }

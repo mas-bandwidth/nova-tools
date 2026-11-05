@@ -63,3 +63,9 @@ func become(argv, env []string) error {
 	os.Exit(cmd.ProcessState.ExitCode())
 	return nil
 }
+
+// isTerminal is whether f is a console; NUL and pipes are not.
+func isTerminal(f *os.File) bool {
+	var mode uint32
+	return windows.GetConsoleMode(windows.Handle(f.Fd()), &mode) == nil
+}
