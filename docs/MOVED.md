@@ -81,6 +81,6 @@ one `<seat>.yaml` per seat). Kept: `exec`, `names`, `check`, `seal`, `seat add`,
 
 | Was | Now |
 |---|---|
-| `nova-cairn` (`cmd/nova-cairn`, `internal/cairn`) | `cairn/`, as `nova-cairn open`, `append`, `index`, `receipt` |
-| `nova-self-talk` (`cmd/nova-self-talk`, `internal/selftalk`) | `cairn/`, as `nova-cairn self-talk` |
-| `nova-memory` (`cmd/nova-memory`, `internal/memindex`) | `cairn/`, as `nova-cairn memory stats`, `search`, `check`, `verify`; dropped: `quickstart`, `eval`, `boot`, `version`, the `trigram` channel, `--json`, `--whole` |
+| `nova-cairn`, as it was | `cairn/`, as `nova-cairn open`, `append`, `index`, `receipt` |
+| `nova-self-talk` | `cairn/`, as `nova-cairn self-talk` |
+| `nova-memory` | `cairn/`, as `nova-cairn memory stats`, `search`, `check`, `verify`; dropped: `quickstart`, `eval`, `boot`, `version`, the `trigram` channel, `--json`, `--whole` |
