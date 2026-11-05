@@ -8,7 +8,7 @@
 #   ansible-playbook -i ./nova-inventory fleet/nova-tools-install.yml -e nova_tools_version=v1.0.0 -l <machine> | cat
 #
 # Variables: fleet/roles/nova-tools-install/defaults/main.yml. A Windows host
-# needs the ansible.windows collection on the control node.
+# needs the ansible.windows collection on the control node (fleet/requirements.yml).
 - name: nova-tools release on the machine
   hosts: all
   gather_facts: true

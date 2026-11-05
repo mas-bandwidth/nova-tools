@@ -1,0 +1,5 @@
+---
+# ansible-galaxy collection install -r fleet/requirements.yml
+# Needed only when a Windows host is in the inventory (roles/nova-tools-install/tasks/windows.yml).
+collections:
+  - name: ansible.windows

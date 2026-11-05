@@ -54,7 +54,9 @@ ansible-playbook -i ./inventory fleet/nova-tools-install.yml -e nova_tools_versi
 The role reads the release's `SHA256SUMS`, downloads each asset and checks it against its digest before it is put in
 place. A binary that already holds the digest is left alone, so a second run changes nothing and `--check --diff` is
 clean. There is no default version: a run never installs "latest" by accident. A platform the release does not ship
-is refused before anything is written.
+is refused before anything is written. The Windows tasks are included only for a Windows host, so
+`ansible-galaxy collection install -r fleet/requirements.yml` (ansible.windows) is needed only when a Windows host is
+in the inventory.
 
 | Variable | Default | |
 |---|---|---|
