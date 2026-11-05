@@ -18,15 +18,19 @@ do the cryptography, git carries the files.
 A seat can open only its own file with its own key. A secret a seat should hold is set under that seat's name.
 The key is a file given by `--key`; no identity from the caller's environment or home directory reaches sops.
 
-Defaults, so a unit file stays short: `--store` is the current directory; `--as` is `$NOVA_SECRETS_SEAT`, else the
-short hostname; `--key` is `~/.config/nova-secrets/<seat>.key`; `--sops` is `sops` on PATH.
+`--store` and `--key` are required, as flags or as `NOVA_SECRETS_STORE` and `NOVA_SECRETS_KEY`; there is no default
+and the current directory is never assumed (a store found by cwd could be any repository). `--key` is made absolute
+before its mode and owner are checked and before sops sees it, so the file checked is the file read. `--as` defaults
+to `$NOVA_SECRETS_SEAT`, else the short hostname; `--sops` to `sops` on PATH.
+
+A seat key is made with `age-keygen -o <file>` and `chmod 600 <file>`; its public key is what `seat add` takes.
 
 ## The verbs
 
 ```
-nova-secrets exec --only NAME[,NAME] [--store <dir>] [--as <seat>] [--key <file>] [--sops <path>] -- cmd [args...]
-nova-secrets set NAME [--store <dir>] [--as <seat>] [--key <file>] [--sops <path>]
-nova-secrets seat add <seat> <age-public-key> [--store <dir>]
+nova-secrets exec --only NAME[,NAME] --store <dir> --key <file> [--as <seat>] [--sops <path>] -- cmd [args...]
+nova-secrets set NAME --store <dir> --key <file> [--as <seat>] [--sops <path>]
+nova-secrets seat add <seat> <age-public-key> --store <dir>
 nova-secrets help
 ```
 
@@ -38,7 +42,7 @@ seat does not hold is refused, by name, and the command never runs. No core file
 implies it is present.
 
 ```
-nova-secrets exec --only DB_PASSWORD,API_KEY --as web -- ./server --port 8080
+nova-secrets exec --only DB_PASSWORD,API_KEY --store /srv/secrets --key ~/.config/nova-secrets/web.key --as web -- ./server --port 8080
 ```
 
 **set** reads the value from stdin, one non-empty line, never a terminal and never an argument, sets `NAME` in
@@ -46,16 +50,19 @@ nova-secrets exec --only DB_PASSWORD,API_KEY --as web -- ./server --port 8080
 branch. Pushing is the caller's. `seal` is kept as a hidden alias of `set`, with `--name NAME`, for one release.
 
 ```
-pass show db | nova-secrets set DB_PASSWORD --as web
+pass show db | nova-secrets set DB_PASSWORD --store /srv/secrets --key ~/.config/nova-secrets/web.key --as web
 git -C /srv/secrets push
 ```
 
-**seat add** appends a rule for `<seat>` to `.sops.yaml`: the seat's public key, and the recovery key when the store
-has a `recovery.pub`. It writes no seat file and commits nothing. It refuses a seat or a key that already has a rule.
-The seat then makes its own file with `set`.
+**seat add** parses `.sops.yaml` and writes it back with a rule for `<seat>`: `path_regex: ^<seat>\.yaml$`, `age:` the
+seat's public key and the store's `recovery.pub`. The store must have a valid `recovery.pub`, else it refuses. sops
+uses the first rule that matches a file, so the new rule goes before the first existing rule that would match the
+seat's file (a catch-all), and every existing rule is kept. A file that does not parse is refused and left alone; the
+write is a temporary file and a rename. It writes no seat file and commits nothing, and refuses a seat or a key that
+already has a rule. The seat then makes its own file with `set`.
 
 ```
-nova-secrets seat add web age1...  --store /srv/secrets
+nova-secrets seat add web age1... --store /srv/secrets
 ```
 
 ## The guarantee

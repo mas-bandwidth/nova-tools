@@ -20,21 +20,24 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 const usage = `nova-secrets: sops-encrypted secrets in a git store, handed to one command at a time.
 
-  nova-secrets exec --only NAME[,NAME] [--store <dir>] [--as <seat>] [--key <file>] -- <cmd> [args...]
+  nova-secrets exec --only NAME[,NAME] --store <dir> --key <file> [--as <seat>] [--sops <path>] -- <cmd> [args...]
       Decrypt <seat>.yaml and become <cmd> with only the --only values added to its
       environment. Exit: the command's own status; 125 when exec refused.
-  nova-secrets set NAME [--store <dir>] [--as <seat>] [--key <file>]
+  nova-secrets set NAME --store <dir> --key <file> [--as <seat>] [--sops <path>]
       Read one value from stdin (one line), set NAME in <seat>.yaml and commit it.
-  nova-secrets seat add <seat> <age-public-key> [--store <dir>]
+  nova-secrets seat add <seat> <age-public-key> --store <dir>
       Add the seat's recipient rule to .sops.yaml. Commits nothing.
   nova-secrets help
 
-Defaults: --store . ; --as $NOVA_SECRETS_SEAT, else the short hostname ;
---key ~/.config/nova-secrets/<seat>.key ; --sops sops (on PATH). No verb prints a value.
+--store and --key are required (or NOVA_SECRETS_STORE / NOVA_SECRETS_KEY); the current
+directory is never assumed. --as defaults to $NOVA_SECRETS_SEAT, else the short hostname;
+--sops to sops on PATH. No verb prints a value.
 Exit codes: 0 done, 2 refused (exec: 125).
 `
 
@@ -62,10 +65,12 @@ type tool struct {
 	// returns its stdout. Its stderr is never shown: it can carry a value.
 	run    func(stdin io.Reader, env []string, dir, name string, args ...string) ([]byte, error)
 	become func(argv, env []string) error
+	// lookPath finds the command exec will become.
+	lookPath func(name string) (string, error)
 }
 
 func main() {
-	t := tool{os.Stdin, os.Stdout, os.Stderr, os.Environ(), runProgram, become}
+	t := tool{os.Stdin, os.Stdout, os.Stderr, os.Environ(), runProgram, become, exec.LookPath}
 	os.Exit(t.main(os.Args[1:]))
 }
 
@@ -133,7 +138,7 @@ func (l *list) Set(v string) error { *l = append(*l, v); return nil }
 
 // parse reads flags after the verb's positional arguments (npos of them) and
 // fills in the defaults. require is the deprecated --require (exec only).
-func (t tool) parse(verb string, args []string, npos int) (o opts, pos, require []string, err error) {
+func (t tool) parse(verb string, args []string, npos int, needKey bool) (o opts, pos, require []string, err error) {
 	for len(pos) < npos && len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		pos, args = append(pos, args[0]), args[1:]
 	}
@@ -156,7 +161,10 @@ func (t tool) parse(verb string, args []string, npos int) (o opts, pos, require 
 		return o, nil, nil, refuse(2, "%s takes %d argument(s) before its flags; run: nova-secrets help", verb, npos)
 	}
 	if o.store == "" {
-		o.store = "."
+		o.store = envValue(t.environ, "NOVA_SECRETS_STORE")
+	}
+	if o.store == "" {
+		return o, nil, nil, refuse(2, "missing --store <dir> (or NOVA_SECRETS_STORE): there is no default, the current directory is never assumed")
 	}
 	if o.sops == "" {
 		o.sops = "sops"
@@ -170,12 +178,17 @@ func (t tool) parse(verb string, args []string, npos int) (o opts, pos, require 
 	if !seatName.MatchString(o.as) {
 		return o, nil, nil, refuse(2, "seat name %q: letters, digits, - and _ only", o.as)
 	}
-	if o.key == "" {
-		home := envValue(t.environ, "HOME")
-		if home == "" {
-			home, _ = os.UserHomeDir() // an empty home gives a relative path that checkKey refuses
+	if needKey {
+		if o.key == "" {
+			o.key = envValue(t.environ, "NOVA_SECRETS_KEY")
 		}
-		o.key = filepath.Join(home, ".config", "nova-secrets", o.as+".key")
+		if o.key == "" {
+			return o, nil, nil, refuse(2, "missing --key <file> (or NOVA_SECRETS_KEY): there is no default")
+		}
+		// Absolute before the mode check and before sops (which runs in the store).
+		if o.key, err = filepath.Abs(o.key); err != nil {
+			return o, nil, nil, refuse(2, "key path %q cannot be made absolute: %v", o.key, err)
+		}
 	}
 	return o, pos, require, nil
 }
@@ -196,7 +209,7 @@ func (t tool) exec(args []string) error {
 	if i < 0 || i == len(args)-1 {
 		return refuse(2, "no command: nova-secrets exec --only NAME -- <cmd> [args...]")
 	}
-	o, _, require, err := t.parse("exec", args[:i], 0)
+	o, _, require, err := t.parse("exec", args[:i], 0, true)
 	if err != nil {
 		return err
 	}
@@ -204,7 +217,7 @@ func (t tool) exec(args []string) error {
 		return refuse(2, "missing --only NAME[,NAME]; run: nova-secrets help")
 	}
 	argv := args[i+1:]
-	if _, err := exec.LookPath(argv[0]); err != nil {
+	if _, err := t.lookPath(argv[0]); err != nil {
 		return refuse(2, "command not found: %s", argv[0])
 	}
 	values, err := t.decrypt(o, o.as)
@@ -250,7 +263,7 @@ func (t tool) exec(args []string) error {
 }
 
 func (t tool) set(args []string) error {
-	o, pos, _, err := t.parse("set", args, 1)
+	o, pos, _, err := t.parse("set", args, 1, true)
 	if err != nil {
 		return err
 	}
@@ -293,7 +306,7 @@ func (t tool) set(args []string) error {
 }
 
 func (t tool) seatAdd(args []string) error {
-	o, pos, _, err := t.parse("seat add", args, 2)
+	o, pos, _, err := t.parse("seat add", args, 2, false)
 	if err != nil {
 		return err
 	}
@@ -301,32 +314,24 @@ func (t tool) seatAdd(args []string) error {
 	if !seatName.MatchString(seat) || !agePub.MatchString(pub) {
 		return refuse(2, "usage: seat add <seat> <age1...>; the seat is letters, digits, - and _")
 	}
-	recipients := pub
-	if b, err := os.ReadFile(filepath.Join(o.store, "recovery.pub")); err == nil {
-		rec := strings.TrimSpace(string(b))
-		if !agePub.MatchString(rec) {
-			return refuse(2, "store %s: recovery.pub is not an age public key", o.store)
-		}
-		if rec == pub {
-			return refuse(2, "that key is the recovery key, not a seat's")
-		}
-		recipients += "," + rec
+	b, err := os.ReadFile(filepath.Join(o.store, "recovery.pub"))
+	rec := strings.TrimSpace(string(b))
+	if err != nil || !agePub.MatchString(rec) {
+		return refuse(2, "store %s has no valid recovery.pub", o.store)
+	}
+	if rec == pub {
+		return refuse(2, "that key is the recovery key, not a seat's")
 	}
 	cfgPath := filepath.Join(o.store, ".sops.yaml")
 	cfg, err := os.ReadFile(cfgPath)
-	if err != nil || !bytes.Contains(cfg, []byte("creation_rules:")) {
-		return refuse(2, "store %s has no .sops.yaml with creation_rules:", o.store)
+	if err != nil {
+		return refuse(2, "store %s has no .sops.yaml", o.store)
 	}
-	rule := `^` + regexp.QuoteMeta(seat) + `\.yaml$`
-	if bytes.Contains(cfg, []byte(rule)) || bytes.Contains(cfg, []byte(pub)) {
-		return refuse(2, ".sops.yaml already has a rule for %s or a seat with that key", seat)
+	out, err := addRule(cfg, seat, pub+","+rec)
+	if err != nil {
+		return err
 	}
-	updated := string(cfg)
-	if !strings.HasSuffix(updated, "\n") {
-		updated += "\n"
-	}
-	updated += fmt.Sprintf("  - path_regex: %s\n    age: %s\n", rule, recipients)
-	if err := writeFile(cfgPath, []byte(updated), 0o644); err != nil {
+	if err := writeFile(cfgPath, out, 0o644); err != nil {
 		return err
 	}
 	fmt.Fprintf(t.stdout, "SECRETS SEAT ADD OK seat=%s; commit .sops.yaml, then the seat's own key runs: nova-secrets set NAME --as %s\n", seat, seat)
@@ -452,4 +457,62 @@ func exitOf(err error) string {
 		return fmt.Sprintf("exit %d", ee.ExitCode())
 	}
 	return err.Error()
+}
+
+// addRule parses .sops.yaml and inserts the seat's rule before the first rule that
+// would shadow it (sops uses the first matching rule), keeping every existing rule.
+func addRule(cfg []byte, seat, age string) ([]byte, error) {
+	var doc yaml.Node
+	if err := yaml.Unmarshal(cfg, &doc); err != nil || doc.Kind != yaml.DocumentNode || len(doc.Content) != 1 || doc.Content[0].Kind != yaml.MappingNode {
+		return nil, refuse(2, ".sops.yaml does not parse as a YAML map; it is left as it was")
+	}
+	var rules *yaml.Node
+	top := doc.Content[0]
+	for i := 0; i+1 < len(top.Content); i += 2 {
+		if top.Content[i].Value == "creation_rules" && top.Content[i+1].Kind == yaml.SequenceNode {
+			rules = top.Content[i+1]
+		}
+	}
+	if rules == nil {
+		return nil, refuse(2, ".sops.yaml has no creation_rules list; it is left as it was")
+	}
+	pathRegex := `^` + regexp.QuoteMeta(seat) + `\.yaml$`
+	file := seat + ".yaml"
+	at := len(rules.Content)
+	for i, r := range rules.Content {
+		if r.Kind != yaml.MappingNode {
+			return nil, refuse(2, ".sops.yaml: a creation rule is not a map; it is left as it was")
+		}
+		shadows := true // a rule without path_regex matches every file
+		for j := 0; j+1 < len(r.Content); j += 2 {
+			switch r.Content[j].Value {
+			case "path_regex":
+				v := r.Content[j+1].Value
+				if v == pathRegex {
+					return nil, refuse(2, ".sops.yaml already has a rule for %s", seat)
+				}
+				re, err := regexp.Compile(v)
+				shadows = v == "" || err == nil && re.MatchString(file)
+			case "age":
+				if strings.Contains(r.Content[j+1].Value, strings.SplitN(age, ",", 2)[0]) {
+					return nil, refuse(2, ".sops.yaml already has a seat with that key")
+				}
+			}
+		}
+		if shadows && at == len(rules.Content) {
+			at = i
+		}
+	}
+	rule := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map", Content: []*yaml.Node{
+		{Kind: yaml.ScalarNode, Tag: "!!str", Value: "path_regex"}, {Kind: yaml.ScalarNode, Tag: "!!str", Value: pathRegex},
+		{Kind: yaml.ScalarNode, Tag: "!!str", Value: "age"}, {Kind: yaml.ScalarNode, Tag: "!!str", Value: age},
+	}}
+	rules.Content = slices.Insert(rules.Content, at, rule)
+	var buf bytes.Buffer
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2)
+	if err := enc.Encode(&doc); err != nil || enc.Close() != nil {
+		return nil, refuse(2, "writing .sops.yaml: %v", err)
+	}
+	return buf.Bytes(), nil
 }

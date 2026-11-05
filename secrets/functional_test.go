@@ -93,6 +93,16 @@ func TestARealStore(t *testing.T) {
 	run("", 7, append(append([]string{"exec"}, seat...), "--only", "API_KEY", "--", "sh", "-c", "exit 7")...)
 	assert.Contains(t, run("", 125, append(append([]string{"exec"}, seat...), "--only", "NOPE", "--", "true")...), "unknown secret name")
 
+	// A second seat: seat add, then its own key sets and execs.
+	bo := filepath.Join(keys, "bo.key")
+	run("", 0, "seat", "add", "bo", keygen("bo"), "--store", store)
+	boSeat := []string{"--store", store, "--as", "bo", "--key", bo, "--sops", sops}
+	run("value-bo-xyz\n", 0, append([]string{"set", "BO_TOKEN"}, boSeat...)...)
+	got = run("", 0, append(append([]string{"exec"}, boSeat...), "--only", "BO_TOKEN", "--", "sh", "-c", `test "$BO_TOKEN" = value-bo-xyz && echo delivered`)...)
+	assert.Contains(t, got, "delivered")
+	run("", 125, append(append([]string{"exec"}, seat...), "--only", "BO_TOKEN", "--", "true")...)
+	run("", 125, "exec", "--store", store, "--as", "bo", "--key", ada, "--sops", sops, "--only", "BO_TOKEN", "--", "true")
+
 	require.NoError(t, os.Chmod(ada, 0o644))
 	run("", 125, append(append([]string{"exec"}, seat...), "--only", "API_KEY", "--", "true")...)
 }

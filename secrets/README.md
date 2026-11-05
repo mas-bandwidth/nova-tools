@@ -4,9 +4,9 @@ sops + age + git: secrets live in a sops-encrypted file per seat in a git store;
 command's environment. The full description is `docs/SPEC-SECRETS.md`.
 
 ```
-nova-secrets exec --only NAME[,NAME] [--store <dir>] [--as <seat>] [--key <file>] -- cmd [args...]
-nova-secrets set NAME [--store <dir>] [--as <seat>] [--key <file>]       # value on stdin
-nova-secrets seat add <seat> <age-public-key> [--store <dir>]
+nova-secrets exec --only NAME[,NAME] --store <dir> --key <file> [--as <seat>] -- cmd [args...]
+nova-secrets set NAME --store <dir> --key <file> [--as <seat>]     # value on stdin
+nova-secrets seat add <seat> <age-public-key> --store <dir>
 nova-secrets help
 ```
 

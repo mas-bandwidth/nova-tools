@@ -15,6 +15,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 )
 
 // The fake sops seals a seat file as one "NAME: ENC[fake]" line per name and a last
@@ -137,6 +138,12 @@ func (h *harness) main(args ...string) int {
 	t := tool{
 		stdin: strings.NewReader(h.stdin), stdout: &h.stdout, stderr: &h.stderr, environ: h.environ, run: h.run,
 		become: func(argv, env []string) error { h.became, h.env = argv, env; return nil },
+		lookPath: func(name string) (string, error) {
+			if name == "no-such-program-here" {
+				return "", errors.New("not found")
+			}
+			return "/bin/" + name, nil
+		},
 	}
 	return t.main(args)
 }
@@ -312,16 +319,31 @@ func TestSealIsAHiddenAliasOfSet(t *testing.T) {
 	assert.Equal(t, map[string]string{"NEW": "old-caller"}, h.open("ada"))
 }
 
+const catchAllRules = "creation_rules:\n  - age: " + pubA + "\n"
+
+func (h *harness) rules() []map[string]string {
+	b, err := os.ReadFile(filepath.Join(h.store, ".sops.yaml"))
+	require.NoError(h.t, err)
+	var doc struct {
+		Rules []map[string]string `yaml:"creation_rules"`
+	}
+	require.NoError(h.t, yaml.Unmarshal(b, &doc), string(b))
+	return doc.Rules
+}
+
+func (h *harness) sopsYAML(body string) {
+	require.NoError(h.t, os.WriteFile(filepath.Join(h.store, ".sops.yaml"), []byte(body), 0o644))
+}
+
 func TestSeatAddEditsTheRecipients(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
-	before, err := os.ReadFile(filepath.Join(h.store, ".sops.yaml"))
-	require.NoError(t, err)
 	args := []string{"seat", "add", "bo", pubB, "--store", h.store}
 	require.Equal(t, 0, h.main(args...), h.stderr.String())
-	after, err := os.ReadFile(filepath.Join(h.store, ".sops.yaml"))
-	require.NoError(t, err)
-	assert.Equal(t, string(before)+"  - path_regex: ^bo\\.yaml$\n    age: "+pubB+","+pubRec+"\n", string(after))
+	assert.Equal(t, []map[string]string{
+		{"path_regex": `^ada\.yaml$`, "age": pubA + "," + pubRec},
+		{"path_regex": `^bo\.yaml$`, "age": pubB + "," + pubRec},
+	}, h.rules())
 	assert.NoFileExists(t, filepath.Join(h.store, "bo.yaml"))
 	assert.Empty(t, h.calls, "no program runs")
 
@@ -333,14 +355,104 @@ func TestSeatAddEditsTheRecipients(t *testing.T) {
 	assert.Equal(t, 2, h.main("seat", "add", "cy", "--store", h.store), "the key is required")
 }
 
+func TestSeatAddNeedsTheRecoveryKey(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	before, _ := os.ReadFile(filepath.Join(h.store, ".sops.yaml"))
+	require.NoError(t, os.Remove(filepath.Join(h.store, "recovery.pub")))
+	assert.Equal(t, 2, h.main("seat", "add", "bo", pubB, "--store", h.store))
+	assert.Contains(t, h.stderr.String(), "no valid recovery.pub")
+	after, _ := os.ReadFile(filepath.Join(h.store, ".sops.yaml"))
+	assert.Equal(t, string(before), string(after))
+}
+
+func TestSeatAddKeepsTheFileValid(t *testing.T) {
+	t.Parallel()
+	for name, body := range map[string]string{
+		"column-zero list":       "creation_rules:\n- path_regex: ^ada\\.yaml$\n  age: " + pubA + "," + pubRec + "\n",
+		"trailing top-level key": "creation_rules:\n  - path_regex: ^ada\\.yaml$\n    age: " + pubA + "," + pubRec + "\nstores:\n  x: 1\n",
+		"comments":               "# the rules\ncreation_rules:\n  # ada\n  - path_regex: ^ada\\.yaml$\n    age: " + pubA + "," + pubRec + "\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			h := newHarness(t)
+			h.sopsYAML(body)
+			require.Equal(t, 0, h.main("seat", "add", "bo", pubB, "--store", h.store), h.stderr.String())
+			rules := h.rules()
+			require.Len(t, rules, 2)
+			assert.Equal(t, `^ada\.yaml$`, rules[0]["path_regex"])
+			assert.Equal(t, `^bo\.yaml$`, rules[1]["path_regex"])
+		})
+	}
+	h := newHarness(t)
+	h.sopsYAML("creation_rules: [unclosed\n")
+	assert.Equal(t, 2, h.main("seat", "add", "bo", pubB, "--store", h.store))
+	b, _ := os.ReadFile(filepath.Join(h.store, ".sops.yaml"))
+	assert.Equal(t, "creation_rules: [unclosed\n", string(b), "an unparsable file is left alone")
+}
+
+func TestSeatAddGoesBeforeACatchAll(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.sopsYAML("creation_rules:\n  - path_regex: ^ada\\.yaml$\n    age: " + pubA + "," + pubRec + "\n  - age: " + pubRec + "\n  - path_regex: .*\n    age: " + pubRec + "\n")
+	require.Equal(t, 0, h.main("seat", "add", "bo", pubB, "--store", h.store), h.stderr.String())
+	rules := h.rules()
+	require.Len(t, rules, 4)
+	assert.Equal(t, `^bo\.yaml$`, rules[1]["path_regex"], "before the first rule that would shadow it")
+	assert.Equal(t, pubRec, rules[2]["age"])
+	assert.Equal(t, ".*", rules[3]["path_regex"])
+}
+
+func TestStoreAndKeyAreRequired(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.seed("ada", map[string]string{"API_KEY": "sk-sealed-two"})
+	h.stdin = "v\n"
+	for _, args := range [][]string{
+		{"set", "NEW", "--as", "ada", "--key", h.key},
+		{"set", "NEW", "--as", "ada", "--store", h.store},
+		{"exec", "--as", "ada", "--key", h.key, "--only", "API_KEY", "--", "true"},
+		{"exec", "--as", "ada", "--store", h.store, "--only", "API_KEY", "--", "true"},
+		{"seat", "add", "bo", pubB},
+	} {
+		code := h.main(args...)
+		assert.Contains(t, []int{2, 125}, code, "%v", args)
+		assert.Contains(t, h.stderr.String(), "missing --")
+		assert.Empty(t, h.calls, "%v", args)
+	}
+}
+
+func TestRelativeKeyIsCheckedWhereSopsWillReadIt(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.seed("ada", map[string]string{"API_KEY": "sk-sealed-two"})
+	// The key in the store is world-readable; a private decoy of the same relative name
+	// sits in the working directory. Both resolve to the same absolute path.
+	require.NoError(t, os.Chmod(h.key, 0o644))
+	rel, err := filepath.Rel(mustGetwd(t), h.key)
+	require.NoError(t, err)
+	require.NotEqual(t, h.key, rel)
+	assert.Equal(t, 125, h.main("exec", "--store", h.store, "--as", "ada", "--key", rel, "--only", "API_KEY", "--", "true"))
+	assert.Contains(t, h.stderr.String(), "mode 0600")
+	assert.Empty(t, h.calls)
+	require.NoError(t, os.Chmod(h.key, 0o600))
+	require.Equal(t, 0, h.main("exec", "--store", h.store, "--as", "ada", "--key", rel, "--only", "API_KEY", "--", "true"), h.stderr.String())
+	assert.Equal(t, h.key, envMap(h.calls[0].env)["SOPS_AGE_KEY_FILE"], "sops is given the absolute path")
+}
+
+func mustGetwd(t *testing.T) string {
+	t.Helper()
+	wd, err := os.Getwd()
+	require.NoError(t, err)
+	return wd
+}
+
 func TestExecDefaultsFromTheEnvironment(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	h.seed("ada", map[string]string{"API_KEY": "sk-sealed-two"})
-	h.environ = append(h.environ[:1:1], "NOVA_SECRETS_SEAT=ada", "HOME="+filepath.Dir(filepath.Dir(h.key)))
-	require.NoError(t, os.MkdirAll(filepath.Join(filepath.Dir(filepath.Dir(h.key)), ".config", "nova-secrets"), 0o700))
-	require.NoError(t, os.Rename(h.key, filepath.Join(filepath.Dir(filepath.Dir(h.key)), ".config", "nova-secrets", "ada.key")))
-	require.Equal(t, 0, h.main("exec", "--store", h.store, "--only", "API_KEY", "--", "true"), h.stderr.String())
+	h.environ = append(h.environ[:1:1], "NOVA_SECRETS_SEAT=ada", "NOVA_SECRETS_STORE="+h.store, "NOVA_SECRETS_KEY="+h.key)
+	require.Equal(t, 0, h.main("exec", "--only", "API_KEY", "--", "true"), h.stderr.String())
 	assert.Equal(t, "sk-sealed-two", envMap(h.env)["API_KEY"])
 }
 
