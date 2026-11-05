@@ -1,17 +1,17 @@
 ---
-# The release to install, by tag (for example v1.6.29). Required; there is no
+# The release to install, by tag (for example v1.0.0). Required; there is no
 # default, so a run never installs "latest" by accident.
 nova_tools_version: ""
 
 # The tools to install, by name. Each is a release asset
-# nova-<tool>_<tag>_<os>_<arch>[.exe] listed in the release's SHA256SUMS.
-nova_tools_names: [nova-bus, nova-cairn, nova-config, nova-sandbox, nova-secrets]
+# <tool>_<tag>_<os>_<arch>[.exe] listed in the release's SHA256SUMS.
+nova_tools_names: [nova-bus, nova-config, nova-sandbox, nova-secrets, nova-slot]
 
 # Where the release assets live: <base>/<tag>/<asset> and <base>/<tag>/SHA256SUMS.
 nova_tools_release_url: https://github.com/mas-bandwidth/nova-tools/releases/download
 
-# The bin directory. Unix: the login's ~/.local/bin (the fleet's nova_bin_dir
-# when set). Windows: <profile>\.local\bin.
+# The bin directory. Unix: nova_bin_dir, default the login's ~/.local/bin.
+# Windows: <profile>\.local\bin.
 nova_tools_bin_dir: "{{ nova_bin_dir | default(ansible_facts['env']['HOME'] ~ '/.local/bin') }}"
 nova_tools_win_bin_dir: "{{ ansible_facts['env']['USERPROFILE'] }}\\.local\\bin"
 
@@ -20,3 +20,33 @@ nova_tools_win_bin_dir: "{{ ansible_facts['env']['USERPROFILE'] }}\\.local\\bin"
 # only when a binary changed.
 nova_tools_restart: false
 nova_tools_restart_commands: []
+
+# Retired binaries. When nova_tools_remove_enabled is true (default false), each
+# name in nova_tools_remove found in the bin directory is moved, after a
+# successful install, into <bin dir>/retired-<date>/ rather than deleted. Unix
+# machines only. A name also in nova_tools_names is refused. The list is the
+# tools nova-tools shipped and ships no more (fleet/retired-tools.txt).
+nova_tools_remove_enabled: false
+nova_tools_remove:
+  - nova-cairn
+  - nova-card
+  - nova-work
+  - nova-sprint
+  - nova-check
+  - nova-ci
+  - nova-decide
+  - nova-doctor
+  - nova-friend
+  - nova-fuse
+  - nova-hook
+  - nova-local
+  - nova-memory
+  - nova-redis
+  - nova-self-talk
+  - nova-swarm
+  - nova-table
+  - nova-tokens
+  - nova-up
+  - nova-update
+  - nova-version
+  - nova-loop

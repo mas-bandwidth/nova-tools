@@ -3,14 +3,19 @@
 # asset is downloaded, checked against the release's SHA256SUMS and put in the
 # bin directory. get_url with a checksum leaves a binary that already holds the
 # digest alone, so a second run changes nothing. Nothing is restarted unless
-# nova_tools_restart is true.
+# nova_tools_restart is true. When nova_tools_remove_enabled is true, the
+# retired binaries named in nova_tools_remove are then moved (never deleted)
+# into <bin dir>/retired-<date>/.
 
 - name: a release is named
   ansible.builtin.assert:
     quiet: true
     that:
-      - nova_tools_version is match('^v[0-9]+[.][0-9]+[.][0-9]+$')
+      - nova_tools_version is match('^v[0-9]+[.][0-9]+[.][0-9]+(-[0-9A-Za-z.]+)?$')
       - nova_tools_names | length > 0
+      - nova_tools_names | reject('match', '^[a-z0-9][a-z0-9-]*$') | list | length == 0
+      - nova_tools_remove | reject('match', '^[a-z0-9][a-z0-9-]*$') | list | length == 0
+      - nova_tools_remove | intersect(nova_tools_names) | length == 0
     fail_msg: "nova-tools-install: name the release, -e nova_tools_version=vX.Y.Z"
 
 - name: the platform
@@ -22,7 +27,7 @@
 - name: this platform is one the release ships
   ansible.builtin.assert:
     quiet: true
-    that: (nova_tools_os ~ '-' ~ nova_tools_arch) in ['darwin-arm64', 'linux-amd64', 'windows-amd64']
+    that: (nova_tools_os ~ '-' ~ nova_tools_arch) in ['darwin-arm64', 'linux-amd64', 'linux-arm64', 'windows-amd64']
     fail_msg: "nova-tools-install: no release asset for {{ nova_tools_os }}-{{ nova_tools_arch }}"
 
 - name: the release's checksum file, read from the release (a read, so check mode runs it too)
@@ -100,3 +105,35 @@
   when:
     - nova_tools_restart | bool
     - (nova_tools_installed.changed | default(false)) or (nova_tools_installed_win.changed | default(false))
+
+# Retiring: only on a Unix machine, only when asked, and only after the install
+# above succeeded (a failed task ends the role). A retired binary is moved into
+# retired-<date> beside the others, never deleted; one not there is skipped, so
+# a second run changes nothing.
+- name: which retired binaries are in the bin directory
+  ansible.builtin.stat:
+    path: "{{ nova_tools_bin_dir }}/{{ item }}"
+  loop: "{{ nova_tools_remove }}"
+  register: nova_tools_retire_stat
+  when: nova_tools_remove_enabled | bool and not nova_tools_win
+
+- name: the retired directory
+  ansible.builtin.file:
+    path: "{{ nova_tools_bin_dir }}/retired-{{ now(fmt='%Y-%m-%d') }}"
+    state: directory
+    mode: "0755"
+  when:
+    - nova_tools_remove_enabled | bool
+    - not nova_tools_win
+    - nova_tools_retire_stat.results | selectattr('stat', 'defined') | selectattr('stat.exists') | list | length > 0
+
+- name: the retired binaries, moved aside
+  ansible.builtin.command:
+    argv:
+      - mv
+      - "{{ nova_tools_bin_dir }}/{{ item.item }}"
+      - "{{ nova_tools_bin_dir }}/retired-{{ now(fmt='%Y-%m-%d') }}/{{ item.item }}"
+    removes: "{{ nova_tools_bin_dir }}/{{ item.item }}"
+  loop: "{{ nova_tools_retire_stat.results | default([]) | selectattr('stat', 'defined') | selectattr('stat.exists') | list }}"
+  loop_control: { label: "{{ item.item }}" }
+  when: nova_tools_remove_enabled | bool and not nova_tools_win

@@ -1,0 +1,61 @@
+# Release for nova-tools: a pushed tag v* builds the five binaries for four
+# platforms, writes one SHA256SUMS and creates the GitHub release. Assets are
+# named <tool>_<tag>_<os>_<arch>[.exe]; fleet/roles/nova-tools-install reads
+# exactly that scheme. The only credential is the workflow's GITHUB_TOKEN.
+
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: build every tool for every platform
+        shell: bash
+        env:
+          TAG: ${{ github.ref_name }}
+          CGO_ENABLED: "0"
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          for tool in bus config sandbox secrets slot; do
+            # main.version is set only for a main that declares it
+            flags="-s -w"
+            if grep -q '^var version ' "$tool/main.go"; then flags="$flags -X main.version=$TAG"; fi
+            pids=()
+            for target in linux/amd64 linux/arm64 darwin/arm64 windows/amd64; do
+              os=${target%/*}; arch=${target#*/}
+              ext=""; [ "$os" = windows ] && ext=".exe"
+              GOOS=$os GOARCH=$arch go build -trimpath -ldflags "$flags" \
+                -o "dist/nova-${tool}_${TAG}_${os}_${arch}${ext}" "./$tool" &
+              pids+=($!)
+            done
+            for pid in "${pids[@]}"; do wait "$pid"; done
+          done
+          ls dist | wc -l
+      - name: SHA256SUMS
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum nova-* > SHA256SUMS
+          cat SHA256SUMS
+      - name: create the release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          gh release create "$TAG" dist/* --title "$TAG" --generate-notes --verify-tag

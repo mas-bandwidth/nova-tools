@@ -11,8 +11,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// loops_play_test.go pins fleet/loops.yml's Linux unit state (docs/SPEC-RELEASE.md,
-// "The seat adopts an approved build"; docs/FLEET.md, "loops.yml"). The state of
+// loops_play_test.go pins fleet/loops.yml's Linux unit state (docs/FLEET.md, "loops.yml"). The state of
 // ansible.builtin.systemd_service was one folded scalar holding a parenthesised
 // ternary chained to a second `if ... else`; the ansible-core templar stops at
 // the `else` with "expected token ')', got 'else'", the task never reaches
@@ -130,19 +129,84 @@ func TestLoopsPlayStateExpressionIsBuiltOutsideTheModuleArgs(t *testing.T) {
 	}
 }
 
-// The disk guard's unit on darwin names --logs ~/Library/Logs (fleet/loops.yml,
-// loop_guard_argv): every launchd agent logs there, ~/nova-bench/loops is empty on
-// darwin, and a guard that read only that never rotated a darwin log (2026-10-17:
-// a friend daemon's log at 12 MB on one bench). Linux keeps the default.
-func TestLoopsPlayDiskGuardRotatesTheDarwinLogDirectory(t *testing.T) {
+// The play and its templates name no tool this repository no longer ships.
+func TestFleetFilesNameNoRetiredTool(t *testing.T) {
 	t.Parallel()
-	for _, play := range loopsPlays(t) {
-		vars, _ := play["vars"].(map[string]any)
-		if argv, ok := vars["loop_guard_argv"].(string); ok {
-			assert.Contains(t, argv, "['--logs', '~/Library/Logs'] if loop_darwin else []",
-				"the disk guard on darwin does not name the directory its launchd logs are in")
-			return
+	for _, f := range []string{"loops.yml", "templates/nova-loop.plist.j2", "templates/nova-loop.service.j2",
+		"templates/nova-loop.timer.j2", "group_vars/all.yml", "nova-tools-install.yml"} {
+		b, err := os.ReadFile(f)
+		require.NoError(t, err)
+		for _, word := range []string{"nova-swarm", "nova-sprint", "nova-update", "disk-guard", "nova-card"} {
+			assert.NotContains(t, string(b), word, "%s", f)
 		}
 	}
-	require.FailNow(t, "fleet/loops.yml has no loop_guard_argv")
+}
+
+// The install role's defaults: the five tools, and retiring off until asked.
+func TestInstallRoleDefaults(t *testing.T) {
+	t.Parallel()
+	b, err := os.ReadFile("roles/nova-tools-install/defaults/main.yml")
+	require.NoError(t, err)
+	var d map[string]any
+	require.NoError(t, yaml.Unmarshal(b, &d))
+	assert.Equal(t, []any{"nova-bus", "nova-config", "nova-sandbox", "nova-secrets", "nova-slot"}, d["nova_tools_names"])
+	assert.Equal(t, false, d["nova_tools_remove_enabled"])
+	assert.Len(t, d["nova_tools_remove"], 22)
+	names, _ := d["nova_tools_names"].([]any)
+	for _, r := range d["nova_tools_remove"].([]any) {
+		assert.NotContains(t, names, r)
+	}
+}
+
+// tasksOf is a play's top-level tasks.
+func tasksOf(t *testing.T, play map[string]any) []map[string]any {
+	t.Helper()
+	return mapsOf(t, play["tasks"])
+}
+
+// flattenTasks is tasks in document order, each block's tasks inlined.
+func flattenTasks(t *testing.T, tasks []map[string]any) []map[string]any {
+	t.Helper()
+	out := []map[string]any{}
+	for _, task := range tasks {
+		out = append(out, task)
+		if block := mapsOf(t, task["block"]); len(block) > 0 {
+			out = append(out, flattenTasks(t, block)...)
+		}
+	}
+	return out
+}
+
+// mapsOf is the []map[string]any a YAML task list decodes to.
+func mapsOf(t *testing.T, v any) []map[string]any {
+	t.Helper()
+	l, ok := v.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]map[string]any, 0, len(l))
+	for _, e := range l {
+		m, ok := e.(map[string]any)
+		require.True(t, ok, "a task is not a mapping: %T", e)
+		out = append(out, m)
+	}
+	return out
+}
+
+func asText(v any) string {
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return ""
+}
+
+// taskVar is a task's own vars key, set on the task itself (not a play var).
+func taskVar(t *testing.T, task map[string]any, key string) string {
+	t.Helper()
+	vars, _ := task["vars"].(map[string]any)
+	if v, ok := vars[key]; ok {
+		return asText(v)
+	}
+	require.FailNow(t, "no task var "+key)
+	return ""
 }

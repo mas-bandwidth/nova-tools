@@ -1,626 +1,130 @@
-# The fleet plays
+# The fleet
 
-A fleet is machines on a tailnet, each a row in nova-config, and the plays
-under `fleet/` put every machine in the state those rows say: the build of the
-tools in its bin directory, the store's function library and ACL, and one
-supervised unit per loop. The plays read nothing but the inventory
-`nova-config inventory` prints (the rows in PostgreSQL) and the defaults in
-`fleet/group_vars/all.yml`; every change goes through a Go tool (`nova-update
-release build` and `install`, `nova-redis fn` and `acl`). Every play has a `--check` form that changes nothing and says what a
-run would do.
+`fleet/` is how the fleet is managed: which machines there are and what they run (nova-config), the loops they keep
+running (`loops.yml`), the nova-tools release each one holds (`nova-tools-install.yml`), and the load slots that keep
+builds and tests from piling onto one box (`nova-slot`). It is Ansible plus two Go tools, nothing else; nothing here
+names a machine, a seat or a person. Those are rows in nova-config.
 
-| play | what it converges | on |
+```
+fleet/
+  nova-tools-install.yml            install one release, by tag
+  roles/nova-tools-install/         the role the play runs
+  loops.yml                         one launchd or systemd unit per loop row
+  templates/nova-loop.*.j2          the unit templates
+  group_vars/all.yml                the defaults both plays read
+  retired-tools.txt                 binaries nova-tools shipped and ships no more
+slot/                               nova-slot, the load slots (Go)
+```
+
+## The machine and loop model
+
+nova-config (`config/README.md`) keeps the fleet as rows in PostgreSQL, each write with a history row. Three kinds
+matter here:
+
+- `machine`: a host, its login `user`, its `seat`, how many load `slots` it has, its `roles`.
+- `loop`: a command one machine runs forever or every n seconds: `machine`, `argv` (a JSON array), `seat`, `keys`
+  (secret names, never values), `every` or `keepalive`, `enabled`.
+- `fleet`: the one fleet row (`loops_dir`, `bus`, and the store endpoints).
+
+`nova-config inventory` prints them as an Ansible dynamic inventory: each machine is a host, its loop rows are the
+host variable `nova_loops`. Use it as an inventory script:
+
+```
+printf '#!/bin/sh\nexec nova-config inventory "$@"\n' > inventory && chmod +x inventory
+export ANSIBLE_INVENTORY_UNPARSED_FAILED=true
+```
+
+The plays take their inventory from that and nothing else, so a change to the fleet is a nova-config write followed
+by a play run. Defaults for the plays are in `fleet/group_vars/all.yml`; a host's variables from the inventory, a
+`group_vars/<group>.yml` or a `host_vars/<machine>.yml` beside the inventory override them.
+
+## Installing a release
+
+A release is a git tag `v*` on this repository. `.github/workflows/release.yml` builds the five tools (nova-bus,
+nova-config, nova-sandbox, nova-secrets, nova-slot) for linux/amd64, linux/arm64, darwin/arm64 and windows/amd64 with
+`CGO_ENABLED=0 -trimpath`, names each asset `<tool>_<tag>_<os>_<arch>[.exe]` (for example
+`nova-slot_v1.0.0_linux_amd64`), writes one `SHA256SUMS`, and creates the GitHub release with the workflow's own
+`GITHUB_TOKEN`. Nothing else holds a credential.
+
+```
+ansible-playbook -i ./inventory fleet/nova-tools-install.yml -e nova_tools_version=v1.0.0 -l <machine> --check --diff
+ansible-playbook -i ./inventory fleet/nova-tools-install.yml -e nova_tools_version=v1.0.0 -l <machine>
+```
+
+The role reads the release's `SHA256SUMS`, downloads each asset and checks it against its digest before it is put in
+place. A binary that already holds the digest is left alone, so a second run changes nothing and `--check --diff` is
+clean. There is no default version: a run never installs "latest" by accident. A platform the release does not ship
+is refused before anything is written.
+
+| Variable | Default | |
 |---|---|---|
-| `fleet/tools.yml` | the build `nova_version` of the checkout `nova_source`, with nova-sprint's tools from its release in `nova_sprint_release`, in `~/.local/bin`, the build fact, the retired tools gone, the schema migrated, the function library loaded; the pinned TLC jar on the record machines | every machine; the build on the machine running the play; migrate and `fn load` on `store_deployer`; the jar on `tla` (`--tags tla` runs that alone) |
-| `fleet/redis.yml` | the store's ACL users, rendered from the library and the key families | the render on the machine running the play; check and apply on `store_deployer` |
-| `fleet/loops.yml` | one launchd or systemd unit per loop record, none for a record that is gone | every machine |
-| `fleet/container-runtime.yml` | rootless podman, the fleet's container runtime, and its version recorded in `~/.config/nova/podman` | every bench: Linux (apt on Ubuntu and Debian, dnf on Fedora) and macOS (brew, and a podman machine) |
+| `nova_tools_version` | none, required | the tag, `vX.Y.Z` |
+| `nova_tools_names` | the five tools | which tools to install |
+| `nova_bin_dir` | `~/.local/bin` | where they go (Windows: `<profile>\.local\bin`) |
+| `nova_tools_release_url` | the GitHub releases of this repository | `<base>/<tag>/<asset>` |
+| `nova_tools_restart`, `nova_tools_restart_commands` | false, empty | argv lists run once, only if a binary changed |
+| `nova_tools_remove_enabled` | false | retire the binaries below |
+| `nova_tools_remove` | the retired list | names to retire |
 
-## An adopter's path
-
-Every command runs from a machine with ssh to every machine, in a nova-tools
-checkout, with a `nova-config` built from it on the PATH: an older one prints
-no `store_deployer` group and no `nova_loops`. Ansible needs blocking stdio:
-run it as `</dev/null 2>&1 | cat`, or it may stop with "Non-blocking file
-handles".
-
-```
-nova-config machine add bench-a --user nova --seat bench-a --slots 2 --width 2
-nova-config fleet set --store bench-a --coordinator bench-a --redis_port 6380 --pg_dsn postgres://nova_config@localhost:5432/nova
-nova-config loop add member-bench-a --machine bench-a --argv '["nova-swarm","member","--as","bench-a","--server","bench-a:6390","--harness","opencode","--root","nova-bench/member","--identity","ada,Ada Bench,ada@example.com"]' --keepalive true
-nova-config loop add reader-bench-a --machine bench-a --argv '["nova-swarm","member","--as","reader-bench-a","--server","bench-a:6390","--reader","--harness","opencode","--root","nova-bench/reader","--identity","ada,Ada Bench,ada@example.com"]' --keepalive true
-printf '#!/bin/sh\nexec nova-config inventory "$@"\n' > nova-inventory
-chmod +x nova-inventory
-```
-
-`NOVA_PG_DSN` names the store (there is no seat login). `NOVA_SPRINT_REDIS_USER` names the Redis user, and `NOVA_SPRINT_REDIS_PASSWORD_ENV` names the
-variable that holds the password, never the password. A store with ACLs needs that login
-in the wrapper's environment, so the wrapper runs under `nova-secrets exec`, for example
-`nova-secrets exec --only NOVA_REDIS_BENCH_PASSWORD --require=NOVA_REDIS_BENCH_PASSWORD
--- env NOVA_SPRINT_REDIS_USER=bench NOVA_SPRINT_REDIS_PASSWORD_ENV=NOVA_REDIS_BENCH_PASSWORD
-nova-config inventory "$@"`, where `NOVA_REDIS_BENCH_PASSWORD` is the secret that holds the
-password. `nova-update release cycle` runs the wrapper with `--list` before any play and
-refuses with the wrapper's own line when it cannot list.
-
-```
-ANSIBLE_INVENTORY_UNPARSED_FAILED=true ansible-inventory -i ./nova-inventory --list
-ansible-playbook -i ./nova-inventory fleet/tools.yml -e nova_version=v1.2.0-dev.abcdef12 -e nova_source=$PWD -e nova_sprint_release=<nova-sprint release dir> -e nova_dogfood_receipts=<dir> --check --diff </dev/null 2>&1 | cat
-ansible-playbook -i ./nova-inventory fleet/tools.yml -e nova_version=v1.2.0-dev.abcdef12 -e nova_source=$PWD -e nova_sprint_release=<nova-sprint release dir> -e nova_dogfood_receipts=<dir> </dev/null 2>&1 | cat
-ansible-playbook -i ./nova-inventory fleet/redis.yml --check --diff </dev/null 2>&1 | cat
-ansible-playbook -i ./nova-inventory fleet/redis.yml </dev/null 2>&1 | cat
-ansible-playbook -i ./nova-inventory fleet/loops.yml --check --diff </dev/null 2>&1 | cat
-ansible-playbook -i ./nova-inventory fleet/loops.yml </dev/null 2>&1 | cat
-nova-sprint fleet sync --check --actor ada
-nova-sprint fleet sync --actor ada
-```
-
-The member and reader loops name the sprint's server, `--server`: the run loop
-the coordinator starts with `nova-sprint run --listen bench-a:6390`, the one
-writer; a member sends its verbs there and opens no store. The member loop
-names no width and no model. Its width is its fleet row's
-(the machine row's width, set with `nova-config machine set <m>
---width <n>`; nothing else, no friend row and
-not the machine's slots, takes part; `nova-sprint fleet
-up <m> --width n` changes it live), read every tick; each card's model, budget
-and deadline are the route the deal drew for it from the sprint's routes
-(here one flash and one pro: a pro card runs on `openrouter/x-ai/grok-4`, a
-flash card on `deepseek/deepseek-v4-flash`, on the same machine), or the
-card's own `model:` line. `nova-sprint routes` shows what each route's attempts
-did.
-
-A reader is a loop record the same as a member: `nova-swarm member --reader`
-under the readers row of its `--as` name (`nova-sprint init --readers
-reader-bench-a`, or `nova-sprint reader add reader-bench-a`). It is named for
-its machine, `reader-<m>`, one reader per machine, and it runs at the
-machine's width, the fleet row's, read with its queue every tick exactly as
-the member on the machine reads its own (the owner, 2026-10-02: "why not just
-have as many readers as workers per-machine"): no loop row carries a width,
-and an argv that spells `--width` is refused by `loop add` and `loop set`. A
-machine of width 0 (no member) reads nothing either. It names no model either: the ask draws each read card's route from the
-tier of the card it reads, the tier its work was dealt on (flash when line 1
-names none), at that tier's rolling index, and
-the packet hands the reader its model, budget and deadline; a reader started
-with `--model`, `--tokens` and `--deadline` runs its reads on those instead.
-A loop record runs a verb its program must still have: a release that retires
-the verb leaves the unit exiting at every start (`sprint-table-live` ran
-`nova-sprint table` that way until 2026-10-04). The loop kind asks each nova
-program in a record's argv `help <verb>` (`pkg/config/loop.go`: exit 2
-naming verbs is a verb gone; a program not installed where nova-config runs
-judges nothing): `CheckLoopVerb` is the refusal of an enabled record whose
-verb is gone (enforced by `loop add` and `loop set`), and `DeadLoops` the line
-for each in `status`, with its `nova-config loop remove <name>`.
-
-Both loops name the identity every child commits under, `--identity
-<owner>,<name>,<email>`, in their argv, so no file is written into a pool by
-hand; a loop without it reads the pool's `identity.tsv`.
-
-The coordinator's seat can run one more loop record: `nova-sprint inbox --wait
---push <dir>`, which writes each new judgment (and each note addressed to the
-coordinator) once into the coordinator's own inbox directory, so the coordinator
-is woken by a file and polls nothing. It is a client of the server like every
-other loop (`NOVA_SPRINT_SERVER` names the loopback address `run --listen`
-prints; the unit's environment names the store, which a verb sent to the server
-never opens), and the files it wrote are its cursor, so a restart by its
-supervisor pushes nothing twice:
-
-```
-nova-config loop add inbox-push --machine bench-a --argv '["env","NOVA_SPRINT_SERVER=127.0.0.1:6390","NOVA_SPRINT_ACTOR=<coordinator>","nova-sprint","inbox","--wait","--push","<home>/ai/<coordinator>/working/inbox/sprint-judgments","--timeout","1m"]' --keepalive true
-```
-
-The sprint dashboard ([SPEC-SPRINT-DASHBOARD.md](https://github.com/mas-bandwidth/nova-sprint/blob/main/docs/SPEC-SPRINT-DASHBOARD.md)), a page
-that is a second view of `where --json`, is one more loop record on the coordinator's
-machine and a client of the server like the others: it reads the sprint at most once
-per `--every` and only while a page is open. It listens on loopback, and on this
-machine's tailnet address when the page is wanted across the fleet's private network;
-an every-network or public address is refused, because the page checks no credential
-(a public page is a reverse proxy in front of the loopback listener,
-[SPEC-SPRINT-DASHBOARD.md](https://github.com/mas-bandwidth/nova-sprint/blob/main/docs/SPEC-SPRINT-DASHBOARD.md)). `--logo` names the image the page shows; the file stays on the
-machine, never in the repository:
-
-```
-nova-config loop add sprint-dashboard --machine bench-a --argv '["env","NOVA_SPRINT_SERVER=127.0.0.1:6390","nova-sprint","dashboard","--listen","127.0.0.1:7390,<tailnet-address>:7390","--logo","<home>/sprint-logo.webp"]' --keepalive true
-```
-
-It exits 3 when a new build is installed under it, and its unit starts the new one;
-`curl -s 127.0.0.1:7390/healthz` prints `ok`.
-
-The public page is served from files on one fleet machine: Caddy's `file_server`
-serves `/var/www/sprint/site` with no reverse proxy, and one puller refreshes those files
-from the dashboard server about once a second, so the number of viewers never reaches that
-server. Whether the page holds a front-page load (2,000 requests per second for ten minutes
-from a distant bench machine with zero errors, the server's own p99 under 50 ms, the dashboard
-server seeing only the puller, the far vantage's p99 recorded beside it) is v1.0.0's acceptance
-record [acceptance/v1.0.0/public-dashboard-load.md](acceptance/v1.0.0/public-dashboard-load.md),
-with the raw numbers and the kernel settings it was measured under.
-
-A friend's working directory, how her jobs arrive and are reported, and how
-their clones are removed once done, is docs/FRIENDS.md. The friends are rows of
-the sprint's friends table, and whether each friend
-is there is the nova-hook record's alone: `nova-hook serve` challenges her once
-a minute and only her model's `nova-hook prove` answers (`where` shows `up` while
-she is hooked in, `down` without it, and `held` while `nova-sprint friend down
-<friend>` holds it; docs/SPEC-HOOK.md). Her daemon's beat, every second (`sprint.FriendBeatEvery`), is
-recorded and never makes her up. The same sync
-reads each friend's working directory, `<root>/ai/<friend>/working` (`--root
-<dir>`, else `HOME`, so it runs on the machine that holds them), and writes her
-job cards, which `where` counts as the fleet's columns but load: `ready`,
-`working`, `width` (1), `done`, `ok%`, `status`. A job is the inbox/outbox
-standard: the coordinator delivers `inbox/<job>/` (with its `BRIEF.md`) and
-only the coordinator reaches out; the friend makes `outbox/<job>/` when she
-starts and writes `outbox/<job>/REPORT.md` when done, with a `Verdict:` line
-(any word but HOLD, FAIL, FAILED or BROKEN is ok; no line is ok). A brief to a
-friend says so. The sync reads and never writes a friend's directory; run it
-after a job is delivered or collected, or every minute from the coordinator's
-loop. No loop beats for a friend: the shell beat loops a wrapper once started
-beside her harness are retired with no replacement (docs/FRIENDS.md, "The beat loops
-are retired, with no replacement").
-
-The inventory reads the store `NOVA_SPRINT_REDIS` names (or `--redis`); export
-it, and `NOVA_MACHINE` when the machine running the play is a row, before the
-first play. `ANSIBLE_INVENTORY_UNPARSED_FAILED=true` (or `[inventory]
-unparsed_is_failed = True` in `ansible.cfg`) makes a failing inventory fail
-the run instead of running the play on no hosts.
-
-A run limited with `--limit` names `localhost` too (`--limit
-bench-a,localhost`): the build in `tools.yml` and the render in `redis.yml`
-run on the machine running the play, and without it they are skipped with "no
-hosts matched".
-
-## The coordinator machine's units, installed by verbs
-
-The plays above install the benches. The coordinator's machine runs nine more units a sprint needs,
-and each is written and loaded by a verb of the tool it runs, never by hand (card
-every-unit-installed-by-a-verb): a launchd agent on macOS and a systemd user unit on Linux, kept alive
-and started again at login, that runs the verb itself by the tool's absolute path, with no
-`nova-secrets exec`, shell or single-instance wrapper around it and no secret in it.
-
-| unit | the verb that installs it | what it runs |
-|---|---|---|
-| the sprint's store | `nova-redis install store` | `nova-redis serve` on 6380, its data in `~/nova-bench/redis/store` |
-| the friends' bus | `nova-redis install bus` | `nova-redis serve` on 6381, its data in `~/nova-bench/redis/bus` |
-| the sprint's server | `nova-sprint install server --listen <address:port>` | `nova-sprint run --listen` |
-| the machine's member | `nova-sprint install member --as <m> --server <address:port>` | `nova-swarm member` |
-| the seat's push loop | `nova-sprint install seat-push` | `nova-sprint inbox --wait --push seat` |
-| the friend sync loop | `nova-sprint install friend-sync --every 15s` | `nova-sprint friend sync --every` |
-| the live table | `nova-sprint install table --out <file>` | `nova-sprint where --watch` |
-| the disk guard | `nova-swarm install disk-guard` | `nova-swarm disk-guard`, one pass every 15 minutes |
-| the mirrors' refresh | `nova-swarm install mirror-refresh` (owed) | `nova-swarm mirror`, one pass every minute, the mirror set a converged property of the fleet: the repositories are the union of every REPO a card can name (the running sprint's stream repos `--repos` plus the fixed set every bench carries, `swarm.MirrorSetRepos`) and every fleet row is a bench (`--benches`), so `nova-swarm mirror --check` names a bench missing a mirror `MIRROR MISSING <bench> <repo>` and a refresh pass creates it; a machine that joins the fleet runs the same verb and gets the full fixed set |
-
-serve writes redis-server's configuration from its flags (binding, port, store directory under the
-bench root, persistence) and reads its password in its own process from the secret its unit names;
-the server, the push loop and the table open the store with the seat login (`nova-sprint seat login`). Two secrets are not read that way yet: the server's decision loop (`run --decide`) reads its
-API key from its environment, and the member hands its children the providers' keys `--pass` names
-from its environment; a unit carries neither, so until those verbs read a login as the store's does,
-the service's environment has to give them. `nova-sprint units --check` names each of the nine installed, missing or different, so a
-machine a stranger set up is checked against what a sprint needs; a unit written by hand around a
-wrapper reads as different. `nova-swarm install disk-guard` writes that unit in the swarm
-binary, and the unit runs `nova-swarm disk-guard` itself. The unit text the sprint and redis
-verbs share lives in `pkg/units`, which a worker's binary may import. `nova-swarm install mirror-refresh` stays owed: the mirror verb `nova-swarm mirror` is written, its
-unit is not, and `units --check` says the unit is owed rather than telling a stranger to run it. Until
-that unit is written, a mirror refresh is not installed from here. The play's disk-guard row above is the
-fleet's copy of the same pass.
-
-## A fixture inventory
-
-The plays' functional tests (`internal/ci/fleetplays_functional_test.go`) run
-against fixed inventories, the JSON `nova-config inventory --list` prints:
-`fleet/testdata/check-inventory.json` is the machine running the play, named
-`localhost`, with no store deployer; in `deployer-inventory.json` it is the
-coordinator and store deployer, and in `tla-inventory.json` a `tla` host only.
-
-## Variables
-
-The inventory gives each host `ansible_user`, `nova_seat`, `slots`,
-`runners`, `nova_tla` (its row's `tla`; the `tla` group is the hosts where it
-is true), `nova_redis_port`, `nova_redis_addr`, `nova_bus_addr` (the applied fleet row's `bus`, omitted when empty), the explicit `nova_pg_dsn`,
-`registry_roles` (the machine row's canonical roles), `nova_os` and
-`nova_arch` (from its beat) and `nova_loops`,
-and `all.vars` `nova_store`. The rest are defaults in
-`fleet/group_vars/all.yml`. The inventory's host variables override them, and
-so do a `group_vars/benches.yml` and `host_vars/<machine>.yml` beside the
-inventory; a `group_vars/all.yml` beside the inventory does not (the play's own
-is read after it). The host variables ensure an applied nonstandard Redis port
-outranks every group default. The Postgres URI is preserved exactly, including
-an explicit localhost; it is never derived from the Redis store machine.
-
-The play variables with a machine-row or beat source are projected as follows.
-The measured facts are optional, and the inventory never refuses a host for
-them: a machine that is down, or whose beat lacks a fact, is listed from its
-row with the facts it has, and the verb prints one `NOTE machine <m>: ...` line
-on stderr for each (never in the JSON, where ansible would read it as a group).
-The play gathers `os`, `arch` and cores from its own facts for any host whose
-beat lacks them (`fleet/tools.yml`). A beat is read from one source per fact:
-`cores` is the nova-sprint member's beat record, `sprint:beat:<machine>` (JSON,
-written by every member on every beat), the source of truth; a configured bench
-publisher's `bench:<machine>:beat` hash `ncpu` is read only when the member's
-record has no cores, so a stale hash never overrides a live beat; `os`, `arch`
-and `memory_gb` are only ever in that hash. When neither carries cores,
-`cores` is absent, and so is `slots_share` unless the row sets `width`.
-
-
-| variable | inventory source | plays that read it |
-|---|---|---|
-| `ansible_host` | the machine row name | Ansible connection target for every play |
-| `ansible_connection` | `local` when the inventory runs on that machine; otherwise absent | the local host in the play that invokes Ansible |
-| `bench_os` | beat `os` | bench, monitoring and tools plays |
-| `cores` | beat cores (`ncpu`), as an integer; absent when no beat has it | bench-register and runners plays |
-| `registry_seat` | machine row `seat` | bench play and fleet group variables |
-| `slots_capacity` | machine row `slots` | bench-register play |
-| `slots_share` | machine row `width`; when width is unset, half the beat cores; absent when neither is known | bench-register play |
-| `registry_roles` | canonical machine row `roles` list | bench and runners plays |
-
-The `benches`, `store`, and `coordinator` groups contain hosts with the
-`bench`, `services`, and `coordination` roles, respectively. `runner` is an
-explicit role carried in `registry_roles`; the existing `runners` group still
-comes from the row's runner count. The store and coordinator role groups must
-match the fleet row's `store` and `coordinator` singleton references exactly:
-one matching role host when a reference is set, and both empty when it is
-unset. Inventory refuses a mismatch before output so Ansible's role groups
-cannot point at different hosts than `nova_store`, Redis routing, or adoption.
-Other groups (`all`, `adopt`, `store_deployer`, `runners`, and `tla`) retain
-their existing sources and ordering. Empty role groups serialize as `[]`.
-
-Migration 0042 backfills each existing config machine with `bench` and adds
-`services` and `coordination` from the current fleet row references. It does
-not infer `runner` or restore assignments from the former external
-`machines.tsv`; those roles must be set explicitly with `nova-config machine
-set <machine> --roles <roles>`. The migration uses only
-`config.machines` and `config.fleet`.
-
-| variable | default | what it is |
-|---|---|---|
-| `nova_home` | the login's `$HOME` | where the bin directory, the release copies, the logs and the secrets layout live |
-| `nova_bin_dir` | `~/.local/bin` | where the tools are installed and where a loop's bare program is found |
-| `nova_sops`, `nova_sops_candidates` | the first of `~/.local/bin/sops`, `/opt/homebrew/bin/sops`, `/usr/local/bin/sops` that exists | the sops a seat is opened with; set `nova_sops` in `host_vars` for another |
-| `nova_secrets_store`, `nova_secrets_key_dir` | `~/nova-bench/secrets`, `~/.config/nova-secrets` | the nova-secrets store and the directory of `<seat>.key` |
-| `nova_launchd_domain` | `auto` | darwin: `gui` (a LaunchAgent in the login's GUI domain), `system` (a LaunchDaemon dropped to the login; sudo), or `auto`, which asks launchd whether the login has a GUI domain and takes `system` when it has not |
-| `nova_systemd_scope` | `user` | linux: a user unit (with linger) or `system` |
-| `nova_retire_units` | `[]` | units of another tool's to retire by name (below) |
-| `nova_disk_guard`, `nova_disk_guard_every`, `nova_disk_guard_args` | `true`, `900`, `--scan ~/nova-bench/run --cache ~/runner-*/_cache/go-build` | the disk guard `loops.yml` adds to every machine (below): on or off, its period in seconds, and its arguments after the `--root` of each record |
-| `nova_redis_port`, `nova_redis_addr` | the explicit applied fleet row (no port default) | the store |
-| `nova_bus_addr` | the applied fleet row's `bus`, omitted when that bus is empty | `NOVA_BUS_REDIS` in the loop units, rendered only when this variable is defined and not empty |
-| `nova_redis_deploy_user`, `nova_redis_deploy_password_key` | `coordinator`, `NOVA_REDIS_COORDINATOR_PASSWORD` | who loads the library, and the secret holding its password in the `store_deployer` seat |
-| `nova_redis_admin_user`, `nova_redis_admin_password_key` | `admin`, `NOVA_REDIS_ADMIN_PASSWORD` | who writes the ACL, and its secret |
-| `nova_redis_user_password_keys` | `coordinator`, `bench` | the secret holding the password of a user `acl apply` creates |
-| `nova_pg_dsn`, `nova_pg_password_key` | the applied fleet row (no inferred DSN), `NOVA_PG_CONFIG_PASSWORD` | the configuration store `tools.yml` migrates; an empty DSN is refused with the `fleet set` command |
-| `nova_release_out`, `nova_release_gocache` | `~/nova-bench/release-build`, `~/nova-bench/release-gocache` on the machine running the play | where the build is written and its Go cache |
-| `nova_version`, `nova_source` | none: `-e` | the build to install and the checkout it is built from |
-| `nova_sprint_release` | none: `-e` | a directory holding one mas-bandwidth/nova-sprint release (`gh release download <tag> -R mas-bandwidth/nova-sprint -D <dir>`); its nova-sprint, nova-card and nova-work are verified against its `SHA256SUMS_<goos>_<goarch>` and shipped in the same release, never compiled from this tree (`nova-update release build --sprint-release`) |
-| `nova_dogfood_receipts` | none: `-e` | the dogfood receipts directory the build's definition-of-done gate reads |
-| `nova_tla_dir`, `nova_tla_jar` | `/opt/tla`, `/opt/tla/tla2tools.jar` | where a record machine holds the TLC jar |
-| `nova_tla_sha256_file` | `tla/tla2tools.sha256` of the checkout the play runs from | the SHA-256 the jar must have, read on the machine running the play |
-| `nova_sdk_home` | `~/sdk` | the login-owned prefix for pinned language toolchains and the first TLC Java candidate |
-| `nova_tla_java_candidates` | `~/sdk/bin/java`, `/usr/bin/java`, `/usr/local/bin/java` | the java a record machine runs TLC with: the first that exists |
-| `nova_release_gate_args` | `--cli <nova_source>/docs/CLI.md --receipts <nova_dogfood_receipts>` | the build's gate flags; a waiver replaces them whole with `--no-dogfood-gate --reason <why>`, and then no receipts are named |
-| `nova_release_build_args` | `[]` | flags appended to the build after the gate's; `nova-update release cycle` passes `--incremental --gate report --reason <why>` |
-
-An existing schema has neither endpoint before migration 0014 adds their
-columns. Run `nova-config fleet set --redis_port
-<port> --pg_dsn postgres://user@localhost:5432/db`. Both endpoints stay unset
-until declared. Inventory refuses an unset endpoint
-before any member argv is rewritten; inventory never guesses a Redis port.
-
-Every secret is named, never valued: a task that needs one runs its tool under
-`nova-secrets exec --only <NAME> --require=<NAME>` as the host's seat, so the
-password reaches the tool's environment and no file, line or log. That the
-`store_deployer` seat holds the admin and deploy secrets is proven by the
-`--check` run of `redis.yml` and `tools.yml`, which log in with them.
-
-## tools.yml
-
-1. Every machine's platform: its beat's `nova_os`-`nova_arch`, else the gathered facts.
-2. On the machine running the play, one `nice -n 19 nova-update release build` (`GOMAXPROCS=4`, its own Go cache) for every platform that has no `SHA256SUMS` under `nova_release_out/<version>/` yet; a platform already built is not built again. `--check` prints `WOULD-BUILD ... built=<platforms> missing=<platforms>`. After a successful build it removes the old version directories in `nova_release_out`: it keeps the version just built, the version of the `nova-update` running it, and the 3 newest of the rest (`pruned=<n>` on its `RELEASE BUILD OK` line). The Go cache (`nova_release_gocache`) is the build's own `GOCACHE`, trimmed by Go itself of entries unused for five days, and is not pruned here.
-3. On every machine: the platform's directory copied to `~/nova-bench/release/<version>/<platform>/`: when the machine has the installed build's directory and this one is not begun, it is seeded from that directory on the machine (unverified); then one listing measures the sha256 of every file in the stage and only the files whose bytes differ from the release's `SHA256SUMS` are sent, so a missing, rebuilt or corrupt file is sent and an intact reused one is not (`tla/BenchStage.tla`). Then that release's own `nova-update release install`, which verifies the `SHA256SUMS` whole and skips a tool that already answers the version or already holds its bytes, then, last, removes the old version directories under `~/nova-bench/release/`: it keeps the version installed, every version the bin directory's binaries answered before it (so a bad build can be put back), and the 3 newest of the rest; only names that parse as a version are touched, and a removal that fails is counted (`prune-failed=<n>` on the `RELEASE INSTALLED` line) and never fails the install; the tools named in `fleet/retired-tools.txt` (tools nova-tools once shipped and ships no more, by exact name) are removed from the bin directory, and nothing else is: a binary the list does not name (a credential helper, a loop wrapper of the fleet's own, a `.prev` copy) is never touched, whatever its name; the build fact (`~/.config/nova/build`) holds the version. `--check` prints `TOOLS host=<m> ... UP-TO-DATE` or `WOULD-INSTALL` from the installed `nova-update version` or the build fact, and `WOULD-REMOVE <path>` for each retired tool present.
-4. On `store_deployer`: `nova-config migrate` (the schema a kind the build adds needs: run before any `nova-config loop add`), then `nova-redis fn load` as the deploy user; `--check` runs `nova-redis fn check` instead.
-5. On `tla`, the record machines (rows with `tla=true`; tagged `tla`, so `--tags tla` runs this step alone): the machine is Linux; `nova_tla_dir` exists and is the login's, and the jar at `nova_tla_jar` is the login's (sudo only when either is not); the jar's SHA-256 is the first word of `nova_tla_sha256_file`; java (the first of `nova_tla_java_candidates`) runs. It downloads and copies nothing: a jar that is missing or differs refuses the host with `TLA REFUSED host=<m> jar=<path> want=<sha> got=<sha|none>` and the `scp` that places it; a host that passes prints `TLA OK host=<m> jar=<path> sha256=<sha> java=<path> version=<v>`, and `--check` says the same. `tlacheck run --bench` runs the records there (tla/README.md, "The record machines").
-
-A machinery install during a sprint is one command from the coordinator,
-`nova-update release cycle` (docs/CLI.md, SPEC-RELEASE rule 13): this play
-with `--check`, then for real, limited to the benches named and `localhost`,
-the build `--incremental --gate report --reason <why>`, one `CYCLE BENCH`
-line per machine.
-
-The role that runs migrate must own every table in schema config. The play
-runs it as `nova_pg_owner` (group_vars: `nova_config`, the role that owns the
-schema whole; `nova_pg_owner_dsn` is `nova_pg_dsn` with that user, its password
-under `nova_pg_password_key`), never as the seat's own role: on 2026-10-08 a
-migrate as `nova_admin` was refused and the store stayed behind the build for
-7h45m. On the coordinator the migration runs inside the seat play's window
-(`nova-config migrate --window`, the old server and member stopped and seen
-gone), after a read-only preflight as the owner before the window: the
-candidate's `nova-config migrate --dry-run --json` must answer as the owner,
-say `owner=<nova_pg_owner>` (or `none`, a store before its first migration)
-and `ready=yes`, or the play refuses before anything is stopped, naming each
-table another role owns with its owner, and the refusal ends in `run:` and
-one `ALTER TABLE config."<table>" OWNER TO "<role>";` per table for a person
-to run in psql; no migration is run by hand before the window. Run those once,
-in psql, as a role with the owners' rights (the owner or a superuser), then
-run the play again. `nova-config migrate --dry-run` prints the same finding,
-applies nothing, and exits 1 when migrate would refuse (`ready=no`), 0 when
-it would apply.
-
-### Language toolchains
-
-Every Linux and Darwin fleet host installs Node, .NET, Dart, Elixir, Erlang/OTP,
-Rust, JDK, SBCL and GitHub CLI from the versioned, SHA-256-pinned archives in
-`fleet/roles/toolchains/defaults/main.yml`. The login's `~/sdk/<tool>-<version>`
-contains each extracted toolchain; verified downloads are cached in
-`~/sdk/.downloads`, `~/sdk/bin` links the commands, and `~/sdk/env.sh` is sourced
-by the login shell. `~/.config/nova/toolchains.json` records each tool's path and
-version on the host. A missing or changed executable
-or archive digest replaces that versioned install. The role verifies a replacement
-archive before removing the old install, so a download or checksum failure leaves
-the current install intact. The play is opt-in: an untagged tools rollout skips it.
-The Linux x86_64 and Darwin arm64 archive pairs are explicit, and an unsupported
-host platform is refused before installation. On Linux `~/sdk/bin/sbcl` is a
-launcher of the distro's sbcl (`apt-get install sbcl`; its path is
-`nova_toolchains_distro_sbcl`, `/usr/bin/sbcl` by default), never the Homebrew
-bottle, which is not relocatable; the play refuses a Linux host without it, and a
-dry run names it as `TOOLCHAINS WOULD-NEED`.
-
-Run the toolchain install with this one command:
-
-```sh
-ansible-playbook fleet/tools.yml --tags toolchains
-```
-
-`--check --diff` reports the same hosts, tool paths and versions without
-installing archives.
-
-eslint (`nova_eslint_version` in the same defaults file; the schema repository's `make/js.mk` pins "eslint 9") is the one
-npm-installed tool: `<sdk>/eslint-<version>` is its npm prefix (`npm install --prefix`, `--ignore-scripts`, run by the
-login, never `npm -g`), `<sdk>/bin/eslint` links to it, and the play fails unless `eslint --version` prints the pin.
-`ansible-playbook fleet/tools.yml --tags eslint --limit <host>` converges it alone and touches no other toolchain;
-`--tags toolchains` converges it with the rest. It needs the SDK's node first. Reach it on the members' PATH (`~/sdk/bin`)
-or from `sudo -u <login> bash -lc 'eslint --version'`; a bare `sudo -u <login> eslint` resets PATH and finds no SDK tool.
-
-google-java-format (`nova_gjf_version` and `nova_gjf_sha256` in the same defaults file; the schema repository's `make/java.mk`
-runs it as `google-java-format`) is the all-deps jar from the google/google-java-format release. Each bench downloads it
-itself and the play refuses it unless it matches the pinned sha256; it lives in `<sdk>/google-java-format-<version>/` and
-`<sdk>/bin/google-java-format` is a wrapper that runs it with the SDK's Java. The play fails unless `--version` prints the pin.
-`ansible-playbook fleet/tools.yml --tags gjf --limit <host>` converges it alone; `--tags toolchains` converges it with the rest.
-
-## redis.yml
-
-`nova-redis acl render` on the machine running the play prints the users this
-build renders (one per role: `coordinator`, the member's `bench`, the table
-reader's `ns-table`, the friend's `ns-friend`) with the key families and the
-code that names each. On `store_deployer`, `nova-redis acl check` compares the
-store's live ACL with them (`ACL OK`, `ACL DRIFT` with what would change, `ACL
-MISSING`; users no role renders are named with `NOTE ACL EXTRA` and left as
-they are, and the default user's state is named); `--check` stops there. A run
-then `nova-redis acl apply`s the users that differ. A user keeps the password
-it has; a user the store lacks is created only with the password in the seat's
-secret `nova_redis_user_password_keys` names, and the run refuses when it
-names none. `docs/CLI.md` ("The store's ACL") has the verbs' lines.
-
-## Containers are podman
-
-The fleet's container runtime is podman, rootless and daemonless, on every
-bench; `tools/functionalrun` runs the functional tier in it and takes podman
-when it is on `PATH`, docker only when podman is not (it names the one it used
-on stderr: `functionalrun: container runtime: podman (<path>)`). Docker is
-never installed by a play. `fleet/container-runtime.yml` is the mechanism
-(`fleet/roles/container-runtime/README.md`):
-
-- Linux: the distribution's `podman`, `uidmap` (`shadow-utils` on Fedora) and
-  `slirp4netns`, with the other rootless helpers, through apt or dnf; a
-  `/etc/subuid` and `/etc/subgid` row, linger and cgroup v2 delegation for the
-  bench's login; then a probe container proves the limits a run relies on.
-- macOS: `brew install podman` and `podman machine init --now`, sized from the
-  row's `slots` (two CPUs and 4 GiB per slot, at least 2 and 4 GiB); an
-  existing machine is started, never resized. A bench with no brew stops the
-  play with that said: the play does not install brew.
-- Every bench: `podman --version` is written to `~/.config/nova/podman` and
-  printed as `PODMAN host=<m> podman version <v> recorded=<path>`.
-
-A hand-installed podman is a stopgap: run the play, which finds the packages
-present and changes nothing but what is missing. `--check --diff` after a real
-run reads no change.
-
-```
-ansible-playbook -i ./nova-inventory fleet/container-runtime.yml --check --diff </dev/null 2>&1 | cat
-ansible-playbook -i ./nova-inventory fleet/container-runtime.yml </dev/null 2>&1 | cat
-```
-
-The inventory's group is `functional_runners` (`fleet/inventory.container-runtime.example.ini`).
+**The retire list.** With `-e nova_tools_remove_enabled=true`, after a successful install each name in
+`nova_tools_remove` found in the bin directory is moved to `<nova_bin_dir>/retired-<date>/`, never deleted; a name
+not there is skipped, so this is idempotent too. A name that is also being installed is refused. The default list is
+the tools nova-tools shipped and ships no more (`fleet/retired-tools.txt`, with the date and where each went):
+nova-cairn, nova-card, nova-work, nova-sprint, nova-check, nova-ci, nova-decide, nova-doctor, nova-friend, nova-fuse,
+nova-hook, nova-local, nova-memory, nova-redis, nova-self-talk, nova-swarm, nova-table, nova-tokens, nova-up,
+nova-update, nova-version, nova-loop. Retiring is for Unix machines; on Windows it is skipped.
 
 ## loops.yml
 
-One unit per record of `nova_loops`, from the record's fields and the host's
-layout: the command is the record's `argv`, word for word (a bare program is the installed
-tool, `~/` the login's home) behind `nova-secrets exec --as <seat> --only
-<keys> --require=<key>...` when the record names keys; its output goes to the
-record's log under the fleet row's `loops_dir` (migration 0033 seeds it to
-`~/nova-bench/loops`), which the play creates (on darwin, launchd agents log under the user's home,
-`~/Library/Logs/nova-loop-<name>.log`, because launchd cannot open log files on
-network volumes such as `/Volumes/nova`). Every unit
-gets `NOVA_SPRINT_REDIS=<store>:<redis_port>` from the applied fleet row. For
-a `nova-swarm member`, inventory removes an older endpoint assignment from the
-rendered `/usr/bin/env` prefix while preserving its Redis user, password
-variable name and every other word. This compatibility projection does not
-rewrite Postgres: remove that old assignment from the loop row with
-`nova-config loop set <loop> --argv '<argv>' --as <actor>`, then apply the loop
-kind. The endpoint remains effective from the unit environment during that
-cleanup.
+One supervised unit per loop row, on the machine the row names: a LaunchAgent (or LaunchDaemon) on macOS, a systemd
+user unit (or system unit) on Linux, with a `.timer` beside the service for a row that runs every n seconds.
 
-A sprint unit reads the API keys it needs in its own process. `nova-sprint run --keys <NAME,...>`
-(recorded as `keys.json` beside the seat login) names the decision key and each provider key the
-run loop reads; `nova-swarm member --pass <NAME,...>` names the keys a child may be handed, read
-from the seat (`NOVA_SEAT`, or the file `NOVA_SWARM_KEYS` names) when the environment does not
-already hold them. The child is handed the decision key, when pass names it, and the one provider
-key its route needs, never the whole set. A named secret that cannot be read refuses at start,
-naming the name and the remedy. The unit's environment does not carry the values, so those loops
-need no `nova-secrets exec` wrapper for `JEV_API_KEY` or a provider key.
+```
+ansible-playbook -i ./inventory fleet/loops.yml --check --diff
+ansible-playbook -i ./inventory fleet/loops.yml
+```
 
-- darwin: `com.nova.loop.<name>.plist` (`templates/nova-loop.plist.j2`) in
-  `~/Library/LaunchAgents` (GUI domain) or `/Library/LaunchDaemons` (system,
-  `UserName` the login), with `StandardOutPath` and `StandardErrorPath` logging
-  to `~/Library/Logs/nova-loop-<name>.log` under the user's home. A kept-alive
-  record has `KeepAlive`; a periodic one
-  `StartInterval`. A record with `enabled: false` is written with `Disabled`
-  and not loaded. A changed unit is booted out and bootstrapped again.
-- linux: `nova-loop-<name>.service` (`templates/nova-loop.service.j2`) in
-  `~/.config/systemd/user` (user scope, linger on) or `/etc/systemd/system`. A
-  kept-alive record is that service, restarted whenever it ends; a periodic
-  one is a oneshot service started by `nova-loop-<name>.timer`
-  (`templates/nova-loop.timer.j2`, `OnUnitActiveSec` the record's `every`). A
-  record with `enabled: false` is written, stopped and disabled.
+The unit runs the row's `argv` as given; a bare program name is the installed tool in `nova_bin_dir`, and `~/` is the
+login's home. A row that names secrets (`keys`) is wrapped in `nova-secrets exec --only <names> --` (with the seat,
+store, key and sops it needs, from `group_vars/all.yml`), so the values reach the command and never the unit file.
+`enabled false` writes the unit and does not load it.
 
-Every unit the play writes carries its mark (`written by fleet/loops.yml from
-the loop record <name>`). A marked unit that no record on the machine names,
-and every marked unit in the other place (the system place when the machine's
-is the login's own, and the other way round), is retired: unloaded and its
-file removed, then systemd reloaded. A unit of the same shape that another
-tool wrote is left as it is and named in a `NOTE`, unless a record of its name
-takes it over (the record's unit replaces it) or `nova_retire_units` names it.
-`--check` prints `WOULD-RETIRE <name> on <machine> (<file>)` for each and
-changes nothing; every run ends with `LOOPS host=<m> place=<dir> records=<n>
-enabled=<n> written=<n> retired=<n>`.
+- Every unit carries a mark. A marked unit no row names, and a marked unit in the other place (user versus system), is
+  retired: unloaded and removed. `--check` lists each as `WOULD-RETIRE`. A unit of another tool is left alone and
+  named in a `NOTE`; `nova_retire_units` names any to retire.
+- A unit whose file changed is restarted (`RESTART`, `WOULD-RESTART` under `--check`).
+- `-e nova_loop_only=a,b` renders and restarts only those rows and retires nothing. `-e nova_loop_restart=a,b`
+  restarts those rows even if their unit did not change; this is how a hung loop is restarted, never by hand. A name
+  no row carries is refused before anything is written.
+- On Linux a changed unit that was not restarted fails the play; the receipt line `LOOPS host=...` ends each host.
 
-`-e nova_loop_only=<name>,<name>` (or a JSON list) limits a run to those
-records (nova-tools#5096 item 24): only their units are rendered, restarted
-and counted (`records=` of the receipt, which ends `only=<names>`); every other
-unit on the machine is left as it is and nothing is retired, so a pass over the
-readers alone touches no member. A name that no record of the run's machines
-carries is refused before anything is written.
+## Load slots
 
-A unit whose file (or timer) changed is restarted, and the run says so first:
-`RESTART <name> on <machine>: its unit file changed; <why>` (`WOULD-RESTART`
-under `--check`, which restarts nothing). A member's unit (a record whose argv
-runs `nova-swarm member`, a reader's too) is never killed mid-card
-(nova-tools#5096 items 25, 26): its unit signals the member alone (systemd
-`KillMode=mixed`; launchd signals the job's process and abandons its group)
-and waits `nova_member_stop_timeout` (180 s, a minute above the member's
-longest drain, which is bounded at two minutes: a member that drains does no
-new work, so the restart gives the machine back and the cards still running are
-redealt) before it kills anything, and the member drains on that SIGTERM:
-it takes no new card, lets its running cards finish and reports them, then
-exits (at once when it runs none). So the restart is the drain: the play waits
-for it (on darwin until launchd no longer holds the member) and then starts the
-new unit. A unit written before the drain settings was started without them: on
-linux the daemon reload before the restart gives the stop its new settings; on
-darwin the old plist's bootout gives the member launchd's default 20 s, after
-which the member is killed and its children, abandoned with its group, are
-adopted by the new member while they live.
+`nova-slot` runs a command holding one of N load slots on the machine, so builds, tests and benches queue instead of
+timing each other out. It is the same tool on Linux, macOS and Windows: OS file locks in one directory
+(`$NOVA_SLOT_DIR`, else `/tmp/nova-slot`; `C:\ProgramData\nova-slot` on Windows), freed by the kernel when a holder
+dies. N defaults to the CPU count divided by 4; a machine's `slots` row says what it should be.
 
-### The disk guard, on every machine
+```
+nova-slot --slots 3 --wait 15m -- go test ./...
+nova-slot --exclusive -- ./bench
+nova-slot hold --slots 3          # prints HELD, holds until stdin closes
+nova-slot status
+```
 
-Beside the records, the play adds one periodic row to every machine,
-`disk-guard`: `nova-swarm disk-guard` every `nova_disk_guard_every` seconds
-(900), its `--root` each root a record's argv names, then
-`nova_disk_guard_args`, logging to `~/nova-bench/loops/disk-guard.log` (on darwin,
-launchd logs to `~/Library/Logs/nova-loop-disk-guard.log`). A record
-named `disk-guard` on the machine takes its place; `nova_disk_guard: false` in
-`host_vars` leaves it out (and retires the unit). Owner's rule, 2026-10-02: "We
-must not fill discs again", "cleanup must be auto!". Every per-card or
-per-machine artifact the fleet writes, and what removes it, when:
+Every caller on a machine uses the same directory. `slot/README.md` has the flags, exit codes and the TLA+ models.
 
-| artifact | what removes it, and when |
-|---|---|
-| a launch's checkout, `<root>/slots/<launch>/` | the member, while its loop runs: at once when the launch is reported ok, a failed one kept (the newest 5 of the pool); swept at the member's start. A pool whose loop stopped (no process names its root or works in it, nothing moved for 30 minutes): the disk guard's next run, by the same rule; a work launch whose checkout holds commits past its staged one is kept and said on a `KEPT slot` line, every run, until a person removes it |
-| a launch's small files and results (`.native.log`, `.card.md`, `.frame.json`, `results/<launch>`) | the member's cleaner, once the sprint's epoch is two past theirs (docs/SPEC-SWARM.md, `member`) |
-| a root's Go build cache, `<root>/cache/go-build` | the member's cleaner, held under `--gocache-limit` (20 GiB) while it runs; the disk guard every run, under `--cache-max-gb` (20), whether or not a loop runs |
-| the login's Go build cache (`$GOCACHE`, else the user cache directory's `go-build`) and every `--cache` (the CI runners' `_cache/go-build`) | the disk guard every run, under `--cache-max-gb`: entries used longest ago first, never one used in the last two hours, down to the cap less a fifth |
-| a module cache (`<root>/cache/go-mod`, the login's `$GOMODCACHE` or `~/go/pkg/mod`) | the disk guard, emptied when over `--modcache-max-gb` (50), no `go` command runs and no process holds a file in it |
-| a loop log, `~/nova-bench/loops/*.log` (on darwin, `~/Library/Logs/nova-loop-<name>.log`, which the disk guard does not rotate unless `--logs` points to `~/Library/Logs`) | the disk guard, over `--log-max-mb` (50): copied to `<log>.1` and emptied in place, the copies shifted, the one past `--log-keep` (3) removed |
-| a land clone, `<user cache dir>/nova-sprint/land/<repo>-<hash>` (`~/Library/Caches` on darwin, `~/.cache` on linux; never `/tmp`) | the disk guard, unused for `--clone-age` (24h), with no uncommitted work and no process naming it or working in it; land clones it again on its next use |
-| a mirror's temporary packs, `~/nova-bench/mirror/<repo>/objects/pack/tmp_pack_*` and `.tmp-*` (an aborted fetch's) | the disk guard, older than an hour, when no process names the mirror or works in it and no git fetch naming no path runs; never `git prune` |
-| release copies, `nova_release_out` | `tools.yml`, after a build: all but the built, the running and the 3 newest |
+## Not yet here
 
-A process works in a path when its working directory or a file it holds open
-lies under it (lsof on darwin, `/proc/<pid>/cwd` and `/proc/<pid>/fd` on Linux):
-a `git push` or a `make` run inside a land clone names no path on its argument
-line, and keeps the clone all the same. A launch agent's PATH leaves out
-`/usr/sbin`, where macOS keeps lsof, so the guard takes lsof from PATH, else
-from `/usr/sbin/lsof`, `/usr/bin/lsof`, `/sbin/lsof` or `/bin/lsof`, and says
-once at its start, on a `NOTE` line, which it took off PATH or that it found
-none. A run that cannot read the open files removes nothing that needs them
-and ends `INCOMPLETE`.
+What the owner wants in `fleet/` that does not exist yet. None of it is written, and none of it is promised by the
+files above:
 
-Each run prints one line per action (`REMOVED`, `TRIMMED`, `CLEANED`,
-`ROTATED`, with `freed=<bytes>`, or `KEPT` with why), a `DISK-GUARD WARN` line
-for a volume under `--disk-floor` (10 GiB, the member's own: a member there
-starts no card), and ends `DISK-GUARD OK freed=<bytes> free=<bytes>`, or
-`DISK-GUARD INCOMPLETE ... failed=<n>` and exit 1 when something could not be
-read or removed. Nothing under `/tmp` is the guard's: a clone a person or a
-child made there by hand is theirs to remove.
+- **ssh setup and hardening role.** Keys, `sshd` settings, per-machine access, applied and checked from the inventory.
+- **tailscale role.** Install and join each machine to the fleet's network, with the host name from the machine row.
+- **Health and self-heal role.** Checking each machine (disk, load, loops alive, tools at the right version) and
+  repairing what can be repaired without a person. The disk guard that used to be a loop here has moved to
+  nova-sprint.
+- **GitHub CI runner role.** Install, register and update the self-hosted runners that `.github/workflows/ci.yml`
+  runs on, from the machine rows (`runners`).
 
-The inventory carries `nova_loops` only once the loop kind has been applied to
-the store; until then `loops.yml` refuses each machine by name instead of
-reading the absence as "no loops" and retiring every unit.
-
-## Muse harness
-
-The tools play installs Muse Code `1.4.7-R6101.1` on every fleet member from
-its public release artefact, verified against the platform's pinned SHA-256
-in `fleet/roles/muse/defaults/main.yml`. A second converge keeps matching bytes.
-The role reads only the member seat's key names with `nova-secrets names`.
-Its adoption table reports `muse_key=present`, `missing`, or `unreadable`.
-A member without `META_API_KEY` refuses a Muse route with the remedy and runs no
-Muse card.
-
-The role writes a login of names, never values, at
-`~/.config/nova-swarm/muse-keys.json`. The member reads that optional login
-in process when `NOVA_SWARM_KEYS` is unset; an explicitly named login takes
-priority and includes `META_API_KEY` in its `names` to serve Muse.
-The direct member unit uses the existing in-process nova-secrets reader;
-its command and environment contain no provider key. Native passes the key
-on Muse's stdin and removes it from the harness environment, so tool children
-inherit no key. Muse reads the card's prompt file in the job worktree, reports
-its JSONL result and token classes, and uses the existing provider-failure
-classifier for a refused key, model, credit, or provider.
-
-A Muse route names `--tier frontier --harness muse --provider meta` and the
-model selected for that route. Muse is a subscription: its route uses the
-existing `--billing plan` vocabulary and explicitly zero marginal prices
-(`--price_input 0 --price_cache_read 0 --price_cache_write 0 --price_output 0`).
-`plan` alone retains the repository's metered-value prediction; the explicit
-zero prices record the subscription's zero marginal card cost. Raw usage stays
-under Muse's original names in the JSONL capture. The common usage table maps
-those reported classes without cache or reasoning subtraction, as the existing
-headless lanes do; overlapping raw classes are no metered price claim.
-`cached_tokens` remains a distinct raw Muse counter in that capture. It is
-not an alias for `cache_read_tokens`: the common `cache_read` column is
-reported only when Muse explicitly reports `cache_read_tokens`. Additional
-raw fields in the durable spend/consumer record belong to the separate
-subscription billing and raw receipts follow-up.
-The coordinator adds `frontier-muse` with
-the sprint's route verb and the selected model, deadline, subscription billing and zero marginal price sheet;
-the tools play writes no route or configuration-store value.
-
-Typed subscription receipt adoption uses a paired installation. Upgrade the sprint
-server first while the existing Muse `plan` route with explicit zero prices remains
-active, then upgrade each member and its native binary. Activate `billing=subscription`
-only after both binaries can pass receipt contract 2. A new native invoked by an old
-member remains on the legacy bridge; the upgraded server refuses that legacy receipt
-for a typed subscription route before writing a result. A new member passes `--billing`
-to native and `--receipt-contract 2` with finish/read; older binaries refuse those flags.
-Do not synthesize original Muse fields from legacy token-only receipts.
-
-The `raw_usage` word is unpadded base64url JSON: version 1, an ordered `records`
-array with `harness=muse`, `execution=fleet`, `source_schema=muse-jsonl-v1`,
-`producer_version`, declared `billing`, and a `tokens` map. Its optional integer
-keys are `input_tokens`, `output_tokens`, `cached_tokens`, `cache_write_tokens`,
-`cache_read_tokens`, and `reasoning_tokens`. Missing differs from zero. Records
-retain launch order and are never summed into disjoint accounting classes.
-`cached_tokens` remains distinct from explicit `cache_read_tokens`; no cache
-subtraction is performed. Envelopes over 32768 JSON bytes are refused.
-
-Before typed activation, let every old native launch end; an old writer does not
-participate in the new usage-file lock. New writers serialize header expansion and
-append through the existing process file lock. A released thirteen- or fourteen-column
-header expands once to the current eighteen columns with one atomic replacement,
-including the first typed row; historical values and file permissions stay intact.
-New historical columns are `-`, including absent raw data. An unknown header or
-incomplete row refuses expansion before publication. Normal appends read only a
-bounded header. Mixed legacy and typed launch rows refuse durable cost recovery;
-start a fresh generation rather than fabricate missing original counters. A durable
-receipt error forces an invalid contract-2 report even if a valid final summary exists.
-The expected contract is stamped in the launch generation and restored on adoption.
-
-Typed rows retain the exact reported amount in optional `actual_usd`; `-` is
-unreported and `0` is a measured zero. The legacy four-place `usd` display remains.
-Receipts with no exact column, and legacy rows, retain their historical display
-precision; recovery never invents a more precise amount. A typed row with an exact
-column uses that column's absence or value independently of the display column.
+Until they exist, those are done by hand, and the hand work is the thing to automate next.

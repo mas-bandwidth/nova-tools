@@ -51,7 +51,7 @@ func (c *clock) sleep() {
 }
 
 func opts(slots int, exclusive bool, wait time.Duration) options {
-	return options{slots: slots, exclusive: exclusive, wait: wait, dir: "/d", card: "-"}
+	return options{slots: slots, exclusive: exclusive, wait: wait, dir: "/d"}
 }
 
 func TestSharedTakesFirstFreeSlot(t *testing.T) {
@@ -180,10 +180,10 @@ func TestRunPassesTheStatusAndFrees(t *testing.T) {
 	f, dir := newFake(), t.TempDir()
 	var ran []string
 	w, _, errb := testWorld(f, dir, "", 7, &ran)
-	code := run([]string{"--slots", "2", "--card", "c1", "--", "make", "-j4"}, w)
+	code := run([]string{"--slots", "2", "--", "make", "-j4"}, w)
 	assert.Equal(t, 7, code)
 	assert.Equal(t, []string{"make", "-j4"}, ran)
-	assert.Contains(t, errb.String(), "HELD mode=shared slot=1/2 card=c1")
+	assert.Contains(t, errb.String(), "HELD mode=shared slot=1/2 pid=")
 	assert.Equal(t, 0, f.sh["all"])
 	assert.False(t, f.ex["slot1"])
 	assert.NoFileExists(t, filepath.Join(dir, "slot1.holder"))
@@ -194,10 +194,9 @@ func TestHoldPrintsHeldAndEndsOnStdinClose(t *testing.T) {
 	f := newFake()
 	var ran []string
 	w, out, _ := testWorld(f, t.TempDir(), "anything", 0, &ran)
-	// winlock's form, as the sprint member's --lane-lock and the WSL wrapper call it
-	code := run([]string{"hold", "--card", "c2", "--slots", "8", "--dir", `C:\rowan-jobs`, "--exclusive"}, w)
+	code := run([]string{"hold", "--slots", "8", "--dir", `C:\rowan-jobs`, "--exclusive"}, w)
 	assert.Equal(t, 0, code)
-	assert.True(t, strings.HasPrefix(out.String(), "HELD mode=exclusive slot=all/8 card=c2"))
+	assert.True(t, strings.HasPrefix(out.String(), "HELD mode=exclusive slot=all/8 pid="))
 	assert.Nil(t, ran)
 	assert.False(t, f.ex["all"])
 	assert.False(t, f.ex["gate"])
@@ -218,9 +217,8 @@ func TestStatusNamesHolders(t *testing.T) {
 	for _, n := range []string{"slot1", "slot2"} {
 		require.NoError(t, os.WriteFile(filepath.Join(dir, n), nil, 0o644))
 	}
-	require.Equal(t, 0, run([]string{"--slots", "2", "--card", "c3", "--", "sleep", "9"}, w))
+	require.Equal(t, 0, run([]string{"--slots", "2", "--", "sleep", "9"}, w))
 	assert.Contains(t, out.String(), "slot1 held pid=")
-	assert.Contains(t, out.String(), "card=c3")
 	assert.Contains(t, out.String(), "cmd=sleep 9")
 	assert.Contains(t, out.String(), "slot2 free\n")
 	assert.Contains(t, out.String(), "all free\n")
@@ -255,4 +253,11 @@ func TestDefaults(t *testing.T) {
 	w.stdout = &out
 	assert.Equal(t, 0, run([]string{"help"}, w))
 	assert.Contains(t, out.String(), "nova-slot status")
+}
+
+func TestCardFlagIsGone(t *testing.T) {
+	t.Parallel()
+	w, _, errb := testWorld(newFake(), t.TempDir(), "", 0, new([]string))
+	assert.Equal(t, 2, run([]string{"--card", "x", "--", "true"}, w))
+	assert.Contains(t, errb.String(), "card")
 }
