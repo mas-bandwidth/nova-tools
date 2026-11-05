@@ -122,7 +122,7 @@ func execWall(w *wall, env []string) *refusal {
 	// exec. --unix still blocks io_uring and ptrace; it only leaves AF_UNIX open.
 	if w.unix && !seccompAvailable() {
 		// nothing to install; the caller accepted the weaker wall
-	} else if err := installSeccomp(w.unix); err != nil {
+	} else if err := installSeccomp(!w.unix); err != nil { // filter AF_UNIX unless --unix
 		return fail("sandbox_failed", "the seccomp filter could not be installed: %v", err)
 	}
 	err := syscall.Exec(w.command, w.argv, env)

@@ -63,7 +63,7 @@ func TestBuild(t *testing.T) {
 	assert.Equal(t, []string{b}, w.writes)
 	assert.Equal(t, []uint16{8080, 9}, w.netPorts)
 	assert.True(t, filepath.IsAbs(w.command))
-	assert.Equal(t, []string{w.command, "-c", "true"}, w.argv)
+	assert.Equal(t, []string{"/bin/sh", "-c", "true"}, w.argv, "argv is verbatim; only w.command is resolved")
 
 	_, bad = build(spec{argv: []string{"/bin/sh"}}, "linux")
 	assert.Empty(t, bad, "no --write is a read-only run, not a refusal")

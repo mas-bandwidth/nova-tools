@@ -160,15 +160,14 @@ func TestEnvironmentAndDirectoryPassThrough(t *testing.T) {
 func TestArgv0IsVerbatim(t *testing.T) {
 	t.Parallel()
 	job, out := scratch(t)
-	// who.sh prints $0; link.sh is a symlink to it. Invoked by the link's name, the
-	// command must see the link's name, not the resolved target.
-	who := filepath.Join(out, "who.sh")
-	require.NoError(t, os.WriteFile(who, []byte("#!/bin/sh\necho $0\n"), 0o755))
-	link := filepath.Join(out, "link.sh")
-	require.NoError(t, os.Symlink(who, link))
-	code, stdout, stderr := sandbox(t, job, "--write", job, "--read", out, "--", link)
+	// A symlink to /bin/sh invoked by the link's name: `sh -c` with no operand sets $0
+	// to argv[0], so the command sees the name it was invoked as, not the resolved path.
+	// (A shebang script cannot show this: the kernel sets $0 to the script file.)
+	link := filepath.Join(out, "mysh")
+	require.NoError(t, os.Symlink("/bin/sh", link))
+	code, stdout, stderr := sandbox(t, job, "--write", job, "--read", out, "--", link, "-c", "echo $0")
 	require.Equal(t, 0, code, stderr)
-	assert.Equal(t, link+"\n", stdout, "argv[0] is the caller's, not the resolved path")
+	assert.Equal(t, link+"\n", stdout, "argv[0] is the caller's, not the resolved /bin/sh target")
 }
 
 func TestUnixSocketIsFencedByDefault(t *testing.T) {
@@ -232,7 +231,7 @@ func TestKeepFDsLeavesAnInheritedDescriptorOpen(t *testing.T) {
 	require.NoError(t, err)
 	// Pass the open descriptor to the child as fd 3 and have it read from /dev/fd/3.
 	run := func(extra ...string) (int, string) {
-		cmd := exec.Command(bin(t), append(append([]string{}, extra...), "--write", job, "--", "/bin/sh", "-c", "cat /dev/fd/3 2>/dev/null; true")...)
+		cmd := exec.Command(bin(t), append(append([]string{}, extra...), "--write", job, "--", "/bin/sh", "-c", "cat <&3 2>/dev/null; true")...)
 		cmd.Env, cmd.Dir = []string{"PATH=/usr/bin:/bin", "HOME=" + job}, job
 		rf, _ := os.Open(f.Name())
 		defer rf.Close()
