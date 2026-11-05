@@ -830,7 +830,7 @@ func TestSetValueSizeLimit(t *testing.T) {
 			continue
 		}
 		assert.Equal(t, 2, code, "%d", n)
-		assert.Regexp(t, fmt.Sprintf(`^nova-secrets set: value is %d\d* bytes; a secret is a key or token, at most 65536 bytes; run: nova-secrets set -h\n$`, n/10), h.stderr.String())
+		assert.Equal(t, "nova-secrets set: value is over 65536 bytes; a secret is a key or token; run: nova-secrets set -h\n", h.stderr.String())
 		assert.NoFileExists(t, filepath.Join(h.store, "ada.yaml"), "nothing is written")
 	}
 	h := newHarness(t) // CRLF after a full-size value is still in range
@@ -848,4 +848,25 @@ func TestExecStripsItsOwnInputsFromTheChild(t *testing.T) {
 		assert.NotContains(t, envMap(h.env), k)
 	}
 	assert.Equal(t, "v", envMap(h.env)["API_KEY"])
+}
+
+// endless is a stdin that never ends; set must refuse it after reading a bounded amount.
+type endless struct{ read int }
+
+func (e *endless) Read(p []byte) (int, error) {
+	e.read += len(p)
+	for i := range p {
+		p[i] = 'v'
+	}
+	return len(p), nil
+}
+
+func TestSetRefusesAnEndlessStdin(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	in := &endless{}
+	tl := tool{stdin: in, stdout: &h.stdout, stderr: &h.stderr, environ: h.environ, run: h.run}
+	assert.Equal(t, 2, tl.main(h.set("NEW")))
+	assert.Contains(t, h.stderr.String(), "value is over 65536 bytes")
+	assert.Less(t, in.read, 1<<20, "it stops reading")
 }

@@ -110,7 +110,7 @@ child has no business knowing where the key is), plus the `--only` names and the
 seat does not hold is refused, by name, and the command never runs. No core file is written after the decrypt.
 
 **set** creates `<seat>.yaml` under its rule when it is new. The first `set` checks `--key` against the seat's rule
-in `.sops.yaml`, as every later `exec` and `set` does, and encrypts nothing under another key. The value is one non-empty line of at most 65536 bytes; a longer one is refused with its size, never cut. An empty stdin, such as
+in `.sops.yaml`, as every later `exec` and `set` does, and encrypts nothing under another key. The value is one non-empty line of at most 65536 bytes; a longer one is refused as soon as it is seen to be over, never cut. An empty stdin, such as
 `/dev/null`, is refused as an empty value.
 
 **seat add** parses `.sops.yaml` and writes it back with the new rule. sops uses the first rule that matches a file,

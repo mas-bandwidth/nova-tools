@@ -76,11 +76,11 @@ func helpFor(verb string) (string, bool) {
 // identityEnv names an age identity or this tool's own inputs; none reaches sops or exec's command.
 var identityEnv = []string{"NOVA_SECRETS_KEY", "NOVA_SECRETS_STORE", "NOVA_SECRETS_SEAT", "SOPS_AGE_KEY", "SOPS_AGE_KEY_FILE", "SOPS_AGE_KEY_CMD", "SOPS_AGE_SSH_PRIVATE_KEY_FILE", "SOPS_KEYSERVICE"}
 
-// markKey is a clear provenance line older releases wrote into seat files; it is
-// not a secret, so it is never delivered, and a set drops it.
 // maxValue is the longest secret set accepts: a key or a token.
 const maxValue = 65536
 
+// markKey is a clear provenance line older releases wrote into seat files; it is
+// not a secret, so it is never delivered, and a set drops it.
 const markKey = "NOVA_SECRETS_WRITTEN_BY"
 
 var (
@@ -362,8 +362,7 @@ func (t tool) set(args []string) error {
 	}
 	value := strings.TrimSuffix(strings.TrimSuffix(string(raw), "\n"), "\r")
 	if len(value) > maxValue {
-		rest, _ := io.Copy(io.Discard, t.stdin)
-		return bad("value is %d bytes; a secret is a key or token, at most %d bytes", int64(len(value))+rest, maxValue)
+		return bad("value is over %d bytes; a secret is a key or token", maxValue)
 	}
 	if value == "" || strings.ContainsAny(value, "\r\n\x00") {
 		return refuse("set: empty or multi-line value on stdin; the value must be one non-empty line; run: nova-secrets set -h")
