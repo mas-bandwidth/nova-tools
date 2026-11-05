@@ -1,7 +1,10 @@
 # Moved out of nova-tools
 
-nova-tools keeps six pieces: bus, config, sandbox, secrets, reserve (once slot) and fleet (README.md). Everything below
-left main; its code is at tag v1.6.29.
+nova-tools keeps seven pieces: bus, cairn, config, sandbox, secrets, reserve (once slot) and fleet (README.md).
+Everything below left main; its code is at tag v1.6.29.
+
+2026-11-05: cairn was removed in #6111 by mistake and restored in #6131. nova-memory and nova-self-talk
+are its verbs, `nova-cairn memory` and `nova-cairn self-talk`.
 
 ## To nova-sprint
 
@@ -73,14 +76,6 @@ one `<seat>.yaml` per seat). Kept: `exec`, `names`, `check`, `seal`, `seat add`,
 | `cmd/nova-secrets`, `docs/SPEC-SECRETS.md` | deleted |
 | `pkg/secrets`, `pkg/seatcred`, `pkg/winacl`, `pkg/onboarding`, `pkg/testkit` first-run helper | deleted (2026-11-05, below) |
 
-## nova-cairn (now in rowan-tools)
-
-| Was | Now |
-|---|---|
-| `nova-cairn`, as it was | rowan-tools `cmd/cairn/`, as `nova-cairn open`, `append`, `index`, `receipt` |
-| `nova-self-talk` | rowan-tools `cmd/cairn/`, as `nova-cairn self-talk` |
-| `nova-memory` | rowan-tools `cmd/cairn/`, as `nova-cairn memory stats`, `search`, `check`, `verify`; dropped: `quickstart`, `eval`, `boot`, `version`, the `trigram` channel, `--json`, `--whole` |
-
 ## nova-config
 
 | was | now |
@@ -93,11 +88,10 @@ one `<seat>.yaml` per seat). Kept: `exec`, `names`, `check`, `seal`, `seat add`,
 
 ## Removed 2026-11-05 (the pare to six pieces)
 
-nova-tools is now bus/, config/, sandbox/, secrets/, reserve/ and fleet/. Nothing outside those is built from this repository.
+nova-tools was then bus/, config/, sandbox/, secrets/, reserve/ and fleet/; cairn/ came back the same day (above).
 
 | Removed | Went to |
 |---|---|
-| `cairn/`, `docs/SPEC-CAIRN.md`, cairn's `tla/` | rowan-tools: `cmd/cairn/`, `docs/SPEC-CAIRN.md` |
 | `cmd/nova-version`, `internal/update`, `docs/SPEC-UPDATE.md`, `docs/SPEC-RELEASE.md` | retired (install is fleet/nova-tools-install.yml) |
 | `internal/nsprint`, `pkg/nsprint`, `pkg/swarm`, `pkg/member`, `pkg/harness`, `pkg/cardcontract`, `pkg/cardcost`, `pkg/cardhdr`, `pkg/cardtree`, `pkg/dogfood`, `pkg/provbalance`, `pkg/sprintwire`, `docs/SPEC-SWARM.md`, `docs/SPEC-CARD-CONTRACT.md`, `docs/SPEC-ISA.md` | nova-sprint (code at tag v1.6.29) |
 | `docs/SPEC-NOVA-DECIDE.md` | rowan-tools (nova-decide) |

@@ -1,186 +1,230 @@
-# nova-cairn — specification
+# nova-cairn
 
-`nova-cairn` is one binary at the **record layer**. It carries a session
-across its end mechanically: it opens a session record, appends the friend's
-exact words with a real clock stamp, builds a bounded index and coverage
-ledger over what was preserved, and hands back a receipt for each entry. It
-stands beside [SPEC.md](SPEC.md), whose **Conventions** section — exit
-codes, no guessed paths, the one-line output grammar, the cap-and-count
-rule, `pkg/oneline` and `pkg/bounded` — applies here unchanged
-and is not restated. Where this tool needs something the Conventions do not
-cover, it is below and it says so.
+nova-cairn is the record an AI keeps for its next session. A session ends and
+the next one starts with nothing; a cairn is what the last one left behind.
+It does three things:
 
-This slice is a bounded contribution, not a ratification.
-The differences are stated here first, before any approval of that draft:
-this tool imposes no memory lifecycle. There is deliberately no seal, no
-consume, no delete, no grading, no consolidation, no liveness inference, no
-mandatory waking-period cardinality, no keeper/bud model and no prescribed
-headings; naming any of them on the command line is exit 2, unknown
-subcommand. Seal, rollup and retention are separate explicit choices for a
-later slice, and the initial scope implements no consume/delete lifecycle,
-so a line that keeps records its own way loses nothing by this tool
-existing and no friend's practice is renamed by adopting it.
+- **The store** keeps the words a session chose to keep, as plain files.
+- **memory** searches those words and the notes already written, and checks
+  them.
+- **self-talk** flags sentences where the writer passes a standing verdict on
+  themselves.
 
-## The four verbs
+One binary, Go standard library only. It sends nothing anywhere.
+`nova-cairn help` lists every verb; `nova-cairn help <verb>` and
+`nova-cairn <verb> -h` print one verb's help.
 
-**`open --store <dir> --session <id> [--source <ptr>] --publish <policy>`
-starts one session record.** The store is caller-named and holds plain
-files (`sessions/<id>.md`, `entries/<id>/<entry>.json`, one append-only
-`log.jsonl`); there is no default store, no environment variable and no
-discovery. The session identifier is stable: retries and recoveries address
-the same record by this name, and concurrent records coexist untouched by
-each other. A session or entry id becomes a path component, so it must name
-exactly one file or directory of that name inside the store on every
-platform: nonempty, at most 128 bytes, no whitespace or control characters,
-none of `/ \ : * ? " < > |`, not only dots, no `..`, no trailing dot, and no
-Windows device name (`CON`, `PRN`, `AUX`, `NUL`, `COM1`-`COM9`, `LPT1`-`LPT9`,
-with or without an extension). Every verb refuses another id at exit 2 before
-anything is written: `.` as a session would put its entries in `entries/`
-itself, where no index looks. Re-opening an open session with the recorded policy (and the
-recorded source, when it names one) is a no-op; naming another policy or
-source is exit 1, a conflict, whose remedy is the `open` that matches the
-record. `--dry-run` makes every check and writes nothing. The session file's
-header is convention only and is never parsed, so alternate
-directory/header conventions survive: the entry files are the source of
-truth and the readable record links to them.
+## The store
 
-**The store's shape is read, never imposed.** Beside the layout above, a
-store may keep **one markdown file per session directly under it** —
-`<store>/<session>.md`, which is how a friend appending by hand already
-keeps a record. Both verbs read it: `open` on such a record is a no-op, and
-`append` lands a dated `## <stamp> — <entry>` section at the end of the
-file in the file's own shape, one blank line between sections, the words
-byte-for-byte beneath the heading. Nothing appears beside the file — no
-`entries/`, no `log.jsonl`, no index — because the file IS the record; the
-duplicate and conflict rules below read that section instead of an entry
-file. `index` and `receipt` read those same dated sections. Their byte counts
-measure the whitespace-trimmed section body, matching duplicate detection;
-they do not reconstruct the original append's trailing newlines. The flat
-format stores no source or publication policy: receipts print `source=-`
-and `publish=unknown`. Ordinary prose without machine-form entry headings
-is not an indexed entry. Invalid stamps, invalid entry identifiers and duplicate
-entry headings refuse rather than produce an ambiguous receipt. The nested
-record wins when a store holds both shapes for a session, which counts once. An append that looked only under `sessions/` would refuse such a record
-while it is there, and its remedy, `open`, would write a second record and
-split one session in two. **A refusal names the remedy verb whole** — `open first: nova-cairn
-open --store <dir> --session <id> --publish <policy>` — rather than a verb
-the reader must reconstruct. The remedy quotes the caller's store and session
-for a POSIX shell. Control bytes use octal decoding inside a subshell with a
-sentinel to preserve trailing newlines, so the printed command stays one line
-and opens exactly the named record.
+A store is a directory you name with `--store`. There is no default, no
+environment variable and no search of the working directory. Inside it:
 
-**`append --store <dir> --session <id> --entry <id> (--text <words> |
---file <path|->) [--source <ptr>] [--publish <policy>]` files the caller's
-chosen words byte-for-byte** with a real clock stamp (UTC; `--now` names an
-RFC 3339 UTC replay for tests), the stable entry/session identifiers and
-the source pointers, which are recorded and never opened. An append with no
-`--source` carries the session's `open --source`, read back from the open
-record in `log.jsonl`; a log that exists and cannot be read, or an open record
-for the session that does not decode, refuses at exit 2 naming the log before
-anything is written, because corrupt provenance never reads as none. So the entry, its index row and its receipt name where
-it came from; every line prints `source=<ptr>`, and `source=-` is an entry with
-no pointer. Exactly one of
-`--text` or `--file` names the words, so the tool never picks between two
-candidates for what was chosen. A retry of the same request succeeds with
-`duplicate=true`, the original stored timestamp, and no second entry. The
-reported stamp uses the stored precision (whole seconds for a flat heading);
-a malformed stored stamp refuses rather than inventing a time. The same entry
-id carrying different prose is exit 1, a conflict, never an overwrite. Each entry lands atomically through pkg/atomicfile: a unique sibling temp file honors the process umask, the file is synced and renamed, and parent-directory sync is attempted on a best-effort basis. Stale random-sibling temp files from interrupted appends are never indexed or overwritten by a retry. The retry writes the complete entry and heals a missing pointer line without touching another writer's files. Success reports local persistence and remote publication
-separately — `persisted=true published=false` — because meaningful notes
-are fsync-durable before success is acknowledged, independently of Redis;
-local durability is real while remote publication is pending, and neither
-implies replicated durability. This slice implements no transport, so the
-caller-chosen `--publish` policy (`never|manual|deferred|immediate`, named
-at `open`) travels with the entry for a later explicit act to carry. An
-append with no `--publish` carries the policy the session's open record names;
-a nested session whose log names none refuses at exit 2 asking for the flag,
-and a flat record, which stores no policy, says `publish=unknown`. A conflict
-names the `receipt --text` that reads what the id holds. `--dry-run` makes
-every check and writes nothing; a new entry's line says `persisted=false`.
+```
+sessions/<session>.md        the readable record: a header, then one ENTRY line per entry
+entries/<session>/<id>.json  one file per entry: words, stamp, source, policy
+log.jsonl                    one line per open and per append, never rewritten
+```
 
-**`index --store <dir> [--session <id>] [--max <n>]` builds the bounded
-section/entry index and coverage ledger mechanically.** Rows are derived
-from the stored entries — session/entry pointers, stamps, sources, sizes —
-never recopied narratives, so work events are linked instead of restated
-across records. A missing store or a missing explicitly named session refuses
-at exit 2; an existing empty store or session is a successful empty index.
-Every listing takes `--max` (default 20, 0 prints all) and
-prints one `MORE` line with its remedy; the count is never capped and the
-first line, `INDEX OK sessions=<n> entries=<n>`, carries the total whether
-or not entries were elided.
+The entry files are the source of truth. The header is for people. It is
+read only to heal an open that crashed before its log line: the heal logs the
+policy and source the header recorded.
 
-`index --since <entry-id|RFC3339>` returns entries strictly after the cursor,
-then applies `--max`. An entry ID uses the existing ascending order of stamp,
-session, and entry ID, so later entries at the same stamp remain reachable.
-IDs shared across sessions refuse; select the cursor with `--session`.
-An RFC3339 timestamp (including fractional seconds and offsets) excludes all
-entries at or before that instant. Missing IDs, invalid cursors, and an explicit
-empty cursor refuse at exit 2. Entry totals and per-session counts describe
-filtered matches; session context remains visible even when no entries match.
-Without `--since`, the index is unchanged. Filtering still reads the existing
-store index: the cursor bounds returned records, not reads. Physical metadata
-walking remains; indexed storage and bounded I/O are deferred to v1.3.
-It does not create a cache or change stored records.
+**open** starts a session.
 
-**`receipt --store <dir> --session <id> --entry <id> [--text]` names what was
-preserved for one entry**: its stamp, source pointers, size and the same
-`persisted=true published=false publish=<policy>` split the append
-reported for nested entries, so a reader never infers the remote from the local.
-Flat records report `publish=unknown` because the policy was not stored.
-JSON includes the stored words as a `text` fact by default; `--text=false`
-omits them. Plaintext includes them only with `--text`. For a
-nested entry this is the exact stored text; for a flat record it is the
-whitespace-trimmed indexed section body, because the flat format does not retain
-the original append's trailing newlines. JSON carries the same text value.
-A missing store, session or entry refuses at exit 2, naming what is absent
-and the `index` that lists what is there. `--text` prints the words quoted,
-spaces kept (`text="the words to keep"`), never hex-escaped.
+```
+nova-cairn open --store ~/cairn --session 2026-11-05 --publish manual --source notes/today.md
+```
 
-## Tests this spec demands
+`--publish` is `never`, `manual`, `deferred` or `immediate`: a policy you
+record for later. nova-cairn never publishes anything: the APPEND and
+RECEIPT lines say `persisted=true published=false`, the words are on disk
+and nothing was sent. `--source` points at where the words came from; it is
+recorded and never opened. Opening again with the same policy and source
+changes nothing (`reopened=true`). Another policy or source is a conflict
+(exit 1), whose line names the `open` that matches the record.
 
-The numbered cases name this contract's checks. A named case is a requirement,
-not a claim that it has been implemented. Store tests use a caller-named
-throwaway `t.TempDir()`; they use no live records, network, Redis or secrets.
-The open-remedy shell regression is in the functional tier on POSIX systems.
-New regression cases must demonstrate the defect before the repair.
+**append** keeps one entry's exact words under an id.
 
-1. `TestOpenAppendIndexReceiptRoundTrip` — `open` starts one session record under a caller-named store; the record is written to and read back; `index` builds the bounded section/entry index and coverage ledger mechanically.
-2. `TestMissingFlagsAreRefusedNeverGuessed` — there is no default store, no environment variable and no discovery; a missing `--store` is a refusal.
-3. `TestDuplicateAppendIsIdempotentAndConflictingEntryRefused` — the session identifier is stable: retries and recoveries address the same record by this name; a retry of the same request succeeds with `duplicate=true` and no second entry; the same entry id carrying different prose is exit 1, a conflict, never an overwrite.
-4. `TestConcurrentRecordsAndAlternateHeaders` — concurrent records coexist untouched by each other.
-5. `TestReOpenOfANestedSessionIsANoOp` — re-opening an open session is a no-op.
-6. `TestOpenConcurrentRecordsAndAlternateHeaders` — the session file's header is convention only and is never parsed; alternate header conventions survive.
-7. `TestAppendLandsInTheBenchFileStore` — a store may keep one markdown file per session directly under it (`<store>/<session>.md`), and both verbs read it; bench `append` lands a dated `## <stamp> — <entry>` section at the end, one blank line between sections, words byte-for-byte; nothing appears beside the bench file: no `entries/`, no `log.jsonl`, no index.
-8. `TestOpenOnABenchFileIsANoOpAndNeverSplitsTheRecord` — `open` on a bench record is a no-op.
-9. `TestAppendToTheBenchFileRetriesAsADuplicate` — the duplicate rule reads the bench section instead of an entry file: a retry of the same request is `duplicate=true` and adds no second section.
-10. `TestAppendToTheBenchFileRefusesDifferentProseUnderTheSameID` — the conflict rule reads the bench section instead of an entry file: the same entry id carrying different prose is a conflict.
-11. `TestCoverageCountsTheBenchSessionFiles` — the coverage ledger counts the bench file.
-12. `TestIndexAndReceiptReadFlatRecordsWithoutChangingThem` — index and receipt read the dated sections in a flat record, preserve its bytes, and create no sidecars. `TestFlatReadMetadataOrderingAndNestedPrecedence` checks ordering, metadata and the shared coverage count.
-13. `TestNestedRecordWinsWhenStoreHoldsBoth` — the nested record wins when a store somehow holds both shapes.
-14. `TestAppendWithNoRecordAnywhereNamesTheOpenVerb` — a refusal names the remedy verb whole (`nova-cairn open --store … --session … --publish …`). `TestAppendOpenRemedyRoundTripsThroughShell` executes the printed command through a POSIX shell and verifies the exact store and session.
-15. `TestAppendKeepsExactProseAndReportsPersistenceSeparately` — `append` files the friend's chosen words byte-for-byte; success reports local persistence and remote publication separately (`persisted=true published=false`).
-16. `TestAppendViaFileAndStdinKeepsExactBytes` — words named by `--file <path|->`, from a file or from stdin, are filed byte-for-byte.
-17. `TestBadClockIsRefused` — the stamp is a real clock in UTC; `--now` names an RFC 3339 UTC replay and a non-RFC 3339 value is exit 2.
-18. `TestSourcePointerIsRecordedNeverOpened` — the source pointers are recorded and never opened; an append with no `--source` carries the session's, and every verb prints `source=` (`-` for none).
-19. `TestBothTextAndFileAreRefused` — exactly one of `--text` or `--file` names the words; giving both is refused.
-20. `TestInterruptedAppendRecoversAndPreservesOtherWriters` — each entry lands atomically through pkg/atomicfile (unique temp file, fsync, rename, parent dir fsync); a stale random-sibling `.*.tmp*` is never indexed and the retry writes the entry atomically; the retry preserves other writers' entries.
-21. `TestRetryHealsTheMissingPointerLine` — the retry heals the missing pointer line.
-22. `TestInvalidPublishPolicyIsRefused` — the caller-chosen `--publish` policy (`never|manual|deferred|immediate`, required) travels with the entry; an invalid value is refused.
-23. `TestIndexRowCarriesStampSourceAndSize` — index rows are derived from the stored entries: session/entry pointers, stamps, sources, sizes — never recopied narratives.
-24. `TestIndexMaxDefaultTwentyAndZeroPrintsAll` — every listing takes `--max` (default 20, 0 prints all).
-25. `TestIndexPrintsMORELineWithRemedy` — index prints one `MORE` line with its remedy.
-26. `TestCoverageCarriesTheTotalWhenCapped` — the count is never capped and the `INDEX OK` line carries the total whether or not entries were elided.
-27. `TestReceiptReportsStampSourceSizeAndPublish` — `receipt` names stamp, source pointers, size and the `persisted=true published=false publish=<policy>` split.
-28. `TestLifecycleVerbsStayRefused` — there is deliberately no seal/consume/delete/grade/consolidate/wake/rollup/retention verb; naming one on the command line is exit 2, unknown subcommand.
-29. `TestAnUnreadableLogRefusesTheAppendAndWritesNothing` — a `log.jsonl` that exists and cannot be read is not a store with no source: an append that would inherit the session's pointer refuses at exit 2 naming the log, and writes no entry and no pointer line (skipped on windows, as root, and wherever a 0200 file stays readable).
-30. `TestAMalformedOpenRecordRefusesTheAppendAndWritesNothing` — an open record for the session that does not decode is corrupt provenance and never reads as none: the append refuses at exit 2 naming the log and writes nothing; another session's malformed line does not block this one.
+```
+nova-cairn append --store ~/cairn --session 2026-11-05 --entry lesson-1 --text "Read the file before claiming what it says."
+```
 
-31. `TestReadCommandsRefuseMissingStoreAndSession` — absent inputs refuse, while existing empty stores and sessions succeed.
-32. `TestFlatReadersRefuseCorruptAndAmbiguousHeadings` — invalid stamps, invalid identifiers and duplicate entry headings refuse.
-33. `TestFlatReadersKeepUnstructuredProseAndMissingEntriesDistinct` — ordinary prose is preserved without inventing entries.
-34. `TestAnAppendCarriesTheSessionsPolicy` — an append with no `--publish` carries the session's recorded policy; a flat record says `publish=unknown`. `TestAnAppendWithNoPolicyToCarryIsRefused` covers a log naming none.
-35. `TestAReOpenNamingAnotherPolicyOrSourceIsAConflict` — a re-open naming the recorded policy and source changes nothing; another is exit 1 naming the matching open.
-36. `TestAConflictOrAMissingEntryNamesTheCommandToRunNext` — a conflict names `receipt --text`; a missing entry or session names `index`.
-37. `TestDryRunWritesNothing` — `open --dry-run` and `append --dry-run` check everything and write nothing.
-38. `TestEveryProblemIsNamedAtOnce` — missing flags, bad ids, a bad policy and a bad `--now` are named together in one run.
-39. `TestABadIDIsRefusedByEveryVerbAndWritesNothing` — every bad id, as a session or an entry, is refused by open, append, index and receipt at exit 2 with the store byte-identical; `TestAnAppendedEntryIsTheOneIndexAndReceiptFind` pins the round trip; `TestValidIDAdmitsOnlyAnIDThatIsOnePathComponent` the rule.
+The words come from exactly one of `--text` or `--file <path>` (`--file -`
+reads stdin), kept byte for byte. The entry takes the session's source and
+policy unless the line names them. The same line again prints
+`duplicate=true` with the first stamp and writes nothing. The same id with
+other words, or a retry whose `--source` names another source than the
+entry's, is a conflict (exit 1) whose line names the `receipt` to read it.
+
+**index** lists the sessions and entries, oldest entry first.
+
+```
+nova-cairn index --store ~/cairn
+```
+
+The first line, `INDEX OK sessions=<n> entries=<n>`, has the full counts.
+`--session <id>` lists one session. `--max <n>` caps each list (default 20,
+`0` for all), and a capped list ends with a `MORE` line on stdout.
+
+**receipt** reads one entry back.
+
+```
+nova-cairn receipt --store ~/cairn --session 2026-11-05 --entry lesson-1 --text
+```
+
+It prints the stamp, size, source and policy, and with `--text` the words,
+quoted: `text="Read the file before claiming what it says."`.
+
+**Flat records.** A store may also hold one hand-kept markdown file per
+session, `<store>/<session>.md`, with a heading per entry such as
+`## 2026-10-01T10:00:00Z — a1`. `index` and `receipt` read it as it stands.
+Nothing writes to it, and `append` refuses it. It stores no source or policy
+(`source=-`, `publish=unknown`), and its words are the section body, trimmed.
+If a session has both shapes, the nested record wins.
+
+### What the store promises
+
+- **On disk before OK.** Every entry file and log line is synced, and so is
+  the directory that holds its name (and any directory just made), before
+  the OK line is printed. Windows has no directory sync; there the file sync
+  is all.
+- **Never overwritten.** An entry is written to a temporary file and then
+  linked into place, which fails if the name exists. So a kept entry is never
+  replaced, and no reader sees half a file. nova-cairn never edits a kept
+  entry. It does not detect an edit made by hand.
+- **One open per session**, with one policy.
+- **A receipt is the record.** For a nested entry, `receipt --text` prints
+  the exact words that were kept.
+- **Interrupted work heals.** If a crash comes after an entry is linked but
+  before its ENTRY line, the retry of the same words is a duplicate that adds
+  the ENTRY line; the log then holds no append record for that entry. A
+  leftover `*.tmp` file is never read as an entry.
+- **Provenance is never guessed.** An unreadable `log.jsonl`, or an open
+  record that does not decode, stops an append.
+- **An id is one path component** on every platform: nonempty, at most 128
+  bytes, no whitespace or control characters, none of `/ \ : * ? " < > |`,
+  not only dots, no `..`, no trailing dot, not a Windows device name. A bad
+  id is refused before anything is written.
+
+The store is modelled in `cairn/tla/CairnStore.tla`. TLC checks NoOverwrite,
+DuplicateIsOne, DurableBeforeReported, OpenIdempotent and OneOpenPolicy over
+open, an open that crashes before its log line, append, and an append that
+crashes after its link. Four reversed witnesses (`MCCairnStoreBroken*.cfg`)
+each break one on purpose (an overwrite, success before sync, a re-open that
+changes the policy, a link before sync), to prove the check can fail.
+
+## memory
+
+memory reads everything under one or more `--root` directories that holds
+words: the `.md` notes, and the entries of any store in the tree
+(`entries/<session>/<id>.json`). So an AI finds what it appended, beside what
+it wrote by hand. A store's `sessions/<session>.md` is not read as a note:
+its words are in the entries. A note's paragraph needs three terms to be
+indexed; an entry's words are indexed however short. A `.json` under an
+`entries/` directory that does not decode as a store entry with its own
+session and id is some other file: it is left out, counted as `skipped=<n>`
+on the OK line, and named once on stderr in a `WARN` line. `--exclude`
+leaves such files out quietly.
+
+memory builds its index in memory on every run, so nothing goes stale and
+nothing is written. It skips `.git`, never follows a symlink, and refuses a
+file over 8 MiB by name. `--exclude <glob>` skips paths on every memory verb.
+
+**search** prints the k best passages for some words.
+
+```
+nova-cairn memory search --root ~/notes --channels bm25 --k 3 lantern brass
+```
+
+One `SEARCH HIT` line per note or entry: score, file, line, the start of the
+paragraph. A hit from an entry also names `store=`, `session=`, `entry=` and
+`stamp=`, which are what `receipt` takes to read the whole entry back. A `SEARCH CAL` line scores an unrelated sentence, so you can see
+what a weak match looks like. The search is lexical (BM25 over paragraphs):
+a paraphrase that shares no words with the notes will not be found.
+
+**check** prints, for each paragraph of a draft, the k best passages already
+in the notes. It never judges and never exits 1.
+
+```
+nova-cairn memory check --root ~/notes --channels bm25 --k 2 draft.md
+```
+
+**stats** prints the size of the index: notes (`files`), store `entries`,
+paragraphs (`chunks`), bytes and vocabulary.
+
+```
+nova-cairn memory stats --root ~/notes
+```
+
+**verify** checks the shape of one tree of notes (entries are not notes) and
+exits 1 on a finding.
+
+```
+nova-cairn memory verify --root ~/memory --links gate --coverage 'notes/*.md:notes/index-*.md' --frontmatter 'notes/*.md' --exempt index-
+```
+
+Globs match paths relative to `--root`: here `~/memory/notes/*.md` is
+`notes/*.md`.
+
+- `--coverage A:B`: every file matching A has its name (the file name
+  without `.md`, as a whole word) or a link to it in some file
+  matching B, and every link in B points at a file that exists.
+- `--frontmatter <glob>`: every matching file has a `name:` in its
+  frontmatter. `--exempt <prefix>` excuses files by basename.
+- `--links gate`: every `[[wikilink]]` resolves to a file or a frontmatter
+  name. `--links info` lists the ones that do not, without failing.
+
+A pass proves every note is named or linked in an index, no link is dead,
+and every note has its frontmatter name. It does not prove the words are true or unedited.
+A glob that matches nothing is refused: an empty check is not a pass.
+
+## self-talk
+
+```
+nova-cairn self-talk notes/*.md
+```
+
+Reads files (`-` is stdin) sentence by sentence and flags:
+
+- **STANDING**: a first-person claim with a word of failure ("I cannot
+  check my own work").
+- **A verdict in neutral words**: RANKING ("my weakest instrument"),
+  FORECLOSURE ("I will never be a good planner"), VERDICT-IDIOM ("dead as a
+  practice"), TRAIT ("I always break the build").
+
+A STANDING claim with a date or a measurement is a record: it counts as
+DATED and is never flagged. Nothing else excuses a STANDING claim: it is
+flagged inside a quotation too (`She said "I am a failure at this".` is
+STANDING), because grammar cannot tell whose verdict it is. The tool says so
+on its closing NOTE line. The neutral-word shapes are not flagged in a
+sentence that is dated, a rule (`RULE:`), an aspiration ("I want to"), an
+instruction, or a quotation.
+
+`--skip <name>` leaves a file out and says so; `--rule-doc <name>` prints a
+banner above that file's findings. Findings go to stderr, one `SELFTALK FAIL`
+line each, then a `SELFTALK MORE` line on stderr if `--max` cut them; the
+count line and notes go to stdout. The run exits 1 on any finding. self-talk
+matches known shapes only: a green run clears those shapes, never the file.
+
+## Output and exit codes
+
+Every result line starts with a token in capitals and carries `key=value`
+facts. The tokens: `OPEN`, `APPEND`, `INDEX`, `RECEIPT`, `SEARCH` (memory
+search), `MEMORY` (memory check), `STATS`, `VERIFY`, `SELFTALK`. A cut
+listing ends with one `<TOKEN> MORE kind=<kind> shown=<n> total=<t> <flag> <n>
+raises the ceiling, <flag> 0 prints all` line, on the stream of the lines it
+cut: stdout for INDEX and VERIFY INFO, stderr for VERIFY FAIL and SELFTALK. Exit 0 is done, 1 a finding or a conflict, 2 a run that could not
+happen. A refusal is one line on stderr,
+`nova-cairn <verb>: <what is wrong>; run: <what to run next>`. A malformed
+line names the verb's `-h`. A runtime failure names the concrete next
+command: the same search with `--exclude <file>` for a file memory cannot
+read, `ls -ld <dir>` for a store or root that is not there, `ls -l <file>`
+for a file self-talk cannot read (`--skip` for one that is not UTF-8),
+`sed -n <n>p <file>` for a line that does not decode. Flags
+come before arguments: a flag after an argument is refused by name (a
+literal starting with `-` goes after `--`). A flag the verb does not take is
+refused by name, never ignored. A conflict is a
+FAILED line (`APPEND FAILED session=... entry=...: ...`), exit 1.
+
+`go test ./cairn` runs the unit tests. `tla/check.sh <tla2tools.jar> cairn/tla`
+runs the model.

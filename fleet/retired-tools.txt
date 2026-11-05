@@ -10,9 +10,6 @@ nova-sprint	2026-11-05	sprint
 nova-swarm	2026-11-05	sprint
 nova-hook	2026-11-05	sprint
 nova-friend	2026-11-05	sprint
-nova-cairn	2026-11-05	rowan-tools
-nova-memory	2026-11-05	rowan-tools
-nova-self-talk	2026-11-05	rowan-tools
 nova-decide	2026-11-05	rowan-tools
 nova-doctor	2026-11-05	rowan-tools
 nova-tokens	2026-11-05	rowan-tools
@@ -27,3 +24,5 @@ nova-table	2026-11-05	retired
 nova-update	2026-11-05	retired
 nova-version	2026-11-05	retired
 nova-slot	2026-11-05	retired (renamed nova-reserve)
+nova-memory	2026-11-05	retired (verbs of nova-cairn: nova-cairn memory)
+nova-self-talk	2026-11-05	retired (verbs of nova-cairn: nova-cairn self-talk)
