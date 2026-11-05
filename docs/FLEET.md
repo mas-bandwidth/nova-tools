@@ -21,7 +21,7 @@ reserve/                            nova-reserve, reservations on a machine (Go)
 nova-config (`config/README.md`) keeps the fleet as rows in PostgreSQL, each write with a history row. Three kinds
 matter here:
 
-- `machine`: a host, its login `user`, its `seat`, how many load `slots` it has, its `roles`.
+- `machine`: a host, its login `user`, its `seat`, its `roles`.
 - `loop`: a command one machine runs forever or every n seconds: `machine`, `argv` (a JSON array), `seat`, `keys`
   (secret names, never values), `every` or `keepalive`, `enabled`.
 - `fleet`: the one fleet row (`loops_dir`, `bus`, and the store endpoints).
@@ -109,13 +109,14 @@ keys runs its `argv` unchanged. Rows without `every` are kept alive; `enabled` d
 `nova-reserve` runs a command holding a reservation of one of N slots on the machine, so builds, tests and benches queue instead of
 timing each other out. It is the same tool on Linux, macOS and Windows: OS file locks in one directory
 (`$NOVA_RESERVE_DIR`, else `/tmp/nova-reserve`; `C:\ProgramData\nova-reserve` on Windows), freed by the kernel when a holder
-dies. N defaults to the CPU count divided by 4; a machine's `slots` row says what it should be.
+dies. A machine has one capacity, N slots, stored in the directory; `docs/SPEC-RESERVE.md` has the rule.
 
 ```
-nova-reserve --slots 3 --wait 15m -- go test ./...
+nova-reserve --wait 15m -- go test ./...
 nova-reserve --exclusive -- ./bench
-nova-reserve hold --slots 3          # prints HELD, holds until stdin closes
+nova-reserve hold --for 2h &        # prints HELD, holds until SIGTERM or --for
 nova-reserve status
+nova-reserve set --slots 3           # refused while a slot is held
 ```
 
 Every caller on a machine uses the same directory. `reserve/README.md` has the flags, exit codes and the TLA+ models.
