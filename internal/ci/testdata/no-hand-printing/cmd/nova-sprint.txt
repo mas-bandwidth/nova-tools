@@ -1,2 +1,0 @@
-# no-hand-printing: hand printing in a tool package; each row's count only falls
-# ceiling: 0

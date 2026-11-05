@@ -1,1 +1,0 @@
-The nightly build is green again after the cache fix. Could you rerun the release check before noon?

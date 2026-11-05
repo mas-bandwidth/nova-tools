@@ -1,6 +1,0 @@
-{
-  "name": "example",
-  "questions": {
-    "clear": {"type": "noul", "instructions": "Is the example state clear?"}
-  }
-}

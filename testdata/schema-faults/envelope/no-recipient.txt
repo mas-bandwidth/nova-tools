@@ -1,3 +1,0 @@
-from: ada
-subject: s
-body: x

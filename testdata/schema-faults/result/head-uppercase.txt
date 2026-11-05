@@ -1,6 +1,0 @@
-head: ABCDEFA0123456789abcdef0123456789abcdef
-branch: b
-verdict: ok
-gate: g
-output: -
-report: r

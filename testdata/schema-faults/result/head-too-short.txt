@@ -1,6 +1,0 @@
-head: 012345
-branch: b
-verdict: ok
-gate: g
-output: -
-report: r
