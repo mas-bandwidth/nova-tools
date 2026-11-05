@@ -31,7 +31,6 @@ nova_tools_restart_commands: []
 #   -e nova_tools_remove='["nova-sprint","nova-card"]'
 nova_tools_remove_enabled: false
 nova_tools_remove:
-  - nova-cairn
   - nova-check
   - nova-ci
   - nova-decide

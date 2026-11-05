@@ -6,7 +6,7 @@
 
 # The tools nova-tools ships, by name: nova-tools-install.yml installs them and
 # loops.yml prefixes argv[0] with nova_bin_dir when it is one of them.
-nova_tools_names: [nova-bus, nova-config, nova-sandbox, nova-secrets, nova-reserve]
+nova_tools_names: [nova-bus, nova-cairn, nova-config, nova-sandbox, nova-secrets, nova-reserve]
 
 # Where a machine keeps the tools: its login's home.
 nova_home: "{{ ansible_env.HOME }}"
