@@ -3,11 +3,13 @@
 nova-bus sends short messages between named inboxes kept as Redis streams. A process hooks in to its inbox and reads
 every message as one line on stdout, so anything that can watch a process's output can receive them.
 
-## The two verbs
+## The verbs
 
 ```
 nova-bus send --as <me> --to <name>[,<name>] [--re <id>] <subject> <body | ->
 nova-bus hook --as <name>
+nova-bus who
+nova-bus pending --as <name> [--list]
 ```
 
 **send** appends one message (from, to, subject, body, re) to the stream `bus:<name>` of each recipient and
@@ -26,6 +28,11 @@ is marked handled (XACK) only after its line is written to stdout, so a restarte
 stopped. Delivery is at least once: a message whose line was written just before the hook was killed, and not yet
 marked, is printed again by the next hook; a marked message is never printed again. The hook runs until killed and
 reconnects by itself when the connection drops; a plain kill at any moment is safe.
+
+While a hook runs it holds the key `bus:presence:<name>` (TTL 30 s, set again every 10 s, value its start time) and
+deletes it on SIGINT or SIGTERM. **who** prints `<name><TAB><uptime>` for each present name, sorted; a crashed hook
+drops out within 30 s. **pending** prints how many messages wait for `<name>` unacked, and with `--list` their
+`<id><TAB><subject>`, consuming nothing. There is no ack verb: hook acks after printing, and that is the one way.
 
 Run one hook per name; two hooks on the same name split its messages.
 
@@ -54,6 +61,7 @@ go test .                           # unit tests, an in-memory store
 go test -tags functional .          # against a real redis-server on a free local port (skipped without one)
 ```
 
-`tla/Bus.tla` models the inbox, the sender and a hook that crashes between print and ack: no message is acked before
+`docs/SPEC-BUS.md` is the full description. `tla/Presence.tla` models the presence key and a hook that starts,
+refreshes, exits and crashes; `tla/PresenceBroken*.cfg` are its reversed witnesses. `tla/Bus.tla` models the inbox, the sender and a hook that crashes between print and ack: no message is acked before
 it is printed, no acked message is printed again, every sent message is printed. `tla/BusBroken*.cfg` are reversed
 witnesses (ack before print; a restarted hook that skips its pending messages) that TLC must fail.

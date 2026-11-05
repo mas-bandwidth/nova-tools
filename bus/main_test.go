@@ -293,7 +293,7 @@ func TestHookAcksEachLineAfterPrintingIt(t *testing.T) {
 func TestHookSetsPresenceAtStartAndRefreshes(t *testing.T) {
 	t.Parallel()
 	f := newFake()
-	f.quiet = 30 // a quiet read waits readBlock: 30 s in all
+	f.quiet = 30                     // a quiet read waits readBlock: 30 s in all
 	_, _ = runHookOnce(t, f, "beta") // ends on the fake's cancel
 	assert.Equal(t, t0.Format(time.RFC3339), f.presence["beta"], "the value is the hook's start time")
 	assert.Equal(t, []time.Time{t0, t0.Add(10 * time.Second), t0.Add(20 * time.Second), t0.Add(30 * time.Second)}, f.sets)
