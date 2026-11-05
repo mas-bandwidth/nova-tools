@@ -248,7 +248,12 @@ func checkTool(h *harness, spec toolSpec) {
 	if !strings.Contains(r.stderr, "no-such-verb") {
 		t.Errorf("A4 %s no-such-verb: expected stderr to name the verb no-such-verb; actual %q", name, trim(r.stderr))
 	}
+	seen := map[string]bool{}
 	for _, v := range spec.verbs {
+		if seen[v[0]] {
+			continue
+		}
+		seen[v[0]] = true
 		if !strings.Contains(r.stderr, v[0]) {
 			t.Errorf("A4 %s no-such-verb: expected stderr to list the verb %q; actual %q", name, v[0], trim(r.stderr))
 		}
