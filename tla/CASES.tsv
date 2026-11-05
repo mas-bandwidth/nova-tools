@@ -1,317 +1,100 @@
-config	module	expected	property	deadlock	group	gate	debt
-MCBenchRun.cfg	MCBenchRun.tla	pass	-	ignore-terminal	benchrun	required	-
-MCBenchRunBrokenNoRemove.cfg	MCBenchRun.tla	invariant	NothingLeftBehind	ignore-terminal	benchrun	required	-
-MCBenchRunBrokenInterruptRefused.cfg	MCBenchRun.tla	invariant	InterruptedExecRan	ignore-terminal	benchrun	required	-
-MCBenchStage.cfg	MCBenchStage.tla	pass	-	ignore-terminal	benchstage	required	-
-MCBenchStageBrokenLines.cfg	MCBenchStage.tla	invariant	ReusedByteIdentical	ignore-terminal	benchstage	required	-
-MCCairnStore.cfg	MCCairnStore.tla	pass	-	ignore-terminal	cairnstore	required	-
-MCCairnStoreBrokenOverwrite.cfg	MCCairnStore.tla	invariant	NoOverwrite	ignore-terminal	cairnstore	required	-
-MCCairnStoreBrokenReopenOther.cfg	MCCairnStore.tla	invariant	OneOpenPolicy	ignore-terminal	cairnstore	required	-
-MCCairnStoreBrokenReportBeforeFsync.cfg	MCCairnStore.tla	invariant	DurableBeforeReported	ignore-terminal	cairnstore	required	-
-MCEpochMemberBroken.cfg	MCEpochMemberTable.tla	invariant	NoEpochLeak	ignore-terminal	epochmembertable	required	-
-MCEpochMemberBrokenStale.cfg	MCEpochMemberTable.tla	action	StaleWritesRefuse	ignore-terminal	epochmembertable	required	-
-MCEpochMemberFixedPoint.cfg	MCEpochMemberTable.tla	pass	-	ignore-terminal	epoch-fixed-point	required	-
-MCEpochMemberTable.cfg	MCEpochMemberTable.tla	pass	-	ignore-terminal	epochmembertable	required	-
-MCFileLock.cfg	MCFileLock.tla	pass	-	ignore-terminal	filelock	bench	-
-MCFileLockBrokenBusyIsHeld.cfg	MCFileLock.tla	invariant	HeldIsTrue	ignore-terminal	filelock	bench	-
-MCFileLockBrokenSentinel.cfg	MCFileLock.tla	invariant	NothingToClear	ignore-terminal	filelock	bench	-
-MCFileLockBrokenStale.cfg	MCFileLock.tla	invariant	MutualExclusion	ignore-terminal	filelock	bench	-
-MCFileLockBrokenUnlink.cfg	MCFileLock.tla	invariant	MutualExclusion	ignore-terminal	filelock	bench	-
-MCFileLockCandidate.cfg	MCFileLock.tla	invariant	HeldIsTrue|MutualExclusion	ignore-terminal	filelock	bench	-
-MCFileLockFour.cfg	MCFileLock.tla	pass	-	ignore-terminal	filelock	bench	-
-MCFirstConn.cfg	MCFirstConn.tla	pass	-	ignore-terminal	firstconn	required	-
-MCFirstConnBrokenAny.cfg	MCFirstConn.tla	invariant	TakenOnlyWhenDue	ignore-terminal	firstconn	required	-
-MCFirstConnBrokenHang.cfg	MCFirstConn.tla	temporal	AnswerDelivered	ignore-terminal	firstconn	required	-
-MCFirstConnBrokenLate.cfg	MCFirstConn.tla	invariant	TakenOnlyWhenDue	ignore-terminal	firstconn	required	-
-MCFirstConnBrokenMisaligned.cfg	MCFirstConn.tla	invariant	TakenOnlyWhenDue	ignore-terminal	firstconn	required	-
-MCFirstConnBrokenRefused.cfg	MCFirstConn.tla	invariant	TakenOnlyWhenDue	ignore-terminal	firstconn	required	-
-MCFirstConnBrokenShort.cfg	MCFirstConn.tla	invariant	AnswerStandsInPlace	ignore-terminal	firstconn	required	-
-MCFirstConnBrokenTwice.cfg	MCFirstConn.tla	invariant	TakenOnlyWhenDue	ignore-terminal	firstconn	required	-
-MCFuseBox.cfg	MCFuseBox.tla	pass	-	ignore-terminal	fusebox	required	-
-MCFuseBoxBrokenAbsentClear.cfg	MCFuseBox.tla	invariant	GateAnswersOnlyFromEveryNamedBox	ignore-terminal	fusebox	required	-
-MCFuseBoxBrokenInitReplaces.cfg	MCFuseBox.tla	invariant	InitOnlyWhereNoBox	ignore-terminal	fusebox	required	-
-MCFuseBoxBrokenLastWins.cfg	MCFuseBox.tla	invariant	GateAnswersOnlyFromEveryNamedBox	ignore-terminal	fusebox	required	-
-MCFuseBoxBrokenLockdownNeedsBox.cfg	MCFuseBox.tla	invariant	LockdownAlwaysBlows	ignore-terminal	fusebox	required	-
-MCFuseBoxBrokenLostUpdate.cfg	MCFuseBox.tla	invariant	LockdownMonotone	ignore-terminal	fusebox	required	-
-MCFuseBoxBrokenQuarantineMakes.cfg	MCFuseBox.tla	invariant	OnlyALiftInitOrHandClears	ignore-terminal	fusebox	required	-
-MCMemberBrokenAlias.cfg	MCMemberTable.tla	invariant	NoOwnedAlias	ignore-terminal	membertable	required	-
-MCMemberBrokenMove.cfg	MCMemberTable.tla	invariant	RecordSetLink	ignore-terminal	membertable	required	-
-MCMemberFixedPoint.cfg	MCMemberTable.tla	pass	-	ignore-terminal	membertable	required	-
-MCMemberTable.cfg	MCMemberTable.tla	pass	-	ignore-terminal	membertable	required	-
-MCRedisFn.cfg	MCRedisFn.tla	pass	-	check	redisfn	required	-
-MCRedisFnDeleteThenLoad.cfg	MCRedisFn.tla	invariant	NoGap	check	redisfn	required	-
-MCRedisFnHolderGone.cfg	MCRedisFn.tla	invariant	HolderFound	check	redisfn	required	-
-MCRedisFnLoadMissing.cfg	MCRedisFn.tla	pass	-	check	redisfn	required	-
-MCRedisFnMissReplaces.cfg	MCRedisFn.tla	action	MissNeverReplaces	check	redisfn	required	-
-MCRedisFnOneDeployer.cfg	MCRedisFn.tla	pass	-	check	redisfn	required	-
-MCRedisFnTwoDeployers.cfg	MCRedisFn.tla	temporal	Settles	check	redisfn	required	-
-MCTableBind.cfg	MCTableMachine.tla	invariant	BindPreservesOwned	ignore-terminal	tablemachine	bench	-
-MCTableBindRetained.cfg	MCTableMachine.tla	invariant	BindPreservesOwned	ignore-terminal	tablemachine	bench	-
-MCTableBoundAlias.cfg	MCTableMachine.tla	invariant	CellWritesPreserveBoundSets	ignore-terminal	tablemachine	bench	-
-MCTableCrossTable.cfg	MCTableMachine.tla	invariant	OneTablePerMember	ignore-terminal	tablemachine	bench	-
-MCTableDropAlias.cfg	MCTableMachine.tla	invariant	DropPreservesBound	ignore-terminal	tablemachine	bench	-
-MCTableEdit.cfg	MCTableEdit.tla	pass	-	ignore-terminal	tableedit	required	-
-MCTableEditBrokenLegacy.cfg	MCTableEdit.tla	invariant	ShapeLosesNoMember	ignore-terminal	tableedit	required	-
-MCTableEditBrokenRefusal.cfg	MCTableEdit.tla	invariant	RefusalWritesNothing	ignore-terminal	tableedit	required	-
-MCTableEditBrokenText.cfg	MCTableEdit.tla	invariant	ShapeLosesNoText	ignore-terminal	tableedit	required	-
-MCTableFirstContact.cfg	MCTableFirstContact.tla	pass	-	check	tablefirstcontact	required	-
-MCTableFirstContactBrokenEveryMiss.cfg	MCTableFirstContact.tla	invariant	LoadOnce	check	tablefirstcontact	required	-
-MCTableFirstContactBrokenReplace.cfg	MCTableFirstContact.tla	invariant	NeverReplaced	check	tablefirstcontact	required	-
-MCTableFirstContactBrokenResendLost.cfg	MCTableFirstContact.tla	invariant	AtMostOnce	check	tablefirstcontact	required	-
-MCTableFirstContactFresh.cfg	MCTableFirstContact.tla	pass	-	check	tablefirstcontact	required	-
-MCTableFixedPoint.cfg	MCTableMachine.tla	pass	-	ignore-terminal	tablemachine	bench	-
-MCTableMachine.cfg	MCTableMachine.tla	pass	-	ignore-terminal	tablemachine	bench	-
-MCTableOnePlace.cfg	MCTableMachine.tla	invariant	OnePlacePerTable	ignore-terminal	tablemachine	bench	-
-MCTableOrder.cfg	MCTableOrder.tla	pass	-	ignore-terminal	tableorder	required	-
-MCTableOrderBrokenBind.cfg	MCTableOrder.tla	invariant	StandingSortHolds	ignore-terminal	tableorder	required	-
-MCTableOrderBrokenBindLoss.cfg	MCTableOrder.tla	invariant	OnlyRowDelDrops	ignore-terminal	tableorder	required	-
-MCTableOrderBrokenCombined.cfg	MCTableOrder.tla	invariant	StandingSortHolds	ignore-terminal	tableorder	required	-
-MCTableOrderBrokenDel.cfg	MCTableOrder.tla	invariant	OnlyRowDelDrops	ignore-terminal	tableorder	required	-
-MCTableOrderBrokenItem.cfg	MCTableOrder.tla	invariant	RowMoveIsExact	ignore-terminal	tableorder	required	-
-MCTableOrderBrokenOnce.cfg	MCTableOrder.tla	invariant	RowSortIsExact	ignore-terminal	tableorder	required	-
-MCTableOrderBrokenPrefix.cfg	MCTableOrder.tla	invariant	RowOrderIsExact	ignore-terminal	tableorder	required	-
-MCTableOrderBrokenSort.cfg	MCTableOrder.tla	invariant	StandingSortHolds	ignore-terminal	tableorder	required	-
-MCTableSession.cfg	MCTableSession.tla	pass	-	ignore-terminal	tablesession	required	-
-MCTableSessionBrokenClass.cfg	MCTableSession.tla	invariant	ConnectionFailureIsTwo	ignore-terminal	tablesession	required	-
-MCTableSessionBrokenInt.cfg	MCTableSession.tla	invariant	StopOnlyWhenStopped	ignore-terminal	tablesession	required	-
-MCTableSessionBrokenLast.cfg	MCTableSession.tla	invariant	ExitIsHighest	ignore-terminal	tablesession	required	-
-MCTableSessionBrokenLong.cfg	MCTableSession.tla	invariant	KeepGoingReadsEveryLine	ignore-terminal	tablesession	required	-
-MCTableSessionBrokenOn.cfg	MCTableSession.tla	invariant	StopsAtFirstFailure	ignore-terminal	tablesession	required	-
-MCTableSessionBrokenReplay.cfg	MCTableSession.tla	invariant	AtMostOnce	ignore-terminal	tablesession	required	-
-MCTableSessionBrokenStale.cfg	MCTableSession.tla	invariant	NoFalseAlarm	ignore-terminal	tablesession	required	-
-MCTableSessionBrokenTerm.cfg	MCTableSession.tla	invariant	NothingStartsAfterStop	ignore-terminal	tablesession	required	-
-MCTableSessionBrokenTermLive.cfg	MCTableSession.tla	temporal	TermEnds	ignore-terminal	tablesession	required	-
-MCCardContract.cfg	MCCardContract.tla	pass	-	ignore-terminal	cardcontract	required	-
-MCCardContractBrokenToday.cfg	MCCardContract.tla	invariant	OkIsPushedWork	ignore-terminal	cardcontract	required	-
-MCCardContractBrokenNoShape.cfg	MCCardContract.tla	invariant	OkIsPushedWork	ignore-terminal	cardcontract	required	-
-MCCardContractBrokenPushIgnored.cfg	MCCardContract.tla	invariant	OkIsPushedWork	ignore-terminal	cardcontract	required	-
-MCCardContractBrokenReapReported.cfg	MCCardContract.tla	invariant	ReapedIsNotReported	ignore-terminal	cardcontract	required	-
-MCCardContractBrokenBranchName.cfg	MCCardContract.tla	invariant	StagedFromOrigin	ignore-terminal	cardcontract	required	-
-MCCardContractBrokenProviderFailed.cfg	MCCardContract.tla	invariant	ProviderIsNotFailedWork	ignore-terminal	cardcontract	required	-
-MCCardContractBrokenPreviousOnly.cfg	MCCardContract.tla	invariant	NoPushedWorkUnreachable	ignore-terminal	cardcontract	required	-
-MCCardContractBrokenStagingFailed.cfg	MCCardContract.tla	invariant	StagingIsNotFailedWork	ignore-terminal	cardcontract	required	-
-MCCardContractBrokenOldHead.cfg	MCCardContract.tla	invariant	ReworkStagedAtTheTip	ignore-terminal	cardcontract	required	-
-MCCardContractBrokenSilentConflict.cfg	MCCardContract.tla	invariant	NoPushedWorkUnreachable	ignore-terminal	cardcontract	required	-
-MCCardContractBrokenApplyMoved.cfg	MCCardContract.tla	invariant	CollectedAppliesOnlyIfHeld	ignore-terminal	cardcontract	required	-
-MCCardContractBrokenReapAccepted.cfg	MCCardContract.tla	invariant	AcceptedIsNeverReaped	ignore-terminal	cardcontract	required	-
-MCCardContractBrokenLengthNoResult.cfg	MCCardContract.tla	invariant	LengthIsAHarnessFault	ignore-terminal	cardcontract	required	-
-MCCardContractBrokenRewritePushed.cfg	MCCardContract.tla	invariant	RewriteKeptIsPushed	ignore-terminal	cardcontract	required	-
-MCFinishRefused.cfg	MCFinishRefused.tla	pass	-	ignore-terminal	finishrefused	required	-
-MCFinishRefusedBrokenForgetUnpushed.cfg	MCFinishRefused.tla	invariant	OneRunPerGeneration	ignore-terminal	finishrefused	required	-
-MCFinishRefusedBrokenExit2NoAnswer.cfg	MCFinishRefused.tla	invariant	RefusalsBounded	ignore-terminal	finishrefused	required	-
-MCBus2.cfg	MCBus2.tla	pass	-	ignore-terminal	bus2	required	-
-MCBus2BrokenPartial.cfg	MCBus2.tla	invariant	OnEveryStreamOrNone	ignore-terminal	bus2	required	-
-MCBus2BrokenNewFirst.cfg	MCBus2.tla	action	PendingBeforeNew	ignore-terminal	bus2	required	-
-MCBus2BrokenSteal.cfg	MCBus2.tla	action	HeldStaysHeld	ignore-terminal	bus2	required	-
-MCBus2BrokenClaimFresh.cfg	MCBus2.tla	action	HeldStaysHeld	ignore-terminal	bus2	required	-
-MCBus2BrokenAckUndelivered.cfg	MCBus2.tla	action	AckOnlyDelivered	ignore-terminal	bus2	required	-
-MCBus2BrokenAckReopens.cfg	MCBus2.tla	action	AckedStaysAcked	ignore-terminal	bus2	required	-
-MCFriend.cfg	MCFriend.tla	pass	-	ignore-terminal	friend	required	-
-MCUpdateApply.cfg	MCUpdateApply.tla	pass	-	ignore-terminal	updateapply	required	-
-MCUpdateApplyBrokenInstallOnVerdict.cfg	MCUpdateApply.tla	invariant	ApplyOnlyWhatIsNamed	ignore-terminal	updateapply	required	-
-MCUpdateApplyBrokenDryRunInstalls.cfg	MCUpdateApply.tla	invariant	DryRunInstallsNothing	ignore-terminal	updateapply	required	-
-MCUpdateApplyBrokenSentOnRefusal.cfg	MCUpdateApply.tla	invariant	SentOnlyOnOK	ignore-terminal	updateapply	required	-
-MCUpdateApplyBrokenAheadIsNewer.cfg	MCUpdateApply.tla	invariant	VerdictMatchesVersion	ignore-terminal	updateapply	required	-
-MCConfigApply.cfg	MCConfigApply.tla	pass	-	ignore-terminal	configapply	required	-
-MCConfigApplyBrokenStampFirst.cfg	MCConfigApply.tla	invariant	StampOnlyWhenComplete	ignore-terminal	configapply	required	-
-MCConfigApplyBrokenFriendBeforeCeiling.cfg	MCConfigApply.tla	invariant	ApplyOrder	ignore-terminal	configapply	required	-
-MCConfigApplyBrokenWriteWithoutHistory.cfg	MCConfigApply.tla	invariant	HistoryCoversEveryWrite	ignore-terminal	configapply	required	-
-MCConfigApplyBrokenApplyOverAhead.cfg	MCConfigApply.tla	invariant	ConflictRefusesAhead	ignore-terminal	configapply	required	-
-MCConfigApplyBrokenStopAtFirstRefusal.cfg	MCConfigApply.tla	invariant	EveryPlannedKindIsAttemptedUnlessCrashed	ignore-terminal	configapply	required	-
-MCConfigApplyBrokenStampWithARefusal.cfg	MCConfigApply.tla	invariant	StampedKindHasNoRefusal	ignore-terminal	configapply	required	-
-MCConfigApplyBrokenSwallowStoreError.cfg	MCConfigApply.tla	invariant	StoreErrorStopsTheRun	ignore-terminal	configapply	required	-
-MCConfigApplySeat.cfg	MCConfigApply.tla	pass	-	ignore-terminal	configapply	required	-
-MCConfigApplyBrokenHeldSeatJudgedOnRow.cfg	MCConfigApply.tla	invariant	SprintRefusedOnlyForItsWrittenRef	ignore-terminal	configapply	required	-
-MCConfigApplyBrokenFriendCeiling.cfg	MCConfigApply.tla	invariant	FriendWidthNeverRefused	ignore-terminal	configapply	required	-
-MCFriendStage.cfg	MCFriendStage.tla	pass	-	ignore-terminal	friendstage	required	-
-MCFriendStageBrokenHandUnstaged.cfg	MCFriendStage.tla	invariant	HandedOnlyStaged	ignore-terminal	friendstage	required	-
-MCFriendStageBrokenSayEach.cfg	MCFriendStage.tla	invariant	OneJudgmentWhileItStands	ignore-terminal	friendstage	required	-
-MCFriendStageBrokenNoRetry.cfg	MCFriendStage.tla	temporal	EveryCardIsHanded	ignore-terminal	friendstage	required	-
-MCFriendLane.cfg	MCFriendLane.tla	pass	-	ignore-terminal	friendlane	required	-
-MCFriendLaneBrokenRunOnNone.cfg	MCFriendLane.tla	invariant	WorkingOnlyOnTheServersSay	ignore-terminal	friendlane	required	-
-MCFriendLaneBrokenLocalEpoch.cfg	MCFriendLane.tla	invariant	OneRequestApart	ignore-terminal	friendlane	required	-
-MCFriendLaneBrokenLocalEpochLive.cfg	MCFriendLane.tla	temporal	WorkingResolves	ignore-terminal	friendlane	required	-
-MCFriendLaneBrokenKeepOnRefusal.cfg	MCFriendLane.tla	invariant	OneRequestApart	ignore-terminal	friendlane	required	-
-MCFriendLaneBrokenCardOnly.cfg	MCFriendLane.tla	invariant	NoStaleStep	ignore-terminal	friendlane	required	-
-MCFriendLaneBrokenNoGone.cfg	MCFriendLane.tla	temporal	WorkingResolves	ignore-terminal	friendlane	required	-
-MCFriendLaneBrokenKeepOnMismatch.cfg	MCFriendLane.tla	invariant	WorkingOnlyOnTheServersSay	ignore-terminal	friendlane	required	-
-MCFriendLaneWidth.cfg	MCFriendLane.tla	pass	-	ignore-terminal	friendlane	required	-
-MCFriendLaneWidthMember.cfg	MCFriendLane.tla	pass	-	ignore-terminal	friendlane	required	-
-MCFriendLaneWidthThree.cfg	MCFriendLane.tla	pass	-	ignore-terminal	friendlane	required	-
-MCFriendLaneWidthBrokenSlotGate.cfg	MCFriendLane.tla	invariant	LanesStartNeverPastWidth	ignore-terminal	friendlane	required	-
-MCFriendLaneWidthBrokenFloorOne.cfg	MCFriendLane.tla	invariant	NothingStartsUnanswered	ignore-terminal	friendlane	required	-
-MCFriendLaneWidthBrokenKillOnLower.cfg	MCFriendLane.tla	action	NoLaneKilledOnLower	ignore-terminal	friendlane	required	-
-MCFriendLaneWidthBrokenNoFollow.cfg	MCFriendLane.tla	temporal	WidthIsFilled	ignore-terminal	friendlane	required	-
-MCFriendLaneParked.cfg	MCFriendLane.tla	pass	-	ignore-terminal	friendlane	required	-
-MCFriendLaneParkedBrokenAskAgain.cfg	MCFriendLane.tla	invariant	RefusedOnceNotALoop	ignore-terminal	friendlane	required	-
-MCFriendLaneParkedBrokenAskAgainAsks.cfg	MCFriendLane.tla	invariant	ParkedNeverAsks	ignore-terminal	friendlane	required	-
-MCFriendLaneParkedBrokenAskAgainLive.cfg	MCFriendLane.tla	temporal	WorkingResolves	ignore-terminal	friendlane	required	-
-MCFriendLaneParkedBrokenStickyPark.cfg	MCFriendLane.tla	temporal	ResumesAfterRestart	ignore-terminal	friendlane	required	-
-MCFriendLaneOneShot.cfg	MCFriendLane.tla	pass	-	ignore-terminal	friendlane	required	-
-MCFriendLaneOneShotBrokenNeedsLink.cfg	MCFriendLane.tla	temporal	AllDone	ignore-terminal	friendlane	required	-
-MCFriendLaneOneShotBrokenCreditFromRunner.cfg	MCFriendLane.tla	invariant	CreditedToTheClaim	ignore-terminal	friendlane	required	-
-MCFriendLaneClient.cfg	MCFriendLaneClient.tla	pass	-	ignore-terminal	friendlaneclient	required	-
-MCFriendLaneClientBrokenTrustCache.cfg	MCFriendLaneClient.tla	invariant	FinishedOnce	ignore-terminal	friendlaneclient	required	-
-MCFriendLaneClientBrokenRenewUnproven.cfg	MCFriendLaneClient.tla	temporal	DeadModelReleases	ignore-terminal	friendlaneclient	required	-
-MCFriendLaneClientBrokenTickUnstarts.cfg	MCFriendLaneClient.tla	invariant	TakenStaysTaken	ignore-terminal	friendlaneclient	required	-
-MCFriendLaneClientBrokenSlowRenew.cfg	MCFriendLaneClient.tla	invariant	LiveHoldNeverExpires	ignore-terminal	friendlaneclient	required	-
-MCFriendLaneClientWidth.cfg	MCFriendLaneClient.tla	pass	-	ignore-terminal	friendlaneclient	required	-
-MCFriendLaneClientBrokenShrinkStopsRenew.cfg	MCFriendLaneClient.tla	invariant	NoLostCard	ignore-terminal	friendlaneclient	required	-
-MCFriendLaneClientBrokenShrinkMoves.cfg	MCFriendLaneClient.tla	invariant	NoDuplicateHold	ignore-terminal	friendlaneclient	required	-
-MCFriendLaneClientBrokenTakeOverWidth.cfg	MCFriendLaneClient.tla	invariant	DrainNeverTakes	ignore-terminal	friendlaneclient	required	-
-MCFriendLaneClientBrokenNoGrow.cfg	MCFriendLaneClient.tla	temporal	GrowTakes	ignore-terminal	friendlaneclient	required	-
-MCFriendLaneClientBlind.cfg	MCFriendLaneClient.tla	pass	-	ignore-terminal	friendlaneclient	required	-
-MCFriendLaneClientBrokenBlindTakes.cfg	MCFriendLaneClient.tla	invariant	DrainNeverTakes	ignore-terminal	friendlaneclient	required	-
-MCFriendLaneClientBlindWidth.cfg	MCFriendLaneClient.tla	pass	-	ignore-terminal	friendlaneclient	required	-
-MCFriendLaneClientBlindRestartLapses.cfg	MCFriendLaneClient.tla	invariant	LiveHoldNeverExpires	ignore-terminal	friendlaneclient	required	-
-MCFriendLaneClientBrokenLostDrops.cfg	MCFriendLaneClient.tla	invariant	DrainNeverTakes	ignore-terminal	friendlaneclient	required	-
-MCFriendLaneClientBlindRestart.cfg	MCFriendLaneClient.tla	pass	-	ignore-terminal	friendlaneclient	required	-
-MCFriendAutoTake.cfg	MCFriendAutoTake.tla	pass	-	ignore-terminal	friendautotake	required	-
-MCFriendAutoTakeBrokenNoServerWidth.cfg	MCFriendAutoTake.tla	action	TakesWithinWidth	ignore-terminal	friendautotake	required	-
-MCFriendAutoTakeBrokenAnyRow.cfg	MCFriendAutoTake.tla	invariant	NeverOthersCard	ignore-terminal	friendautotake	required	-
-MCFriendAutoTakeBrokenLocalTable.cfg	MCFriendAutoTake.tla	invariant	TakenWithinInterval	ignore-terminal	friendautotake	required	-
-MCFriendAutoTakeBrokenOneShot.cfg	MCFriendAutoTake.tla	invariant	TakenWithinInterval	ignore-terminal	friendautotake	required	-
-MCBus2Receipts.cfg	MCBus2Receipts.tla	pass	-	ignore-terminal	bus2	required	-
-MCBus2BrokenPushDup.cfg	MCBus2Receipts.tla	invariant	NoIdActedTwice	ignore-terminal	bus2	required	-
-MCBus2BrokenBackStamp.cfg	MCBus2Receipts.tla	action	ReceiptNeverMovesBack	ignore-terminal	bus2	required	-
-MCBus2ReceiptsKnownGap.cfg	MCBus2Receipts.tla	invariant	NoIdActedTwice	ignore-terminal	bus2	required	-
-MCFriendBrokenTwoTurns.cfg	MCFriend.tla	invariant	OneTurnPerSession	ignore-terminal	friend	required	-
-MCFriendBrokenDeliverBroken.cfg	MCFriend.tla	action	NoDeliveryWhenBroken	ignore-terminal	friend	required	-
-MCFriendBrokenFixedKill.cfg	MCFriend.tla	invariant	StopOnlyWhenSilent	ignore-terminal	friend	required	-
-MCFriendBrokenAsideEarly.cfg	MCFriend.tla	invariant	SetAsideAfterCardTurns	ignore-terminal	friend	required	-
-MCFriendBrokenFaultCounts.cfg	MCFriend.tla	invariant	SetAsideAfterCardTurns	ignore-terminal	friend	required	-
-MCReach.cfg	MCReach.tla	pass	-	ignore-terminal	reach	required	-
-MCReachBrokenStepAfterProof.cfg	MCReach.tla	invariant	NoStepAfterProof	ignore-terminal	reach	required	-
-MCReachBrokenFromTriedAll.cfg	MCReach.tla	invariant	FailedOnlyAfterAllThree	ignore-terminal	reach	required	-
-MCWakeCursor.cfg	MCWakeCursor.tla	pass	-	ignore-terminal	wakecursor	required	-
-MCWakeCursorBrokenRearm.cfg	MCWakeCursor.tla	invariant	NoSkipped	ignore-terminal	wakecursor	required	-
-MCStopCancels.cfg	MCStopCancels.tla	pass	-	ignore-terminal	stopcancels	required	-
-MCStopCancelsBrokenNoCancel.cfg	MCStopCancels.tla	invariant	NoLaneWhileStopped	ignore-terminal	stopcancels	required	-
-MCStopCancelsBrokenLaunchAfterStop.cfg	MCStopCancels.tla	invariant	NoLaunchAfterStop	ignore-terminal	stopcancels	required	-
-MCStopCancelsBrokenForgetOnRestart.cfg	MCStopCancels.tla	invariant	StopReturnsSurviveRestart	ignore-terminal	stopcancels	required	-
-MCStopCancelsBrokenNudge.cfg	MCStopCancels.tla	invariant	NoNudgeWhileStopped	ignore-terminal	stopcancels	required	-
-MCStopCancelsBrokenFinishCancelled.cfg	MCStopCancels.tla	invariant	NoFinishOfACancelledCard	ignore-terminal	stopcancels	required	-
-MCStopCancelsBrokenHeldThrough.cfg	MCStopCancels.tla	invariant	NoLaunchAfterStop	ignore-terminal	stopcancels	required	-
-MCLoopRedial.cfg	MCLoopRedial.tla	pass	-	ignore-terminal	loopredial	required	-
-MCLoopRedialBrokenNoRedial.cfg	MCLoopRedialBrokenNoRedial.tla	invariant	NoParkOnDropped	ignore-terminal	loopredial	required	-
-MCLoopRedialBrokenNoBound.cfg	MCLoopRedial.tla	invariant	BackoffBounded	ignore-terminal	loopredial	required	-
-MCHook.cfg	MCHook.tla	pass	-	ignore-terminal	hook	required	-
-MCHookFriend.cfg	MCHook.tla	pass	-	ignore-terminal	hook	required	-
-MCHookBrokenStaleEpoch.cfg	MCHook.tla	invariant	LiveIsJoined	ignore-terminal	hook	required	-
-MCHookBrokenNoEpoch.cfg	MCHook.tla	invariant	UnhookStands	ignore-terminal	hook	required	-
-MCHookBrokenNoLease.cfg	MCHook.tla	invariant	ProofOnlyHeld	ignore-terminal	hook	required	-
-MCHookBrokenNoStream.cfg	MCHook.tla	invariant	ProofMeansRead	ignore-terminal	hook	required	-
-MCHookBrokenNoRole.cfg	MCHook.tla	invariant	LiveIsJoined	ignore-terminal	hook	required	-
-MCHookBrokenTakeover.cfg	MCHook.tla	invariant	HookedByItsWord	ignore-terminal	hook	required	-
-MCHookBrokenReArm.cfg	MCHook.tla	invariant	HookedByItsWord	ignore-terminal	hook	required	-
-MCHookBrokenNoExpire.cfg	MCHook.tla	temporal	DeadHolderLosesGate	ignore-terminal	hook	required	-
-MCBusSendOnce.cfg	MCBusSendOnce.tla	pass	-	ignore-terminal	bussendonce	required	-
-MCBusSendOnceBrokenCheckApart.cfg	MCBusSendOnce.tla	invariant	OneMessageWithinLife	ignore-terminal	bussendonce	required	-
-MCBusSendOnceBrokenNewId.cfg	MCBusSendOnce.tla	invariant	OneMessageWithinLife	ignore-terminal	bussendonce	required	-
-MCBusSendOnceBrokenDropEarly.cfg	MCBusSendOnce.tla	invariant	OneMessageWithinLife	ignore-terminal	bussendonce	required	-
-MCBusSendOnceBrokenNoFingerprint.cfg	MCBusSendOnce.tla	invariant	AnswerIsTheOriginal	ignore-terminal	bussendonce	required	-
-MCHookBeat.cfg	MCHookBeat.tla	pass	-	ignore-terminal	hookbeat	required	-
-MCHookBeatTell.cfg	MCHookBeat.tla	pass	-	ignore-terminal	hookbeat	required	-
-MCHookBeatClient.cfg	MCHookBeat.tla	pass	-	ignore-terminal	hookbeat	required	-
-MCHookBeatLive.cfg	MCHookBeat.tla	pass	-	ignore-terminal	hookbeat	required	-
-MCHookBeatLiveSilent.cfg	MCHookBeat.tla	pass	-	ignore-terminal	hookbeat	required	-
-MCHookBeatClock.cfg	MCHookBeat.tla	pass	-	ignore-terminal	hookbeat	required	-
-MCHookBeatWitnessUnhook.cfg	MCHookBeat.tla	invariant	WitnessUnhook	ignore-terminal	hookbeat	required	-
-MCHookBeatWitnessHeld.cfg	MCHookBeat.tla	invariant	WitnessHeld	ignore-terminal	hookbeat	required	-
-MCHookBeatWitnessOverdue.cfg	MCHookBeat.tla	invariant	WitnessOverdue	ignore-terminal	hookbeat	required	-
-MCHookBeatWitnessCoordDown.cfg	MCHookBeat.tla	invariant	WitnessCoordDown	ignore-terminal	hookbeat	required	-
-MCHookBeatBrokenUpAfterOutage.cfg	MCHookBeat.tla	invariant	UpMeansAnsweredInServerTime	ignore-terminal	hookbeat	required	-
-MCHookBeatBrokenNoOnce.cfg	MCHookBeat.tla	invariant	OnePassPerInterval	ignore-terminal	hookbeat	required	-
-MCHookBeatBrokenHeldWhileDown.cfg	MCHookBeat.tla	invariant	DownTrumpsHeld	ignore-terminal	hookbeat	required	-
-MCHookBeatBrokenDaemonAnswers.cfg	MCHookBeat.tla	invariant	UpMeansAnsweredRecently	ignore-terminal	hookbeat	required	-
-MCHookBeatBrokenDaemonNeverDown.cfg	MCHookBeat.tla	temporal	SilentFriendGoesDown	ignore-terminal	hookbeat	required	-
-MCHookBeatBrokenDownEarly.cfg	MCHookBeat.tla	action	NoDownBeforeDownAfter	ignore-terminal	hookbeat	required	-
-MCHookBeatWitnessMissesPastTwo.cfg	MCHookBeat.tla	invariant	WitnessMissesPastTwo	ignore-terminal	hookbeat	required	-
-MCHookBeatBrokenTwoServersDoubleAnnounce.cfg	MCHookBeat.tla	invariant	NeverToldTwice	ignore-terminal	hookbeat	required	-
-MCHookBeatBrokenShownReadsClientClock.cfg	MCHookBeat.tla	action	ShownIgnoresClientClock	ignore-terminal	hookbeat	required	-
-MCHookBeatBrokenMarkBeforeSend.cfg	MCHookBeatMarkAfterSend.tla	temporal	EveryTransitionToldAtLeastOnce	ignore-terminal	hookbeat	required	-
-MCHookBeatBrokenMarkAfterSend.cfg	MCHookBeatMarkAfterSend.tla	temporal	EveryTransitionToldAtLeastOnce	ignore-terminal	hookbeat	required	-
-MCHookBeatBrokenUpWithServerGone.cfg	MCHookBeat.tla	invariant	StaleServerMeansDown	ignore-terminal	hookbeat	required	-
-MCHookBeatBootstrap.cfg	MCHookBeat.tla	pass	-	ignore-terminal	hookbeat	required	-
-MCHookBeatBrokenBootstrapOverwrite.cfg	MCHookBeat.tla	invariant	BootstrapPreservesServerNonce	ignore-terminal	hookbeat	required	-
-MCHookBeatWitnessBootstrap.cfg	MCHookBeat.tla	invariant	WitnessBootstrap	ignore-terminal	hookbeat	required	-
-MCHookBeatWindow.cfg	MCHookBeat.tla	pass	-	ignore-terminal	hookbeat	required	-
-MCHookBeatBrokenProveOldNonce.cfg	MCHookBeat.tla	invariant	ProofNamesIssuedInWindow	ignore-terminal	hookbeat	required	-
-MCHookBeatBrokenProveOtherName.cfg	MCHookBeat.tla	invariant	ProofNamesIssuedInWindow	ignore-terminal	hookbeat	required	-
-MCHookBeatWitnessProveOlder.cfg	MCHookBeat.tla	invariant	WitnessProveOlder	ignore-terminal	hookbeat	required	-
-MCHookBeatTransitionPush.cfg	MCHookBeat.tla	pass	-	ignore-terminal	hookbeat	required	-
-MCHookBeatPushThree.cfg	MCHookBeat.tla	pass	-	ignore-terminal	hookbeat	required	-
-MCHookBeatBrokenSelfFiltered.cfg	MCHookBeat.tla	temporal	TransitionPushedToCoordinator	ignore-terminal	hookbeat	required	-
-MCHookBeatBrokenFolded.cfg	MCHookBeat.tla	invariant	NoFold	ignore-terminal	hookbeat	required	-
-MCHookBeatBrokenPushAll.cfg	MCHookBeat.tla	invariant	NoPushWithinDown	ignore-terminal	hookbeat	required	-
-MCHookBeatBrokenPushSelf.cfg	MCHookBeat.tla	invariant	NeverPushedSelf	ignore-terminal	hookbeat	required	-
-MCHookBeatPushHandover.cfg	MCHookBeat.tla	pass	-	ignore-terminal	hookbeat	required	-
-MCHookBeatWitnessPushHandover.cfg	MCHookBeat.tla	invariant	WitnessPushHandover	ignore-terminal	hookbeat	required	-
-MCHookBeatPushUpgrade.cfg	MCHookBeat.tla	pass	-	ignore-terminal	hookbeat	required	-
-MCHookBeatBrokenRawMark.cfg	MCHookBeat.tla	invariant	NoPushWithinDown	ignore-terminal	hookbeat	required	-
-MCHookBeatPushUp.cfg	MCHookBeat.tla	pass	-	ignore-terminal	hookbeat	required	-
-MCHookBeatBrokenProvenOnly.cfg	MCHookBeat.tla	action	ArmingPushedAtPass	ignore-terminal	hookbeat	required	-
-MCCodexDesktopWake.cfg	MCCodexDesktopWake.tla	pass	-	ignore-terminal	codexdesktopwake	required	-
-MCCodexDesktopWakeBrokenExternalBody.cfg	MCCodexDesktopWake.tla	invariant	ExternalBodyIsNeverPrompt	ignore-terminal	codexdesktopwake	required	-
-MCCodexDesktopWakeBrokenRetry.cfg	MCCodexDesktopWake.tla	invariant	OneMutationAttempt	ignore-terminal	codexdesktopwake	required	-
-MCCodexDesktopWakeBrokenSettings.cfg	MCCodexDesktopWake.tla	invariant	TurnKeepsSettings	ignore-terminal	codexdesktopwake	required	-
-MCCodexHookRecovery.cfg	MCCodexHookRecovery.tla	pass	-	ignore-terminal	codexhookrecovery	required	-
-MCCodexHookRecoveryBrokenCursor.cfg	MCCodexHookRecovery.tla	invariant	NoUnansweredGap	ignore-terminal	codexhookrecovery	required	-
-MCCodexHookRecoveryBrokenCutoff.cfg	MCCodexHookRecovery.tla	invariant	NoUnansweredGap	ignore-terminal	codexhookrecovery	required	-
-MCCodexHookRecoveryBrokenRetry.cfg	MCCodexHookRecovery.tla	invariant	OneAttemptPerProcess	ignore-terminal	codexhookrecovery	required	-
-MCDshNativeWake.cfg	MCDshNativeWake.tla	pass	-	ignore-terminal	dshnativewake	required	-
-MCDshNativeWakeBrokenHide.cfg	MCDshNativeWake.tla	invariant	PriorityUnblocked	ignore-terminal	dshnativewake	required	-
-MCDshNativeWakeWitnessIdle.cfg	MCDshNativeWake.tla	invariant	IdleWakeUnreachable	ignore-terminal	dshnativewake	required	-
-MCDshNativeWakeBrokenInherit.cfg	MCDshNativeWake.tla	invariant	HoldOnTarget	ignore-terminal	dshnativewake	required	-
-MCHarnessNoticeUnknown.cfg	MCHarnessNoticeUnknown.tla	pass	-	ignore-terminal	harnessnoticeunknown	required	-
-MCHarnessNoticeUnknownBrokenStop.cfg	MCHarnessNoticeUnknown.tla	invariant	NeverUnhooked	ignore-terminal	harnessnoticeunknown	required	-
-MCHarnessNoticeUnknownBrokenMove.cfg	MCHarnessNoticeUnknown.tla	invariant	ToldWhereTheRoutePoints	ignore-terminal	harnessnoticeunknown	required	-
-MCFriendNotices.cfg	MCFriendNotices.tla	pass	-	ignore-terminal	friend-notices	required	-
-MCFriendNoticesNewToken.cfg	MCFriendNotices.tla	invariant	AtMostOnce	ignore-terminal	friend-notices	required	-
-MCFriendNoticesDropLost.cfg	MCFriendNotices.tla	invariant	NoNoticeLost	ignore-terminal	friend-notices	required	-
-MCHookBeatQuiet.cfg	MCHookBeat.tla	pass	-	ignore-terminal	hookbeat	required	-
-MCHookBeatQuietLive.cfg	MCHookBeat.tla	pass	-	ignore-terminal	hookbeat	required	-
-MCHookBeatBrokenChallengeWhileTalking.cfg	MCHookBeat.tla	invariant	NoChallengeWhileTalking	ignore-terminal	hookbeat	required	-
-MCHookBeatBrokenSilentDetection.cfg	MCHookBeat.tla	invariant	SilentDetectionBound	ignore-terminal	hookbeat	required	-
-MCHookBeatBrokenDaemonActivity.cfg	MCHookBeat.tla	temporal	SilentFriendGoesDown	ignore-terminal	hookbeat	required	-
-MCHookBeatTalkingProof.cfg	MCHookBeat.tla	pass	-	ignore-terminal	hookbeat	required	-
-MCHookBeatBrokenTalkingProof.cfg	MCHookBeat.tla	invariant	TalkingProofStaysFresh	ignore-terminal	hookbeat	required	-
-MCHookBeatQuietDelivery.cfg	MCHookBeat.tla	pass	-	ignore-terminal	hookbeat	required	-
-MCHookBeatBrokenLostDelivery.cfg	MCHookBeat.tla	temporal	SilentFriendGoesDown	ignore-terminal	hookbeat	required	-
-MCHookBeatQuietCoordinator.cfg	MCHookBeat.tla	pass	-	ignore-terminal	hookbeat	required	-
-MCHookBeatBrokenCoordTalk.cfg	MCHookBeat.tla	invariant	CoordUpMeansAnswered	ignore-terminal	hookbeat	required	-
-MCConfigApplyBrokenSilentUnapplied.cfg	MCConfigApply.tla	invariant	NoSilentUnappliedWrite	ignore-terminal	configapply	required	-
-MCHookBeatReaderBackstop.cfg	MCHookBeat.tla	pass	-	ignore-terminal	hookbeat	required	-
-MCHookBeatBrokenReaderBackstop.cfg	MCHookBeat.tla	invariant	ReaderBackstop	ignore-terminal	hookbeat	required	-
-MCHookBeatBrokenExpiredTalking.cfg	MCHookBeat.tla	action	NoExpiredRetryWhileTalking	ignore-terminal	hookbeat	required	-
-MCHookBeatProven.cfg	MCHookBeat.tla	pass	-	ignore-terminal	hookbeat	required	-
-MCHookBeatProvenLive.cfg	MCHookBeat.tla	pass	-	ignore-terminal	hookbeat	required	-
-MCHookBeatBrokenArmedBack.cfg	MCHookBeat.tla	action	NoBackWithoutProof	ignore-terminal	hookbeat	required	-
-MCHookBeatWitnessArmedDown.cfg	MCHookBeat.tla	action	WitnessArmedDown	ignore-terminal	hookbeat	required	-
-MCHookBeatProvenRetry.cfg	MCHookBeat.tla	pass	-	ignore-terminal	hookbeat	required	-
-MCHookBeatBrokenLatch.cfg	MCHookBeat.tla	temporal	AliveHookedEventuallyUp	ignore-terminal	hookbeat	required	-
-MCHookBeatBrokenKeepUp.cfg	MCHookBeat.tla	action	NoFlapWithoutProof	ignore-terminal	hookbeat	required	-
-MCHookBeatKeepUpBackHolds.cfg	MCHookBeat.tla	pass	-	ignore-terminal	hookbeat	required	-
-MCHookBeatCoordJudged.cfg	MCHookBeat.tla	pass	-	ignore-terminal	hookbeat	required	-
-MCHookBeatBrokenMarkDrop.cfg	MCHookBeat.tla	temporal	DownJudgedToCoordinator	ignore-terminal	hookbeat	required	-
-MCHookBeatTwoCoords.cfg	MCHookBeat.tla	pass	-	ignore-terminal	hookbeat	required	-
-MCHookBeatTwoCoordsTell.cfg	MCHookBeat.tla	pass	-	ignore-terminal	hookbeat	required	-
-MCHookBeatBrokenSelfBack.cfg	MCHookBeat.tla	invariant	NoJudgmentNamesItsRecipientBack	ignore-terminal	hookbeat	required	-
-MCHookBeatBrokenSelfBackTell.cfg	MCHookBeat.tla	invariant	NoJudgmentNamesItsRecipientBack	ignore-terminal	hookbeat	required	-
-MCHookLastChance.cfg	MCHookLastChance.tla	pass	-	ignore-terminal	hooklastchance	required	-
-MCHookLastChanceGone.cfg	MCHookLastChance.tla	pass	-	ignore-terminal	hooklastchance	required	-
-MCHookLastChanceCoord.cfg	MCHookLastChance.tla	pass	-	ignore-terminal	hooklastchance	required	-
-MCHookLastChanceBrokenOneMiss.cfg	MCHookLastChance.tla	invariant	NoDownWithoutLastChance	ignore-terminal	hooklastchance	required	-
-MCHookLastChanceBrokenAlways.cfg	MCHookLastChance.tla	temporal	GoneIsEventuallyDown	ignore-terminal	hooklastchance	required	-
-MCHookLastChanceWitnessSaves.cfg	MCHookLastChance.tla	invariant	WitnessLastChanceSaves	ignore-terminal	hooklastchance	required	-
-MCHookLastChanceWitnessDownAtTwo.cfg	MCHookLastChance.tla	invariant	WitnessDownAtTwo	ignore-terminal	hooklastchance	required	-
-MCTypedFrames.cfg	MCTypedFrames.tla	pass	-	ignore-terminal	typed-frames	required	-
-MCTypedFramesBrokenRefusedBeforeTransition.cfg	MCTypedFrames.tla	invariant	FrameRefusedBeforeTransition	ignore-terminal	typed-frames	required	-
-MCTypedFramesBrokenDualReadLoss.cfg	MCTypedFrames.tla	invariant	DualReadNoLoss	ignore-terminal	typed-frames	required	-
-MCTypedFramesBrokenWritersFirst.cfg	MCTypedFrames.tla	invariant	ReadersBeforeWriters	ignore-terminal	typed-frames	required	-
-MCTypedFramesBrokenClampAccepted.cfg	MCTypedFrames.tla	invariant	NoClampAccepted	ignore-terminal	typed-frames	required	-
-MCTypedFramesBrokenAbsentIsZero.cfg	MCTypedFrames.tla	invariant	AbsentIsNotZero	ignore-terminal	typed-frames	required	-
-MCTypedFramesBrokenWriterLooser.cfg	MCTypedFrames.tla	invariant	WriterRefusesWhatReaderRefuses	ignore-terminal	typed-frames	required	-
-MCProviderRetry.cfg	MCProviderRetry.tla	pass	-	ignore-terminal	providerretry	required	-
-MCProviderRetryBrokenHandFirst.cfg	MCProviderRetry.tla	invariant	NoRefusalBeforeTheCap	ignore-terminal	providerretry	required	-
-MCProviderRetryBrokenUnbounded.cfg	MCProviderRetry.tla	invariant	SendsBounded	ignore-terminal	providerretry	required	-
+config	module	expected	property	deadlock
+MCBenchStage.cfg	MCBenchStage.tla	pass	-	ignore-terminal
+MCBenchStageBrokenLines.cfg	MCBenchStage.tla	invariant	ReusedByteIdentical	ignore-terminal
+MCCairnStore.cfg	MCCairnStore.tla	pass	-	ignore-terminal
+MCCairnStoreBrokenOverwrite.cfg	MCCairnStore.tla	invariant	NoOverwrite	ignore-terminal
+MCCairnStoreBrokenReopenOther.cfg	MCCairnStore.tla	invariant	OneOpenPolicy	ignore-terminal
+MCCairnStoreBrokenReportBeforeFsync.cfg	MCCairnStore.tla	invariant	DurableBeforeReported	ignore-terminal
+MCFileLock.cfg	MCFileLock.tla	pass	-	ignore-terminal
+MCFileLockBrokenBusyIsHeld.cfg	MCFileLock.tla	invariant	HeldIsTrue	ignore-terminal
+MCFileLockBrokenSentinel.cfg	MCFileLock.tla	invariant	NothingToClear	ignore-terminal
+MCFileLockBrokenStale.cfg	MCFileLock.tla	invariant	MutualExclusion	ignore-terminal
+MCFileLockBrokenUnlink.cfg	MCFileLock.tla	invariant	MutualExclusion	ignore-terminal
+MCFileLockCandidate.cfg	MCFileLock.tla	invariant	HeldIsTrue|MutualExclusion	ignore-terminal
+MCFileLockFour.cfg	MCFileLock.tla	pass	-	ignore-terminal
+MCFirstConn.cfg	MCFirstConn.tla	pass	-	ignore-terminal
+MCFirstConnBrokenAny.cfg	MCFirstConn.tla	invariant	TakenOnlyWhenDue	ignore-terminal
+MCFirstConnBrokenHang.cfg	MCFirstConn.tla	temporal	AnswerDelivered	ignore-terminal
+MCFirstConnBrokenLate.cfg	MCFirstConn.tla	invariant	TakenOnlyWhenDue	ignore-terminal
+MCFirstConnBrokenMisaligned.cfg	MCFirstConn.tla	invariant	TakenOnlyWhenDue	ignore-terminal
+MCFirstConnBrokenRefused.cfg	MCFirstConn.tla	invariant	TakenOnlyWhenDue	ignore-terminal
+MCFirstConnBrokenShort.cfg	MCFirstConn.tla	invariant	AnswerStandsInPlace	ignore-terminal
+MCFirstConnBrokenTwice.cfg	MCFirstConn.tla	invariant	TakenOnlyWhenDue	ignore-terminal
+MCRedisFn.cfg	MCRedisFn.tla	pass	-	check
+MCRedisFnDeleteThenLoad.cfg	MCRedisFn.tla	invariant	NoGap	check
+MCRedisFnHolderGone.cfg	MCRedisFn.tla	invariant	HolderFound	check
+MCRedisFnLoadMissing.cfg	MCRedisFn.tla	pass	-	check
+MCRedisFnMissReplaces.cfg	MCRedisFn.tla	action	MissNeverReplaces	check
+MCRedisFnOneDeployer.cfg	MCRedisFn.tla	pass	-	check
+MCRedisFnTwoDeployers.cfg	MCRedisFn.tla	temporal	Settles	check
+MCCardContract.cfg	MCCardContract.tla	pass	-	ignore-terminal
+MCCardContractBrokenToday.cfg	MCCardContract.tla	invariant	OkIsPushedWork	ignore-terminal
+MCCardContractBrokenNoShape.cfg	MCCardContract.tla	invariant	OkIsPushedWork	ignore-terminal
+MCCardContractBrokenPushIgnored.cfg	MCCardContract.tla	invariant	OkIsPushedWork	ignore-terminal
+MCCardContractBrokenReapReported.cfg	MCCardContract.tla	invariant	ReapedIsNotReported	ignore-terminal
+MCCardContractBrokenBranchName.cfg	MCCardContract.tla	invariant	StagedFromOrigin	ignore-terminal
+MCCardContractBrokenProviderFailed.cfg	MCCardContract.tla	invariant	ProviderIsNotFailedWork	ignore-terminal
+MCCardContractBrokenPreviousOnly.cfg	MCCardContract.tla	invariant	NoPushedWorkUnreachable	ignore-terminal
+MCCardContractBrokenStagingFailed.cfg	MCCardContract.tla	invariant	StagingIsNotFailedWork	ignore-terminal
+MCCardContractBrokenOldHead.cfg	MCCardContract.tla	invariant	ReworkStagedAtTheTip	ignore-terminal
+MCCardContractBrokenSilentConflict.cfg	MCCardContract.tla	invariant	NoPushedWorkUnreachable	ignore-terminal
+MCCardContractBrokenApplyMoved.cfg	MCCardContract.tla	invariant	CollectedAppliesOnlyIfHeld	ignore-terminal
+MCCardContractBrokenReapAccepted.cfg	MCCardContract.tla	invariant	AcceptedIsNeverReaped	ignore-terminal
+MCCardContractBrokenLengthNoResult.cfg	MCCardContract.tla	invariant	LengthIsAHarnessFault	ignore-terminal
+MCCardContractBrokenRewritePushed.cfg	MCCardContract.tla	invariant	RewriteKeptIsPushed	ignore-terminal
+MCFinishRefused.cfg	MCFinishRefused.tla	pass	-	ignore-terminal
+MCFinishRefusedBrokenForgetUnpushed.cfg	MCFinishRefused.tla	invariant	OneRunPerGeneration	ignore-terminal
+MCFinishRefusedBrokenExit2NoAnswer.cfg	MCFinishRefused.tla	invariant	RefusalsBounded	ignore-terminal
+MCBus2.cfg	MCBus2.tla	pass	-	ignore-terminal
+MCBus2BrokenPartial.cfg	MCBus2.tla	invariant	OnEveryStreamOrNone	ignore-terminal
+MCBus2BrokenNewFirst.cfg	MCBus2.tla	action	PendingBeforeNew	ignore-terminal
+MCBus2BrokenSteal.cfg	MCBus2.tla	action	HeldStaysHeld	ignore-terminal
+MCBus2BrokenClaimFresh.cfg	MCBus2.tla	action	HeldStaysHeld	ignore-terminal
+MCBus2BrokenAckUndelivered.cfg	MCBus2.tla	action	AckOnlyDelivered	ignore-terminal
+MCBus2BrokenAckReopens.cfg	MCBus2.tla	action	AckedStaysAcked	ignore-terminal
+MCUpdateApply.cfg	MCUpdateApply.tla	pass	-	ignore-terminal
+MCUpdateApplyBrokenInstallOnVerdict.cfg	MCUpdateApply.tla	invariant	ApplyOnlyWhatIsNamed	ignore-terminal
+MCUpdateApplyBrokenDryRunInstalls.cfg	MCUpdateApply.tla	invariant	DryRunInstallsNothing	ignore-terminal
+MCUpdateApplyBrokenSentOnRefusal.cfg	MCUpdateApply.tla	invariant	SentOnlyOnOK	ignore-terminal
+MCUpdateApplyBrokenAheadIsNewer.cfg	MCUpdateApply.tla	invariant	VerdictMatchesVersion	ignore-terminal
+MCConfigApply.cfg	MCConfigApply.tla	pass	-	ignore-terminal
+MCConfigApplyBrokenStampFirst.cfg	MCConfigApply.tla	invariant	StampOnlyWhenComplete	ignore-terminal
+MCConfigApplyBrokenFriendBeforeCeiling.cfg	MCConfigApply.tla	invariant	ApplyOrder	ignore-terminal
+MCConfigApplyBrokenWriteWithoutHistory.cfg	MCConfigApply.tla	invariant	HistoryCoversEveryWrite	ignore-terminal
+MCConfigApplyBrokenApplyOverAhead.cfg	MCConfigApply.tla	invariant	ConflictRefusesAhead	ignore-terminal
+MCConfigApplyBrokenStopAtFirstRefusal.cfg	MCConfigApply.tla	invariant	EveryPlannedKindIsAttemptedUnlessCrashed	ignore-terminal
+MCConfigApplyBrokenStampWithARefusal.cfg	MCConfigApply.tla	invariant	StampedKindHasNoRefusal	ignore-terminal
+MCConfigApplyBrokenSwallowStoreError.cfg	MCConfigApply.tla	invariant	StoreErrorStopsTheRun	ignore-terminal
+MCConfigApplySeat.cfg	MCConfigApply.tla	pass	-	ignore-terminal
+MCConfigApplyBrokenHeldSeatJudgedOnRow.cfg	MCConfigApply.tla	invariant	SprintRefusedOnlyForItsWrittenRef	ignore-terminal
+MCConfigApplyBrokenFriendCeiling.cfg	MCConfigApply.tla	invariant	FriendWidthNeverRefused	ignore-terminal
+MCBus2Receipts.cfg	MCBus2Receipts.tla	pass	-	ignore-terminal
+MCBus2BrokenPushDup.cfg	MCBus2Receipts.tla	invariant	NoIdActedTwice	ignore-terminal
+MCBus2BrokenBackStamp.cfg	MCBus2Receipts.tla	action	ReceiptNeverMovesBack	ignore-terminal
+MCBus2ReceiptsKnownGap.cfg	MCBus2Receipts.tla	invariant	NoIdActedTwice	ignore-terminal
+MCStopCancels.cfg	MCStopCancels.tla	pass	-	ignore-terminal
+MCStopCancelsBrokenNoCancel.cfg	MCStopCancels.tla	invariant	NoLaneWhileStopped	ignore-terminal
+MCStopCancelsBrokenLaunchAfterStop.cfg	MCStopCancels.tla	invariant	NoLaunchAfterStop	ignore-terminal
+MCStopCancelsBrokenForgetOnRestart.cfg	MCStopCancels.tla	invariant	StopReturnsSurviveRestart	ignore-terminal
+MCStopCancelsBrokenNudge.cfg	MCStopCancels.tla	invariant	NoNudgeWhileStopped	ignore-terminal
+MCStopCancelsBrokenFinishCancelled.cfg	MCStopCancels.tla	invariant	NoFinishOfACancelledCard	ignore-terminal
+MCStopCancelsBrokenHeldThrough.cfg	MCStopCancels.tla	invariant	NoLaunchAfterStop	ignore-terminal
+MCLoopRedial.cfg	MCLoopRedial.tla	pass	-	ignore-terminal
+MCLoopRedialBrokenNoRedial.cfg	MCLoopRedialBrokenNoRedial.tla	invariant	NoParkOnDropped	ignore-terminal
+MCLoopRedialBrokenNoBound.cfg	MCLoopRedial.tla	invariant	BackoffBounded	ignore-terminal
+MCBusSendOnce.cfg	MCBusSendOnce.tla	pass	-	ignore-terminal
+MCBusSendOnceBrokenCheckApart.cfg	MCBusSendOnce.tla	invariant	OneMessageWithinLife	ignore-terminal
+MCBusSendOnceBrokenNewId.cfg	MCBusSendOnce.tla	invariant	OneMessageWithinLife	ignore-terminal
+MCBusSendOnceBrokenDropEarly.cfg	MCBusSendOnce.tla	invariant	OneMessageWithinLife	ignore-terminal
+MCBusSendOnceBrokenNoFingerprint.cfg	MCBusSendOnce.tla	invariant	AnswerIsTheOriginal	ignore-terminal
+MCConfigApplyBrokenSilentUnapplied.cfg	MCConfigApply.tla	invariant	NoSilentUnappliedWrite	ignore-terminal
+MCTypedFrames.cfg	MCTypedFrames.tla	pass	-	ignore-terminal
+MCTypedFramesBrokenRefusedBeforeTransition.cfg	MCTypedFrames.tla	invariant	FrameRefusedBeforeTransition	ignore-terminal
+MCTypedFramesBrokenDualReadLoss.cfg	MCTypedFrames.tla	invariant	DualReadNoLoss	ignore-terminal
+MCTypedFramesBrokenWritersFirst.cfg	MCTypedFrames.tla	invariant	ReadersBeforeWriters	ignore-terminal
+MCTypedFramesBrokenClampAccepted.cfg	MCTypedFrames.tla	invariant	NoClampAccepted	ignore-terminal
+MCTypedFramesBrokenAbsentIsZero.cfg	MCTypedFrames.tla	invariant	AbsentIsNotZero	ignore-terminal
+MCTypedFramesBrokenWriterLooser.cfg	MCTypedFrames.tla	invariant	WriterRefusesWhatReaderRefuses	ignore-terminal
+MCProviderRetry.cfg	MCProviderRetry.tla	pass	-	ignore-terminal
+MCProviderRetryBrokenHandFirst.cfg	MCProviderRetry.tla	invariant	NoRefusalBeforeTheCap	ignore-terminal
+MCProviderRetryBrokenUnbounded.cfg	MCProviderRetry.tla	invariant	SendsBounded	ignore-terminal

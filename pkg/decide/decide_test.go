@@ -63,10 +63,10 @@ func TestReadSchemaIsValid(t *testing.T) {
 		row := "| `" + option + "` | " + rule + " |"
 		assert.True(t, strings.Contains(string(spec), row), "SPEC-NOVA-DECIDE section 6 does not state the %s rule as the schema asks it; want the row %q", option, row)
 	}
-	fixture, err := Load(filepath.Join("..", "..", "cmd", "nova-decide", "testdata", "record.jsonl"))
+	fixture, err := Load(filepath.Join("testdata", "record.jsonl"))
 	require.NoError(t, err)
 	require.NotEmpty(t, fixture)
-	assert.Equal(t, fixture[0].Schema, s.Hash(), "the read schema changed and cmd/nova-decide/testdata/record.jsonl (and its docs/TESTS.md transcript) still carry the old hash: regenerate the fixture with the new schema")
+	assert.Equal(t, fixture[0].Schema, s.Hash(), "the read schema changed and pkg/decide/testdata/record.jsonl (and its docs/TESTS.md transcript) still carry the old hash: regenerate the fixture with the new schema")
 }
 
 // A backend's answers are held to the schema; nothing is repaired.
@@ -426,7 +426,7 @@ func TestLoadRefusesARecordedProbabilityOutsideZeroAndOne(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, got, 2)
 	for _, rel := range []string{
-		filepath.Join("..", "..", "cmd", "nova-decide", "testdata", "record.jsonl"),
+		filepath.Join("testdata", "record.jsonl"),
 		filepath.Join("testdata", "judgment-record.jsonl"),
 		filepath.Join("testdata", "gate-calibration-base-not-run.jsonl"),
 		filepath.Join("testdata", "gate-calibration-base-run.jsonl"),

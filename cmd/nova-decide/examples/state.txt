@@ -1,1 +1,0 @@
-The sample record is intentionally small and has a clear next action.

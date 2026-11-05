@@ -1,7 +1,0 @@
-package fixture
-
-import "testing"
-
-func TestFixtureBareHostPort(t *testing.T) {
-	_ = "metrics.acme.com:9090"
-}

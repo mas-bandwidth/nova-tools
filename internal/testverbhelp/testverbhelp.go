@@ -233,7 +233,7 @@ func HelpVerb(t *testing.T, run Run, tool string, verbs ...string) {
 // the set (pkg/nsprint/verbflag), and the refusal of an unknown flag
 // names the set's flags as well, so a flag the refusal names and -h omits is
 // a gap too. What a verb lacks and is not yet fixed is a line of
-// internal/ci/testdata/help-complete-ledger.txt, `<tool> <verb> <parts>`,
+// internal/testverbhelp/testdata/help-complete-ledger.txt, `<tool> <verb> <parts>`,
 // shrink-only: a gap not in the ledger fails, and so does a ledger line whose
 // gap is fixed (or only partly there).
 
@@ -252,7 +252,7 @@ const (
 // LedgerPath is the shrink-only ledger, found from this source file.
 func LedgerPath() string {
 	_, file, _, _ := runtime.Caller(0)
-	return filepath.Join(filepath.Dir(file), "..", "ci", "testdata", "help-complete-ledger.txt")
+	return filepath.Join(filepath.Dir(file), "testdata", "help-complete-ledger.txt")
 }
 
 var (
@@ -405,7 +405,7 @@ func Judge(key string, gaps, ledgered []string) []string {
 	for _, g := range ledgered {
 		in[g] = true
 		if !have[g] {
-			problems = append(problems, fmt.Sprintf("%s: the ledger lists %q, which is fixed; remove it from %s (the ledger only shrinks)", key, g, "internal/ci/testdata/help-complete-ledger.txt"))
+			problems = append(problems, fmt.Sprintf("%s: the ledger lists %q, which is fixed; remove it from %s (the ledger only shrinks)", key, g, "internal/testverbhelp/testdata/help-complete-ledger.txt"))
 		}
 	}
 	for _, g := range gaps {

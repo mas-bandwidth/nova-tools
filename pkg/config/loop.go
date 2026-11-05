@@ -27,16 +27,20 @@ import (
 // TestNovaToolsIsEveryCommand holds the list to the directories of cmd/: a new
 // command is added here, or that test is red.
 var NovaTools = []string{
-	"nova-bus", "nova-cairn", "nova-check", "nova-ci", "nova-config", "nova-decide",
-	"nova-doctor", "nova-friend", "nova-fuse", "nova-hook", "nova-local", "nova-memory", "nova-redis",
-	"nova-sandbox", "nova-secrets", "nova-self-talk", "nova-swarm", "nova-table",
-	"nova-tokens", "nova-up", "nova-update", "nova-version",
+	"nova-cairn", "nova-config", "nova-memory", "nova-sandbox", "nova-secrets",
+	"nova-self-talk", "nova-update", "nova-version",
 }
 
 // SprintTools are the programs the same release ships from nova-sprint's own
 // release (the split, v1.2.3: nova-update release build --sprint-release), not
-// from cmd/. A loop that runs one is asked like any other.
-var SprintTools = []string{"nova-card", "nova-sprint", "nova-work"}
+// from cmd/, and the programs that moved to nova-sprint with the strip
+// (docs/MOVED.md), which fleet loops still run. A loop that runs one is asked
+// like any other.
+var SprintTools = []string{
+	"nova-card", "nova-sprint", "nova-work",
+	"nova-doctor", "nova-friend", "nova-hook", "nova-local", "nova-swarm",
+	"nova-table", "nova-tokens", "nova-up",
+}
 
 // verbWord is a word that can be a verb: lower-case, a letter first. A path, a
 // flag or a value with any other character is no verb, and is never asked.

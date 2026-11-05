@@ -1,4 +1,0 @@
-from: ada
-to: a b
-subject: s
-body: x

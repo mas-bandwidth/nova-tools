@@ -36,13 +36,13 @@ func TestScoreSchemaAsksTheReadAndEveryClass(t *testing.T) {
 	}
 	assert.ElementsMatch(t, want, slices.Collect(maps.Keys(s.Questions)))
 	assert.NotContains(t, s.Questions, OutsidePaths, "outside_paths is 1 - inside_paths, never asked twice")
-	fixture, err := Load(filepath.Join("..", "..", "cmd", "nova-decide", "testdata", "record.jsonl"))
+	fixture, err := Load(filepath.Join("testdata", "record.jsonl"))
 	require.NoError(t, err)
 	scored := 0
 	for _, d := range fixture {
 		if d.Decision == ScoreName {
 			scored++
-			assert.Equal(t, s.Hash(), d.Schema, "the score schema changed and cmd/nova-decide/testdata/record.jsonl still carries %s's old hash: regenerate its score decisions", d.ID)
+			assert.Equal(t, s.Hash(), d.Schema, "the score schema changed and pkg/decide/testdata/record.jsonl still carries %s's old hash: regenerate its score decisions", d.ID)
 		}
 	}
 	assert.NotZero(t, scored, "the fixture record holds score decisions")
