@@ -25,7 +25,7 @@ nova-bus pending --as bob --list               # what bob has not handled yet
 ```sh
 export NOVA_PG_DSN=postgres://nova@db-host:5432/nova   # the password comes from NOVA_PG_PASSWORD
 nova-config machine add bench-a --user nova --roles bench --actor ops
-nova-config loop add reader --machine bench-a --argv '["nova-bus","hook","--as","reader"]' --keepalive true --actor ops
+nova-config loop add reader --machine bench-a --argv '["env","NOVA_BUS_REDIS=redis-host:6379","nova-bus","hook","--as","reader"]' --keepalive true --actor ops
 printf '#!/bin/sh\nexec nova-config inventory "$@"\n' > nova-inventory && chmod +x nova-inventory
 ```
 
@@ -55,7 +55,7 @@ nova-secrets seat add bench-b age1...                         # a new machine's 
 
 ```sh
 nova-sandbox probe                                            # proves a write outside, a read outside and a connect are refused
-nova-sandbox --read /opt/tools --write /srv/work --net-deny -- /opt/tools/run-agent
+nova-sandbox --read /srv/agent --write /srv/agent/work --net-deny -- /srv/agent/bin/agent run
 ```
 
 ## Share machines without stepping on each other
@@ -74,7 +74,7 @@ nova-slot status                          # each slot: free, or who holds it
 Install a release on a machine with the fleet play, from a checkout with Ansible and the inventory script above:
 
 ```sh
-ansible-playbook -i ./nova-inventory fleet/nova-tools-install.yml -e nova_tools_version=v1.6.29 -l bench-a
+ansible-playbook -i ./nova-inventory fleet/nova-tools-install.yml -e nova_tools_version=v2.0.0 -l bench-a
 ```
 
 Or build any one tool: each directory is a Go `package main`, so `go build ./bus` (or `./config`, `./sandbox`, `./secrets`, `./slot`) makes its binary.
