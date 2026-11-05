@@ -1,5 +1,9 @@
 # nova-tools changelog
 
+## Unreleased
+
+Removed everything that is not one of the six pieces (bus, config, sandbox, secrets, slot, fleet): `cmd/` (nova-version), `internal/` (update, nsprint, testverbhelp), all of `pkg/`, `cairn/` and `docs/SPEC-CAIRN.md` (moved to rowan-tools as `cmd/cairn/`), the TLA+ models of the removed code (`tla/check.sh` stays and now runs only directories that hold a module), `schemas/`, `infra/`, `assets/`, `FIXES.md`, the issue templates, and the specs and docs of the removed tools; ROADMAP.md lost its entries about them, SECURITY.md and CLI-STYLE.md lost their paragraphs about them, README.md is rewritten, and docs/MOVED.md says where each piece went. go.mod dropped the modules only the removed code used.
+
 ## v1.6.29 — 2026-11-05
 
 Cut from c4d5385075d247f55e22a62f1a108c0ad6891715. 3 pull requests since v1.6.27.

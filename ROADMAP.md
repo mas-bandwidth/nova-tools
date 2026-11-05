@@ -26,22 +26,6 @@ Target: v1.5
 
 From: issue #1664; issue #1495; issue #1737; issue #2162
 
-### A nova-config write reaches the fleet copy by itself within seconds
-
-Every config write is applied to the Redis copy automatically, without a manual apply step.
-
-Target: v1.5
-
-From: card from the sprint store (2026-10-10)
-
-### An install verification matrix runs across darwin, linux and wsl2
-
-Functional tests verify nova-update install on each bench platform.
-
-Target: v1.5
-
-From: PR #4615
-
 ### nova-sandbox reports the right cause and the right backend
 
 An ssh host alias origin is reported as an unreachable forge, and a dot repo is refused. The policy verb prints the darwin profile under the landlock backend.
@@ -49,11 +33,3 @@ An ssh host alias origin is reported as an unreachable forge, and a dot repo is 
 Target: v1.5
 
 From: issue #1452; issue #1469
-
-### nova-self-talk detects plain first person absolutes
-
-The three plainest absolute claims about what the writer permanently is or cannot do return no claims. The detector counts them.
-
-Target: v1.5
-
-From: issue #1468
