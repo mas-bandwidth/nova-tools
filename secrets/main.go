@@ -24,22 +24,51 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// usage is the whole help. A verb's -h prints the paragraph that starts with its
+// name; nova-secrets help prints everything.
 const usage = `nova-secrets: sops-encrypted secrets in a git store, handed to one command at a time.
+A new store takes four commands, in this order: init, seat add, set, exec.
 
-  nova-secrets exec --only NAME[,NAME] --store <dir> --key <file> [--as <seat>] [--sops <path>] -- <cmd> [args...]
-      Decrypt <seat>.yaml and become <cmd> with only the --only values added to its
-      environment. Exit: the command's own status; 125 when exec refused.
-  nova-secrets set NAME --store <dir> --key <file> [--as <seat>] [--sops <path>]
-      Read one value from stdin (one line), set NAME in <seat>.yaml and commit it.
-  nova-secrets seat add <seat> <age-public-key> --store <dir>
-      Add the seat's recipient rule to .sops.yaml. Commits nothing.
-  nova-secrets help
+nova-secrets init --store <dir> --recovery <age-public-key>
+  Create a store in <dir>, which must be absent or empty (its parent must exist) and not inside another git
+  work tree: git init, .sops.yaml with no rules, recovery.pub, one commit. Refuses a store that exists.
+  The recovery key is a public key (age-keygen -y <file>); keep its private half offline.
+  Prints: SECRETS INIT OK store=<dir> next: nova-secrets seat add <seat> <age-pubkey> --store <dir>
 
---store and --key are required (or NOVA_SECRETS_STORE / NOVA_SECRETS_KEY); the current
-directory is never assumed. --as defaults to $NOVA_SECRETS_SEAT, else the short hostname;
---sops to sops on PATH. No verb prints a value.
-Exit codes: 0 done, 2 refused (exec: 125).
+nova-secrets seat add <seat> <age-public-key> --store <dir>
+  Add the seat's rule to .sops.yaml: its key and the recovery key may open <seat>.yaml. Commits nothing.
+  The seat is letters, digits, - and _.
+
+nova-secrets set NAME --store <dir> --key <file> [--as <seat>] [--sops <path>]
+  Read one value from stdin (one non-empty line, never a terminal), set NAME in <seat>.yaml and commit that
+  file. Pushing is yours. Example: pass show db | nova-secrets set DB_PASSWORD --store S --key K --as web
+
+nova-secrets names --store <dir> [--as <seat>]
+  List the names in <seat>.yaml, one per line, from the file's plaintext keys. No key, no sops, no value read.
+  A key that is no environment variable name is not printed and is counted as refused=<n> on stderr.
+
+nova-secrets exec --only NAME[,NAME] --store <dir> --key <file> [--as <seat>] [--sops <path>] -- <cmd> [args...]
+  Decrypt <seat>.yaml and become <cmd> with only the --only values added to its environment.
+  Exit: the command's own status; 125 when exec refused at run time and the command never ran.
+  --require NAME  kept for existing units; same as --only
+
+--store and --key are required where a verb lists them (or NOVA_SECRETS_STORE / NOVA_SECRETS_KEY); the
+current directory is never assumed. --as defaults to $NOVA_SECRETS_SEAT, else the short hostname; --sops
+to sops on PATH. No verb prints a value. Exit codes: 0 done, 2 refused (exec: 125).
 `
+
+// helpFor is the paragraph for a verb, or the whole text for "".
+func helpFor(verb string) (string, bool) {
+	if verb == "" {
+		return usage, true
+	}
+	for _, p := range strings.SplitAfter(usage, "\n\n") {
+		if strings.HasPrefix(p, "nova-secrets "+verb+" ") {
+			return p, true
+		}
+	}
+	return "", false
+}
 
 // identityEnv is every variable sops reads an age identity from: none reaches sops
 // (it gets --key alone) or the command exec becomes.
@@ -81,113 +110,154 @@ func runProgram(stdin io.Reader, env []string, dir, name string, args ...string)
 }
 
 type refusal struct {
-	code int
-	msg  string
+	code  int
+	msg   string
+	usage bool // a malformed invocation: "nova-secrets <verb>: <msg>; run: nova-secrets <verb> -h"
+	sops  bool // sops itself failed
 }
 
 func (r refusal) Error() string { return r.msg }
 
-func refuse(code int, format string, a ...any) error {
-	return refusal{code, fmt.Sprintf(format, a...)}
+func refuse(format string, a ...any) error {
+	return refusal{2, fmt.Sprintf(format, a...), false, false}
 }
 
+// bad is a malformed invocation: exit 2, even for exec.
+func bad(format string, a ...any) error { return refusal{2, fmt.Sprintf(format, a...), true, false} }
+
 func (t tool) main(args []string) int {
-	if len(args) == 0 || args[0] == "help" || args[0] == "-h" || args[0] == "--help" {
+	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" {
 		fmt.Fprint(t.stdout, usage)
 		return 0
 	}
 	verb, rest := args[0], args[1:]
+	if verb == "help" {
+		verb, rest = strings.Join(rest, " "), nil
+		if h, ok := helpFor(verb); ok {
+			fmt.Fprint(t.stdout, h)
+			return 0
+		}
+		return t.unknownVerb(verb)
+	}
+	if verb == "seat" && len(rest) > 0 && rest[0] == "add" {
+		verb, rest = "seat add", rest[1:]
+	}
+	if h, ok := helpFor(verb); ok {
+		if a := beforeDashes(verb, rest); slices.Contains(a, "-h") || slices.Contains(a, "--help") {
+			fmt.Fprint(t.stdout, h)
+			return 0
+		}
+	}
 	var err error
 	switch verb {
+	case "init":
+		err = t.initStore(rest)
+	case "names":
+		err = t.names(rest)
 	case "exec":
 		err = t.exec(rest)
-	case "set", "seal": // seal is the old name of set, kept for one release
-		verb = "set"
+	case "set":
 		err = t.set(rest)
+	case "seat add":
+		err = t.seatAdd(rest)
 	case "seat":
-		if len(rest) == 0 || rest[0] != "add" {
-			err = refuse(2, "the seat verb is: seat add <seat> <age-public-key>")
-		} else {
-			verb, err = "seat add", t.seatAdd(rest[1:])
-		}
+		verb, err = "seat add", bad("the seat verb is: seat add <seat> <age-public-key> --store <dir>")
 	default:
-		err = refuse(2, "unknown verb %q (exec, set, seat add, help)", verb)
+		return t.unknownVerb(verb)
 	}
 	if err == nil {
 		return 0
 	}
-	code := 2
 	var r refusal
-	if errors.As(err, &r) {
-		code = r.code
-	}
-	if verb == "exec" {
-		code = 125
+	errors.As(err, &r)
+	if r.usage {
+		fmt.Fprintf(t.stderr, "nova-secrets %s: %s; run: nova-secrets %s -h\n", verb, r.msg, verb)
+		return 2
 	}
 	fmt.Fprintf(t.stderr, "SECRETS %s REFUSED: %v\n", strings.ToUpper(verb), err)
-	return code
+	if verb == "exec" {
+		return 125
+	}
+	return 2
+}
+
+func (t tool) unknownVerb(verb string) int {
+	fmt.Fprintf(t.stderr, "nova-secrets: unknown verb %q (init, seat add, set, names, exec); run: nova-secrets help\n", verb)
+	return 2
+}
+
+// beforeDashes is exec's arguments before its --, else all of them.
+func beforeDashes(verb string, args []string) []string {
+	if i := slices.Index(args, "--"); verb == "exec" && i >= 0 {
+		return args[:i]
+	}
+	return args
 }
 
 // opts is the flags the verbs share.
-type opts struct{ store, as, key, sops, only string }
-
-type list []string
-
-func (l *list) String() string     { return strings.Join(*l, ",") }
-func (l *list) Set(v string) error { *l = append(*l, v); return nil }
+type opts struct{ store, as, key, sops, only, recovery string }
 
 // parse reads flags after the verb's positional arguments (npos of them) and
-// fills in the defaults. require is the deprecated --require (exec only).
-func (t tool) parse(verb string, args []string, npos int, needKey bool) (o opts, pos, require []string, err error) {
+// fills in the defaults. require is --require, kept for existing units (exec only);
+// also names inputs the caller found missing, so one refusal names them all.
+func (t tool) parse(verb string, args []string, npos int, needKey bool, also ...string) (o opts, pos, require []string, err error) {
 	for len(pos) < npos && len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		pos, args = append(pos, args[0]), args[1:]
 	}
 	fs := flag.NewFlagSet(verb, flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	for name, p := range map[string]*string{"store": &o.store, "as": &o.as, "key": &o.key, "sops": &o.sops, "only": &o.only} {
+	for name, p := range map[string]*string{"store": &o.store, "as": &o.as, "key": &o.key, "sops": &o.sops, "only": &o.only, "recovery": &o.recovery} {
 		fs.StringVar(p, name, "", "")
 	}
-	fs.Var((*list)(&require), "require", "")
-	fs.String("name", "", "") // seal's old spelling of set's NAME
-	fs.Bool("stdin", false, "")
-	fs.Bool("no-pr", false, "")
+	fs.Func("require", "", func(v string) error { require = append(require, v); return nil })
 	if err = fs.Parse(args); err != nil {
-		return o, nil, nil, refuse(2, "%v; run: nova-secrets help", err)
-	}
-	if n := fs.Lookup("name").Value.String(); n != "" {
-		pos = append(pos, n)
+		msg := err.Error()
+		if n, ok := strings.CutPrefix(msg, "flag provided but not defined: "); ok {
+			msg = "unknown flag --" + strings.TrimLeft(n, "-")
+		} else if n, ok := strings.CutPrefix(msg, "flag needs an argument: "); ok {
+			msg = "--" + strings.TrimLeft(n, "-") + " needs a value"
+		}
+		return o, nil, nil, bad("%s", msg)
 	}
 	if pos = append(pos, fs.Args()...); len(pos) != npos {
-		return o, nil, nil, refuse(2, "%s takes %d argument(s) before its flags; run: nova-secrets help", verb, npos)
+		return o, nil, nil, bad("takes %d argument(s) before its flags, got %d", npos, len(pos))
+	}
+	var missing []string
+	if verb == "exec" && o.only == "" && len(require) == 0 {
+		missing = append(missing, "--only NAME[,NAME]")
 	}
 	if o.store == "" {
-		o.store = envValue(t.environ, "NOVA_SECRETS_STORE")
+		if o.store = envValue(t.environ, "NOVA_SECRETS_STORE"); o.store == "" {
+			missing = append(missing, "--store <dir> (or NOVA_SECRETS_STORE)")
+		}
 	}
-	if o.store == "" {
-		return o, nil, nil, refuse(2, "missing --store <dir> (or NOVA_SECRETS_STORE): there is no default, the current directory is never assumed")
+	if verb == "init" && o.recovery == "" {
+		missing = append(missing, "--recovery <age-public-key>")
+	}
+	if needKey && o.key == "" {
+		if o.key = envValue(t.environ, "NOVA_SECRETS_KEY"); o.key == "" {
+			missing = append(missing, "--key <file> (or NOVA_SECRETS_KEY)")
+		}
+	}
+	if missing = append(missing, also...); len(missing) > 0 {
+		return o, nil, nil, bad("missing %s (no default; the current directory is never assumed)", strings.Join(missing, ", "))
 	}
 	if o.sops == "" {
 		o.sops = "sops"
 	}
-	if o.as == "" {
+	noSeat := verb == "init" || verb == "seat add"
+	if o.as == "" && !noSeat {
 		if o.as = envValue(t.environ, "NOVA_SECRETS_SEAT"); o.as == "" {
 			h, _ := os.Hostname() // an empty name fails the seat check below
 			o.as, _, _ = strings.Cut(h, ".")
 		}
 	}
-	if !seatName.MatchString(o.as) {
-		return o, nil, nil, refuse(2, "seat name %q: letters, digits, - and _ only", o.as)
+	if !noSeat && !seatName.MatchString(o.as) {
+		return o, nil, nil, bad("seat name %q: letters, digits, - and _ only", o.as)
 	}
-	if needKey {
-		if o.key == "" {
-			o.key = envValue(t.environ, "NOVA_SECRETS_KEY")
-		}
-		if o.key == "" {
-			return o, nil, nil, refuse(2, "missing --key <file> (or NOVA_SECRETS_KEY): there is no default")
-		}
-		// Absolute before the mode check and before sops (which runs in the store).
+	if needKey { // absolute before the mode check and before sops (which runs in the store)
 		if o.key, err = filepath.Abs(o.key); err != nil {
-			return o, nil, nil, refuse(2, "key path %q cannot be made absolute: %v", o.key, err)
+			return o, nil, nil, refuse("key path %q cannot be made absolute: %v", o.key, err)
 		}
 	}
 	return o, pos, require, nil
@@ -204,28 +274,36 @@ func envValue(env []string, name string) string {
 
 func (o opts) file(seat string) string { return filepath.Join(o.store, seat+".yaml") }
 
-func (t tool) exec(args []string) error {
-	i := slices.Index(args, "--")
-	if i < 0 || i == len(args)-1 {
-		return refuse(2, "no command: nova-secrets exec --only NAME -- <cmd> [args...]")
+// q quotes a word for a shell, for the command lines a refusal prints.
+func q(s string) string {
+	if s != "" && strings.Trim(s, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_./:=@%+-") == "" {
+		return s
 	}
-	o, _, require, err := t.parse("exec", args[:i], 0, true)
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+func (t tool) exec(args []string) error {
+	flags, argv := args, []string(nil)
+	if i := slices.Index(args, "--"); i >= 0 {
+		flags, argv = args[:i], args[i+1:]
+	}
+	var also []string
+	if len(argv) == 0 {
+		also = []string{"a command after --"}
+	}
+	o, _, require, err := t.parse("exec", flags, 0, true, also...)
 	if err != nil {
 		return err
 	}
-	if o.only == "" {
-		return refuse(2, "missing --only NAME[,NAME]; run: nova-secrets help")
-	}
-	argv := args[i+1:]
 	if _, err := t.lookPath(argv[0]); err != nil {
-		return refuse(2, "command not found: %s", argv[0])
+		return refuse("command not found: %s", argv[0])
 	}
 	values, err := t.decrypt(o, o.as)
 	if err != nil {
 		return err
 	}
 	var pick, missing []string
-	for _, n := range strings.Split(o.only, ",") {
+	for _, n := range strings.Split(strings.Join(append([]string{o.only}, require...), ","), ",") {
 		if n = strings.TrimSpace(n); n == "" || slices.Contains(pick, n) {
 			continue
 		}
@@ -235,12 +313,7 @@ func (t tool) exec(args []string) error {
 		pick = append(pick, n)
 	}
 	if len(missing) > 0 {
-		return refuse(2, "unknown secret name(s) %s: %s holds no such name", strings.Join(missing, ", "), o.file(o.as))
-	}
-	for _, r := range require { // every --only name is already required; --require must agree with --only
-		if !slices.Contains(pick, r) {
-			return refuse(2, "--require %s is not in --only", r)
-		}
+		return refuse("unknown secret name(s) %s: %s holds no such name", strings.Join(missing, ", "), o.file(o.as))
 	}
 	// The inherited environment loses every name the seat holds (a value left out
 	// must not arrive another way) and every sops identity variable.
@@ -257,7 +330,7 @@ func (t tool) exec(args []string) error {
 	}
 	fmt.Fprintf(t.stderr, "SECRETS EXEC OK as=%s keys=%d cmd=%s\n", o.as, len(pick), filepath.Base(argv[0]))
 	if err := t.become(argv, env); err != nil {
-		return refuse(2, "exec %s: %v; the command never started", argv[0], err)
+		return refuse("exec %s: %v; the command never started", argv[0], err)
 	}
 	return nil
 }
@@ -269,20 +342,21 @@ func (t tool) set(args []string) error {
 	}
 	name := pos[0]
 	if !envName.MatchString(name) {
-		return refuse(2, "NAME %q is not an environment variable name", name)
+		return bad("NAME %q is not an environment variable name", name)
 	}
-	if f, ok := t.stdin.(*os.File); ok {
-		if fi, err := f.Stat(); err == nil && fi.Mode()&os.ModeCharDevice != 0 {
-			return refuse(2, "stdin is a terminal: pipe the value in, as: <source> | nova-secrets set NAME")
-		}
+	if f, ok := t.stdin.(*os.File); ok && isTerminal(f) {
+		return refuse("set: stdin is a terminal; pipe the value in, as: <source> | nova-secrets set NAME ...; run: nova-secrets set -h")
 	}
 	raw, err := io.ReadAll(io.LimitReader(t.stdin, 1<<20))
 	if err != nil {
-		return refuse(2, "reading the value from stdin: %v", err)
+		return refuse("reading the value from stdin: %v", err)
 	}
 	value := strings.TrimSuffix(strings.TrimSuffix(string(raw), "\n"), "\r")
 	if value == "" || strings.ContainsAny(value, "\r\n\x00") {
-		return refuse(2, "the value on stdin must be one non-empty line")
+		return refuse("set: empty or multi-line value on stdin; the value must be one non-empty line; run: nova-secrets set -h")
+	}
+	if _, err := t.toplevel(o.store); err != nil {
+		return refuse("%s is not a git repository; run: git -C %s init && git -C %s add -A && git -C %s commit -m store", o.store, o.store, o.store, o.store)
 	}
 	values := map[string]string{} // a seat's first value starts its file
 	if _, err := os.Stat(o.file(o.as)); err == nil {
@@ -295,11 +369,10 @@ func (t tool) set(args []string) error {
 		return err
 	}
 	file := o.as + ".yaml"
-	if err := t.git(o.store, "add", "--", file); err != nil {
-		return err
-	}
-	if err := t.git(o.store, "commit", "-q", "-m", "set "+name+" in "+file, "--", file); err != nil {
-		return err
+	for _, g := range [][]string{{"add", "--", file}, {"commit", "-q", "-m", "set " + name + " in " + file, "--", file}} {
+		if err := t.git(o.store, g...); err != nil {
+			return fmt.Errorf("%w; the file is written: run: git -C %s status", err, o.store)
+		}
 	}
 	fmt.Fprintf(t.stdout, "SECRETS SET OK as=%s name=%s file=%s committed; run: git -C %s push\n", o.as, name, file, o.store)
 	return nil
@@ -312,20 +385,20 @@ func (t tool) seatAdd(args []string) error {
 	}
 	seat, pub := pos[0], pos[1]
 	if !seatName.MatchString(seat) || !agePub.MatchString(pub) {
-		return refuse(2, "usage: seat add <seat> <age1...>; the seat is letters, digits, - and _")
+		return bad("usage: seat add <seat> <age1...>; the seat is letters, digits, - and _")
 	}
 	b, err := os.ReadFile(filepath.Join(o.store, "recovery.pub"))
 	rec := strings.TrimSpace(string(b))
 	if err != nil || !agePub.MatchString(rec) {
-		return refuse(2, "store %s has no valid recovery.pub", o.store)
+		return refuse("%s/recovery.pub is missing or not an age public key; run: age-keygen -y <recovery.key> > %s/recovery.pub, then commit it", o.store, o.store)
 	}
 	if rec == pub {
-		return refuse(2, "that key is the recovery key, not a seat's")
+		return refuse("that key is the recovery key, not a seat's")
 	}
 	cfgPath := filepath.Join(o.store, ".sops.yaml")
 	cfg, err := os.ReadFile(cfgPath)
 	if err != nil {
-		return refuse(2, "store %s has no .sops.yaml", o.store)
+		return refuse("%s is missing; create it with the line: creation_rules: []", cfgPath)
 	}
 	out, err := addRule(cfg, seat, pub+","+rec)
 	if err != nil {
@@ -334,7 +407,7 @@ func (t tool) seatAdd(args []string) error {
 	if err := writeFile(cfgPath, out, 0o644); err != nil {
 		return err
 	}
-	fmt.Fprintf(t.stdout, "SECRETS SEAT ADD OK seat=%s; commit .sops.yaml, then the seat's own key runs: nova-secrets set NAME --as %s\n", seat, seat)
+	fmt.Fprintf(t.stdout, "SECRETS SEAT ADD OK seat=%s next: commit .sops.yaml, then the seat's own key runs: nova-secrets set NAME --as %s --store %s --key <file>\n", seat, seat, o.store)
 	return nil
 }
 
@@ -351,38 +424,103 @@ func (t tool) sopsEnv(key, home string) []string {
 }
 
 // sopsRun runs sops in the store with --key as its only identity, after the key
-// file's mode and owner check.
+// file's mode and owner check. A failure carries the command that ran, in a form
+// that is safe to paste: a scratch HOME, and a decrypt that writes to /dev/null.
 func (t tool) sopsRun(o opts, stdin io.Reader, args ...string) ([]byte, error) {
+	if _, err := t.lookPath(o.sops); err != nil {
+		return nil, refuse("sops not found at %s; install sops 3.x", o.sops)
+	}
 	if err := checkKey(o.key); err != nil {
 		return nil, err
 	}
 	home, err := os.MkdirTemp("", "nova-secrets-*")
 	if err != nil {
-		return nil, refuse(2, "temporary directory: %v", err)
+		return nil, refuse("temporary directory: %v", err)
 	}
 	defer func() { _ = os.RemoveAll(home) }() // ignored: an empty directory of our own; failing leaves only it
 	out, err := t.run(stdin, t.sopsEnv(o.key, home), o.store, o.sops, args...)
 	if err != nil {
-		return nil, refuse(2, "sops %s failed (%v); its output is withheld: run sops yourself to see why", args[0], exitOf(err))
+		shown := slices.Clone(args)
+		if args[0] == "-d" {
+			shown = slices.Insert(shown, 1, "--output", "/dev/null")
+		}
+		for i := range shown {
+			shown[i] = q(shown[i])
+		}
+		return nil, refusal{2, fmt.Sprintf("sops %s failed (%v); its output is withheld; ran: cd %s && HOME=$(mktemp -d) SOPS_AGE_KEY_FILE=%s %s %s",
+			args[0], exitOf(err), q(o.store), q(o.key), q(o.sops), strings.Join(shown, " ")), false, true}
 	}
 	return out, nil
+}
+
+// diagnose names why sops failed on a seat's file when the key is the cause. It
+// compares the key's public half (age-keygen -y) with the seat's rule in .sops.yaml
+// and with the file's own recipients; it reads no value.
+func (t tool) diagnose(o opts, seat string, fail error) error {
+	if _, err := t.lookPath("age-keygen"); err != nil {
+		return refuse("%v; age-keygen not found, so the key cannot be checked: install age", fail)
+	}
+	out, err := t.run(nil, t.sopsEnv(o.key, os.TempDir()), o.store, "age-keygen", "-y", o.key)
+	pub := strings.TrimSpace(string(out))
+	if err != nil || !agePub.MatchString(pub) {
+		return fail
+	}
+	file := seat + ".yaml"
+	cfg, _ := os.ReadFile(filepath.Join(o.store, ".sops.yaml"))
+	if rule := ruleFor(cfg, file); rule != nil {
+		if age := field(rule, "age"); age != nil && !slices.Contains(strings.Split(age.Value, ","), pub) {
+			return refuse("key %s is not the key in .sops.yaml for %s (%s): wrong --key/--as, or the key was replaced; edit the seat's age: in .sops.yaml then: cd %s && SOPS_AGE_KEY_FILE=<recovery.key> sops updatekeys -y %s",
+				pub, seat, strings.Split(age.Value, ",")[0], o.store, file)
+		}
+	}
+	data, _ := os.ReadFile(o.file(seat))
+	if rs, ok := recipientsOf(data); ok && !slices.Contains(rs, pub) {
+		return refuse("key %s is the key in .sops.yaml for %s but not among %s's %d recipients: re-key it with: cd %s && SOPS_AGE_KEY_FILE=<recovery.key> sops updatekeys -y %s",
+			pub, seat, file, len(rs), o.store, file)
+	}
+	return fail
+}
+
+// seatsIn lists the seat files in the store.
+func seatsIn(store string) []string {
+	entries, _ := os.ReadDir(store)
+	var seats []string
+	for _, e := range entries {
+		if s, ok := strings.CutSuffix(e.Name(), ".yaml"); ok && !e.IsDir() && seatName.MatchString(s) {
+			seats = append(seats, s)
+		}
+	}
+	return seats
+}
+
+// noSeatFile is the refusal for a seat with no file: it lists the seats there are.
+func noSeatFile(o opts, seat string) error {
+	have := "none"
+	if s := seatsIn(o.store); len(s) > 0 {
+		have = strings.Join(s, ",")
+	}
+	return refuse("no %s.yaml in %s: wrong --as? seats here: %s; or create it: nova-secrets set NAME --as %s --store %s --key <file>", seat, o.store, have, seat, o.store)
 }
 
 // decrypt opens <seat>.yaml into its flat name -> value map.
 func (t tool) decrypt(o opts, seat string) (map[string]string, error) {
 	file := seat + ".yaml"
 	if _, err := os.Stat(o.file(seat)); err != nil {
-		return nil, refuse(2, "seat file %s is absent (a new seat starts with: nova-secrets seat add)", o.file(seat))
+		return nil, noSeatFile(o, seat)
 	}
 	out, err := t.sopsRun(o, nil, "-d", "--output-type", "json", file)
 	if err != nil {
+		var r refusal
+		if errors.As(err, &r) && r.sops {
+			return nil, t.diagnose(o, seat, err)
+		}
 		return nil, err
 	}
 	var raw map[string]any
 	dec := json.NewDecoder(bytes.NewReader(out))
 	dec.UseNumber()
 	if err := dec.Decode(&raw); err != nil {
-		return nil, refuse(2, "%s did not decrypt to a map of names", file)
+		return nil, refuse("%s did not decrypt to a map of names", file)
 	}
 	values := map[string]string{}
 	for k, v := range raw {
@@ -399,10 +537,10 @@ func (t tool) decrypt(o opts, seat string) (map[string]string, error) {
 			s = fmt.Sprint(v)
 		case nil:
 		default: // a nested value is no environment variable; the value is not shown
-			return nil, refuse(2, "%s: %s is not a single value", file, k)
+			return nil, refuse("%s: %s is not a single value", file, k)
 		}
 		if !envName.MatchString(k) || strings.Contains(s, "\x00") {
-			return nil, refuse(2, "%s: %q is not an environment variable name, or its value holds a NUL", file, k)
+			return nil, refuse("%s: %q is not an environment variable name, or its value holds a NUL", file, k)
 		}
 		values[k] = s
 	}
@@ -413,26 +551,54 @@ func (t tool) decrypt(o opts, seat string) (map[string]string, error) {
 func (t tool) encrypt(o opts, seat string, values map[string]string) error {
 	plain, err := json.Marshal(values)
 	if err != nil {
-		return refuse(2, "encoding the seat: %v", err)
+		return refuse("encoding the seat: %v", err)
 	}
 	out, err := t.sopsRun(o, bytes.NewReader(plain), "-e", "--filename-override", seat+".yaml", "--input-type", "json", "--output-type", "yaml", "/dev/stdin")
 	if err != nil {
+		var r refusal
+		cfg, _ := os.ReadFile(filepath.Join(o.store, ".sops.yaml"))
+		if errors.As(err, &r) && r.sops && ruleFor(cfg, seat+".yaml") == nil {
+			return refuse("no rule for %s.yaml in %s/.sops.yaml (or it does not parse); run: nova-secrets seat add %s <age-public-key> --store %s", seat, o.store, seat, o.store)
+		}
 		return err
 	}
 	return writeFile(o.file(seat), out, 0o600)
 }
 
-func (t tool) git(dir string, args ...string) error {
+// gitRun runs git in dir without the caller's repository variables.
+func (t tool) gitRun(dir string, args ...string) ([]byte, error) {
 	var env []string
 	for _, kv := range t.environ {
 		if k, _, _ := strings.Cut(kv, "="); !slices.Contains([]string{"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"}, k) {
 			env = append(env, kv)
 		}
 	}
-	if _, err := t.run(nil, env, dir, "git", args...); err != nil {
-		return refuse(2, "git %s in %s failed (%v); the file is written: run: git -C %s status", args[0], dir, exitOf(err), dir)
+	return t.run(nil, env, dir, "git", args...)
+}
+
+func (t tool) git(dir string, args ...string) error {
+	if _, err := t.gitRun(dir, args...); err != nil {
+		return refuse("git %s in %s failed (%v)", args[0], dir, exitOf(err))
 	}
 	return nil
+}
+
+// toplevel is the top of the work tree that holds dir.
+func (t tool) toplevel(dir string) (string, error) {
+	out, err := t.gitRun(dir, "rev-parse", "--show-toplevel")
+	return strings.TrimSpace(string(out)), err
+}
+
+// sameDir is whether two paths are one directory, links resolved.
+func sameDir(a, b string) bool {
+	real := func(p string) string {
+		if r, err := filepath.EvalSymlinks(p); err == nil {
+			p = r
+		}
+		abs, _ := filepath.Abs(p)
+		return abs
+	}
+	return real(a) == real(b)
 }
 
 // writeFile replaces path through a temporary file beside it and a rename.
@@ -445,7 +611,7 @@ func writeFile(path string, data []byte, mode os.FileMode) error {
 	}
 	if err != nil {
 		_ = os.Remove(tmp) // ignored: the write already failed, and that is the error reported
-		return refuse(2, "writing %s: %v", path, err)
+		return refuse("writing %s: %v", path, err)
 	}
 	return nil
 }
@@ -459,60 +625,200 @@ func exitOf(err error) string {
 	return err.Error()
 }
 
-// addRule parses .sops.yaml and inserts the seat's rule before the first rule that
-// would shadow it (sops uses the first matching rule), keeping every existing rule.
-func addRule(cfg []byte, seat, age string) ([]byte, error) {
-	var doc yaml.Node
-	if err := yaml.Unmarshal(cfg, &doc); err != nil || doc.Kind != yaml.DocumentNode || len(doc.Content) != 1 || doc.Content[0].Kind != yaml.MappingNode {
-		return nil, refuse(2, ".sops.yaml does not parse as a YAML map; it is left as it was")
+// parseTop is the top-level map of a YAML document.
+func parseTop(data []byte) (doc, top *yaml.Node, err error) {
+	doc = &yaml.Node{}
+	if err = yaml.Unmarshal(data, doc); err != nil || doc.Kind != yaml.DocumentNode || len(doc.Content) != 1 || doc.Content[0].Kind != yaml.MappingNode {
+		return nil, nil, errors.New("not a YAML map")
 	}
-	var rules *yaml.Node
-	top := doc.Content[0]
-	for i := 0; i+1 < len(top.Content); i += 2 {
-		if top.Content[i].Value == "creation_rules" && top.Content[i+1].Kind == yaml.SequenceNode {
-			rules = top.Content[i+1]
+	return doc, doc.Content[0], nil
+}
+
+// field is the value of key in a YAML map node, or nil.
+func field(m *yaml.Node, key string) *yaml.Node {
+	for i := 0; m != nil && i+1 < len(m.Content); i += 2 {
+		if m.Content[i].Value == key {
+			return m.Content[i+1]
 		}
 	}
-	if rules == nil {
-		return nil, refuse(2, ".sops.yaml has no creation_rules list; it is left as it was")
+	return nil
+}
+
+// items is the elements of a YAML sequence node, or none.
+func items(n *yaml.Node) []*yaml.Node {
+	if n == nil || n.Kind != yaml.SequenceNode {
+		return nil
 	}
-	pathRegex := `^` + regexp.QuoteMeta(seat) + `\.yaml$`
-	file := seat + ".yaml"
+	return n.Content
+}
+
+// matches is whether a creation rule applies to file: a rule without path_regex
+// matches every file.
+func matches(rule *yaml.Node, file string) bool {
+	pr := field(rule, "path_regex")
+	if pr == nil || pr.Value == "" {
+		return true
+	}
+	re, err := regexp.Compile(pr.Value)
+	return err == nil && re.MatchString(file)
+}
+
+// ruleFor is the first creation rule that matches file (sops uses the first), or nil.
+func ruleFor(cfg []byte, file string) *yaml.Node {
+	_, top, err := parseTop(cfg)
+	if err != nil {
+		return nil
+	}
+	for _, r := range items(field(top, "creation_rules")) {
+		if r.Kind == yaml.MappingNode && matches(r, file) {
+			return r
+		}
+	}
+	return nil
+}
+
+// recipientsOf lists the age recipients in a sops file's metadata.
+func recipientsOf(data []byte) ([]string, bool) {
+	_, top, err := parseTop(data)
+	if err != nil {
+		return nil, false
+	}
+	var out []string
+	for _, a := range items(field(field(top, "sops"), "age")) {
+		if r := field(a, "recipient"); r != nil {
+			out = append(out, r.Value)
+		}
+	}
+	return out, true
+}
+
+// addRule inserts the seat's rule before the first rule that would shadow it,
+// keeping every existing rule.
+func addRule(cfg []byte, seat, age string) ([]byte, error) {
+	doc, top, err := parseTop(cfg)
+	if err != nil {
+		return nil, refuse(".sops.yaml does not parse as a YAML map; it is left as it was")
+	}
+	rules := field(top, "creation_rules")
+	if rules == nil || rules.Kind != yaml.SequenceNode {
+		return nil, refuse(".sops.yaml has no creation_rules list; it is left as it was")
+	}
+	pathRegex, file := `^`+regexp.QuoteMeta(seat)+`\.yaml$`, seat+".yaml"
 	at := len(rules.Content)
 	for i, r := range rules.Content {
 		if r.Kind != yaml.MappingNode {
-			return nil, refuse(2, ".sops.yaml: a creation rule is not a map; it is left as it was")
+			return nil, refuse(".sops.yaml: a creation rule is not a map; it is left as it was")
 		}
-		shadows := true // a rule without path_regex matches every file
-		for j := 0; j+1 < len(r.Content); j += 2 {
-			switch r.Content[j].Value {
-			case "path_regex":
-				v := r.Content[j+1].Value
-				if v == pathRegex {
-					return nil, refuse(2, ".sops.yaml already has a rule for %s", seat)
-				}
-				re, err := regexp.Compile(v)
-				shadows = v == "" || err == nil && re.MatchString(file)
-			case "age":
-				if strings.Contains(r.Content[j+1].Value, strings.SplitN(age, ",", 2)[0]) {
-					return nil, refuse(2, ".sops.yaml already has a seat with that key")
-				}
-			}
+		if pr := field(r, "path_regex"); pr != nil && pr.Value == pathRegex {
+			return nil, refuse(".sops.yaml already has a rule for %s", seat)
 		}
-		if shadows && at == len(rules.Content) {
+		if a := field(r, "age"); a != nil && strings.Contains(a.Value, strings.SplitN(age, ",", 2)[0]) {
+			return nil, refuse(".sops.yaml already has a seat with that key")
+		}
+		if at == len(rules.Content) && matches(r, file) {
 			at = i
 		}
 	}
-	rule := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map", Content: []*yaml.Node{
-		{Kind: yaml.ScalarNode, Tag: "!!str", Value: "path_regex"}, {Kind: yaml.ScalarNode, Tag: "!!str", Value: pathRegex},
-		{Kind: yaml.ScalarNode, Tag: "!!str", Value: "age"}, {Kind: yaml.ScalarNode, Tag: "!!str", Value: age},
-	}}
+	str := func(v string) *yaml.Node { return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: v} }
+	rule := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map", Content: []*yaml.Node{str("path_regex"), str(pathRegex), str("age"), str(age)}}
 	rules.Content = slices.Insert(rules.Content, at, rule)
 	var buf bytes.Buffer
 	enc := yaml.NewEncoder(&buf)
 	enc.SetIndent(2)
-	if err := enc.Encode(&doc); err != nil || enc.Close() != nil {
-		return nil, refuse(2, "writing .sops.yaml: %v", err)
+	if err := enc.Encode(doc); err != nil || enc.Close() != nil {
+		return nil, refuse("writing .sops.yaml: %v", err)
 	}
 	return buf.Bytes(), nil
+}
+
+// names prints the names in a seat file. A sops file keeps its keys in the clear;
+// the sops block is skipped and no value is read. A key that is no environment
+// variable name, or whose value is no single value, is counted and never printed:
+// a key is data from a file anyone with push access can edit.
+func (t tool) names(args []string) error {
+	o, _, _, err := t.parse("names", args, 0, false)
+	if err != nil {
+		return err
+	}
+	b, err := os.ReadFile(o.file(o.as))
+	if err != nil {
+		return noSeatFile(o, o.as)
+	}
+	_, top, err := parseTop(b)
+	if err != nil {
+		return refuse("%s does not parse as a sops file", o.file(o.as))
+	}
+	var out strings.Builder
+	shown, refused := 0, 0
+	for i := 0; i+1 < len(top.Content); i += 2 {
+		k, v := top.Content[i], top.Content[i+1]
+		switch {
+		case k.Value == "sops" || k.Value == markKey:
+		case k.Kind != yaml.ScalarNode || k.Tag != "!!str" || !envName.MatchString(k.Value) || v.Kind != yaml.ScalarNode:
+			refused++
+		default:
+			out.WriteString(k.Value + "\n")
+			shown++
+		}
+	}
+	fmt.Fprint(t.stdout, out.String())
+	fmt.Fprintf(t.stderr, "SECRETS NAMES OK as=%s names=%d refused=%d\n", o.as, shown, refused)
+	return nil
+}
+
+// initStore creates the store: git, .sops.yaml with no rules, recovery.pub, one commit.
+func (t tool) initStore(args []string) error {
+	o, _, _, err := t.parse("init", args, 0, false)
+	if err != nil {
+		return err
+	}
+	rec := strings.TrimSpace(o.recovery)
+	if !agePub.MatchString(rec) {
+		return bad("--recovery wants an age public key (age1...), not a private key or a file; make one: age-keygen -o recovery.key, then: age-keygen -y recovery.key")
+	}
+	at := o.store // where git is asked about: the store, or its parent while it is absent
+	entries, err := os.ReadDir(o.store)
+	absent := errors.Is(err, os.ErrNotExist)
+	if absent {
+		at = filepath.Dir(o.store)
+	} else if err != nil {
+		return refuse("%s cannot be read: %v", o.store, err)
+	}
+	var names []string
+	for _, e := range entries {
+		if names = append(names, e.Name()); e.Name() == ".sops.yaml" || e.Name() == "recovery.pub" {
+			return refuse("store %s exists; use: nova-secrets seat add <seat> <age-public-key> --store %s", o.store, o.store)
+		}
+	}
+	if names = slices.DeleteFunc(names, func(n string) bool { return n == ".git" }); len(names) > 0 {
+		return refuse("%s is not empty (it holds %s); init needs a directory that is absent or empty, and never touches files that are there", o.store, strings.Join(names[:min(len(names), 5)], ", "))
+	}
+	top, gerr := t.toplevel(at)
+	if gerr == nil && !sameDir(top, o.store) {
+		return refuse("%s is inside the git work tree %s; make the store a repository of its own: mkdir -p %s && git -C %s init, then run init again", o.store, top, o.store, o.store)
+	}
+	if absent {
+		if err := os.Mkdir(o.store, 0o755); err != nil {
+			return refuse("creating %s: %v (its parent must exist)", o.store, err)
+		}
+	}
+	if gerr != nil {
+		if err := t.git(o.store, "init", "-q"); err != nil {
+			return err
+		}
+	}
+	files := []string{".sops.yaml", "recovery.pub"}
+	for i, body := range []string{"creation_rules: []\n", rec + "\n"} {
+		if err := writeFile(filepath.Join(o.store, files[i]), []byte(body), 0o644); err != nil {
+			return err
+		}
+	}
+	if err := t.git(o.store, append([]string{"add", "--"}, files...)...); err != nil {
+		return err
+	}
+	if err := t.git(o.store, append([]string{"commit", "-q", "-m", "init secrets store", "--"}, files...)...); err != nil {
+		return err
+	}
+	fmt.Fprintf(t.stdout, "SECRETS INIT OK store=%s next: nova-secrets seat add <seat> <age-pubkey> --store %s\n", o.store, o.store)
+	return nil
 }
