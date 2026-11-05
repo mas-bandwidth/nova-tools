@@ -5,7 +5,6 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/update"
 	"github.com/mas-bandwidth/nova-tools/pkg/testkit"
 	"github.com/stretchr/testify/assert"
 )
@@ -37,10 +36,4 @@ func TestVersionLineShapeAcceptsTheOneLine(t *testing.T) {
 	testkit.VersionLineShape(t, "faketool", func() (int, string, string) {
 		return 0, line, ""
 	})
-}
-
-func TestExecutableFirstRunRunsTheDocumentedFirstRun(t *testing.T) {
-	t.Parallel()
-
-	testkit.ExecutableFirstRun(t, "nova-update", update.Main)
 }

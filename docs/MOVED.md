@@ -59,3 +59,19 @@ nova-sandbox is now `sandbox/`: the wall only (`--read`, `--read-noexec`, `--wri
 | `--net-listen`, `--json`, `--secret`, `--max` | dropped; inbound is never granted, `probe` takes no flags |
 | `policy` verb, lane profiles (`LaneProfile`), `--deny` | dropped (the lane profile was nova-friend's) |
 | `pkg/sandbox`, `profiles/`, `tools/sandboxcheck`, `cmd/nova-sandbox` | deleted; the darwin profile template is `sandbox/darwin.sb.tmpl` |
+
+## nova-secrets
+
+nova-secrets is now `secrets/`: a thin wrapper over sops and age on the same store (`.sops.yaml`, `recovery.pub`,
+one `<seat>.yaml` per seat). Kept: `exec`, `names`, `check`, `seal`, `seat add`, `keygen`, `version`.
+
+| Was | Now |
+|---|---|
+| `gate`, the clear `NOVA_SECRETS_WRITTEN_BY` mark | dropped; a seal drops an old mark |
+| `place`, `placed` | dropped |
+| `seat inject` | dropped; `seal` sets one value, `seat add` starts a seat |
+| `seal`'s branch, push, pull request and merge | dropped; `seal` commits on the current branch, pushing is the caller's |
+| `seal`'s hidden terminal prompt | dropped; the value is piped on stdin |
+| the store's upstream, clean-tree and invariant checks; the sops and age version probes | dropped |
+| `names --json`, `--max`'s MORE line; `--dry-run` | dropped; `--max` and `--no-pr` are accepted and ignored |
+| `cmd/nova-secrets`, `pkg/secrets`, `pkg/seatcred`, `pkg/onboarding`, `pkg/winacl`, `docs/SPEC-SECRETS.md` | deleted |
