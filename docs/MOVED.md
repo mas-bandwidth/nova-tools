@@ -74,4 +74,5 @@ one `<seat>.yaml` per seat). Kept: `exec`, `names`, `check`, `seal`, `seat add`,
 | `seal`'s hidden terminal prompt | dropped; the value is piped on stdin |
 | the store's upstream, clean-tree and invariant checks; the sops and age version probes | dropped |
 | `names --json`, `--max`'s MORE line; `--dry-run` | dropped; `--max` and `--no-pr` are accepted and ignored |
-| `cmd/nova-secrets`, `pkg/secrets`, `pkg/seatcred`, `pkg/onboarding`, `pkg/winacl`, `docs/SPEC-SECRETS.md` | deleted |
+| `cmd/nova-secrets`, `docs/SPEC-SECRETS.md` | deleted |
+| `pkg/secrets`, `pkg/seatcred`, `pkg/winacl`, `pkg/onboarding`, `pkg/testkit` first-run helper | still on main for now: nova-config, nsprint, update and version import them; each goes with its last importer |
