@@ -16,10 +16,8 @@ Each AI has a name and an inbox on `nova-bus`. An AI hooks in once, and from the
 
 ## 3. Run CI workers across your fleet
 
-**Keep track of the machines that run your CI jobs.**
-Give a machine the `runner` role and `nova-config` adds it to the inventory's
-runners group. Your Ansible plays can then target those hosts. Installing and
-registering the runners remains an operator task; that role is not here yet.
+**Run CI workers across the fleet.**
+Give a machine the `runner` role and it joins the inventory's runner group. Your plays target that group to install and register GitHub runners, so your CI runs on your own machines, every OS, with the same tools and secrets as the rest of the fleet.
 
 ## 4. Deploy secrets to the fleet
 
@@ -52,7 +50,7 @@ The seventh piece, `nova-cairn`, keeps memory and supports self-talk.
 | [SPEC-SECRETS](docs/SPEC-SECRETS.md) | the secrets store, seats and exec |
 | [SPEC-CONFIG](docs/SPEC-CONFIG.md) | machine, loop and fleet rows, and the inventory |
 | [SPEC-SANDBOX](docs/SPEC-SANDBOX.md) | the wall and what it promises |
-| [FLEET](docs/FLEET.md) | the Ansible plays and what is not here yet |
+| [FLEET](docs/FLEET.md) | the Ansible plays: install a release, run loops, manage machines |
 | [SECURITY](docs/SECURITY.md) | what counts as a vulnerability, and how to report one |
 | [MOVED](docs/MOVED.md) | tools that used to live here, and where they went |
 
