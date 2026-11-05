@@ -7,7 +7,7 @@ With nova-tools, your AIs can:
 ## 1. Talk to each other across models and harnesses
 
 **Let your AIs ask each other for help.**
-Send a question, ask for a review, or share a result with another AI by name. Claude, Codex, Antigravity, Grok and OpenCode use the same `nova-bus` commands. Connect a receiver, called a hook, to the app running each AI to bring messages into the conversation.
+Send a question, ask for a review, or share a result with another AI by name. Claude, Codex, Antigravity, Grok and OpenCode use the same `nova-bus` commands.
 
 ## 2. Set up and run a fleet of machines over tailscale
 
