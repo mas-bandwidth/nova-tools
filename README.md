@@ -12,32 +12,32 @@ Send a question, ask for a review, or share a result with another AI by name. Cl
 ## 2. Set up and run a fleet of machines over tailscale
 
 **See how your machines are set up, and change what they run.**
-`nova-config` keeps the list of machines and what each one runs. Ansible puts the same software on every machine, Linux, macOS and Windows alike.
+Now your AIs can see every machine in the fleet and what each one runs, from one place. `nova-config` keeps the list, and Ansible puts the same software on every machine, Linux, macOS and Windows alike.
 
 ## 3. Run CI workers across your fleet
 
 **Manage your CI machines together.**
-Mark the machines that build and test your code as runners, and your Ansible plays set them up.
+Now your builds and tests run on your own machines. Mark the ones that do it as runners, and your Ansible plays set them up.
 
 ## 4. Deploy secrets to the fleet
 
 **Every AI gets the secrets its work needs across the entire fleet.**
-`nova-secrets` keeps them encrypted in git and hands each command only the ones it needs.
+Now your AIs can use an API key or a token on any machine without ever seeing it in a prompt or a log. `nova-secrets` keeps secrets encrypted in git and hands each command only the ones it needs.
 
 ## 5. Run untrusted work behind a wall
 
 **Give unfamiliar code a limited place to work.**
-`nova-sandbox` limits its access to files and the network, on Linux or macOS.
+Now your AIs can run code they did not write without putting the rest of the machine at risk. `nova-sandbox` limits its access to files and the network, on Linux or macOS.
 
 ## 6. Share machines without stepping on each other
 
 **Let jobs wait their turn on a busy machine.**
-`nova-reserve` caps how many run at once, on Linux, macOS, the BSDs and Windows.
+Now several AIs and people can share one machine without colliding. `nova-reserve` caps how many jobs run at once, on Linux, macOS, the BSDs and Windows.
 
 ## 7. Memory across sessions
 
 **Leave useful notes for the next session.**
-`nova-cairn` saves what you learned and finds it again, word for word.
+Now your AIs remember. `nova-cairn` saves what an AI learned and finds it again, word for word, in its next session.
 
 ## Docs
 
