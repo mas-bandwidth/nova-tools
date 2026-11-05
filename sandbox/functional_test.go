@@ -518,8 +518,11 @@ func TestSpecWorkedExample(t *testing.T) {
 	modcache, err := exec.Command(goBin, "env", "GOMODCACHE").Output()
 	require.NoError(t, err)
 	mod := strings.TrimSpace(string(modcache))
-	if !underAny(goBin, linuxReadRoots) {
-		t.Skip("go is outside the system roots here: " + goBin)
+	// The example's toolchain is /usr/local/go, under /usr; a toolchain elsewhere is
+	// named with --read, as the spec says for any command outside the roots.
+	var toolchain []string
+	if goBin, err = filepath.EvalSymlinks(goBin); err == nil && !underAny(goBin, linuxReadRoots) {
+		toolchain = []string{"--read", filepath.Dir(filepath.Dir(goBin))}
 	}
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)
@@ -536,14 +539,15 @@ func TestSpecWorkedExample(t *testing.T) {
 	if out, err := tidy.CombinedOutput(); err != nil {
 		t.Skip("testify v1.12.1 is not in this host's module cache: " + string(out))
 	}
-	cmd := exec.Command(bin(t), "--write", src, "--write", scr, "--read", mod, "--net-deny", "--", "go", "build", "./...")
+	wall := append([]string{"--write", src, "--write", scr, "--read", mod}, toolchain...)
+	cmd := exec.Command(bin(t), append(wall, "--net-deny", "--", "go", "build", "./...")...)
 	cmd.Dir = src
 	cmd.Env = []string{"PATH=" + filepath.Dir(goBin) + ":/usr/bin:/bin", "HOME=" + filepath.Join(scr, "home"), "TMPDIR=" + filepath.Join(scr, "tmp"),
 		"GOCACHE=" + filepath.Join(scr, "gocache"), "GOMODCACHE=" + mod, "GOPROXY=off"}
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, string(out))
 	assert.FileExists(t, filepath.Join(src, "w"), "the binary is written into the --write")
-	ssh := exec.Command(bin(t), "--write", src, "--write", scr, "--read", mod, "--net-deny", "--", "/bin/ls", os.Getenv("HOME"))
-	ssh.Dir, ssh.Env = src, cmd.Env
-	assert.Error(t, ssh.Run(), "anything else is denied")
+	home := exec.Command(bin(t), append(wall, "--net-deny", "--", "/bin/ls", os.Getenv("HOME"))...)
+	home.Dir, home.Env = src, cmd.Env
+	assert.Error(t, home.Run(), "anything else is denied")
 }
