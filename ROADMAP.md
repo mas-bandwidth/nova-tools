@@ -21,11 +21,11 @@ Decided and in place. Recorded so the items that measure them have their startin
 
 ## Contents
 
-- [Lessons from Prime Agent's rewrite](#lessons-from-prime-agents-rewrite) (5)
+- [Lessons from Prime Agent's rewrite](#lessons-from-prime-agents-rewrite) (4)
 - [Measure and rate](#measure-and-rate) (8)
-- [Friends](#friends) (26)
+- [Friends](#friends) (22)
 - [Setup, release and operations](#setup-release-and-operations) (100)
-- [Docs, models and the repository](#docs-models-and-the-repository) (15)
+- [Docs, models and the repository](#docs-models-and-the-repository) (14)
 - [Far](#far) (10)
 - [Tests and test tiers](#tests-and-test-tiers) (37)
 - [Cleanup, dead code and debt](#cleanup-dead-code-and-debt) (36)
@@ -34,14 +34,6 @@ Decided and in place. Recorded so the items that measure them have their startin
 ## Lessons from Prime Agent's rewrite
 
 Prime Intellect's write-up of rewriting Prime Agent with AI workers (https://www.primeintellect.ai/blog/prime-agent-rust) names what made a large AI-built rewrite hold together. Each item is one of those lessons, checked against nova's code at dev 9ff68178: what already exists is named by file and line, and the item covers the rest.
-
-### One-shot workers per card, friends included
-
-Every card gets a fresh worker session that ends when the card ends. No worker sits idle between cards holding a session, and no session carries one card's context into the next. Long-lived sessions are kept only for coordination: the seat and the friends' chat. This changes the friend default from batch to one-shot, makes a lane one session, and changes the friend daemon's lifecycle to match.
-
-Already in the code: nova-swarm runs one task per launch (cmd/nova-swarm/main.go:1). Friends have a one-shot mode (internal/friend/lanes.go:26), but the default is batch (internal/config/kind.go:213-215). The gap is one-shot as the default for every friend, and batch delivery retired for work.
-
-Why it waits: A change of the default delivery model, not a fix.
 
 ### Orchestration on small nodes, builds in disposable sandboxes
 
@@ -171,14 +163,6 @@ Target: v1.3
 
 From: cards moved out of the sprint (work record, 2026-10-04); card from the sprint store (2026-10-10)
 
-### One-shot friend lanes replace the hand-written runner scripts
-
-nova-friend runs cards through each harness in one-shot lanes with a limit-aware pause, and the stopgap shell runners are deleted.
-
-Target: after v1.4
-
-From: cards moved out of the sprint (work record, 2026-10-04); card moved out of the sprint (work record, 2026-10-04)
-
 ### A broken friend session renews itself
 
 The friend daemon renews a session it marked broken, in the same harness, and exposes the renewal as a verb. No person has to renew it by hand.
@@ -202,14 +186,6 @@ A friend delivers a bus message as an instruction only when it comes from the co
 Target: after v1.4
 
 From: card moved out of the sprint (work record, 2026-10-04)
-
-### Per-card token cap and cheaper deliveries for per-token friends
-
-Every one-shot friend lane counts tokens and stops at a per-card cap. Briefs cite rules by reference and each prompt starts with one stable prefix to cut tokens per landed card.
-
-Target: after v1.4
-
-From: cards moved out of the sprint (work record, 2026-10-04); card from the sprint store (2026-10-10)
 
 ### Run every friend lane inside a wall profile taken from its friend row
 
@@ -306,22 +282,6 @@ Delivery into the open session of each harness is measured and reliable, and a m
 Target: v1.3
 
 From: card from the sprint store (2026-10-10); cards moved out of the sprint (work record, 2026-10-04); card moved out of the sprint (work record, 2026-10-04)
-
-### The friend daemon serves its reader row through one-shot lanes
-
-A friend daemon with one-shot lanes also beats a reader queue and runs asked reads as one-shots within the row's tiers and read width.
-
-Target: v1.5
-
-From: card from the sprint store (2026-10-10)
-
-### One lane engine keeps a one-shot friend at width
-
-A one-shot friend has exactly one lane engine, installed, upgraded and retired by the adopt, and nova-runner keeps it at its width.
-
-Target: v1.5
-
-From: card from the sprint store (2026-10-10)
 
 ### Pin the friend harness version, including under the lane wall
 
@@ -1270,14 +1230,6 @@ Each package that owns state (bus, cairn, card tree, config, decision record, se
 Target: v1.5
 
 From: card from the sprint store (2026-10-10); cards moved out of the sprint (work record, 2026-10-04)
-
-### TLA+ models for friend lanes, delivery, presence and session checks
-
-Model the friend daemon's one-shot lanes, message delivery and acks, presence across batch turns, the session check file and the lane governor, and check them with TLC.
-
-Target: v1.5
-
-From: card from the sprint store (2026-10-10); card moved out of the sprint (work record, 2026-10-04)
 
 ## Far
 

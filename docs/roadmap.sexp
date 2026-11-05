@@ -88,19 +88,6 @@
  :items
  (
   ; Lessons from Prime Agent's rewrite
-  (item "one-shot-workers" :group "lessons" :area "nova-friend"
-   :title "One-shot workers per card, friends included"
-   :text "Every card gets a fresh worker session that ends when the card ends. No worker sits idle
-    between cards holding a session, and no session carries one card's context into the next.
-    Long-lived sessions are kept only for coordination: the seat and the friends' chat. This changes
-    the friend default from batch to one-shot, makes a lane one session, and changes the friend
-    daemon's lifecycle to match."
-   :exists "nova-swarm runs one task per launch (cmd/nova-swarm/main.go:1). Friends have a
-    one-shot mode (internal/friend/lanes.go:26), but the default is batch
-    (internal/config/kind.go:213-215). The gap is one-shot as the default for every friend, and batch
-    delivery retired for work."
-   :why "A change of the default delivery model, not a fix."
-   :date "2026-10-09")
   (item "small-nodes-and-disposable-sandboxes" :group "lessons" :area "ops"
    :title "Orchestration on small nodes, builds in disposable sandboxes"
    :text "The coordinator, the sprint server and the stores run on small machines that do nothing else.
@@ -373,14 +360,6 @@
    :date "2026-10-10"
    :release "after v1.4"
    :origin "card moved out of the sprint (work record, 2026-10-04)")
-  (item "friend-one-shot-lanes-replace-runner-scripts" :group "friends"
-   :title "One-shot friend lanes replace the hand-written runner scripts"
-   :text "nova-friend runs cards through each harness in one-shot lanes with a limit-aware pause, and the
-    stopgap shell runners are deleted."
-   :date "2026-10-10"
-   :release "after v1.4"
-   :origin "cards moved out of the sprint (work record, 2026-10-04); card moved out of the sprint (work
-    record, 2026-10-04)")
   (item "tool-cold-read-fix-steps" :group "quality"
    :title "Fix the defects found by cold reads of the tools"
    :text "Cold readers of config, fuse, memory, redis, self-talk, tokens and update found defects. Each is
@@ -610,13 +589,6 @@
    :release "v1.5"
    :origin "cards moved out of the sprint (work record, 2026-10-04); issue #1142; issue #2051; card moved
     out of the sprint (work record, 2026-10-04)")
-  (item "friend-token-budgets" :group "friends"
-   :title "Per-card token cap and cheaper deliveries for per-token friends"
-   :text "Every one-shot friend lane counts tokens and stops at a per-card cap. Briefs cite rules by
-    reference and each prompt starts with one stable prefix to cut tokens per landed card."
-   :date "2026-10-10"
-   :release "after v1.4"
-   :origin "cards moved out of the sprint (work record, 2026-10-04); card from the sprint store (2026-10-10)")
   (item "script-verify-wired" :group "quality"
    :title "Re-land and wire script-card self-verification"
    :text "A script card whose head equals its program's output needs no model read. The verifier was
@@ -1649,20 +1621,6 @@
    :release "v1.3"
    :origin "card from the sprint store (2026-10-10); cards moved out of the sprint (work record,
     2026-10-04); card moved out of the sprint (work record, 2026-10-04)")
-  (item "friend-daemon-lane-reads" :group "friends"
-   :title "The friend daemon serves its reader row through one-shot lanes"
-   :text "A friend daemon with one-shot lanes also beats a reader queue and runs asked reads as one-shots
-    within the row's tiers and read width."
-   :date "2026-10-10"
-   :release "v1.5"
-   :origin "card from the sprint store (2026-10-10)")
-  (item "runner-one-lane-engine-at-width" :group "friends"
-   :title "One lane engine keeps a one-shot friend at width"
-   :text "A one-shot friend has exactly one lane engine, installed, upgraded and retired by the adopt, and
-    nova-runner keeps it at its width."
-   :date "2026-10-10"
-   :release "v1.5"
-   :origin "card from the sprint store (2026-10-10)")
   (item "friend-unit-test-coverage" :group "tests"
    :title "Unit tests for the friend state directory choice and watch cursor"
    :text "Uncovered functions in the friend state file get unit tests to raise package coverage."
@@ -1724,13 +1682,6 @@
    :date "2026-10-10"
    :release "v1.5"
    :origin "card from the sprint store (2026-10-10); cards moved out of the sprint (work record, 2026-10-04)")
-  (item "friend-lane-tla-models" :group "docs"
-   :title "TLA+ models for friend lanes, delivery, presence and session checks"
-   :text "Model the friend daemon's one-shot lanes, message delivery and acks, presence across batch
-    turns, the session check file and the lane governor, and check them with TLC."
-   :date "2026-10-10"
-   :release "v1.5"
-   :origin "card from the sprint store (2026-10-10); card moved out of the sprint (work record, 2026-10-04)")
   (item "friend-harness-version-pinned-under-the-wall" :group "friends"
    :title "Pin the friend harness version, including under the lane wall"
    :text "A friend's harness runs at the pinned version in the daemon as well as in the lanes, so an
