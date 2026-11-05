@@ -430,7 +430,7 @@ func TestCapacityRewriteCannotLeaveItEmpty(t *testing.T) {
 	c, have, err := readCapacity(h.dir)
 	require.NoError(t, err)
 	assert.True(t, have)
-	assert.Equal(t, capacity{4, "pid 9 at 2026-11-05T22:03:32Z"}, c)
+	assert.Equal(t, capacity{n: 4, pid: "9", at: "2026-11-05T22:03:32Z"}, c)
 }
 
 // --- hold ---------------------------------------------------------------------
