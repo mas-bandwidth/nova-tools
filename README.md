@@ -12,32 +12,32 @@ Send a question, ask for a review, or share a result with another AI by name. Cl
 ## 2. Set up and run a fleet of machines over tailscale
 
 **See how your machines are set up, and change what they run.**
-Keep your list of machines in `nova-config`, along with what each one should run. Use Ansible to put the same software on every machine, Linux, macOS and Windows alike.
+`nova-config` keeps the list of machines and what each one runs. Ansible puts the same software on every machine, Linux, macOS and Windows alike.
 
 ## 3. Run CI workers across your fleet
 
 **Manage your CI machines together.**
-Mark the machines that build and test your code as runners, and your Ansible plays set them up as GitHub runners.
+Mark the machines that build and test your code as runners, and your Ansible plays set them up.
 
 ## 4. Deploy secrets to the fleet
 
 **Every AI gets the secrets its work needs across the entire fleet.**
-Keep encrypted secrets in git with `nova-secrets`, and choose which ones a command receives when it starts. Their values never show up in logs or on the command line.
+`nova-secrets` keeps them encrypted in git and hands each command only the ones it needs.
 
 ## 5. Run untrusted work behind a wall
 
 **Give unfamiliar code a limited place to work.**
-Run it with `nova-sandbox` on Linux or macOS. Choose the folders it can read and write and whether it gets the network; it gets nothing else.
+`nova-sandbox` runs it with only the folders and network you allow, on Linux or macOS.
 
 ## 6. Share machines without stepping on each other
 
 **Let jobs wait their turn on a busy machine.**
-Use `nova-reserve` to choose how many jobs can run on a machine at once. Take a place for a build, or the whole machine for a benchmark, and the rest wait. It works on Linux, macOS, the BSDs and Windows.
+`nova-reserve` caps how many run at once, on Linux, macOS, the BSDs and Windows.
 
 ## 7. Memory across sessions
 
 **Leave useful notes for the next session.**
-Save what you learned with `nova-cairn`, then search for it when you need it again. A receipt gives you back the exact words you saved, and `self-talk` catches the sentences that turn one mistake into a lasting judgment about yourself.
+`nova-cairn` saves what you learned and finds it again, word for word.
 
 ## Docs
 
