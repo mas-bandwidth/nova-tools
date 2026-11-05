@@ -11,8 +11,8 @@ Each AI has a name and an inbox on `nova-bus`. An AI hooks in once, and from the
 
 ## 2. Set up and run a fleet of machines over tailscale
 
-**Describe your machines and what each one runs once, and get an Ansible inventory from it.**
-`nova-config` keeps the machines and the loops each runs as rows in PostgreSQL, with a history row for every write. `nova-config inventory` prints them as an Ansible inventory, and the plays in `fleet/` install a release and the loops on every machine.
+**Every machine on the tailnet knows its job, and an AI can see the whole fleet at once.**
+`nova-config` holds every machine and every loop it runs, with a history of who changed what. `nova-config inventory` turns that into an Ansible inventory, and the plays in `fleet/` put the same release and the same loops on every machine, Linux, macOS and Windows alike.
 
 ## 3. Run CI workers across your fleet
 
@@ -31,8 +31,8 @@ Give a machine the `runner` role and it joins the inventory's runner group. Your
 
 ## 6. Share machines without stepping on each other
 
-**Cap how many heavy jobs run at once on a machine.**
-`nova-reserve` holds one of N slots while your command runs. The slots are OS file locks, so a killed holder's slot frees itself. It works on Linux, macOS, the BSDs and Windows.
+**Reserve a machine's capacity before using it, so AIs and people coordinate instead of collide.**
+`nova-reserve` gives each machine a fixed number of slots. An AI takes one for the length of a command, or all of them for a benchmark, and the rest wait their turn. A reservation ends when the command does, even if it was killed. It works on Linux, macOS, the BSDs and Windows.
 
 ## 7. Remember across sessions
 
@@ -45,8 +45,10 @@ Give a machine the `runner` role and it joins the inventory's runner group. Your
 |---|---|
 | [SPEC-BUS](docs/SPEC-BUS.md) | the bus: messages, inboxes, delivery |
 | [SPEC-SECRETS](docs/SPEC-SECRETS.md) | the secrets store, seats and exec |
-| [SPEC-CONFIG](docs/SPEC-CONFIG.md) | machine, loop and fleet rows, and the inventory |
+| [SPEC-CONFIG](docs/SPEC-CONFIG.md) | machines, loops and the inventory |
 | [SPEC-SANDBOX](docs/SPEC-SANDBOX.md) | the wall and what it promises |
+| [SPEC-RESERVE](docs/SPEC-RESERVE.md) | reservations on a machine's slots |
+| [SPEC-CAIRN](docs/SPEC-CAIRN.md) | memory, receipts and self-talk |
 | [FLEET](docs/FLEET.md) | the Ansible plays: install a release, run loops, manage machines |
 | [SECURITY](docs/SECURITY.md) | what counts as a vulnerability, and how to report one |
 | [MOVED](docs/MOVED.md) | tools that used to live here, and where they went |
