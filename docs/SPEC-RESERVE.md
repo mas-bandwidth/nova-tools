@@ -151,7 +151,7 @@ There is no arrival order: waiters poll, and a steady stream of takers may pass 
 `SlotFiles.tla` is the lock layout for a fixed N. `Capacity.tla` is the capacity file beside the slot array, gate and
 all: one N for every caller, set only when free, and two first takers both get slots even when holders never finish.
 Each `*Broken*.cfg` is a reversed witness that TLC must fail; `CASES.tsv` lists them. Run them with
-`tla/check.sh <tla2tools.jar> reserve/tla`.
+`tests/tla/check.sh <tla2tools.jar> reserve/tla`.
 
 ## Platforms
 

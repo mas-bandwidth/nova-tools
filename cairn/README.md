@@ -16,4 +16,4 @@ The files:
 - `tla/`: the model of the store, with four reversed witnesses (`MCCairnStoreBroken*.cfg`).
 - `testdata/corpus`: the notes the memory tests read.
 
-`go test ./cairn` runs the unit tests; `tla/check.sh <tla2tools.jar> cairn/tla` runs the model.
+`go test ./cairn` runs the unit tests; `tests/tla/check.sh <tla2tools.jar> cairn/tla` runs the model.
