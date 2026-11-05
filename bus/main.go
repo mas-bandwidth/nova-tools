@@ -18,7 +18,7 @@ import (
 const usage = `nova-bus: messages between named inboxes, kept in Redis.
 
   nova-bus send [--as <me>] --to <name>[,<name>] [--re <id>] <subject> <body | ->
-      Append one message to each recipient's inbox; prints one id per recipient.
+      Append one message to each recipient's inbox; prints "<name> <id>" for each.
       A body of - is read from stdin. The sender is --as, else $NOVA_BUS_AS.
   nova-bus hook --as <name>
       Print every waiting message for <name>, then each new one as it arrives,
