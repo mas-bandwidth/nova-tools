@@ -21,7 +21,7 @@ const modulePath = "github.com/mas-bandwidth/nova-tools"
 var allowedTop = map[string]bool{
 	// tools and support directories
 	"bus": true, "config": true, "sandbox": true, "secrets": true, "reserve": true, "cairn": true,
-	"fleet": true, "tla": true, "docs": true, "boundary": true, ".github": true,
+	"fleet": true, "tla": true, "docs": true, "boundary": true, "contract": true, ".github": true,
 	// version control
 	".git": true,
 	// root files: exactly these, nothing else
