@@ -31,7 +31,7 @@ func TestParseArgs(t *testing.T) {
 		want []string
 	}{
 		{[]string{"--write", "/w", "--bogus", "--", "ls"}, []string{"bad_flag"}},
-		{[]string{"--cwd", "/w", "--", "ls"}, []string{"bad_flag"}},
+		{[]string{"--cwd", "/w", "--", "ls"}, []string{"bad_flag", "bad_flag"}}, // a removed flag and its value
 		{[]string{"--write", "/w", "ls"}, []string{"bad_flag", "no_command"}},
 		{[]string{"--write"}, []string{"bad_flag", "no_command"}},
 		{[]string{"--write", "/w", "--"}, []string{"no_command"}},
