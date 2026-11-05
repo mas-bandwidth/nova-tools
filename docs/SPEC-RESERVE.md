@@ -20,7 +20,8 @@ A machine has one capacity: N slots. It lives in the file `<dir>/capacity`. Ever
   `nova-reserve set: capacity in use (slot1 held pid=102933 since=...); retry when free; run: nova-reserve status`
 - `--exclusive` takes every slot, whatever N is. It does not take `--slots`.
 - A capacity file that holds no number in 1..1024 is refused, exit 2, with the command that repairs it:
-  `nova-reserve: /var/tmp/nova-reserve/capacity holds "", not a capacity of 1..1024; run: nova-reserve set --slots 8`
+  `nova-reserve: /var/tmp/nova-reserve/capacity holds "", not a capacity of 1..1024; run: nova-reserve set --slots 8  # your choice`.
+  The 8 (your `--slots`, else CPU count / 4) is a suggestion; the comment after it is ignored by the shell.
 
 Before this rule each caller counted its own `--slots`, so a `--slots 1` holder and a `--slots 4` caller both ran.
 `reserve/tla/Capacity.tla` models the rule; its witness `CapacityBrokenPerCaller.cfg` is that bug.
@@ -48,9 +49,11 @@ kill %1
 
 It prints `HELD ...` to stdout, then on exit `RELEASED reason=signal signal=SIGTERM held_for=12m3s`,
 `reason=for` or `reason=parent_exit`. A hold with no `--for` also ends when its parent exits: it checks once a second
-whether it was reparented or its parent is gone. It also ends at once if its parent had already exited when it
-started, as with `sh -c "nova-reserve hold & exit"`. A hold that must outlive the shell that started it, such as an
-AI's tool call that backgrounds it, gives `--for`.
+whether it was reparented or its parent is gone (on Windows, only whether the parent pid is still running). A hold
+with no `--for` whose parent pid is 1 when it starts (launchd, systemd, a container's first process, or a shell such
+as `sh -c "nova-reserve hold & exit"` that exited first) has no parent to watch. It is refused before any slot is
+taken, exit 2: `nova-reserve hold: no parent to watch (parent pid 1); run: nova-reserve hold --for <duration> ...`.
+A hold that must outlive the shell that started it, such as an AI's tool call that backgrounds it, gives `--for`.
 
 **status** prints the capacity, each slot, the two inner locks, and how many slots are free.
 
@@ -147,4 +150,5 @@ Each `*Broken*.cfg` is a reversed witness that TLC must fail; `CASES.tsv` lists 
 
 Linux, macOS and Windows are tested. The release workflow builds linux/amd64, linux/arm64, darwin/arm64 and
 windows/amd64. On the BSDs, build from source: `go build -o nova-reserve ./reserve`. On Windows there are no signals to
-pass to the command; Ctrl+C reaches it directly. `hold` ends on Ctrl+C, `--for`, or its parent's exit.
+pass to the command; Ctrl+C reaches it directly. `hold` ends on Ctrl+C, `--for`, or its parent's exit, which Windows
+detects by pid liveness only: the parent pid stops running. A new process that reuses that pid keeps the hold.

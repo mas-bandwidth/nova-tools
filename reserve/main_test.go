@@ -91,7 +91,8 @@ func newHarness(t *testing.T) *harness {
 			h.ran = argv
 			return h.code
 		},
-		hold:    func(time.Duration) string { return "signal signal=SIGTERM" },
+		hold:    func(time.Duration, int) string { return "signal signal=SIGTERM" },
+		ppid:    func() int { return 4242 },
 		running: func(pid int) bool { return !h.dead[pid] },
 		pid:     42,
 		cpus:    8,
@@ -402,7 +403,7 @@ func TestCorruptCapacityIsRefusedWithARemedy(t *testing.T) {
 		path := filepath.Join(h.dir, "capacity")
 		require.NoError(t, os.WriteFile(path, []byte(body), 0o644))
 		assert.Equal(t, 2, run([]string{"--dir", h.dir, "--", "make"}, h.w))
-		assert.Equal(t, "nova-reserve: "+path+" holds \""+strings.TrimSpace(body)+"\", not a capacity of 1..1024; run: nova-reserve set --slots 2 --dir "+shellQuote(h.dir)+"\n", h.err.String())
+		assert.Equal(t, "nova-reserve: "+path+" holds \""+strings.TrimSpace(body)+"\", not a capacity of 1..1024; run: nova-reserve set --dir "+shellQuote(h.dir)+" --slots 2  # your choice\n", h.err.String())
 		assert.Nil(t, h.ran)
 		assert.True(t, h.f.idle())
 		h.err.Reset()
@@ -437,8 +438,9 @@ func TestHoldUntilFor(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	var asked time.Duration
-	h.w.hold = func(d time.Duration) string {
+	h.w.hold = func(d time.Duration, ppid int) string {
 		asked = d
+		assert.Equal(t, 4242, ppid, "the parent read before the slot was taken")
 		h.c.t = h.c.t.Add(d)
 		return "for"
 	}
@@ -453,7 +455,7 @@ func TestHoldUntilSignalOrParentExit(t *testing.T) {
 	t.Parallel()
 	for _, reason := range []string{"signal signal=SIGINT", "parent_exit"} {
 		h := newHarness(t)
-		h.w.hold = func(d time.Duration) string {
+		h.w.hold = func(d time.Duration, _ int) string {
 			assert.Zero(t, d, "no --for: no bound")
 			h.c.t = h.c.t.Add(90 * time.Second)
 			return reason
@@ -464,12 +466,29 @@ func TestHoldUntilSignalOrParentExit(t *testing.T) {
 	}
 }
 
+// TestHoldWithInitAsParentIsRefused: under init (launchd, systemd, a
+// container's first process) no parent's exit can end a hold with no --for.
+func TestHoldWithInitAsParentIsRefused(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.dir = filepath.Join(h.dir, "never")
+	h.w.ppid = func() int { return 1 }
+	h.w.hold = func(time.Duration, int) string { t.Fatal("held"); return "" }
+	assert.Equal(t, 2, run([]string{"hold", "--why", "x"}, h.w))
+	assert.Equal(t, "nova-reserve hold: no parent to watch (parent pid 1); run: nova-reserve hold --for <duration> ...\n", h.err.String())
+	assert.Empty(t, h.out.String())
+	assert.NoDirExists(t, h.dir, "nothing taken, nothing made")
+	assert.True(t, h.f.idle())
+	h.w.hold = func(time.Duration, int) string { return "for" }
+	assert.Equal(t, 0, run([]string{"hold", "--for", "1m"}, h.w), "with --for there is no parent to watch")
+}
+
 func TestHoldHonoursDir(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	other := filepath.Join(t.TempDir(), "jobs")
 	var status bytes.Buffer
-	h.w.hold = func(time.Duration) string {
+	h.w.hold = func(time.Duration, int) string {
 		s := h.sibling(9)
 		require.Equal(t, 0, run([]string{"status", "--dir", other}, s.w))
 		status.WriteString(s.out.String())
@@ -552,7 +571,7 @@ func TestStatusWithACorruptCapacityStillShowsTheSlots(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(h.dir, "slot1.holder"), []byte("pid=42 since=x\n"), 0o644))
 	h.out.Reset()
 	require.Equal(t, 0, run([]string{"status"}, h.w))
-	assert.Equal(t, "capacity=? # corrupt: "+filepath.Join(h.dir, "capacity")+` holds "", not a capacity of 1..1024; nova-reserve set --slots 2
+	assert.Equal(t, "capacity=? # corrupt: "+filepath.Join(h.dir, "capacity")+` holds "", not a capacity of 1..1024; nova-reserve set --slots 2  # your choice
 slot1 held pid=42 since=x
 gate free # held by an --exclusive run from when it starts waiting until it ends
 all free # the exclusive lock: held by an --exclusive run while it runs

@@ -56,8 +56,8 @@ Linux and Windows; on macOS and the BSDs a SIGKILL of nova-reserve leaves it run
 	"hold": `nova-reserve hold [--for D] [--slots N | --exclusive] [--wait D] [--why TEXT] [--dir DIR]
 
 Take a reservation, print HELD, keep it until SIGTERM, SIGINT or SIGHUP, or for D.
-Stdin is never read. With no --for it also ends when its parent exits (or has exited
-before it starts); give --for to outlive the shell that started it. On exit it prints
+Stdin is never read. With no --for it also ends when its parent exits, and is refused
+if its parent is pid 1; give --for to outlive the shell that started it. On exit it prints
 RELEASED reason=signal|for|parent_exit held_for=D.
 `,
 	"status": `nova-reserve status [--dir DIR]
@@ -272,7 +272,8 @@ type world struct {
 	sleep          func(d time.Duration)
 	resolve        func(name string) (string, error) // exec.LookPath
 	exec           func(path string, argv []string) int
-	hold           func(d time.Duration) (reason string) // blocks: "for", "parent_exit", "signal signal=SIGTERM"
+	hold           func(d time.Duration, ppid int) (reason string) // blocks: "for", "parent_exit", "signal signal=SIGTERM"
+	ppid           func() int
 	running        func(pid int) bool
 	pid            int
 	cpus           int
@@ -285,7 +286,7 @@ const poll = time.Second
 
 func main() {
 	os.Exit(run(os.Args[1:], world{os.Getenv, osLock, time.Now, time.Sleep,
-		exec.LookPath, runCommand, waitHold, running, os.Getpid(), runtime.NumCPU(), os.Stdout, os.Stderr}))
+		exec.LookPath, runCommand, waitHold, os.Getppid, running, os.Getpid(), runtime.NumCPU(), os.Stdout, os.Stderr}))
 }
 
 func run(args []string, w world) int {
@@ -335,6 +336,12 @@ func do(o options, w world) error {
 		}
 		return status(o, w)
 	}
+	ppid := w.ppid()
+	if o.verb == "hold" && o.hold == 0 && ppid == 1 {
+		// started by init (launchd, systemd, a container's first process), or
+		// orphaned before it began: no parent whose exit could end the hold
+		return refuse(2, "no parent to watch (parent pid 1); run: nova-reserve hold --for <duration> ...")
+	}
 	// the one directory is the create target; its parent must exist
 	if err := os.Mkdir(o.dir, 0o777); err != nil && !errors.Is(err, fs.ErrExist) {
 		return err
@@ -365,7 +372,7 @@ func do(o options, w world) error {
 		return nil
 	}
 	since := w.now()
-	reason := w.hold(o.hold)
+	reason := w.hold(o.hold, ppid)
 	fmt.Fprintf(out, "RELEASED reason=%s held_for=%s\n", reason, w.now().Sub(since).Round(time.Millisecond))
 	return nil
 }
@@ -556,8 +563,7 @@ func (t *taker) step() (bool, error) {
 		if err != nil || have {
 			defer gate()
 			if bad := (corrupt("")); errors.As(err, &bad) {
-				return false, refuse(2, "%s; run: %s", bad,
-					t.o.remedy("set", "--slots", strconv.Itoa(cmp.Or(t.o.slots, t.defaultSlots()))))
+				return false, refuse(2, "%s; run: %s", bad, setRemedy(t.o, cmp.Or(t.o.slots, t.defaultSlots())))
 			}
 			if err != nil {
 				return false, err
@@ -568,6 +574,12 @@ func (t *taker) step() (bool, error) {
 		t.claiming = true
 	}
 	return false, nil
+}
+
+// setRemedy repairs a corrupt capacity file; n is a suggestion, so it comes
+// last, after --dir, with a comment the shell ignores.
+func setRemedy(o options, n int) string {
+	return o.remedy("set") + " --slots " + strconv.Itoa(n) + "  # your choice"
 }
 
 func (t *taker) defaultSlots() int { return max(1, t.w.cpus/4) }
@@ -724,8 +736,7 @@ func status(o options, w world) error {
 	out := bufio.NewWriter(w.stdout)
 	switch {
 	case errors.As(err, &bad):
-		fmt.Fprintf(out, "capacity=? # corrupt: %s; %s\n", bad,
-			o.remedy("set", "--slots", strconv.Itoa(max(1, w.cpus/4))))
+		fmt.Fprintf(out, "capacity=? # corrupt: %s; %s\n", bad, setRemedy(o, max(1, w.cpus/4)))
 	case err != nil:
 		return err
 	case have:
@@ -794,17 +805,16 @@ func esc(s string) string {
 var signalNames = map[os.Signal]string{os.Interrupt: "SIGINT", syscall.SIGTERM: "SIGTERM", syscall.SIGHUP: "SIGHUP"}
 
 // waitHold blocks until SIGINT, SIGTERM or SIGHUP, or until d has passed;
-// with no d, until its parent exits, which it polls: a changed parent pid
-// (reparented) or a parent no longer running. A parent that is already init
-// when the hold starts has exited. Parent pid 0 (a parent outside this pid
-// namespace) cannot be watched.
-func waitHold(d time.Duration) string {
+// with no d, until its parent (ppid, read before the slot was taken) exits,
+// which it polls: a changed parent pid (reparented; not on Windows) or a
+// parent no longer running (pid liveness, all Windows has). Parent pid 0 (a
+// parent outside this pid namespace) cannot be watched.
+func waitHold(d time.Duration, ppid int) string {
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer signal.Stop(sigs)
 	var timeout, tick <-chan time.Time
-	ppid := os.Getppid()
-	gone := func() bool { return ppid != 0 && (ppid == 1 || os.Getppid() != ppid || !running(ppid)) }
+	gone := func() bool { return ppid != 0 && (os.Getppid() != ppid || !running(ppid)) }
 	if d > 0 {
 		timer := time.NewTimer(d)
 		defer timer.Stop()
