@@ -105,7 +105,8 @@ Two TCP paths go around Landlock's hooks, so the filter closes them under `--net
 
 The rule is: under `--net-allow` nothing can serve. A command that serves a unix socket runs with `--unix` and
 `--net-deny` alone, with no `--net-allow`; there no TCP socket exists, so `listen` stays open. An explicit TCP
-`bind` is refused by Landlock in both modes.
+`bind` is refused by Landlock in both modes. Under `--net-deny` alone, a TCP listener inherited and kept with
+`--keep-fds` still accepts inbound connections: `listen` and `accept` are refused only under `--net-allow`.
 
 **Linux, no seccomp.** `--net-deny` refuses to start (`net_unenforceable`: "net-deny needs seccomp on this kernel").
 Landlock alone fences TCP only, and the wall never stands weaker than it says. The same refusal comes below Landlock
