@@ -97,5 +97,6 @@ func TestNovaToolsIsEveryCommand(t *testing.T) {
 			cmds = append(cmds, e.Name())
 		}
 	}
+	cmds = append(cmds, "nova-sandbox") // lives in sandbox/, not cmd/
 	assert.ElementsMatch(t, cmds, NovaTools, "pkg/config/loop.go's NovaTools is not the set of cmd/ directories; add the new command there")
 }

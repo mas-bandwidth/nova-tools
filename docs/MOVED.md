@@ -43,3 +43,19 @@ pkg/buswire. cmd/nova-version stays with internal/update, which implements it.
 - pkg/pkgselect: CI's package selection (still imported through pkg/cardcontract)
 - the models whose code is gone: FuseBox, and the TLC run records (RUNS.tsv, RUNS-HISTORY.tsv, COVERAGE.tsv)
 - docs and ledgers that described only removed tools: the specs, release notes, ratings, research, audits, RESOLUTIONS.md, docs/roadmap.sexp and docs/fixes.sexp
+
+## nova-sandbox
+
+nova-sandbox is now `sandbox/`: the wall only (`--read`, `--read-noexec`, `--write`, `--cwd`, `--tmp`,
+`--net-deny`, `--net-allow`, `--gpu`, then `-- <cmd>`), plus `check` and `probe`. macOS and Linux.
+
+| Was | Now |
+|---|---|
+| `nova-sandbox run`, `reap` (disposable APFS volumes) | nova-sprint |
+| `nova-sandbox worktree` | nova-sprint |
+| `nova-sandbox egress plan/apply/check/drop` (nftables) | nova-sprint |
+| `--name`, `--acl` (Windows container and ACLs) | nova-sprint; no Windows wall in nova-tools |
+| `--max-procs`, `--max-mem` (tree caps, SANDBOX RUNAWAY) | nova-sprint |
+| `--net-listen`, `--json`, `--secret`, `--max` | dropped; inbound is never granted, `probe` takes no flags |
+| `policy` verb, lane profiles (`LaneProfile`), `--deny` | dropped (the lane profile was nova-friend's) |
+| `pkg/sandbox`, `profiles/`, `tools/sandboxcheck`, `cmd/nova-sandbox` | deleted; the darwin profile template is `sandbox/darwin.sb.tmpl` |
