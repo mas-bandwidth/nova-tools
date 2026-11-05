@@ -22,7 +22,7 @@ func TestStellaTwoSnapshotsOneDirectoryPreservesKilledWritersTemp(t *testing.T) 
 	if runtime.GOOS == "windows" {
 		t.Skip("SIGKILL on a process group stages the death; the owed Windows validation is named in the pull request")
 	}
-	bin := filepath.Join(buildTreeBinaries(t), exeName("nova-update"))
+	bin := filepath.Join(buildTreeBinaries(t), exeName("nova-version"))
 	dir := t.TempDir()
 	snapA := filepath.Join(dir, "a.json")
 	snapB := filepath.Join(dir, "b.json")

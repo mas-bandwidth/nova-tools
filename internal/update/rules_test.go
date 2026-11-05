@@ -265,7 +265,7 @@ func TestUsageAndRefusalSayWhatTheFileIs(t *testing.T) {
 	require.Truef(t, strings.Contains(err.String(), manifestShape), "missing-file refusal does not carry the shape sentence:\n%s", err.String())
 }
 
-// SPEC-UPDATE's first-run block names ./cmd/nova-update/testdata/versions.tsv and
+// SPEC-UPDATE's first-run block names ./cmd/nova-version/testdata/versions.tsv and
 // apply.tsv, and its "The versions file" section prints the five entries the
 // first of those holds. Both files now exist; this reads them the way the tool
 // does, so a fixture the spec points a stranger at cannot rot unnoticed. It
@@ -273,7 +273,7 @@ func TestUsageAndRefusalSayWhatTheFileIs(t *testing.T) {
 func TestTheSpecsNamedFixturesLoad(t *testing.T) {
 	t.Parallel()
 
-	for _, dir := range []string{"nova-update", "nova-version"} {
+	for _, dir := range []string{"nova-version"} {
 		for _, name := range []string{"versions.tsv", "apply.tsv", "example.tsv", "nova.tsv"} {
 			path := filepath.Join("..", "..", "cmd", dir, "testdata", name)
 			b, err := os.ReadFile(path)
@@ -311,7 +311,7 @@ func TestTheSpecsNamedFixturesLoad(t *testing.T) {
 }
 func readFixture(t *testing.T, name string) string {
 	t.Helper()
-	b, err := os.ReadFile(filepath.Join("..", "..", "cmd", "nova-update", "testdata", name))
+	b, err := os.ReadFile(filepath.Join("..", "..", "cmd", "nova-version", "testdata", name))
 	require.NoError(t, err, err)
 	return string(b)
 }

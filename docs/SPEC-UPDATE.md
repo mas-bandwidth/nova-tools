@@ -699,7 +699,7 @@ bench; it performs no latest-version lookup, installation or bus delivery. Outpu
 timestamps, paths and versions come from your run; UNKNOWN means an incomplete inventory.
 
 Then replace the example with your own six-column manifest and choose which tools to
-check. In a nova-tools checkout, `cmd/nova-update/testdata/versions.tsv` demonstrates
+check. In a nova-tools checkout, `cmd/nova-version/testdata/versions.tsv` demonstrates
 the supported source types; `apply.tsv` there is a parser-only fixture with fictional
 executable paths, not a runnable installation example. An explicit `apply` runs the
 installer your own manifest names, so review that command before choosing it.
