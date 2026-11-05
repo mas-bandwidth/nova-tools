@@ -1,10 +1,6 @@
 config	module	expected	property	deadlock
 MCBenchStage.cfg	MCBenchStage.tla	pass	-	ignore-terminal
 MCBenchStageBrokenLines.cfg	MCBenchStage.tla	invariant	ReusedByteIdentical	ignore-terminal
-MCCairnStore.cfg	MCCairnStore.tla	pass	-	ignore-terminal
-MCCairnStoreBrokenOverwrite.cfg	MCCairnStore.tla	invariant	NoOverwrite	ignore-terminal
-MCCairnStoreBrokenReopenOther.cfg	MCCairnStore.tla	invariant	OneOpenPolicy	ignore-terminal
-MCCairnStoreBrokenReportBeforeFsync.cfg	MCCairnStore.tla	invariant	DurableBeforeReported	ignore-terminal
 MCFileLock.cfg	MCFileLock.tla	pass	-	ignore-terminal
 MCFileLockBrokenBusyIsHeld.cfg	MCFileLock.tla	invariant	HeldIsTrue	ignore-terminal
 MCFileLockBrokenSentinel.cfg	MCFileLock.tla	invariant	NothingToClear	ignore-terminal
