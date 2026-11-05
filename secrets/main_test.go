@@ -29,17 +29,23 @@ type call struct {
 }
 
 type harness struct {
-	t       *testing.T
-	store   string
-	key     string
-	calls   []call
-	stdout  bytes.Buffer
-	stderr  bytes.Buffer
-	stdin   string
-	environ []string
-	became  []string // argv
-	env     []string // the environment exec handed the command
-	failEnc bool
+	t           *testing.T
+	store       string
+	key         string
+	calls       []call
+	stdout      bytes.Buffer
+	stderr      bytes.Buffer
+	stdin       string
+	environ     []string
+	became      []string // argv
+	env         []string // the environment exec handed the command
+	failEnc     bool
+	failDec     bool
+	sopsMissing bool
+	noAgeKeygen bool
+	failGit     bool
+	notRepo     bool   // git rev-parse fails
+	top         string // what git rev-parse --show-toplevel prints; the directory asked about when ""
 }
 
 const pubA = "age1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqa"
@@ -104,6 +110,9 @@ func (h *harness) run(stdin io.Reader, env []string, dir, name string, args ...s
 	h.calls = append(h.calls, c)
 	switch {
 	case name == "sops" && args[0] == "-d":
+		if h.failDec {
+			return nil, exitErr(128)
+		}
 		data, err := os.ReadFile(filepath.Join(dir, args[len(args)-1]))
 		if err != nil {
 			return nil, exitErr(128)
@@ -126,6 +135,16 @@ func (h *harness) run(stdin io.Reader, env []string, dir, name string, args ...s
 		return nil, os.WriteFile(args[1], []byte("AGE-SECRET-KEY-FAKE\n"), 0o644)
 	case name == "age-keygen" && args[0] == "-y":
 		return []byte(pubB + "\n"), nil
+	case name == "git" && args[0] == "rev-parse":
+		if h.notRepo {
+			return nil, exitErr(128)
+		}
+		if h.top != "" {
+			return []byte(h.top + "\n"), nil
+		}
+		return []byte(dir + "\n"), nil
+	case name == "git" && h.failGit:
+		return nil, exitErr(1)
 	case name == "git":
 		return nil, nil
 	}
@@ -139,7 +158,7 @@ func (h *harness) main(args ...string) int {
 		stdin: strings.NewReader(h.stdin), stdout: &h.stdout, stderr: &h.stderr, environ: h.environ, run: h.run,
 		become: func(argv, env []string) error { h.became, h.env = argv, env; return nil },
 		lookPath: func(name string) (string, error) {
-			if name == "no-such-program-here" {
+			if name == "no-such-program-here" || name == "sops" && h.sopsMissing || name == "age-keygen" && h.noAgeKeygen {
 				return "", errors.New("not found")
 			}
 			return "/bin/" + name, nil
@@ -210,11 +229,7 @@ func TestExecRefusalsAre125AndNeverRun(t *testing.T) {
 	for name, args := range map[string][]string{
 		"unknown name":        {"--only", "API_KEY,NOPE", "--", "true"},
 		"require not present": {"--only", "API_KEY", "--require", "NOPE", "--", "true"},
-		"require not in only": {"--only", "API_KEY", "--require", "OTHER", "--", "true"},
-		"no command":          {"--only", "API_KEY", "--"},
-		"no dash dash":        {"--only", "API_KEY", "true"},
 		"unknown command":     {"--only", "API_KEY", "--", "no-such-program-here"},
-		"argument before --":  {"--only", "API_KEY", "stray", "--", "true"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -226,8 +241,38 @@ func TestExecRefusalsAre125AndNeverRun(t *testing.T) {
 			h.noLeak("sk-sealed-two", "sealed-three")
 		})
 	}
+}
+
+// A malformed exec is a usage error: exit 2, one line, the command never runs.
+func TestExecUsageErrorsAre2AndNameEveryMissingFlag(t *testing.T) {
+	t.Parallel()
+	for name, args := range map[string][]string{
+		"no command":         {"--only", "API_KEY", "--"},
+		"no dash dash":       {"--only", "API_KEY", "true"},
+		"argument before --": {"--only", "API_KEY", "stray", "--", "true"},
+		"unknown flag":       {"--only", "API_KEY", "--x", "--", "true"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			h := newHarness(t)
+			h.seed("ada", map[string]string{"API_KEY": "sk-sealed-two"})
+			assert.Equal(t, 2, h.main(h.seat("exec", args...)...))
+			assert.Nil(t, h.became)
+			assert.Regexp(t, `^nova-secrets exec: .*; run: nova-secrets exec -h\n$`, h.stderr.String())
+			assert.NotContains(t, h.stderr.String(), "flag provided")
+		})
+	}
 	h := newHarness(t)
-	assert.Equal(t, 125, h.main("exec", "--store", h.store, "--key", h.key, "--", "true"))
+	assert.Equal(t, 2, h.main("exec", "--x"))
+	assert.Equal(t, "nova-secrets exec: unknown flag --x; run: nova-secrets exec -h\n", h.stderr.String())
+	assert.Equal(t, 2, h.main("exec"))
+	for _, w := range []string{"--only", "--store", "--key", "command"} {
+		assert.Contains(t, h.stderr.String(), w)
+	}
+	assert.Len(t, strings.Split(strings.TrimSpace(h.stderr.String()), "\n"), 1)
+	assert.Equal(t, 2, h.main("no-such-verb"))
+	assert.Contains(t, h.stderr.String(), "run: nova-secrets help")
+	assert.Equal(t, 2, h.main("exec", "--store", h.store, "--key", h.key, "--", "true"))
 	assert.Contains(t, h.stderr.String(), "missing --only")
 }
 
@@ -256,7 +301,7 @@ func TestSetSetsOneValueAndCommits(t *testing.T) {
 	assert.Equal(t, map[string]string{"OLD": "sealed-old", "NEW": "fresh-value-123"}, h.open("ada"), "the old mark is dropped")
 	var git [][]string
 	for _, c := range h.calls {
-		if c.name == "git" {
+		if c.name == "git" && c.args[0] != "rev-parse" {
 			git = append(git, c.args)
 			assert.Equal(t, h.store, c.dir)
 		}
@@ -311,12 +356,20 @@ func TestSetLeavesNoPlaintextOnDisk(t *testing.T) {
 	}
 }
 
-func TestSealIsAHiddenAliasOfSet(t *testing.T) {
+func TestSealIsGone(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
-	h.stdin = "old-caller\n"
-	require.Equal(t, 0, h.main(h.seat("seal", "--name", "NEW", "--stdin", "--no-pr")...), h.stderr.String())
-	assert.Equal(t, map[string]string{"NEW": "old-caller"}, h.open("ada"))
+	assert.Equal(t, 2, h.main(h.seat("seal", "--name", "NEW")...))
+	assert.Contains(t, h.stderr.String(), `unknown verb "seal"`)
+}
+
+func TestRequireIsOnlyUnderAnotherName(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.seed("ada", map[string]string{"API_KEY": "sk-sealed-two", "OTHER": "sealed-three"})
+	require.Equal(t, 0, h.main(h.seat("exec", "--only", "API_KEY", "--require", "OTHER", "--", "true")...), h.stderr.String())
+	assert.Equal(t, "sealed-three", envMap(h.env)["OTHER"])
+	require.Equal(t, 0, h.main(h.seat("exec", "--require", "API_KEY", "--", "true")...), h.stderr.String())
 }
 
 const catchAllRules = "creation_rules:\n  - age: " + pubA + "\n"
@@ -361,7 +414,7 @@ func TestSeatAddNeedsTheRecoveryKey(t *testing.T) {
 	before, _ := os.ReadFile(filepath.Join(h.store, ".sops.yaml"))
 	require.NoError(t, os.Remove(filepath.Join(h.store, "recovery.pub")))
 	assert.Equal(t, 2, h.main("seat", "add", "bo", pubB, "--store", h.store))
-	assert.Contains(t, h.stderr.String(), "no valid recovery.pub")
+	assert.Contains(t, h.stderr.String(), "recovery.pub is missing")
 	after, _ := os.ReadFile(filepath.Join(h.store, ".sops.yaml"))
 	assert.Equal(t, string(before), string(after))
 }
@@ -476,7 +529,212 @@ func TestVerbs(t *testing.T) {
 	h := newHarness(t)
 	assert.Equal(t, 0, h.main("help"))
 	assert.Contains(t, h.stdout.String(), "nova-secrets exec")
-	for _, args := range [][]string{{"get"}, {"names"}, {"check"}, {"keygen"}, {"seat"}, {"seat", "inject"}, {"set", "--bogus"}, {"set", "X", "--as", "../x"}} {
+	for _, args := range [][]string{{"get"}, {"check"}, {"keygen"}, {"seat"}, {"seat", "inject"}, {"set", "--bogus"}, {"set", "X", "--as", "../x"}} {
 		assert.Equal(t, 2, h.main(args...), "%v", args)
 	}
+}
+
+func (h *harness) gitCalls() [][]string {
+	var out [][]string
+	for _, c := range h.calls {
+		if c.name == "git" && c.args[0] != "rev-parse" {
+			out = append(out, c.args)
+		}
+	}
+	return out
+}
+
+func TestInitCreatesTheStore(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.notRepo = true
+	store := filepath.Join(t.TempDir(), "new")
+	require.Equal(t, 0, h.main("init", "--store", store, "--recovery", pubRec), h.stderr.String())
+	assert.Equal(t, "SECRETS INIT OK store="+store+" next: nova-secrets seat add <seat> <age-pubkey> --store "+store+"\n", h.stdout.String())
+	b, err := os.ReadFile(filepath.Join(store, ".sops.yaml"))
+	require.NoError(t, err)
+	assert.Equal(t, "creation_rules: []\n", string(b))
+	b, err = os.ReadFile(filepath.Join(store, "recovery.pub"))
+	require.NoError(t, err)
+	assert.Equal(t, pubRec+"\n", string(b))
+	assert.NoFileExists(t, filepath.Join(store, "README.md"))
+	files := []string{".sops.yaml", "recovery.pub"}
+	assert.Equal(t, [][]string{{"init", "-q"}, append([]string{"add", "--"}, files...),
+		append([]string{"commit", "-q", "-m", "init secrets store", "--"}, files...)}, h.gitCalls(), "git init, since it is no repository")
+	h.calls = nil
+	require.Equal(t, 0, h.main("seat", "add", "bo", pubB, "--store", store), h.stderr.String(), "the rule list init wrote is one seat add accepts")
+}
+
+func TestInitIntoAnEmptyRepositoryOfItsOwn(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	store := filepath.Join(t.TempDir(), "new")
+	require.NoError(t, os.MkdirAll(filepath.Join(store, ".git"), 0o755))
+	require.Equal(t, 0, h.main("init", "--store", store, "--recovery", pubRec), h.stderr.String())
+	assert.Len(t, h.gitCalls(), 2, "no git init: it is its own top level")
+}
+
+func TestInitRefusals(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	assert.Equal(t, 2, h.main("init", "--store", h.store, "--recovery", pubRec))
+	assert.Contains(t, h.stderr.String(), "store "+h.store+" exists; use: nova-secrets seat add")
+	assert.Equal(t, 2, h.main("init"))
+	assert.Contains(t, h.stderr.String(), "--recovery <age-public-key>", "every missing flag at once")
+	assert.Equal(t, 2, h.main("init", "--store", filepath.Join(t.TempDir(), "a", "b"), "--recovery", pubRec), "never a parent tree")
+	assert.Equal(t, 2, h.main("init", "--store", filepath.Join(t.TempDir(), "n"), "--recovery", "AGE-SECRET-KEY-1ABC"))
+	assert.Empty(t, h.gitCalls())
+
+	// A project directory is never written into: its README stays.
+	proj := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(proj, "README.md"), []byte("mine\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(proj, "main.go"), []byte("x\n"), 0o644))
+	assert.Equal(t, 2, h.main("init", "--store", proj, "--recovery", pubRec))
+	assert.Contains(t, h.stderr.String(), "is not empty (it holds README.md, main.go)")
+	b, _ := os.ReadFile(filepath.Join(proj, "README.md"))
+	assert.Equal(t, "mine\n", string(b))
+	assert.Empty(t, h.gitCalls())
+
+	// A directory inside another work tree is refused, absent or empty.
+	h.top = "/work/parent"
+	empty := t.TempDir()
+	for _, dir := range []string{empty, filepath.Join(empty, "new")} {
+		assert.Equal(t, 2, h.main("init", "--store", dir, "--recovery", pubRec), dir)
+		assert.Contains(t, h.stderr.String(), "is inside the git work tree /work/parent")
+	}
+	assert.Empty(t, h.gitCalls())
+	assert.NoDirExists(t, filepath.Join(empty, "new"))
+}
+
+func TestNamesListsOnlyRealNamesNeverValues(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	body := "GH_TOKEN: ENC[AES256_GCM,data:sealed-needle,tag:x,type:str]\n" +
+		"nested:\n    inner: ENC[x]\n" +
+		"\"SECRETS SET OK forged\\e[31m\": ENC[x]\n" +
+		"? [a, b]\n: ENC[x]\n" +
+		"API_KEY: ENC[AES256_GCM,data:z]\n" + markKey + ": x\nsops:\n    age:\n        - recipient: " + pubA + "\n"
+	require.NoError(t, os.WriteFile(filepath.Join(h.store, "ada.yaml"), []byte(body), 0o600))
+	require.Equal(t, 0, h.main("names", "--store", h.store, "--as", "ada"), h.stderr.String())
+	assert.Equal(t, "GH_TOKEN\nAPI_KEY\n", h.stdout.String(), "the sops block, the old mark and every non-name key are not printed")
+	assert.Equal(t, "SECRETS NAMES OK as=ada names=2 refused=3\n", h.stderr.String())
+	assert.Empty(t, h.calls, "no program runs, no key is read")
+	h.noLeak("sealed-needle")
+	assert.Equal(t, 2, h.main("names", "--store", h.store, "--as", "nobody"))
+	assert.Contains(t, h.stderr.String(), "no nobody.yaml in "+h.store+": wrong --as? seats here: ada; or create it: nova-secrets set NAME --as nobody")
+	assert.Equal(t, 2, h.main("names", "--store", h.store))
+}
+
+func TestWrongKeyRemedies(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t) // the fake age-keygen -y prints pubB
+	h.failDec = true
+	file := func(rec string) { // ada.yaml with recipients rec
+		require.NoError(t, os.WriteFile(filepath.Join(h.store, "ada.yaml"), []byte("A: ENC[x]\nsops:\n    age:\n        - recipient: "+rec+"\n        - recipient: "+pubRec+"\n"), 0o600))
+	}
+	exec := func() string {
+		assert.Equal(t, 125, h.main(h.seat("exec", "--only", "A", "--", "true")...))
+		return h.stderr.String()
+	}
+	// The rule names pubA, the key is pubB.
+	file(pubA)
+	assert.Equal(t, "SECRETS EXEC REFUSED: key "+pubB+" is not the key in .sops.yaml for ada ("+pubA+"): wrong --key/--as, or the key was replaced; edit the seat's age: in .sops.yaml then: cd "+h.store+" && SOPS_AGE_KEY_FILE=<recovery.key> sops updatekeys -y ada.yaml\n", exec())
+	// The rule names the key, the file does not: the file is stale.
+	h.sopsYAML("creation_rules:\n  - path_regex: ^ada\\.yaml$\n    age: " + pubB + "," + pubRec + "\n")
+	file(pubA)
+	assert.Contains(t, exec(), "is the key in .sops.yaml for ada but not among ada.yaml's 2 recipients: re-key it with: cd "+h.store+" && SOPS_AGE_KEY_FILE=<recovery.key> sops updatekeys -y ada.yaml")
+	// Everything agrees: sops's own failure, with the command that ran, pasteable.
+	file(pubB)
+	got := exec()
+	assert.Contains(t, got, "sops -d failed (exit status 128); its output is withheld; ran: cd "+h.store+" && HOME=$(mktemp -d) SOPS_AGE_KEY_FILE="+h.key+" sops -d --output /dev/null --output-type json ada.yaml")
+	// No age-keygen: say so.
+	h.noAgeKeygen = true
+	assert.Contains(t, exec(), "age-keygen not found")
+}
+
+func TestOtherRemedies(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.seed("ada", map[string]string{"A": "v"})
+	h.sopsMissing = true
+	assert.Equal(t, 125, h.main(h.seat("exec", "--only", "A", "--", "true")...))
+	assert.Contains(t, h.stderr.String(), "sops not found at sops; install sops 3.x")
+
+	h = newHarness(t)
+	h.notRepo = true
+	h.stdin = "v\n"
+	assert.Equal(t, 2, h.main(h.set("NEW")...))
+	assert.Contains(t, h.stderr.String(), h.store+" is not a git repository; run: git -C "+h.store+" init && git -C "+h.store+" add -A && git -C "+h.store+" commit -m store")
+	assert.Empty(t, h.gitCalls())
+
+	h = newHarness(t)
+	h.seed("bo", map[string]string{"B": "v"})
+	h.seed("cy", map[string]string{"C": "v"})
+	assert.Equal(t, 125, h.main(h.seat("exec", "--only", "A", "--", "true")...))
+	assert.Contains(t, h.stderr.String(), "no ada.yaml in "+h.store+": wrong --as? seats here: bo,cy; or create it: nova-secrets set NAME --as ada --store "+h.store+" --key <file>")
+
+	h = newHarness(t)
+	require.NoError(t, os.Remove(filepath.Join(h.store, "recovery.pub")))
+	assert.Equal(t, 2, h.main("seat", "add", "bo", pubB, "--store", h.store))
+	assert.Contains(t, h.stderr.String(), h.store+"/recovery.pub is missing or not an age public key; run: age-keygen -y <recovery.key> > "+h.store+"/recovery.pub, then commit it")
+
+	h = newHarness(t)
+	require.NoError(t, os.Remove(filepath.Join(h.store, ".sops.yaml")))
+	assert.Equal(t, 2, h.main("seat", "add", "bo", pubB, "--store", h.store))
+	assert.Contains(t, h.stderr.String(), h.store+"/.sops.yaml is missing; create it with the line: creation_rules: []")
+	assert.NotContains(t, h.stderr.String(), "init")
+
+	h = newHarness(t) // no rule matches the new seat: sops cannot create the file
+	h.sopsYAML("creation_rules: []\n")
+	h.failEnc = true
+	h.stdin = "v\n"
+	assert.Equal(t, 2, h.main(h.set("NEW")...))
+	assert.Contains(t, h.stderr.String(), "no rule for ada.yaml in "+h.store+"/.sops.yaml (or it does not parse); run: nova-secrets seat add ada <age-public-key> --store "+h.store)
+
+	h = newHarness(t) // git failing after the file is written says so; git failing in init does not
+	h.failGit = true
+	h.stdin = "v\n"
+	assert.Equal(t, 2, h.main(h.set("NEW")...))
+	assert.Contains(t, h.stderr.String(), "the file is written: run: git -C "+h.store+" status")
+	h.notRepo, h.stderr = true, bytes.Buffer{}
+	assert.Equal(t, 2, h.main("init", "--store", filepath.Join(t.TempDir(), "n"), "--recovery", pubRec))
+	assert.Contains(t, h.stderr.String(), "git init in")
+	assert.NotContains(t, h.stderr.String(), "file is written")
+}
+
+func TestSetFromDevNullIsAnEmptyValueNotATerminal(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	f, err := os.Open(os.DevNull)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, f.Close()) }()
+	tl := tool{stdin: f, stdout: &h.stdout, stderr: &h.stderr, environ: h.environ, run: h.run}
+	assert.Equal(t, 2, tl.main(h.set("NEW")))
+	assert.Contains(t, h.stderr.String(), "empty or multi-line value on stdin")
+	assert.NotContains(t, h.stderr.String(), "terminal")
+}
+
+func TestVerbHelp(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	for verb, other := range map[string]string{"init": "nova-secrets names", "names": "nova-secrets set", "set": "nova-secrets exec", "exec": "nova-secrets init", "seat add": "nova-secrets set"} {
+		for _, args := range [][]string{append(strings.Fields(verb), "-h"), append(strings.Fields(verb), "--help"), append([]string{"help"}, strings.Fields(verb)...)} {
+			if verb == "exec" && args[0] == "exec" {
+				args = append(args, "--only", "X")
+			}
+			assert.Equal(t, 0, h.main(args...), "%v", args)
+			assert.Contains(t, h.stdout.String(), "nova-secrets "+verb+" ", "%v", args)
+			assert.NotContains(t, h.stdout.String(), other, "only the verb's own paragraph: %v", args)
+			assert.Empty(t, h.calls)
+		}
+	}
+	h.stdout.Reset()
+	h.main("exec", "-h")
+	assert.Contains(t, h.stdout.String(), "kept for existing units; same as --only")
+	h.seed("ada", map[string]string{"X": "v"})
+	h.stdout.Reset()
+	assert.Equal(t, 0, h.main(h.seat("exec", "--only", "X", "--", "true", "-h")...), "-h after -- belongs to the command: %s", h.stderr.String())
+	assert.Equal(t, []string{"true", "-h"}, h.became)
+	assert.Equal(t, 2, h.main("help", "bogus"))
+	assert.Equal(t, 2, h.main("seat"))
 }

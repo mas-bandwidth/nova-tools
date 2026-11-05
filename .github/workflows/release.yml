@@ -1,4 +1,4 @@
-# Release for nova-tools: a pushed tag v* builds the five binaries for four
+# Release for nova-tools: a pushed tag v* builds the six binaries for four
 # platforms, writes one SHA256SUMS and creates the GitHub release. Assets are
 # named <tool>_<tag>_<os>_<arch>[.exe]; fleet/roles/nova-tools-install reads
 # exactly that scheme. The only credential is the workflow's GITHUB_TOKEN.
@@ -29,7 +29,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist
-          for tool in bus config sandbox secrets reserve; do
+          for tool in bus cairn config sandbox secrets reserve; do
             # main.version is set only for a main that declares it
             flags="-s -w"
             if grep -q '^var version ' "$tool/main.go"; then flags="$flags -X main.version=$TAG"; fi

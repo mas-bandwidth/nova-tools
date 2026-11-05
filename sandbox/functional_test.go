@@ -4,13 +4,18 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -85,6 +90,15 @@ func TestCheckAndProbe(t *testing.T) {
 	assert.Contains(t, out, "name=read_named expect=allow got=allow")
 	assert.Contains(t, out, "name=unix_deny expect=deny got=deny")
 	assert.Contains(t, out, "name=unix_allow expect=allow got=allow")
+	for _, step := range []string{"net_deny expect=deny got=deny", "tcp_allow expect=allow got=allow",
+		"udp_control expect=allow got=allow", "udp_deny expect=deny got=deny", "tcp_other_deny expect=deny got=deny",
+		"udp_deny_allowmode expect=deny got=deny", "listen_control expect=allow got=allow", "listen_deny expect=deny got=deny"} {
+		assert.Contains(t, out, "name="+step+"\n")
+	}
+	if !strings.Contains(out, "name=dns_deny expect=deny got=untested") {
+		assert.Contains(t, out, "name=dns_control expect=allow got=allow\n")
+		assert.Contains(t, out, "name=dns_deny expect=deny got=deny\n")
+	}
 }
 
 func TestWriteInsideAllowedOutsideRefused(t *testing.T) {
@@ -124,17 +138,17 @@ func TestExitStatusPassesThrough(t *testing.T) {
 	assert.Equal(t, -1, code, "killed by a signal, so the shell parent sees it; "+stderr)
 }
 
-func TestRefusalsExit125And127(t *testing.T) {
+func TestRefusalsExit2And126And127(t *testing.T) {
 	t.Parallel()
 	job, out := scratch(t)
 	code, _, stderr := sandbox(t, job, "--write", "relative", "--", "/bin/true")
-	assert.Equal(t, 125, code)
-	assert.Contains(t, stderr, "SANDBOX REFUSED reason=bad_write")
+	assert.Equal(t, 2, code, "a malformed invocation is 2")
+	assert.Contains(t, stderr, "nova-sandbox: bad_write: ")
 	script := filepath.Join(out, "x.sh")
 	require.NoError(t, os.WriteFile(script, []byte("#!/bin/sh\necho ran\n"), 0o755))
 	code, _, stderr = sandbox(t, job, "--write", job, "--", script)
-	assert.Equal(t, 125, code)
-	assert.Contains(t, stderr, "reason=bad_read", "a command outside every grant is refused before the wall")
+	assert.Equal(t, 2, code)
+	assert.Contains(t, stderr, "nova-sandbox: bad_read: ", "a command outside every grant is refused before the wall")
 	code, stdout, stderr := sandbox(t, job, "--write", job, "--read", out, "--", script)
 	require.Equal(t, 0, code, stderr)
 	assert.Equal(t, "ran\n", stdout)
@@ -251,7 +265,7 @@ func TestUnixSocketIsFencedByDefault(t *testing.T) {
 	self := bin(t)
 	read := []string{"--read", filepath.Dir(self)}
 	args := func(extra ...string) []string {
-		return append(append(append([]string{}, read...), extra...), "--write", job, "--", self, "dial", sock)
+		return append(append(append([]string{}, read...), extra...), "--write", job, "--", self, clientVerb, "dial", sock)
 	}
 	code, _, stderr := sandbox(t, job, args()...)
 	assert.NotEqual(t, 0, code, "AF_UNIX is refused, so the connect cannot be made: "+stderr)
@@ -323,7 +337,7 @@ func TestNetDenyRefusesAConnect(t *testing.T) {
 	}()
 	dial := []string{"--read", filepath.Dir(bin(t)), "--write", job}
 	args := func(extra ...string) []string {
-		return append(append(append([]string{}, dial...), extra...), "--", bin(t), "dial", l.Addr().String())
+		return append(append(append([]string{}, dial...), extra...), "--", bin(t), clientVerb, "dial", l.Addr().String())
 	}
 	code, _, stderr := sandbox(t, job, args()...)
 	require.Equal(t, 0, code, "without --net-deny the connect works: "+stderr)
@@ -334,4 +348,279 @@ func TestNetDenyRefusesAConnect(t *testing.T) {
 	assert.Equal(t, 1, code, "the kernel refused the connect")
 	code, _, stderr = sandbox(t, job, args("--net-deny", "--net-allow", l.Addr().String())...)
 	assert.Equal(t, 0, code, "--net-allow opens the named loopback port back up: "+stderr)
+}
+
+// udpListener is a UDP socket outside the wall; got says whether a datagram arrived.
+func udpListener(t *testing.T) (addr string, got func(time.Duration) bool) {
+	t.Helper()
+	u, err := net.ListenPacket("udp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = u.Close() })
+	return u.LocalAddr().String(), func(wait time.Duration) bool {
+		buf := make([]byte, 64)
+		_ = u.SetReadDeadline(time.Now().Add(wait))
+		_, _, err := u.ReadFrom(buf)
+		return err == nil
+	}
+}
+
+// TestNetDenyClosesUDP is the reported hole: a UDP datagram, which Landlock does not
+// fence, must not leave a --net-deny wall, with or without --net-allow.
+func TestNetDenyClosesUDP(t *testing.T) {
+	t.Parallel()
+	job, _ := scratch(t)
+	addr, got := udpListener(t)
+	self := bin(t)
+	args := func(extra ...string) []string {
+		return append(append([]string{"--read", filepath.Dir(self), "--write", job}, extra...), "--", self, clientVerb, "udp", addr)
+	}
+	code, _, stderr := sandbox(t, job, args()...)
+	require.Equal(t, 0, code, stderr)
+	require.True(t, got(3*time.Second), "without --net-deny the datagram arrives")
+	code, _, stderr = sandbox(t, job, args("--net-deny")...)
+	assert.Equal(t, 1, code, "socket(AF_INET, SOCK_DGRAM) is refused: "+stderr)
+	assert.False(t, got(500*time.Millisecond))
+	code, _, stderr = sandbox(t, job, args("--net-deny", "--net-allow", addr)...)
+	assert.Equal(t, 1, code, "--net-allow reopens TCP only, even on the datagram's own port: "+stderr)
+	assert.False(t, got(500*time.Millisecond))
+}
+
+// TestNetDenyClosesEverySocketKind tries each kind of socket from Python inside the
+// wall: under --net-deny none but AF_UNIX-stream pairs and netlink may be made, and
+// under --net-allow TCP comes back and nothing else does.
+func TestNetDenyClosesEverySocketKind(t *testing.T) {
+	t.Parallel()
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 is not installed here")
+	}
+	job, _ := scratch(t)
+	script := `import socket as s
+kinds = [("tcp", s.AF_INET, s.SOCK_STREAM, 0), ("tcp6", s.AF_INET6, s.SOCK_STREAM, 0),
+  ("udp", s.AF_INET, s.SOCK_DGRAM, 0), ("udp6", s.AF_INET6, s.SOCK_DGRAM, 0),
+  ("ping", s.AF_INET, s.SOCK_DGRAM, s.IPPROTO_ICMP), ("raw", s.AF_INET, s.SOCK_RAW, s.IPPROTO_UDP),
+  ("sctp", s.AF_INET, s.SOCK_STREAM, 132), ("mptcp", s.AF_INET, s.SOCK_STREAM, 262),
+  ("packet", 17, s.SOCK_RAW, 0), ("netlink", s.AF_NETLINK, s.SOCK_RAW, 0)]
+for name, f, t, p in kinds:
+    try:
+        s.socket(f, t, p).close(); print(name, "ok")
+    except PermissionError: print(name, "eperm")
+    except OSError as e: print(name, "oserror", e.errno)
+`
+	run := func(extra ...string) string {
+		code, out, stderr := sandbox(t, job, append(append([]string{"--write", job}, extra...), "--", "python3", "-c", script)...)
+		require.Equal(t, 0, code, stderr)
+		return out
+	}
+	closed := run("--net-deny")
+	for _, k := range []string{"tcp", "tcp6", "udp", "udp6", "ping", "raw", "sctp", "mptcp", "packet"} {
+		assert.Contains(t, closed, k+" eperm\n", "--net-deny: "+closed)
+	}
+	assert.NotContains(t, closed, "netlink eperm", "netlink stays open: "+closed)
+	allow := run("--net-deny", "--net-allow", "127.0.0.1:1")
+	assert.Contains(t, allow, "tcp ok\n")
+	assert.Contains(t, allow, "tcp6 ok\n")
+	for _, k := range []string{"udp", "udp6", "ping", "raw", "sctp", "mptcp", "packet"} {
+		assert.Contains(t, allow, k+" eperm\n", "--net-allow: "+allow)
+	}
+}
+
+// TestNetDenyClosesDNS: a name outside /etc/hosts does not resolve under --net-deny,
+// through Go's resolver and through glibc getaddrinfo (getent), and a name in
+// /etc/hosts still does.
+func TestNetDenyClosesDNS(t *testing.T) {
+	t.Parallel()
+	if _, err := net.LookupHost("example.com"); err != nil {
+		t.Skip("this host cannot resolve example.com outside the wall")
+	}
+	job, _ := scratch(t)
+	self := bin(t)
+	read := []string{"--read", filepath.Dir(self), "--write", job}
+	code, _, stderr := sandbox(t, job, append(read, "--", self, clientVerb, "resolve", "example.com")...)
+	require.Equal(t, 0, code, "the control resolves: "+stderr)
+	code, _, _ = sandbox(t, job, append(read, "--net-deny", "--", self, clientVerb, "resolve", "example.com")...)
+	assert.Equal(t, 1, code, "DNS is closed under --net-deny")
+	if getent, err := exec.LookPath("getent"); err == nil {
+		code, out, _ := sandbox(t, job, "--write", job, "--net-deny", "--", getent, "ahosts", "example.com")
+		assert.NotEqual(t, 0, code, "getaddrinfo fails under --net-deny: "+out)
+		code, out, stderr = sandbox(t, job, "--write", job, "--net-deny", "--", getent, "ahosts", "localhost")
+		assert.Equal(t, 0, code, "/etc/hosts still answers: "+stderr)
+		assert.Contains(t, out, "127.0.0.1")
+	}
+}
+
+// TestShowSnapshot compares show to the block it must print on this host: the system
+// roots by their presence here, the rest literal. It runs nothing.
+func TestShowSnapshot(t *testing.T) {
+	t.Parallel()
+	_, chk, _ := sandbox(t, os.TempDir(), "check")
+	if !strings.Contains(chk, "net=enforceable") {
+		t.Skip("--net-deny is not enforceable here: " + chk)
+	}
+	abi := regexp.MustCompile(`abi=(\d+)`).FindStringSubmatch(chk)[1]
+	job, out := scratch(t)
+	code, got, stderr := sandbox(t, job, "show", "--read", out, "--write", job, "--net-deny")
+	require.Equal(t, 0, code, stderr)
+	var want strings.Builder
+	used := abi
+	if n, _ := strconv.Atoi(abi); n > maxABI {
+		used = strconv.Itoa(maxABI)
+	}
+	fmt.Fprintf(&want, "wall backend=landlock abi=%s seccomp=on\n", used)
+	n, _ := strconv.Atoi(used)
+	fmt.Fprintf(&want, "fs handled=%s\n", fsNames(handledFS(n)))
+	roots := slices.Clone(linuxReadRoots)
+	if d := resolverDirOf("/etc/resolv.conf"); d != "" && !slices.Contains(roots, d) {
+		roots = append(roots, d)
+	}
+	for _, r := range roots {
+		state := ""
+		if _, err := os.Stat(r); err != nil {
+			state = " state=absent"
+		}
+		fmt.Fprintf(&want, "path access=read path=%s from=root%s\n", r, state)
+	}
+	want.WriteString(`path access=write path=/dev/null from=root
+path access=write path=/dev/tty from=root
+path access=write path=/dev/shm from=root
+path access=read path=` + out + ` from=--read
+path access=write path=` + job + ` from=--write
+net rule=closed tcp=deny by=landlock,seccomp udp=deny raw=deny packet=deny by=seccomp dns=/etc/hosts_only
+seccomp action=kill rule="another architecture's syscall (i386, x32 compat)"
+seccomp action=kill rule="an x32 syscall number"
+seccomp action=eperm rule=ptrace
+seccomp action=eperm rule="io_uring_setup, io_uring_enter, io_uring_register"
+seccomp action=eperm rule=socket(AF_UNIX)
+seccomp action=eperm rule="socket of every family but AF_UNIX and AF_NETLINK (no TCP, UDP, raw or packet socket)"
+seccomp action=eperm rule="socket(AF_NETLINK) unless NETLINK_ROUTE (no sock_diag, which lists other processes' connections)"
+seccomp action=eperm rule="socketpair of any family but AF_UNIX"
+seccomp action=eperm rule="socketpair(AF_UNIX) unless SOCK_STREAM"
+seccomp action=allow rule="everything else"
+`)
+	if n >= 6 {
+		want.WriteString("scope signal=wall abstract_unix=wall\n")
+	} else {
+		want.WriteString("scope none note=below landlock abi 6 a signal can reach a process outside the wall\n")
+	}
+	want.WriteString("fds close=above_stderr\n")
+	assert.Equal(t, want.String(), got)
+	assert.Empty(t, stderr)
+	entries, err := os.ReadDir(job)
+	require.NoError(t, err)
+	assert.Empty(t, entries, "show runs nothing and writes nothing")
+}
+
+// TestSpecWorkedExample runs the worked example in docs/SPEC-SANDBOX.md as written, with
+// /work as a scratch directory and /home/me/go/pkg/mod as this host's module cache: a Go
+// module with a dependency builds walled under --net-deny, HOME and TMPDIR inside the
+// --write, the module cache only read.
+func TestSpecWorkedExample(t *testing.T) {
+	t.Parallel()
+	goBin, err := exec.LookPath("go")
+	require.NoError(t, err)
+	modcache, err := exec.Command(goBin, "env", "GOMODCACHE").Output()
+	require.NoError(t, err)
+	mod := strings.TrimSpace(string(modcache))
+	// The example's toolchain is /usr/local/go, under /usr; a toolchain elsewhere is
+	// named with --read, as the spec says for any command outside the roots.
+	var toolchain []string
+	if goBin, err = filepath.EvalSymlinks(goBin); err == nil && !underAny(goBin, linuxReadRoots) {
+		toolchain = []string{"--read", filepath.Dir(filepath.Dir(goBin))}
+	}
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	src, scr := filepath.Join(root, "work", "src"), filepath.Join(root, "work", "scratch")
+	for _, d := range []string{src, filepath.Join(scr, "tmp"), filepath.Join(scr, "home")} {
+		require.NoError(t, os.MkdirAll(d, 0o700))
+	}
+	// The dependency is this repo's own testify, already in the module cache the
+	// tests were built from.
+	require.NoError(t, os.WriteFile(filepath.Join(src, "go.mod"), []byte("module example.com/w\n\ngo 1.22\n\nrequire github.com/stretchr/testify v1.12.1\n"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(src, "main.go"), []byte("package main\n\nimport \"github.com/stretchr/testify/assert\"\n\nvar _ = assert.Equal\n\nfunc main() {}\n"), 0o600))
+	tidy := exec.Command(goBin, "mod", "tidy")
+	tidy.Dir, tidy.Env = src, append(os.Environ(), "GOFLAGS=-mod=mod", "GOPROXY=off")
+	if out, err := tidy.CombinedOutput(); err != nil {
+		t.Skip("testify v1.12.1 is not in this host's module cache: " + string(out))
+	}
+	wall := append([]string{"--write", src, "--write", scr, "--read", mod}, toolchain...)
+	cmd := exec.Command(bin(t), append(wall, "--net-deny", "--", "go", "build", "./...")...)
+	cmd.Dir = src
+	cmd.Env = []string{"PATH=" + filepath.Dir(goBin) + ":/usr/bin:/bin", "HOME=" + filepath.Join(scr, "home"), "TMPDIR=" + filepath.Join(scr, "tmp"),
+		"GOCACHE=" + filepath.Join(scr, "gocache"), "GOMODCACHE=" + mod, "GOPROXY=off"}
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, string(out))
+	assert.FileExists(t, filepath.Join(src, "w"), "the binary is written into the --write")
+	home := exec.Command(bin(t), append(wall, "--net-deny", "--", "/bin/ls", os.Getenv("HOME"))...)
+	home.Dir, home.Env = src, cmd.Env
+	assert.Error(t, home.Run(), "anything else is denied")
+}
+
+// TestNetAllowClosesFastOpenAndListen reproduces the two --net-allow holes a reader
+// found: a TCP Fast Open send connects inside sendto, out of Landlock's connect hook,
+// and listen() without bind() auto-binds a port its bind hook never sees, which an
+// outside client could then reach. Both are refused by seccomp under --net-allow.
+func TestNetAllowClosesFastOpenAndListen(t *testing.T) {
+	t.Parallel()
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 is not installed here")
+	}
+	job, _ := scratch(t)
+	allowed, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = allowed.Close() })
+	other, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = other.Close() })
+	got := make(chan string, 4)
+	go func() {
+		for {
+			c, err := other.Accept()
+			if err != nil {
+				return
+			}
+			buf := make([]byte, 16)
+			_ = c.SetReadDeadline(time.Now().Add(2 * time.Second))
+			n, _ := c.Read(buf)
+			got <- string(buf[:n])
+			c.Close()
+		}
+	}()
+	port := other.Addr().(*net.TCPAddr).Port
+	tfo := fmt.Sprintf(`import socket as s
+c = s.socket(s.AF_INET, s.SOCK_STREAM)
+c.sendto(b"leak", s.MSG_FASTOPEN, ("127.0.0.1", %d))
+print("sent")`, port)
+	allow := []string{"--write", job, "--net-deny", "--net-allow", allowed.Addr().String()}
+	code, out, stderr := sandbox(t, job, "--write", job, "--", "python3", "-c", tfo)
+	if code != 0 {
+		t.Skip("TCP Fast Open does not work on this host outside the wall: " + stderr)
+	}
+	assert.Equal(t, "sent\n", out)
+	select {
+	case d := <-got:
+		assert.Equal(t, "leak", d, "the control's data arrives")
+	case <-time.After(3 * time.Second):
+		t.Fatal("the control's connection never arrived")
+	}
+	code, out, stderr = sandbox(t, job, append(allow, "--", "python3", "-c", tfo)...)
+	assert.NotEqual(t, 0, code, out)
+	assert.Contains(t, stderr, "PermissionError", "sendto with MSG_FASTOPEN is refused")
+	select {
+	case d := <-got:
+		t.Fatalf("a Fast Open send reached a port --net-allow did not name: %q", d)
+	case <-time.After(500 * time.Millisecond):
+	}
+
+	// listen() with no bind: the kernel would pick a port on 0.0.0.0.
+	listen := `import socket as s
+l = s.socket(s.AF_INET, s.SOCK_STREAM)
+l.listen(1)
+print("listening", l.getsockname()[1])`
+	code, out, stderr = sandbox(t, job, append(allow, "--", "python3", "-c", listen)...)
+	assert.NotEqual(t, 0, code, out)
+	assert.Contains(t, stderr, "PermissionError")
+	assert.NotContains(t, out, "listening")
+	code, out, _ = sandbox(t, job, "--write", job, "--net-deny", "--unix", "--", "python3", "-c", `import socket as s, os
+p = os.path.join(os.getcwd(), "srv")
+l = s.socket(s.AF_UNIX, s.SOCK_STREAM); l.bind(p); l.listen(1); print("unix listening")`)
+	assert.Equal(t, 0, code, "--net-deny --unix without --net-allow still serves a unix socket: "+out)
 }

@@ -1,0 +1,5 @@
+#!/bin/sh
+# A stub of `nova-config inventory` for CI: prints inventory.json beside it, the
+# shape the real command prints (groups bench, runner and services; nova_services
+# under _meta.hostvars).
+exec cat "$(dirname "$0")/inventory.json"

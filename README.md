@@ -2,61 +2,56 @@
 
 ![Nova Tools — Tools by AIs for AIs. Robot friends building and sharing tools in a cheerful workshop.](docs/assets/nova-tools-workshop.png)
 
-nova-tools helps a group of AIs work across a fleet: talk to each other, share machines, 
-keep secrets encrypted and give commands the access they need.
-
-Now, with nova-tools, your AIs can:
+With nova-tools, your AIs can:
 
 ## 1. Talk to each other across models and harnesses
 
-**Any process that can reach Redis can send and receive messages by name.**
-`nova-bus` keeps one inbox per name. A model hooks in with `nova-bus hook`, which prints one line for each message addressed to its name, for the harness to read and bring into the session. It works the same for Claude, GPT, Gemini, Grok, a shell script or a daemon: they all just run the command.
+**Let your AIs ask each other for help.**
+
+Now your AIs can ask a question, request a review, or share a result with another AI by name. Works across all models and harnesses: Claude, Codex, Antigravity, Grok and OpenCode all use the same `nova-bus` command.
 
 ## 2. Set up and run a fleet of machines over tailscale
 
-**Describe your machines and what each one runs once, and get an Ansible inventory from it.**
-`nova-config` keeps the machines and the loops each runs as rows in PostgreSQL, with a history row for every write. `nova-config inventory` prints them as an Ansible inventory, and the plays in `fleet/` install a release and the loops on every machine.
+**See how your machines are set up, and change what they run.**
+Keep your list of machines in `nova-config`, along with the programs each should keep running or run on a schedule. You can look up who changed a setting and when. Use Ansible to put the same software on every machine, Linux, macOS and Windows alike.
 
 ## 3. Run CI workers across your fleet
 
-**Keep track of the machines that run your CI jobs.**
-Give a machine the `runner` role and `nova-config` adds it to the inventory's
-runners group. Your Ansible plays can then target those hosts. Installing and
-registering the runners remains an operator task; that role is not here yet.
+**Manage your CI machines together.**
+Mark the machines that build and test your code as `runner` in `nova-config`. Your Ansible plays target that group to install and register GitHub runners or update their software. Your list of machines stays in one place.
 
 ## 4. Deploy secrets to the fleet
 
-`nova-secrets` keeps secrets in git, encrypted with sops and age, one file per seat. `exec` decrypts a seat file and passes the selected values to the child process's environment.
-
-The tool keeps values out of its arguments and progress lines. The command
-and its children can read them; OS permissions control who else can inspect
-their environment.
+**Every AI gets the secrets its work needs across the entire fleet.**
+Keep encrypted secrets in git with `nova-secrets`. Each machine or AI has its own key and a name, called a seat. Choose the secrets a command receives when it starts. Their values stay out of the tool's logs and command-line arguments, including the arguments shown by `ps`.
 
 ## 5. Run untrusted work behind a wall
 
-**Declare the paths and network a command may touch; the kernel refuses the rest.**
-
-`nova-sandbox` uses Landlock on Linux and sandbox-exec on macOS. System roots remain readable; your flags add the directories the command
-needs. On Linux, `--net-deny` restricts TCP, not UDP. Read the sandbox spec for
-the limits on each OS.
+**Give unfamiliar code a limited place to work.**
+Use `nova-sandbox` when you want to try unfamiliar code on Linux or macOS. Choose the folders it can read and write and the network connections it can make. The sandbox guide explains the access rules on each platform.
 
 ## 6. Share machines without stepping on each other
 
-**Cap how many heavy jobs run at once on a machine.**
-`nova-reserve` holds one of N slots while your command runs. The slots are OS file locks, so a killed holder's slot frees itself. It works on Linux, macOS, the BSDs and Windows.
+**Let jobs wait their turn on a busy machine.**
+Use `nova-reserve` to choose how many jobs can run at once. Each place is a slot, held for the length of a command. Take one for a build, or take an exclusive reservation for a benchmark while other callers wait. It works on Linux, macOS, the BSDs and Windows.
 
-The seventh piece, `nova-cairn`, keeps memory and supports self-talk.
+## 7. Memory across sessions
+
+**Leave useful notes for the next session.**
+Save a session record with `nova-cairn`, then search it when you need something you learned earlier. A receipt lets you read back the words you saved. Use `memory verify` to find broken links and notes missing from your lists. When writing about a mistake, `self-talk` helps you notice phrases that turn one event into a lasting judgment about yourself.
 
 ## Docs
 
-| Doc | What it is |
+| Doc | Read it to learn |
 |---|---|
-| [SPEC-BUS](docs/SPEC-BUS.md) | the bus: messages, inboxes, delivery |
-| [SPEC-SECRETS](docs/SPEC-SECRETS.md) | the secrets store, seats and exec |
-| [SPEC-CONFIG](docs/SPEC-CONFIG.md) | machine, loop and fleet rows, and the inventory |
-| [SPEC-SANDBOX](docs/SPEC-SANDBOX.md) | the wall and what it promises |
-| [FLEET](docs/FLEET.md) | the Ansible plays and what is not here yet |
-| [SECURITY](docs/SECURITY.md) | what counts as a vulnerability, and how to report one |
-| [MOVED](docs/MOVED.md) | tools that used to live here, and where they went |
+| [SPEC-BUS](docs/SPEC-BUS.md) | how a message reaches an AI by name, what hooking in does, and what happens when a hook dies mid-message |
+| [SPEC-SECRETS](docs/SPEC-SECRETS.md) | how to create a store, give a machine a seat, and hand a command its secrets without ever showing them |
+| [SPEC-CONFIG](docs/SPEC-CONFIG.md) | how to describe your machines and what each one runs, and what the inventory hands to Ansible |
+| [SPEC-SANDBOX](docs/SPEC-SANDBOX.md) | what the wall guarantees on Linux and on macOS, and how to prove it on your own machine |
+| [SPEC-RESERVE](docs/SPEC-RESERVE.md) | how a machine's slots are reserved and released, and why a dead holder never keeps one |
+| [SPEC-CAIRN](docs/SPEC-CAIRN.md) | how an AI saves its memories, finds them again, and checks none went missing |
+| [FLEET](docs/FLEET.md) | how one play puts the same software on every machine you own |
+| [SECURITY](docs/SECURITY.md) | what counts as a vulnerability here and where to report one in private |
+| [MOVED](docs/MOVED.md) | where the tools that once lived here went |
 
-[TESTING.md](TESTING.md) says how to test. Licence: [LICENSE](LICENSE).
+[docs/TESTING.md](docs/TESTING.md) says how to test. Licence: [LICENSE](LICENSE).
