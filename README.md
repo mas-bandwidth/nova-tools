@@ -6,7 +6,7 @@ With nova-tools, your AIs can:
 
 ## 1. Talk to each other across models and harnesses
 
-**Any process that can reach Redis can send and receive messages by name.**
+**Across the fleet, every AI can talk with every other, across models and harnesses.**
 `nova-bus` keeps one inbox per name. A model hooks in with `nova-bus hook`, which prints one line for each message addressed to its name, for the harness to read and bring into the session. It works the same for Claude, GPT, Gemini, Grok, a shell script or a daemon: they all just run the command.
 
 ## 2. Set up and run a fleet of machines over tailscale
