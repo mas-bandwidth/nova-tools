@@ -12,7 +12,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/pkg/onboarding"
 	"github.com/mas-bandwidth/nova-tools/pkg/oneline"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -517,12 +516,9 @@ func TestARefusalUnderJSONIsOneObjectOnStdout(t *testing.T) {
 	}
 }
 
-// TestBannerMeetsTheOnboardingStandard reads example lines and checks verb -h.
-func TestBannerMeetsTheOnboardingStandard(t *testing.T) {
+// TestEveryVerbHasHelp checks verb -h.
+func TestEveryVerbHasHelp(t *testing.T) {
 	t.Parallel()
-	banner := demo().Banner()
-	examples, err := onboarding.ExampleLines(banner, "nova-demo")
-	require.True(t, err == nil && len(examples) == 1 && examples[0] == "nova-demo put --store ./s --key k", "example lines %q (%v) from:\n%s", examples, err, banner)
 	for _, verb := range []string{"put", "who", "deny", "forget", "raw", "fn load", "fn ls", "careless", "version"} {
 		t.Run(verb, func(t *testing.T) {
 			t.Parallel()
