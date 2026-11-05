@@ -79,8 +79,8 @@ inventory does not, because the playbook's own is read after it: use a group nam
 
 ## Installing a release
 
-A release is a git tag `v*` on this repository. `.github/workflows/release.yml` builds the five tools (nova-bus,
-nova-config, nova-sandbox, nova-secrets, nova-reserve) for linux/amd64, linux/arm64, darwin/arm64 and windows/amd64 with
+A release is a git tag `v*` on this repository. `.github/workflows/release.yml` builds the six tools (nova-bus,
+nova-cairn, nova-config, nova-sandbox, nova-secrets, nova-reserve) for linux/amd64, linux/arm64, darwin/arm64 and windows/amd64 with
 `CGO_ENABLED=0 -trimpath`, names each asset `<tool>_<tag>_<os>_<arch>[.exe]` (for example
 `nova-reserve_v1.0.0_linux_amd64`), writes one `SHA256SUMS`, and creates the GitHub release with the workflow's own
 `GITHUB_TOKEN`. Nothing else holds a credential.
@@ -100,7 +100,7 @@ in the inventory.
 | Variable | Default | |
 |---|---|---|
 | `nova_tools_version` | none, required | the tag, `vX.Y.Z` |
-| `nova_tools_names` | the five tools | which tools to install (and which `argv[0]` loops.yml prefixes) |
+| `nova_tools_names` | the six tools | which tools to install (and which `argv[0]` loops.yml prefixes) |
 | `nova_bin_dir` | `~/.local/bin` | where they go (Windows: `<profile>\.local\bin`) |
 | `nova_tools_release_url` | the GitHub releases of this repository | `<base>/<tag>/<asset>` |
 | `nova_tools_restart`, `nova_tools_restart_commands` | false, empty | argv lists run once, only if a binary changed |
@@ -110,7 +110,7 @@ in the inventory.
 **The retire list.** With `-e nova_tools_remove_enabled=true`, after a successful install each name in
 `nova_tools_remove` found in the bin directory is moved to `<nova_bin_dir>/retired-<date>/`, never deleted; a name
 not there is skipped, so this is idempotent too. A name that is also being installed is refused. The default list is
-the rows of `fleet/retired-tools.txt` that say `retired` or `rowan-tools`: nova-cairn, nova-check, nova-ci,
+the rows of `fleet/retired-tools.txt` that say `retired` or `rowan-tools`: nova-check, nova-ci,
 nova-decide, nova-doctor, nova-fuse, nova-local, nova-loop, nova-memory, nova-redis, nova-self-talk, nova-slot,
 nova-table, nova-tokens, nova-up, nova-update, nova-version. Another product's binaries (nova-sprint, nova-card,
 nova-work, nova-swarm, nova-hook, nova-friend) are never in it. An operator who wants more gone names the whole list:

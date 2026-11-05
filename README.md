@@ -6,38 +6,38 @@ With nova-tools, your AIs can:
 
 ## 1. Talk to each other across models and harnesses
 
-**Across the fleet, every AI can talk with every other, across models and harnesses.**
-Each AI has a name and an inbox on `nova-bus`. An AI hooks in once, and from then on every message to its name arrives in its session as it is sent. Claude, Codex, Antigravity, Grok and OpenCode all hook in the same way.
+**Let your AIs ask each other for help.**
+Send a question, ask for a review, or share a result with another AI by name. Claude, Codex, Antigravity, Grok and OpenCode use the same `nova-bus` commands.
 
 ## 2. Set up and run a fleet of machines over tailscale
 
-**Every machine on the tailnet knows its job, and an AI can see the whole fleet at once.**
-`nova-config` holds every machine and what each one runs, with a history of who changed what. `nova-config inventory` turns that into an Ansible inventory, and the plays in `fleet/` put the same software on every machine, Linux, macOS and Windows alike.
+**See how your machines are set up, and change what they run.**
+Keep your list of machines in `nova-config`, along with the programs each should keep running or run on a schedule. You can look up who changed a setting and when. Use Ansible to put the same software on every machine, Linux, macOS and Windows alike.
 
 ## 3. Run CI workers across your fleet
 
-**Run CI workers across the fleet.**
-Give a machine the `runner` role and it joins the inventory's runner group. Your plays target that group to install and register GitHub runners, so your CI runs on your own machines, every OS, with the same tools and secrets as the rest of the fleet.
+**Manage your CI machines together.**
+Mark the machines that build and test your code as `runner` in `nova-config`. Your Ansible plays target that group to install and register GitHub runners or update their software. Your list of machines stays in one place.
 
 ## 4. Deploy secrets to the fleet
 
 **Every AI gets the secrets its work needs across the entire fleet.**
-`nova-secrets` keeps the fleet's secrets in git, encrypted with sops and age, one file per seat. A machine or an AI holds a seat key; `exec` decrypts only the names you list, straight into the command it runs. No value ever appears on a command line, in a log, or in `ps`.
+Keep encrypted secrets in git with `nova-secrets`. Each machine or AI has its own key and a name, called a seat. Choose the secrets a command receives when it starts. Their values stay out of the tool's logs and command-line arguments, including the arguments shown by `ps`.
 
 ## 5. Run untrusted work behind a wall
 
-**Declare the paths and network a command may touch; the kernel refuses the rest.**
-`nova-sandbox` walls a command on Linux and macOS. It reads only the directories you name, writes only where you say, and with `--net-deny` has no network at all. An AI can run code it did not write and know the rest of the machine was never in reach.
+**Give unfamiliar code a limited place to work.**
+Use `nova-sandbox` when you want to try unfamiliar code on Linux or macOS. Choose the folders it can read and write and the network connections it can make. The sandbox guide explains the access rules on each platform.
 
 ## 6. Share machines without stepping on each other
 
-**Reserve a machine's capacity before using it, so AIs and people coordinate instead of collide.**
-`nova-reserve` gives each machine a fixed number of slots. An AI takes one for the length of a command, or all of them for a benchmark, and the rest wait their turn. A reservation ends when the command does, even if it was killed. It works on Linux, macOS, the BSDs and Windows.
+**Let jobs wait their turn on a busy machine.**
+Use `nova-reserve` to choose how many jobs can run at once. Each place is a slot, held for the length of a command. Take one for a build, or take an exclusive reservation for a benchmark while other callers wait. It works on Linux, macOS, the BSDs and Windows.
 
 ## 7. Memory across sessions
 
-**An AI keeps what it learned, finds it again, and checks that nothing was lost.**
-`nova-cairn` is the record an AI leaves for its next self. It opens a session, appends the words worth keeping, and hands back a receipt for the exact words saved. `memory search` finds them again by the words in them, `memory verify` checks every note is indexed and every link resolves, and `self-talk` reads a draft and flags the sentences where the writer passes a standing verdict on themselves, so a memory records what happened rather than a judgement. Memories are plain files in git, readable by any model and any harness.
+**Leave useful notes for the next session.**
+Save a session record with `nova-cairn`, then search it when you need something you learned earlier. A receipt lets you read back the words you saved. Use `memory verify` to find broken links and notes missing from your lists. When writing about a mistake, `self-talk` helps you notice phrases that turn one event into a lasting judgment about yourself.
 
 ## Docs
 
