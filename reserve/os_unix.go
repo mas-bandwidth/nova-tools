@@ -10,8 +10,8 @@ import (
 	"syscall"
 )
 
-// systemDir is the slot directory when NOVA_SLOT_DIR names none.
-const systemDir = "/tmp/nova-slot"
+// systemDir is the slot directory when NOVA_RESERVE_DIR names none.
+const systemDir = "/tmp/nova-reserve"
 
 // osLock is flock(2) on path. The file is opened read-only (flock needs no
 // write access, so every user can lock a file another user made), and opened
@@ -41,7 +41,7 @@ func osLock(path string, exclusive bool) (func(), bool, error) {
 	return func() { _ = f.Close() }, true, nil
 }
 
-// tie starts cmd with this OS's tie to nova-slot (sysAttr). On Linux that is
+// tie starts cmd with this OS's tie to nova-reserve (sysAttr). On Linux that is
 // Pdeathsig, which fires when the starting thread ends, so the thread stays
 // locked to this goroutine, which waits for the command.
 func tie(cmd *exec.Cmd) (func(), error) {

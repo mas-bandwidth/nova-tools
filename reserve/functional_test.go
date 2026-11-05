@@ -37,7 +37,7 @@ const patience = 20 * time.Second
 
 func build(t *testing.T) string {
 	t.Helper()
-	bin := filepath.Join(t.TempDir(), "nova-slot")
+	bin := filepath.Join(t.TempDir(), "nova-reserve")
 	if runtime.GOOS == "windows" {
 		bin += ".exe"
 	}
@@ -81,7 +81,7 @@ func TestKilledHolderFreesItsSlot(t *testing.T) {
 		t.Fatal("the waiter ran while the only slot was held")
 	case <-time.After(2 * time.Second):
 	}
-	require.NoError(t, holder.Process.Kill()) // SIGKILL: nothing of nova-slot runs after it
+	require.NoError(t, holder.Process.Kill()) // SIGKILL: nothing of nova-reserve runs after it
 	select {
 	case err := <-done:
 		var ee *exec.ExitError
@@ -111,7 +111,7 @@ func TestHoldEndsWhenStdinCloses(t *testing.T) {
 	t.Parallel()
 	bin, dir := build(t), t.TempDir()
 	cmd := exec.Command(bin, "hold", "--slots", "1")
-	cmd.Env = append(os.Environ(), "NOVA_SLOT_DIR="+dir)
+	cmd.Env = append(os.Environ(), "NOVA_RESERVE_DIR="+dir)
 	in, err := cmd.StdinPipe()
 	require.NoError(t, err)
 	out, err := cmd.StdoutPipe()
@@ -129,7 +129,7 @@ func TestHoldEndsWhenStdinCloses(t *testing.T) {
 	assert.Contains(t, string(status), "slot1 free")
 }
 
-// TestKilledHolderTakesItsCommandWith SIGKILLs nova-slot itself: its command
+// TestKilledHolderTakesItsCommandWith SIGKILLs nova-reserve itself: its command
 // must not run on without the slot (Linux: Pdeathsig; Windows: the job), and
 // the slot frees. On macOS and the BSDs the command outlives a SIGKILL, so
 // only the slot is checked there.
@@ -147,12 +147,12 @@ func TestKilledHolderTakesItsCommandWith(t *testing.T) {
 		child, _ = strconv.Atoi(string(b))
 		return err == nil && child > 0
 	}, patience, 50*time.Millisecond)
-	require.True(t, alive(child), "the command runs while nova-slot holds its slot")
+	require.True(t, alive(child), "the command runs while nova-reserve holds its slot")
 	require.NoError(t, holder.Process.Kill())
 	_ = holder.Wait()
 	if runtime.GOOS == "linux" || runtime.GOOS == "windows" {
 		assert.Eventually(t, func() bool { return !alive(child) }, patience, 50*time.Millisecond,
-			"the command outlived nova-slot")
+			"the command outlived nova-reserve")
 	}
 	assert.Eventually(t, func() bool {
 		out, _ := exec.Command(bin, "status", "--dir", dir).Output()

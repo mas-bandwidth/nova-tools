@@ -1,4 +1,4 @@
-// Command nova-slot runs a command holding one of N load slots on this machine.
+// Command nova-reserve runs a command holding one of N load slots on this machine.
 // The slots are OS file locks, so the kernel frees a dead holder's slot.
 package main
 
@@ -20,19 +20,19 @@ import (
 	"time"
 )
 
-const usage = `nova-slot: run a command holding one of N load slots on this machine.
+const usage = `nova-reserve: run a command holding one of N load slots on this machine.
 
-  nova-slot [--slots N] [--wait D] [--exclusive] [--dir DIR] -- <cmd> [args...]
+  nova-reserve [--slots N] [--wait D] [--exclusive] [--dir DIR] -- <cmd> [args...]
       Wait for a free slot, run the command, free the slot when it exits; exit
       with its status. --exclusive runs alone: it waits for every holder and
       keeps new ones out. --wait bounds the wait (default none; past it, exit 3).
-      The command dies with nova-slot on Linux and Windows; on macOS and the
-      BSDs a SIGKILL of nova-slot leaves it running without its slot.
-  nova-slot hold [same flags]     take a slot, print HELD..., hold it until stdin closes (--dir ignored)
-  nova-slot status [--dir DIR]   each slot: free, or held by pid and command
+      The command dies with nova-reserve on Linux and Windows; on macOS and the
+      BSDs a SIGKILL of nova-reserve leaves it running without its slot.
+  nova-reserve hold [same flags]     take a slot, print HELD..., hold it until stdin closes (--dir ignored)
+  nova-reserve status [--dir DIR]   each slot: free, or held by pid and command
 
-N defaults to the CPU count / 4 (at least 1). DIR defaults to $NOVA_SLOT_DIR,
-else /tmp/nova-slot (C:\ProgramData\nova-slot on Windows); every caller on a
+N defaults to the CPU count / 4 (at least 1). DIR defaults to $NOVA_RESERVE_DIR,
+else /tmp/nova-reserve (C:\ProgramData\nova-reserve on Windows); every caller on a
 machine must use the same DIR. Exit: the command's status; 2 usage; 3 the
 slot could not be taken.
 `
@@ -141,10 +141,10 @@ func (t *taker) describe() string {
 	return fmt.Sprintf("mode=%s slot=%s/%d pid=%d", mode, strings.TrimPrefix(t.name(), "slot"), t.o.slots, os.Getpid())
 }
 
-func defaultDir(env func(string) string) string { return cmp.Or(env("NOVA_SLOT_DIR"), systemDir) }
+func defaultDir(env func(string) string) string { return cmp.Or(env("NOVA_RESERVE_DIR"), systemDir) }
 
 func parse(verb string, args []string, env func(string) string, stderr io.Writer) (options, error) {
-	fs := flag.NewFlagSet("nova-slot "+verb, flag.ContinueOnError)
+	fs := flag.NewFlagSet("nova-reserve "+verb, flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.Usage = func() { fmt.Fprint(stderr, usage) }
 	o := options{}
@@ -162,9 +162,9 @@ func parse(verb string, args []string, env func(string) string, stderr io.Writer
 	case o.wait < 0:
 		return o, fmt.Errorf("--wait wants a duration >= 0")
 	case verb == "run" && len(o.argv) == 0:
-		return o, fmt.Errorf("no command: nova-slot [flags] -- <cmd> [args...]")
+		return o, fmt.Errorf("no command: nova-reserve [flags] -- <cmd> [args...]")
 	case verb != "run" && len(o.argv) > 0:
-		return o, fmt.Errorf("nova-slot %s takes no command, not %q", verb, o.argv[0])
+		return o, fmt.Errorf("nova-reserve %s takes no command, not %q", verb, o.argv[0])
 	}
 	return o, nil
 }
@@ -199,7 +199,7 @@ func run(args []string, w world) int {
 	o, err := parse(verb, args, w.env, w.stderr)
 	if err != nil {
 		if !errors.Is(err, flag.ErrHelp) {
-			fmt.Fprintln(w.stderr, "nova-slot:", err)
+			fmt.Fprintln(w.stderr, "nova-reserve:", err)
 		}
 		return 2
 	}
@@ -232,7 +232,7 @@ func run(args []string, w world) int {
 		_, _ = io.Copy(io.Discard, w.stdin)
 		return 0
 	}
-	fmt.Fprintln(w.stderr, "nova-slot: HELD", t.describe())
+	fmt.Fprintln(w.stderr, "nova-reserve: HELD", t.describe())
 	return w.exec(o.argv)
 }
 
@@ -270,7 +270,7 @@ func status(dir string, w world) int {
 
 // fail is exit 3: the slot, its directory or its output could not be had.
 func fail(w world, err error) int {
-	fmt.Fprintln(w.stderr, "nova-slot:", err)
+	fmt.Fprintln(w.stderr, "nova-reserve:", err)
 	return 3
 }
 
@@ -282,7 +282,7 @@ func runCommand(argv []string) int {
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	untie, err := tie(cmd)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "nova-slot:", err)
+		fmt.Fprintln(os.Stderr, "nova-reserve:", err)
 		return 127
 	}
 	defer untie()
@@ -296,7 +296,7 @@ func runCommand(argv []string) int {
 	err = cmd.Wait()
 	signal.Stop(sigs)
 	if cmd.ProcessState == nil {
-		fmt.Fprintln(os.Stderr, "nova-slot:", err)
+		fmt.Fprintln(os.Stderr, "nova-reserve:", err)
 		return 127
 	}
 	if ws, ok := cmd.ProcessState.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
