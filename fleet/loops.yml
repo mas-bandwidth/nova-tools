@@ -135,6 +135,34 @@
       ansible.builtin.file: { path: "{{ item }}", state: directory, mode: "0755" }
       loop: "{{ loop_records | map(attribute='log') | map('regex_replace', '^~/', nova_home ~ '/') | map('dirname') | unique | list }}"
 
+    # launchd does not search the unit's PATH for a program: a bare argv[0] that
+    # is not one of nova_tools_names is resolved here, with the PATH the unit
+    # gets, and the play fails if it is not found.
+    - name: where a bare program of a record is (darwin)
+      ansible.builtin.command:
+        argv: [sh, -c, 'command -v "$1"', sh, "{{ item.argv[0] }}"]
+      environment:
+        PATH: "{{ ({'PATH': nova_loop_path} | combine(item.env)).PATH }}"
+      loop: "{{ loop_records }}"
+      loop_control: { label: "{{ item.name }}" }
+      register: loop_found
+      changed_when: false
+      # ignored: a non-zero exit is the answer "not found", asserted below
+      failed_when: false
+      check_mode: false
+      when: loop_darwin and '/' not in item.argv[0] and item.argv[0] not in nova_tools_names
+
+    - name: every bare program of a record was found (darwin)
+      ansible.builtin.assert:
+        that: item.rc == 0
+        fail_msg: >-
+          {{ inventory_hostname }}: loop {{ item.item.name }} runs {{ item.item.argv[0] }}, which is not on its unit PATH;
+          launchd does not search PATH, so give an absolute path or a nova-tools name as argv[0]
+        quiet: true
+      loop: "{{ loop_found.results | default([]) | rejectattr('skipped', 'defined') | list }}"
+      loop_control: { label: "{{ item.item.name }}" }
+      when: loop_darwin
+
     - name: one unit per record
       ansible.builtin.template:
         src: "{{ 'templates/nova-loop.plist.j2' if loop_darwin else 'templates/nova-loop.service.j2' }}"
@@ -143,11 +171,14 @@
       vars:
         l: "{{ item }}"
         # The command the unit runs: the record's argv exactly, argv[0] taking
-        # nova_bin_dir only when it is one of nova_tools_names, behind
+        # nova_bin_dir only when it is one of nova_tools_names (on darwin any
+        # other bare program is replaced by where it was found), behind
         # nova-secrets exec when the record names keys (the seat opens them;
         # their values never reach the unit file).
         loop_argv: >-
-          {{ ([nova_bin_dir ~ '/' ~ item.argv[0]] if item.argv[0] in nova_tools_names else [item.argv[0]]) + item.argv[1:] }}
+          {{ ([nova_bin_dir ~ '/' ~ item.argv[0]] if item.argv[0] in nova_tools_names
+               else ([(loop_found.results | selectattr('item.name', 'equalto', item.name) | first).stdout]
+                     if loop_darwin and '/' not in item.argv[0] else [item.argv[0]])) + item.argv[1:] }}
         loop_secrets: >-
           {{ ([nova_bin_dir ~ '/nova-secrets', 'exec', '--store', nova_secrets_store, '--as', item.seat,
                '--key', nova_secrets_key_dir ~ '/' ~ item.seat ~ '.key', '--sops', nova_sops,
@@ -168,7 +199,7 @@
         mode: "0644"
       vars:
         l: "{{ item }}"
-      loop: "{{ loop_records | rejectattr('keepalive') | list }}"
+      loop: "{{ loop_records }}"
       loop_control: { label: "{{ item.name }}" }
       become: "{{ loop_system }}"
       register: loop_timers

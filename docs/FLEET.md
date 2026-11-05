@@ -14,7 +14,7 @@ fleet/
   group_vars/all.yml                the generic defaults both plays read
   retired-tools.txt                 binaries nova-tools shipped and ships no more
   requirements.yml                  the Ansible collection a Windows host needs
-  ci/inventory.yml                  the stub inventory CI checks loops.yml against
+  ci/inventory                      the stub inventory CI checks loops.yml against
 reserve/                            nova-reserve, reservations on a machine (Go)
 ```
 
@@ -136,8 +136,13 @@ The unit runs the row's `argv` exactly. If `argv[0]` is one of `nova_tools_names
 `{"argv":["nova-bus","hook","--as","reader"],"env":{"NOVA_BUS_REDIS":"redis-host:6379"}}` runs
 `<nova_bin_dir>/nova-bus hook --as reader` with `NOVA_BUS_REDIS=redis-host:6379` in its environment. The unit's
 `PATH` includes `nova_bin_dir`, and each `env` entry is a unit environment variable (an `Environment=` line on Linux,
-an `EnvironmentVariables` entry on macOS); a row's `env` wins over `HOME` and `PATH`. Output is appended to the row's
-`log`, whose directory the play creates.
+an `EnvironmentVariables` entry on macOS); a row's `env` wins over `HOME` and `PATH`. Env values are strings: a JSON `true` reaches the program as
+`True`, so write the string you mean. Output is appended to the row's `log` (a `~/` is the login's home), whose directory
+the play creates.
+
+A bare `argv[0]` that is not a tool name (`sleep`, say) is found on the unit's `PATH` by systemd. launchd does not
+search `PATH`, so on macOS the play resolves it with `command -v` against the unit's `PATH` and writes the absolute
+path into the plist; if it is not found the play fails before anything is written.
 
 A row whose `keys` is not empty is wrapped in
 `nova-secrets exec --store <store> --as <seat> --key <key_dir>/<seat>.key --sops <sops> --only <keys> --`, so the
@@ -169,7 +174,7 @@ nova-reserve status
 ```
 
 Every caller on a machine uses the same directory. `reserve/README.md` has the flags, exit codes and the TLA+ models;
-`docs/SPEC-RESERVE.md` specifies the reservations.
+`docs/SPEC-RESERVE.md` (lands with the reserve PR) specifies the reservations.
 
 ## Not yet here
 

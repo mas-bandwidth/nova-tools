@@ -29,8 +29,8 @@ Environment="{{ k }}={{ v | string | replace('\\', '\\\\') | replace('"', '\\"')
 {% endfor %}
 ExecStart={% for w in loop_exec %}"{{ w | replace('\\', '\\\\') | replace('"', '\\"') | replace('%', '%%') | replace('$', '$$') }}"{{ ' ' if not loop.last else '' }}{% endfor %}
 
-StandardOutput=append:{{ loop_log }}
-StandardError=append:{{ loop_log }}
+StandardOutput=append:{{ loop_log | replace('%', '%%') }}
+StandardError=append:{{ loop_log | replace('%', '%%') }}
 {% if l.keepalive %}
 
 [Install]
