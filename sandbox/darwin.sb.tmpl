@@ -1,95 +1,70 @@
 ;; nova-sandbox: the darwin sandbox-exec profile, as a template (profile.go fills it).
 ;;
 ;; The filled text goes to sandbox-exec inline with -p, so no profile file exists to be
-;; replaced or left behind. Caller paths never enter the text: they arrive as
-;; -D NAME=<path> and are read back as (param "NAME"); every param named below must be
-;; passed, or the profile fails to compile at exit 65 rather than weakening the wall.
-;; The one place a path is written into the text is the ancestor literals, which is why
-;; a path with a quote, backslash or paren is refused.
+;; replaced or left behind. Caller paths arrive as -D NAME=<path> and are read back as
+;; (param "NAME"); a param the text names and the caller does not pass fails to compile
+;; (exit 65) rather than weakening the wall. The ancestor and link literals are the only
+;; paths written into the text, which is why a path with a quote, backslash or paren is
+;; refused.
 ;;
 ;; A line holding only a marker is replaced:
-;;   @@OPTROOTS@@    read on each optional root that exists (Homebrew, MacPorts, the Xcode
-;;                   developer dir, the command's own dir)
-;;   @@ANCESTORS@@   stat-only (file-read-metadata) on every proper ancestor of every
-;;                   granted path: without it mkdir and stat by
-;;                   absolute path die at /private or /Users. Listing stays denied.
-;;   @@READS@@       read on each --read
-;;   @@READSNOEXEC@@ read on each --read-noexec, then a deny of exec there; the last matching
-;;                   rule wins, so this must stay after the global exec grant
-;;   @@WRITES@@      read+write on each --write, and network-outbound there: the only
-;;                   unix-socket reach, a socket under the write set is the job's own
-;;   @@NET@@         IP-only outbound plus the DNS socket; empty under --net-deny, except
-;;                   for --net-allow ports. Never (allow network*), which would grant every
-;;                   unix socket on the machine, an SSH agent's included.
-;;
-;; HOME is not a root: it must sit inside a --write, which already covers it.
+;;   @@OPTROOTS@@   read on the active developer directory, when it is outside the roots
+;;   @@ANCESTORS@@  stat only (file-read-metadata) on every proper ancestor of every
+;;                  granted path: without it mkdir and stat by absolute path die at
+;;                  /private or /Users. Listing stays denied.
+;;   @@READS@@      read on each --read, and on the caller's symlink spellings
+;;   @@WRITES@@     read+write on each --write, and network-outbound there: the only
+;;                  unix-socket reach is a socket inside a --write
+;;   @@NET@@        IP-only outbound plus the DNS socket; under --net-deny only the
+;;                  --net-allow ports. Never (allow network*), which would grant every
+;;                  unix socket on the machine.
 
 (version 1)
-;; The default deny is NO-REPORT (measured 2026-10-18, macOS 27.0.1): with a reporting deny
-;; a walled 143 MB Bun binary hung on most cold starts, the denied thread waiting for a
-;; violation report that never came. The deny itself is unchanged.
+;; The default deny does not report: with a reporting deny a large walled binary was
+;; measured to hang on cold starts, its denied thread waiting on a violation report.
+;; The deny itself is the same.
 (deny default (with no-report))
 
-;; exec and signal are TWO clauses. Folding them into
-;; (allow process-exec* process-fork signal (target self)) applies the target filter
-;; to the exec too and denies it: execvp() ... Operation not permitted, exit 71.
+;; exec and signal are two clauses: folding them into one applies the target filter
+;; to the exec too and denies it (execvp: Operation not permitted, exit 71).
 (allow process-exec* process-fork)
 (allow signal (target self) (target children))
 
 (allow sysctl-read)
 
-;; mach-lookup is NARROWED to the four services the harnesses and the Go toolchain need,
-;; measured 2026-09-11 on this Mac by growing the set until `/bin/sh -c true`, `git status`,
-;; `curl https://example.com`, `opencode --version` and `node -e 1` all passed, and on
-;; 2026-10-04 on an Intel Mac bench by growing it again until `go mod download` passed:
-;;   opendirectoryd.libinfo  getpwuid(3)/getaddrinfo(3) -- without it HOME lookup and
-;;                           name resolution fail;
-;;   SecurityServer          TLS trust evaluation -- without it curl to an https name fails;
-;;   system.logger           os_log(3), which libsystem calls on many paths;
-;;   trustd.agent            SecTrustEvaluateWithError, the call Go's crypto/x509 makes on darwin
-;;                           for every TLS handshake. curl verifies through SecurityServer
-;;                           and passed without it; `go mod download` inside the wall failed
-;;                           every fetch with `tls: failed to verify certificate: x509:
-;;                           OSStatus -26276` under the three-name set, and the same fetch
-;;                           passed with this one name added (measured 2026-10-04 on a
-;;                           darwin/amd64 bench, sandbox-exec -f on the generated profile;
-;;                           `com.apple.trustd` alone did not help). pbpaste stays rc=1.
-;; Unqualified (allow mach-lookup) was measured to leave `pbpaste` READING THE CLIPBOARD
-;; inside the wall; with this set pbpaste is rc=1 (clipboard_denied).
-;; ACCEPTED WIDTH, named rather than removed: `launchctl print system` still answers and
-;; `security list-keychains` still lists the keychain FILE NAMES -- neither reads a
-;; secret, and both were measured to still answer under this narrowed set. Apple Events
-;; are denied at every width.
+;; mach-lookup is narrowed to the services ordinary commands need, measured by growing
+;; the set until a shell, git, curl to an https name, node and `go mod download` ran:
+;;   opendirectoryd.libinfo  getpwuid(3) and getaddrinfo(3)
+;;   SecurityServer          TLS trust evaluation (curl)
+;;   system.logger           os_log(3), which libsystem calls on many paths
+;;   trustd.agent            SecTrustEvaluateWithError, which Go's crypto/x509 calls
+;; An unqualified (allow mach-lookup) was measured to let pbpaste read the clipboard;
+;; under this set it fails. `launchctl print system` and `security list-keychains`
+;; (file names only, no secret) still answer under it.
 (allow mach-lookup
   (global-name "com.apple.system.opendirectoryd.libinfo")
   (global-name "com.apple.SecurityServer")
   (global-name "com.apple.system.logger")
   (global-name "com.apple.trustd.agent"))
 
-;; The symlinks macOS puts in / are granted as literals on the LINK. (literal "/")
-;; grants the root directory only; a subpath grant on /var or /tmp is not wanted.
-;; Without these, `cat /etc/hosts` is denied and every /bin/sh -c dies on
-;; "Error opening /private/var/select/sh".
+;; The symlinks macOS keeps in / are granted as literals on the link, not subpaths on
+;; their targets. Without them `cat /etc/hosts` is denied and /bin/sh dies opening
+;; /private/var/select/sh. The xcode-select link is how the /usr/bin compiler and git
+;; shims find the developer directory.
 (allow file-read* (literal "/") (literal "/etc") (literal "/tmp") (literal "/var"))
-
-;; /usr/bin/c++ and /usr/bin/cc (and /usr/bin/git) are Xcode shims that resolve
-;; the active developer directory through this link. /var is a literal on the
-;; symlink only, not a subpath, so without these literals every C/C++ compile
-;; inside the wall dies with xcode-select's "unable to read data link".
-;; The grant is the link, not a subpath on /private/var/db. The directory the
-;; link points at is an optional root when it is not already under a fixed one
-;; (CommandLineTools sits under /Library; Xcode.app/Contents does not —
-;; Contents, not Contents/Developer: the shims also read Info.plist and
-;; SharedFrameworks next to Developer).
 (allow file-read* (literal "/var/db/xcode_select_link") (literal "/private/var/db/xcode_select_link"))
 
 (allow file-read* (subpath "/System"))
 (allow file-read* (subpath "/usr"))
 (allow file-read* (subpath "/bin"))
 (allow file-read* (subpath "/sbin"))
+(allow file-read* (subpath "/opt/homebrew"))
+(allow file-read* (subpath "/opt/local"))
 (allow file-read* (subpath "/Library"))
 (allow file-read* (subpath "/private/etc"))
 (allow file-read* (subpath "/private/var/select"))
+;; the zoneinfo database: without it every program runs in UTC.
+(allow file-read* (subpath "/private/var/db/timezone"))
 (allow file-read* (subpath "/dev"))
 @@OPTROOTS@@
 
@@ -97,18 +72,8 @@
 
 @@READS@@
 
-;; --read-noexec: readable, and NOT executable. The deny lines are last-wins over the
-;; global (allow process-exec* process-fork) above.
-@@READSNOEXEC@@
-
 @@WRITES@@
-;; HOME is inside a --write and is passed for the record.
-(allow file-read* file-write* (subpath (param "HOME")))
 
 (allow file-write* (literal "/dev/null") (literal "/dev/tty"))
 
-;; Network is IP only. (allow network*) would also grant every unix-domain socket
-;; on the machine, including an inherited SSH agent's. The
-;; agent is closed twice: here, and by the wrapper stripping SSH_AUTH_SOCK and every
-;; *_AGENT* variable out of the child environment before exec.
 @@NET@@

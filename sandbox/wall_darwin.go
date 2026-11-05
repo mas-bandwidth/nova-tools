@@ -37,17 +37,13 @@ func wallCheck() (abi string, netOK bool, note string, err error) {
 }
 
 // execWall applies the wall and execs the command. It returns only on failure.
-func execWall(p *policy, env []string) *refusal {
-	if os.Geteuid() == 0 {
-		r := refuse("sandbox_failed", "this tool does not run as root: the wall is for an ordinary user")
-		return &r
-	}
+func execWall(w *wall, env []string) *refusal {
 	bin, ok := sandboxExec()
 	if !ok {
 		r := refuse("no_sandbox", "sandbox-exec is not available; this tool does not run a command it cannot contain")
 		return &r
 	}
-	text, params, err := darwinProfile(p)
+	text, params, err := darwinProfile(w)
 	if err != nil {
 		r := refuse("sandbox_failed", "the profile could not be generated: %v", err)
 		return &r
@@ -56,11 +52,9 @@ func execWall(p *policy, env []string) *refusal {
 	for _, kv := range params {
 		argv = append(argv, "-D", kv)
 	}
-	argv = append(argv, "--")
-	argv = append(argv, p.argv...)
-	if err := os.Chdir(p.cwd); err != nil {
-		r := refuse("sandbox_failed", "cannot enter %s: %v", p.cwd, err)
-		return &r
+	argv = append(append(argv, "--"), w.argv...)
+	if !w.keepFDs {
+		closeInheritedFDs()
 	}
 	err = syscall.Exec(bin, argv, env)
 	r := refuse("sandbox_failed", "%s could not be started: %v", bin, err)
