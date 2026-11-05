@@ -40,10 +40,9 @@ func probe(stdout io.Writer, env []string) int {
 		fmt.Fprintf(stdout, "PROBE FAILED reason=%v\n", err)
 		return 1
 	}
-	// walled runs argv inside a wall whose only write is in; self's directory is read so
-	// the dial helper can start wherever the binary is installed.
+	// walled runs argv inside a wall whose only grant is a write to in, plus extra flags.
 	walled := func(extra []string, argv ...string) int {
-		args := append([]string{"--read", filepath.Dir(self), "--write", in}, extra...)
+		args := append([]string{"--write", in}, extra...)
 		cmd := exec.Command(self, append(append(args, "--"), argv...)...)
 		cmd.Env = append(env[:len(env):len(env)], "HOME="+in)
 		if err := cmd.Run(); err != nil {
@@ -101,8 +100,10 @@ func probe(stdout io.Writer, env []string) int {
 			}
 		}()
 		addr := l.Addr().String()
-		step("net_control", "allow", walled(nil, self, "dial", addr) == 0, "allow")
-		switch rc := walled([]string{"--net-deny"}, self, "dial", addr); rc {
+		// the dial helper is this binary, so its directory is read wherever it is installed
+		readSelf := []string{"--read", filepath.Dir(self)}
+		step("net_control", "allow", walled(readSelf, self, "dial", addr) == 0, "allow")
+		switch rc := walled(append(readSelf, "--net-deny"), self, "dial", addr); rc {
 		case 125:
 			fmt.Fprintf(stdout, "PROBE STEP name=net_deny expect=deny got=wall_refused note=--net-deny is not enforceable on this machine; the wall refuses it rather than pretend\n")
 		default:
