@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -75,7 +76,7 @@ func realRun(t *testing.T, env map[string]string, args ...string) (int, string, 
 	ctx, cancel := context.WithTimeout(context.Background(), wait)
 	defer cancel()
 	var out, errs bytes.Buffer
-	d := deps{getenv: func(k string) string { return env[k] }, hostname: func() (string, error) { return "m1", nil }, openPG: openPG}
+	d := deps{getenv: func(k string) string { return env[k] }, hostname: func() (string, error) { return "m1", nil }, now: time.Now, openPG: openPG}
 	code := run(ctx, args, d, &out, &errs)
 	return code, out.String(), errs.String()
 }
@@ -92,48 +93,57 @@ func TestFunctionalStore(t *testing.T) {
 	assert.Equal(t, "CONFIG ADD kind=machine name=m1 rev=1\n", ok("machine", "add", "m1", "--user", "nova", "--actor", "a1"))
 	ok("loop", "add", "r-m1", "--machine", "m1", "--argv", `["prog","a b"]`, "--keepalive", "true", "--actor", "a1")
 	assert.Equal(t, "CONFIG SET kind=loop name=r-m1 rev=3 changed=enabled\n", ok("loop", "set", "r-m1", "--enabled", "false", "--actor", "a1", "--reason", "why"))
-	assert.Equal(t, `LOOP name=r-m1 machine=m1 argv=["prog","a\x20b"] seat=- keys=- every=0 keepalive=true enabled=false`+"\nCONFIG LIST kind=loop rows=1\n", ok("loop", "list"))
-	assert.Equal(t, "MACHINE name=m1 user=nova address=- os=- arch=- cores=- runners=0 roles=bench note=-\nCONFIG LIST kind=machine rows=1\n", ok("machine", "list"))
+	assert.Equal(t, `LOOP name=r-m1 machine=m1 argv=["prog","a b"] seat=- keys=- every=0 keepalive=true enabled=false env={} log=-`+"\nCONFIG LIST kind=loop rows=1\n", ok("loop", "list"))
+	assert.Equal(t, "MACHINE name=m1 address=- user=nova os=- arch=- cores=- roles=bench runners=0 note=-\nCONFIG LIST kind=machine rows=1\n", ok("machine", "list"))
 	show := ok("machine", "show", "m1")
 	assert.Regexp(t, `created=20\d\d-\d\d-\d\dT\d\d:\d\d:\d\dZ updated=20\d\d-.*Z loops=r-m1\n$`, show)
 	ok("machine", "set", "m1", "--cores", "4", "--note", "a note", "--actor", "a1")
 	ok("machine", "set", "m1", "--cores", "default", "--actor", "a1")
 	ok("machine", "set", "m1", "--cores", "16", "--os", "linux", "--arch", "amd64", "--roles", "bench,services", "--actor", "a1")
-	ok("fleet", "set", "--pg_dsn", "postgres://nova@m1/postgres", "--actor", "a1")
 
 	c, err := pgx.Connect(context.Background(), env["NOVA_PG_DSN"])
 	require.NoError(t, err)
 	defer func() { _ = c.Close(context.Background()) }() // ignored: closing the check connection
 	var before, after, actor string
 	require.NoError(t, c.QueryRow(context.Background(), "SELECT before::text, after::text, actor FROM config.history WHERE id = 3").Scan(&before, &after, &actor))
-	assert.JSONEq(t, `{"argv":"[\"prog\",\"a b\"]","enabled":"true","every":"0","keepalive":"true","keys":"","machine":"m1","seat":""}`, before)
-	assert.JSONEq(t, `{"argv":"[\"prog\",\"a b\"]","enabled":"false","every":"0","keepalive":"true","keys":"","machine":"m1","seat":"","reason":"why"}`, after)
+	assert.JSONEq(t, `{"argv":"[\"prog\",\"a b\"]","enabled":"true","env":"{}","every":"0","keepalive":"true","keys":"","log":"","machine":"m1","seat":""}`, before)
+	assert.JSONEq(t, `{"argv":"[\"prog\",\"a b\"]","enabled":"false","env":"{}","every":"0","keepalive":"true","keys":"","log":"","machine":"m1","seat":"","reason":"why"}`, after)
 	assert.Equal(t, "a1", actor)
 	var cores *int
 	require.NoError(t, c.QueryRow(context.Background(), "SELECT cores FROM config.machines WHERE name = 'm1'").Scan(&cores))
 	require.NotNil(t, cores)
 	assert.Equal(t, 16, *cores)
 
-	for _, refusal := range [][]string{
-		{"loop", "add", "r-x", "--machine", "nope", "--argv", `["p"]`, "--every", "5", "--actor", "a1"},
-		{"machine", "remove", "m1", "--actor", "a1"},
-		{"machine", "add", "m1", "--user", "u", "--actor", "a1"},
+	for _, refusal := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"loop", "add", "r-x", "--machine", "nope", "--argv", `["p"]`, "--every", "5", "--actor", "a1"}, "nova-config loop add: no machine nope; the machines are m1\n"},
+		{[]string{"machine", "remove", "m1", "--actor", "a1"}, "nova-config machine remove: machine m1 still runs loops r-m1; remove them first: nova-config loop remove r-m1 --actor <you>\n"},
+		{[]string{"machine", "add", "m1", "--user", "u", "--actor", "a1"}, "nova-config machine add: machine m1 exists; use: nova-config machine set\n"},
 	} {
-		code, _, errs := realRun(t, env, refusal...)
-		assert.Equal(t, 1, code, "%v: %s", refusal, errs)
-		assert.Contains(t, errs, "REFUSED")
+		code, _, errs := realRun(t, env, refusal.args...)
+		assert.Equal(t, 1, code, "%v: %s", refusal.args, errs)
+		assert.Equal(t, refusal.want, errs)
 	}
-
-	code, out, errs := realRun(t, env, "inventory", "--host", "m1")
+	code, out, errs := realRun(t, env, "history", "loop")
 	require.Equal(t, 0, code, errs)
-	for _, want := range []string{`"cores": 16`, `"nova_os": "linux"`, `"ansible_connection": "local"`, `"log": "~/nova-bench/loops/r-m1.log"`} {
+	assert.Regexp(t, `^HISTORY at=20\d\d-\d\d-\d\dT\d\d:\d\d:\d\dZ actor=a1 kind=loop name=r-m1 op=set rev=3\n  enabled: true -> false\n  reason: "why"\nHISTORY .* op=add rev=2\n`, out)
+	assert.Contains(t, out, "CONFIG HISTORY rows=2\n")
+	code, out, errs = realRun(t, env, "history", "--since", "1h")
+	require.Equal(t, 0, code, errs)
+	assert.Contains(t, out, "op=set rev=3")
+
+	code, out, errs = realRun(t, env, "inventory", "--host", "m1")
+	require.Equal(t, 0, code, errs)
+	for _, want := range []string{`"cores": 16`, `"nova_os": "linux"`, `"ansible_connection": "local"`, `"log": "~/.local/state/nova/loops/r-m1.log"`, `"env": {}`} {
 		assert.Contains(t, out, want)
 	}
 	code, out, errs = realRun(t, env, "inventory", "--list")
 	require.Equal(t, 0, code, errs)
-	assert.Contains(t, out, `"nova_pg_dsn": "postgres://nova@m1/postgres"`)
+	assert.NotContains(t, out, "nova_pg_dsn")
 
-	assert.Equal(t, "CONFIG REMOVE kind=loop name=r-m1 rev=8\n", ok("loop", "remove", "r-m1", "--actor", "a1"))
+	assert.Equal(t, "CONFIG REMOVE kind=loop name=r-m1 rev=7\n", ok("loop", "remove", "r-m1", "--actor", "a1"))
 }
 
 // TestFunctionalOldColumns models the live store: main's schema, seeded the way
@@ -160,7 +170,7 @@ func TestFunctionalOldColumns(t *testing.T) {
 		_, err = c.Exec(ctx, string(schema))
 		require.NoError(t, err, "schema.sql runs on the old store")
 	}
-	for _, args := range [][]string{{"machine", "list"}, {"machine", "show", "old-store"}, {"loop", "list"}, {"fleet", "show"}, {"inventory"}} {
+	for _, args := range [][]string{{"machine", "list"}, {"machine", "show", "old-store"}, {"loop", "list"}, {"history"}, {"inventory"}} {
 		code, out, errs := realRun(t, env, args...)
 		require.Equal(t, 0, code, "%v: %s", args, errs)
 		assert.NotContains(t, out, "seat1", "%v", args)
@@ -188,6 +198,38 @@ func TestFunctionalOldColumns(t *testing.T) {
 	var n int
 	require.NoError(t, c.QueryRow(ctx, `SELECT count(*) FROM information_schema.columns WHERE table_schema = 'config' AND table_name = 'machines' AND column_name IN ('address', 'os', 'arch', 'cores')`).Scan(&n))
 	assert.Equal(t, 4, n, "the four new columns exist exactly once")
+	require.NoError(t, c.QueryRow(ctx, `SELECT count(*) FROM information_schema.columns WHERE table_schema = 'config' AND table_name = 'loops' AND column_name IN ('env', 'log')`).Scan(&n))
+	assert.Equal(t, 2, n, "the loop columns env and log exist exactly once")
+	code, out, errs = realRun(t, env, "inventory", "--host", "old-plain")
+	require.Equal(t, 0, code, errs)
+	assert.Contains(t, out, `"log": "~/.local/state/nova/loops/old-loop.log"`, "an old loop row gets the default log")
+	code, out, errs = realRun(t, env, "history")
+	require.Equal(t, 0, code, errs)
+	assert.Contains(t, out, "kind=machine name=old-store op=remove")
 	require.NoError(t, c.QueryRow(ctx, `SELECT count(*) FROM information_schema.columns WHERE table_schema = 'config' AND table_name = 'machines' AND column_name IN ('seat', 'slots', 'width', 'tla', 'gates_only')`).Scan(&n))
 	assert.Equal(t, 5, n, "no old column is dropped")
+}
+
+// A store the schema was never applied to says how to apply it, in one line.
+func TestFunctionalNoSchema(t *testing.T) {
+	t.Parallel()
+	env := map[string]string{"NOVA_PG_DSN": startPG(t, "testdata/empty.sql")}
+	for _, args := range [][]string{{"machine", "list"}, {"history"}, {"inventory"}} {
+		code, out, errs := realRun(t, env, args...)
+		assert.Equal(t, 2, code, "%v", args)
+		assert.Empty(t, out)
+		assert.Contains(t, errs, `store has no current schema; run: nova-config schema | psql "$NOVA_PG_DSN"`)
+		assert.Equal(t, 1, strings.Count(errs, "\n"), errs)
+	}
+}
+
+// A store nothing listens at is "cannot reach", with the host and port.
+func TestFunctionalUnreachable(t *testing.T) {
+	t.Parallel()
+	port := freePort(t)
+	code, out, errs := realRun(t, map[string]string{"NOVA_PG_DSN": "postgres://nova@127.0.0.1:" + port + "/postgres?sslmode=disable"}, "machine", "list")
+	assert.Equal(t, 2, code)
+	assert.Empty(t, out)
+	assert.Equal(t, "nova-config machine list: cannot reach postgres at 127.0.0.1:"+port+" (NOVA_PG_DSN): connection refused\n", errs)
+	assert.Equal(t, 1, strings.Count(errs, "\n"), errs)
 }
