@@ -148,7 +148,7 @@ nova_tla_java_candidates: ["{{ nova_sdk_home }}/bin/java", /usr/bin/java, /usr/l
 # the URL whose answer is the dashboard's summary ("" skips the check), extra
 # host:port addresses the server must answer on besides its --listen ones,
 # the deadline of the build's shadow tick before any restart, how long each
-# reinstalled friend daemon has to beat (seconds), and the launchd labels the
+# restarted agent has to beat (seconds), and the launchd labels the
 # play never restarts.
 nova_seat_dashboard_links: []
 nova_seat_dashboard_url: ""

@@ -215,9 +215,7 @@
     # machine, before anything on disk or in the store changes, the new
     # build itself reads the host (its nova-sprint live: the old library's
     # digest, every agent) and plans a tick on the store read-only (its
-    # nova-sprint server switch --dry-run). No friend daemon's reinstall is
-    # planned: the friend daemons are retired (2026-10-17) and the play only
-    # removes them. A refusal here leaves the host as it was. The candidate is the stage, else, on the machine that built
+    # nova-sprint server switch --dry-run). A refusal here leaves the host as it was. The candidate is the stage, else, on the machine that built
     # it, the build's own directory.
     - name: "seat: the candidate checks, before the install"
       when: inventory_hostname in groups['coordinator'] | default([])
@@ -954,14 +952,14 @@
       tags: [seat]
 
 # The seat play (docs/SPEC-SPRINT.md, "Adopting a build"): the coordinator
-# machine, which runs the sprint server, its member, its dashboard and the
-# friend daemons, adopts the build as a whole or not at all. Its adoption is
+# machine, which runs the sprint server, its member and its dashboard,
+# adopts the build as a whole or not at all. Its adoption is
 # a window, and no old server or member code ever meets the new schema or
 # the new library:
 #   the candidate's checks pass (the install play, before anything changes);
 #   the window opens only when the install replaces a tool or the library is
-#   not the installed build's: the agents it stops (every loaded nova agent
-#   but the friend daemons, and any agent whose process is a nova-sprint or
+#   not the installed build's: the agents it stops (every loaded nova agent,
+#   and any agent whose process is a nova-sprint or
 #   a nova-swarm member) are booted out, a member draining on the SIGTERM,
 #   and launchd is waited on to hold none of them (nova_member_stop_timeout
 #   and 30 s more); live then shows none of them running, waited on for
@@ -980,9 +978,7 @@
 #   and fresh, in the manifest exactly once, and the server answers on its
 #   --listen addresses;
 #   then the dashboard (each nova_seat_dashboard_links link names the
-#   installed nova-sprint, nova_seat_dashboard_url returns a summary) and the
-#   friends (the friend daemons are retired, 2026-10-17: each one live lists
-#   is booted out and its plist removed; none is reinstalled).
+#   installed nova-sprint, nova_seat_dashboard_url returns a summary).
 # A refusal once the window opened stops whatever runs again, puts back the
 # kept tools of before (nova_seat_rollback_dir/bin, fresh inodes), loads the
 # library of before with the kept nova-redis and reads its digest back,
@@ -1012,13 +1008,13 @@
     seat_live: >-
       {{ seat_wrap + [nova_bin_dir ~ '/nova-sprint', 'live'] + nova_seat_live_flags
          + (nova_seat_dashboard_links | map('regex_replace', '^', '--dashboard=') | list) }}
-    # the agents the window stops: every loaded nova agent but the friend daemons
+    # the agents the window stops: every loaded nova agent
     seat_stopped: >-
       {{ (seat_was | default(dict(agents=[]))).agents | selectattr('loaded') | rejectattr('disabled')
-         | rejectattr('role', 'equalto', 'friend') | rejectattr('label', 'in', nova_seat_hold)
+         | rejectattr('label', 'in', nova_seat_hold)
          | selectattr('holds') | list
          + (seat_was | default(dict(agents=[]))).agents | selectattr('loaded') | rejectattr('disabled')
-         | rejectattr('role', 'equalto', 'friend') | rejectattr('label', 'in', nova_seat_hold)
+         | rejectattr('label', 'in', nova_seat_hold)
          | rejectattr('holds') | selectattr('tool', 'defined') | list }}
     seat_stopped_labels: "{{ seat_stopped | map(attribute='label') | list }}"
     # Every daemon whose binary the install replaced: the manifest marks an
@@ -1028,33 +1024,23 @@
     # install play restarted nothing).
     seat_replaced: >-
       {{ (seat_cur | default(dict(agents=[]))).agents | rejectattr('disabled')
-         | selectattr('role', 'in', ['agent', 'friend'])
+         | selectattr('role', 'equalto', 'agent')
          | rejectattr('label', 'in', nova_seat_hold)
          | selectattr('stale') | list }}
     # The seat restart keeps the base's stale-with-tool restart (a stale agent
     # whose process runs a replaced nova tool is restarted) and adds the
     # replaced members and readers beside it.
     seat_restart: >-
-      {{ (seat_cur | default(dict(agents=[]))).agents | rejectattr('disabled') | rejectattr('role', 'equalto', 'friend')
+      {{ (seat_cur | default(dict(agents=[]))).agents | rejectattr('disabled')
          | rejectattr('label', 'in', nova_seat_hold)
          | selectattr('label', 'in', seat_stopped_labels if seat_window | default(false) else [])
          | list
          + (seat_cur | default(dict(agents=[]))).agents | selectattr('stale') | selectattr('tool', 'defined')
-         | rejectattr('role', 'equalto', 'friend') | rejectattr('label', 'in', nova_seat_hold)
+         | rejectattr('label', 'in', nova_seat_hold)
          | rejectattr('label', 'in', seat_stopped_labels if seat_window | default(false) else []) | list
-         + (seat_replaced | rejectattr('role', 'equalto', 'friend')
+         + (seat_replaced
             | rejectattr('label', 'in', seat_stopped_labels if seat_window | default(false) else []) | list) }}
     seat_restart_labels: "{{ seat_restart | map(attribute='label') | list }}"
-    # The friend daemons are retired (2026-10-17, the owner: nova-hook is the one
-    # friend channel; every nova-friend process was stopped, its launch agent moved
-    # out and its binary deleted). The play never installs, reinstalls or starts
-    # one again: every friend daemon live lists on the host (role friend, loaded or
-    # not, stale or not) is booted out and its plist removed. Until that night a
-    # stale one launchd held was reinstalled, so an orphan unit came back on the
-    # next deploy (docs/FLEET.md, the tools play).
-    seat_friends_gone: >-
-      {{ (seat_cur | default(dict(agents=[]))).agents | selectattr('role', 'equalto', 'friend')
-         | rejectattr('label', 'in', nova_seat_hold) | list }}
   tasks:
     - name: "seat: what --check says with no candidate on this machine"
       ansible.builtin.debug:
@@ -1109,7 +1095,7 @@
             msg: "WOULD-INSTALL {{ nova_version }} into {{ nova_bin_dir }} with {{ seat_stage }}/nova-update release install"
           when: seat_window and ansible_check_mode
 
-        - name: "window: stop the old server, member and every nova agent but the friends"
+        - name: "window: stop the old server, member and every nova agent"
           when: seat_window and not ansible_check_mode
           block:
             - name: "window: the window is open"
@@ -1398,35 +1384,6 @@
               after={{ nova_bin_dir }}/nova-sprint links={{ nova_seat_dashboard_links | length }}
               {{ 'WOULD-CHANGE' if ansible_check_mode and seat_links is changed else ('CHANGED' if seat_links is changed else 'UNCHANGED') }}
 
-        - name: "friends: what --check would remove (the friend daemons are retired)"
-          ansible.builtin.debug:
-            msg: "WOULD-REMOVE {{ item.friend }} on {{ inventory_hostname }}: the friend daemons are retired, nova-hook is the friend channel ({{ item.plist }})"
-          loop: "{{ seat_friends_gone }}"
-          loop_control: { label: "{{ item.friend }}" }
-          when: ansible_check_mode
-
-        - name: "friends: a retired friend daemon launchd holds is booted out (never reinstalled, never started)"
-          ansible.builtin.command: { argv: ["{{ nova_launchctl }}", bootout, "{{ item.target }}"] }
-          loop: "{{ (seat_friends_gone | selectattr('loaded') | list) if not ansible_check_mode else [] }}"
-          loop_control: { label: "{{ item.friend }}" }
-          register: seat_friend_bootout
-          changed_when: seat_friend_bootout.rc == 0
-          # 3 and 113: launchd holds no such job any more, the state wanted
-          failed_when: seat_friend_bootout.rc not in [0, 3, 113]
-
-        - name: "friends: a retired friend daemon's unit is removed"
-          ansible.builtin.file: { path: "{{ item.plist }}", state: absent }
-          loop: "{{ seat_friends_gone if not ansible_check_mode else [] }}"
-          loop_control: { label: "{{ item.friend }}" }
-
-        - name: "friends: the receipt"
-          ansible.builtin.debug:
-            msg: >-
-              ADOPT step=friends host={{ inventory_hostname }} before={{ seat_was.server.revision or 'none' }}
-              after={{ seat_cur.server.revision or 'none' }}
-              removed={{ seat_friends_gone | map(attribute='friend') | join(',') or 'none' }}
-              {{ ('WOULD-CHANGE' if seat_friends_gone else 'UNCHANGED') if ansible_check_mode else ('CHANGED' if seat_friends_gone else 'UNCHANGED') }}
-
         - name: "seat: adopted, so the nova-redis kept for a restore is the one whose library the store now holds"
           ansible.builtin.copy:
             src: "{{ nova_bin_dir }}/nova-redis"
@@ -1526,92 +1483,13 @@
           vars:
             seat_back: "{{ (seat_readback.stdout | from_json).library.loaded if (seat_readback.stdout | default('')) is match('[{]') else 'unread' }}"
 
-# The friend daemons of the machines that are not the coordinator: the seat play
-# above removes the coordinator's. The friend daemons are retired (2026-10-17;
-# nova-hook is the one friend channel), and until then this play reinstalled a
-# stale one launchd held, so an orphan unit came back on the next deploy. Here
-# every host the build was installed on, the coordinator ended first, that holds a
-# LaunchAgents directory (nova_seat_agents_dir) is read by the installed
-# nova-sprint live, and every friend daemon it lists is booted out and its plist
-# removed; none is ever installed or started. --check lists each WOULD-REMOVE.
-- name: the friend daemons of the fleet hosts removed
-  hosts: all
-  gather_facts: true
-  gather_subset: [min]
-  tags: [seat]
-  environment:
-    PATH: "{{ nova_loop_path }}"
-  vars:
-    seat_env: {}
-    seat_live: "{{ [nova_bin_dir ~ '/nova-sprint', 'live'] + nova_seat_live_flags }}"
-  tasks:
-    - name: "friends: the coordinator's friends are the seat play's"
-      ansible.builtin.meta: end_host
-      when: inventory_hostname in groups['coordinator'] | default([])
-
-    - name: "friends: the agents directory (a host with none has no friend daemon)"
-      ansible.builtin.stat: { path: "{{ nova_seat_agents_dir }}", get_checksum: false }
-      register: ff_dir
-
-    - name: "friends: the manifest before"
-      ansible.builtin.command: { argv: "{{ seat_live }}" }
-      register: ff_read
-      changed_when: false
-      # ignored: read by the assert below, which names the step
-      failed_when: false
-      check_mode: false
-      when: ff_dir.stat.exists
-
-    - name: "friends: the installed nova-sprint live read the host"
-      ansible.builtin.assert:
-        that: ff_read.rc == 0 and ff_read.stdout is match('[{]')
-        fail_msg: >-
-          ADOPT REFUSED step=friends host={{ inventory_hostname }}: the installed nova-sprint live printed no manifest
-          ({{ (ff_read.stderr or ff_read.stdout) | default('') }}); no friend daemon was removed
-        quiet: true
-      when: ff_dir.stat.exists
-
-    - name: "friends: every friend daemon live lists (retired: each is removed, none reinstalled)"
-      ansible.builtin.set_fact:
-        ff_gone: >-
-          {{ ((ff_read.stdout | from_json).agents | selectattr('role', 'equalto', 'friend')
-              | rejectattr('label', 'in', nova_seat_hold | default([])) | list) if ff_dir.stat.exists else [] }}
-
-    - name: "friends: what --check would remove (the friend daemons are retired)"
-      ansible.builtin.debug:
-        msg: "WOULD-REMOVE {{ item.friend }} on {{ inventory_hostname }}: the friend daemons are retired, nova-hook is the friend channel ({{ item.plist }})"
-      loop: "{{ ff_gone }}"
-      loop_control: { label: "{{ item.friend }}" }
-      when: ansible_check_mode
-
-    - name: "friends: a retired friend daemon launchd holds is booted out (never reinstalled, never started)"
-      ansible.builtin.command: { argv: ["{{ nova_launchctl }}", bootout, "{{ item.target }}"] }
-      loop: "{{ (ff_gone | selectattr('loaded') | list) if not ansible_check_mode else [] }}"
-      loop_control: { label: "{{ item.friend }}" }
-      register: ff_friend_bootout
-      changed_when: ff_friend_bootout.rc == 0
-      # 3 and 113: launchd holds no such job any more, the state wanted
-      failed_when: ff_friend_bootout.rc not in [0, 3, 113]
-
-    - name: "friends: a retired friend daemon's unit is removed"
-      ansible.builtin.file: { path: "{{ item.plist }}", state: absent }
-      loop: "{{ ff_gone if not ansible_check_mode else [] }}"
-      loop_control: { label: "{{ item.friend }}" }
-
-    - name: "friends: the receipt"
-      ansible.builtin.debug:
-        msg: >-
-          ADOPT step=friends host={{ inventory_hostname }}
-          removed={{ ff_gone | map(attribute='friend') | join(',') or 'none' }}
-          {{ ('WOULD-CHANGE' if ff_gone else 'UNCHANGED') if ansible_check_mode else ('CHANGED' if ff_gone else 'UNCHANGED') }}
-
 # The identity check (v1.2.8; docs/SPEC-RELEASE.md, install skip): every tool
 # of the build is installed from the published release and never compiled on
-# the machine it runs on, so after the install and the friends' removal each
+# the machine it runs on, so after the install each
 # machine's bin directory holds, for every file in its platform's SHA256SUMS,
 # exactly those bytes (the sha256 of the file, not the version it prints: a
 # tool built here by `go build` prints the release's version and holds the
-# bytes of another Go toolchain, as one machine's nova-friend did with go1.27.1
+# bytes of another Go toolchain, as one machine's tool did with go1.27.1
 # beside the release's go1.26.6). A tool that differs refuses the play, naming
 # it: TOOLS REFUSED step=identity. --check names what the install would
 # replace (WOULD-REPLACE) and refuses nothing. The comparison is read on the

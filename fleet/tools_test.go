@@ -14,110 +14,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/pkg/config"
 )
 
-// tools_test.go pins the friend step of fleet/tools.yml (docs/FLEET.md, the
-// tools play). The friend daemons are retired (2026-10-17, the owner: nova-hook
-// is the one friend channel; every nova-friend process stopped, its launch agent
-// moved out, its binary deleted). The step used to reinstall every stale friend
-// daemon launchd still held (fleet/seat-friend.yml), so an orphan unit like
-// aurora's came back on the next deploy. Now it removes every friend daemon live
-// lists, loaded or not, stale or not, and installs or starts none.
-
-// friendPlay is one friend step of tools.yml: the play's name, the fact that
-// names the friend daemons it removes, and the fact that names the seat hold.
-type friendPlay struct {
-	play     string
-	gone     string // every friend daemon live lists on the host: removed
-	holdFact string
-}
-
-func TestFriendStepRemovesEveryFriendDaemonAndInstallsNone(t *testing.T) {
-	t.Parallel()
-	plays := readTools(t)
-	for _, fp := range []friendPlay{
-		{play: "the seat adopts the build", gone: "seat_friends_gone", holdFact: "nova_seat_hold"},
-		{play: "the friend daemons of the fleet hosts removed", gone: "ff_gone", holdFact: "nova_seat_hold"},
-	} {
-		t.Run(fp.play, func(t *testing.T) {
-			t.Parallel()
-			play := playNamed(t, plays, fp.play)
-			tasks := flattenTasks(t, tasksOf(t, play))
-
-			// Every friend daemon, not only the stale ones nor only the ones launchd
-			// does not hold: a loaded one is the orphan that came back.
-			gone := varOf(t, play, tasks, fp.gone)
-			assert.Contains(t, gone, "selectattr('role', 'equalto', 'friend')", "%s is not the friend daemons", fp.gone)
-			assert.NotContains(t, gone, "'stale'", "%s keeps a fresh friend daemon", fp.gone)
-			assert.NotContains(t, gone, "'loaded'", "%s keeps the friend daemons launchd holds or does not", fp.gone)
-			assert.Contains(t, gone, fp.holdFact, "%s does not keep the held labels out", fp.gone)
-
-			var bootout, unit map[string]any
-			for _, task := range tasks {
-				loop := asText(task["loop"])
-				if !strings.Contains(loop, fp.gone) {
-					continue
-				}
-				if argv := strings.Join(argvOf(task), " "); strings.Contains(argv, "bootout") {
-					bootout = task
-				}
-				if f, ok := task["ansible.builtin.file"].(map[string]any); ok && f["state"] == "absent" {
-					unit = task
-				}
-			}
-			// A daemon launchd holds is booted out; launchd holding none any more is the state wanted.
-			require.NotNil(t, bootout, "%s: no bootout of %s: a loaded friend daemon keeps running", fp.play, fp.gone)
-			assert.Equal(t, "{{ ("+fp.gone+" | selectattr('loaded') | list) if not ansible_check_mode else [] }}", asText(bootout["loop"]),
-				"%s: the bootout is not the loaded friend daemons, run only outside --check", fp.play)
-			assert.Contains(t, strings.Join(argvOf(bootout), " "), "item.target")
-			// Its plist is removed, so launchd never loads it again at login.
-			require.NotNil(t, unit, "%s: no removal of %s's plists: the unit stays installed", fp.play, fp.gone)
-			assert.True(t, removesOnlyOutsideCheck(asText(unit["loop"]), fp.gone),
-				"%s: the removal loop %q is not %s guarded by `if not ansible_check_mode else []`", fp.play, asText(unit["loop"]), fp.gone)
-			assert.Contains(t, fmt.Sprint(unit["ansible.builtin.file"]), "item.plist")
-
-			// --check reports what it would remove.
-			var reported bool
-			for _, task := range tasks {
-				if strings.Contains(asText(task["loop"]), fp.gone) && task["when"] == "ansible_check_mode" && strings.Contains(debugMsg(task), "WOULD-REMOVE") {
-					reported = true
-				}
-			}
-			assert.True(t, reported, "%s: no --check report (WOULD-REMOVE) of %s", fp.play, fp.gone)
-
-			// Nothing installs, reinstalls, accepts or starts a friend daemon, and no
-			// step runs the retired nova-friend binary.
-			for _, task := range tasks {
-				assert.NotContains(t, fmt.Sprint(task), "nova-friend", "%s: task %q runs or names nova-friend", fp.play, asText(task["name"]))
-				_, include := task["ansible.builtin.include_tasks"]
-				assert.False(t, include && strings.Contains(fmt.Sprint(task), "seat-friend"), "%s: the friend reinstall is still included", fp.play)
-				for _, w := range []string{"bootstrap", "kickstart"} {
-					argv := strings.Join(argvOf(task), " ")
-					assert.False(t, strings.Contains(argv, w) && strings.Contains(asText(task["loop"]), fp.gone),
-						"%s: task %q %ss a friend daemon", fp.play, asText(task["name"]), w)
-				}
-			}
-		})
-	}
-	_, err := os.Stat("seat-friend.yml")
-	assert.True(t, os.IsNotExist(err), "fleet/seat-friend.yml, the friend reinstall, is gone")
-	raw, err := os.ReadFile("tools.yml")
-	require.NoError(t, err)
-	assert.NotContains(t, string(raw), "nova-friend install", "no play installs a friend daemon")
-	assert.NotContains(t, string(raw), "/nova-friend'", "no play runs the retired nova-friend binary")
-}
-
-// removesOnlyOutsideCheck says loop is the list gone, emptied under --check:
-// `{{ gone if not ansible_check_mode else [] }}`. The inverse (removing only
-// under --check) and a bare `{{ gone }}` (removing under --check too) are not.
-func removesOnlyOutsideCheck(loop, gone string) bool {
-	return strings.Join(strings.Fields(loop), " ") == "{{ "+gone+" if not ansible_check_mode else [] }}"
-}
-
-func TestRemovalGuardIsTheRightWayRound(t *testing.T) {
-	t.Parallel()
-	assert.True(t, removesOnlyOutsideCheck("{{ ff_gone if not ansible_check_mode else [] }}", "ff_gone"))
-	assert.False(t, removesOnlyOutsideCheck("{{ ff_gone if ansible_check_mode else [] }}", "ff_gone"), "removes only under --check")
-	assert.False(t, removesOnlyOutsideCheck("{{ ff_gone }}", "ff_gone"), "removes under --check too")
-}
+// tools_test.go pins the plays of fleet/tools.yml (docs/FLEET.md, the tools play).
 
 // readTools reads fleet/tools.yml as the list of plays it holds.
 func readTools(t *testing.T) []map[string]any {
@@ -325,7 +222,7 @@ func taskVar(t *testing.T, task map[string]any, key string) string {
 // tools_test.go also pins the identity rule of fleet/tools.yml
 // (docs/SPEC-RELEASE.md, install skip): every tool in a machine's bin
 // directory is the published release's bytes, installed from it and never
-// compiled on the machine (dogfood 2026-10-10: one machine's nova-friend
+// compiled on the machine (dogfood 2026-10-10: one machine's tool
 // reported go1.27.1 while every other v1.2.5 tool reported go1.26.6, a local
 // build beside the release's assets). The play is read as YAML; the comparison
 // itself is ansible's, measured by the sha256 of the files, because a build
@@ -394,8 +291,8 @@ func TestToolsPlayNeverCompilesATool(t *testing.T) {
 	}
 }
 
-// TestToolsPlayChecksEveryInstalledToolAgainstTheRelease: after the install and
-// the friends' removal, a play on every host lists the bin directory with the
+// TestToolsPlayChecksEveryInstalledToolAgainstTheRelease: after the install,
+// a play on every host lists the bin directory with the
 // sha256 of each file, compares it with the release's SHA256SUMS, and refuses
 // the host whose tool differs, naming the step.
 func TestToolsPlayChecksEveryInstalledToolAgainstTheRelease(t *testing.T) {
@@ -406,16 +303,14 @@ func TestToolsPlayChecksEveryInstalledToolAgainstTheRelease(t *testing.T) {
 	play := plays[id]
 
 	assert.Equal(t, "all", play["hosts"], "a local build can be on any machine, the coordinator's included")
-	assert.Contains(t, play["tags"], "seat", "it runs wherever the friends' removal does, which assumes the build is installed")
+	assert.Contains(t, play["tags"], "seat", "it runs wherever the seat play does, which assumes the build is installed")
 
 	// It runs after everything that installs or reinstalls a tool.
 	install := playIndex(plays, "the build in ~/.local/bin on every machine")
 	seat := playIndex(plays, "the seat adopts the build")
-	friends := playIndex(plays, "the friend daemons of the fleet hosts removed")
-	require.True(t, install >= 0 && seat >= 0 && friends >= 0, "the install, seat and friends plays are in tools.yml")
+	require.True(t, install >= 0 && seat >= 0, "the install and seat plays are in tools.yml")
 	assert.Greater(t, id, install)
 	assert.Greater(t, id, seat)
-	assert.Greater(t, id, friends)
 
 	var listing, refusal map[string]any
 	var tasks int
@@ -469,9 +364,8 @@ func taskContaining(t *testing.T, tasks []map[string]any, name string) map[strin
 func runsInstalled(loaded, stale bool) bool { return loaded && !stale }
 
 // TestRestartSelectsEveryReplacedDaemon pins the restart selection: the set is
-// every loaded member, reader and friend whose binary the install replaced (the
-// manifest's stale, role agent for members and readers, friend for the friend
-// daemons), built from seat_replaced and the base's stale-with-tool set. Bug 13
+// every loaded member and reader whose binary the install replaced (the
+// manifest's stale, role agent), built from seat_replaced and the base's stale-with-tool set. Bug 13
 // was exactly a member outside the old selection, so a fix that adds no restart
 // path does not reach it.
 func TestRestartSelectsEveryReplacedDaemon(t *testing.T) {
@@ -481,7 +375,7 @@ func TestRestartSelectsEveryReplacedDaemon(t *testing.T) {
 	restart := varOf(t, seat, flattenTasks(t, tasksOf(t, seat)), "seat_restart")
 
 	assert.Contains(t, replaced, "'agent'", "the replaced set names the manifest's role for members and readers (agent)")
-	assert.Contains(t, replaced, "'friend'", "the replaced set names the friend daemons")
+	assert.NotContains(t, replaced, "'friend'", "the replaced set names no friend daemon: there are none")
 	assert.Contains(t, replaced, "stale")
 	assert.NotContains(t, replaced, "'member'", "the manifest names no role member: live emits agent")
 	assert.NotContains(t, replaced, "'reader'", "the manifest names no role reader: live emits agent")
@@ -593,7 +487,6 @@ func TestLiveManifestFlagsArePerPlatform(t *testing.T) {
 	plays := readTools(t)
 	for _, read := range []struct{ play, key string }{
 		{"the build in ~/.local/bin on every machine", "tools_live"},
-		{"the friend daemons of the fleet hosts removed", "seat_live"},
 		{"the adoption table", "seat_live"},
 	} {
 		t.Run(read.play, func(t *testing.T) {
