@@ -340,7 +340,7 @@ func TestSendFailedIsNotRetried(t *testing.T) {
 	code := run(context.Background(), []string{"send", "--as", "a", "--to", "beta,gamma,delta", "s", "b"},
 		func(k string) string { return testEnv[k] }, nil, &out, &errOut, dial, f)
 	assert.Equal(t, 1, code)
-	assert.Equal(t, "beta 1-0\n", out, "the names before the failure were sent")
+	assert.Equal(t, "beta 1-0\n", out.String(), "the names before the failure were sent")
 	assert.Contains(t, errOut.String(), "SEND FAILED to gamma: EOF")
 	assert.Empty(t, f.entries["bus:delta"], "nothing after the failure")
 }

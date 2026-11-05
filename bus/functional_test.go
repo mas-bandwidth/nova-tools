@@ -117,6 +117,9 @@ func TestAHookKilledAndRestarted(t *testing.T) {
 	assert.True(t, strings.HasSuffix(first.next(t), "\talpha\t-\ttwo\tsecond"))
 	require.Eventually(t, func() bool { return pending() == 0 }, wait, 20*time.Millisecond, "both acked")
 	first.kill() // blocked in XREADGROUP > with nothing pending
+	// A killed hook's presence lapses in 30 s and refuses a new hook until
+	// then (TestPresenceWhoAndPending); this test does not wait for it.
+	require.NoError(t, c.Del(ctx, "bus:presence:beta").Err())
 
 	send("three", "third")
 	handed, err := c.XReadGroup(ctx, &redis.XReadGroupArgs{Group: group, Consumer: group, Streams: []string{"bus:beta", ">"}, Count: 1, Block: -1}).Result()
