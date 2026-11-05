@@ -108,7 +108,10 @@ func probe(stdout io.Writer, env []string) int {
 	}
 
 	// --net-deny: a listener this process owns must be unreachable from the wall, and
-	// reachable without it.
+	// reachable without it. 125 means the wall refused --net-deny on this machine.
+	refused := func(name string) {
+		fmt.Fprintf(stdout, "PROBE STEP name=%s expect=deny got=wall_refused note=--net-deny is not enforceable on this machine; the wall refuses it rather than pretend\n", name)
+	}
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		step("net_control", "allow", false, "listen_failed")
@@ -119,9 +122,56 @@ func probe(stdout io.Writer, env []string) int {
 		step("net_control", "allow", walled(readSelf, self, "dial", addr) == 0, "allow")
 		switch rc := walled(append(readSelf, "--net-deny"), self, "dial", addr); rc {
 		case 125:
-			fmt.Fprintf(stdout, "PROBE STEP name=net_deny expect=deny got=wall_refused note=--net-deny is not enforceable on this machine; the wall refuses it rather than pretend\n")
+			refused("net_deny")
 		default:
 			step("net_deny", "deny", rc != 0, gotOf(rc == 0))
+		}
+		switch rc := walled(append(readSelf, "--net-deny", "--net-allow", addr), self, "dial", addr); rc {
+		case 125:
+			fmt.Fprintf(stdout, "PROBE STEP name=tcp_allow expect=allow got=wall_refused note=--net-deny is not enforceable on this machine\n")
+		default:
+			step("tcp_allow", "allow", rc == 0, gotOf(rc == 0))
+		}
+	}
+
+	// UDP: Landlock has no UDP rights, so on Linux this is the seccomp filter's step.
+	// The listener judges: a datagram that arrives was let through, whatever the
+	// sender's exit says.
+	if u, err := net.ListenPacket("udp", "127.0.0.1:0"); err != nil {
+		step("udp_control", "allow", false, "listen_failed")
+	} else {
+		defer u.Close()
+		addr := u.LocalAddr().String()
+		got := func(wait time.Duration) bool {
+			buf := make([]byte, 16)
+			_ = u.SetReadDeadline(time.Now().Add(wait))
+			_, _, err := u.ReadFrom(buf)
+			return err == nil
+		}
+		rc := walled(readSelf, self, "udp", addr)
+		ok := rc == 0 && got(3*time.Second)
+		step("udp_control", "allow", ok, gotOf(ok))
+		switch rc := walled(append(readSelf, "--net-deny"), self, "udp", addr); rc {
+		case 125:
+			refused("udp_deny")
+		default:
+			arrived := got(500 * time.Millisecond)
+			step("udp_deny", "deny", rc != 0 && !arrived, gotOf(rc == 0 || arrived))
+		}
+	}
+
+	// DNS: a name that is not in /etc/hosts. The control is this process, unwalled: a
+	// host that cannot resolve the name at all proves nothing, and says so.
+	if _, err := net.LookupHost(dnsName); err != nil {
+		fmt.Fprintf(stdout, "PROBE STEP name=dns_deny expect=deny got=untested note=this host cannot resolve %s outside the wall, so the step proves nothing here\n", dnsName)
+	} else {
+		rc := walled(readSelf, self, "resolve", dnsName)
+		step("dns_control", "allow", rc == 0, gotOf(rc == 0))
+		switch rc := walled(append(readSelf, "--net-deny"), self, "resolve", dnsName); rc {
+		case 125:
+			refused("dns_deny")
+		default:
+			step("dns_deny", "deny", rc != 0, gotOf(rc == 0))
 		}
 	}
 	abi, _, _, _ := wallCheck()
@@ -144,22 +194,43 @@ func acceptClose(l net.Listener) {
 	}
 }
 
-// dial exits 0 when a connect to addr succeeds, 1 when it fails. It is the probe's
-// client inside the wall: no shell or tool every host has can open a connection. An
-// absolute path is a unix socket (the same-uid escape the seccomp fence closes);
-// anything else is a TCP address.
-func dial(args []string) int {
+// dnsName is the probe's lookup: reserved by IANA, published, and in no stock
+// /etc/hosts.
+const dnsName = "example.com"
+
+// probeClient is the probe's client inside the wall, exit 0 when the act succeeds and 1
+// when it fails: no shell or tool every host has can open a connection.
+//
+//	dial <addr>     a connect: an absolute path is a unix socket (the same-uid escape
+//	                the seccomp fence closes), anything else a TCP address
+//	udp <addr>      one datagram sent to a UDP address
+//	resolve <name>  a lookup through the system resolver
+func probeClient(verb string, args []string) int {
 	if len(args) != 1 {
 		return 2
 	}
-	network := "tcp"
-	if strings.HasPrefix(args[0], "/") {
-		network = "unix"
+	var err error
+	switch verb {
+	case "dial", "udp":
+		network := "tcp"
+		switch {
+		case verb == "udp":
+			network = "udp"
+		case strings.HasPrefix(args[0], "/"):
+			network = "unix"
+		}
+		var c net.Conn
+		if c, err = net.DialTimeout(network, args[0], 3*time.Second); err == nil {
+			if verb == "udp" {
+				_, err = c.Write([]byte("probe"))
+			}
+			c.Close()
+		}
+	case "resolve":
+		_, err = net.LookupHost(args[0])
 	}
-	c, err := net.DialTimeout(network, args[0], 3*time.Second)
 	if err != nil {
 		return 1
 	}
-	c.Close()
 	return 0
 }

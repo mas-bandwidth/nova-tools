@@ -1,6 +1,10 @@
 package main
 
-import "slices"
+import (
+	"slices"
+	"strconv"
+	"strings"
+)
 
 // The Landlock access bits of uapi/linux/landlock.h, in ABI order.
 const (
@@ -105,4 +109,65 @@ func buildRuleset(w *wall, abi int, resolverDir string) *ruleset {
 		rs.rules = append(rs.rules, rule{path: d, mask: rs.fs, must: true})
 	}
 	return rs
+}
+
+// maxABI is the highest Landlock ABI this tool knows; a newer kernel accepts a ruleset
+// built for an older one.
+const maxABI = 6
+
+// linuxHost is what the kernel offers the wall.
+type linuxHost struct {
+	landlock    bool
+	abi         int // the kernel's Landlock ABI
+	seccomp     bool
+	resolverDir string
+}
+
+// linuxPlan is the wall as it will be applied: the ruleset at the ABI used, and the
+// seccomp filter if one is installed.
+type linuxPlan struct {
+	abi     int // the ABI the ruleset is built for: the kernel's, capped at maxABI
+	rs      *ruleset
+	seccomp bool
+	filter  filterOpts
+}
+
+// planLinux decides the wall for host, or refuses: it never plans a wall weaker than
+// the flags say. It is pure, so execWall and show apply and print the same plan.
+func planLinux(w *wall, h linuxHost) (*linuxPlan, []refusal) {
+	if !h.landlock {
+		return nil, []refusal{refuse("no_sandbox", "this kernel has no landlock; this tool does not run a command it cannot contain")}
+	}
+	var bad []refusal
+	used := min(h.abi, maxABI)
+	if w.netDeny && used < 4 {
+		bad = append(bad, refuse("net_unenforceable", "--net-deny needs landlock abi 4 (kernel 6.7) and this kernel reports abi %d", h.abi))
+	}
+	// Landlock fences TCP only; UDP, raw and every other family are closed by the
+	// seccomp filter, so --net-deny without it would be weaker than it says.
+	if w.netDeny && !h.seccomp {
+		bad = append(bad, refuse("net_unenforceable", "net-deny needs seccomp on this kernel: landlock fences TCP only, and without the seccomp filter UDP and raw sockets would stay open"))
+	}
+	// The unix-socket escape (Landlock does not path-check a unix connect) is closed by
+	// the seccomp filter. Without seccomp the wall refuses rather than stand weaker than
+	// it says, unless --unix opts into leaving the socket open.
+	if !w.unix && !h.seccomp {
+		bad = append(bad, refuse("no_seccomp", "this kernel has no seccomp filter mode, so the same-uid unix-socket escape cannot be closed; pass --unix to run without that fence"))
+	}
+	if len(bad) > 0 {
+		return nil, bad
+	}
+	// With seccomp, --unix still installs the filter, minus the AF_UNIX rules, so ptrace
+	// and io_uring stay refused. Without seccomp only --unix without --net-deny gets
+	// here, and nothing is installed: the caller accepted a wall without those fences.
+	return &linuxPlan{abi: used, rs: buildRuleset(w, used, h.resolverDir), seccomp: h.seccomp, filter: filterOptsOf(w)}, nil
+}
+
+// portList is the --net-allow ports, comma-separated.
+func portList(ports []uint16) string {
+	var s []string
+	for _, p := range ports {
+		s = append(s, strconv.Itoa(int(p)))
+	}
+	return strings.Join(s, ",")
 }

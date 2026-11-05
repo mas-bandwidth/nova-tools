@@ -21,7 +21,7 @@ func reasons(bad []refusal) []string {
 func TestParseArgs(t *testing.T) {
 	t.Parallel()
 	s, bad := parseArgs([]string{"--read", "/r", "--read", "/r2", "--write", "/w", "--net-deny",
-		"--net-allow", "localhost:1", "--gpu", "--unix", "--keep-fds", "--", "ls", "--read", "-l"})
+		"--net-allow", "localhost:1", "--gpu", "--unix", "--keep-fds", "--", "ls", "--read", "-l"}, true)
 	require.Empty(t, bad)
 	assert.Equal(t, spec{reads: []string{"/r", "/r2"}, writes: []string{"/w"}, netAllow: []string{"localhost:1"},
 		netDeny: true, gpu: true, unix: true, keepFDs: true, argv: []string{"ls", "--read", "-l"}}, s, "everything after -- is the command, verbatim")
@@ -37,7 +37,7 @@ func TestParseArgs(t *testing.T) {
 		{[]string{"--write", "/w", "--"}, []string{"no_command"}},
 		{nil, []string{"no_command"}},
 	} {
-		_, bad := parseArgs(c.args)
+		_, bad := parseArgs(c.args, true)
 		assert.Equal(t, c.want, reasons(bad), c.args)
 	}
 }
@@ -129,18 +129,72 @@ func TestBadPath(t *testing.T) {
 
 func TestExitCodes(t *testing.T) {
 	t.Parallel()
-	var out strings.Builder
 	env := []string{"PATH=/usr/bin:/bin"}
-	assert.Equal(t, 0, run([]string{"help"}, &out, &out, env))
-	assert.Contains(t, out.String(), "--net-allow")
-	assert.Equal(t, 125, run(nil, &out, &out, env))
-	assert.Equal(t, 125, run([]string{"--bogus", "--", "ls"}, &out, &out, env))
-	assert.Equal(t, 127, run([]string{"--", "no-such-command-here"}, &out, &out, env))
-	assert.Equal(t, 127, run([]string{"--", "./no-such-file-here"}, &out, &out, env), "a path that does not exist is 127, not 126")
+	exit := func(args ...string) (int, string, string) {
+		var out, errb strings.Builder
+		code := run(args, &out, &errb, env)
+		return code, out.String(), errb.String()
+	}
+	code, out, errs := exit("help")
+	assert.Equal(t, 0, code)
+	assert.Contains(t, out, "--net-allow")
+	assert.Empty(t, errs)
+	for _, v := range []string{"show", "check", "probe"} {
+		for _, form := range [][]string{{v, "-h"}, {v, "--help"}, {"help", v}} {
+			code, out, errs := exit(form...)
+			assert.Equal(t, 0, code, form)
+			assert.Contains(t, out, "nova-sandbox "+v+":", form)
+			assert.Empty(t, errs, form)
+		}
+	}
+	code, out, _ = exit("--write", "/w", "--help", "--", "ls")
+	assert.Equal(t, 0, code, "-h before -- is the run form's help")
+	assert.Contains(t, out, "nova-sandbox show")
+
+	// A malformed invocation: exit 2, one CLI-STYLE line naming every problem.
+	oneLine := func(prefix string, args ...string) string {
+		t.Helper()
+		code, out, errs := exit(args...)
+		assert.Equal(t, 2, code, args)
+		assert.Empty(t, out, args)
+		require.Equal(t, 1, strings.Count(errs, "\n"), "one line: %q", errs)
+		assert.True(t, strings.HasPrefix(errs, prefix+": "), errs)
+		assert.True(t, strings.HasSuffix(errs, "; run: "+prefix+" -h\n"), errs)
+		return errs
+	}
+	assert.Contains(t, oneLine("nova-sandbox check", "check", "--no-such-flag"), "--no-such-flag")
+	assert.Contains(t, oneLine("nova-sandbox probe", "probe", "x"), "x")
+	assert.Contains(t, oneLine("nova-sandbox help", "help", "nope"), "nope")
+	errs = oneLine("nova-sandbox", "no-such-verb")
+	assert.Contains(t, errs, "unknown verb no-such-verb")
+	assert.Contains(t, errs, "show check probe help (see nova-sandbox help)")
+	oneLine("nova-sandbox")
+	assert.Contains(t, oneLine("nova-sandbox", "--bogus", "--", "ls"), "bad_flag: unknown flag --bogus")
+	errs = oneLine("nova-sandbox", "--write", "rel", "--", "no-such-command-here")
+	assert.Contains(t, errs, "bad_write")
+	assert.Contains(t, errs, "not_found", "every problem in the one line")
+	errs = oneLine("nova-sandbox", "--read", filepath.Join(t.TempDir(), "missing"))
+	assert.Contains(t, errs, "--read")
+	assert.Contains(t, errs, "no_command")
+	assert.Contains(t, oneLine("nova-sandbox show", "show", "--bogus"), "--bogus")
+	assert.Contains(t, oneLine("nova-sandbox show", "show", "--", "no-such-command-here"), "not_found")
+
+	// The command alone: 127 and 126, SANDBOX REFUSED lines.
+	code, _, errs = exit("--", "no-such-command-here")
+	assert.Equal(t, 127, code)
+	assert.Contains(t, errs, "SANDBOX REFUSED reason=not_found")
+	code, _, _ = exit("--", "./no-such-file-here")
+	assert.Equal(t, 127, code, "a path that does not exist is 127, not 126")
 	nox := filepath.Join(t.TempDir(), "noexec")
 	require.NoError(t, os.WriteFile(nox, []byte("x"), 0o600))
-	assert.Equal(t, 126, run([]string{"--", nox}, &out, &out, env), "a file that is not executable is 126")
-	out.Reset()
-	assert.Equal(t, 125, run([]string{"--write", "rel", "--", "no-such-command-here"}, &out, &out, env), "a refusal beside not_found is 125")
-	assert.Equal(t, 2, strings.Count(out.String(), "SANDBOX REFUSED "), "every problem is reported at once")
+	code, _, _ = exit("--", nox)
+	assert.Equal(t, 126, code, "a file that is not executable is 126")
+}
+
+func TestReport(t *testing.T) {
+	t.Parallel()
+	var b strings.Builder
+	assert.Equal(t, 125, report(&b, "", []refusal{refuse("net_unenforceable", "x"), refuse("no_seccomp", "y")}))
+	assert.Equal(t, "SANDBOX REFUSED reason=net_unenforceable: x\nSANDBOX REFUSED reason=no_seccomp: y\n", b.String(),
+		"a wall refusal is runtime, not usage: every reason on its own line, exit 125")
 }
