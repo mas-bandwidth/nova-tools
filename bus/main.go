@@ -53,9 +53,12 @@ const group = "hook"
 // A hook holds its presence key for presenceTTL and sets it again every
 // presenceRefresh, so a live hook never lapses and a crashed one lapses
 // within presenceTTL (tla/Presence.tla: TTL, R).
+// A read waits at most readBlock, because a blocked read is not interrupted
+// by a signal: it bounds how long a clean exit takes.
 const (
 	presenceTTL     = 30 * time.Second
 	presenceRefresh = 10 * time.Second
+	readBlock       = time.Second
 )
 
 // Msg is one inbox entry: its stream id and its fields.
@@ -228,7 +231,7 @@ func hook(ctx context.Context, store Store, name string, start time.Time, now fu
 		if err := refresh(); err != nil {
 			return err
 		}
-		msgs, err := store.Read(ctx, stream, pending, max(due.Sub(now()), time.Millisecond))
+		msgs, err := store.Read(ctx, stream, pending, min(max(due.Sub(now()), time.Millisecond), readBlock))
 		if err != nil {
 			return err
 		}

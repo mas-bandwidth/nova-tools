@@ -173,8 +173,10 @@ func TestPresenceWhoAndPending(t *testing.T) {
 	ttl, err := c.TTL(ctx, "bus:presence:beta").Result()
 	require.NoError(t, err)
 	assert.True(t, ttl > 0 && ttl <= presenceTTL, ttl)
+	stopped := time.Now()
 	require.NoError(t, h.cmd.Process.Signal(syscall.SIGTERM))
 	require.NoError(t, h.cmd.Wait(), "a clean exit")
+	assert.Less(t, time.Since(stopped), 5*time.Second, "a blocked read does not hold up the exit")
 	assert.Empty(t, bus("who"), "a clean exit deletes presence")
 
 	k := startHook(t, bin, addr)
