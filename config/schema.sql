@@ -1,7 +1,8 @@
--- The tables nova-config reads and writes, in the schema config: for a fresh
--- store, psql <dsn> -f schema.sql. Every statement is idempotent, so a store
--- that has them already is left as it is; the ALTERs add the columns an older
--- store lacks and lift two constraints of the old columns, and drop no column.
+-- The tables nova-config reads and writes, in the schema config. For a fresh
+-- or an older store: nova-config schema | psql "$NOVA_PG_DSN"
+-- Every statement is idempotent, so a store that has them already is left as
+-- it is; the ALTERs add the columns an older store lacks and lift two
+-- constraints of the old columns, and drop no column.
 CREATE SCHEMA IF NOT EXISTS config;
 
 -- One row per write of any row: before and after are the row's fields as
@@ -38,15 +39,6 @@ ALTER TABLE config.machines ADD COLUMN IF NOT EXISTS os text NOT NULL DEFAULT ''
 ALTER TABLE config.machines ADD COLUMN IF NOT EXISTS arch text NOT NULL DEFAULT '';
 ALTER TABLE config.machines ADD COLUMN IF NOT EXISTS cores integer CHECK (cores >= 0);
 
--- The one fleet row.
-CREATE TABLE IF NOT EXISTS config.fleet (
-    name       text PRIMARY KEY CHECK (name = 'fleet'),
-    created_at timestamptz NOT NULL DEFAULT now(),
-    updated_at timestamptz NOT NULL DEFAULT now(),
-    pg_dsn     text NOT NULL DEFAULT ''
-);
-INSERT INTO config.fleet (name) VALUES ('fleet') ON CONFLICT (name) DO NOTHING;
-
 -- A loop: a command one machine runs, every n seconds or kept alive.
 CREATE TABLE IF NOT EXISTS config.loops (
     name       text PRIMARY KEY CONSTRAINT loops_name_pattern CHECK (name ~ '^[a-z0-9][a-z0-9-]*$'),
@@ -59,15 +51,20 @@ CREATE TABLE IF NOT EXISTS config.loops (
     enabled    boolean NOT NULL DEFAULT true,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
+    env        text NOT NULL DEFAULT '{}' CHECK (env LIKE '{%}'),
+    log        text NOT NULL DEFAULT '',
     CHECK ((every > 0) <> keepalive)
 );
+ALTER TABLE config.loops ADD COLUMN IF NOT EXISTS env text NOT NULL DEFAULT '{}' CHECK (env LIKE '{%}');
+ALTER TABLE config.loops ADD COLUMN IF NOT EXISTS log text NOT NULL DEFAULT '';
 CREATE INDEX IF NOT EXISTS loops_machine ON config.loops (machine, name);
 
--- Older stores: the fleet row's store and coordinator pointed at machines, and
--- machines.seat was required. Lift those, so a machine can be removed or added;
--- no column is dropped.
-ALTER TABLE config.fleet DROP CONSTRAINT IF EXISTS fleet_store_fkey;
-ALTER TABLE config.fleet DROP CONSTRAINT IF EXISTS fleet_coordinator_fkey;
+-- Older stores: a fleet table (a kind this tool no longer has; it is left as it
+-- is, unread) had store and coordinator pointing at machines, and machines.seat
+-- was required. Lift those, so a machine can be removed or added; no column
+-- is dropped.
+ALTER TABLE IF EXISTS config.fleet DROP CONSTRAINT IF EXISTS fleet_store_fkey;
+ALTER TABLE IF EXISTS config.fleet DROP CONSTRAINT IF EXISTS fleet_coordinator_fkey;
 DO $$
 BEGIN
     IF EXISTS (SELECT 1 FROM information_schema.columns

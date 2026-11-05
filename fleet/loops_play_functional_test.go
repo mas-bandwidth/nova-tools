@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -17,18 +18,14 @@ import (
 )
 
 // loops_play_functional_test.go renders fleet/loops.yml's Linux unit state
-// through ansible-core's own templar. It carries //go:build functional (docs/STANDARD.md section 8;
-// unit-rule) so the unit tier does not compile the ansible render. Since
-// 219c33235e the task's state was a folded scalar whose restart check lost a
-// closing paren; ansible-core stops at the `else` ("expected token ')', got
-// 'else'"), so no Linux host ever restarted its unit.
+// through ansible-core's own templar. It carries //go:build functional
+// (docs/STANDARD.md section 8) so the unit tier does not compile the ansible
+// render.
 //
 // The render runs the task as the play holds it: its own vars block and its
 // module state argument, copied into a one-task localhost playbook, fed the
-// inputs the play feeds it (loop_units, loop_timers, loop_restart, item). So
-// the whole chain is templated, the selectattr over the unit results included,
-// whichever form the task takes. The four truth-table inputs are held to
-// restarted, restarted, started and stopped.
+// inputs the play feeds it (loop_units, loop_timers, loop_restart, item). The
+// four truth-table inputs are held to restarted, restarted, started and stopped.
 
 // stateRenderPlay is a one-task localhost playbook that prints what the Linux
 // state task would hand systemd: the task's own vars and its state argument.
@@ -111,4 +108,48 @@ func TestLoopsPlayStateExpressionRendersThroughTheTemplar(t *testing.T) {
 				"the templar yielded no %s for %s:\n%s", tc.want, tc.name, out)
 		})
 	}
+}
+
+// timerTask is the task that writes a loop's timer.
+func timerTask(t *testing.T) map[string]any {
+	t.Helper()
+	for _, play := range loopsPlays(t) {
+		for _, task := range flattenTasks(t, tasksOf(t, play)) {
+			if _, ok := task["ansible.builtin.template"].(map[string]any); ok &&
+				asText(task["name"]) == "one timer per record that runs every n seconds (linux)" {
+				return task
+			}
+		}
+	}
+	require.FailNow(t, "no task writes the Linux timers")
+	return nil
+}
+
+// A kept-alive row renders no timer and an `every` row renders exactly one: the
+// timer task's loop, templated by ansible-core over both kinds of row.
+func TestLoopsPlayTimersOnlyForEveryRows(t *testing.T) {
+	t.Parallel()
+	if _, err := exec.LookPath("ansible-playbook"); err != nil {
+		t.Skip("ansible-core is not installed on this machine")
+	}
+	loop := asText(timerTask(t)["loop"])
+	require.NotEmpty(t, loop)
+	play := []map[string]any{{
+		"hosts": "localhost", "connection": "local", "gather_facts": false,
+		"tasks": []map[string]any{{"ansible.builtin.debug": map[string]any{
+			"msg": "TIMERS={{ (" + strings.Trim(strings.TrimSpace(loop), "{} ") + ") | map(attribute='name') | join(',') }}"}}},
+	}}
+	b, err := yaml.Marshal(play)
+	require.NoError(t, err)
+	playbook := filepath.Join(t.TempDir(), "timers.yml")
+	require.NoError(t, os.WriteFile(playbook, b, 0o644))
+	extra, err := json.Marshal(map[string]any{"loop_records": []any{
+		map[string]any{"name": "kept", "keepalive": true, "every": 0},
+		map[string]any{"name": "periodic", "keepalive": false, "every": 60},
+	}})
+	require.NoError(t, err)
+	out, err := renderState(t, playbook, string(extra))
+	require.NoErrorf(t, err, "ansible refused the timer loop:\n%s", out)
+	assert.Contains(t, out, `TIMERS=periodic"`, out)
+	assert.NotContains(t, out, "kept", out)
 }
