@@ -31,11 +31,11 @@ SECRETS INIT OK store=S next: nova-secrets seat add <seat> <age-pubkey> --store 
 ```
 
 **2. seat add** adds the seat's rule to `.sops.yaml`: the seat's key and the recovery key may open `<seat>.yaml`.
-It commits nothing.
+It commits `.sops.yaml`, and only that file.
 
 ```
 nova-secrets seat add web <seat public key> --store S
-SECRETS SEAT ADD OK seat=web next: commit .sops.yaml, then the seat's own key runs: nova-secrets set NAME --as web --store S --key <file>
+SECRETS SEAT ADD OK seat=web committed; next: the seat's own key runs: nova-secrets set NAME --as web --store S --key <file>
 ```
 
 **3. set** reads one value from stdin, never from a terminal or an argument. It writes it to `<seat>.yaml` and commits
@@ -94,6 +94,7 @@ hostname. `--sops` defaults to `sops` on PATH.
 ```
 nova-secrets init --store <dir> --recovery <age-public-key>
 nova-secrets seat add <seat> <age-public-key> --store <dir>
+nova-secrets seat list --store <dir>
 nova-secrets set NAME --store <dir> --key <file> [--as <seat>] [--sops <path>]
 nova-secrets names --store <dir> [--as <seat>]
 nova-secrets exec --only NAME[,NAME] --store <dir> --key <file> [--as <seat>] [--sops <path>] -- cmd [args...]
@@ -104,16 +105,26 @@ nova-secrets help [verb]
 The child's environment is the inherited one with every name the seat holds removed, so a secret not asked for cannot
 arrive another way, and every sops identity variable removed, plus the `--only` names and their values. A name the
 seat does not hold is refused, by name, and the command never runs. No core file is written after the decrypt.
-`--require NAME` is kept for existing units: it means the same as `--only` and goes in the next release.
 
-**set** creates `<seat>.yaml` under its rule when it is new. The value is one non-empty line. An empty stdin, such as
+**set** creates `<seat>.yaml` under its rule when it is new. The first `set` checks `--key` against the seat's rule
+in `.sops.yaml`, as every later `exec` and `set` does, and encrypts nothing under another key. The value is one non-empty line. An empty stdin, such as
 `/dev/null`, is refused as an empty value.
 
 **seat add** parses `.sops.yaml` and writes it back with the new rule. sops uses the first rule that matches a file,
 so the rule goes before the first existing rule that would match the seat's file (a catch-all). Every existing rule
 is kept. A file that does not parse is refused and left alone. The write is a temporary file and a rename. A seat or a
-key that already has a rule is refused. Comments are kept. Formatting is normalised: 2-space indent, no blank lines
-between rules.
+key that already has a rule is refused. Comments are kept. An empty `creation_rules: []` becomes a block list, written
+with a 2-space indent so it reads and diffs; a list that already has rules keeps its style, and blank lines between
+rules are dropped.
+
+**seat list** is read-only. It prints every seat that a rule in `.sops.yaml` names or that has a file in the store,
+one `<seat> file=yes|no` per line, and `SECRETS SEAT LIST OK seats=<n>` on stderr. There is no `seat remove` and no
+`unset`: a seat or a name is removed with git and sops.
+
+```
+nova-secrets seat list --store S
+web file=yes
+```
 
 ## Refusals say what to run
 
@@ -129,6 +140,7 @@ A runtime refusal is one line on stderr: `SECRETS <VERB> REFUSED: <why>; run: <n
 | `key <pub> is not the key in .sops.yaml for <s> (<rulepub>)` | edit the seat's `age:` in `.sops.yaml`, then `cd S && SOPS_AGE_KEY_FILE=<recovery.key> sops updatekeys -y <s>.yaml` |
 | `key <pub> is the key in .sops.yaml for <s> but not among <s>.yaml's recipients` | the same `updatekeys` command |
 | `sops not found at <path>; install sops 3.x` | install sops, or pass `--sops <path>` |
+| `unknown secret name(s) X: ... holds no such name` | `nova-secrets names --store S --as <s>` |
 | `S is not a git repository` | `git -C S init && git -C S add -A && git -C S commit -m store` |
 | `no <s>.yaml in S: wrong --as? seats here: a,b` | the right `--as`, or `nova-secrets set NAME --as <s> ...` |
 | `no rule for <s>.yaml in S/.sops.yaml` | `nova-secrets seat add <s> <public key> --store S` |
