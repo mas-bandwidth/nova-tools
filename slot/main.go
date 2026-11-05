@@ -246,6 +246,7 @@ func run(args []string, w world) int {
 	_ = os.Remove(t.holderFile())
 	_ = os.WriteFile(t.holderFile(), []byte(fmt.Sprintf("pid=%d card=%s start=%s cmd=%s\n",
 		os.Getpid(), o.card, w.now().UTC().Format(time.RFC3339), strings.Join(o.argv, " "))), 0o666)
+	// ignored: a leftover holder file names a pid whose lock is gone; status probes the lock
 	defer os.Remove(t.holderFile())
 	if verb == "hold" {
 		fmt.Fprintln(w.stdout, "HELD", t.describe())
@@ -274,7 +275,6 @@ func status(dir string, w world) int {
 		return 3
 	}
 	out := bufio.NewWriter(w.stdout)
-	defer out.Flush()
 	line := func(name string, exclusive bool) {
 		rel, ok, err := w.lock(filepath.Join(dir, name), exclusive)
 		switch {
@@ -294,6 +294,10 @@ func status(dir string, w world) int {
 		}
 	}
 	line("all", false) // taken shared by every shared holder; held only by an exclusive one
+	if err := out.Flush(); err != nil {
+		fmt.Fprintln(w.stderr, "nova-slot:", err)
+		return 3
+	}
 	return 0
 }
 
