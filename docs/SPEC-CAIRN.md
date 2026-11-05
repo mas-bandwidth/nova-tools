@@ -1,16 +1,13 @@
 # nova-cairn
 
-nova-cairn is the record an AI keeps for its next session. A session ends and
-the next one starts with nothing; a cairn is what the last one left behind.
-It does three things:
+Keep useful words for a later session. A **cairn** is a saved session record.
+The tool writes plain files, searches saved entries and Markdown notes,
+and checks notes for broken links and missing index entries. Its self-talk
+check flags known sentence patterns that turn an event into a lasting
+judgment about the writer.
 
-- **The store** keeps the words a session chose to keep, as plain files.
-- **memory** searches those words and the notes already written, and checks
-  them.
-- **self-talk** flags sentences where the writer passes a standing verdict on
-  themselves.
-
-One binary, Go standard library only. It sends nothing anywhere.
+The files stay on your machine. Protect private notes with filesystem
+permissions; nova-cairn does not encrypt them or send them anywhere.
 `nova-cairn help` lists every verb; `nova-cairn help <verb>` and
 `nova-cairn <verb> -h` print one verb's help.
 
@@ -49,13 +46,9 @@ changes nothing (`reopened=true`). Another policy or source is a conflict
 nova-cairn append --store ~/cairn --session 2026-11-05 --entry lesson-1 --text "Read the file before claiming what it says."
 ```
 
-The words come from exactly one of `--text` or `--file <path>` (`--file -`
-reads stdin), kept byte for byte. They must be valid UTF-8, because the entry
-file is JSON: anything else is refused (exit 2) naming the first bad byte,
-so everything accepted is kept exactly. A new id (on `open` and `append`)
-and `--source` must be valid UTF-8 too; the read verbs still take ids an older
-build wrote with other bytes, and memory leaves such entries out with a WARN. The entry takes the session's source and
-policy unless the line names them. The same line again prints
+Supply the words through one of `--text` or `--file <path>` (`--file -`
+reads stdin), kept byte for byte. The entry inherits the session's source unless `--source` supplies another
+pointer. An explicit `--publish` must match the session's policy. The same line again prints
 `duplicate=true` with the first stamp and writes nothing. The same id with
 other words, or a retry whose `--source` names another source than the
 entry's, is a conflict (exit 1) whose line names the `receipt` to read it.
@@ -68,11 +61,9 @@ nova-cairn index --store ~/cairn
 
 The first line, `INDEX OK sessions=<n> entries=<n>`, has the full counts.
 `--session <id>` lists one session. `--max <n>` caps each list (default 20,
-`0` for all); each capped kind (sessions, entries) ends with its own `MORE`
-line on stdout.
+`0` for all), and a capped list ends with a `MORE` line on stdout.
 
-**receipt** reads one entry back. It takes `--store`, `--session` and
-`--entry`; there is no stamp flag.
+**receipt** reads one entry back.
 
 ```
 nova-cairn receipt --store ~/cairn --session 2026-11-05 --entry lesson-1 --text
@@ -117,7 +108,8 @@ DuplicateIsOne, DurableBeforeReported, OpenIdempotent and OneOpenPolicy over
 open, an open that crashes before its log line, append, and an append that
 crashes after its link. Four reversed witnesses (`MCCairnStoreBroken*.cfg`)
 each break one on purpose (an overwrite, success before sync, a re-open that
-changes the policy, a link before sync), to prove the check can fail.
+changes the policy, a link before sync), to check that the model detects those mistakes. Model results depend on
+the assumptions represented there.
 
 ## memory
 
@@ -132,12 +124,11 @@ session and id is some other file: it is left out, counted as `skipped=<n>`
 on the OK line, and named once on stderr in a `WARN` line. `--exclude`
 leaves such files out quietly.
 
-memory builds its index in memory on every run, so nothing goes stale and
-nothing is written. It skips `.git`, never follows a symlink, and refuses a
+memory builds its index in memory on every run, and writes
+nothing. It skips `.git`, never follows a symlink, and refuses a
 file over 8 MiB by name. `--exclude <glob>` skips paths on every memory verb.
 
-**search** prints the k best files (notes or entries) for some words, one
-hit per file: its best-scoring paragraph.
+**search** prints the k best passages for some words.
 
 ```
 nova-cairn memory search --root ~/notes --channels bm25 --k 3 lantern brass
@@ -181,12 +172,37 @@ Globs match paths relative to `--root`: here `~/memory/notes/*.md` is
 - `--links gate`: every `[[wikilink]]` resolves to a file or a frontmatter
   name. `--links info` lists the ones that do not, without failing.
 
-`--links` is always required. `--links info` with no `--coverage` and no
-`--frontmatter` is refused, because that run could not fail.
+A pass covers the checks and matching files you selected. Coverage and
+frontmatter checks run only for their supplied globs; informational wikilink
+findings do not fail the run. The checks do not establish that the words are
+true or unedited. A supplied glob that matches nothing is refused.
+At least one gating check is required: `--links gate`, `--coverage` or
+`--frontmatter`. `--exempt` requires a frontmatter check.
 
-A pass proves every note is named or linked in an index, no link is dead,
-and every note has its frontmatter name. It does not prove the words are true or unedited.
-A glob that matches nothing is refused: an empty check is not a pass.
+## Try all memory operations
+
+This example creates a small notes directory and a draft outside it. A
+**frontmatter** block is the YAML-shaped block between the opening `---`
+lines. An **index** here is an ordinary note that names or links other notes.
+
+```sh
+notes_dir=$(mktemp -d)
+printf '%s\n' '---' 'name: lantern' '---' '' 'The brass lantern illuminates the harbor.' > "$notes_dir/lantern.md"
+printf '%s\n' '# Index' '' '[lantern](lantern.md)' > "$notes_dir/index-main.md"
+printf '%s\n' 'The brass lantern lights the harbor.' > "$notes_dir/draft.txt"
+nova-cairn memory stats --root "$notes_dir"
+nova-cairn memory search --root "$notes_dir" --root ~/cairn --exclude 'ignored/*' --channels bm25 --k 3 brass lantern
+nova-cairn memory check --root "$notes_dir" --channels bm25 --k 2 "$notes_dir/draft.txt"
+nova-cairn memory verify --root "$notes_dir" --links gate --coverage 'lantern.md:index-*.md' --frontmatter '*.md' --exempt index- --fail-max 0
+```
+
+Use the store created earlier for the second root. Search and check require
+`--channels bm25` and a positive `--k`. BM25 ranks passages by shared words;
+`--k` limits the passages returned for each query, not the files read.
+`--root` and `--exclude` can repeat. Verify accepts one root and requires at
+least one gating check. `--fail-max` defaults to 20 lines per finding kind;
+0 prints all. To make wikilinks informational while still checking frontmatter,
+replace `--links gate` with `--links info` in this example.
 
 ## self-talk
 
@@ -216,7 +232,75 @@ line each, then a `SELFTALK MORE` line on stderr if `--max` cut them; the
 count line and notes go to stdout. The run exits 1 on any finding. self-talk
 matches known shapes only: a green run clears those shapes, never the file.
 
+For a small file-based run:
+
+```sh
+printf '%s\n' 'The measured check passed.' > "$notes_dir/review.txt"
+printf '%s\n' 'RULE: Read the evidence before making a claim.' > "$notes_dir/rules.txt"
+nova-cairn self-talk --max 20 --rule-doc rules.txt --skip review.txt "$notes_dir/review.txt" "$notes_dir/rules.txt"
+printf '%s\n' 'The measured check passed.' | nova-cairn self-talk -
+```
+
+`--skip` and `--rule-doc` match basenames and can repeat. `--max` defaults to
+20 findings per class across the run: standing claims and other verdict
+patterns. 0 prints all. Skipped files are reported. A rule-doc
+banner identifies that input when it has findings; it does not change the classifier.
+
+## Other store forms and help
+
+Use `--file` when words are already in a file, or `--file -` for stdin:
+
+```sh
+printf '%s\n' 'Keep the original evidence.' > "$notes_dir/entry.txt"
+nova-cairn append --store ~/cairn --session 2026-11-05 --entry lesson-2 --file "$notes_dir/entry.txt" --source notes/evidence.md --publish manual
+printf '%s\n' 'Check the saved receipt.' | nova-cairn append --store ~/cairn --session 2026-11-05 --entry lesson-3 --file -
+nova-cairn index --store ~/cairn --session 2026-11-05 --max 0
+nova-cairn receipt --store ~/cairn --session 2026-11-05 --entry lesson-2
+nova-cairn help memory search
+nova-cairn append --help
+nova-cairn version
+```
+
+These commands continue the session opened earlier. `--text` and `--file`
+are alternatives, not a combined input. `version` prints the build's version
+string; a local build may say `dev`.
+
+## Recover from a refusal
+
+| Result | Next step |
+|---|---|
+| Missing or unknown flags, late flag, bad ID or policy | Follow the verb's help. IDs obey the path-component rules above; policies are the four listed values. |
+| Session absent | Run the printed `open` command with the intended policy, then retry append. |
+| Session policy or source conflict | Read the existing record; reuse its settings or choose a new session ID. |
+| Entry conflict | Run the printed `receipt`; keep the existing entry and use a new ID for different words. |
+| Flat record cannot be appended | Edit that hand-kept Markdown record yourself, or open a new nested session. |
+| Unreadable store, root or input | Inspect the named path and permissions with the printed listing command. |
+| Corrupt open log or entry record | Inspect the named file or line and restore it from known-good data before retrying. |
+| Memory input cannot be read or exceeds 8 MiB | Correct the input or exclude the named path. An exclusion changes the corpus being searched or checked. |
+| Empty corpus or draft | Choose a root with readable notes or entries, or a draft with a paragraph of at least three terms. |
+| Invalid retrieval settings | Use `--channels bm25` and positive `--k`. |
+| Verify glob matches nothing, or no gating check selected | Correct the relative globs and select `--links gate`, coverage or frontmatter checking. |
+| Verify findings | Repair the reported links, index references or frontmatter, then rerun the same check. |
+| Self-talk finding | Read the sentence in context and decide whether to revise it. The tool matches patterns, not intent. |
+| Self-talk input is not UTF-8 | Correct its encoding or explicitly skip the named file. |
+
 ## Output and exit codes
+
+| Output | Meaning |
+|---|---|
+| `OPEN OK` | Session, policy and source; `reopened=true` means an idempotent open. |
+| `APPEND OK` | Saved entry identity, stamp and policy; `duplicate=true` retains the first record. |
+| `INDEX OK`, `INDEX SESSION`, `INDEX ENTRY`, `INDEX MORE` | Full counts, session policy and opening time, entry metadata, then any truncation notice. |
+| `RECEIPT OK` | Stored entry metadata, and quoted words with `--text`. |
+| `SEARCH OK`, `CAL`, `HIT` or `MISS` | Corpus/query summary, unrelated calibration score, then matches or the reason for no match. |
+| `MEMORY OK`, `CAL`, `CAND`, `HIT` or `MISS`, `NOTE` | Draft and corpus counts, calibration, numbered candidate paragraph, its similar passages, and interpretation limits. No truth judgment. |
+| `STATS OK` | Notes, entries, skipped files, paragraphs, bytes and vocabulary, followed by per-class counts. |
+| `VERIFY OK` or `FAIL` | Counts of gating and informational findings; only selected gating checks determine failure. |
+| `SELFTALK FAIL`, `MORE`, summary and `NOTE` | Sentence findings, any display cap, totals and classifier limits. |
+
+Ordinary field values escape spaces, `=` and control characters so they stay
+on one line. Receipt text is quoted. `stamp` is the stored time; it is not
+refreshed by a duplicate or a read.
 
 Every result line starts with a token in capitals and carries `key=value`
 facts. The tokens: `OPEN`, `APPEND`, `INDEX`, `RECEIPT`, `SEARCH` (memory
@@ -236,5 +320,13 @@ literal starting with `-` goes after `--`). A flag the verb does not take is
 refused by name, never ignored. A conflict is a
 FAILED line (`APPEND FAILED session=... entry=...: ...`), exit 1.
 
-`go test ./cairn` runs the unit tests. `tests/tla/check.sh <tla2tools.jar> cairn/tla`
-runs the model.
+## Build and test
+
+From the repository root, on a build machine:
+
+```sh
+build_dir=$(mktemp -d)
+go build -o "$build_dir/nova-cairn" ./cairn
+go test ./cairn
+tla/check.sh <tla2tools.jar> cairn/tla
+```

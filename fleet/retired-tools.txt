@@ -11,7 +11,7 @@ nova-swarm	2026-11-05	sprint
 nova-hook	2026-11-05	sprint
 nova-friend	2026-11-05	sprint
 nova-decide	2026-11-05	rowan-tools
-nova-doctor	2026-11-05	rowan-tools
+nova-doctor	2026-11-05	retired
 nova-tokens	2026-11-05	rowan-tools
 nova-ci	2026-11-05	retired
 nova-check	2026-11-05	retired

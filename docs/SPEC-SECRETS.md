@@ -1,173 +1,256 @@
 # nova-secrets
 
-A thin wrapper over sops, age and git. Secrets live in sops-encrypted files in a git repository (the store), one file
-per seat. A seat is a machine or a person with an age key. `exec` decrypts only the secrets it is told to name, puts
-them in the environment of one child process, and becomes that process. sops and age do the cryptography. git carries
-the files.
+Keep encrypted values in git and give a command the ones it needs.
+sops and age handle encryption.
 
-## Create a store
+A **seat** names the identity a machine or AI uses to decrypt its file. Each
+seat has an age key. A recovery key can also open files that name it as a
+recipient.
 
-Four commands, in this order. You need `sops` 3.x, `age-keygen`, `git`, and this binary. Below, `S` is the store
-directory and `K` is a seat's key file.
+`exec` opens the chosen seat's file, selects names, and puts their values in
+the command's environment.
 
-**0. Make two keys.** One is the seat's. One is the recovery key: its public half goes in the store, its private half
-stays offline.
+## Create the store
 
-```
-age-keygen -o web.key && chmod 600 web.key
-age-keygen -y web.key                       # prints the seat's public key
-age-keygen -o recovery.key
-age-keygen -y recovery.key                  # prints the recovery public key
-```
+Install sops 3.x, age-keygen and git. Configure git's commit identity before
+using `init` or `set`. The **store** is a directory containing encrypted files
+in its own git repository.
 
-**1. init** creates the store: `git init` when `S` is in no repository, `.sops.yaml` with `creation_rules: []`,
-`recovery.pub`, and one commit. `S` must be missing (its parent must exist) or empty. A directory with files in it
-is refused, so a project's README is never overwritten. `S` inside another git work tree is refused too: make it a
-repository of its own first. It refuses a store that exists.
+Choose a new store directory and a place outside it for private keys:
 
-```
-nova-secrets init --store S --recovery <recovery public key>
-SECRETS INIT OK store=S next: nova-secrets seat add <seat> <age-pubkey> --store S
-```
-
-**2. seat add** adds the seat's rule to `.sops.yaml`: the seat's key and the recovery key may open `<seat>.yaml`.
-It commits `.sops.yaml`, and only that file.
-
-```
-nova-secrets seat add web <seat public key> --store S
-SECRETS SEAT ADD OK seat=web committed; next: the seat's own key runs: nova-secrets set NAME --as web --store S --key <file>
+```sh
+secrets_dir="$HOME/.local/share/nova/secrets"
+key_dir="$HOME/.config/nova-secrets"
+mkdir -p "$(dirname "$secrets_dir")" "$key_dir"
+age-keygen -o "$key_dir/web.key"
+age-keygen -o "$key_dir/recovery.key"
+chmod 600 "$key_dir/web.key" "$key_dir/recovery.key"
+seat_public=$(age-keygen -y "$key_dir/web.key")
+recovery_public=$(age-keygen -y "$key_dir/recovery.key")
+nova-secrets init --store "$secrets_dir" --recovery "$recovery_public"
+nova-secrets seat add web "$seat_public" --store "$secrets_dir"
+git -C "$secrets_dir" add .sops.yaml
+git -C "$secrets_dir" commit -m 'Add web seat'
 ```
 
-**3. set** reads one value from stdin, never from a terminal or an argument. It writes it to `<seat>.yaml` and commits
-that file. Pushing is yours.
+Keep the recovery private key offline after setup. Its public key stays in the
+store, allowing the recovery holder to open files that name it as a recipient.
 
-```
-printf '%s\n' "$VALUE" | nova-secrets set DB_PASSWORD --store S --key web.key --as web
-SECRETS SET OK as=web name=DB_PASSWORD file=web.yaml committed; run: git -C S push
-```
+`init` accepts an absent or empty directory whose parent exists. An empty git
+repository of its own is also accepted. A directory inside another git work
+tree is refused. `init` creates the git repository if needed, writes
+`.sops.yaml` with `creation_rules: []` and `recovery.pub`, and commits those two
+files. Existing store files are refused.
 
-**4. exec** hands named secrets to one command.
+| Path | Contents |
+|---|---|
+| `.sops.yaml` | Recipient rules, with one rule per seat. |
+| `recovery.pub` | The recovery public key. |
+| `<seat>.yaml` | Encrypted values. The first `set` creates this file. |
 
-```
-nova-secrets exec --only DB_PASSWORD --store S --key web.key --as web -- ./server --port 8080
-SECRETS EXEC OK as=web keys=1 cmd=server
-```
+On Unix, a supplied private key must be a regular file owned by the caller,
+with mode 0600. On Windows, its owner must be the caller, and its access list
+must contain only the caller, SYSTEM and Administrators.
 
-The OK line of `exec` goes to stderr, because stdout belongs to the command.
+A seat name selects a file. Its recipient keys control who can decrypt it.
+Choosing the name alone grants no access to the values.
 
-## List the names
+## Paths and defaults
 
-**names** lists the secret names in a seat file. A sops file keeps its keys in the clear, so no key and no sops are
-needed, and no value is read. It lists the top-level keys and skips the `sops:` block. A key that is not an
-environment variable name, or whose value is not a single value, is never printed: it is counted as `refused=<n>`.
+Every store operation needs `--store`, or `NOVA_SECRETS_STORE`.
+`exec` and `set` also need `--key`, or `NOVA_SECRETS_KEY`.
+`init` and `seat add` use public keys. `names` reads plaintext names from an
+encrypted file. These three commands need no private key.
 
-```
-nova-secrets names --store S --as web
-DB_PASSWORD
-SECRETS NAMES OK as=web names=1 refused=0
-```
+There is no default store or private-key path. The tool does not assume the
+current directory. It makes the key path absolute before checking it and
+passing it to sops.
 
-The names are the payload on stdout, one per line. The OK line goes to stderr.
+`--as` defaults to `NOVA_SECRETS_SEAT`, then the short hostname.
+`--sops` defaults to `sops` on PATH. The supplied key replaces the caller's
+other sops identity settings.
 
-## The model
+## Commands
 
-```
-<store>/.sops.yaml     creation rules: one per seat, path_regex ^<seat>\.yaml$, age: <seat key>,<recovery key>
-<store>/recovery.pub   the recovery public key every rule also names
-<store>/<seat>.yaml    the seat's secrets, sops-encrypted, one NAME: value per line
-<key file>             the seat's private age key, mode 0600, owned by the user
-                       (Windows: owned by the user, access list only the user, SYSTEM and Administrators)
-```
-
-A seat opens only its own file with its own key. The key is a file given by `--key`. No identity from the caller's
-environment or home directory reaches sops.
-
-`--require NAME` is kept so existing units keep working; use `--only`.
-
-`--store` is required for every verb, and `--key` for `set` and `exec`, as flags or as `NOVA_SECRETS_STORE` and
-`NOVA_SECRETS_KEY`. There is no default and the current directory is never assumed. `--key` is made absolute before
-its mode and owner are checked and before sops sees it. `--as` defaults to `$NOVA_SECRETS_SEAT`, else the short
-hostname. `--sops` defaults to `sops` on PATH.
-
-`<verb> -h` and `help <verb>` print that verb's paragraph of the help and exit 0.
-
-## The verbs
-
-```
+```text
 nova-secrets init --store <dir> --recovery <age-public-key>
 nova-secrets seat add <seat> <age-public-key> --store <dir>
-nova-secrets seat list --store <dir>
 nova-secrets set NAME --store <dir> --key <file> [--as <seat>] [--sops <path>]
 nova-secrets names --store <dir> [--as <seat>]
 nova-secrets exec --only NAME[,NAME] --store <dir> --key <file> [--as <seat>] [--sops <path>] -- cmd [args...]
 nova-secrets help [verb]
 ```
 
-**exec** decrypts `<seat>.yaml` and becomes `cmd` (exec(2); on Windows it runs `cmd` and exits with its status).
-The child's environment is the inherited one with every name the seat holds removed, so a secret not asked for cannot
-arrive another way, and every sops identity variable and `NOVA_SECRETS_KEY`, `NOVA_SECRETS_STORE` and `NOVA_SECRETS_SEAT` removed (the
-child has no business knowing where the key is), plus the `--only` names and their values. A name the
-seat does not hold is refused, by name, and the command never runs. No core file is written after the decrypt.
+## Try a value end to end
 
-**set** creates `<seat>.yaml` under its rule when it is new. The first `set` checks `--key` against the seat's rule
-in `.sops.yaml`, as every later `exec` and `set` does, and encrypts nothing under another key. The value is one non-empty line of at most 65536 bytes; a longer one is refused as soon as it is seen to be over, never cut. An empty stdin, such as
-`/dev/null`, is refused as an empty value.
+After the setup above, these commands use public example values in the new
+store. `--sops` selects the helper explicitly; omit it to use PATH.
 
-**seat add** parses `.sops.yaml` and writes it back with the new rule. sops uses the first rule that matches a file,
-so the rule goes before the first existing rule that would match the seat's file (a catch-all). Every existing rule
-is kept. A file that does not parse is refused and left alone. The write is a temporary file and a rename. A seat or a
-key that already has a rule is refused. Comments are kept. An empty `creation_rules: []` becomes a block list, written
-with a 2-space indent so it reads and diffs; a list that already has rules keeps its style, and blank lines between
-rules are dropped.
-
-**seat list** is read-only. It prints every seat that a rule in `.sops.yaml` names or that has a file in the store,
-one `<seat> file=yes|no rule=yes|no` per line (an orphan file shows `rule=no`), and `SECRETS SEAT LIST OK seats=<n>` on stderr. There is no `seat remove` and no
-`unset`: a seat or a name is removed with git and sops.
-
-```
-nova-secrets seat list --store S
-web file=yes rule=yes
+```sh
+printf 'example-value\n' | nova-secrets set TOKEN --store "$secrets_dir" --key "$key_dir/web.key" --as web --sops "$(command -v sops)"
+printf 'example-label\n' | nova-secrets set LABEL --store "$secrets_dir" --key "$key_dir/web.key" --as web
+nova-secrets names --store "$secrets_dir" --as web
+nova-secrets exec --only TOKEN --require LABEL --store "$secrets_dir" --key "$key_dir/web.key" --as web -- /bin/sh -c 'test -n "$TOKEN" && test -n "$LABEL" && printf "selected values received\n"'
 ```
 
-## Refusals say what to run
+`set` reports the encrypted file it committed. `names` prints `LABEL` and
+`TOKEN`. `exec` reports the two selected names' count on stderr; the child
+prints its confirmation on stdout. Supply real values from their source on
+stdin instead of putting them in shell arguments.
 
-A malformed invocation is one line on stderr and exit 2, for `exec` too: `nova-secrets <verb>: <what is wrong>; run: nova-secrets <verb> -h`.
-It names every missing flag at once, for example `nova-secrets exec: missing --only NAME[,NAME], --store <dir> (or NOVA_SECRETS_STORE), --key <file> (or NOVA_SECRETS_KEY), a command after -- (no default; the current directory is never assumed); run: nova-secrets exec -h`.
-An unknown verb is named and listed, and points at `nova-secrets help`.
+You can reuse the setup through environment variables:
 
-A runtime refusal is one line on stderr: `SECRETS <VERB> REFUSED: <why>; run: <next command>`. These are the common ones.
+```sh
+export NOVA_SECRETS_STORE="$secrets_dir"
+export NOVA_SECRETS_KEY="$key_dir/web.key"
+export NOVA_SECRETS_SEAT=web
+nova-secrets names
+nova-secrets exec --require TOKEN --require LABEL -- /bin/sh -c 'test -n "$TOKEN" && test -n "$LABEL"'
+nova-secrets help exec
+nova-secrets seat add --help
+```
 
-| refusal | next command |
-| --- | --- |
-| `store S exists` | `seat add` |
-| `key <pub> is not the key in .sops.yaml for <s> (<rulepub>)` | edit the seat's `age:` in `.sops.yaml`, then `cd S && SOPS_AGE_KEY_FILE=<recovery.key> sops updatekeys -y <s>.yaml` |
-| `key <pub> is the key in .sops.yaml for <s> but not among <s>.yaml's recipients` | the same `updatekeys` command |
-| `sops not found at <path>; install sops 3.x` | install sops, or pass `--sops <path>` |
-| `unknown secret name(s) X: ... holds no such name` | `nova-secrets names --store S --as <s>` |
-| `S is not a git repository` | `git -C S init && git -C S add -A && git -C S commit -m store` |
-| `no <s>.yaml in S: wrong --as? seats here: a,b` | the right `--as`, or `nova-secrets set NAME --as <s> ...` |
-| `no rule for <s>.yaml in S/.sops.yaml` | `nova-secrets seat add <s> <public key> --store S` |
-| `S/recovery.pub is missing` | `age-keygen -y <recovery.key> > S/recovery.pub`, then commit |
-| `S/.sops.yaml is missing` | create it with the line `creation_rules: []` |
-| `sops -d failed (exit n); its output is withheld; ran: ...` | rerun the printed command |
+The two `--require` flags form one selection. No value is selected implicitly.
 
-The key check compares the public half of `--key` (`age-keygen -y`, which must be on PATH) with the seat's rule and with
-the file's recipients, which sops keeps in the clear. No value is read. When sops itself fails, the line carries the
-command that ran: a scratch `HOME`, and for a decrypt `--output /dev/null`, so pasting it prints no value. Its output
-is never shown.
+## Give values to a command
 
-## The guarantee
+Name the values with `--only`. The tool decrypts the seat file, checks every
+requested name, and starts the command only when all are present.
 
-A secret value never appears in argv, in a log line, in an error, or in a file in the clear, so never in `ps`. A value
-travels stdin to sops, sops to the store file (encrypted), and the store file through sops to the child's environment
-only. sops and git output is never shown, because it can carry a value. A failure names the program and its exit
-status. Progress lines carry names and counts, never values.
+```sh
+nova-secrets exec --only DB_PASSWORD,API_KEY --store /srv/secrets --key ~/.config/nova-secrets/web.key --as web -- ./server --port 8080
+```
 
-## Exit codes
+The command inherits the caller's environment, with two changes. Names held
+by the seat are removed, then the selected values are added. The caller's
+sops identity variables are also removed. An unselected value cannot arrive
+through an inherited variable with the same name.
 
-| code | meaning |
-| --- | --- |
-| 0 | `init`, `seat add`, `set`, `names` or help done |
-| the command's own | `exec` ran the command; its status is exec's |
-| 2 | refused: a malformed invocation (bad or missing flags, unknown verb, bad name), or a runtime refusal outside `exec` (key file not private, sops or git failed) |
-| 125 | `exec` refused at run time and the command never ran: an unknown secret name, a decrypt failure, a command not found. The units rely on it. |
+On Unix, `exec` replaces the tool with the command. It sets the core-file
+size limit to zero just before that replacement. This limit does not cover
+every earlier process that handled a value. On Windows, the tool runs the
+command and exits with its status.
+
+Existing units may pass repeatable `--require NAME`. It adds names to the
+selection, including when `--only` is absent. Duplicate names are selected once.
+
+## Set a value
+
+Pipe one non-empty line into `set NAME`. A terminal or multiline value is
+refused. The value is not a command-line argument.
+
+```sh
+pass show db | nova-secrets set DB_PASSWORD --store /srv/secrets --key ~/.config/nova-secrets/web.key --as web
+git -C /srv/secrets push
+```
+
+`set` creates or updates the encrypted seat file through sops, then commits
+that file on the store's current branch. It does not push. If git fails after
+encryption, the file remains written. Inspect `git status` before retrying.
+
+## Add a seat
+
+Put the complete public key from age-keygen in `AGE_PUBLIC_KEY`, then run:
+
+```sh
+nova-secrets seat add web "$AGE_PUBLIC_KEY" --store /srv/secrets
+```
+
+The store must already contain `.sops.yaml` and a valid `recovery.pub`.
+The new rule matches `^web\.yaml$` and names both the seat and recovery keys.
+It goes before the first existing rule that would match that filename.
+Other rules remain in place.
+
+The tool refuses a seat or key that already has a rule, or YAML it cannot
+parse. It writes through a temporary file and rename. Comments are preserved;
+formatting changes to two-space indentation without blank lines between rules.
+
+This command writes no seat file and makes no commit. Commit `.sops.yaml`
+yourself, then use the seat's private key with `set` to create its first value.
+
+## List names
+
+```sh
+nova-secrets names --store "$secrets_dir" --as web
+```
+
+Names are plaintext keys in the encrypted file. This command reads one seat's
+file, using the usual `--as` default when omitted. It prints valid environment
+variable names on stdout, one per line, without decrypting values or running
+sops. The `sops` metadata block and old provenance marker are skipped.
+
+A key with an invalid name or a nonscalar value is withheld and counted in
+`refused=<n>`. The summary goes to stderr:
+
+```text
+SECRETS NAMES OK as=web names=2 refused=0
+```
+
+## Diagnosing a refusal
+
+Missing arguments are listed together, with a pointer to the verb's help.
+Use `nova-secrets help <verb>` or `<verb> --help` to print that usage with exit 0.
+
+A missing seat file names the seats present and suggests the right `--as` or a
+first `set`. A missing rule points to `seat add`. Missing sops or age-keygen is
+reported by name.
+
+After a sops failure, key diagnosis compares the supplied key's public half
+with the recipient rule and file metadata. It can distinguish a wrong key from
+a file that still names an older key. The recovery key can update recipients
+through the sops command shown in that refusal.
+
+When sops itself fails, its output is withheld. The error gives the command
+that ran; a decrypt diagnostic directs plaintext output to `/dev/null`.
+Git failures identify the operation. A failed commit can leave files written,
+so inspect `git status` before retrying.
+
+| Refusal | Next step |
+|---|---|
+| Missing store or private key | Pass the named flag or environment variable. Create a new store with `init` when that is the intended operation. |
+| Store is nonempty, nested in another git work tree, or already initialized | Use the existing store, or choose a separate new directory with an existing parent. Do not rerun init over its files. |
+| Missing recipient rule or seat file | Check `names --as <seat>` for the chosen seat; add its public-key rule, then use `set` with its private key for the first value. |
+| Duplicate seat or public key | Reuse the existing rule, or choose a different identity and key. Inspect `.sops.yaml` before editing it. |
+| Invalid name, empty value, terminal input or multiline value | Use a valid environment name and pipe one nonempty line into `set`. |
+| Unknown selected secret | Run `nova-secrets names --store <dir> --as <seat>`, then correct `--only` or add the missing value with `set`. |
+| Private key permissions or ownership refused | On Unix, use a caller-owned regular file with `chmod 600`; on Windows, correct its owner and access list. |
+| Key does not match recipients | Select the right key. If the file needs recipient updates, use the recovery procedure named by the refusal. |
+| Invalid YAML or missing store metadata | Inspect the named file and restore the intended structure from the store's git history. |
+| Missing helper or command | Install it or correct PATH; `--sops` can name the encryption helper explicitly. |
+| sops failed | Run the diagnostic shown in stderr. Its output is withheld from the tool's error report. |
+| git failed | Inspect `git -C <store> status`; files may already be written. Correct git identity, permissions or repository state before committing or retrying. |
+
+## Output and limits
+
+The tool's own arguments, progress lines and store files contain no plaintext
+values. Values pass through stdin to sops and through sops to the selected
+command's environment. sops and git output is withheld because it can contain
+a value; failures name the program and its exit status.
+
+The selected command can read, print, save or send its values. Its children
+inherit them. OS permissions determine who else can inspect that environment.
+
+`exec` writes its progress to stderr:
+
+```text
+SECRETS EXEC OK as=web keys=2 cmd=server
+```
+
+| Success line | Meaning |
+|---|---|
+| `SECRETS INIT OK store=...` | The initial store files were committed; the line suggests adding a seat. |
+| `SECRETS SEAT ADD OK seat=...` | The recipient rule was written. The next action is to commit it and set a value with the seat's key. |
+| `SECRETS SET OK as=... name=... file=... committed` | The named value was encrypted and the file committed. The suggested push remains a separate action. |
+| `SECRETS NAMES OK as=... names=... refused=...` | Counts of printed names and withheld keys; the names themselves are on stdout. |
+| `SECRETS EXEC OK as=... keys=... cmd=...` | The selection was prepared for the named child command. Its eventual status still matters. |
+
+`init`, `set` and `seat add` write success lines to stdout. Runtime refusals
+go to stderr as `SECRETS <VERB> REFUSED: <why>`. Bad invocations use
+`nova-secrets <verb>: <why>; run: nova-secrets <verb> -h`.
+
+| Exit | Meaning |
+|---|---|
+| 0 | `init`, `set`, `seat add`, `names` or help finished. |
+| Command status | `exec` ran the command. |
+| 2 | Bad invocation, including for `exec`; or a runtime refusal outside `exec`. |
+| 125 | `exec` refused at runtime; the command did not start. |

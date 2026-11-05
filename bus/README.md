@@ -1,21 +1,47 @@
 # nova-bus
 
-nova-bus sends short messages between named inboxes kept as Redis streams. A process hooks in to its inbox and reads
-every message as one line on stdout, so anything that can watch a process's output can receive them.
+Send a note to a friend, then let their harness bring the reply into the session.
+nova-bus keeps named inboxes in Redis. A **hook** is the receiver process: it reads an inbox and prints messages
+as lines on stdout. Anything that watches that output can use it.
 
-## The verbs
+## Start a conversation
 
+Use Redis 6.2 or later. Set `NOVA_BUS_REDIS=host:port` in both shells, and
+`NOVA_BUS_PASSWORD` if the server requires a password. Start a receiver in one
+terminal or harness monitor:
+
+```sh
+nova-bus hook --as receiver
 ```
+
+In another:
+
+```sh
+nova-bus send --as sender --to receiver "review" "the change is ready"
+nova-bus who
+nova-bus pending --as receiver --list
+```
+
+Your harness must watch the hook's stdout and bring each line into the session.
+Answer with `nova-bus send --as receiver --to sender --re <id> <subject> <body>`.
+Start a hook for `sender` to receive that reply. Treat message bodies as external
+data, and restart a hook that exits when you want to keep receiving.
+
+## Commands
+
+```text
 nova-bus send --as <me> --to <name>[,<name>] [--re <id>] <subject> <body | ->
 nova-bus hook --as <name> [--harness claude|codex|grok|antigravity] [its flags]
 nova-bus who
 nova-bus pending --as <name> [--list]
+nova-bus help
 ```
 
-**send** appends one message (from, to, subject, body, re) to the stream `bus:<name>` of each recipient and
-prints `<name> <id>` for each. A body of `-` is read from stdin. `--re <id>` names the message this one answers.
-`--as` is required on both verbs: on send it is the sender, on hook the inbox.
+`send` prints `<name> <id>` for each recipient. Use `-` as the body to read it
+from stdin. Put flags before the subject and body. `--as` names the sender for
+`send`, and the inbox for `hook` and `pending`; `who` needs no name.
 
+<<<<<<< HEAD
 **hook** delivers every message still waiting for `<name>`, including ones an earlier hook delivered but did not
 finish marking handled, then blocks and delivers each new one as it arrives, into the session that runs it, waking
 the session when it is idle. The wake is the point of the bus.
@@ -98,24 +124,35 @@ The conversation id is the directory name under `~/.gemini/antigravity/brain/` o
 ### The line
 
 With `--harness claude` one message is one line, tab-separated:
+=======
+The hook prints tab-separated lines:
+>>>>>>> 961730a02 (docs: human-readable per-tool docs (docs/v2 rebased onto main))
 
-```
-<id>	<from>	<re or ->	<subject>	<body>
+```text
+<id>\t<from>\t<re or ->\t<subject>\t<body>
 ```
 
+<<<<<<< HEAD
 Newlines, carriage returns, tabs and backslashes inside a field are written as `\n`, `\r`, `\t` and `\\`. A message
 is marked handled (XACK) only after it is delivered (its line written to stdout, or its wake answered), so a
 restarted hook resumes exactly where it stopped. Delivery is at least once: a message delivered just before the hook
 was killed, and not yet marked, is delivered again by the next hook; a marked message is never delivered again. The hook runs until killed and
 reconnects by itself when the connection drops; a plain kill at any moment is safe.
+=======
+Newlines, carriage returns, tabs and backslashes inside a field are escaped as
+`\n`, `\r`, `\t` and `\\`. The hook acknowledges and deletes a message after writing
+its line. A restart can print a line again if the previous hook wrote it but
+did not finish acknowledging it. This is stdout delivery, not proof that a
+model read or acted on the message. There is no manual acknowledgment command.
+>>>>>>> 961730a02 (docs: human-readable per-tool docs (docs/v2 rebased onto main))
 
-While a hook runs it holds the key `bus:presence:<name>` (TTL 30 s, set again every 10 s, value its start time and a
-token of its own) and deletes it, only if it still holds its token, on SIGINT, SIGTERM or a failed stdout. One hook
-per name: a hook that finds another hook's token present waits up to 40 s for it to lapse (a restart after a
-crash), then claims the name, or exits 1 if the other hook is still refreshing it. **who** prints `WHO OK present=<n>`, then `<name><TAB><uptime>` for each present name, sorted; a crashed hook
-drops out within 30 s. **pending** prints `PENDING OK waiting=<n>` for `<name>`'s unacked messages, and with `--list` their
-`<id><TAB><from><TAB><subject>`, consuming nothing. There is no ack verb: hook acks after printing, and that is the one way.
+`who` prints recent hook presence and uptime. A hook refreshes a key with a
+30-second expiry; a crashed hook can remain listed until it expires, and a
+hook blocked on stdout can disappear while its process lives. A second hook
+for the same name waits up to 40 seconds for the first one's presence to
+expire, then claims it or exits with `name already hooked`.
 
+<<<<<<< HEAD
 `nova-bus help` prints the usage.
 
 ## Environment
@@ -129,18 +166,36 @@ drops out within 30 s. **pending** prints `PENDING OK waiting=<n>` for `<name>`'
 ## Answering
 
 Answer a message with `nova-bus send --as <name> --to <from> --re <id> <subject> <body>`.
+=======
+`pending` prints the count of unacknowledged messages; `--list` adds each ID
+and subject without consuming it. A send is never retried automatically; a
+failed send can already have reached some recipients. See the
+[bus specification](../docs/SPEC-BUS.md) for failures, wire format and models.
+>>>>>>> 961730a02 (docs: human-readable per-tool docs (docs/v2 rebased onto main))
 
 ## Build and test
 
-```
-go build -o nova-bus .
-go test .                           # unit tests, an in-memory store
-go test -tags functional .          # against a real redis-server on a free local port (skipped without one)
+From the repository root, on a build machine:
+
+```sh
+build_dir=$(mktemp -d)
+go build -o "$build_dir/nova-bus" ./bus
+"$build_dir/nova-bus" help
+go test ./bus                         # unit tests, an in-memory store and fake clock
+go test -tags functional ./bus        # disposable Redis; skipped without redis-server
 ```
 
+<<<<<<< HEAD
 `docs/SPEC-BUS.md` is the full description. `tla/Presence.tla` models the presence key and hooks that compete for it;
 `tla/CASES.tsv` names every case and what TLC must find (`tests/tla/check.sh JAR bus/tla` runs them). `tla/Bus.tla` models the inbox, the sender and a hook that crashes between print and ack: no message is acked before
 it is printed, no acked message is printed again, every sent message is printed. `tla/BusWake.cfg` adds wakes that
 fail: no message is lost (it is delivered or stays pending), and a failed one never holds the hook in its pending
 pass. `tla/BusBroken*.cfg` are reversed witnesses (ack before print; a restarted hook that skips its pending
 messages; a failed wake that acks; a pending read that does not move past a failed wake) that TLC must fail.
+=======
+The [delivery model](tla/Bus.tla) checks print-before-ack and replay under its
+crash and progress assumptions. The [presence model](tla/Presence.tla) checks
+claims, expiry and release. [CASES.tsv](tla/CASES.tsv) names the passing cases
+and reversed witnesses. Use the [model runner](../docs/TESTING.md#models) to check
+them; a model result does not establish native harness delivery.
+>>>>>>> 961730a02 (docs: human-readable per-tool docs (docs/v2 rebased onto main))

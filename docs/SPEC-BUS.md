@@ -1,14 +1,12 @@
-# SPEC-BUS: nova-bus
+# nova-bus
 
-nova-bus sends short messages between named inboxes kept in Redis, and hooks a
-process in to one inbox: every message arrives as one line on that process's
-stdout. It is one Go directory, `bus/`, depending on the standard library and
-go-redis only (`bus/imports_test.go` holds it to that). Anything that can watch
-a process's output can receive messages; anything that can run a command can
-send them.
+Send messages to named inboxes in Redis. The receiver process, called a **hook**, prints an inbox's messages to
+stdout, one line at a time. The app running an AI, or another process, can watch those lines and bring
+them to a reader.
 
-## Verbs
+The [bus guide](../bus/README.md) walks through a conversation.
 
+<<<<<<< HEAD
 ```
 nova-bus send --as <me> --to <name>[,<name>] [--re <id>] <subject> <body | ->
 nova-bus hook --as <name> [--harness claude|codex|grok|antigravity] [its flags]
@@ -93,77 +91,82 @@ pending id taken), so it neither blocks the pending pass nor is tried twice
 by one hook; the next hook, or the next reconnect, delivers it again. What was
 v1's recovery, lanes, challenges, chat following and consumption tracking is
 not here.
+=======
+## Connection
 
-## Exit codes and refusals
+Use Redis 6.2 or later. Set `NOVA_BUS_REDIS` to its `host:port`, and
+`NOVA_BUS_PASSWORD` if it requires a password. The tool does not print that
+password. Each process uses one Redis connection and runs commands in turn.
+The client does not retry a failed Redis command automatically.
 
-| Code | When |
-|---|---|
-| 0 | done; help; a hook stopped by SIGINT or SIGTERM |
-| 1 | refused or failed: Redis unreachable or erring, `SEND FAILED`, `name already hooked`, stdout failing |
-| 2 | a malformed invocation |
+Redis controls access to the inboxes. A sender supplies its own name; `--as`
+does not authenticate a person or model. Treat message bodies as external data.
 
-A malformed invocation is refused in one stderr line,
-`nova-bus <verb>: <what is wrong>; run: nova-bus <verb> -h`, with nothing on
-stdout and nothing done in Redis. Missing inputs are named all at once
-(`missing --as <name>, --to <name>, <subject> <body>, NOVA_BUS_REDIS
-(host:port)`). Each other case is named on its own: an unknown flag, or a flag
-the verb does not take (`unknown flag --x`); a flag without a value; a bad
-`--list` value; a name that is not letters, digits, `.`, `_` and `-` (for
-`--as` and every `--to` name); a `--re` that is not `<ms>-<seq>`; an empty
-name in `--to` (`a,,b`); an empty subject; more than a subject and a body; an
-argument to hook, who or pending ("takes no arguments"). An unknown verb (`ack` is one) gets
-`nova-bus: unknown verb "<verb>"; verbs: send, hook, who, pending, help; run:
-nova-bus help`. go-redis's own logging is silenced: every message on stderr is
-nova-bus's.
+## Send
 
-A runtime failure keeps the one-line shape, `nova-bus <verb>: <what>`, exit 1.
-An unreachable server is said plainly: `cannot reach redis at <host:port>
-(NOVA_BUS_REDIS): connection refused` (or `no such host`, `timed out`, or
-`connection lost` for a dropped connection: EOF, reset, broken pipe); for
-send it follows `SEND FAILED to <name>:`. A hook that loses Redis logs
-`nova-bus hook: <what>; reconnecting` once, then at most once a minute, while
-it retries every second.
+```sh
+nova-bus send --as sender --to receiver "review" "the change is ready"
+```
 
-## Environment
+Put flags before the subject and body. `--to` accepts comma-separated names.
+`--re <id>` names the message being answered. Use `-` as the body to read stdin.
+Names cannot contain `:`. Empty recipients are refused.
 
-| Variable | |
-|---|---|
-| `NOVA_BUS_REDIS` | the Redis address, `host:port` (required); Redis 6.2 or later |
-| `NOVA_BUS_USER` | the Redis ACL user (optional): with it the client sends `AUTH <user> <password>`; without it, `AUTH <password>` as Redis's `default` user |
-| `NOVA_BUS_PASSWORD` | the Redis password (optional; never printed) |
+Send appends a separate entry to each inbox in the given order. For each
+successful append, stdout shows `<name> <id>`. If one fails, stderr shows
+`nova-bus: SEND FAILED to <name>: <error>` and the command exits 1. Earlier
+recipients may have their messages; later ones were not attempted.
+>>>>>>> 961730a02 (docs: human-readable per-tool docs (docs/v2 rebased onto main))
 
-`NOVA_BUS_USER` without `NOVA_BUS_PASSWORD` is refused (exit 2): go-redis
-would send no `AUTH` at all and run as `default`. The user needs the keys
-`bus:*` and the commands nova-bus sends (streams, `GET`/`SET`/`DEL`, `SCAN`,
-`EVALSHA`/`EVAL`, `MULTI`/`EXEC`):
-`~bus:* +@stream +@string +@keyspace +@transaction +eval +evalsha +@connection -@dangerous`.
-The functional test runs a server with exactly that user and `default` off.
+A lost reply leaves the sender uncertain whether Redis accepted that append.
+Send does not retry. A caller that retries must allow for duplicates.
 
-Each process keeps one Redis connection and runs its commands in turn. The
-client never retries a command by itself.
+For a reply, keep the ID printed by the send:
 
-## Wire format
+```sh
+sent=$(nova-bus send --as sender --to receiver "review" "the change is ready")
+message_id=${sent#* }
+nova-bus send --as receiver --to sender --re "$message_id" "review result" "looks good"
+printf 'The build finished.\n' | nova-bus send --as sender --to receiver,reviewer "build" -
+```
 
-- The inbox of `<name>` is the stream `bus:<name>`. A message is one entry
-  with the fields `from`, `to` (the recipients, trimmed, each once, joined by
-  commas), `subject`, `body`
-  and `re` (empty when none), all strings.
-- Every hook reads with the consumer group `hook` and the consumer `hook`. The
-  group is created at id `0` on the first hook, so messages sent before any
-  hook are delivered too.
-- A hook's line is tab-separated:
+The last command sends the stdin body to both named inboxes. Each recipient
+gets its own ID. Start `nova-bus hook --as sender` to receive the reply.
 
-  ```
-  <id>	<from>	<re or ->	<subject>	<body>
-  ```
+## Receive
 
-  Backslash, newline, carriage return and tab inside a field are written as
-  `\\`, `\n`, `\r` and `\t`, so a line never splits. pending escapes the
-  subject the same way.
-- Presence of `<name>` is the string key `bus:presence:<name>`, whose value is
-  the hook's start time (RFC 3339 UTC, to the second), a tab, and a random
-  token that process made at start.
+```sh
+nova-bus hook --as receiver
+```
 
+Hook reads entries delivered but not acknowledged first, then waits for new
+ones. It reads up to 100 per batch. Each stdout line has five tab-separated
+fields:
+
+```text
+<id>\t<from>\t<re or ->\t<subject>\t<body>
+```
+
+Within a field, backslash, newline, carriage return and tab become `\\`, `\n`,
+`\r` and `\t`. An absent reply ID appears as `-`.
+
+The hook acknowledges and deletes each entry in one Redis transaction after
+writing its line.
+There is no manual acknowledgment command. This acknowledgment records stdout
+delivery; it does not prove that a person or model read the message or completed
+its request.
+
+A crash between writing and acknowledging can cause the next hook to print the
+same entry again. With the Redis stream and group state retained, delivery is
+at least once. Acknowledged entries are skipped by later hooks. If Redis loses
+that state, these guarantees no longer hold.
+
+A hook reconnects after a Redis error, waiting one second between attempts.
+It starts again with pending entries, including a batch whose read reply was
+lost. A stdout write error ends the hook with exit 1 and leaves the entry
+unacknowledged. SIGPIPE is ignored so a closed reader is handled as a write error.
+
+<<<<<<< HEAD
 ## Delivery
 
 A hook reads its pending entries first (`XREADGROUP ... 0`, then past the
@@ -202,93 +205,130 @@ Until then pending counts that history too.
 
 An inbox nobody hooks is never trimmed, by design: its messages wait for
 their reader, however long that takes.
+=======
+SIGINT or SIGTERM requests a clean exit with status 0. Reads wait at most one
+second; acknowledgment and presence-release attempts each have a two-second
+cleanup timeout. These are operation limits, not a one-second guarantee for
+process shutdown. A blocked stdout write can delay progress and cleanup.
+>>>>>>> 961730a02 (docs: human-readable per-tool docs (docs/v2 rebased onto main))
 
 ## Presence
 
-Presence means one thing: a hook process is alive for this name.
-
-- **One hook per name.** On start the hook claims the key: one Lua script sets
-  it with a 30 s TTL unless it holds another process's value. If it does, the
-  hook prints `HOOK WAIT name=<name> held_since=<holder's start> ttl=30s
-  budget=40s` to stderr and tries again every second for at most 40 s (the TTL
-  plus one refresh). A hook restarted by a
-  supervisor after a crash so waits out the dead hook's key and claims the
-  name within about 30 s. If the key is still held after 40 s, another hook is
-  alive and refreshing it: the hook prints `nova-bus hook: name already
-  hooked: <name> after 40s; run: nova-bus who` and exits 1, touching nothing.
-  A signal while waiting exits 0.
-- It claims again whenever 10 s have passed. Each read waits at most 1 s, so a
-  quiet or a busy hook refreshes on time, and a signal is acted on within a
-  second. A refresh that finds another value (this hook lapsed and another
-  took the name) ends this hook with `name taken by another hook while this
-  one lapsed`, exit 1.
-- On a clean exit (SIGINT, SIGTERM, stdout failing) it releases the key: a
-  second script deletes it only if it still holds this process's value. A
-  release that fails leaves the key to its TTL.
-- SIGPIPE is ignored, so a reader that goes away (`nova-bus hook ... | head -1`)
-  makes the next write fail with EPIPE: the hook releases its presence, leaves
-  the unprinted message pending and exits 1.
-- who scans `bus:presence:*` and reads each key; one that expires in between
-  is left out. Uptime is the reader's clock minus the start time; clocks that
-  disagree skew it, and a negative uptime shows as `0s`.
-
-## Failure
-
-- **A hook dies before acking.** The message stays pending and is printed again
-  by the next hook on that name.
-- **A hook crashes or its machine is lost.** Its presence lapses within 30 s;
-  until then who lists it, and a new hook on that name waits for it.
-- **stdout blocks** (the reader stopped reading). The hook cannot refresh, so
-  its presence lapses within 30 s while the process lives.
-- **Redis is unreachable.** send, pending and who exit 1. A hook logs
-  `nova-bus: <error>; reconnecting` to stderr and retries every second; its
-  presence may lapse meanwhile, and it claims again when Redis is back.
-
-## Models
-
-`bus/tla/Presence.tla` models the key with its TTL and hooks that compete for
-one name: start, refresh, a stdout that blocks and unblocks, a clean exit
-whose DEL may fail, a crash, expiry, and a start that waits for the key. It
-checks: a name is present only if
-a hook set the key within the TTL; a running hook not stuck on stdout is
-present with its own token; a hook never starts while another's token is
-present; the key is deleted only by the hook whose token it holds; a hook
-that exited or crashed is absent within the TTL; a waiting hook whose rival
-crashed sees the name claimed; and every wait ends in a claim or a refusal. A stuck hook is allowed to
-drop out, and `PresenceStuckStrict.cfg` shows that it does. The reversed
-witnesses remove the TTL, the refresh, the claim's check, the release's check
-and the wait, one each. `Presence.cfg` checks two hooks; `PresenceThree.cfg` checks three (about 3.9M states, minutes on many workers, so it is run by hand rather than by `tests/tla/check.sh`). `bus/tla/Bus.tla` models delivery. `bus/tla/CASES.tsv` names
-every case with the outcome TLC must reach; `tests/tla/check.sh JAR bus/tla` runs
-them.
-
-## An example session
-
-Two names, alpha and beta, with `NOVA_BUS_REDIS` set in both shells.
-
-```
-beta$  nova-bus hook --as beta
-alpha$ nova-bus who
-beta	4s
-alpha$ nova-bus send --as alpha --to beta "build" "main is green"
-beta 1730800000000-0
-beta:  1730800000000-0	alpha	-	build	main is green
-beta$  nova-bus send --as beta --to alpha --re 1730800000000-0 "re: build" "thanks"
-alpha 1730800005000-0
-alpha$ nova-bus pending --as alpha --list
-1
-1730800005000-0	re: build
-alpha$ nova-bus hook --as alpha
-1730800005000-0	beta	1730800000000-0	re: build	thanks
+```sh
+nova-bus who
 ```
 
-The line marked `beta:` is what beta's hook prints. alpha had no hook running,
-so beta's answer waited in alpha's inbox, and pending showed it without
-consuming it; alpha's hook printed it as soon as it started.
+Who prints recent hook presence, sorted by name: `<name><TAB><uptime>`. Uptime
+uses Go duration notation, such as `1h2m3s`. An unreadable start time appears as
+`?`. Clock differences can skew uptime; a negative value is shown as `0s`.
 
-## Build and test
+A hook claims its name with a random token and a 30-second expiry. It tries to
+refresh every 10 seconds while making progress. Another hook cannot claim that
+name while the token remains present.
 
+When a name is held, a new hook prints `HOOK WAIT name=<name> ttl=30` to stderr
+and polls once per second for up to 40 seconds. It then claims the name or exits
+1 with `name already hooked`. SIGINT or SIGTERM while waiting exits 0.
+
+On a clean exit, the hook tries to delete only its own token. A failed release
+leaves the key to expire. A crash can therefore leave a name listed for up to
+30 seconds after its last refresh. A hook blocked on stdout or unable to reach
+Redis can disappear from who even though its process is alive.
+
+Who is a recent-presence view, not a process-health or model-attention check.
+Its scan can omit a key that expires before it is read.
+
+## Waiting messages
+
+```sh
+nova-bus pending --as receiver
+nova-bus pending --as receiver --list
 ```
-go build -o nova-bus ./bus
-go test ./bus                     # unit tests: an in-memory store and a fake clock
-go test -tags functional ./bus    # a real redis-server on a free local port
+
+The first line is the number of unacknowledged entries. `--list` adds
+`<id><TAB><subject>` lines, oldest first, escaping subjects as hook does.
+Neither command consumes messages.
+
+The count uses the stream length. The list reads the stream in pages of 1,000
+and collects the entries in memory. Count and list are separate operations;
+they can differ while senders and receivers are active.
+
+Older builds kept acknowledged payloads in the stream. When a hook finds
+previously delivered, unacknowledged entries, it trims history older than the
+first of those entries. A newly delivered entry is not used as a trim point.
+Until that cleanup occurs, pending can count the old history too.
+
+## Stored data
+
+| Data | Redis representation |
+|---|---|
+| Inbox | Stream `bus:<name>`. Each entry has string fields `from`, `to`, `subject`, `body` and `re`. `to` retains the original comma list; absent `re` is empty. |
+| Delivery position | Consumer group `hook`, consumer `hook`. The group starts at ID `0`, so it includes messages sent before the first hook. |
+| Presence | String key `bus:presence:<name>` containing the UTC RFC 3339 start time, a tab and the hook's token. |
+
+An acknowledged payload is deleted, so an inbox normally holds only waiting
+messages. Operators choose Redis persistence and backups. Removing stream or
+group data can affect replay and pending counts.
+
+The new stream layout does not read the old `bus2:*` inboxes. See
+[migration](MOVED.md) before replacing an older bus.
+
+## Help and exits
+
+`nova-bus help`, `-h`, `--help` and no arguments print the whole usage.
+`help <verb>`, `<verb> -h` and `<verb> --help` print that verb's usage. Help exits
+0 with empty stderr.
+
+A bad invocation is rejected before Redis operations begin. Its stderr line
+names the problem and points to the verb's help. Missing required inputs are
+listed together, including the Redis address. Other errors identify an unknown
+verb or flag, a flag belonging to another verb, an invalid recipient, `--re -`,
+or the wrong number of arguments. The tool suppresses go-redis's own log lines.
+
+| Code | Meaning |
+|---|---|
+| 0 | Success, help, or a hook stopped by SIGINT or SIGTERM. |
+| 1 | An operation failed or was refused, including a held hook name or a stdout error. |
+| 2 | Bad flags or arguments, or missing required configuration. |
+
+## Recover from a refusal
+
+| Result | Next step |
+|---|---|
+| Missing Redis address, sender, recipient, subject or body | Supply all named inputs; `nova-bus help send` shows their order. |
+| Unknown verb or flag, late flag, invalid name or reply ID | Correct the invocation using that verb's help. `--re` takes a real message ID, not `-`. |
+| Redis connection or authentication failure | Check `NOVA_BUS_REDIS`, server availability and `NOVA_BUS_PASSWORD`. `nova-bus who` checks access without sending a message. |
+| `SEND FAILED` after some recipients printed IDs | Keep the successful IDs. A failed append may also have reached Redis; check with the recipient before retrying work that cannot tolerate duplicates. |
+| `name already hooked` | Use the existing receiver, stop it before replacing it, or choose another identity. A crashed receiver's key expires. |
+| Hook stdout error | Restore the output reader, then restart the hook. Expect a duplicate of a line whose acknowledgment did not finish. |
+| Hook Redis error | Restore connectivity. The running hook retries; an exited hook needs restarting. |
+
+## Build, tests and models
+
+From the repository root:
+
+```sh
+build_dir=$(mktemp -d)
+go build -o "$build_dir/nova-bus" ./bus
+"$build_dir/nova-bus" help
+go test ./bus
+go test -tags functional ./bus
 ```
+
+Unit tests use an in-memory store and a fake clock. Functional tests start a
+private Redis server and skip if `redis-server` is absent. The package uses the
+standard library and go-redis; its import test checks that boundary.
+
+[Bus.tla](../bus/tla/Bus.tla) models print-before-ack and replay under its crash
+and progress assumptions. [Presence.tla](../bus/tla/Presence.tla) models token
+claims, refresh, expiry, blocked stdout and release. Its strict stuck-hook case
+shows why a live process can lose presence. Reversed witnesses remove individual
+rules to check that the model detects those changes.
+
+The automatic presence cases use two hooks. `PresenceThree.cfg` checks three
+hooks and runs separately by hand. [CASES.tsv](../bus/tla/CASES.tsv) lists the
+automatic cases and expected outcomes. Run them with
+`tla/check.sh /absolute/path/to/tla2tools.jar bus/tla`; the
+[testing guide](TESTING.md#models) lists the runner's prerequisites. A model result
+does not establish delivery into a native harness or the durability of a Redis
+installation.

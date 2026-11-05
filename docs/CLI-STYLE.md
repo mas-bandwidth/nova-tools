@@ -1,93 +1,105 @@
-# CLI style
+# Using the command line
 
-The command-line contract, written so a cold AI can predict any nova tool. SPEC.md governs the exit table and the output grammar.
+Start with `<tool> help`. Use `<tool> help <verb>`, `<tool> <verb> -h` or
+`<tool> <verb> --help` for one operation. Help prints to stdout, returns 0
+and makes no changes. Each guide shows setup and a working example.
 
-## Grammar and help
+| Tool | Reference | Main operations |
+|---|---|---|
+| `nova-bus` | [Bus](SPEC-BUS.md) | `send`, `hook`, `who`, `pending` |
+| `nova-config` | [Config](SPEC-CONFIG.md) | `machine`, `service`, `history`, `schema`, `inventory` |
+| `nova-sandbox` | [Sandbox](SPEC-SANDBOX.md) | a command after `--`, `show`, `check`, `probe` |
+| `nova-secrets` | [Secrets](SPEC-SECRETS.md) | `init`, `seat add`, `set`, `names`, `exec` |
+| `nova-reserve` | [Reserve](SPEC-RESERVE.md) | `run`, `hold`, `status`, `set` |
+| `nova-cairn` | [Cairn](SPEC-CAIRN.md) | `open`, `append`, `index`, `receipt`, `memory`, `self-talk` |
 
-**(a) Grammar.** `<tool> <verb path> [flags] [positionals]`. A verb path may be nested (`nova-secrets seat add`). Flags come before positionals. A late flag is refused by name, except a literal after `--`.
+## Arguments
 
-**(b) Help.** `<tool> help` prints the banner. `<tool> help <verb>` and `<tool> <verb> -h|--help` print that verb's help and exit 0, with no side effects.
+Follow the order in the tool's examples. Bus and cairn take flags before
+positional arguments. Config accepts a row name before its flags. Secrets
+accepts `set NAME` or `seat add SEAT KEY` before flags.
 
-## Flags
+Sandbox, secrets `exec` and reserve use `--` to separate their options from
+the command and its arguments. Quote each argument for your shell. Bus accepts
+`-` as its body to read stdin. Secrets `set` reads its value from stdin,
+keeping it out of command arguments.
 
-**(c) One spelling for each flag, and each flag wants one thing.**
+An unknown verb, unknown flag, missing required argument or malformed value
+returns 2. The error names the problem and points to help. A flag belonging
+to another operation is refused rather than ignored. Required inputs are
+reported together where the command can identify them before reading a store.
 
-| flag | wants |
+## Output
+
+The bus receiver process, called a **hook**, prints messages as tab-separated
+lines. Backslashes, tabs and line breaks within fields are escaped.
+
+Config prints records. `list` and `show` accept `--json` for typed row output;
+`history` prints changes as text. `inventory` prints Ansible inventory JSON.
+
+Secrets `exec` puts progress on stderr, leaving stdout for the command.
+`init`, `set` and `seat add` print success lines on stdout. `names` prints
+names on stdout and its summary on stderr.
+
+Reserve prints acquisition on stderr for `run`, and on stdout for `hold`.
+`status` shows capacity, holders and the number of free slots.
+
+Cairn prints named result lines and counts. An entry's `receipt --text`
+includes its saved words in a quoted field. Check findings use stderr;
+read the final status as well as any earlier results.
+
+There is no shared JSON or escaping format. Parse the format described by
+the tool you use. A successful item can precede a later failure.
+
+## Exit codes
+
+| Code | Meaning |
 |---|---|
-| `--addr` | a Redis host:port |
-| `--user`, `--password-env` | an ACL user, and an env variable's NAME |
-| `--pg` | a Postgres DSN with no password |
-| `--root` | a root the tool reads |
-| `--dir` | a working directory the tool owns |
-| `--store` | a store directory the tool owns |
-| `--out` | one output file |
-| `--as` | the acting identity |
-| `--seat` | a seat |
-| `--remote`, `--branch` | a git remote, and a git branch |
-| `--max` | displayed items; default 20, 0 means all |
-| `--timeout` | a Go duration |
+| 0 | The operation succeeded. |
+| 1 | The tool refused the operation, found a conflict, or a check found a problem. |
+| 2 | The invocation was wrong or the operation could not run. |
+| 125 | The sandbox refused to start, or secrets `exec` could not launch its command. |
+| 126 | A command was found but could not be executed. |
+| 127 | A command was not found or could not be launched. |
+| Child status | A wrapper returns its command's status after launch. The same number can therefore have a different cause. |
 
-A resource limit keeps its unit or scope in its name; A resource budget of 0 is a refusal, not "all"; help states each zero. A storage-shape noun (`--bus`, `--box`) stays; help names the shape.
+Config uses 2 for connection and execution failures. Secrets operations other
+than `exec` also use 2 for runtime refusals. Bus uses 1 for Redis-operation
+failures. Sandbox `show`, `check` and `probe` use 0/1 for their result;
+a macOS profile compilation failure can return the platform's own status.
+The individual specs list the full distinctions.
 
-## Exits and output
+Read stderr as well as the status. Missing input is different from a valid
+empty result. An existing empty inbox, search with no matches or idempotent
+retry can succeed; a required unreadable store or file cannot.
 
-**(d) Exits.** 0 passed or done. 1 ran and said NO. 2 could not run. A wrapper may pass through its program's code; no tool invents another. The protocol exceptions:
+## Effects
 
-**(e) Output: events and payloads.**
-- EVENT output is one line per event, `<TOKEN> OK|FAILED key=value ...`; OK to stdout, FAILED and REFUSED to stderr.
-- Item OK events may precede a later failure; the closing status is then FAILED, exit not 0.
-- PAYLOAD output: a verb documented to emit a payload names its format in help and emits exactly that payload on stdout and nothing else; its events go to stderr. A payload is never capped like a listing.
-- A remedy is a command, printed shell-quoted so it pastes.
+Config writes accept `--dry-run`. Fleet plays support Ansible's `--check`.
+These modes can still read inputs or contact a store or release server.
+Sandbox `show` prepares and prints rules without starting the supplied command.
 
-**(e2) Token and escaping grammar.** SPEC.md's oneline escaping, whitespace-safe `key=value` fields and the `VERB STATUS` token shape govern. The caller knows which tool it ran, so the token does not repeat it, and a field needs no quoted-string parser.
+A successful bus send stores a message in Redis. A hook acknowledges and
+deletes it after writing it to stdout. That does not establish whether a model
+read it or did the work. A send to several recipients can fail after reaching
+some of them; retrying can deliver duplicates.
 
-## Refusals and silence
+A secrets **seat** names a decryption identity and its age key. `exec` and
+`set` need a store and key through flags or named environment variables.
+`seat add` and `names` need the store. The guide explains how to create them.
 
-**(f) Refusals.**
-- A MALFORMED INVOCATION (a missing or unknown flag, a bad value shape, an unknown verb) is refused in one line, plus at most one hint line for what the input WANTS (SPEC.md): `<tool> <verb>: <what is wrong>; run: <tool> <verb> -h`.
-- It names every missing required flag at once, never in rounds.
-- An unknown flag is named. An unknown verb is named, lists the verbs, and points at the root `<tool> help`, since it has no verb help.
-- A RUNTIME failure (an unreachable store, a refused login, a missing input file, a lost reply) keeps the one-line shape, and its remedy is the concrete next command for that failure, not `-h`.
+A **slot** is one place in a concurrent job limit. Reserve callers share the
+capacity recorded in their reservation directory. A **cairn** is a saved
+session record; its directory is explicit, and its publish policy records
+intent without sending anything.
 
-**(g) No silent success.** Three cases:
-- A missing INPUT (a required path, root, store, session, machine, friend or seat that must exist and be readable) is a refusal, exit 2, never `count=0 OK`.
-- A CREATE target: a verb documented to create a destination may create exactly the explicitly selected path, never a parent tree and never a default.
-- A VALID EMPTY RESULT (an idle poll, an empty search, a clean checker, an idempotent retry) is OK with its count and, where it helps, `note=`; only when the input is resolved and read.
+Defaults belong to each tool. There is no common version command; cairn has
+`version`. Record the installed release tag or source commit when reporting
+a problem.
 
-An ignored flag is a refusal; a stale checker (`last=` past its bound) is FAILED.
+## Checks for contributors
 
-## Paths and helpers
-
-**(h) No guessed inputs.**
-- No default paths outside the tool's own `--dir` or `--store`; no directory but a CREATE target.
-- An external helper is found on PATH, with an override flag, and the path found is echoed.
-- An explicitly selected seat or named config is not guessed: help states it once, the summary line echoes it once (`seat=`, `config=`); payload output stays pure.
-
-**(i) Bounded listings.** At most `--max` items per kind, then `<TOKEN> MORE kind=<kind> shown=<n> total=<t> <remedy>` (SPEC.md). A cap never changes the work checked or the total counted.
-
-## First run and use
-
-
-**(k) A remedy preserves the effective inputs.** It keeps the failed operation's inputs (target, identity, login, selections, explicit empty and default overrides) unless it names an intended change. It carries only flags the target verb accepts, and names password VARIABLES, never a value. A test runs the printed remedy through the real CLI.
-
-**(l) An uncertain write is never reported as absent.** A write is done, refused or unconfirmed; a retry reports the stored receipt with its original stamp.
-
-**(m) Library noise never reaches stderr.** go-redis pool logs are discarded; the refusal says what failed.
-
-**(n) Used means delivered.** A delivery loop reports `delivered=` and `refused=` truthfully; an idle poll is a valid empty result. Dated delivery evidence is a release criterion.
-
-## Settled choices
-
-1. **Token shape:** `VERB STATUS`.
-2. **Field quoting:** oneline escaping.
-3. **The seat's Redis:** a tool may default to the Redis its seat is configured with; that is configuration, not a guess. Every other store is named with `--addr`.
-4. **Help pointer:** a malformed invocation's remedy is `<tool> <verb> -h`.
-
-## Enforce in this order
-
-1. Verb help at exit 0, with no side effects.
-2. A truthful final status and exit, and uncertainty and receipt semantics.
-3. Missing-input and ignored-flag refusal.
-4. Runnable, login-preserving remedies, and quiet library failures.
-5. Executable First runs and bounded listings.
-6. The flag and token migration, one coherent change that updates every affected doc with it. The agreed docs proceed now.
+The `contract` package builds the tools and checks root and verb help, bad
+invocations, missing inputs, exit codes and selected output rules in temporary
+directories. Tool tests cover the rest of their behavior. See
+[TESTING.md](TESTING.md) for commands and prerequisites.
