@@ -144,7 +144,7 @@ func (h *harness) main(args ...string) int {
 		stdin: strings.NewReader(h.stdin), stdout: &h.stdout, stderr: &h.stderr, environ: h.environ, run: h.run,
 		become: func(argv, env []string) error { h.became, h.env = argv, env; return nil },
 		lookPath: func(name string) (string, error) {
-			if name == "no-such-program-here" {
+			if name == "no-such-program-here" || name == "sops" && h.sopsMissing {
 				return "", errors.New("not found")
 			}
 			return "/bin/" + name, nil
@@ -579,17 +579,12 @@ func TestWrongKeyIsDiagnosed(t *testing.T) {
 	// When the key is a recipient, the failure is sops's own and the command that ran is shown.
 	require.NoError(t, os.WriteFile(filepath.Join(h.store, "ada.yaml"), []byte("A: ENC[x]\nsops:\n    age:\n        - recipient: "+pubB+"\n"), 0o600))
 	assert.Equal(t, 125, h.main(h.seat("exec", "--only", "A", "--", "true")...))
-	assert.Contains(t, h.stderr.String(), "sops -d failed (exit 128); its output is withheld; ran: cd "+h.store)
+	assert.Contains(t, h.stderr.String(), "sops -d failed (exit status 128); its output is withheld; ran: cd "+h.store)
 	assert.Contains(t, h.stderr.String(), "sops -d --output-type json ada.yaml")
 }
 
 func TestOtherDiagnoses(t *testing.T) {
 	t.Parallel()
-	h := newHarness(t)
-	h.seed("ada", map[string]string{"A": "v"})
-	assert.Equal(t, 125, h.main(h.seat("exec", "--only", "A", "--", "true")[:0:0]...) == 0 && false, false)
-	args := append(h.seat("exec", "--only", "A"), "--", "true")
-	args[len(args)-6] = "no-such-sops-here" // the --sops value
 	h2 := newHarness(t)
 	h2.seed("ada", map[string]string{"A": "v"})
 	h2.sopsMissing = true
@@ -643,8 +638,9 @@ func TestVerbHelp(t *testing.T) {
 				args = []string{"exec", flag, "--only", "X"}
 			}
 			assert.Equal(t, 0, h.main(args...), "%v", args)
-			for _, w := range want {
-				assert.Contains(t, h.stdout.String(), "nova-secrets "+w, "%v", args)
+			assert.Contains(t, h.stdout.String(), "nova-secrets "+want[0], "%v", args)
+			for _, w := range want[1:] {
+				assert.Contains(t, h.stdout.String(), w, "%v", args)
 			}
 			assert.Empty(t, h.calls)
 		}
