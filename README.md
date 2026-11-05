@@ -69,20 +69,6 @@ nova-slot --exclusive -- ./benchmark      # runs alone
 nova-slot status                          # each slot: free, or who holds it
 ```
 
-## Install
-
-Install a release on a machine with the fleet play, from a checkout with Ansible and the inventory script above:
-
-```sh
-ansible-playbook -i ./nova-inventory fleet/nova-tools-install.yml -e nova_tools_version=v2.0.0 -l bench-a
-```
-
-Or build any one tool: each directory is a Go `package main`, so `go build ./bus` (or `./config`, `./sandbox`, `./secrets`, `./slot`) makes its binary.
-
-## Size
-
-Each tool aims at a few hundred lines. A tool that grows past that is split or pared back.
-
 ## Docs
 
 | Doc | What it is |
