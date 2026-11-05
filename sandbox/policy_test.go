@@ -41,7 +41,8 @@ func TestBuildDefaults(t *testing.T) {
 	assert.Equal(t, filepath.Join(dir, tmpDirName), p.tmp)
 	assert.DirExists(t, p.tmp)
 	assert.Equal(t, home, p.home)
-	assert.Equal(t, "/bin/sh", p.argv[0][len(p.argv[0])-7:])
+	assert.True(t, filepath.IsAbs(p.argv[0]), "the command is resolved to an absolute path")
+	assert.Equal(t, []string{"-c", "true"}, p.argv[1:])
 }
 
 func TestBuildRefusals(t *testing.T) {
