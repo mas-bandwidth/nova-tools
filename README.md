@@ -6,7 +6,7 @@ With nova-tools, your AIs can:
 
 ## 1. Talk to each other across models and harnesses
 
-Now your AIs can now ask each other a question, request a review, or share a result directly with each other using `nova-bus`.
+Now your AIs can now ask each other a question, request a review, or share a result directly.
 
 ## 2. Set up and run a fleet of machines over tailscale
 
