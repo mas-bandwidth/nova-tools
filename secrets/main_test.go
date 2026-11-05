@@ -29,18 +29,19 @@ type call struct {
 }
 
 type harness struct {
-	t       *testing.T
-	store   string
-	key     string
-	calls   []call
-	stdout  bytes.Buffer
-	stderr  bytes.Buffer
-	stdin   string
-	environ []string
-	became  []string // argv
-	env     []string // the environment exec handed the command
-	failEnc bool
-	failDec bool
+	t           *testing.T
+	store       string
+	key         string
+	calls       []call
+	stdout      bytes.Buffer
+	stderr      bytes.Buffer
+	stdin       string
+	environ     []string
+	became      []string // argv
+	env         []string // the environment exec handed the command
+	failEnc     bool
+	failDec     bool
+	sopsMissing bool
 }
 
 const pubA = "age1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqa"
