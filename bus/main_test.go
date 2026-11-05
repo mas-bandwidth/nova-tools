@@ -353,7 +353,7 @@ func TestHelp(t *testing.T) {
 		assert.Contains(t, out, "nova-bus hook --as <name>", args)
 	}
 	_, out, _ := call(t, newFake(), nil, "", "help")
-	assert.Contains(t, out, "One hook per name: a second is refused while the first is present.")
+	assert.Contains(t, out, "One hook per name: a hook that finds the name held waits up to 40 s")
 	assert.Contains(t, out, "nova-bus who\n")
 	assert.Contains(t, out, "nova-bus pending --as <name> [--list]")
 }

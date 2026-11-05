@@ -87,7 +87,6 @@ Claim(p) ==
 Start(p) ==
   /\ hs[p] = "none"
   /\ IF Free(p) \/ Broken = "noclaimcheck" THEN Claim(p)
-     ELSE IF Broken = "nowait" THEN hs' = [hs EXCEPT ![p] = "refused"] /\ UNCHANGED <<keyVars, since, badStart>>
      ELSE hs' = [hs EXCEPT ![p] = "waiting"] /\ UNCHANGED <<keyVars, since, badStart>>
   /\ UNCHANGED <<stuck, waited, badDel>>
 
@@ -97,9 +96,10 @@ Poll(p) ==
   /\ Claim(p)
   /\ UNCHANGED <<stuck, waited, badDel>>
 
-\* W ticks of waiting and the key is still held: a live duplicate.
+\* W ticks of waiting and the key is still held: a live duplicate. Under
+\* "nowait" the hook gives up as soon as it finds the key held.
 GiveUp(p) ==
-  /\ hs[p] = "waiting" /\ waited[p] = W /\ ~Free(p)
+  /\ hs[p] = "waiting" /\ (waited[p] = W \/ Broken = "nowait") /\ ~Free(p)
   /\ hs' = [hs EXCEPT ![p] = "refused"]
   /\ UNCHANGED <<stuck, since, waited, keyVars, badStart, badDel>>
 
@@ -174,10 +174,14 @@ OnlyOwnerDeletes == ~badDel
 
 \* A hook that exited or crashed is absent within the TTL.
 GoneAfterExit == \A p \in Procs : (hs[p] \in {"exited", "crashed", "refused"}) ~> ~(Present /\ owner = p)
-\* A waiting hook whose rival crashed sees the name claimed: by itself, or by
-\* another hook that got there first.
+\* A waiting hook whose rival crashed, with the rival's key due to lapse
+\* inside what is left of the wait, sees the name claimed: by itself, or by
+\* another hook that got there first. (The wait is counted from its start: if
+\* the name changed hands meanwhile and the new holder's key outlasts the
+\* wait, the hook gives up, as for a live duplicate.)
 WaitClaims == \A p \in Procs :
-  (hs[p] = "waiting" /\ owner \in Procs /\ hs[owner] = "crashed") ~> (\E q \in Procs : hs[q] = "up" /\ owner = q /\ Present)
+  (hs[p] = "waiting" /\ owner \in Procs /\ hs[owner] = "crashed" /\ waited[p] + keyLeft < W)
+    ~> (\E q \in Procs : hs[q] = "up" /\ owner = q /\ Present)
 
 \* Waiting ends: the hook claims or gives up.
 WaitEnds == \A p \in Procs : (hs[p] = "waiting") ~> (hs[p] \in {"up", "refused"})
