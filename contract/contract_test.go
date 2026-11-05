@@ -25,6 +25,9 @@ type missingCase struct {
 	want []string
 }
 
+// The default verb of reserve and sandbox ("run", no name on the command line) has no
+// verb path to test and is not listed.
+
 // toolSpec is what the test knows about one tool that its banner does not give
 // in a parseable form.
 type toolSpec struct {
@@ -35,19 +38,20 @@ type toolSpec struct {
 }
 
 var toolSpecs = []toolSpec{
-	{dir: "bus", verbs: [][]string{{"send"}, {"hook"}},
+	{dir: "bus", verbs: [][]string{{"send"}, {"hook"}, {"who"}, {"pending"}},
 		missing: []missingCase{{[]string{"send"}, []string{"--as", "--to", "--addr|NOVA_BUS_REDIS"}}}},
-	{dir: "cairn", verbs: [][]string{{"help"}}},
+	{dir: "cairn", verbs: [][]string{{"open"}, {"append"}, {"index"}, {"receipt"}, {"self-talk"},
+		{"memory", "stats"}, {"memory", "search"}, {"memory", "check"}, {"memory", "verify"}}},
 	{dir: "config", verbs: [][]string{
 		{"machine", "list"}, {"machine", "show"}, {"machine", "add"}, {"machine", "set"}, {"machine", "remove"},
 		{"loop", "list"}, {"loop", "show"}, {"loop", "add"}, {"loop", "set"}, {"loop", "remove"},
-		{"fleet", "show"}, {"fleet", "set"}, {"inventory"}, {"schema"}},
+		{"history"}, {"inventory"}, {"schema"}},
 		missing: []missingCase{{[]string{"machine", "list"}, []string{"--pg"}}}},
-	{dir: "reserve", verbs: [][]string{{"hold"}, {"status"}}, extra: []int{126, 127},
+	{dir: "reserve", verbs: [][]string{{"set"}, {"hold"}, {"status"}}, extra: []int{126, 127},
 		missing: []missingCase{{[]string{"status", "--dir", "@tmp/no-such-dir"}, []string{"--dir"}}}},
-	{dir: "sandbox", verbs: [][]string{{"check"}, {"probe"}}, extra: []int{125, 126, 127},
+	{dir: "sandbox", verbs: [][]string{{"check"}, {"probe"}, {"show"}}, extra: []int{125, 126, 127},
 		missing: []missingCase{{[]string{"--read", "@tmp/no-such-dir"}, []string{"--read|command"}}}},
-	{dir: "secrets", verbs: [][]string{{"exec"}, {"set"}, {"seat", "add"}}, extra: []int{125},
+	{dir: "secrets", verbs: [][]string{{"exec"}, {"set"}, {"seat", "add"}, {"init"}, {"names"}}, extra: []int{125},
 		missing: []missingCase{{[]string{"exec"}, []string{"--only", "--store", "--key"}}}},
 }
 
