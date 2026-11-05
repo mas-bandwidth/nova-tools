@@ -65,7 +65,8 @@ nova-bus's.
 
 A runtime failure keeps the one-line shape, `nova-bus <verb>: <what>`, exit 1.
 An unreachable server is said plainly: `cannot reach redis at <host:port>
-(NOVA_BUS_REDIS): connection refused` (or `no such host`, or `timed out`); for
+(NOVA_BUS_REDIS): connection refused` (or `no such host`, `timed out`, or
+`connection lost` for a dropped connection: EOF, reset, broken pipe); for
 send it follows `SEND FAILED to <name>:`. A hook that loses Redis logs
 `nova-bus hook: <what>; reconnecting` once, then at most once a minute, while
 it retries every second.
@@ -78,9 +79,12 @@ it retries every second.
 | `NOVA_BUS_USER` | the Redis ACL user (optional): with it the client sends `AUTH <user> <password>`; without it, `AUTH <password>` as Redis's `default` user |
 | `NOVA_BUS_PASSWORD` | the Redis password (optional; never printed) |
 
-The user needs the keys `bus:*` and the commands nova-bus sends (streams,
-`GET`/`SET`/`DEL`, `SCAN`, `EVALSHA`/`EVAL`, `MULTI`/`EXEC`); `~bus:* +@all`
-is enough, and the functional test runs a server whose `default` user is off.
+`NOVA_BUS_USER` without `NOVA_BUS_PASSWORD` is refused (exit 2): go-redis
+would send no `AUTH` at all and run as `default`. The user needs the keys
+`bus:*` and the commands nova-bus sends (streams, `GET`/`SET`/`DEL`, `SCAN`,
+`EVALSHA`/`EVAL`, `MULTI`/`EXEC`):
+`~bus:* +@stream +@string +@keyspace +@transaction +eval +evalsha +@connection -@dangerous`.
+The functional test runs a server with exactly that user and `default` off.
 
 Each process keeps one Redis connection and runs its commands in turn. The
 client never retries a command by itself.

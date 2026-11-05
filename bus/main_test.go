@@ -111,7 +111,7 @@ func (f *fake) Read(ctx context.Context, stream string, pending bool, block time
 	f.pending[stream] = append(f.pending[stream], fresh[0].ID)
 	if f.failRead > 0 {
 		f.failRead--
-		return nil, errors.New("EOF")
+		return nil, io.EOF
 	}
 	return fresh[:1], nil
 }
@@ -347,6 +347,8 @@ func TestRefusals(t *testing.T) {
 		{"control char in --as", testEnv, []string{"send", "--as", "a\x01", "--to", "b", "s", "b"}, `bad name "a\x01"`},
 		{"re not an id", testEnv, []string{"send", "--as", "a", "--to", "b", "--re", "hello", "s", "b"}, `--re "hello" is not a message id`},
 		{"re half an id", testEnv, []string{"send", "--as", "a", "--to", "b", "--re", "12-", "s", "b"}, "is not a message id"},
+		{"user without password", map[string]string{"NOVA_BUS_REDIS": testAddr, "NOVA_BUS_USER": "bus"}, []string{"who"},
+			"nova-bus who: NOVA_BUS_USER is set but NOVA_BUS_PASSWORD is empty: a named user needs its password; run: nova-bus who -h\n"},
 		{"empty subject", testEnv, []string{"send", "--as", "a", "--to", "b", " ", "b"}, "nova-bus send: empty subject; run: nova-bus send -h\n"},
 		{"hook with --to", testEnv, []string{"hook", "--as", "beta", "--to", "x"}, "nova-bus hook: unknown flag --to; run: nova-bus hook -h\n"},
 		{"who with --as", testEnv, []string{"who", "--as", "beta"}, "unknown flag --as"},
@@ -372,7 +374,7 @@ type failingAdd struct{ *fake }
 
 func (f failingAdd) Add(ctx context.Context, stream string, fields map[string]string) (string, error) {
 	if stream == "bus:gamma" {
-		return "", errors.New("EOF")
+		return "", io.EOF
 	}
 	return f.fake.Add(ctx, stream, fields)
 }
@@ -386,7 +388,7 @@ func TestSendFailedIsNotRetried(t *testing.T) {
 		func(k string) string { return testEnv[k] }, nil, &out, &errOut, dial, f)
 	assert.Equal(t, 1, code)
 	assert.Equal(t, "beta 1-0\n", out.String(), "the names before the failure were sent")
-	assert.Equal(t, "nova-bus send: SEND FAILED to gamma: EOF\n", errOut.String())
+	assert.Equal(t, "nova-bus send: SEND FAILED to gamma: cannot reach redis at 127.0.0.1:1 (NOVA_BUS_REDIS): connection lost\n", errOut.String())
 	assert.Empty(t, f.entries["bus:delta"], "nothing after the failure")
 }
 
@@ -590,7 +592,7 @@ func TestLostReadReplyIsPrintedAfterReconnect(t *testing.T) {
 	var out, errOut bytes.Buffer
 	code := runHook(ctx, f, "beta", testAddr, f, &out, &errOut)
 	assert.Equal(t, 0, code)
-	assert.Contains(t, errOut.String(), "EOF; reconnecting")
+	assert.Equal(t, "HOOK OK name=beta waiting=1\nnova-bus hook: cannot reach redis at 127.0.0.1:1 (NOVA_BUS_REDIS): connection lost; reconnecting\n", errOut.String())
 	assert.Equal(t, []time.Duration{time.Second}, f.afters, "the wait is on the injected clock")
 	assert.Equal(t, "1-0\talpha\t-\tone\t1\n", out.String())
 	assert.Empty(t, f.pending["bus:beta"])
@@ -692,6 +694,7 @@ func TestUnreachableRedisIsSaidPlainly(t *testing.T) {
 	}
 	assert.Equal(t, "cannot reach redis at h:1 (NOVA_BUS_REDIS): no such host", describe(errors.New("dial tcp: lookup h: no such host"), "h:1"))
 	assert.Equal(t, "cannot reach redis at h:1 (NOVA_BUS_REDIS): timed out", describe(errors.New("dial tcp 10.0.0.1:1: i/o timeout"), "h:1"))
+	assert.Equal(t, "cannot reach redis at h:1 (NOVA_BUS_REDIS): connection lost", describe(errors.New("read tcp 1.2.3.4:5->h:1: read: connection reset by peer"), "h:1"))
 	assert.Equal(t, "WRONGPASS invalid", describe(errors.New("WRONGPASS invalid"), "h:1"))
 }
 

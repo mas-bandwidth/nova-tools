@@ -220,6 +220,8 @@ func run(ctx context.Context, args []string, env func(string) string, stdin io.R
 	switch {
 	case len(missing) > 0:
 		return misuse(stderr, verb, "missing %s", strings.Join(missing, ", "))
+	case env("NOVA_BUS_USER") != "" && env("NOVA_BUS_PASSWORD") == "":
+		return misuse(stderr, verb, "NOVA_BUS_USER is set but NOVA_BUS_PASSWORD is empty: a named user needs its password")
 	case verb == "send" && slices.Contains(names, ""):
 		return misuse(stderr, verb, "empty name in --to %q", *to)
 	case len(bad) > 0:
@@ -274,9 +276,10 @@ func idShape(id string) bool {
 	return ok && digits(ms) && digits(seq)
 }
 
-// describe names a Redis error, saying an unreachable server plainly.
+// describe names a Redis error, saying an unreachable or lost server plainly.
 func describe(err error, addr string) string {
-	for _, c := range [][2]string{{"connection refused", "connection refused"}, {"no such host", "no such host"}, {"timeout", "timed out"}} {
+	for _, c := range [][2]string{{"connection refused", "connection refused"}, {"no such host", "no such host"}, {"timeout", "timed out"},
+		{"connection reset", "connection lost"}, {"broken pipe", "connection lost"}, {io.EOF.Error(), "connection lost"}} {
 		if strings.Contains(err.Error(), c[0]) {
 			return fmt.Sprintf("cannot reach redis at %s (NOVA_BUS_REDIS): %s", addr, c[1])
 		}
