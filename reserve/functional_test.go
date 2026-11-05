@@ -223,7 +223,7 @@ func TestMissingCommandNeverHolds(t *testing.T) {
 	var ee *exec.ExitError
 	require.ErrorAs(t, err, &ee)
 	assert.Equal(t, 127, ee.ExitCode())
-	assert.Equal(t, "nova-reserve: no-such-command-anywhere: command not found\n", string(out))
+	assert.Equal(t, "nova-reserve: no-such-command-anywhere: command not found on PATH="+os.Getenv("PATH")+"\n", string(out))
 	assert.NoDirExists(t, filepath.Join(dir, "r"))
 	if runtime.GOOS != "windows" {
 		plain := filepath.Join(dir, "plain")
