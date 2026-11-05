@@ -1,11 +1,10 @@
-// Command nova-slot runs a command holding one of N load slots on this
-// machine, so builds, tests and benches queue instead of piling onto one box.
-// The slots are OS file locks in one directory, so the kernel frees the slot
-// of a holder that dies, however it dies.
+// Command nova-slot runs a command holding one of N load slots on this machine.
+// The slots are OS file locks, so the kernel frees a dead holder's slot.
 package main
 
 import (
 	"bufio"
+	"cmp"
 	"errors"
 	"flag"
 	"fmt"
@@ -24,15 +23,13 @@ import (
 const usage = `nova-slot: run a command holding one of N load slots on this machine.
 
   nova-slot [--slots N] [--wait D] [--exclusive] [--card ID] [--dir DIR] -- <cmd> [args...]
-      Wait for a free slot, run the command, free the slot when it exits for
-      any reason; exits with the command's status. --exclusive waits for every
-      holder to end and keeps new ones out while it runs (timing-sensitive
-      work). --wait bounds the wait (default: no bound); past it, exit 3.
-  nova-slot hold [same flags]
-      Take a slot, print one line starting HELD, and hold it until stdin
-      closes. --dir is accepted and ignored here (winlock's form).
-  nova-slot status [--dir DIR]
-      Print each slot: free, or held with the holder's pid, card and command.
+      Wait for a free slot, run the command, free the slot when it exits; exit
+      with its status. --exclusive runs alone: it waits for every holder and
+      keeps new ones out. --wait bounds the wait (default none; past it, exit 3).
+      The command dies with nova-slot on Linux and Windows; on macOS and the
+      BSDs a SIGKILL of nova-slot leaves it running without its slot.
+  nova-slot hold [same flags]     take a slot, print HELD..., hold it until stdin closes (--dir ignored)
+  nova-slot status [--dir DIR]   each slot: free, or held by pid, card and command
 
 N defaults to the CPU count / 4 (at least 1). DIR defaults to $NOVA_SLOT_DIR,
 else /tmp/nova-slot (C:\ProgramData\nova-slot on Windows); every caller on a
@@ -61,9 +58,8 @@ var errTimeout = errors.New("no slot within --wait")
 type taker struct {
 	lock tryLock
 	o    options
-	gate func()
-	held []func()
-	slot int
+	held []func() // what release lets go of; an exclusive waiter's gate too
+	slot int      // 0 until a shared hold; an exclusive hold names no slot
 }
 
 func (t *taker) path(name string) string { return filepath.Join(t.o.dir, name) }
@@ -71,17 +67,16 @@ func (t *taker) path(name string) string { return filepath.Join(t.o.dir, name) }
 // step makes one attempt without waiting; it reports true once held.
 func (t *taker) step() (bool, error) {
 	if t.o.exclusive {
-		if t.gate == nil {
-			rel, ok, err := t.lock(t.path("gate"), true)
+		if len(t.held) == 0 {
+			gate, ok, err := t.lock(t.path("gate"), true)
 			if !ok || err != nil {
 				return false, err
 			}
-			t.gate = rel
+			t.held = []func(){gate}
 		}
-		rel, ok, err := t.lock(t.path("all"), true)
+		all, ok, err := t.lock(t.path("all"), true)
 		if ok {
-			t.held = []func(){rel, t.gate}
-			t.gate = nil
+			t.held = append(t.held, all)
 		}
 		return ok, err
 	}
@@ -92,10 +87,10 @@ func (t *taker) step() (bool, error) {
 	defer gate()
 	for k := 1; k <= t.o.slots; k++ {
 		slot, ok, err := t.lock(t.path("slot"+strconv.Itoa(k)), true)
-		if err != nil {
-			return false, err
-		}
-		if !ok {
+		if !ok || err != nil {
+			if err != nil {
+				return false, err
+			}
 			continue
 		}
 		all, ok, err := t.lock(t.path("all"), false)
@@ -110,10 +105,6 @@ func (t *taker) step() (bool, error) {
 }
 
 func (t *taker) release() {
-	if t.gate != nil {
-		t.gate()
-		t.gate = nil
-	}
 	for _, rel := range t.held {
 		rel()
 	}
@@ -140,30 +131,17 @@ func acquire(lock tryLock, o options, now func() time.Time, sleep func()) (*take
 	}
 }
 
-// holderFile names the holder for status: slot<k>.holder, or all.holder.
-func (t *taker) holderFile() string {
-	if t.o.exclusive {
-		return t.path("all.holder")
-	}
-	return t.path("slot" + strconv.Itoa(t.slot) + ".holder")
+// name is the hold's lock, whose <name>.holder file status reads: slot<k>, or all.
+func (t *taker) name() string {
+	return map[bool]string{false: "slot" + strconv.Itoa(t.slot), true: "all"}[t.o.exclusive]
 }
 
 func (t *taker) describe() string {
-	if t.o.exclusive {
-		return fmt.Sprintf("mode=exclusive slot=all/%d card=%s pid=%d", t.o.slots, t.o.card, os.Getpid())
-	}
-	return fmt.Sprintf("mode=shared slot=%d/%d card=%s pid=%d", t.slot, t.o.slots, t.o.card, os.Getpid())
+	mode := map[bool]string{false: "shared", true: "exclusive"}[t.o.exclusive]
+	return fmt.Sprintf("mode=%s slot=%s/%d card=%s pid=%d", mode, strings.TrimPrefix(t.name(), "slot"), t.o.slots, t.o.card, os.Getpid())
 }
 
-func defaultDir(env func(string) string) string {
-	if d := env("NOVA_SLOT_DIR"); d != "" {
-		return d
-	}
-	if runtime.GOOS == "windows" {
-		return `C:\ProgramData\nova-slot`
-	}
-	return "/tmp/nova-slot"
-}
+func defaultDir(env func(string) string) string { return cmp.Or(env("NOVA_SLOT_DIR"), systemDir) }
 
 func parse(verb string, args []string, env func(string) string, stderr io.Writer) (options, error) {
 	fs := flag.NewFlagSet("nova-slot "+verb, flag.ContinueOnError)
@@ -229,25 +207,26 @@ func run(args []string, w world) int {
 	if verb == "hold" {
 		o.dir = defaultDir(w.env) // winlock's --dir named its holder files, never the count
 	}
-	if err := makeDir(o.dir); err != nil {
-		fmt.Fprintln(w.stderr, "nova-slot:", err)
-		return 3
+	if err := os.MkdirAll(o.dir, 0o777); err != nil {
+		return fail(w, err)
 	}
+	// ignored: only the directory's owner may widen it; others share it as it is
+	_ = os.Chmod(o.dir, 0o777|os.ModeSticky)
 	if verb == "status" {
 		return status(o.dir, w)
 	}
 	t, err := acquire(w.lock, o, w.now, w.sleep)
 	if err != nil {
-		fmt.Fprintln(w.stderr, "nova-slot:", err)
-		return 3
+		return fail(w, err)
 	}
 	defer t.release()
+	holder := t.path(t.name() + ".holder")
 	// ignored: the holder file is for status to read; the lock is the slot either way
-	_ = os.Remove(t.holderFile())
-	_ = os.WriteFile(t.holderFile(), []byte(fmt.Sprintf("pid=%d card=%s start=%s cmd=%s\n",
+	_ = os.Remove(holder)
+	_ = os.WriteFile(holder, []byte(fmt.Sprintf("pid=%d card=%s start=%s cmd=%s\n",
 		os.Getpid(), o.card, w.now().UTC().Format(time.RFC3339), strings.Join(o.argv, " "))), 0o666)
 	// ignored: a leftover holder file names a pid whose lock is gone; status probes the lock
-	defer os.Remove(t.holderFile())
+	defer os.Remove(holder)
 	if verb == "hold" {
 		fmt.Fprintln(w.stdout, "HELD", t.describe())
 		// ignored: EOF or an error both mean the caller is gone, which ends the hold
@@ -258,21 +237,11 @@ func run(args []string, w world) int {
 	return w.exec(o.argv)
 }
 
-func makeDir(dir string) error {
-	if err := os.MkdirAll(dir, 0o777); err != nil {
-		return fmt.Errorf("the slot directory: %w", err)
-	}
-	// ignored: only the directory's owner may widen it; others share it as it is
-	_ = os.Chmod(dir, 0o777|os.ModeSticky)
-	return nil
-}
-
 // status probes each lock in dir: a lock it can take is free.
 func status(dir string, w world) int {
 	names, err := filepath.Glob(filepath.Join(dir, "slot*"))
 	if err != nil {
-		fmt.Fprintln(w.stderr, "nova-slot:", err)
-		return 3
+		return fail(w, err)
 	}
 	out := bufio.NewWriter(w.stdout)
 	line := func(name string, exclusive bool) {
@@ -295,41 +264,44 @@ func status(dir string, w world) int {
 	}
 	line("all", false) // taken shared by every shared holder; held only by an exclusive one
 	if err := out.Flush(); err != nil {
-		fmt.Fprintln(w.stderr, "nova-slot:", err)
-		return 3
+		return fail(w, err)
 	}
 	return 0
 }
 
-// runCommand runs argv with this process's stdio, forwards interrupts to it,
-// and returns its exit status (128+signal when a signal ended it).
+// fail is exit 3: the slot, its directory or its output could not be had.
+func fail(w world, err error) int {
+	fmt.Fprintln(w.stderr, "nova-slot:", err)
+	return 3
+}
+
+// runCommand runs argv with this process's stdio, tied to this process so it
+// cannot outlive the slot (tie, per OS), forwards interrupts to it, and
+// returns its exit status (128+signal when a signal ended it).
 func runCommand(argv []string) int {
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
-	if err := cmd.Start(); err != nil {
-		fmt.Fprintln(os.Stderr, "nova-slot:", err)
-		return 127
-	}
-	sigs := make(chan os.Signal, 1)
-	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
-	go func() {
-		for s := range sigs {
-			// ignored: a process that has already ended needs no signal
-			_ = cmd.Process.Signal(s)
-		}
-	}()
-	err := cmd.Wait()
-	signal.Stop(sigs)
-	var ee *exec.ExitError
-	if errors.As(err, &ee) {
-		if ws, ok := ee.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
-			return 128 + int(ws.Signal())
-		}
-		return ee.ExitCode()
-	}
+	untie, err := tie(cmd)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "nova-slot:", err)
 		return 127
 	}
-	return 0
+	defer untie()
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		for s := range sigs {
+			forward(cmd, s)
+		}
+	}()
+	err = cmd.Wait()
+	signal.Stop(sigs)
+	if cmd.ProcessState == nil {
+		fmt.Fprintln(os.Stderr, "nova-slot:", err)
+		return 127
+	}
+	if ws, ok := cmd.ProcessState.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
+		return 128 + int(ws.Signal())
+	}
+	return cmd.ProcessState.ExitCode()
 }

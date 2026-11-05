@@ -17,11 +17,14 @@ import (
 )
 
 // The functional tests run the real binary on real locks. The commands it
-// runs are this test binary again, as a child: NOVA_SLOT_CHILD=sleep sleeps
-// (a killed holder's orphaned child ends by itself); =exit7 exits 7.
+// runs are this test binary again, as a child: NOVA_SLOT_CHILD=sleep writes
+// its pid to NOVA_SLOT_PIDFILE when that is set, and sleeps; =exit7 exits 7.
 func TestMain(m *testing.M) {
 	switch os.Getenv("NOVA_SLOT_CHILD") {
 	case "sleep":
+		if p := os.Getenv("NOVA_SLOT_PIDFILE"); p != "" {
+			_ = os.WriteFile(p, []byte(strconv.Itoa(os.Getpid())), 0o644)
+		}
 		time.Sleep(30 * time.Second)
 		os.Exit(0)
 	case "exit7":
@@ -124,4 +127,35 @@ func TestHoldEndsWhenStdinCloses(t *testing.T) {
 	require.NoError(t, cmd.Wait())
 	status, _ = exec.Command(bin, "status", "--dir", dir).Output()
 	assert.Contains(t, string(status), "slot1 free")
+}
+
+// TestKilledHolderTakesItsCommandWith SIGKILLs nova-slot itself: its command
+// must not run on without the slot (Linux: Pdeathsig; Windows: the job), and
+// the slot frees. On macOS and the BSDs the command outlives a SIGKILL, so
+// only the slot is checked there.
+func TestKilledHolderTakesItsCommandWith(t *testing.T) {
+	t.Parallel()
+	bin, dir := build(t), t.TempDir()
+	pidfile := filepath.Join(t.TempDir(), "child.pid")
+	holder := slotCmd(t, bin, dir, "sleep", "--slots", "1")
+	holder.Env = append(holder.Env, "NOVA_SLOT_PIDFILE="+pidfile)
+	require.NoError(t, holder.Start())
+	t.Cleanup(func() { _ = holder.Process.Kill(); _ = holder.Wait() })
+	var child int
+	require.Eventually(t, func() bool {
+		b, err := os.ReadFile(pidfile)
+		child, _ = strconv.Atoi(string(b))
+		return err == nil && child > 0
+	}, patience, 50*time.Millisecond)
+	require.True(t, alive(child), "the command runs while nova-slot holds its slot")
+	require.NoError(t, holder.Process.Kill())
+	_ = holder.Wait()
+	if runtime.GOOS == "linux" || runtime.GOOS == "windows" {
+		assert.Eventually(t, func() bool { return !alive(child) }, patience, 50*time.Millisecond,
+			"the command outlived nova-slot")
+	}
+	assert.Eventually(t, func() bool {
+		out, _ := exec.Command(bin, "status", "--dir", dir).Output()
+		return strings.Contains(string(out), "slot1 free")
+	}, patience, 50*time.Millisecond)
 }

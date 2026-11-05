@@ -24,6 +24,13 @@
 \*   "nogate"  an exclusive taker skips the gate: ExclusiveBarsShared fails
 \*   "leak"    a crashed holder's locks are never let go (a PID file, a
 \*             daemon's table): a waiter never runs (EveryWaiterRuns)
+\*   "orphan"  a crashed holder's command runs on (no Pdeathsig, no job
+\*             object: macOS and the BSDs on SIGKILL): CommandHasSlot fails
+\*
+\* cmd is the set of processes whose command runs. The command starts once
+\* the hold is complete and ends before the locks are let go (runCommand
+\* returns, then release), so a finish is one step; a crash takes the
+\* command with it (proc_linux.go Pdeathsig, os_windows.go job object).
 EXTENDS Naturals, FiniteSets
 
 CONSTANTS Procs, N, Rounds, MaxCrash, Broken
@@ -31,9 +38,9 @@ CONSTANTS Procs, N, Rounds, MaxCrash, Broken
 None == "none"
 Waiting == {"sgate", "sscan", "sall", "xgate", "xall"}
 
-VARIABLES pc, scan, mine, slotEx, gateEx, gateSh, allEx, allSh, rounds, crashes
+VARIABLES pc, scan, mine, slotEx, gateEx, gateSh, allEx, allSh, rounds, crashes, cmd
 
-vars == <<pc, scan, mine, slotEx, gateEx, gateSh, allEx, allSh, rounds, crashes>>
+vars == <<pc, scan, mine, slotEx, gateEx, gateSh, allEx, allSh, rounds, crashes, cmd>>
 
 TypeOK ==
   /\ pc \in [Procs -> {"idle", "dead"} \cup Waiting \cup {"srun", "xrun"}]
@@ -41,13 +48,13 @@ TypeOK ==
   /\ slotEx \in [1..N -> Procs \cup {None}]
   /\ gateEx \in Procs \cup {None} /\ gateSh \subseteq Procs
   /\ allEx \in Procs \cup {None} /\ allSh \subseteq Procs
-  /\ rounds \in [Procs -> 0..Rounds] /\ crashes \in 0..MaxCrash
+  /\ rounds \in [Procs -> 0..Rounds] /\ crashes \in 0..MaxCrash /\ cmd \subseteq Procs
 
 Init ==
   /\ pc = [p \in Procs |-> "idle"] /\ scan = [p \in Procs |-> 1] /\ mine = [p \in Procs |-> 0]
   /\ slotEx = [k \in 1..N |-> None]
   /\ gateEx = None /\ gateSh = {} /\ allEx = None /\ allSh = {}
-  /\ rounds = [p \in Procs |-> 0] /\ crashes = 0
+  /\ rounds = [p \in Procs |-> 0] /\ crashes = 0 /\ cmd = {}
 
 Start(p) ==
   /\ pc[p] = "idle" /\ rounds[p] < Rounds
@@ -147,7 +154,15 @@ Crash(p) ==
 
 Step(p) == SGate(p) \/ SScan(p) \/ SAll(p) \/ SFinish(p) \/ XGate(p) \/ XAll(p) \/ XFinish(p)
 
-Next == \E p \in Procs : Start(p) \/ Step(p) \/ XTimeout(p) \/ Crash(p)
+Run == {"srun", "xrun"}
+
+\* A command starts as its hold completes and ends as its hold is finished.
+Commands ==
+  cmd' = (cmd \ {q \in Procs : pc[q] \in Run /\ pc'[q] \notin Run}) \cup {q \in Procs : pc'[q] \in Run}
+
+Next == \E p \in Procs :
+  \/ (Start(p) \/ Step(p) \/ XTimeout(p)) /\ Commands
+  \/ Crash(p) /\ cmd' = IF Broken = "orphan" THEN cmd ELSE cmd \ {p}
 
 \* Every process keeps taking its own steps; starting, timing out and dying
 \* are never forced.
@@ -170,6 +185,9 @@ ExclusiveBarsShared ==
   (\E x \in Procs : pc[x] \in {"xall", "xrun"}) => \A q \in Procs : pc[q] \notin {"sscan", "sall"}
 \* The layout: a locked slot file belongs to the process that scanned to it.
 SlotOwned == \A k \in 1..N : slotEx[k] # None => mine[slotEx[k]] = k
+
+\* No command runs without its process holding the slot.
+CommandHasSlot == \A p \in cmd : pc[p] \in Run
 
 EveryWaiterRuns == \A p \in Procs :
   pc[p] \in Waiting ~> pc[p] \in {"srun", "xrun", "idle", "dead"}
