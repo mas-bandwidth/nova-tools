@@ -173,6 +173,12 @@ func TestPresenceWhoAndPending(t *testing.T) {
 	ttl, err := c.TTL(ctx, "bus:presence:beta").Result()
 	require.NoError(t, err)
 	assert.True(t, ttl > 0 && ttl <= presenceTTL, ttl)
+	second := exec.Command(bin, "hook", "--as", "beta")
+	second.Env = append(os.Environ(), "NOVA_BUS_REDIS="+addr)
+	out, err := second.CombinedOutput()
+	assert.Equal(t, 1, second.ProcessState.ExitCode(), string(out))
+	assert.Contains(t, string(out), "name already hooked: beta")
+	assert.Regexp(t, `^beta\t\d+s\n$`, bus("who"), "the first hook's presence is untouched")
 	stopped := time.Now()
 	require.NoError(t, h.cmd.Process.Signal(syscall.SIGTERM))
 	require.NoError(t, h.cmd.Wait(), "a clean exit")
@@ -186,4 +192,46 @@ func TestPresenceWhoAndPending(t *testing.T) {
 	ttl, err = c.TTL(ctx, "bus:presence:beta").Result()
 	require.NoError(t, err)
 	assert.True(t, ttl > 0 && ttl <= presenceTTL, "and then lapses: %v", ttl)
+
+	require.NoError(t, c.XAdd(ctx, &redis.XAddArgs{Stream: "bus:presence:zeta", Values: []string{"k", "v"}}).Err())
+	assert.Regexp(t, `^beta\t\d+s\nzeta\t\?\n$`, bus("who"), "a key that is not a string is shown, not fatal")
+}
+
+// TestHookOnAClosedPipe is hook | true: the reader is gone before the first
+// line, the write fails with EPIPE (SIGPIPE ignored), and the hook releases
+// its presence and exits 1, leaving the message pending.
+func TestHookOnAClosedPipe(t *testing.T) {
+	t.Parallel()
+	addr := startRedis(t)
+	bin := filepath.Join(t.TempDir(), "nova-bus")
+	build := exec.Command("go", "build", "-o", bin, ".")
+	build.Stderr = os.Stderr
+	require.NoError(t, build.Run())
+	ctx := context.Background()
+	c := redis.NewClient(&redis.Options{Addr: addr})
+	t.Cleanup(func() { _ = c.Close() }) // ignored: closing a test client
+	env := append(os.Environ(), "NOVA_BUS_REDIS="+addr)
+	send := exec.Command(bin, "send", "--as", "alpha", "--to", "beta", "one", "1")
+	send.Env = env
+	out, err := send.CombinedOutput()
+	require.NoError(t, err, string(out))
+
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	require.NoError(t, r.Close())
+	var stderr strings.Builder
+	hook := exec.Command(bin, "hook", "--as", "beta")
+	hook.Env, hook.Stdout, hook.Stderr = env, w, &stderr
+	err = hook.Run()
+	require.NoError(t, w.Close())
+	var exit *exec.ExitError
+	require.ErrorAs(t, err, &exit)
+	assert.Equal(t, 1, exit.ExitCode(), "exit 1, not killed by SIGPIPE: %s", stderr.String())
+	assert.Contains(t, stderr.String(), "broken pipe")
+	n, err := c.Exists(ctx, "bus:presence:beta").Result()
+	require.NoError(t, err)
+	assert.Zero(t, n, "presence released")
+	p, err := c.XPending(ctx, "bus:beta", group).Result()
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), p.Count, "the message was not printed, so not acked")
 }

@@ -14,34 +14,49 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// fake is an in-memory inbox store: per stream, the entries, how many the
+// fake is an in-memory store and clock: per stream, the entries, how many the
 // group has been handed, and the handed-but-unacked ids; the presence keys
 // with their deadlines on the fake clock. A read for new entries hands one at
-// a time. When there are none it lets quiet reads time out, each moving the
-// clock on by its block, then calls idle (the test stops the hook).
+// a time and moves the clock on by step. When there are none it lets quiet
+// reads time out, each moving the clock on by its block, then calls idle (the
+// test stops the hook). Like the real client, it refuses a done context.
 type fake struct {
 	entries   map[string][]Msg
 	delivered map[string]int
 	pending   map[string][]string
 	failAck   int // fail this many acks, then succeed
+	failRead  int // hand this many entries and then lose the reply
 	idle      func()
-	quiet     int // quiet reads to time out before idle
+	onWrite   func() // after each line is written
+	quiet     int    // quiet reads to time out before idle
+	step      time.Duration
 	clock     time.Time
 	blocks    []time.Duration
+	afters    []time.Duration
 	presence  map[string]string
 	deadline  map[string]time.Time
-	sets      []time.Time // the clock at each SetPresence
+	claims    []time.Time // the clock at each successful Claim
 	log       []string    // the order of writes to stdout and acks
 }
 
 var t0 = time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
 
+const testValue = "2026-11-05T12:00:00Z\ttoken"
+
 func newFake() *fake {
 	return &fake{entries: map[string][]Msg{}, delivered: map[string]int{}, pending: map[string][]string{},
-		clock: t0, presence: map[string]string{}, deadline: map[string]time.Time{}}
+		clock: t0, presence: map[string]string{}, deadline: map[string]time.Time{}, idle: func() {}}
 }
 
-func (f *fake) now() time.Time { return f.clock }
+func (f *fake) Now() time.Time { return f.clock }
+
+func (f *fake) After(d time.Duration) <-chan time.Time {
+	f.afters = append(f.afters, d)
+	f.clock = f.clock.Add(d)
+	c := make(chan time.Time, 1)
+	c <- f.clock
+	return c
+}
 
 func (f *fake) Add(_ context.Context, stream string, fields map[string]string) (string, error) {
 	id := fmt.Sprintf("%d-0", len(f.entries[stream])+1)
@@ -65,6 +80,9 @@ func (f *fake) find(stream, id string) Msg {
 }
 
 func (f *fake) Read(ctx context.Context, stream string, pending bool, block time.Duration) ([]Msg, error) {
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
 	if pending {
 		var out []Msg
 		for _, id := range f.pending[stream] {
@@ -83,8 +101,13 @@ func (f *fake) Read(ctx context.Context, stream string, pending bool, block time
 		f.idle()
 		return nil, ctx.Err()
 	}
+	f.clock = f.clock.Add(f.step)
 	f.delivered[stream]++
 	f.pending[stream] = append(f.pending[stream], fresh[0].ID)
+	if f.failRead > 0 {
+		f.failRead--
+		return nil, errors.New("EOF")
+	}
 	return fresh[:1], nil
 }
 
@@ -96,15 +119,35 @@ func (f *fake) Waiting(_ context.Context, stream string) ([]Msg, error) {
 	return append(out, f.entries[stream][f.delivered[stream]:]...), nil
 }
 
-func (f *fake) SetPresence(_ context.Context, name, value string, ttl time.Duration) error {
-	f.presence[name], f.deadline[name] = value, f.clock.Add(ttl)
-	f.sets = append(f.sets, f.clock)
-	return nil
+func (f *fake) Count(ctx context.Context, stream string) (int64, error) {
+	w, err := f.Waiting(ctx, stream)
+	return int64(len(w)), err
 }
 
-func (f *fake) DelPresence(_ context.Context, name string) error {
-	delete(f.presence, name)
-	delete(f.deadline, name)
+func (f *fake) live(name string) bool {
+	_, ok := f.presence[name]
+	return ok && f.clock.Before(f.deadline[name])
+}
+
+func (f *fake) Claim(ctx context.Context, name, value string, ttl time.Duration) (bool, error) {
+	if ctx.Err() != nil {
+		return false, ctx.Err()
+	}
+	if f.live(name) && f.presence[name] != value {
+		return false, nil
+	}
+	f.presence[name], f.deadline[name] = value, f.clock.Add(ttl)
+	f.claims = append(f.claims, f.clock)
+	return true, nil
+}
+
+func (f *fake) Release(ctx context.Context, name, value string) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if f.live(name) && f.presence[name] == value {
+		delete(f.presence, name)
+	}
 	return nil
 }
 
@@ -112,14 +155,17 @@ func (f *fake) DelPresence(_ context.Context, name string) error {
 func (f *fake) Presence(context.Context) (map[string]string, error) {
 	out := map[string]string{}
 	for n, v := range f.presence {
-		if f.clock.Before(f.deadline[n]) {
+		if f.live(n) {
 			out[n] = v
 		}
 	}
 	return out, nil
 }
 
-func (f *fake) Ack(_ context.Context, stream, id string) error {
+func (f *fake) Ack(ctx context.Context, stream, id string) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	f.log = append(f.log, "ack "+id)
 	if f.failAck > 0 {
 		f.failAck--
@@ -140,7 +186,7 @@ func call(t *testing.T, f *fake, env map[string]string, stdin string, args ...st
 	t.Helper()
 	var out, errOut bytes.Buffer
 	dial := func(string, string) Store { return f }
-	code := run(context.Background(), args, func(k string) string { return env[k] }, strings.NewReader(stdin), &out, &errOut, dial, f.now)
+	code := run(context.Background(), args, func(k string) string { return env[k] }, strings.NewReader(stdin), &out, &errOut, dial, f)
 	return code, out.String(), errOut.String()
 }
 
@@ -150,7 +196,7 @@ func runHookOnce(t *testing.T, f *fake, name string) (string, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	f.idle = cancel
 	var out bytes.Buffer
-	err := hook(ctx, f, name, f.clock, f.now, &logWriter{&out, f})
+	err := hook(ctx, f, name, testValue, f, &logWriter{&out, f})
 	cancel()
 	return out.String(), err
 }
@@ -164,7 +210,11 @@ type logWriter struct {
 
 func (l *logWriter) Write(p []byte) (int, error) {
 	l.f.log = append(l.f.log, "print "+strings.SplitN(string(p), "\t", 2)[0])
-	return l.w.Write(p)
+	n, err := l.w.Write(p)
+	if l.f.onWrite != nil {
+		l.f.onWrite()
+	}
+	return n, err
 }
 
 func send(t *testing.T, f *fake, subject, body string) {
@@ -242,40 +292,68 @@ func TestRefusals(t *testing.T) {
 		name string
 		env  map[string]string
 		args []string
+		code int
 		want string
 	}{
-		{"missing NOVA_BUS_REDIS", map[string]string{}, []string{"hook", "--as", "beta"}, "NOVA_BUS_REDIS is not set"},
-		{"send without --as", testEnv, []string{"send", "--to", "beta", "s", "b"}, "give --as <name>"},
-		{"hook without --as", testEnv, []string{"hook"}, "give --as <name>"},
-		{"re of -", testEnv, []string{"send", "--as", "a", "--to", "beta", "--re", "-", "s", "b"}, "--re wants a message id"},
-		{"send without a body", testEnv, []string{"send", "--as", "a", "--to", "beta", "s"}, "usage: nova-bus send"},
-		{"send without --to", testEnv, []string{"send", "--as", "a", "s", "b"}, "usage: nova-bus send"},
-		{"empty name", testEnv, []string{"send", "--as", "a", "--to", "a,,b", "s", "b"}, "empty name"},
-		{"unknown verb", testEnv, []string{"recv"}, "unknown verb"},
-		{"ack is not a verb", testEnv, []string{"ack", "--as", "beta"}, "unknown verb"},
-		{"colon in a name", testEnv, []string{"send", "--as", "a", "--to", "presence:x", "s", "b"}, "may not contain ':'"},
-		{"hook with --to", testEnv, []string{"hook", "--as", "beta", "--to", "x"}, "hook does not take --to"},
-		{"who with --as", testEnv, []string{"who", "--as", "beta"}, "who does not take --as"},
-		{"pending without --as", testEnv, []string{"pending"}, "give --as <name>"},
-		{"pending with an argument", testEnv, []string{"pending", "--as", "beta", "x"}, "pending takes no arguments"},
+		{"missing NOVA_BUS_REDIS", map[string]string{}, []string{"hook", "--as", "beta"}, 1, "NOVA_BUS_REDIS is not set"},
+		{"send without --as", testEnv, []string{"send", "--to", "beta", "s", "b"}, 2, "give --as <name>"},
+		{"hook without --as", testEnv, []string{"hook"}, 2, "give --as <name>"},
+		{"re of -", testEnv, []string{"send", "--as", "a", "--to", "beta", "--re", "-", "s", "b"}, 2, "--re wants a message id"},
+		{"send without a body", testEnv, []string{"send", "--as", "a", "--to", "beta", "s"}, 2, "usage: nova-bus send"},
+		{"send without --to", testEnv, []string{"send", "--as", "a", "s", "b"}, 2, "usage: nova-bus send"},
+		{"empty name", testEnv, []string{"send", "--as", "a", "--to", "a,,b", "s", "b"}, 2, "empty name"},
+		{"unknown verb", testEnv, []string{"recv"}, 2, "unknown verb"},
+		{"ack is not a verb", testEnv, []string{"ack", "--as", "beta"}, 2, "unknown verb"},
+		{"unknown flag", testEnv, []string{"hook", "--as", "beta", "--nope"}, 2, "flag provided but not defined"},
+		{"colon in a name", testEnv, []string{"send", "--as", "a", "--to", "presence:x", "s", "b"}, 2, "may not contain ':'"},
+		{"hook with --to", testEnv, []string{"hook", "--as", "beta", "--to", "x"}, 2, "hook does not take --to"},
+		{"who with --as", testEnv, []string{"who", "--as", "beta"}, 2, "who does not take --as"},
+		{"pending without --as", testEnv, []string{"pending"}, 2, "give --as <name>"},
+		{"pending with an argument", testEnv, []string{"pending", "--as", "beta", "x"}, 2, "pending takes no arguments"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			f := newFake()
 			code, _, errOut := call(t, f, tc.env, "", tc.args...)
-			assert.NotEqual(t, 0, code)
+			assert.Equal(t, tc.code, code)
 			assert.Contains(t, errOut, tc.want)
 			assert.Empty(t, f.entries, "a refused send writes nothing")
 		})
 	}
 }
 
+// failingAdd is a store whose XADD fails for one name.
+type failingAdd struct{ *fake }
+
+func (f failingAdd) Add(ctx context.Context, stream string, fields map[string]string) (string, error) {
+	if stream == "bus:gamma" {
+		return "", errors.New("EOF")
+	}
+	return f.fake.Add(ctx, stream, fields)
+}
+
+func TestSendFailedIsNotRetried(t *testing.T) {
+	t.Parallel()
+	f := newFake()
+	var out, errOut bytes.Buffer
+	dial := func(string, string) Store { return failingAdd{f} }
+	code := run(context.Background(), []string{"send", "--as", "a", "--to", "beta,gamma,delta", "s", "b"},
+		func(k string) string { return testEnv[k] }, nil, &out, &errOut, dial, f)
+	assert.Equal(t, 1, code)
+	assert.Equal(t, "beta 1-0\n", out, "the names before the failure were sent")
+	assert.Contains(t, errOut.String(), "SEND FAILED to gamma: EOF")
+	assert.Empty(t, f.entries["bus:delta"], "nothing after the failure")
+}
+
 func TestHelp(t *testing.T) {
 	t.Parallel()
-	code, out, _ := call(t, newFake(), nil, "", "help")
-	assert.Equal(t, 0, code)
-	assert.Contains(t, out, "nova-bus hook --as <name>")
-	assert.Contains(t, out, "Run one hook per name; two hooks on the same name split its messages.")
+	for _, args := range [][]string{{"help"}, {"-h"}, {"--help"}, {}, {"send", "-h"}} {
+		code, out, _ := call(t, newFake(), nil, "", args...)
+		assert.Equal(t, 0, code, args)
+		assert.Contains(t, out, "nova-bus hook --as <name>", args)
+	}
+	_, out, _ := call(t, newFake(), nil, "", "help")
+	assert.Contains(t, out, "One hook per name: a second is refused while the first is present.")
 	assert.Contains(t, out, "nova-bus who\n")
 	assert.Contains(t, out, "nova-bus pending --as <name> [--list]")
 }
@@ -290,21 +368,73 @@ func TestHookAcksEachLineAfterPrintingIt(t *testing.T) {
 	assert.Equal(t, []string{"print 1-0", "ack 1-0", "print 2-0", "ack 2-0"}, f.log)
 }
 
-func TestHookSetsPresenceAtStartAndRefreshes(t *testing.T) {
+// A signal between writing a line and acking it does not leave the line
+// unacked: the ack runs on a context the signal does not cancel, and nothing
+// more is printed.
+func TestSignalAfterWriteStillAcks(t *testing.T) {
+	t.Parallel()
+	f := newFake()
+	send(t, f, "one", "1")
+	send(t, f, "two", "2")
+	ctx, cancel := context.WithCancel(context.Background())
+	f.onWrite = cancel
+	var out bytes.Buffer
+	err := hook(ctx, f, "beta", testValue, f, &logWriter{&out, f})
+	assert.ErrorIs(t, err, context.Canceled)
+	assert.Equal(t, []string{"print 1-0", "ack 1-0"}, f.log)
+	assert.Empty(t, f.pending["bus:beta"])
+}
+
+func TestHookClaimsPresenceAtStartAndRefreshes(t *testing.T) {
 	t.Parallel()
 	f := newFake()
 	f.quiet = 30                     // a quiet read waits readBlock: 30 s in all
 	_, _ = runHookOnce(t, f, "beta") // ends on the fake's cancel
-	assert.Equal(t, t0.Format(time.RFC3339), f.presence["beta"], "the value is the hook's start time")
-	assert.Equal(t, []time.Time{t0, t0.Add(10 * time.Second), t0.Add(20 * time.Second), t0.Add(30 * time.Second)}, f.sets)
-	assert.Equal(t, t0.Add(60*time.Second), f.deadline["beta"], "each set holds the key for 30 s")
+	assert.Equal(t, testValue, f.presence["beta"])
+	assert.Equal(t, []time.Time{t0, t0.Add(10 * time.Second), t0.Add(20 * time.Second), t0.Add(30 * time.Second)}, f.claims)
+	assert.Equal(t, t0.Add(60*time.Second), f.deadline["beta"], "each claim holds the key for 30 s")
 	for _, b := range f.blocks {
 		assert.LessOrEqual(t, b, readBlock, "no read waits past the next refresh, or long enough to delay an exit")
 		assert.Positive(t, b, "a block of 0 would wait forever")
 	}
 }
 
-func TestHookDeletesPresenceOnCleanExit(t *testing.T) {
+func TestHookRefreshesUnderContinuousTraffic(t *testing.T) {
+	t.Parallel()
+	f := newFake()
+	for i := 0; i < 25; i++ {
+		send(t, f, "s", "b")
+	}
+	f.step = time.Second // every read returns a message and takes a second
+	out, _ := runHookOnce(t, f, "beta")
+	assert.Equal(t, 25, strings.Count(out, "\n"))
+	assert.Equal(t, []time.Time{t0, t0.Add(10 * time.Second), t0.Add(20 * time.Second)}, f.claims)
+}
+
+func TestSecondHookOnANameIsRefused(t *testing.T) {
+	t.Parallel()
+	f := newFake()
+	_, _ = runHookOnce(t, f, "beta") // the first hook, still present
+	f.clock = t0.Add(5 * time.Second)
+	var out, errOut bytes.Buffer
+	code := runHook(context.Background(), f, "beta", f, &out, &errOut)
+	assert.Equal(t, 1, code)
+	assert.Contains(t, errOut.String(), "name already hooked: beta")
+	assert.Equal(t, testValue, f.presence["beta"], "the first hook's presence is untouched")
+	assert.Empty(t, out.String())
+}
+
+func TestReleaseLeavesAnotherHooksPresence(t *testing.T) {
+	t.Parallel()
+	f := newFake()
+	ok, err := f.Claim(context.Background(), "beta", "other\tvalue", presenceTTL)
+	require.True(t, ok)
+	require.NoError(t, err)
+	require.NoError(t, f.Release(context.Background(), "beta", testValue))
+	assert.Equal(t, "other\tvalue", f.presence["beta"])
+}
+
+func TestHookReleasesPresenceOnCleanExit(t *testing.T) {
 	t.Parallel()
 	f := newFake()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -313,15 +443,49 @@ func TestHookDeletesPresenceOnCleanExit(t *testing.T) {
 		cancel()
 	}
 	var out, errOut bytes.Buffer
-	code := runHook(ctx, f, "beta", f.now, &out, &errOut)
+	code := runHook(ctx, f, "beta", f, &out, &errOut)
 	assert.Equal(t, 0, code, errOut.String())
 	assert.NotContains(t, f.presence, "beta")
+}
+
+type brokenPipe struct{}
+
+func (brokenPipe) Write([]byte) (int, error) { return 0, errors.New("write |1: broken pipe") }
+
+func TestHookReleasesPresenceWhenStdoutFails(t *testing.T) {
+	t.Parallel()
+	f := newFake()
+	send(t, f, "one", "1")
+	var errOut bytes.Buffer
+	code := runHook(context.Background(), f, "beta", f, brokenPipe{}, &errOut)
+	assert.Equal(t, 1, code)
+	assert.Contains(t, errOut.String(), "writing stdout: write |1: broken pipe")
+	assert.NotContains(t, f.presence, "beta")
+	assert.Equal(t, []string{"1-0"}, f.pending["bus:beta"], "the unprinted message stays pending")
+}
+
+// A read whose reply is lost after the server handed the entry: the hook
+// waits a second on its clock, reconnects and prints it from the pending list.
+func TestLostReadReplyIsPrintedAfterReconnect(t *testing.T) {
+	t.Parallel()
+	f := newFake()
+	send(t, f, "one", "1")
+	f.failRead = 1
+	ctx, cancel := context.WithCancel(context.Background())
+	f.idle = cancel
+	var out, errOut bytes.Buffer
+	code := runHook(ctx, f, "beta", f, &out, &errOut)
+	assert.Equal(t, 0, code)
+	assert.Contains(t, errOut.String(), "EOF; reconnecting")
+	assert.Equal(t, []time.Duration{time.Second}, f.afters, "the wait is on the injected clock")
+	assert.Equal(t, "1-0\talpha\t-\tone\t1\n", out.String())
+	assert.Empty(t, f.pending["bus:beta"])
 }
 
 func TestCrashedHookLapsesWithinTTL(t *testing.T) {
 	t.Parallel()
 	f := newFake()
-	_, _ = runHookOnce(t, f, "beta") // stops without deleting: a crash, as far as Redis knows
+	_, _ = runHookOnce(t, f, "beta") // stops without releasing: a crash, as far as Redis knows
 	f.clock = t0.Add(29 * time.Second)
 	present, _ := f.Presence(context.Background())
 	assert.Contains(t, present, "beta")
@@ -333,15 +497,21 @@ func TestCrashedHookLapsesWithinTTL(t *testing.T) {
 func TestWhoSortsAndShowsUptime(t *testing.T) {
 	t.Parallel()
 	f := newFake()
+	claim := func(name, value string, ttl time.Duration) {
+		ok, err := f.Claim(context.Background(), name, value, ttl)
+		require.True(t, ok)
+		require.NoError(t, err)
+	}
 	f.clock = t0.Add(-90 * time.Minute)
-	require.NoError(t, f.SetPresence(context.Background(), "gamma", f.clock.Format(time.RFC3339), time.Hour*2))
+	claim("gamma", f.clock.Format(time.RFC3339)+"\tg", 2*time.Hour)
 	f.clock = t0.Add(-5 * time.Second)
-	require.NoError(t, f.SetPresence(context.Background(), "alpha", f.clock.Format(time.RFC3339), presenceTTL))
-	require.NoError(t, f.SetPresence(context.Background(), "beta", "not a time", presenceTTL))
+	claim("alpha", f.clock.Format(time.RFC3339)+"\ta", presenceTTL)
+	claim("beta", "not a time", presenceTTL)
+	claim("delta", "", presenceTTL) // what Presence gives for a key that is not a string
 	f.clock = t0.Add(500 * time.Millisecond)
 	code, out, errOut := call(t, f, testEnv, "", "who")
 	require.Equal(t, 0, code, errOut)
-	assert.Equal(t, "alpha\t5s\nbeta\t?\ngamma\t1h30m0s\n", out)
+	assert.Equal(t, "alpha\t5s\nbeta\t?\ndelta\t?\ngamma\t1h30m0s\n", out)
 }
 
 func TestWhoWithNobody(t *testing.T) {

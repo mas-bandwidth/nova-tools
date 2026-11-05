@@ -1,105 +1,156 @@
 ------------------------------ MODULE Presence ------------------------------
-\* nova-bus presence: the key bus:presence:<name> and the hook processes that
-\* hold it, one at a time (bus/main.go hook, runHook; bus/redis.go
-\* SetPresence, DelPresence, Presence).
+\* nova-bus presence: the key bus:presence:<name> and hook processes that
+\* compete for it (bus/main.go runHook, hook; bus/redis.go claim, release,
+\* Presence). Each process in Procs starts at most once, with its own token:
+\* owner is the process whose token the key holds.
 \*
 \* Time is counted in ticks and kept relative, so the state space is finite:
-\* keyLeft is the key's remaining TTL (SET EX), sinceSet the ticks since a hook
-\* last set it, sinceRefresh the ticks since the running hook last set it. The
-\* key is present, as a GET or who sees it, while it exists and its TTL has not
-\* run out; Expire is Redis removing it once it has.
+\* keyLeft is the key's remaining TTL, sinceSet the ticks since the key was
+\* last set, since[p] the ticks since p last set it. The key is present, as a
+\* GET or who sees it, while it exists and its TTL has not run out; Expire is
+\* Redis removing it once it has.
 \*
-\* The code refreshes when presenceRefresh has passed and never blocks in a
-\* read past that, so a running hook sets the key at the latest R ticks after
-\* the last set: Tick may not pass a running hook's refresh. R stands for the
-\* refresh interval plus the time to print and ack one batch; the code keeps
-\* that under the TTL (10 s refresh, 30 s TTL).
+\* Claim is the claim script: set the key unless it is present with another
+\* token. A hook claims at start and again when its refresh is due; a claim
+\* that finds another token refuses the hook (it exits 1 and releases
+\* nothing). The code claims when presenceRefresh has passed and never blocks
+\* a read past that, so a running hook claims at the latest R ticks after its
+\* last: Tick may not pass that. R stands for the refresh interval plus the
+\* time to print and ack one batch.
 \*
-\* Start is the hook's first SET (a process not yet at it is not a hook here),
-\* Exit a clean exit (SIGINT, SIGTERM, a stdout error: DEL), Crash a kill or a
-\* lost machine (the key is left to its TTL).
+\* A hook whose stdout blocks (the reader stopped reading) is stuck: it does
+\* not refresh, and Tick is not held for it. When the write returns it claims
+\* at once (the atomic Unstick stands for the write returning and the next
+\* refresh; the code may print the rest of its batch first).
+\*
+\* Exit is a clean exit (SIGINT, SIGTERM, stdout failing): the release script
+\* deletes the key only if it holds this token, and the DEL may fail (the
+\* connection is down), leaving the key to its TTL. Crash is a kill or a lost
+\* machine: the key is left to its TTL.
 \*
 \* Broken = "none" is the design. Reversed witnesses:
-\*   "noexpire"   the key is set without a TTL and the hook forgets to
-\*                refresh: it still shows present long after its last set,
-\*                and forever after a crash (PresentOnlyIfFresh fails)
-\*   "norefresh"  the hook forgets to refresh: a running hook drops out
-\*                (LiveIsPresent fails)
+\*   "noexpire"     the key is set without a TTL (refresh left on): a crashed
+\*                  hook stays present (PresentOnlyIfFresh fails)
+\*   "norefresh"    the hook never refreshes: a running hook drops out
+\*                  (LiveIsPresent fails)
+\*   "noclaimcheck" the claim sets the key whatever it holds: a second hook
+\*                  starts while the first is live (StartOnlyWhenFree fails)
+\*   "nodelcheck"   the release deletes whatever the key holds: a hook that
+\*                  exits deletes its successor's key (OnlyOwnerDeletes fails)
+\* LiveIsPresentStrict, which counts a stuck hook too, is the property that
+\* is allowed to fail: PresenceStuckStrict.cfg shows it does.
 EXTENDS Naturals
 
-CONSTANTS TTL, R, MaxStarts, Broken
+CONSTANTS TTL, R, Procs, Broken
 
-ASSUME R < TTL
+ASSUME R < TTL /\ 0 \notin Procs
 
-VARIABLES hook, starts, keyOn, keyTTL, keyLeft, sinceSet, sinceRefresh
+VARIABLES hs, stuck, since, keyOn, owner, keyTTL, keyLeft, sinceSet, badStart, badDel
 
-vars == <<hook, starts, keyOn, keyTTL, keyLeft, sinceSet, sinceRefresh>>
+vars == <<hs, stuck, since, keyOn, owner, keyTTL, keyLeft, sinceSet, badStart, badDel>>
+keyVars == <<keyOn, owner, keyTTL, keyLeft, sinceSet>>
 
 Min(a, b) == IF a < b THEN a ELSE b
 
 TypeOK ==
-  /\ hook \in {"none", "up", "exited", "crashed"} /\ starts \in 0..MaxStarts
-  /\ keyOn \in BOOLEAN /\ keyTTL \in BOOLEAN /\ keyLeft \in 0..TTL
-  /\ sinceSet \in 0..TTL /\ sinceRefresh \in 0..R
+  /\ hs \in [Procs -> {"none", "up", "refused", "exited", "crashed"}]
+  /\ stuck \in [Procs -> BOOLEAN] /\ since \in [Procs -> 0..R]
+  /\ keyOn \in BOOLEAN /\ owner \in Procs \cup {0} /\ keyTTL \in BOOLEAN
+  /\ keyLeft \in 0..TTL /\ sinceSet \in 0..TTL
+  /\ badStart \in BOOLEAN /\ badDel \in BOOLEAN
 
 Present == keyOn /\ (~keyTTL \/ keyLeft > 0)
+Free(p) == ~Present \/ owner = p
 
 Init ==
-  /\ hook = "none" /\ starts = 0
-  /\ keyOn = FALSE /\ keyTTL = TRUE /\ keyLeft = 0
-  /\ sinceSet = TTL /\ sinceRefresh = 0
+  /\ hs = [p \in Procs |-> "none"] /\ stuck = [p \in Procs |-> FALSE]
+  /\ since = [p \in Procs |-> 0]
+  /\ keyOn = FALSE /\ owner = 0 /\ keyTTL = TRUE /\ keyLeft = 0 /\ sinceSet = TTL
+  /\ badStart = FALSE /\ badDel = FALSE
 
-\* SET bus:presence:<name> <start> EX TTL; under "noexpire", no EX.
-Set ==
-  /\ keyOn' = TRUE /\ keyTTL' = (Broken /= "noexpire") /\ keyLeft' = TTL
-  /\ sinceSet' = 0 /\ sinceRefresh' = 0
+\* The claim script: SET ... PX unless another token is present.
+Claim(p) ==
+  IF Free(p) \/ Broken = "noclaimcheck"
+    THEN /\ keyOn' = TRUE /\ owner' = p /\ keyTTL' = (Broken /= "noexpire")
+         /\ keyLeft' = TTL /\ sinceSet' = 0 /\ since' = [since EXCEPT ![p] = 0]
+         /\ hs' = [hs EXCEPT ![p] = "up"]
+         /\ badStart' = (badStart \/ (hs[p] = "none" /\ ~Free(p)))
+    ELSE /\ hs' = [hs EXCEPT ![p] = "refused"]
+         /\ UNCHANGED <<keyVars, since, badStart>>
 
-Start ==
-  /\ hook /= "up" /\ starts < MaxStarts
-  /\ hook' = "up" /\ starts' = starts + 1
-  /\ Set
+Start(p) ==
+  /\ hs[p] = "none"
+  /\ Claim(p)
+  /\ UNCHANGED <<stuck, badDel>>
 
-Refresh ==
-  /\ hook = "up" /\ Broken = "none"
-  /\ Set
-  /\ UNCHANGED <<hook, starts>>
+Refresh(p) ==
+  /\ hs[p] = "up" /\ ~stuck[p] /\ Broken /= "norefresh"
+  /\ Claim(p)
+  /\ UNCHANGED <<stuck, badDel>>
 
-Exit ==
-  /\ hook = "up"
-  /\ hook' = "exited" /\ keyOn' = FALSE
-  /\ UNCHANGED <<starts, keyTTL, keyLeft, sinceSet, sinceRefresh>>
+Stick(p) ==
+  /\ hs[p] = "up" /\ ~stuck[p]
+  /\ stuck' = [stuck EXCEPT ![p] = TRUE]
+  /\ UNCHANGED <<hs, since, keyVars, badStart, badDel>>
 
-Crash ==
-  /\ hook = "up"
-  /\ hook' = "crashed"
-  /\ UNCHANGED <<starts, keyOn, keyTTL, keyLeft, sinceSet, sinceRefresh>>
+Unstick(p) ==
+  /\ hs[p] = "up" /\ stuck[p]
+  /\ stuck' = [stuck EXCEPT ![p] = FALSE]
+  /\ IF Broken = "norefresh" THEN UNCHANGED <<hs, since, keyVars, badStart>> ELSE Claim(p)
+  /\ UNCHANGED badDel
+
+\* The release script, or a DEL that fails.
+Exit(p) ==
+  /\ hs[p] = "up"
+  /\ hs' = [hs EXCEPT ![p] = "exited"]
+  /\ \/ UNCHANGED <<keyVars, badDel>>
+     \/ /\ IF Present /\ (owner = p \/ Broken = "nodelcheck")
+             THEN keyOn' = FALSE /\ owner' = 0 /\ badDel' = (badDel \/ owner /= p)
+             ELSE UNCHANGED <<keyOn, owner, badDel>>
+        /\ UNCHANGED <<keyTTL, keyLeft, sinceSet>>
+  /\ UNCHANGED <<stuck, since, badStart>>
+
+Crash(p) ==
+  /\ hs[p] = "up"
+  /\ hs' = [hs EXCEPT ![p] = "crashed"]
+  /\ UNCHANGED <<stuck, since, keyVars, badStart, badDel>>
 
 Expire ==
   /\ keyOn /\ keyTTL /\ keyLeft = 0
-  /\ keyOn' = FALSE
-  /\ UNCHANGED <<hook, starts, keyTTL, keyLeft, sinceSet, sinceRefresh>>
+  /\ keyOn' = FALSE /\ owner' = 0
+  /\ UNCHANGED <<hs, stuck, since, keyTTL, keyLeft, sinceSet, badStart, badDel>>
 
-\* Time passes, but not past a running hook's refresh (the design only).
+\* Time passes, but not past a running hook's refresh (unless it never
+\* refreshes).
 Tick ==
-  /\ ~(hook = "up" /\ Broken = "none" /\ sinceRefresh = R)
+  /\ ~\E p \in Procs : hs[p] = "up" /\ ~stuck[p] /\ since[p] = R /\ Broken /= "norefresh"
   /\ keyLeft' = IF keyOn /\ keyTTL /\ keyLeft > 0 THEN keyLeft - 1 ELSE keyLeft
   /\ sinceSet' = Min(sinceSet + 1, TTL)
-  /\ sinceRefresh' = IF hook = "up" THEN Min(sinceRefresh + 1, R) ELSE sinceRefresh
-  /\ UNCHANGED <<hook, starts, keyOn, keyTTL>>
+  /\ since' = [p \in Procs |-> IF hs[p] = "up" THEN Min(since[p] + 1, R) ELSE since[p]]
+  /\ UNCHANGED <<hs, stuck, keyOn, owner, keyTTL, badStart, badDel>>
 
-Next == Start \/ Refresh \/ Exit \/ Crash \/ Expire \/ Tick
+Next ==
+  \/ Expire \/ Tick
+  \/ \E p \in Procs : Start(p) \/ Refresh(p) \/ Stick(p) \/ Unstick(p) \/ Exit(p) \/ Crash(p)
 
 Spec == Init /\ [][Next]_vars /\ WF_vars(Tick) /\ WF_vars(Expire)
+          /\ \A p \in Procs : WF_vars(Refresh(p))
 
-\* A name is present only if a hook started and set the key within the TTL.
-PresentOnlyIfFresh == Present => starts > 0 /\ sinceSet < TTL
+\* A name is present only if a hook set the key within the TTL.
+PresentOnlyIfFresh == Present => owner \in Procs /\ sinceSet < TTL
 
-\* A running hook is always present.
-LiveIsPresent == hook = "up" => Present
+\* A running hook that is not stuck on stdout is present, with its token.
+LiveIsPresent == \A p \in Procs : hs[p] = "up" /\ ~stuck[p] => Present /\ owner = p
 
-\* A clean exit leaves the name absent.
-ExitedIsAbsent == hook = "exited" => ~Present
+\* The same for every running hook: fails once a stuck hook lapses.
+LiveIsPresentStrict == \A p \in Procs : hs[p] = "up" => Present /\ owner = p
 
-\* A crashed hook's presence goes away, unless a new hook takes the name.
-CrashLapses == (hook = "crashed") ~> (~Present \/ hook = "up")
+\* A hook never starts while another hook's token is present.
+StartOnlyWhenFree == ~badStart
+
+\* The key is only ever deleted by the hook whose token it holds.
+OnlyOwnerDeletes == ~badDel
+
+\* A hook that exited or crashed is absent within the TTL.
+GoneAfterExit == \A p \in Procs : (hs[p] \in {"exited", "crashed", "refused"}) ~> ~(Present /\ owner = p)
 =============================================================================

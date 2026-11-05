@@ -14,37 +14,51 @@ nova-bus send --as <me> --to <name>[,<name>] [--re <id>] <subject> <body | ->
 nova-bus hook --as <name>
 nova-bus who
 nova-bus pending --as <name> [--list]
-nova-bus help
+nova-bus help | -h | --help
 ```
 
-- **send** appends one message to the inbox of each recipient and prints
-  `<name> <id>` for each. A body of `-` is read from stdin. `--re <id>` names
-  the message this one answers.
+- **send** appends one message to the inbox of each recipient, in the order
+  given, and prints `<name> <id>` for each. A body of `-` is read from stdin.
+  `--re <id>` names the message this one answers.
 - **hook** prints every message still waiting for `<name>`, then blocks and
   prints each new one as it arrives, and holds `<name>`'s presence while it
-  runs. It runs until killed or interrupted.
-- **who** prints `<name><TAB><uptime>` for each name whose hook is running,
-  sorted by name; uptime is a Go duration to the second (`1h2m3s`), or `?` if
-  the stored start time cannot be read.
+  runs. It runs until killed.
+- **who** prints `<name><TAB><uptime>` for each present name, sorted by name;
+  uptime is a Go duration to the second (`1h2m3s`), or `?` when the key does
+  not hold a start time (including a key that is not a string).
 - **pending** prints the number of messages waiting for `<name>` that no hook
   has acked; with `--list`, then `<id><TAB><subject>` for each, oldest first.
   It consumes nothing.
-- **help** prints the usage. Every verb exits 0 on success and 1 on a refusal
-  or a Redis error; a flag a verb does not take is refused.
+- **help**, `-h`, `--help`, no arguments, or `-h` after a verb print the usage
+  to stdout.
 
 There is no ack verb: hook acks each message after printing its line, and that
 is the one way a message is marked handled.
 
-A name may not contain `:`. Every verb but who and help needs `--as`.
+## Exit codes and refusals
+
+| Code | When |
+|---|---|
+| 0 | done; help; a hook stopped by SIGINT or SIGTERM |
+| 1 | refused or failed: `NOVA_BUS_REDIS` unset, a Redis error, `SEND FAILED`, `name already hooked`, stdout failing |
+| 2 | a flag or usage error |
+
+Usage errors (exit 2), each named on stderr: an unknown verb (`ack` is one); an
+unknown flag, or a flag the verb does not take; a missing `--as` (every verb
+but who); a name containing `:`; `--re -`; an empty name in `--to` (`a,,b`);
+send without `--to` or without exactly a subject and a body; an argument to
+hook, who or pending ("takes no arguments"). A refused command touches
+nothing in Redis.
 
 ## Environment
 
 | Variable | |
 |---|---|
-| `NOVA_BUS_REDIS` | the Redis address, `host:port` (required) |
+| `NOVA_BUS_REDIS` | the Redis address, `host:port` (required); Redis 7 or later |
 | `NOVA_BUS_PASSWORD` | the Redis password (optional; never printed) |
 
-Each process keeps one Redis connection and runs its commands in turn.
+Each process keeps one Redis connection and runs its commands in turn. The
+client never retries a command by itself.
 
 ## Wire format
 
@@ -52,8 +66,8 @@ Each process keeps one Redis connection and runs its commands in turn.
   with the fields `from`, `to` (the comma list as given), `subject`, `body`
   and `re` (empty when none), all strings.
 - Every hook reads with the consumer group `hook` and the consumer `hook`. The
-  group is created at id `0` on the first hook (`XGROUP CREATE ... 0
-  MKSTREAM`), so messages sent before any hook are delivered too.
+  group is created at id `0` on the first hook, so messages sent before any
+  hook are delivered too.
 - A hook's line is tab-separated:
 
   ```
@@ -64,67 +78,84 @@ Each process keeps one Redis connection and runs its commands in turn.
   `\\`, `\n`, `\r` and `\t`, so a line never splits. pending escapes the
   subject the same way.
 - Presence of `<name>` is the string key `bus:presence:<name>`, whose value is
-  the hook's start time in RFC 3339 UTC to the second.
+  the hook's start time (RFC 3339 UTC, to the second), a tab, and a random
+  token that process made at start.
 
 ## Delivery
 
-A hook first reads its pending entries (`XREADGROUP ... 0`: handed to an
-earlier hook and never acked), then new ones (`XREADGROUP ... >`, at most 100 at
-a time). For each entry it writes the line to stdout and only then acks it
-(`XACK`). So:
+A hook reads its pending entries first (`XREADGROUP ... 0`: handed to a hook
+and never acked), then new ones (`XREADGROUP ... >`, up to 100 at a time). For
+each entry it writes the line, then acks it (`XACK`). The ack runs to the end
+even if a signal arrives after the write, and no further line is written once
+one has. So:
 
 - a restarted hook resumes where the last one stopped;
 - delivery is at least once: a hook killed after writing a line and before
   acking it leaves the entry pending, and the next hook prints it again;
-- an acked message is never printed again.
+- an acked message is never printed again;
+- a read whose reply is lost (the connection dropped after the server handed
+  the batch) is not retried: the hook reconnects after a second and starts
+  again from the pending list, so the batch is printed then.
 
-pending counts the entries the group holds unacked (`XINFO GROUPS`,
-`XPENDING`) plus every entry after the group's last-delivered id (`XRANGE`);
-with no group yet, the whole stream.
+**No retries.** A send that fails prints `nova-bus: SEND FAILED to <name>:
+<error>` and exits 1; the names before it were sent (their lines are on
+stdout), the names after it were not. The tool never retries a send: if the
+connection dropped mid-command the message may or may not have been
+appended, so retrying is the caller's choice, knowing that it can duplicate.
 
-Run one hook per name. Two hooks on the same name split its messages between
-them, and either's clean exit deletes the presence the other holds until its
-next refresh.
+pending's count is the group's pending count plus its lag (`XINFO GROUPS`), or
+`XLEN` when there is no group yet; constant time. `--list` reads the entries
+(`XPENDING`, `XRANGE` 1000 at a time) and is O(entries waiting).
 
 ## Presence
 
-Presence means one thing: a hook process is alive for this name. There is no
-challenge, no proof and no role.
+Presence means one thing: a hook process is alive for this name.
 
-- On start, before it reads, the hook sets the key with a TTL of 30 s
-  (`SET ... EX 30`).
-- It sets the key again whenever 10 s have passed since the last set. Each read
-  waits at most 1 s, so a quiet hook refreshes on time and a signal is acted
-  on within a second.
-- On a clean exit (SIGINT, SIGTERM, or stdout failing) it deletes the key.
+- **One hook per name.** On start the hook claims the key: one Lua script sets
+  it with a 30 s TTL unless it holds another process's value. If it does, the
+  hook prints `name already hooked: <name>` and exits 1, touching nothing. A
+  hook restarted after a crash is refused until the old key lapses (at most
+  30 s).
+- It claims again whenever 10 s have passed. Each read waits at most 1 s, so a
+  quiet or a busy hook refreshes on time, and a signal is acted on within a
+  second. A refresh that finds another value (this hook lapsed and another
+  took the name) ends this hook the same way.
+- On a clean exit (SIGINT, SIGTERM, stdout failing) it releases the key: a
+  second script deletes it only if it still holds this process's value. A
+  release that fails leaves the key to its TTL.
+- SIGPIPE is ignored, so a reader that goes away (`nova-bus hook ... | head -1`)
+  makes the next write fail with EPIPE: the hook releases its presence, leaves
+  the unprinted message pending and exits 1.
 - who scans `bus:presence:*` and reads each key; one that expires in between
-  is left out.
-
-Uptime is the reader's clock minus the hook's start time; clocks that disagree
-skew it, and a negative uptime shows as `0s`.
-
-`bus/tla/Presence.tla` models the key (with its TTL), a hook process that
-starts, refreshes, exits and crashes, and expiry. It checks that a name is
-present only if a hook set the key within the TTL, that a running hook is
-always present, that a clean exit leaves the name absent, and that a crashed
-hook's presence goes away. Its reversed witnesses, which TLC must fail:
-`PresenceBrokenNoExpire.cfg` (set without a TTL, never refreshed: still shown
-present) and `PresenceBrokenNoRefresh.cfg` (never refreshed: a running hook
-drops out). `bus/tla/Bus.tla` models delivery the same way, with
-`BusBroken*.cfg` as its witnesses.
+  is left out. Uptime is the reader's clock minus the start time; clocks that
+  disagree skew it, and a negative uptime shows as `0s`.
 
 ## Failure
 
 - **A hook dies before acking.** The message stays pending and is printed again
   by the next hook on that name.
 - **A hook crashes or its machine is lost.** Its presence lapses within 30 s;
-  until then who still lists it.
-- **Redis is unreachable.** send and pending and who exit 1 with the error. A
-  hook logs `nova-bus: <error>; reconnecting` to stderr and retries every
-  second; it cannot refresh meanwhile, so its presence may lapse until it is
-  back.
-- **stdout fails** (the reader went away). The hook deletes its presence and
-  exits 1.
+  until then who lists it, and a new hook on that name is refused.
+- **stdout blocks** (the reader stopped reading). The hook cannot refresh, so
+  its presence lapses within 30 s while the process lives.
+- **Redis is unreachable.** send, pending and who exit 1. A hook logs
+  `nova-bus: <error>; reconnecting` to stderr and retries every second; its
+  presence may lapse meanwhile, and it claims again when Redis is back.
+
+## Models
+
+`bus/tla/Presence.tla` models the key with its TTL and hooks that compete for
+one name: start, refresh, a stdout that blocks and unblocks, a clean exit
+whose DEL may fail, a crash, and expiry. It checks: a name is present only if
+a hook set the key within the TTL; a running hook not stuck on stdout is
+present with its own token; a hook never starts while another's token is
+present; the key is deleted only by the hook whose token it holds; and a hook
+that exited or crashed is absent within the TTL. A stuck hook is allowed to
+drop out, and `PresenceStuckStrict.cfg` shows that it does. The reversed
+witnesses remove the TTL, the refresh, the claim's check and the release's
+check, one each. `bus/tla/Bus.tla` models delivery. `bus/tla/CASES.tsv` names
+every case with the outcome TLC must reach; `tla/check.sh JAR bus/tla` runs
+them.
 
 ## An example session
 
