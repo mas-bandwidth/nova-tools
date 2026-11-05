@@ -32,14 +32,14 @@ A push is held by the process that receives it:
 | push | holder | its proof |
 |---|---|---|
 | `bus` of a session | `nova-hook hook --as <name> --role <role>`, under the session's Monitor | the session answers `HOOK CHALLENGE nonce=<n>` with `nova-hook prove --as <name> --nonce <n>` |
-| optional `work` lease of a friend | the lane daemon, `nova-friend run`, when used | the daemon renews only `work`, never proves or renews `bus`; this optional lease does not decide the friend role's presence |
 | `sprint` | the sprint server, `nova-sprint run` | the server holds it for the coordinator while it runs and reaches the bus |
 | `work` of a member or reader | its loop, `nova-swarm member` | the loop's own round trip to the sprint server |
 
 The hook service's live friend lane client renews the sprint server's lane leases
 by asking what each lane holds. Those server leases are distinct from `hook:live:<name>:work`:
-the client holds only the session's `bus` push. A one-shot friend uses the member
-loop and identity prompt instead (`docs/SPEC-SWARM.md`); it has no live session presence.
+the client holds only the session's `bus` push. A friend runs her own loop (`nova-sprint take --as
+friend.<f>`, `nova-sprint friend stage`, work, `nova-sprint finish --as friend.<f>`); `nova-hook` is her
+liveness, and her working cell is the count of what she holds.
 
 ## The key layout
 
@@ -111,12 +111,8 @@ the holder's next beat (`ReArm`).
   strictly gates `--as` on its own `bus` push before reading or writing. `send` refuses any recipient
   the hook record shows down, at once, with the reason and one deduplicated judgment to the coordinator.
   `names` reads every name's state from the hook record.
-- `nova-friend run`: acts as its friend's hook holder for `friend`. While the gate says no, her lanes
-  take nothing and report nothing, and her reads begin nothing.
-- Coordinator verbs (`nova-friend watch`, `nova-friend reach`) gate `--as` on the
-  `bus` push and role `coordinator` or `comms` (`hook.Want.Roles`). `nova-hook serve` does not: the
-  heartbeat server depends only on its store, never on its own name's hook record (no daemon gates on
-  another daemon's liveness or on a model's proof).
+- `nova-hook serve` does not gate: the heartbeat server depends only on its store, never on its own
+  name's hook record (no daemon gates on another daemon's liveness or on a model's proof).
 - `pkg/hookgate` is the one place a `nova-tools` verb meets the gate (`Gate` and `Out`).
 
 A gate refusal is `FAILED` at exit 1 with `reason=unhooked` and the runnable breadcrumb lines on `NOTE`.
