@@ -73,14 +73,12 @@ func helpFor(verb string) (string, bool) {
 	return out, out != ""
 }
 
-// identityEnv is every variable that names an age identity or this tool's own inputs: none
-// reaches sops (it gets --key alone) or the command exec becomes.
+// identityEnv names an age identity or this tool's own inputs; none reaches sops or exec's command.
 var identityEnv = []string{"NOVA_SECRETS_KEY", "NOVA_SECRETS_STORE", "NOVA_SECRETS_SEAT", "SOPS_AGE_KEY", "SOPS_AGE_KEY_FILE", "SOPS_AGE_KEY_CMD", "SOPS_AGE_SSH_PRIVATE_KEY_FILE", "SOPS_KEYSERVICE"}
 
 // markKey is a clear provenance line older releases wrote into seat files; it is
 // not a secret, so it is never delivered, and a set drops it.
-// maxValue is the longest secret set accepts: a key or a token. A longer one would also
-// overflow the environment exec hands a command.
+// maxValue is the longest secret set accepts: a key or a token.
 const maxValue = 65536
 
 const markKey = "NOVA_SECRETS_WRITTEN_BY"
@@ -364,7 +362,7 @@ func (t tool) set(args []string) error {
 	}
 	value := strings.TrimSuffix(strings.TrimSuffix(string(raw), "\n"), "\r")
 	if len(value) > maxValue {
-		rest, _ := io.Copy(io.Discard, t.stdin) // only to say how big it was
+		rest, _ := io.Copy(io.Discard, t.stdin)
 		return bad("value is %d bytes; a secret is a key or token, at most %d bytes", int64(len(value))+rest, maxValue)
 	}
 	if value == "" || strings.ContainsAny(value, "\r\n\x00") {
@@ -468,8 +466,7 @@ func (t tool) seatList(args []string) error {
 	return nil
 }
 
-// sopsEnv is sops's whole environment: PATH, the one key file, and a HOME and config
-// directory of its own, so no identity of the caller's (keys.txt included) is read.
+// sopsEnv is sops's whole environment: PATH, the one key file, and a HOME of its own.
 func (t tool) sopsEnv(key, home string) []string {
 	env := []string{"SOPS_AGE_KEY_FILE=" + key, "HOME=" + home, "XDG_CONFIG_HOME=" + home, "APPDATA=" + home}
 	for _, kv := range t.environ {
