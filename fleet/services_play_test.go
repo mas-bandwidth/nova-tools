@@ -11,19 +11,17 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// loops_play_test.go pins fleet/loops.yml's Linux unit state (docs/FLEET.md, "loops.yml"). The state of
-// ansible.builtin.systemd_service was one folded scalar holding a parenthesised
-// ternary chained to a second `if ... else`; the ansible-core templar stops at
-// the `else` with "expected token ')', got 'else'", the task never reaches
-// systemd, and every Linux host keeps running the old unit. The value is built
-// before the module call instead: loop_unit_changed, loop_unit_wants_restart and
-// loop_unit_state are task vars, the module reads `state: "{{ loop_unit_state }}"`,
-// and the same four outcomes hold.
+// services_play_test.go pins fleet/services.yml's Linux unit state (docs/FLEET.md, "services.yml").
+// The state of ansible.builtin.systemd_service is built before the module call,
+// because the ansible-core templar stops at a parenthesised ternary chained to a
+// second `if ... else` ("expected token ')', got 'else'"): service_unit_changed,
+// service_unit_wants_restart and service_unit_state are task vars, and the module
+// reads `state: "{{ service_unit_state }}"`.
 
-// loopsPlays reads fleet/loops.yml as the list of plays it holds.
-func loopsPlays(t *testing.T) []map[string]any {
+// servicesPlays reads fleet/services.yml as the list of plays it holds.
+func servicesPlays(t *testing.T) []map[string]any {
 	t.Helper()
-	b, err := os.ReadFile("loops.yml")
+	b, err := os.ReadFile("services.yml")
 	require.NoError(t, err)
 	var plays []map[string]any
 	require.NoError(t, yaml.Unmarshal(b, &plays))
@@ -60,11 +58,11 @@ func holdsInlineConditional(expr string) bool {
 	return nestedIf.MatchString(expr) || strings.Count(expr, " if ") > 1
 }
 
-// loopUnitState is the truth table the task's loop_unit_state expression writes
+// serviceUnitState is the truth table the task's service_unit_state expression writes
 // down, the same four outcomes the module saw before: a disabled record is
-// stopped; an enabled record whose unit file changed, or one nova_loop_restart
+// stopped; an enabled record whose unit file changed, or one nova_service_restart
 // names, is restarted; any other enabled record is started.
-func loopUnitState(enabled, changed, restart bool) string {
+func serviceUnitState(enabled, changed, restart bool) string {
 	if !enabled {
 		return "stopped"
 	}
@@ -74,9 +72,9 @@ func loopUnitState(enabled, changed, restart bool) string {
 	return "started"
 }
 
-func TestLoopsPlayStateExpressionIsBuiltOutsideTheModuleArgs(t *testing.T) {
+func TestServicesPlayStateExpressionIsBuiltOutsideTheModuleArgs(t *testing.T) {
 	t.Parallel()
-	plays := loopsPlays(t)
+	plays := servicesPlays(t)
 	task := linuxStateTask(t, plays)
 
 	// The module call reads one var: no inline conditional is built inside the
@@ -84,29 +82,29 @@ func TestLoopsPlayStateExpressionIsBuiltOutsideTheModuleArgs(t *testing.T) {
 	systemd, ok := task["ansible.builtin.systemd_service"].(map[string]any)
 	require.True(t, ok, "the Linux state task is not a systemd_service task")
 	state := asText(systemd["state"])
-	assert.Equal(t, "{{ loop_unit_state }}", state,
-		"the module's state is not the loop_unit_state var built before the call")
+	assert.Equal(t, "{{ service_unit_state }}", state,
+		"the module's state is not the service_unit_state var built before the call")
 	assert.False(t, holdsInlineConditional(state),
 		"the module's state holds an inline conditional nested in parentheses: %q", state)
 
 	// The branches are short named task vars.
-	changed := taskVar(t, task, "loop_unit_changed")
+	changed := taskVar(t, task, "service_unit_changed")
 	assert.Contains(t, changed, "selectattr('changed')",
-		"loop_unit_changed is not the selectattr('changed') chain")
-	assert.Contains(t, changed, "loop_timers.results | default([])",
-		"loop_unit_changed does not fold the timers' results in")
+		"service_unit_changed is not the selectattr('changed') chain")
+	assert.Contains(t, changed, "service_timers.results | default([])",
+		"service_unit_changed does not fold the timers' results in")
 
-	wants := taskVar(t, task, "loop_unit_wants_restart")
-	assert.Contains(t, wants, "loop_unit_changed",
-		"loop_unit_wants_restart does not read loop_unit_changed")
-	assert.Contains(t, wants, "item.name in loop_restart",
-		"loop_unit_wants_restart does not read nova_loop_restart")
+	wants := taskVar(t, task, "service_unit_wants_restart")
+	assert.Contains(t, wants, "service_unit_changed",
+		"service_unit_wants_restart does not read service_unit_changed")
+	assert.Contains(t, wants, "item.name in service_restart",
+		"service_unit_wants_restart does not read nova_service_restart")
 
-	stateExpr := taskVar(t, task, "loop_unit_state")
+	stateExpr := taskVar(t, task, "service_unit_state")
 	assert.False(t, nestedIf.MatchString(stateExpr),
-		"loop_unit_state closes a `)` into a second `if`: %q", stateExpr)
+		"service_unit_state closes a `)` into a second `if`: %q", stateExpr)
 	assert.Contains(t, stateExpr, "'stopped' if not item.enabled",
-		"loop_unit_state does not stop a disabled record")
+		"service_unit_state does not stop a disabled record")
 	assert.Contains(t, stateExpr, "'restarted'")
 	assert.Contains(t, stateExpr, "'started'")
 
@@ -119,12 +117,12 @@ func TestLoopsPlayStateExpressionIsBuiltOutsideTheModuleArgs(t *testing.T) {
 	}{
 		{"disabled", false, false, false, "stopped"},
 		{"enabled and changed", true, true, false, "restarted"},
-		{"enabled and named by nova_loop_restart", true, false, true, "restarted"},
+		{"enabled and named by nova_service_restart", true, false, true, "restarted"},
 		{"enabled, unchanged and not restarted", true, false, false, "started"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, tc.want, loopUnitState(tc.enabled, tc.changed, tc.restart))
+			assert.Equal(t, tc.want, serviceUnitState(tc.enabled, tc.changed, tc.restart))
 		})
 	}
 }
@@ -132,8 +130,8 @@ func TestLoopsPlayStateExpressionIsBuiltOutsideTheModuleArgs(t *testing.T) {
 // The play and its templates name no tool this repository no longer ships.
 func TestFleetFilesNameNoRetiredTool(t *testing.T) {
 	t.Parallel()
-	for _, f := range []string{"loops.yml", "templates/nova-loop.plist.j2", "templates/nova-loop.service.j2",
-		"templates/nova-loop.timer.j2", "group_vars/all.yml", "nova-tools-install.yml"} {
+	for _, f := range []string{"services.yml", "templates/nova-service.plist.j2", "templates/nova-service.service.j2",
+		"templates/nova-service.timer.j2", "group_vars/all.yml", "nova-tools-install.yml"} {
 		b, err := os.ReadFile(f)
 		require.NoError(t, err)
 		for _, word := range []string{"nova-swarm", "nova-sprint", "nova-update", "disk-guard", "nova-card"} {
@@ -142,19 +140,48 @@ func TestFleetFilesNameNoRetiredTool(t *testing.T) {
 	}
 }
 
-// The install role's defaults: the five tools, and retiring off until asked.
+// The install defaults: the six tools, and retiring off until asked.
 func TestInstallRoleDefaults(t *testing.T) {
 	t.Parallel()
 	b, err := os.ReadFile("roles/nova-tools-install/defaults/main.yml")
 	require.NoError(t, err)
 	var d map[string]any
 	require.NoError(t, yaml.Unmarshal(b, &d))
-	assert.Equal(t, []any{"nova-bus", "nova-config", "nova-sandbox", "nova-secrets", "nova-reserve"}, d["nova_tools_names"])
+	g, err := os.ReadFile("group_vars/all.yml")
+	require.NoError(t, err)
+	var gv map[string]any
+	require.NoError(t, yaml.Unmarshal(g, &gv))
+	assert.Equal(t, []any{"nova-bus", "nova-cairn", "nova-config", "nova-sandbox", "nova-secrets", "nova-reserve"}, gv["nova_tools_names"])
 	assert.Equal(t, false, d["nova_tools_remove_enabled"])
-	assert.Len(t, d["nova_tools_remove"], 23)
-	names, _ := d["nova_tools_names"].([]any)
+	names, _ := gv["nova_tools_names"].([]any)
 	for _, r := range d["nova_tools_remove"].([]any) {
 		assert.NotContains(t, names, r)
+	}
+}
+
+// The default retire list is the rows of retired-tools.txt that say "retired"
+// or "rowan-tools", and no other row: another product's binaries are never in it.
+func TestRetireListIsOnlyRetiredAndRowanTools(t *testing.T) {
+	t.Parallel()
+	b, err := os.ReadFile("roles/nova-tools-install/defaults/main.yml")
+	require.NoError(t, err)
+	var d map[string]any
+	require.NoError(t, yaml.Unmarshal(b, &d))
+	var want []any
+	txt, err := os.ReadFile("retired-tools.txt")
+	require.NoError(t, err)
+	for _, line := range strings.Split(string(txt), "\n") {
+		f := strings.Split(line, "\t")
+		if len(f) < 3 || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if strings.HasPrefix(f[2], "retired") || f[2] == "rowan-tools" {
+			want = append(want, f[0])
+		}
+	}
+	assert.ElementsMatch(t, want, d["nova_tools_remove"])
+	for _, other := range []string{"nova-sprint", "nova-card", "nova-work", "nova-swarm", "nova-hook", "nova-friend"} {
+		assert.NotContains(t, d["nova_tools_remove"], other)
 	}
 }
 
@@ -209,4 +236,22 @@ func taskVar(t *testing.T, task map[string]any, key string) string {
 	}
 	require.FailNow(t, "no task var "+key)
 	return ""
+}
+
+// The play names the units its earlier name wrote (com.nova.loop.*, nova-loop-*), and its mark matches
+// both marks, so the first run under the new name retires them.
+func TestOldLoopUnitsAreRetired(t *testing.T) {
+	t.Parallel()
+	b, err := os.ReadFile("services.yml")
+	require.NoError(t, err)
+	for _, want := range []string{"'com.nova.loop.*.plist'", "'nova-loop-*.service'", "'nova-loop-*.timer'"} {
+		assert.Contains(t, string(b), want)
+	}
+	mark := regexp.MustCompile(`written by fleet/(services|loops)[.]yml from the (service|loop) record`)
+	assert.True(t, mark.MatchString("# /x/nova-loop-a.service: written by fleet/loops.yml from the loop record a"))
+	for _, f := range []string{"templates/nova-service.plist.j2", "templates/nova-service.service.j2", "templates/nova-service.timer.j2"} {
+		tmpl, err := os.ReadFile(f)
+		require.NoError(t, err)
+		assert.True(t, mark.Match(tmpl), f)
+	}
 }

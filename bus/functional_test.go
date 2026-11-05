@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -71,11 +72,16 @@ func (h *hookProc) kill() { _ = h.cmd.Process.Signal(os.Kill); _ = h.cmd.Wait() 
 
 func (h *hookProc) next(t *testing.T) string {
 	t.Helper()
+	return h.nextWithin(t, wait)
+}
+
+func (h *hookProc) nextWithin(t *testing.T, d time.Duration) string {
+	t.Helper()
 	select {
 	case l, ok := <-h.lines:
 		require.True(t, ok, "hook exited")
 		return l
-	case <-time.After(wait):
+	case <-time.After(d):
 		require.FailNow(t, "no line from the hook")
 		return ""
 	}
@@ -123,9 +129,147 @@ func TestAHookKilledAndRestarted(t *testing.T) {
 	require.Len(t, handed[0].Messages, 1)
 	require.Equal(t, int64(1), pending(), "three handed, not acked")
 
+	// The killed hook's key holds for up to 30 s: the restarted hook waits it
+	// out, as a supervised restart does, then claims the name.
 	second := startHook(t, bin, addr)
-	assert.Equal(t, handed[0].Messages[0].ID+"\talpha\t-\tthree\tthird", second.next(t), "the unacked message is printed again first")
+	assert.Equal(t, handed[0].Messages[0].ID+"\talpha\t-\tthree\tthird", second.nextWithin(t, presenceTTL+wait), "the unacked message is printed again first")
 	send("four", "fourth")
 	assert.True(t, strings.HasSuffix(second.next(t), "\tfour\tfourth"), "then the new one; one and two are never printed again")
 	require.Eventually(t, func() bool { return pending() == 0 }, wait, 20*time.Millisecond, "all acked")
+	n, err := c.XLen(ctx, "bus:beta").Result()
+	require.NoError(t, err)
+	assert.Zero(t, n, "each acked entry is deleted: the inbox holds only what waits")
+}
+
+// TestPresenceWhoAndPending runs who and pending against a real Redis while a
+// hook process runs, then stops it cleanly (SIGTERM: presence deleted) and by
+// SIGKILL (presence left to lapse by its TTL).
+func TestPresenceWhoAndPending(t *testing.T) {
+	t.Parallel()
+	addr := startRedis(t)
+	bin := filepath.Join(t.TempDir(), "nova-bus")
+	build := exec.Command("go", "build", "-o", bin, ".")
+	build.Stderr = os.Stderr
+	require.NoError(t, build.Run())
+	ctx := context.Background()
+	c := redis.NewClient(&redis.Options{Addr: addr})
+	t.Cleanup(func() { _ = c.Close() }) // ignored: closing a test client
+	bus := func(args ...string) string {
+		t.Helper()
+		cmd := exec.Command(bin, args...)
+		cmd.Env = append(os.Environ(), "NOVA_BUS_REDIS="+addr)
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, string(out))
+		return string(out)
+	}
+
+	assert.Equal(t, "0\n", bus("pending", "--as", "beta"), "no stream yet")
+	one := strings.Fields(bus("send", "--as", "alpha", "--to", "beta", "one", "1"))[1]
+	two := strings.Fields(bus("send", "--as", "alpha", "--to", "beta", "two", "2"))[1]
+	assert.Equal(t, "2\n", bus("pending", "--as", "beta"), "no group yet: the whole stream waits")
+	_, err := c.XGroupCreateMkStream(ctx, "bus:beta", group, "0").Result()
+	require.NoError(t, err)
+	_, err = c.XReadGroup(ctx, &redis.XReadGroupArgs{Group: group, Consumer: group, Streams: []string{"bus:beta", ">"}, Count: 1, Block: -1}).Result()
+	require.NoError(t, err, "one handed, not acked")
+	assert.Equal(t, "2\n"+one+"\tone\n"+two+"\ttwo\n", bus("pending", "--as", "beta", "--list"))
+	assert.Equal(t, "2\n", bus("pending", "--as", "beta"), "pending consumed nothing")
+	assert.Empty(t, bus("who"))
+
+	h := startHook(t, bin, addr)
+	h.next(t)
+	h.next(t)
+	require.Eventually(t, func() bool { return bus("pending", "--as", "beta") == "0\n" }, wait, 20*time.Millisecond)
+	assert.Regexp(t, `^beta\t\d+s\n$`, bus("who"))
+	ttl, err := c.TTL(ctx, "bus:presence:beta").Result()
+	require.NoError(t, err)
+	assert.True(t, ttl > 0 && ttl <= presenceTTL, ttl)
+	second := exec.Command(bin, "hook", "--as", "beta")
+	second.Env = append(os.Environ(), "NOVA_BUS_REDIS="+addr)
+	out, err := second.CombinedOutput()
+	assert.Equal(t, 1, second.ProcessState.ExitCode(), string(out))
+	assert.Contains(t, string(out), "HOOK WAIT name=beta ttl=30\n")
+	assert.Contains(t, string(out), "name already hooked: beta", "after 40 s of the first hook refreshing")
+	assert.Regexp(t, `^beta\t\d+s\n$`, bus("who"), "the first hook's presence is untouched")
+	stopped := time.Now()
+	require.NoError(t, h.cmd.Process.Signal(syscall.SIGTERM))
+	require.NoError(t, h.cmd.Wait(), "a clean exit")
+	assert.Less(t, time.Since(stopped), 5*time.Second, "a blocked read does not hold up the exit")
+	assert.Empty(t, bus("who"), "a clean exit deletes presence")
+
+	k := startHook(t, bin, addr)
+	require.Eventually(t, func() bool { return bus("who") != "" }, wait, 20*time.Millisecond)
+	k.kill()
+	assert.Regexp(t, `^beta\t`, bus("who"), "a crashed hook stays present until the TTL")
+	ttl, err = c.TTL(ctx, "bus:presence:beta").Result()
+	require.NoError(t, err)
+	assert.True(t, ttl > 0 && ttl <= presenceTTL, "and then lapses: %v", ttl)
+
+	require.NoError(t, c.XAdd(ctx, &redis.XAddArgs{Stream: "bus:presence:zeta", Values: []string{"k", "v"}}).Err())
+	assert.Regexp(t, `^beta\t\d+s\nzeta\t\?\n$`, bus("who"), "a key that is not a string is shown, not fatal")
+}
+
+// TestHookOnAClosedPipe is hook | true: the reader is gone before the first
+// line, the write fails with EPIPE (SIGPIPE ignored), and the hook releases
+// its presence and exits 1, leaving the message pending.
+func TestHookOnAClosedPipe(t *testing.T) {
+	t.Parallel()
+	addr := startRedis(t)
+	bin := filepath.Join(t.TempDir(), "nova-bus")
+	build := exec.Command("go", "build", "-o", bin, ".")
+	build.Stderr = os.Stderr
+	require.NoError(t, build.Run())
+	ctx := context.Background()
+	c := redis.NewClient(&redis.Options{Addr: addr})
+	t.Cleanup(func() { _ = c.Close() }) // ignored: closing a test client
+	env := append(os.Environ(), "NOVA_BUS_REDIS="+addr)
+	send := exec.Command(bin, "send", "--as", "alpha", "--to", "beta", "one", "1")
+	send.Env = env
+	out, err := send.CombinedOutput()
+	require.NoError(t, err, string(out))
+
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	require.NoError(t, r.Close())
+	var stderr strings.Builder
+	hook := exec.Command(bin, "hook", "--as", "beta")
+	hook.Env, hook.Stdout, hook.Stderr = env, w, &stderr
+	err = hook.Run()
+	require.NoError(t, w.Close())
+	var exit *exec.ExitError
+	require.ErrorAs(t, err, &exit)
+	assert.Equal(t, 1, exit.ExitCode(), "exit 1, not killed by SIGPIPE: %s", stderr.String())
+	assert.Contains(t, stderr.String(), "broken pipe")
+	n, err := c.Exists(ctx, "bus:presence:beta").Result()
+	require.NoError(t, err)
+	assert.Zero(t, n, "presence released")
+	p, err := c.XPending(ctx, "bus:beta", group).Result()
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), p.Count, "the message was not printed, so not acked")
+}
+
+// TestHookTrimsOldAckedHistory: a stream an older build acked without
+// deleting keeps its history until a hook finds an entry pending; the hook
+// trims below it.
+func TestHookTrimsOldAckedHistory(t *testing.T) {
+	t.Parallel()
+	addr := startRedis(t)
+	bin := filepath.Join(t.TempDir(), "nova-bus")
+	build := exec.Command("go", "build", "-o", bin, ".")
+	build.Stderr = os.Stderr
+	require.NoError(t, build.Run())
+	ctx := context.Background()
+	c := redis.NewClient(&redis.Options{Addr: addr})
+	t.Cleanup(func() { _ = c.Close() }) // ignored: closing a test client
+	for _, s := range []string{"old1", "old2", "handed"} {
+		require.NoError(t, c.XAdd(ctx, &redis.XAddArgs{Stream: "bus:beta", Values: []string{"from", "alpha", "subject", s, "body", s}}).Err())
+	}
+	require.NoError(t, c.XGroupCreate(ctx, "bus:beta", group, "0").Err())
+	old, err := c.XReadGroup(ctx, &redis.XReadGroupArgs{Group: group, Consumer: group, Streams: []string{"bus:beta", ">"}, Count: 3, Block: -1}).Result()
+	require.NoError(t, err)
+	for _, m := range old[0].Messages[:2] {
+		require.NoError(t, c.XAck(ctx, "bus:beta", group, m.ID).Err()) // acked, not deleted: an older build
+	}
+	h := startHook(t, bin, addr)
+	assert.True(t, strings.HasSuffix(h.next(t), "\thanded\thanded"), "only the unacked entry is printed")
+	require.Eventually(t, func() bool { return c.XLen(ctx, "bus:beta").Val() == 0 }, wait, 20*time.Millisecond, "history trimmed, the pending entry deleted on ack")
 }

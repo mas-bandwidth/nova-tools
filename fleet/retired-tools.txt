@@ -1,18 +1,15 @@
-# The tools nova-tools once shipped and ships no more: name, date retired, where
-# it went (nova-sprint, rowan-tools, or retired: no successor). The install play
-# moves exactly these names aside (nova_tools_remove in
-# roles/nova-tools-install/defaults/main.yml) when nova_tools_remove_enabled is
-# true, and nothing else: a nova-* nova-tools never shipped is never touched.
-# A name here is never also a binary this repository builds.
+# The tools nova-tools shipped and ships no more: name, date retired, where it
+# went (sprint: nova-sprint, rowan-tools: rowan-tools, retired: no successor).
+# The install play's default retire list (nova_tools_remove) is the rows that say
+# rowan-tools or retired, and nothing else: another product's binaries (the
+# sprint rows) are never in it. A name here is never also a binary this
+# repository builds.
 nova-card	2026-11-05	sprint
 nova-work	2026-11-05	sprint
 nova-sprint	2026-11-05	sprint
 nova-swarm	2026-11-05	sprint
 nova-hook	2026-11-05	sprint
 nova-friend	2026-11-05	sprint
-nova-cairn	2026-11-05	rowan-tools
-nova-memory	2026-11-05	rowan-tools
-nova-self-talk	2026-11-05	rowan-tools
 nova-decide	2026-11-05	rowan-tools
 nova-doctor	2026-11-05	rowan-tools
 nova-tokens	2026-11-05	rowan-tools
@@ -26,4 +23,6 @@ nova-redis	2026-11-05	retired
 nova-table	2026-11-05	retired
 nova-update	2026-11-05	retired
 nova-version	2026-11-05	retired
-nova-slot	2026-11-05	retired (renamed nova-reserve; was never installed on any machine)
+nova-slot	2026-11-05	retired (renamed nova-reserve)
+nova-memory	2026-11-05	retired (verbs of nova-cairn: nova-cairn memory)
+nova-self-talk	2026-11-05	retired (verbs of nova-cairn: nova-cairn self-talk)

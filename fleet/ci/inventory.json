@@ -1,0 +1,37 @@
+{
+  "bench": { "hosts": ["localhost"] },
+  "runner": { "hosts": ["localhost"] },
+  "services": { "hosts": ["localhost"] },
+  "_meta": {
+    "hostvars": {
+      "localhost": {
+        "ansible_connection": "local",
+        "ansible_system": "Linux",
+        "nova_services": [
+          {
+            "name": "bus-hook",
+            "argv": ["nova-bus", "hook", "--as", "reader"],
+            "env": { "NOVA_BUS_REDIS": "redis-host:6379" },
+            "log": "~/.local/state/nova/services/bus-hook.log",
+            "seat": "",
+            "keys": [],
+            "every": 0,
+            "keepalive": true,
+            "enabled": true
+          },
+          {
+            "name": "secret-sweep",
+            "argv": ["nova-secrets", "names"],
+            "env": {},
+            "log": "~/.cache/nova/secret-sweep.log",
+            "seat": "reader",
+            "keys": ["BUS_TOKEN"],
+            "every": 300,
+            "keepalive": false,
+            "enabled": true
+          }
+        ]
+      }
+    }
+  }
+}

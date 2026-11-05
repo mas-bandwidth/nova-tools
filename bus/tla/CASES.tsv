@@ -1,0 +1,11 @@
+config	module	expected	property	deadlock
+Bus.cfg	Bus.tla	pass	-	check
+BusBrokenAckFirst.cfg	Bus.tla	invariant	AckedOnlyPrinted	check
+BusBrokenNewFirst.cfg	Bus.tla	temporal	EveryPrinted	check
+Presence.cfg	Presence.tla	pass	-	check
+PresenceStuckStrict.cfg	Presence.tla	invariant	LiveIsPresentStrict	check
+PresenceBrokenNoExpire.cfg	Presence.tla	invariant	PresentOnlyIfFresh	check
+PresenceBrokenNoRefresh.cfg	Presence.tla	invariant	LiveIsPresent	check
+PresenceBrokenNoClaimCheck.cfg	Presence.tla	invariant	StartOnlyWhenFree	check
+PresenceBrokenNoDelCheck.cfg	Presence.tla	invariant	OnlyOwnerDeletes	check
+PresenceBrokenNoWait.cfg	Presence.tla	temporal	WaitClaims	check
