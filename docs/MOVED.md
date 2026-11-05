@@ -1,6 +1,6 @@
 # Moved out of nova-tools
 
-nova-tools keeps six pieces: bus, config, sandbox, secrets, slot and fleet (README.md). Everything below
+nova-tools keeps six pieces: bus, config, sandbox, secrets, reserve (once slot) and fleet (README.md). Everything below
 left main; its code is at tag v1.6.29.
 
 ## To nova-sprint
@@ -93,7 +93,7 @@ one `<seat>.yaml` per seat). Kept: `exec`, `names`, `check`, `seal`, `seat add`,
 
 ## Removed 2026-11-05 (the pare to six pieces)
 
-nova-tools is now bus/, config/, sandbox/, secrets/, slot/ and fleet/. Nothing outside those is built from this repository.
+nova-tools is now bus/, config/, sandbox/, secrets/, reserve/ and fleet/. Nothing outside those is built from this repository.
 
 | Removed | Went to |
 |---|---|
