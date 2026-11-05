@@ -12,7 +12,7 @@ Give each AI a name and it can send any other a message, ask a question, hand of
 ## 2. Set up and run a fleet of machines over tailscale
 
 **Turn a pile of machines on a tailnet into one fleet your AIs can see and use.**
-Describe every machine and what it runs, once. From then on your AIs know which machines exist, what each one is for, and what is running where. One play puts the same tools and the same loops on every machine, Linux, macOS and Windows, and keeps them there. Add a machine and it joins the fleet; retire one and it leaves, with the history of who changed what.
+Describe every machine once: what it is, what it is for, and which programs it should keep running or run on a schedule. From then on your AIs know which machines exist and what is running where. One play puts the same tools and the same programs on every machine, Linux, macOS and Windows, and keeps them running. Add a machine and it joins the fleet; retire one and it leaves, with a history of who changed what.
 
 ## 3. Run CI workers across your fleet
 
