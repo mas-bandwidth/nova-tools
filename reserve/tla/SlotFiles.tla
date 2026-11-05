@@ -1,5 +1,5 @@
 ------------------------------ MODULE SlotFiles ------------------------------
-\* nova-slot as the code lays it out on disk (slot/main.go taker.step,
+\* nova-reserve as the code lays it out on disk (reserve/main.go taker.step,
 \* acquire, release): the lock files gate, all and slot1..slotN in one
 \* directory, each an OS lock (flock or LockFileEx) the kernel holds for a
 \* process and lets go of when it dies, however it dies.

@@ -5,7 +5,7 @@ nova_tools_version: ""
 
 # The tools to install, by name. Each is a release asset
 # <tool>_<tag>_<os>_<arch>[.exe] listed in the release's SHA256SUMS.
-nova_tools_names: [nova-bus, nova-config, nova-sandbox, nova-secrets, nova-slot]
+nova_tools_names: [nova-bus, nova-config, nova-sandbox, nova-secrets, nova-reserve]
 
 # Where the release assets live: <base>/<tag>/<asset> and <base>/<tag>/SHA256SUMS.
 nova_tools_release_url: https://github.com/mas-bandwidth/nova-tools/releases/download
@@ -42,6 +42,7 @@ nova_tools_remove:
   - nova-local
   - nova-memory
   - nova-redis
+  - nova-slot
   - nova-self-talk
   - nova-swarm
   - nova-table

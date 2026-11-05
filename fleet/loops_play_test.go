@@ -149,9 +149,9 @@ func TestInstallRoleDefaults(t *testing.T) {
 	require.NoError(t, err)
 	var d map[string]any
 	require.NoError(t, yaml.Unmarshal(b, &d))
-	assert.Equal(t, []any{"nova-bus", "nova-config", "nova-sandbox", "nova-secrets", "nova-slot"}, d["nova_tools_names"])
+	assert.Equal(t, []any{"nova-bus", "nova-config", "nova-sandbox", "nova-secrets", "nova-reserve"}, d["nova_tools_names"])
 	assert.Equal(t, false, d["nova_tools_remove_enabled"])
-	assert.Len(t, d["nova_tools_remove"], 22)
+	assert.Len(t, d["nova_tools_remove"], 23)
 	names, _ := d["nova_tools_names"].([]any)
 	for _, r := range d["nova_tools_remove"].([]any) {
 		assert.NotContains(t, names, r)

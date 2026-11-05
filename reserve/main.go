@@ -1,5 +1,6 @@
-// Command nova-reserve runs a command holding one of N load slots on this machine.
-// The slots are OS file locks, so the kernel frees a dead holder's slot.
+// Command nova-reserve takes a reservation on a machine's shared resources for the
+// duration of a command. A reservation is one of N slots; the slots are OS file
+// locks, so the kernel frees a dead holder's slot.
 package main
 
 import (
@@ -20,16 +21,18 @@ import (
 	"time"
 )
 
-const usage = `nova-reserve: run a command holding one of N load slots on this machine.
+const usage = `nova-reserve: reservations on a machine's shared resources so people and AIs can coordinate
+
+A reservation holds one of N slots on this machine while a command runs.
 
   nova-reserve [--slots N] [--wait D] [--exclusive] [--dir DIR] -- <cmd> [args...]
-      Wait for a free slot, run the command, free the slot when it exits; exit
+      Wait for a free slot, reserve it, run the command, free it when it exits; exit
       with its status. --exclusive runs alone: it waits for every holder and
       keeps new ones out. --wait bounds the wait (default none; past it, exit 3).
       The command dies with nova-reserve on Linux and Windows; on macOS and the
       BSDs a SIGKILL of nova-reserve leaves it running without its slot.
-  nova-reserve hold [same flags]     take a slot, print HELD..., hold it until stdin closes (--dir ignored)
-  nova-reserve status [--dir DIR]   each slot: free, or held by pid and command
+  nova-reserve hold [same flags]     take a reservation, print HELD..., hold it until stdin closes (--dir ignored)
+  nova-reserve status [--dir DIR]   each slot: free, or reserved by pid and command
 
 N defaults to the CPU count / 4 (at least 1). DIR defaults to $NOVA_RESERVE_DIR,
 else /tmp/nova-reserve (C:\ProgramData\nova-reserve on Windows); every caller on a

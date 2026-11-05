@@ -29,7 +29,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist
-          for tool in bus config sandbox secrets slot; do
+          for tool in bus config sandbox secrets reserve; do
             # main.version is set only for a main that declares it
             flags="-s -w"
             if grep -q '^var version ' "$tool/main.go"; then flags="$flags -X main.version=$TAG"; fi

@@ -10,7 +10,7 @@ import (
 	"syscall"
 )
 
-// systemDir is the slot directory when NOVA_RESERVE_DIR names none.
+// systemDir is the reservation directory when NOVA_RESERVE_DIR names none.
 const systemDir = "/tmp/nova-reserve"
 
 // osLock is flock(2) on path. The file is opened read-only (flock needs no

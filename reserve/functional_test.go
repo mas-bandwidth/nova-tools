@@ -17,12 +17,12 @@ import (
 )
 
 // The functional tests run the real binary on real locks. The commands it
-// runs are this test binary again, as a child: NOVA_SLOT_CHILD=sleep writes
-// its pid to NOVA_SLOT_PIDFILE when that is set, and sleeps; =exit7 exits 7.
+// runs are this test binary again, as a child: NOVA_RESERVE_CHILD=sleep writes
+// its pid to NOVA_RESERVE_PIDFILE when that is set, and sleeps; =exit7 exits 7.
 func TestMain(m *testing.M) {
-	switch os.Getenv("NOVA_SLOT_CHILD") {
+	switch os.Getenv("NOVA_RESERVE_CHILD") {
 	case "sleep":
-		if p := os.Getenv("NOVA_SLOT_PIDFILE"); p != "" {
+		if p := os.Getenv("NOVA_RESERVE_PIDFILE"); p != "" {
 			_ = os.WriteFile(p, []byte(strconv.Itoa(os.Getpid())), 0o644)
 		}
 		time.Sleep(30 * time.Second)
@@ -51,7 +51,7 @@ func slotCmd(t *testing.T, bin, dir, child string, args ...string) *exec.Cmd {
 	self, err := os.Executable()
 	require.NoError(t, err)
 	cmd := exec.Command(bin, append(append([]string{"--dir", dir}, args...), "--", self)...)
-	cmd.Env = append(os.Environ(), "NOVA_SLOT_CHILD="+child)
+	cmd.Env = append(os.Environ(), "NOVA_RESERVE_CHILD="+child)
 	return cmd
 }
 
@@ -138,7 +138,7 @@ func TestKilledHolderTakesItsCommandWith(t *testing.T) {
 	bin, dir := build(t), t.TempDir()
 	pidfile := filepath.Join(t.TempDir(), "child.pid")
 	holder := slotCmd(t, bin, dir, "sleep", "--slots", "1")
-	holder.Env = append(holder.Env, "NOVA_SLOT_PIDFILE="+pidfile)
+	holder.Env = append(holder.Env, "NOVA_RESERVE_PIDFILE="+pidfile)
 	require.NoError(t, holder.Start())
 	t.Cleanup(func() { _ = holder.Process.Kill(); _ = holder.Wait() })
 	var child int

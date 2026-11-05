@@ -1,7 +1,8 @@
 # nova-reserve
 
-nova-reserve runs a command holding one of N load slots on this machine, so builds, test runs, benches and CI jobs queue
-instead of piling onto one box and timing each other out. The slots are OS file locks in one directory (flock on Linux,
+nova-reserve: reservations on a machine's shared resources so people and AIs can coordinate. It runs a command holding a
+reservation of one of N slots on this machine, so builds, test runs, benches and CI jobs queue instead of piling onto one
+box and timing each other out. A reservation has N slots (the capacity, set with `--slots`). The slots are OS file locks in one directory (flock on Linux,
 macOS and the BSDs, LockFileEx on Windows): the kernel frees the slot of a holder that ends or dies, however it dies,
 SIGKILL included. There is no daemon, no server and no PID file to clean up.
 
@@ -13,7 +14,7 @@ nova-reserve hold [--slots N] [--wait D] [--exclusive] [--dir DIR]
 nova-reserve status [--dir DIR]
 ```
 
-**run** (no verb) waits for a free slot, runs the command with this process's stdin, stdout and stderr, and frees the
+**run** (no verb) waits for a free slot to reserve, runs the command with this process's stdin, stdout and stderr, and frees the
 slot when the command exits. It exits with the command's status (128 + the signal when a signal ended it); 2 for a
 usage error; 3 when the slot could not be taken. Before the command starts it prints one line to stderr:
 `nova-reserve: HELD mode=shared slot=2/4 pid=1234`. SIGINT and SIGTERM are passed to the command (to its process group on macOS and the BSDs).
@@ -30,7 +31,7 @@ closes the pipe too.
 | `--slots N` | how many shared holders may run at once (default: CPU count / 4, at least 1) |
 | `--wait D` | the longest wait for a slot, as a Go duration (`90s`, `15m`); default no bound |
 | `--exclusive` | run alone: wait for every holder to end, and keep new ones out while waiting and running |
-| `--dir DIR` | the slot directory; default `$NOVA_RESERVE_DIR`, else `/tmp/nova-reserve` (`C:\ProgramData\nova-reserve` on Windows) |
+| `--dir DIR` | the reservation directory; default `$NOVA_RESERVE_DIR`, else `/tmp/nova-reserve` (`C:\ProgramData\nova-reserve` on Windows) |
 
 Every caller on a machine must use the same directory. Callers may pass different `--slots`: each counts slot1..slotN
 of its own N. An exclusive taker first holds the file `gate`, so no new shared taker passes while it waits; then it

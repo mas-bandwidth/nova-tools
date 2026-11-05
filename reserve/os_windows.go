@@ -11,7 +11,7 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// systemDir is the slot directory when NOVA_RESERVE_DIR names none.
+// systemDir is the reservation directory when NOVA_RESERVE_DIR names none.
 const systemDir = `C:\ProgramData\nova-reserve`
 
 // osLock is LockFileEx on the first byte of path. The handle is not
