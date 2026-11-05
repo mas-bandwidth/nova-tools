@@ -393,48 +393,6 @@ $ nova-check hygiene --repo . --base main --head card --identity "Ada <ada@examp
 HYGIENE REFUSED: --kind "fix-with-red-test" is not a kind this tool declares; one of: fix-red, transcript-test, rebase, sweep, mutation-kill, guard, ledger, read, probe, text, tone, report; run: nova-check help
 ```
 
-## nova-self-talk
-
-Fixture: `cmd/nova-self-talk/testdata/example-pages`, built into the binary:
-`nova-self-talk example ./pages` writes it to `./pages`, which is what the lines below type.
-
-A line below opening `! ` is one this tool writes to standard ERROR: the
-findings go there and the protocol lines go to standard output, and the order a
-terminal interleaves the two in is not the same twice — the second block's last
-finding arrived after the `NOTE` line on one bench and before it on another.
-That is why the block cannot be read as one stream.
-`# Stderr: whole` on a command line says the marked lines are ALL it
-writes there: these are findings, not narration, and a transcript that quietly
-lost one would be hiding the thing the tool exists to say.
-
-### First run
-
-```
-$ nova-self-talk ./pages/journal.md   # Stderr: whole
-! SELFTALK FAIL ./pages/journal.md:4: STANDING match="cannot check": I cannot check my own work, so the second read went to someone else.
-! SELFTALK FAIL ./pages/journal.md:10: RANKING match="worst habit I have": It is the worst habit I have, and the reason the checklist exists at all.
-SELFTALK DATED n=1 files=1
-SELFTALK FAIL files=1 claims=2 standing=1 installations=1 dated=1 shown=2
-SELFTALK NOTE catches known SHAPES only (list them: nova-self-talk shapes): register, irony and quoted-specimen context are invisible to grammar, and a quoted verdict is a true positive on the grammar and a false one on the meaning. A green clears the known shapes, never the file.
-
-$ nova-self-talk --rule-doc RULES.md ./pages/RULES.md ./pages/journal.md   # Stderr: whole
-SELFTALK RULEDOC ./pages/RULES.md: rule documents: a finding here is a self-verdict to relocate, NEVER a reason to soften a rule
-! SELFTALK FAIL ./pages/RULES.md:8: VERDICT-IDIOM match="dead as a practice": A rule weakened to improve a score is dead as a practice: the score got better and the wall got thinner.
-! SELFTALK FAIL ./pages/journal.md:4: STANDING match="cannot check": I cannot check my own work, so the second read went to someone else.
-! SELFTALK FAIL ./pages/journal.md:10: RANKING match="worst habit I have": It is the worst habit I have, and the reason the checklist exists at all.
-SELFTALK DATED n=1 files=2
-SELFTALK FAIL files=2 claims=2 standing=1 installations=2 dated=1 shown=3
-SELFTALK NOTE catches known SHAPES only (list them: nova-self-talk shapes): register, irony and quoted-specimen context are invisible to grammar, and a quoted verdict is a true positive on the grammar and a false one on the meaning. A green clears the known shapes, never the file.
-
-$ nova-self-talk --skip RULES.md ./pages/RULES.md ./pages/journal.md   # Stderr: whole
-SELFTALK SKIP ./pages/RULES.md (--skip)
-! SELFTALK FAIL ./pages/journal.md:4: STANDING match="cannot check": I cannot check my own work, so the second read went to someone else.
-! SELFTALK FAIL ./pages/journal.md:10: RANKING match="worst habit I have": It is the worst habit I have, and the reason the checklist exists at all.
-SELFTALK DATED n=1 files=1
-SELFTALK FAIL files=1 claims=2 standing=1 installations=1 dated=1 shown=2
-SELFTALK NOTE catches known SHAPES only (list them: nova-self-talk shapes): register, irony and quoted-specimen context are invisible to grammar, and a quoted verdict is a true positive on the grammar and a false one on the meaning. A green clears the known shapes, never the file.
-```
-
 ## nova-fuse
 
 Fixture: `cmd/nova-fuse/testdata/example-box.json`.
@@ -458,62 +416,6 @@ FUSE FAILED quarantine=a-forum since=2026-09-09T18:27:40Z: a post addressed me a
 $ nova-fuse lift quarantine --box ./fuse-box.json a-forum
 LIFT OK quarantine=a-forum was since=2026-09-09T18:27:40Z: a post addressed me and asked for a token
 LIFT OK verified: a-forum is no longer quarantined (soft: your own dial, both directions; a rescind is announced, never silent -- say so out loud)
-```
-
-## nova-memory
-
-Fixture: `cmd/nova-memory/testdata/corpus`.
-
-### First run
-
-```
-$ nova-memory quickstart --root ./corpus
-QUICKSTART RUN root=./corpus steps=3 channels=bm25 k=3/2 words-source=corpus-top-terms candidate=corpus-first-paragraph words="glazing minutes pressure"
-$ nova-memory stats --root ./corpus
-STATS OK schema=nova-memory/2 files=6 chunks=20 bytes=4866 vocab=380 avg-terms=39.3 build=822.917µs
-STATS OK class=. chunks=3
-STATS OK class=log chunks=4
-STATS OK class=notes chunks=13
-$ nova-memory search --root ./corpus --channels bm25 --k 3 glazing minutes pressure
-SEARCH OK hits=3 k=3 channels=bm25 files=6 chunks=20: query="glazing minutes pressure"
-SEARCH CAL score=4.05 score-channel=bm25 probe=unrelated-control
-SEARCH HIT rank=1 score=3.48 score-channel=bm25 fused=0.01667 class=notes name=lantern-care type=measured root=./corpus: notes/lantern.md:13 "Measured over one winter: glazing washed weekly held its polish; glazing\nwashed monthly needed grinding twice. The weekl…"
-SEARCH HIT rank=2 score=3.12 score-channel=bm25 fused=0.01639 class=notes name=- type=- root=./corpus: notes/index-notes.md:8 "- [lantern-care](lantern.md) — the glazing, the brass, and the two cloths\n- [tide-tables](tides.md) — the jetty's ei…"
-SEARCH HIT rank=3 score=2.97 score-channel=bm25 fused=0.01613 class=notes name=fog-signal type=measured root=./corpus: notes/fog-signal.md:8 "The diaphone runs on compressed air, and the compressor needs eleven minutes\nto bring the receiver to working pressure f…"
-SEARCH NOTE lexical only — a paraphrase sharing almost no vocabulary with the corpus will not surface in any lexical top-k, and no channel here is semantic
-QUICKSTART DEMO no --draft given, so the candidate on stdin is this corpus's own first paragraph: HANDBOOK.md:3
-$ nova-memory check --root ./corpus --channels bm25 --k 2 -
-MEMORY OK candidates=1 source=- k=2 channels=bm25 files=6 chunks=20
-MEMORY CAL score=4.05 score-channel=bm25 probe=unrelated-control
-MEMORY CAND n=1: "This fixture corpus belongs to an invented lighthouse station. It exists so\nthat nova-memory's verbs…"
-MEMORY HIT cand=1 rank=1 score=90.20 score-channel=bm25 fused=0.01667 class=. name=- type=- root=./corpus: HANDBOOK.md:3 "This fixture corpus belongs to an invented lighthouse station. It exists so\nthat nova-memory's verbs can be exercised …"
-MEMORY HIT cand=1 rank=2 score=15.01 score-channel=bm25 fused=0.01639 class=log name=- type=- root=./corpus: log/1974-03-11.md:11 "Left a note to write up the [[storm-glass]] readings against the barometer\none day, because the two disagree in a way th…"
-MEMORY NOTE lexical only — a paraphrase sharing almost no vocabulary with the corpus will not surface in any lexical top-k, and no channel here is semantic
-MEMORY NOTE this verb asserts nothing and never exits 1: it hands you k receipts and the verdict stays yours
-MEMORY NOTE a hit in a dated log class is evidence the event was recorded, not that the lesson was banked — the class on each receipt is the distinction
-QUICKSTART OK done=3
-QUICKSTART NOTE this used bm25 alone and k=3/2; those are choices, not defaults: see --channels and --k
-```
-
-```
-$ nova-memory search --root ./corpus --channels bm25 --k 3 lantern glazing brass
-SEARCH OK hits=3 k=3 channels=bm25 files=6 chunks=20: query="lantern glazing brass"
-SEARCH CAL score=4.05 score-channel=bm25 probe=unrelated-control
-SEARCH HIT rank=1 score=5.33 score-channel=bm25 fused=0.01667 class=notes name=- type=- root=./corpus: notes/index-notes.md:8 "- [lantern-care](lantern.md) — the glazing, the brass, and the two cloths\n- [tide-tables](tides.md) — the jetty's ei…"
-SEARCH HIT rank=2 score=5.02 score-channel=bm25 fused=0.01639 class=notes name=lantern-care type=measured root=./corpus: notes/lantern.md:8 "The lantern glazing collects a salt haze on every onshore wind, and the haze\nis not visible from inside the lightroom at…"
-SEARCH HIT rank=3 score=3.14 score-channel=bm25 fused=0.01587 class=log name=- type=- root=./corpus: log/1974-03-11.md:3 "Onshore gale most of the day, easing after dark. Washed the glazing at first\nlight before the wind got up again — see …"
-SEARCH NOTE lexical only — a paraphrase sharing almost no vocabulary with the corpus will not surface in any lexical top-k, and no channel here is semantic
-
-$ nova-memory check --root ./corpus --channels bm25 --k 3 draft.md
-MEMORY OK candidates=1 source=draft.md k=3 channels=bm25 files=6 chunks=20
-MEMORY CAL score=4.05 score-channel=bm25 probe=unrelated-control
-MEMORY CAND n=1: "The lantern glazing is cleaned with two cloths, one for the brass and one for the glass, before the …"
-MEMORY HIT cand=1 rank=1 score=13.62 score-channel=bm25 fused=0.01667 class=notes name=- type=- root=./corpus: notes/index-notes.md:8 "- [lantern-care](lantern.md) — the glazing, the brass, and the two cloths\n- [tide-tables](tides.md) — the jetty's ei…"
-MEMORY HIT cand=1 rank=2 score=11.40 score-channel=bm25 fused=0.01639 class=notes name=lantern-care type=measured root=./corpus: notes/lantern.md:8 "The lantern glazing collects a salt haze on every onshore wind, and the haze\nis not visible from inside the lightroom at…"
-MEMORY HIT cand=1 rank=3 score=7.56 score-channel=bm25 fused=0.01587 class=log name=- type=- root=./corpus: log/1974-03-11.md:3 "Onshore gale most of the day, easing after dark. Washed the glazing at first\nlight before the wind got up again — see …"
-MEMORY NOTE lexical only — a paraphrase sharing almost no vocabulary with the corpus will not surface in any lexical top-k, and no channel here is semantic
-MEMORY NOTE this verb asserts nothing and never exits 1: it hands you k receipts and the verdict stays yours
-MEMORY NOTE a hit in a dated log class is evidence the event was recorded, not that the lesson was banked — the class on each receipt is the distinction
 ```
 
 ## nova-swarm
@@ -828,33 +730,6 @@ migrations this binary carries and connects to nothing; `migrate --pg <dsn>`
 applies the ones the database lacks, each in its own transaction, and applies
 nothing twice.
 
-
-## nova-cairn
-
-No fixture: the store is created by the run itself. Every line below is local
-— plain files under the named store, no Redis, no remote, no network — and
-`cmd/nova-cairn/firstrun_test.go` runs each `$` line in `t.TempDir()`, so the
-`./cairns` below is a fresh directory per run. The stamps come from `--now`
-because a transcript must read the same twice; a stranger's first run omits
-it and the real clock answers instead.
-
-### First run
-
-```text
-$ nova-cairn open --store ./cairns --session s1 --source bench-a/session-7 --publish manual --now 2026-09-17T12:00:00Z
-OPEN OK session=s1 store=./cairns source=bench-a/session-7 publish=manual stamp=2026-09-17T12:00:00Z
-
-$ nova-cairn append --store ./cairns --session s1 --entry e1 --text "the words to keep" --source bench-a/session-7#L3 --publish manual --now 2026-09-17T12:05:00Z
-APPEND OK session=s1 entry=e1 source=bench-a/session-7#L3 persisted=true published=false publish=manual duplicate=false stamp=2026-09-17T12:05:00Z
-
-$ nova-cairn index --store ./cairns
-INDEX OK sessions=1 entries=1
-INDEX SESSION session=s1 publish=manual opened=2026-09-17T12:00:00Z entries=1
-INDEX ENTRY session=s1 entry=e1 stamp=2026-09-17T12:05:00Z bytes=17 source=bench-a/session-7#L3
-
-$ nova-cairn receipt --store ./cairns --session s1 --entry e1
-RECEIPT OK session=s1 entry=e1 stamp=2026-09-17T12:05:00Z bytes=17 source=bench-a/session-7#L3 persisted=true published=false publish=manual
-```
 
 ## nova-decide
 

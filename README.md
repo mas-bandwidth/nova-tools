@@ -13,7 +13,7 @@ Small tools that each do one thing. Each one stands alone: adopt one, or several
 | [nova-config](cmd/nova-config/README.md) | machines, loops, the fleet and the ansible inventory |
 | [fleet](fleet/) | ansible playbooks and roles that set up, harden and update a machine |
 | [nova-sandbox](sandbox/README.md) | run one command inside an OS-enforced wall (macOS sandbox-exec, Linux Landlock) |
-| [nova-cairn](cmd/nova-cairn/README.md) | a session's notes kept as plain files; self-talk and memory checks |
+| [nova-cairn](cairn/README.md) | a session's notes kept as plain files; self-talk and memory checks |
 | [nova-update](cmd/nova-update/README.md) | install the latest release of a tool on a machine |
 
 Tools that used to live here and where they went: [docs/MOVED.md](docs/MOVED.md).

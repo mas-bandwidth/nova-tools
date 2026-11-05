@@ -133,7 +133,6 @@ func TestParseCLIReadsThisRepositorysOwnReference(t *testing.T) {
 		"nova-bus send":             false,
 		"nova-fuse lift quarantine": false,
 		"nova-version snapshot":     false,
-		"nova-memory quickstart":    false,
 	}
 	tools := map[string]bool{}
 	for _, v := range verbs {
