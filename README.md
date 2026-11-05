@@ -27,7 +27,7 @@ Mark the machines that build and test your code as runners, and your Ansible pla
 ## 5. Run untrusted work behind a wall
 
 **Give unfamiliar code a limited place to work.**
-`nova-sandbox` runs it with only the folders and network you allow, on Linux or macOS.
+`nova-sandbox` limits its access to files and the network, on Linux or macOS.
 
 ## 6. Share machines without stepping on each other
 
