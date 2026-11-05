@@ -163,15 +163,17 @@ the unit and does not load it.
 
 ## Reservations
 
-`nova-reserve` runs a command holding a reservation of one of N slots on the machine, so builds, tests and benches queue instead of timing each other out. It is the same tool on Linux, macOS and Windows: OS file locks in one directory
-(`$NOVA_RESERVE_DIR`, else `/tmp/nova-reserve`; `C:\ProgramData\nova-reserve` on Windows), freed by the kernel when a holder
-dies. N defaults to the CPU count divided by 4.
+`nova-reserve` runs a command holding a reservation of one of N slots on the machine, so builds, tests and benches queue instead of
+timing each other out. It is the same tool on Linux, macOS and Windows: OS file locks in one directory
+(`$NOVA_RESERVE_DIR`, else `/var/tmp/nova-reserve`; `C:\ProgramData\nova-reserve` on Windows; a local disk), freed by the kernel when a holder
+dies. A machine has one capacity, N slots, stored in the directory; `docs/SPEC-RESERVE.md` has the rule.
 
 ```
-nova-reserve --slots 3 --wait 15m -- go test ./...
+nova-reserve --wait 15m -- go test ./...
 nova-reserve --exclusive -- ./bench
-nova-reserve hold --slots 3          # prints HELD, holds until stdin closes
+nova-reserve hold --for 2h &        # prints HELD, holds until SIGTERM or --for
 nova-reserve status
+nova-reserve set --slots 3           # refused while a slot is held
 ```
 
 Every caller on a machine uses the same directory. `reserve/README.md` has the flags, exit codes and the TLA+ models;

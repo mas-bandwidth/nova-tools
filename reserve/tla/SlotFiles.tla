@@ -3,6 +3,8 @@
 \* acquire, release): the lock files gate, all and slot1..slotN in one
 \* directory, each an OS lock (flock or LockFileEx) the kernel holds for a
 \* process and lets go of when it dies, however it dies.
+\* N is the machine's stored capacity, one value for every caller;
+\* Capacity.tla checks how it is chosen and changed.
 \*
 \* A shared taker, once per poll: gate shared (fails while an exclusive taker
 \* holds it), then slot1..slotN in order until one is free (the scan index is
