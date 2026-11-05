@@ -190,7 +190,6 @@ func (t tool) unknownVerb(verb string) int {
 	return 2
 }
 
-// beforeDashes is exec's arguments before its --, else all of them.
 func beforeDashes(verb string, args []string) []string {
 	if i := slices.Index(args, "--"); verb == "exec" && i >= 0 {
 		return args[:i]
@@ -198,7 +197,6 @@ func beforeDashes(verb string, args []string) []string {
 	return args
 }
 
-// opts is the flags the verbs share.
 type opts struct{ store, as, key, sops, only, recovery string }
 
 // parse reads flags after the verb's positional arguments (npos of them) and
@@ -276,7 +274,6 @@ func envValue(env []string, name string) string {
 
 func (o opts) file(seat string) string { return filepath.Join(o.store, seat+".yaml") }
 
-// q quotes a word for a shell, for the command lines a refusal prints.
 func q(s string) string {
 	if s != "" && strings.Trim(s, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_./:=@%+-") == "" {
 		return s
@@ -533,7 +530,6 @@ func (t tool) keyVsRule(o opts, seat string) (string, error) {
 	return pub, nil
 }
 
-// seatsIn lists the seat files in the store.
 func seatsIn(store string) []string {
 	entries, _ := os.ReadDir(store)
 	var seats []string
@@ -635,13 +631,11 @@ func (t tool) git(dir string, args ...string) error {
 	return nil
 }
 
-// toplevel is the top of the work tree that holds dir.
 func (t tool) toplevel(dir string) (string, error) {
 	out, err := t.gitRun(dir, "rev-parse", "--show-toplevel")
 	return strings.TrimSpace(string(out)), err
 }
 
-// sameDir is whether two paths are one directory, links resolved.
 func sameDir(a, b string) bool {
 	real := func(p string) string {
 		if r, err := filepath.EvalSymlinks(p); err == nil {
@@ -668,7 +662,6 @@ func writeFile(path string, data []byte, mode os.FileMode) error {
 	return nil
 }
 
-// exitOf names how a program failed without its output.
 func exitOf(err error) string {
 	var ee *exec.ExitError
 	if errors.As(err, &ee) {
@@ -677,7 +670,6 @@ func exitOf(err error) string {
 	return err.Error()
 }
 
-// parseTop is the top-level map of a YAML document.
 func parseTop(data []byte) (doc, top *yaml.Node, err error) {
 	doc = &yaml.Node{}
 	if err = yaml.Unmarshal(data, doc); err != nil || doc.Kind != yaml.DocumentNode || len(doc.Content) != 1 || doc.Content[0].Kind != yaml.MappingNode {
@@ -686,7 +678,6 @@ func parseTop(data []byte) (doc, top *yaml.Node, err error) {
 	return doc, doc.Content[0], nil
 }
 
-// field is the value of key in a YAML map node, or nil.
 func field(m *yaml.Node, key string) *yaml.Node {
 	for i := 0; m != nil && i+1 < len(m.Content); i += 2 {
 		if m.Content[i].Value == key {
@@ -696,7 +687,6 @@ func field(m *yaml.Node, key string) *yaml.Node {
 	return nil
 }
 
-// items is the elements of a YAML sequence node, or none.
 func items(n *yaml.Node) []*yaml.Node {
 	if n == nil || n.Kind != yaml.SequenceNode {
 		return nil
