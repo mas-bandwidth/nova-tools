@@ -44,8 +44,10 @@ jobs:
         shell: bash
         run: |
           want=go$(sed -n 's/^go \([0-9.]*\)$/\1/p' go.mod)
-          for d in "$HOME/sdk/$want/bin" "$HOME/go/bin" /usr/local/go/bin /opt/homebrew/bin; do
-            [ -x "$d/go" ] && { echo "$d" >> "$GITHUB_PATH"; "$d/go" version; exit 0; }
+          newest=$(ls -d "$HOME"/sdk/go*/bin 2>/dev/null | sort -V | tail -1 || true)
+          onpath=$(dirname "$(command -v go 2>/dev/null || echo /none/go)")
+          for d in "$HOME/sdk/$want/bin" "$newest" "$HOME/go/bin" /usr/local/go/bin /opt/homebrew/bin "$onpath"; do
+            [ -n "$d" ] && [ -x "$d/go" ] && { echo "$d" >> "$GITHUB_PATH"; "$d/go" version; exit 0; }
           done
           echo "no Go toolchain on this runner" >&2; exit 1
       - name: gofmt
