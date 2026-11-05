@@ -173,7 +173,7 @@ func (s *selector) dotted(importPaths []string) []string {
 // fails when a top-level directory holding Go packages is neither here nor in
 // its named exclusions, so the next folded directory cannot drop out of CI in
 // silence.
-var Roots = []string{"bus", "cairn", "cmd", "hook", "internal", "pkg", "tools"}
+var Roots = []string{"bus", "cairn", "cmd", "config", "hook", "internal", "pkg", "tools"}
 
 // treeRoots is Roots as `go list` patterns: ./<root>/... each.
 var treeRoots = func() []string {

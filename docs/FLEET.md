@@ -207,16 +207,11 @@ fleet's copy of the same pass.
 
 ## A fixture inventory
 
-`nova-config inventory --fixture <file>` reads the rows from a YAML or JSON
-file instead of the store: machines (with an explicit `roles` list, `os`,
-`arch` and `cores` standing in for the beat, and optional `width` for the
-machine row), the fleet row and loops. Empty `roles` is valid; a missing key
-is not. A file with no `loops` key is a fleet whose
-loops were never applied. `fleet/testdata/inventory-fixture.yml` is two
-machines and their loops; `fleet/testdata/check-fixture.yml` is the machine
-running the play, named `localhost`, with no store deployer, which is what
-`TestFleetPlaysPassSyntaxAndCheckOnTheFixture` runs all three plays against
-with `--check`.
+The plays' functional tests (`internal/ci/fleetplays_functional_test.go`) run
+against fixed inventories, the JSON `nova-config inventory --list` prints:
+`fleet/testdata/check-inventory.json` is the machine running the play, named
+`localhost`, with no store deployer; in `deployer-inventory.json` it is the
+coordinator and store deployer, and in `tla-inventory.json` a `tla` host only.
 
 ## Variables
 
@@ -247,18 +242,6 @@ record has no cores, so a stale hash never overrides a live beat; `os`, `arch`
 and `memory_gb` are only ever in that hash. When neither carries cores,
 `cores` is absent, and so is `slots_share` unless the row sets `width`.
 
-A machine row applied before migration 0042 has no `roles` field (the store the
-previous release leaves for this release's adopt): the inventory derives it as
-0042 does (`bench`; `coordination` on the fleet coordinator; `services` on the
-fleet store; `config.DeriveMachineRoles`, one rule with the migration's SQL,
-held to one table of cases) and prints a NOTE; `nova-config apply --kind
-machine` stores it. Only a row with nothing to derive from (the fleet row was
-never applied) is refused. A present field always wins. The release gate
-`TestReleaseNInventoryOverReleaseNMinus1Store` (certification.yml,
-release-checks) builds this release's inventory from the store the previous
-release leaves (`fleet/testdata/inventory-fixture-n-1.yml`) and asserts every
-host and group of the previous release's own inventory of it
-(`fleet/testdata/inventory-n-1-golden.json`) is present.
 
 | variable | inventory source | plays that read it |
 |---|---|---|

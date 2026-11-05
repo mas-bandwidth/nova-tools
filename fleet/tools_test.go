@@ -3,15 +3,12 @@ package fleet
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
-
-	"github.com/mas-bandwidth/nova-tools/pkg/config"
 )
 
 // tools_test.go pins the friend step of fleet/tools.yml (docs/FLEET.md, the
@@ -705,17 +702,7 @@ func TestInstallPlayStartsWithOneCanaryBatch(t *testing.T) {
 	_, ok = all["nova_adopt_canary_wait"]
 	assert.True(t, ok, "nova_adopt_canary_wait is not a group var")
 
-	// The fixture's all order is [bench-a, bench-b] with bench-a the
-	// coordinator, so the first host of all is the coordinator; the adopt
-	// order leads with the canary bench-b, which the serial's first batch takes.
-	snap, err := config.LoadFixture(filepath.Join("testdata", "inventory-fixture.yml"))
-	require.NoError(t, err)
-	inv, err := config.BuildInventory(snap, "")
-	require.NoError(t, err)
-	require.NotEmpty(t, inv.Adopt.Hosts, "the adopt order is empty")
-	assert.Equal(t, "bench-a", inv.All.Hosts[0], "the fixture no longer sorts the coordinator first")
-	assert.Equal(t, "bench-b", inv.Adopt.Hosts[0], "the adopt order's first host is not the canary")
-	assert.ElementsMatch(t, inv.All.Hosts, inv.Adopt.Hosts, "the adopt order drops or adds a host")
+	// The adopt order itself (the canary first) is pinned by config/inventory_test.go.
 }
 
 // TestInstallPlayCanaryWaitsOnItsMemberLog pins the wait (docs/SPEC-RELEASE.md,

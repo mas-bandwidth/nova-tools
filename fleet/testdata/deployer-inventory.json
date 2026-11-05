@@ -1,0 +1,72 @@
+{
+  "_meta": {
+    "hostvars": {
+      "localhost": {
+        "ansible_connection": "local",
+        "ansible_host": "localhost",
+        "ansible_user": "nova",
+        "bench_os": "linux",
+        "cores": 2,
+        "kind": "machine",
+        "nova_arch": "amd64",
+        "nova_loops": [],
+        "nova_os": "linux",
+        "nova_pg_dsn": "postgres://nova_config@localhost:5432/nova",
+        "nova_redis_addr": "localhost:6380",
+        "nova_redis_port": 6380,
+        "nova_seat": "seat-local",
+        "nova_tla": false,
+        "registry_roles": "bench,coordination,services",
+        "registry_seat": "seat-local",
+        "runners": 0,
+        "slots": 1,
+        "slots_capacity": 1,
+        "slots_share": 1
+      }
+    }
+  },
+  "all": {
+    "hosts": [
+      "localhost"
+    ],
+    "vars": {
+      "nova_config_rev": {
+        "fleet": 1,
+        "loop": 1,
+        "machine": 1
+      },
+      "nova_store": "localhost"
+    }
+  },
+  "adopt": {
+    "hosts": [
+      "localhost"
+    ]
+  },
+  "benches": {
+    "hosts": [
+      "localhost"
+    ]
+  },
+  "coordinator": {
+    "hosts": [
+      "localhost"
+    ]
+  },
+  "store": {
+    "hosts": [
+      "localhost"
+    ]
+  },
+  "store_deployer": {
+    "hosts": [
+      "localhost"
+    ]
+  },
+  "runners": {
+    "hosts": []
+  },
+  "tla": {
+    "hosts": []
+  }
+}

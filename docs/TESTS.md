@@ -677,60 +677,6 @@ REPORT TOOL name=go kind=tool version=1.27.1 raw=go\x20version\x20go1.27.1\x20da
 ```
 
 
-## nova-config
-
-No database: the first run keeps its rows in `./try.json` (`--file`), the
-same kinds, refusals and history as PostgreSQL, and
-`cmd/nova-config/firstrun_test.go` runs each `$` line in `t.TempDir()`. The
-history's `at=` is the instant of the run, the one value that differs on a
-second run. The real runs need a Postgres (`nova-config migrate`) and a Redis
-(`nova-config apply`); `docs/nova-config/README.md` walks them, and
-`cmd/nova-config/config_functional_test.go` runs them against a throwaway
-Postgres and a throwaway Redis. The bare sprint store from the recorded
-`nova-sprint seat login` (address, ACL user and in-process password, never in
-an environment or an output) is pinned over a private Redis by
-`cmd/nova-config/seat_login_redis_functional_test.go`
-(`TestNovaConfigReadsTheSeatLogin`); the resolution (address, ACL user and
-in-process password) and `status`'s `redis-from=<flag|env|seat|seat-login>`
-source are pinned by `cmd/nova-config/seat_login_redis_test.go`
-(`TestSeatLoginSprintCredsAndStatusSource`).
-
-### First run
-
-```text
-$ nova-config migrate --file try.json
-CONFIG MIGRATE file=try.json from=0 to=47 applied=47
-
-$ nova-config machine add m1 --user nova --seat s1 --slots 8 --width 4 --actor a1 --file try.json
-CONFIG ADD kind=machine name=m1 rev=1
-
-$ nova-config machine set m1 --width 6 --actor a1 --file try.json
-CONFIG SET kind=machine name=m1 rev=2 changed=width
-
-$ nova-config machine list --file try.json
-MACHINE name=m1 user=nova seat=s1 slots=8 runners=0 roles=bench width=6 gates_only=- tla=false note=-
-CONFIG LIST kind=machine rows=1
-
-$ nova-config machine history m1 --file try.json
-HISTORY id=1 kind=machine name=m1 op=add actor=a1 at=2026-10-02T03:18:20Z gates_only=- note=- roles=bench runners=0 seat=s1 slots=8 tla=false user=nova width=4
-HISTORY id=2 kind=machine name=m1 op=set actor=a1 at=2026-10-02T03:18:20Z width=4>6
-CONFIG HISTORY kind=machine name=m1 changes=2
-```
-
-`migrate --file` makes the file at this binary's schema; each write prints
-its history id (`rev=`); `list` is one typed line per row and a count;
-`history` is every change, who made it and when, a set as
-`<field>=<before>><after>`.
-
-`kinds` (no store) is one line per kind: its table under schema `config`, its fields in
-the order every line prints them, the fields `add` requires, and whether the
-kind is many rows or one (`rows=one`: the fleet and the sprint, a row
-`migrate` creates and `set` changes, with no add, remove or list). `migrate --print` lists the
-migrations this binary carries and connects to nothing; `migrate --pg <dsn>`
-applies the ones the database lacks, each in its own transaction, and applies
-nothing twice.
-
-
 ## nova-decide
 
 Fixture: `cmd/nova-decide/testdata/`: a schema and a state, a card and its
