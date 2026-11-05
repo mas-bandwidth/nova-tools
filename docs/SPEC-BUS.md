@@ -61,7 +61,7 @@ nova-bus's.
 
 | Variable | |
 |---|---|
-| `NOVA_BUS_REDIS` | the Redis address, `host:port` (required); Redis 7 or later |
+| `NOVA_BUS_REDIS` | the Redis address, `host:port` (required); Redis 6.2 or later |
 | `NOVA_BUS_PASSWORD` | the Redis password (optional; never printed) |
 
 Each process keeps one Redis connection and runs its commands in turn. The
@@ -111,9 +111,17 @@ stdout), the names after it were not. The tool never retries a send: if the
 connection dropped mid-command the message may or may not have been
 appended, so retrying is the caller's choice, knowing that it can duplicate.
 
-pending's count is the group's pending count plus its lag (`XINFO GROUPS`), or
-`XLEN` when there is no group yet; constant time. `--list` reads the entries
-(`XPENDING`, `XRANGE` 1000 at a time) and is O(entries waiting).
+Because an ack deletes its entry, a stream holds exactly the messages no hook
+has acked. pending's count is one `XLEN`; `--list` reads the stream with
+`XRANGE`, 1000 entries at a time, and is O(entries waiting).
+
+A stream written by an older build, whose acks did not delete, may still hold
+acked history. A hook clears it once: the first entry it is handed is the
+oldest unacked one (pending entries come first, and every pending id is below
+every undelivered id), so it trims everything older (`XTRIM MINID <that id>`)
+before printing. Until a hook has run on such a stream, pending counts that
+history too. A stream with history and nothing waiting is trimmed when its
+next message arrives.
 
 ## Presence
 

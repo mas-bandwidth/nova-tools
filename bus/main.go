@@ -102,9 +102,11 @@ type Store interface {
 	Read(ctx context.Context, stream string, pending bool, block time.Duration) ([]Msg, error)
 	Ack(ctx context.Context, stream, id string) error
 	// Count is the number of entries no hook has acked; Waiting returns
-	// them, oldest first. Neither consumes anything.
+	// them, oldest first. Neither consumes anything. Trim deletes every entry
+	// older than id.
 	Count(ctx context.Context, stream string) (int64, error)
 	Waiting(ctx context.Context, stream string) ([]Msg, error)
+	Trim(ctx context.Context, stream, id string) error
 	// Claim sets name's presence to value for ttl unless another value is
 	// present (false); Release deletes it only if it still holds value.
 	Claim(ctx context.Context, name, value string, ttl time.Duration) (bool, error)
@@ -315,7 +317,7 @@ func hook(ctx context.Context, store Store, name, value string, clk Clock, out, 
 	if err := store.Group(ctx, stream); err != nil {
 		return err
 	}
-	pending := true
+	pending, trimmed := true, false
 	for {
 		if err := refresh(); err != nil {
 			return err
@@ -326,6 +328,15 @@ func hook(ctx context.Context, store Store, name, value string, clk Clock, out, 
 		}
 		if pending && len(msgs) == 0 {
 			pending = false
+		}
+		// The first entry handed is the oldest unacked one (pending ids are
+		// below every undelivered id): what is older is acked history an
+		// older build left, as acks did not delete.
+		if !trimmed && len(msgs) > 0 {
+			if err := store.Trim(ctx, stream, msgs[0].ID); err != nil {
+				return err
+			}
+			trimmed = true
 		}
 		for _, m := range msgs {
 			if ctx.Err() != nil {

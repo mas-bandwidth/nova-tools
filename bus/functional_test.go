@@ -246,3 +246,29 @@ func TestHookOnAClosedPipe(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), p.Count, "the message was not printed, so not acked")
 }
+
+// TestHookTrimsOldAckedHistory: a stream an older build acked without
+// deleting keeps its history until a hook runs; the hook trims it.
+func TestHookTrimsOldAckedHistory(t *testing.T) {
+	t.Parallel()
+	addr := startRedis(t)
+	bin := filepath.Join(t.TempDir(), "nova-bus")
+	build := exec.Command("go", "build", "-o", bin, ".")
+	build.Stderr = os.Stderr
+	require.NoError(t, build.Run())
+	ctx := context.Background()
+	c := redis.NewClient(&redis.Options{Addr: addr})
+	t.Cleanup(func() { _ = c.Close() }) // ignored: closing a test client
+	for _, s := range []string{"old1", "old2", "new"} {
+		require.NoError(t, c.XAdd(ctx, &redis.XAddArgs{Stream: "bus:beta", Values: []string{"from", "alpha", "subject", s, "body", s}}).Err())
+	}
+	require.NoError(t, c.XGroupCreate(ctx, "bus:beta", group, "0").Err())
+	old, err := c.XReadGroup(ctx, &redis.XReadGroupArgs{Group: group, Consumer: group, Streams: []string{"bus:beta", ">"}, Count: 2, Block: -1}).Result()
+	require.NoError(t, err)
+	for _, m := range old[0].Messages {
+		require.NoError(t, c.XAck(ctx, "bus:beta", group, m.ID).Err()) // acked, not deleted: an older build
+	}
+	h := startHook(t, bin, addr)
+	assert.True(t, strings.HasSuffix(h.next(t), "\tnew\tnew"), "only the unacked entry is printed")
+	require.Eventually(t, func() bool { return c.XLen(ctx, "bus:beta").Val() == 0 }, wait, 20*time.Millisecond, "history trimmed, the new entry deleted on ack")
+}

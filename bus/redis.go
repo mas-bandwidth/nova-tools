@@ -88,67 +88,16 @@ func (r redisStore) Ack(ctx context.Context, stream, id string) error {
 	return err
 }
 
-// Count is the group's pending count plus its lag (Redis 7); the stream's
-// length when there is no group yet; a full count when the lag is unknown.
+// Count is one XLEN: an ack deletes its entry, so a stream holds exactly
+// the entries no hook has acked.
 func (r redisStore) Count(ctx context.Context, stream string) (int64, error) {
-	groups, err := r.c.XInfoGroups(ctx, stream).Result()
-	if noSuchKey(err) {
-		return 0, nil
-	}
-	if err != nil {
-		return 0, err
-	}
-	for _, g := range groups {
-		if g.Name == group && g.Lag >= 0 {
-			return g.Pending + g.Lag, nil
-		}
-		if g.Name == group {
-			msgs, err := r.Waiting(ctx, stream)
-			return int64(len(msgs)), err
-		}
-	}
 	return r.c.XLen(ctx, stream).Result()
 }
 
-// Waiting reads the group's handed-but-unacked entries (XPENDING, then one
-// pipelined XRANGE each), then every entry after its last-delivered id, 1000
-// at a time; with no group yet, the whole stream. It is O(entries waiting).
+// Waiting reads the whole stream, 1000 entries at a time.
 func (r redisStore) Waiting(ctx context.Context, stream string) ([]Msg, error) {
-	groups, err := r.c.XInfoGroups(ctx, stream).Result()
-	if noSuchKey(err) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
 	var msgs []Msg
-	start := "-"
-	for _, g := range groups {
-		if g.Name != group {
-			continue
-		}
-		start = "(" + g.LastDeliveredID
-		if g.Pending == 0 {
-			break
-		}
-		ps, err := r.c.XPendingExt(ctx, &redis.XPendingExtArgs{Stream: stream, Group: group, Start: "-", End: "+", Count: g.Pending}).Result()
-		if err != nil {
-			return nil, err
-		}
-		cmds, err := r.c.Pipelined(ctx, func(p redis.Pipeliner) error {
-			for _, x := range ps {
-				p.XRange(ctx, stream, x.ID, x.ID)
-			}
-			return nil
-		})
-		if err != nil {
-			return nil, err
-		}
-		for _, c := range cmds {
-			msgs = append(msgs, toMsgs(c.(*redis.XMessageSliceCmd).Val())...)
-		}
-	}
-	for {
+	for start := "-"; ; {
 		xs, err := r.c.XRangeN(ctx, stream, start, "+", 1000).Result()
 		if err != nil {
 			return nil, err
@@ -161,7 +110,10 @@ func (r redisStore) Waiting(ctx context.Context, stream string) ([]Msg, error) {
 	}
 }
 
-func noSuchKey(err error) bool { return err != nil && strings.Contains(err.Error(), "no such key") }
+// Trim deletes every entry older than id (XTRIM MINID).
+func (r redisStore) Trim(ctx context.Context, stream, id string) error {
+	return r.c.XTrimMinID(ctx, stream, id).Err()
+}
 
 // claim sets the key unless it holds another value; release deletes it only
 // if it holds this one (tla/Presence.tla Claim, Release: StartOnlyWhenFree,

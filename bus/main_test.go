@@ -36,6 +36,7 @@ type fake struct {
 	presence  map[string]string
 	deadline  map[string]time.Time
 	claims    []time.Time // the clock at each successful Claim
+	trims     []string    // the id of each Trim
 	log       []string    // the order of writes to stdout and acks
 }
 
@@ -117,6 +118,11 @@ func (f *fake) Waiting(_ context.Context, stream string) ([]Msg, error) {
 		out = append(out, f.find(stream, id))
 	}
 	return append(out, f.entries[stream][f.delivered[stream]:]...), nil
+}
+
+func (f *fake) Trim(_ context.Context, stream, id string) error {
+	f.trims = append(f.trims, stream+" "+id)
+	return nil
 }
 
 func (f *fake) Count(ctx context.Context, stream string) (int64, error) {
@@ -374,6 +380,29 @@ func TestHelp(t *testing.T) {
 	_, out, _ := call(t, newFake(), nil, "", "help")
 	assert.Contains(t, out, "One hook per name: a hook that finds the name held waits up to 40 s")
 	assert.Contains(t, out, "nova-bus pending --as <name> [--list]")
+}
+
+// Streams from an older build hold acked history: the hook trims everything
+// older than the first entry it is handed, once.
+func TestHookTrimsAckedHistoryOnce(t *testing.T) {
+	t.Parallel()
+	f := newFake()
+	for _, s := range []string{"one", "two", "three", "four"} {
+		send(t, f, s, "b")
+	}
+	f.delivered["bus:beta"] = 3 // one and two acked; three handed, not acked
+	f.pending["bus:beta"] = []string{"3-0"}
+	out, _ := runHookOnce(t, f, "beta")
+	assert.Equal(t, 2, strings.Count(out, "\n"))
+	assert.Equal(t, []string{"bus:beta 3-0"}, f.trims, "trimmed below the oldest unacked entry, once")
+
+	g := newFake()
+	for _, s := range []string{"one", "two", "three"} {
+		send(t, g, s, "b")
+	}
+	g.delivered["bus:beta"] = 2 // nothing pending: the first new entry is the oldest unacked
+	_, _ = runHookOnce(t, g, "beta")
+	assert.Equal(t, []string{"bus:beta 3-0"}, g.trims)
 }
 
 func TestHookAcksEachLineAfterPrintingIt(t *testing.T) {
