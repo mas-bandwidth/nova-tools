@@ -59,4 +59,4 @@ The seventh piece, `nova-cairn`, keeps memory and supports self-talk.
 | [SECURITY](docs/SECURITY.md) | what counts as a vulnerability, and how to report one |
 | [MOVED](docs/MOVED.md) | tools that used to live here, and where they went |
 
-[TESTING.md](TESTING.md) says how to test. Licence: [LICENSE](LICENSE).
+[docs/TESTING.md](docs/TESTING.md) says how to test. Licence: [LICENSE](LICENSE).
