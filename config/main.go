@@ -16,37 +16,6 @@ import (
 	"time"
 )
 
-const usage = `nova-config: a fleet's machines and loops, kept as rows in PostgreSQL.
-
-  nova-config machine|loop list [--json]
-  nova-config machine|loop show <name> [--json]
-  nova-config machine|loop add <name> --<field> <value> ... --actor <name> [--reason <line>] [--dry-run]
-  nova-config machine|loop set <name> --<field> <value> ... --actor <name> [--reason <line>] [--dry-run]
-  nova-config machine|loop remove <name> --actor <name> [--reason <line>] [--dry-run]
-  nova-config fleet show [--json]
-  nova-config fleet set --<field> <value> ... --actor <name> [--reason <line>] [--dry-run]
-  nova-config inventory [--list | --host <name>]
-  nova-config schema
-
-machine  a machine, named by its tailnet host: user (required), address (what ssh dials, else
-         the name), os, arch, cores (default unsets it), runners, roles (bench,runner,services), note
-loop     a command a machine runs under launchd or systemd: machine, argv (a JSON array,
-         required), seat, keys (secret NAMES, never values), every (seconds) or keepalive
-         true, enabled
-fleet    the one fleet row: pg_dsn (no password)
-
-Every write is one transaction: the row and a history row naming the actor (and the reason).
-inventory prints the Ansible dynamic inventory: use it as ansible-playbook -i <script>, where
-the script is: #!/bin/sh followed by: exec nova-config inventory "$@".
-
-Store: --pg <dsn> or NOVA_PG_DSN, postgres://user@host:port/db with no password; the password
-is read from the variable NOVA_PG_PASSWORD_ENV names, else NOVA_PG_PASSWORD. NOVA_MACHINE names
-the machine inventory runs on (else the host name's first label).
-A fresh or older store is made current with: nova-config schema | psql <dsn>
-Apply it before running this binary against an older store; nothing migrates on start.
-Exit codes: 0 done, 1 refused, 2 could not run.
-`
-
 //go:embed schema.sql
 var schemaSQL string
 
@@ -54,11 +23,12 @@ var schemaSQL string
 type deps struct {
 	getenv   func(string) string
 	hostname func() (string, error)
+	now      func() time.Time
 	openPG   func(ctx context.Context, dsn, password string) (Store, error)
 }
 
 func main() {
-	d := deps{getenv: os.Getenv, hostname: os.Hostname, openPG: openPG}
+	d := deps{getenv: os.Getenv, hostname: os.Hostname, now: time.Now, openPG: openPG}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	code := run(ctx, os.Args[1:], d, os.Stdout, os.Stderr)
 	cancel()
@@ -73,33 +43,72 @@ func (r refusal) Error() string { return r.msg }
 func refused(format string, a ...any) error { return refusal{fmt.Sprintf(format, a...)} }
 
 func run(ctx context.Context, args []string, d deps, stdout, stderr io.Writer) int {
-	if len(args) == 0 || args[0] == "help" || args[0] == "-h" || args[0] == "--help" {
+	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" {
 		fmt.Fprint(stdout, usage)
 		return 0
 	}
-	verb, rest := args[0], args[1:]
-	if k, ok := kinds[verb]; ok && len(rest) > 0 {
-		verb, rest = verb+" "+rest[0], rest[1:]
-		if err := runKind(ctx, k, verb, rest, d, stdout, stderr); err != nil {
-			return fail(stderr, verb, err)
+	if args[0] == "help" {
+		if len(args) == 2 && wantsHelp(args[1:]) {
+			args = []string{"help", "help"}
 		}
+		if text, ok := helpText(args[1:]); ok {
+			fmt.Fprint(stdout, text)
+			return 0
+		}
+		return fail(stderr, "help", unknownVerb(strings.Join(args[1:min(3, len(args))], " ")))
+	}
+	verb, rest := args[0], args[1:]
+	path := []string{verb}
+	k, isKind := kinds[verb]
+	if isKind && len(rest) > 0 && !strings.HasPrefix(rest[0], "-") {
+		path, rest = append(path, rest[0]), rest[1:]
+	}
+	if text, ok := helpText(path); ok && wantsHelp(rest) {
+		fmt.Fprint(stdout, text)
 		return 0
 	}
-	switch verb {
-	case "schema":
+	name := strings.Join(path, " ")
+	switch {
+	case isKind && len(path) == 1:
+		return fail(stderr, name, usagef(name, "the verbs are "+strings.Join(k.ops(), ", "), "wants a verb"))
+	case isKind && slices.Contains(k.ops(), path[1]):
+		if err := runKind(ctx, k, name, rest, d, stdout); err != nil {
+			return fail(stderr, name, err)
+		}
+		return 0
+	case isKind:
+		return fail(stderr, name, unknownVerb(name))
+	case verb == "schema":
+		if len(rest) > 0 {
+			msg := "takes no arguments"
+			if strings.HasPrefix(rest[0], "-") {
+				msg = "unknown flag " + rest[0]
+			}
+			return fail(stderr, verb, usagef(verb, "", "%s", msg))
+		}
 		fmt.Fprint(stdout, schemaSQL)
 		return 0
-	case "inventory":
-		if err := runInventory(ctx, rest, d, stdout, stderr); err != nil {
+	case verb == "inventory":
+		if err := runInventory(ctx, rest, d, stdout); err != nil {
+			return fail(stderr, verb, err)
+		}
+		return 0
+	case verb == "history":
+		if err := runHistory(ctx, rest, d, stdout); err != nil {
 			return fail(stderr, verb, err)
 		}
 		return 0
 	}
-	return fail(stderr, verb, fmt.Errorf("unknown verb %q; run: nova-config help", strings.Join(args[:min(2, len(args))], " ")))
+	return fail(stderr, verb, unknownVerb(strings.Join(args[:min(2, len(args))], " ")))
 }
 
 func fail(stderr io.Writer, verb string, err error) int {
-	fmt.Fprintf(stderr, "nova-config %s REFUSED: %s\n", verb, escape(err.Error()))
+	var u usageError
+	if errors.As(err, &u) {
+		fmt.Fprintln(stderr, escape(err.Error()))
+		return 2
+	}
+	fmt.Fprintf(stderr, "nova-config %s: %s\n", verb, escape(err.Error()))
 	var r refusal
 	if errors.As(err, &r) {
 		return 1
@@ -107,45 +116,47 @@ func fail(stderr io.Writer, verb string, err error) int {
 	return 2
 }
 
-// flags parses a verb's flags around one optional leading name.
-func flags(verb string, args []string, stderr io.Writer, define func(*flag.FlagSet)) (*flag.FlagSet, string, map[string]bool, error) {
+// flags parses a verb's flags around the words before them: the names a verb
+// takes. A flag it does not have is a usage error that names the flag and, as
+// hint, what the verb does take.
+func flags(verb, hint string, args []string, define func(*flag.FlagSet)) (*flag.FlagSet, []string, map[string]bool, error) {
 	fs := flag.NewFlagSet("nova-config "+verb, flag.ContinueOnError)
-	fs.SetOutput(stderr)
-	fs.Usage = func() { fmt.Fprintf(stderr, "usage: nova-config %s; the flags:\n", verb); fs.PrintDefaults() }
-	fs.String("pg", "", "the PostgreSQL `dsn`, with no password (env NOVA_PG_DSN)")
+	fs.SetOutput(io.Discard)
+	fs.String("pg", "", "the PostgreSQL dsn, with no password (env NOVA_PG_DSN)")
 	define(fs)
-	name := ""
-	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
-		name, args = args[0], args[1:]
+	var words []string
+	for len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		words, args = append(words, args[0]), args[1:]
 	}
 	if err := fs.Parse(args); err != nil {
-		return nil, "", nil, err
+		msg := strings.TrimPrefix(err.Error(), "flag provided but not defined: -")
+		if msg != err.Error() {
+			msg = "unknown flag --" + msg
+		} else if m := strings.TrimPrefix(err.Error(), "flag needs an argument: -"); m != err.Error() {
+			msg = "--" + m + " wants a value"
+		}
+		return nil, nil, nil, usagef(verb, hint, "%s", oneLine(msg))
 	}
-	rest := fs.Args()
-	if name == "" && len(rest) > 0 {
-		name, rest = rest[0], rest[1:]
-	}
-	if len(rest) > 0 {
-		return nil, "", nil, fmt.Errorf("unexpected words %q", rest)
-	}
+	words = append(words, fs.Args()...)
 	set := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
-	return fs, name, set, nil
+	return fs, words, set, nil
 }
 
 func str(fs *flag.FlagSet, name string) string { return fs.Lookup(name).Value.String() }
 
 // open opens the store the flag or the environment names.
 func open(ctx context.Context, fs *flag.FlagSet, d deps) (Store, error) {
+	verb := strings.TrimPrefix(fs.Name(), "nova-config ")
 	dsn := str(fs, "pg")
 	if dsn == "" {
 		dsn = d.getenv("NOVA_PG_DSN")
 	}
 	if dsn == "" {
-		return nil, errors.New("no store: give --pg postgres://user@host:5432/db or set NOVA_PG_DSN")
+		return nil, usagef(verb, "", "no store: set NOVA_PG_DSN or --pg")
 	}
 	if str(fs, "pg") != "" && dsnPassword(dsn) {
-		return nil, errors.New("--pg carries a password; leave it out and name its variable in NOVA_PG_PASSWORD_ENV")
+		return nil, usagef(verb, "", "--pg carries a password; leave it out and name its variable in NOVA_PG_PASSWORD_ENV")
 	}
 	pe := d.getenv("NOVA_PG_PASSWORD_ENV")
 	if pe == "" {
@@ -154,13 +165,11 @@ func open(ctx context.Context, fs *flag.FlagSet, d deps) (Store, error) {
 	return d.openPG(ctx, dsn, d.getenv(pe))
 }
 
-func runKind(ctx context.Context, k *kind, verb string, args []string, d deps, stdout, stderr io.Writer) error {
+func runKind(ctx context.Context, k *kind, verb string, args []string, d deps, stdout io.Writer) error {
 	op := verb[len(k.name)+1:]
 	write := op == "add" || op == "set" || op == "remove"
-	if !slices.Contains([]string{"list", "show", "add", "set", "remove"}, op) || (k.one && op != "show" && op != "set") {
-		return fmt.Errorf("unknown verb %q; run: nova-config help", verb)
-	}
-	fs, name, given, err := flags(verb, args, stderr, func(fs *flag.FlagSet) {
+	hint := k.fieldsLine()
+	fs, words, given, err := flags(verb, hint, args, func(fs *flag.FlagSet) {
 		fs.Bool("json", false, "print one JSON object instead of the lines")
 		if !write {
 			return
@@ -177,20 +186,37 @@ func runKind(ctx context.Context, k *kind, verb string, args []string, d deps, s
 	if err != nil {
 		return err
 	}
+	name := ""
+	switch {
+	case k.one && len(words) > 0, len(words) > 1:
+		return usagef(verb, hint, "unexpected words %q", words[1:])
+	case len(words) == 1:
+		name = words[0]
+	}
 	if k.one {
 		name = k.name
 	}
 	if (op == "list") != (name == "") {
-		return fmt.Errorf("%s wants %s", verb, map[bool]string{true: "no name", false: "a name"}[op == "list"])
+		return usagef(verb, hint, "wants %s", map[bool]string{true: "no name", false: "a name"}[op == "list"])
 	}
 	actor, reason := "", ""
 	if write {
 		actor = str(fs, "actor")
-		if reason = str(fs, "reason"); strings.ContainsAny(reason, "\r\n") {
-			return errors.New("--reason wants one line")
+		var missing []string
+		if op == "add" {
+			missing = k.missing(given)
 		}
 		if strings.TrimSpace(actor) == "" {
-			return errors.New("--actor is required: the name the write is recorded under")
+			missing = append(missing, "--actor")
+		}
+		if len(missing) > 0 {
+			return usagef(verb, hint, "missing required flag %s", strings.Join(missing, ", "))
+		}
+		if reason = str(fs, "reason"); strings.ContainsAny(reason, "\r\n") {
+			return usagef(verb, hint, "--reason wants one line")
+		}
+		if op == "set" && len(values(fs, k, given)) == 0 {
+			return usagef(verb, hint, "no field given to set")
 		}
 	}
 	st, err := open(ctx, fs, d)
@@ -209,7 +235,7 @@ func runKind(ctx context.Context, k *kind, verb string, args []string, d deps, s
 		return printRows(stdout, k, verb, rows, nil, asJSON)
 	case "show":
 		if !found {
-			return refused("%s %s not found", k.name, name)
+			return refused("%s %s not found; run: nova-config %s list", k.name, name, k.name)
 		}
 		var loops []string
 		if k.name == "machine" {
@@ -222,25 +248,21 @@ func runKind(ctx context.Context, k *kind, verb string, args []string, d deps, s
 	before, after := cur, Row{}
 	switch {
 	case op == "add" && found:
-		return refused("%s %s exists", k.name, name)
+		return refused("%s %s exists; use: nova-config %s set", k.name, name, k.name)
 	case op != "add" && !found:
-		return refused("%s %s not found", k.name, name)
+		return refused("%s %s not found; run: nova-config %s list", k.name, name, k.name)
 	case op == "add":
 		before = Row{}
 		if after, err = k.newRow(name, values(fs, k, given)); err != nil {
 			return refusal{err.Error()}
 		}
 	case op == "set":
-		changes := values(fs, k, given)
-		if len(changes) == 0 {
-			return errors.New("set names no field")
-		}
-		if after, err = k.merge(cur, changes); err != nil {
+		if after, err = k.merge(cur, values(fs, k, given)); err != nil {
 			return refusal{err.Error()}
 		}
 	}
 	if fs.Lookup("dry-run").Value.String() == "true" {
-		fmt.Fprintln(stdout, planLine(k.name, op, name, actor, reason, before.F, after.F))
+		fmt.Fprintln(stdout, planLines(k, op, name, actor, reason, before.F, after.F))
 		return nil
 	}
 	rev, err := st.Write(ctx, k, op, before, after, actor, reason)

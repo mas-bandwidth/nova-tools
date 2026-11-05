@@ -1,7 +1,8 @@
--- The tables nova-config reads and writes, in the schema config: for a fresh
--- store, psql <dsn> -f schema.sql. Every statement is idempotent, so a store
--- that has them already is left as it is; the ALTERs add the columns an older
--- store lacks and lift two constraints of the old columns, and drop no column.
+-- The tables nova-config reads and writes, in the schema config. For a fresh
+-- or an older store: nova-config schema | psql "$NOVA_PG_DSN"
+-- Every statement is idempotent, so a store that has them already is left as
+-- it is; the ALTERs add the columns an older store lacks and lift two
+-- constraints of the old columns, and drop no column.
 CREATE SCHEMA IF NOT EXISTS config;
 
 -- One row per write of any row: before and after are the row's fields as
@@ -59,8 +60,12 @@ CREATE TABLE IF NOT EXISTS config.loops (
     enabled    boolean NOT NULL DEFAULT true,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
+    env        text NOT NULL DEFAULT '{}' CHECK (env LIKE '{%}'),
+    log        text NOT NULL DEFAULT '',
     CHECK ((every > 0) <> keepalive)
 );
+ALTER TABLE config.loops ADD COLUMN IF NOT EXISTS env text NOT NULL DEFAULT '{}' CHECK (env LIKE '{%}');
+ALTER TABLE config.loops ADD COLUMN IF NOT EXISTS log text NOT NULL DEFAULT '';
 CREATE INDEX IF NOT EXISTS loops_machine ON config.loops (machine, name);
 
 -- Older stores: the fleet row's store and coordinator pointed at machines, and

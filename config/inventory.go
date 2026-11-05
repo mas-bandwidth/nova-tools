@@ -11,8 +11,8 @@ import (
 	"strings"
 )
 
-// loopLogDir is where the units write each loop's log, as the loop plays expect.
-const loopLogDir = "~/nova-bench/loops"
+// loopLogDir is where a loop's log goes when its row names no log.
+const loopLogDir = "~/.local/state/nova/loops"
 
 type group struct {
 	Hosts []string       `json:"hosts"`
@@ -25,24 +25,28 @@ type inventory struct {
 		Hostvars map[string]map[string]any `json:"hostvars"`
 	} `json:"_meta"`
 	All      group `json:"all"`
-	Benches  group `json:"benches"`
-	Runners  group `json:"runners"`
+	Bench    group `json:"bench"`
+	Runner   group `json:"runner"`
 	Services group `json:"services"`
 }
 
 type invLoop struct {
-	Name      string   `json:"name"`
-	Argv      []string `json:"argv"`
-	Seat      string   `json:"seat"`
-	Keys      []string `json:"keys"`
-	Every     int      `json:"every"`
-	Keepalive bool     `json:"keepalive"`
-	Enabled   bool     `json:"enabled"`
-	Log       string   `json:"log"`
+	Name      string            `json:"name"`
+	Argv      []string          `json:"argv"`
+	Seat      string            `json:"seat"`
+	Keys      []string          `json:"keys"`
+	Every     int               `json:"every"`
+	Keepalive bool              `json:"keepalive"`
+	Enabled   bool              `json:"enabled"`
+	Env       map[string]string `json:"env"`
+	Log       string            `json:"log"`
 }
 
-func runInventory(ctx context.Context, args []string, d deps, stdout, stderr io.Writer) error {
-	fs, name, _, err := flags("inventory", args, stderr, func(fs *flag.FlagSet) {
+// inventoryHint is what a usage error of inventory names.
+const inventoryHint = "inventory flags: --list, --host <name>, --pg <dsn>"
+
+func runInventory(ctx context.Context, args []string, d deps, stdout io.Writer) error {
+	fs, words, _, err := flags("inventory", inventoryHint, args, func(fs *flag.FlagSet) {
 		fs.Bool("list", false, "print the whole inventory (the default)")
 		fs.String("host", "", "print one machine's variables")
 	})
@@ -50,8 +54,8 @@ func runInventory(ctx context.Context, args []string, d deps, stdout, stderr io.
 		return err
 	}
 	host := str(fs, "host")
-	if name != "" || (host != "" && str(fs, "list") == "true") {
-		return fmt.Errorf("inventory takes --list or --host <name>")
+	if len(words) > 0 || (host != "" && str(fs, "list") == "true") {
+		return usageError{"inventory", "takes --list or --host <name>, not both", inventoryHint}
 	}
 	st, err := open(ctx, fs, d)
 	if err != nil {
@@ -99,8 +103,15 @@ func build(machines []Row, fleet map[string]string, loops []Row, local string) *
 	inv.Meta.Hostvars = map[string]map[string]any{}
 	byMachine := map[string][]invLoop{}
 	for _, l := range loops {
-		il := invLoop{Name: l.Name, Seat: l.F["seat"], Keys: []string{}, Log: loopLogDir + "/" + l.Name + ".log"}
+		il := invLoop{Name: l.Name, Seat: l.F["seat"], Keys: []string{}, Env: map[string]string{}, Log: l.F["log"]}
+		if il.Log == "" {
+			il.Log = loopLogDir + "/" + l.Name + ".log"
+		}
 		_ = json.Unmarshal([]byte(l.F["argv"]), &il.Argv) // ignored: the row's argv was canonical when written
+		_ = json.Unmarshal([]byte(l.F["env"]), &il.Env)   // ignored: likewise; an empty or old value leaves no variables
+		if il.Env == nil {
+			il.Env = map[string]string{}
+		}
 		if l.F["keys"] != "" {
 			il.Keys = strings.Split(l.F["keys"], ",")
 		}
@@ -141,6 +152,6 @@ func build(machines []Row, fleet map[string]string, loops []Row, local string) *
 		vars["nova_pg_dsn"] = fleet["pg_dsn"]
 	}
 	inv.All = group{Hosts: all, Vars: vars}
-	inv.Benches, inv.Runners, inv.Services = group{Hosts: groups["bench"]}, group{Hosts: groups["runner"]}, group{Hosts: groups["services"]}
+	inv.Bench, inv.Runner, inv.Services = group{Hosts: groups["bench"]}, group{Hosts: groups["runner"]}, group{Hosts: groups["services"]}
 	return inv
 }

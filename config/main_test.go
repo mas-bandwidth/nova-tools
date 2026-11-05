@@ -5,12 +5,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"maps"
 	"os"
 	"regexp"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -71,6 +73,24 @@ func (f *fake) Write(_ context.Context, k *kind, op string, before, after Row, a
 	return int64(len(f.history)), nil
 }
 
+// History is the writes newest first; the n-th write happened n seconds past 2026-01-02T00:00:00Z.
+func (f *fake) History(_ context.Context, q HistoryQuery) ([]HistoryEntry, error) {
+	var out []HistoryEntry
+	for i := len(f.history) - 1; i >= 0; i-- {
+		c := f.history[i]
+		at := fmt.Sprintf("2026-01-02T00:00:%02dZ", i+1)
+		t, _ := time.Parse(time.RFC3339, at)
+		if (q.Kind != "" && q.Kind != c.kind) || (q.Name != "" && q.Name != c.name) || t.Before(q.Since) {
+			continue
+		}
+		out = append(out, HistoryEntry{ID: int64(i + 1), At: at, Actor: c.actor, Kind: c.kind, Name: c.name, Op: c.op, Before: c.before, After: c.after})
+		if q.Limit > 0 && len(out) == q.Limit {
+			break
+		}
+	}
+	return out, nil
+}
+
 func (f *fake) Close() {}
 
 // harness runs nova-config against one fake store, with NOVA_PG_DSN set.
@@ -90,6 +110,7 @@ func (h *harness) run(t *testing.T, args ...string) (int, string, string) {
 	d := deps{
 		getenv:   func(k string) string { return h.env[k] },
 		hostname: func() (string, error) { return h.host, nil },
+		now:      func() time.Time { return time.Date(2026, 1, 3, 0, 0, 0, 0, time.UTC) },
 		openPG:   func(context.Context, string, string) (Store, error) { return h.st, nil },
 	}
 	code := run(context.Background(), args, d, &out, &errs)
@@ -119,14 +140,14 @@ func TestListAndShowLines(t *testing.T) {
 	h := fleet(t)
 	h.ok(t, "machine", "set", "bench-b", "--note", strings.Repeat("ab ", 30)+"=", "--cores", "4", "--actor", "t")
 	out := h.ok(t, "machine", "list")
-	assert.Equal(t, "MACHINE name=bench-a user=nova address=- os=- arch=- cores=- runners=0 roles=bench,services note=-\n"+
-		"MACHINE name=bench-b user=nova address=bench-b.tail os=linux arch=amd64 cores=4 runners=2 roles=bench note="+
-		strings.ReplaceAll(strings.Repeat("ab ", 20), " ", `\x20`)+"...\n"+
+	assert.Equal(t, "MACHINE name=bench-a address=- user=nova os=- arch=- cores=- roles=bench,services runners=0 note=-\n"+
+		"MACHINE name=bench-b address=bench-b.tail user=nova os=linux arch=amd64 cores=4 roles=bench runners=2 note="+
+		`"`+strings.Repeat("ab ", 20)+`..."`+"\n"+
 		"CONFIG LIST kind=machine rows=2\n", out)
 	out = h.ok(t, "machine", "show", "bench-b")
-	assert.Contains(t, out, `\x20\x3d created=2026-01-01T00:00:00Z updated=2026-01-02T00:00:00Z loops=member-b`+"\n", "show does not cut the note")
+	assert.Contains(t, out, ` ="`+" created=2026-01-01T00:00:00Z updated=2026-01-02T00:00:00Z loops=member-b\n", "show does not cut the note")
 	out = h.ok(t, "loop", "list")
-	assert.Equal(t, `LOOP name=member-b machine=bench-b argv=["/usr/bin/env","A\x3db","prog"] seat=s-b keys=A_KEY,B_KEY every=0 keepalive=true enabled=true`+"\nCONFIG LIST kind=loop rows=1\n", out)
+	assert.Equal(t, `LOOP name=member-b machine=bench-b argv=["/usr/bin/env","A=b","prog"] seat=s-b keys=A_KEY,B_KEY every=0 keepalive=true enabled=true env={} log=-`+"\nCONFIG LIST kind=loop rows=1\n", out)
 	assert.Equal(t, "FLEET name=fleet pg_dsn=postgres://u@bench-a/x created=2026-01-01T00:00:00Z updated=2026-01-02T00:00:00Z\n", h.ok(t, "fleet", "show"))
 }
 
@@ -181,10 +202,12 @@ func TestDryRunWritesNothing(t *testing.T) {
 	t.Parallel()
 	h := fleet(t)
 	n := len(h.st.history)
-	assert.Equal(t, "CONFIG DRY-RUN op=set kind=loop name=member-b actor=a1 wrote=nothing reason=a\\x20b every=0>5 keepalive=true>false\n",
+	assert.Equal(t, "CONFIG DRY-RUN op=set kind=loop name=member-b actor=a1 wrote=nothing\n  every: 0 -> 5\n  keepalive: true -> false\n  reason: \"a b\"\n",
 		h.ok(t, "loop", "set", "member-b", "--every", "5", "--keepalive", "false", "--actor", "a1", "--reason", "a b", "--dry-run"))
 	out := h.ok(t, "machine", "remove", "bench-b", "--actor", "a1", "--dry-run")
-	assert.Equal(t, "CONFIG DRY-RUN op=remove kind=machine name=bench-b actor=a1 wrote=nothing address=bench-b.tail arch=amd64 cores=12 note=- os=linux roles=bench runners=2 user=nova\n", out)
+	assert.Equal(t, "CONFIG DRY-RUN op=remove kind=machine name=bench-b actor=a1 wrote=nothing\n  address: \"bench-b.tail\"\n  user: \"nova\"\n  os: \"linux\"\n  arch: \"amd64\"\n  cores: 12\n  roles: \"bench\"\n  runners: 2\n  note: \"\"\n", out)
+	assert.Equal(t, "CONFIG DRY-RUN op=set kind=machine name=bench-a actor=a1 wrote=nothing\n  note: \"\" -> \"the first\"\n",
+		h.ok(t, "machine", "set", "bench-a", "--note", "the first", "--actor", "a1", "--dry-run"))
 	assert.Len(t, h.st.history, n)
 }
 
@@ -200,23 +223,25 @@ func TestRefusals(t *testing.T) {
 		{1, []string{"loop", "set", "nope", "--every", "5", "--actor", "a"}, "loop nope not found"},
 		{1, []string{"machine", "add", "bench-a", "--user", "u", "--actor", "a"}, "machine bench-a exists"},
 		{1, []string{"machine", "add", "Bad_Name", "--user", "u", "--actor", "a"}, "want lower-case letters"},
-		{1, []string{"machine", "add", "m9", "--actor", "a"}, "--user is required"},
+		{2, []string{"machine", "add", "m9", "--actor", "a"}, "missing required flag --user; machine fields: name, address, user, os, arch, cores, roles, runners, note; run: nova-config machine add -h"},
+		{2, []string{"loop", "add", "l9"}, "missing required flag --machine, --argv, --actor"},
 		{1, []string{"machine", "set", "bench-a", "--roles", "coordination", "--actor", "a"}, `--roles "coordination"`},
-		{2, []string{"machine", "set", "bench-a", "--slots", "4", "--actor", "a"}, "flag provided but not defined"},
+		{2, []string{"machine", "set", "bench-a", "--slots", "4", "--actor", "a"}, "unknown flag --slots; machine fields: name, address, user, os, arch, cores, roles, runners, note; run: nova-config machine set -h"},
 		{2, []string{"version"}, `unknown verb "version"`},
 		{1, []string{"machine", "set", "bench-a", "--roles", "bench,chef", "--actor", "a"}, `--roles "chef"`},
 		{1, []string{"loop", "set", "member-b", "--argv", "prog", "--actor", "a"}, "want the command as a JSON array"},
 		{1, []string{"loop", "set", "member-b", "--seat", "", "--actor", "a"}, "names secrets (--keys A_KEY,B_KEY) and no --seat"},
 		{1, []string{"fleet", "set", "--pg_dsn", "postgres://u:hunter2@h/x", "--actor", "a"}, "carries a password"},
 		{1, []string{"machine", "show", "nope"}, "machine nope not found"},
-		{2, []string{"loop", "set", "member-b", "--every", "5"}, "--actor is required"},
-		{2, []string{"loop", "set", "member-b", "--actor", "a"}, "set names no field"},
-		{2, []string{"machine", "set", "bench-a", "--flavour", "x", "--actor", "a"}, "flag provided but not defined"},
+		{2, []string{"loop", "set", "member-b", "--every", "5"}, "missing required flag --actor"},
+		{2, []string{"loop", "set", "member-b", "--actor", "a"}, "no field given to set"},
+		{2, []string{"machine", "set", "bench-a", "--flavour", "x", "--actor", "a"}, "unknown flag --flavour"},
+		{1, []string{"loop", "set", "member-b", "--env", "{\"bad-name\":\"1\"}", "--actor", "a"}, `--env name "bad-name"`},
 		{2, []string{"machine", "history", "bench-a"}, `unknown verb "machine history"`},
 		{2, []string{"fleet", "list"}, `unknown verb "fleet list"`},
 		{2, []string{"friend", "list"}, `unknown verb "friend list"`},
 		{2, []string{"machine", "list", "--pg", "postgres://u:hunter2@h/x"}, "--pg carries a password"},
-		{2, []string{"machine", "show"}, "machine show wants a name"},
+		{2, []string{"machine", "show"}, "nova-config machine show: wants a name"},
 		{2, []string{"machine", "show", "a", "b"}, "unexpected words"},
 	} {
 		code, out, errs := h.run(t, c.args...)
@@ -228,7 +253,7 @@ func TestRefusals(t *testing.T) {
 	h.env = map[string]string{}
 	code, _, errs := h.run(t, "machine", "list")
 	assert.Equal(t, 2, code)
-	assert.Contains(t, errs, "no store: give --pg")
+	assert.Contains(t, errs, "no store: set NOVA_PG_DSN or --pg; run: nova-config machine list -h")
 	h = newHarness()
 	h.st.failure = errors.New("postgres: down")
 	code, _, errs = h.run(t, "loop", "list")
@@ -289,10 +314,10 @@ func TestSQLNamesItsColumns(t *testing.T) {
 	}
 	row := Row{Name: "m1", F: map[string]string{"user": "u", "address": "", "os": "linux", "arch": "", "cores": "", "runners": "2", "roles": "bench", "note": ""}}
 	q, args := writeSQL(kinds["machine"], "add", "m1", row)
-	assert.Equal(t, `INSERT INTO config.machines (name, "user", "address", "os", "arch", "cores", "runners", "roles", "note") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`, q)
-	assert.Equal(t, []any{"m1", "u", "", "linux", "", nil, int64(2), "bench", ""}, args)
+	assert.Equal(t, `INSERT INTO config.machines (name, "address", "user", "os", "arch", "cores", "roles", "runners", "note") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`, q)
+	assert.Equal(t, []any{"m1", "", "u", "linux", "", nil, "bench", int64(2), ""}, args)
 	q, args = writeSQL(kinds["machine"], "set", "m1", row)
-	assert.True(t, strings.HasPrefix(q, `UPDATE config.machines SET "user" = $2, `) && strings.HasSuffix(q, `, updated_at = now() WHERE name = $1`), q)
+	assert.True(t, strings.HasPrefix(q, `UPDATE config.machines SET "address" = $2, `) && strings.HasSuffix(q, `, updated_at = now() WHERE name = $1`), q)
 	assert.Len(t, args, 9)
 	q, args = writeSQL(kinds["machine"], "remove", "m1", Row{})
 	assert.Equal(t, "DELETE FROM config.machines WHERE name = $1", q)
@@ -326,7 +351,7 @@ func TestUnknownOldRoleIsRead(t *testing.T) {
 	h.st.rows["machine"]["bench-a"] = r
 	assert.Contains(t, h.ok(t, "machine", "list"), "roles=bench,coordination")
 	assert.Contains(t, h.ok(t, "machine", "show", "bench-a"), "roles=bench,coordination")
-	assert.Contains(t, h.ok(t, "inventory"), `"benches": {`+"\n"+`    "hosts": [`+"\n"+`      "bench-a"`)
+	assert.Contains(t, h.ok(t, "inventory"), `"bench": {`+"\n"+`    "hosts": [`+"\n"+`      "bench-a"`)
 	h.ok(t, "machine", "set", "bench-a", "--note", "n", "--actor", "a")
 	assert.Equal(t, "bench,coordination", h.st.rows["machine"]["bench-a"].F["roles"], "a set that leaves roles alone keeps them")
 }

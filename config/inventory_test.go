@@ -22,9 +22,9 @@ func TestInventory(t *testing.T) {
 		groups[k] = string(v)
 	}
 	assert.JSONEq(t, `{"hosts":["bench-a","bench-b"],"vars":{"nova_pg_dsn":"postgres://u@bench-a/x"}}`, groups["all"])
-	assert.JSONEq(t, `{"hosts":["bench-a","bench-b"]}`, groups["benches"])
+	assert.JSONEq(t, `{"hosts":["bench-a","bench-b"]}`, groups["bench"])
 	assert.JSONEq(t, `{"hosts":["bench-a"]}`, groups["services"])
-	assert.JSONEq(t, `{"hosts":["bench-b"]}`, groups["runners"])
+	assert.JSONEq(t, `{"hosts":["bench-b"]}`, groups["runner"])
 	assert.True(t, strings.HasPrefix(out, "{\n  \"_meta\": {\n    \"hostvars\": {\n      \"bench-a\": {\n        \"ansible_host\": \"bench-a\","), out)
 
 	_, out, _ = h.run(t, "inventory", "--host", "bench-b")
@@ -32,7 +32,7 @@ func TestInventory(t *testing.T) {
 		"ansible_host": "bench-b.tail", "ansible_user": "nova", "cores": 12, "runners": 2, "nova_os": "linux", "nova_arch": "amd64",
 		"nova_loops": [{"name": "member-b", "argv": ["/usr/bin/env", "A=b", "prog"],
 			"seat": "s-b", "keys": ["A_KEY", "B_KEY"], "every": 0, "keepalive": true, "enabled": true,
-			"log": "~/nova-bench/loops/member-b.log"}]}`, out)
+			"env": {}, "log": "~/.local/state/nova/loops/member-b.log"}]}`, out)
 
 	_, out, _ = h.run(t, "inventory", "--host", "bench-a")
 	assert.Contains(t, out, `"nova_loops": []`, "a machine with no loops has an empty list, never none")
