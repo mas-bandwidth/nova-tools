@@ -166,8 +166,8 @@ func TestTwoCapacitiesNeverBothRun(t *testing.T) {
 	assert.Equal(t, 1, strings.Count(stderr.String(), "\n"), "one line, nothing else on stderr")
 }
 
-// TestWaitIsABound: a 100 ms --wait on a held slot returns well inside a poll.
-func TestWaitIsABound(t *testing.T) {
+// TestWaitIsABoundOnRealLocks: a 100 ms --wait on a held slot returns well inside a poll.
+func TestWaitIsABoundOnRealLocks(t *testing.T) {
 	t.Parallel()
 	bin, dir := build(t), t.TempDir()
 	startHolder(t, bin, dir, "--slots", "1")
