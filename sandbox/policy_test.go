@@ -21,7 +21,7 @@ func job(t *testing.T) (dir, home string) {
 }
 
 func baseInput(dir, home string) input {
-	return input{writes: []string{dir}, home: home, argv: []string{"/bin/sh", "-c", "true"}, pathEnv: "/usr/bin:/bin"}
+	return input{writes: []string{dir}, home: home, argv: []string{"/bin/sh", "-c", "true"}}
 }
 
 func reasons(bad []refusal) []string {

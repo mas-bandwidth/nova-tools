@@ -29,12 +29,9 @@ func darwinProfile(p *policy) (text string, params []string, err error) {
 	for _, r := range p.optRoots {
 		optRoots = append(optRoots, fmt.Sprintf("(allow file-read* (subpath %q))", r))
 	}
-	paths := slices.Concat(p.reads, p.readsNoExec, p.writes, p.optRoots, p.pathDirs, []string{p.cwd, p.tmp})
+	paths := slices.Concat(p.reads, p.readsNoExec, p.writes, p.optRoots, []string{p.cwd, p.tmp})
 	for _, d := range ancestors(paths...) {
 		anc = append(anc, fmt.Sprintf("(allow file-read-metadata (literal %q))", d))
-	}
-	for _, d := range p.pathDirs {
-		anc = append(anc, fmt.Sprintf("(allow file-read-metadata (subpath %q))", d))
 	}
 	for i, r := range p.reads {
 		reads = append(reads, fmt.Sprintf(`(allow file-read* (subpath (param "READ%d")))`, i))

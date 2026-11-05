@@ -11,7 +11,7 @@
 ;;   @@OPTROOTS@@    read on each optional root that exists (Homebrew, MacPorts, the Xcode
 ;;                   developer dir, the command's own dir)
 ;;   @@ANCESTORS@@   stat-only (file-read-metadata) on every proper ancestor of every
-;;                   granted path, and on PATH directories: without it mkdir and stat by
+;;                   granted path: without it mkdir and stat by
 ;;                   absolute path die at /private or /Users. Listing stays denied.
 ;;   @@READS@@       read on each --read
 ;;   @@READSNOEXEC@@ read on each --read-noexec, then a deny of exec there; the last matching

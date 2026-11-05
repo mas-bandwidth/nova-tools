@@ -64,7 +64,7 @@ func run(args []string, stdout, stderr io.Writer, env []string) int {
 	}
 	in, bad := parseArgs(args)
 	if len(bad) == 0 {
-		in.home, in.pathEnv, in.homes = homeOf(env), os.Getenv("PATH"), callerHomes()
+		in.home, in.homes = homeOf(env), callerHomes()
 		var p *policy
 		if p, bad = build(in); len(bad) == 0 {
 			if r := execWall(p, childEnv(env, p.tmp)); r != nil {

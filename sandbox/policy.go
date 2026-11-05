@@ -31,7 +31,6 @@ type input struct {
 	netAllow                   []string
 	gpu                        string
 	argv                       []string
-	pathEnv                    string   // PATH, for resolving the command
 	homes                      []string // the caller's own home directories
 }
 
@@ -39,7 +38,7 @@ type input struct {
 type policy struct {
 	reads, readsNoExec, writes []string // resolved
 	linkSpellings              []string // the caller's spelling where it differs from the resolved path
-	optRoots, pathDirs         []string
+	optRoots                   []string
 	cwd, tmp, home             string
 	netDeny                    bool
 	netAllow                   []string
@@ -96,18 +95,16 @@ func build(in input) (*policy, []refusal) {
 	resolveAll("--read", "bad_read", in.reads, &p.reads)
 	resolveAll("--read-noexec", "bad_read", in.readsNoExec, &p.readsNoExec)
 	resolveAll("--write", "bad_write", in.writes, &p.writes)
-	// One directory in two lists is a contradiction, not something to merge.
-	for _, w := range p.writes {
-		if slices.Contains(p.reads, w) {
-			bad = append(bad, refuse("bad_read", "%s is in both --read and --write; name it once, --write already carries read", w))
-		}
-		if slices.Contains(p.readsNoExec, w) {
-			bad = append(bad, refuse("bad_read", "%s is in both --read-noexec and --write; --write carries execute", w))
-		}
-	}
-	for _, n := range p.readsNoExec {
-		if slices.Contains(p.reads, n) {
-			bad = append(bad, refuse("bad_read", "%s is in both --read and --read-noexec; one gives execute and the other takes it away", n))
+	// One directory in two lists is a contradiction, not something to merge: --write
+	// carries read and execute, and --read-noexec takes execute away.
+	for _, c := range []struct {
+		a, b         []string
+		nameA, nameB string
+	}{{p.reads, p.writes, "--read", "--write"}, {p.readsNoExec, p.writes, "--read-noexec", "--write"}, {p.readsNoExec, p.reads, "--read-noexec", "--read"}} {
+		for _, d := range c.a {
+			if slices.Contains(c.b, d) {
+				bad = append(bad, refuse("bad_read", "%s is in both %s and %s; name it once", d, c.nameA, c.nameB))
+			}
 		}
 	}
 	if len(p.writes) == 0 {
@@ -115,29 +112,25 @@ func build(in input) (*policy, []refusal) {
 	}
 	first := p.writes[0]
 
-	p.cwd = first
-	if in.cwd != "" {
-		got, rf := resolveDir("bad_cwd", "--cwd", in.cwd)
-		switch {
-		case rf != nil:
-			bad = append(bad, *rf)
-		case !insideAny(got, p.writes):
-			bad = append(bad, refuse("bad_cwd", "--cwd %s is outside every --write; its default is the first --write (%s)", got, first))
-		default:
-			p.cwd = got
+	// --cwd and --tmp must be inside a --write; they default to the first --write and
+	// <first>/.nova-sandbox-tmp.
+	inWrites := func(flag, reason, raw, dflt string) string {
+		if raw == "" {
+			return dflt
 		}
-	}
-	if in.tmp != "" {
-		got, rf := resolveDir("bad_write", "--tmp", in.tmp)
-		switch {
-		case rf != nil:
-			bad = append(bad, *rf)
-		case !insideAny(got, p.writes):
-			bad = append(bad, refuse("bad_write", "--tmp %s is outside every --write", got))
-		default:
-			p.tmp = got
+		got, rf := resolveDir(reason, flag, raw)
+		if rf == nil && !insideAny(got, p.writes) {
+			r := refuse(reason, "%s %s is outside every --write", flag, got)
+			rf = &r
 		}
+		if rf != nil {
+			bad = append(bad, *rf)
+			return dflt
+		}
+		return got
 	}
+	p.cwd = inWrites("--cwd", "bad_cwd", in.cwd, first)
+	p.tmp = inWrites("--tmp", "bad_write", in.tmp, "")
 
 	// HOME is never defaulted: almost every tool derives a path from it, and the
 	// caller's own HOME is denied by the wall. It must be inside a --write.
@@ -179,7 +172,6 @@ func build(in input) (*policy, []refusal) {
 		}
 	}
 	p.optRoots = optionalRoots(p.command)
-	p.pathDirs = pathDirs(in.pathEnv, in.homes, p.optRoots, p.reads, p.writes)
 	return p, nil
 }
 
@@ -262,33 +254,18 @@ func underAny(p string, prefixes []string) bool {
 
 // resolveCommand finds the command on PATH and checks it can run, outside the wall:
 // sandbox-exec's own exec failure is an exit 71 the tool could not tell from the
-// command's. A name that is on no PATH entry is reason not_found (exit 127).
+// command's. A name on no PATH entry is reason not_found (exit 127).
 func resolveCommand(name string) (string, *refusal) {
-	found := name
+	found, err := exec.LookPath(name)
 	if strings.Contains(name, "/") {
-		abs, err := filepath.Abs(name)
-		if err != nil {
-			r := refuse("not_found", "%s could not be made absolute: %v", name, err)
-			return "", &r
-		}
-		found = abs
-	} else {
-		var err error
-		if found, err = exec.LookPath(name); err != nil {
-			r := refuse("not_found", "%s is on no PATH entry; name the command or give its absolute path", name)
-			return "", &r
-		}
+		found, err = filepath.Abs(name)
 	}
-	fi, err := os.Stat(found)
-	switch {
-	case err != nil:
-		r := refuse("not_executable", "%s cannot be run: %v", found, err)
+	if err != nil {
+		r := refuse("not_found", "%s is on no PATH entry; name the command or give its absolute path", name)
 		return "", &r
-	case fi.IsDir():
-		r := refuse("not_executable", "%s is a directory, not a command", found)
-		return "", &r
-	case fi.Mode().Perm()&0o111 == 0:
-		r := refuse("not_executable", "%s carries no executable bit for this user", found)
+	}
+	if fi, err := os.Stat(found); err != nil || fi.IsDir() || fi.Mode().Perm()&0o111 == 0 {
+		r := refuse("not_executable", "%s is not an executable file", found)
 		return "", &r
 	}
 	if resolved, err := filepath.EvalSymlinks(found); err == nil {
@@ -322,21 +299,15 @@ func commandDirRefusal(command string, named, homes []string) *refusal {
 // callerHomes is the passwd home and $HOME of the person running the tool.
 func callerHomes() []string {
 	var out []string
-	add := func(p string) {
-		if strings.TrimSpace(p) == "" {
-			return
-		}
-		if got, err := filepath.EvalSymlinks(p); err == nil {
-			p = got
-		}
-		if abs, err := filepath.Abs(p); err == nil && !slices.Contains(out, abs) {
-			out = append(out, abs)
-		}
-	}
 	if u, err := user.Current(); err == nil {
-		add(u.HomeDir)
+		out = append(out, u.HomeDir)
 	}
-	add(os.Getenv("HOME"))
+	out = append(out, os.Getenv("HOME"))
+	for i, h := range out {
+		if got, err := filepath.EvalSymlinks(h); err == nil {
+			out[i] = got
+		}
+	}
 	return out
 }
 
@@ -369,33 +340,6 @@ func optionalRoots(command string) []string {
 			continue
 		}
 		out = append(out, r)
-	}
-	return out
-}
-
-// pathDirs are the existing PATH directories no other grant covers. On darwin they get
-// stat only, so a command installed in ~/.local/bin resolves by name while its files
-// stay unreadable. A caller's home itself is skipped.
-func pathDirs(pathEnv string, homes, optRoots, reads, writes []string) []string {
-	var out []string
-	for _, raw := range filepath.SplitList(pathEnv) {
-		abs, err := filepath.Abs(strings.TrimSpace(raw))
-		if fi, serr := os.Stat(abs); raw == "" || err != nil || serr != nil || !fi.IsDir() {
-			continue
-		}
-		res, err := filepath.EvalSymlinks(abs)
-		if err != nil {
-			res = abs
-		}
-		if slices.Contains(homes, res) || slices.Contains(homes, abs) {
-			continue
-		}
-		for _, d := range []string{abs, res} {
-			if d != "/" && !slices.Contains(out, d) && !underAny(d, fixedDarwin) &&
-				!underAny(d, optRoots) && !underAny(d, reads) && !underAny(d, writes) {
-				out = append(out, d)
-			}
-		}
 	}
 	return out
 }
