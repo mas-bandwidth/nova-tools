@@ -114,6 +114,7 @@ type options struct {
 	dir       string
 	dirSet    bool
 	argv      []string
+	args      []string // the command line as given, for a remedy that reruns it
 }
 
 // remedy is a nova-reserve command line that keeps an explicit --dir.
@@ -121,11 +122,7 @@ func (o options) remedy(args ...string) string {
 	if o.dirSet {
 		args = append(args, "--dir", o.dir)
 	}
-	q := []string{"nova-reserve"}
-	for _, a := range args {
-		q = append(q, shellQuote(a))
-	}
-	return strings.Join(q, " ")
+	return "nova-reserve " + quoteAll(args)
 }
 
 // helpFor is a malformed invocation's remedy (CLI-STYLE (f)).
@@ -144,6 +141,14 @@ func prefix(verb string) string {
 	return "nova-reserve " + verb + ":"
 }
 
+func quoteAll(args []string) string {
+	q := make([]string, len(args))
+	for i, a := range args {
+		q[i] = shellQuote(a)
+	}
+	return strings.Join(q, " ")
+}
+
 func shellQuote(s string) string {
 	if s != "" && strings.Trim(s, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_./:=@%+,-") == "" {
 		return s
@@ -155,7 +160,7 @@ func defaultDir(env func(string) string) string { return cmp.Or(env("NOVA_RESERV
 
 // parse reads a command line. Every malformed one is one line and exit 2.
 func parse(args []string, env func(string) string) (options, error) {
-	o := options{verb: "run", dir: defaultDir(env)}
+	o := options{verb: "run", dir: defaultDir(env), args: args}
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		switch args[0] {
 		case "run", "hold", "status", "set", "help":
@@ -324,7 +329,10 @@ func do(o options, w world) error {
 		case errors.Is(err, fs.ErrPermission) || errors.Is(err, syscall.EISDIR):
 			return refuse(126, "%s: not executable", o.argv[0])
 		case err != nil:
-			return refuse(127, "%s: command not found", o.argv[0])
+			if strings.ContainsAny(o.argv[0], `/\`) {
+				return refuse(127, "%s: no such file", o.argv[0])
+			}
+			return refuse(127, "%s: command not found on PATH=%s", o.argv[0], w.env("PATH"))
 		}
 		path = p
 	}
@@ -344,6 +352,14 @@ func do(o options, w world) error {
 	}
 	// the one directory is the create target; its parent must exist
 	if err := os.Mkdir(o.dir, 0o777); err != nil && !errors.Is(err, fs.ErrExist) {
+		parent := filepath.Dir(o.dir)
+		if _, perr := os.Stat(parent); errors.Is(perr, fs.ErrNotExist) {
+			return refuse(2, "--dir %s: parent %s does not exist; run: mkdir -p %s && %s", o.dir, parent,
+				shellQuote(parent), "nova-reserve "+quoteAll(o.args))
+		}
+		if errors.Is(err, fs.ErrPermission) {
+			return refuse(2, "--dir %s: parent %s is not writable by this user; run: ls -ld %s", o.dir, parent, shellQuote(parent))
+		}
 		return err
 	}
 	// ignored: only the directory's owner may widen it; others share it as it is
@@ -379,10 +395,18 @@ func do(o options, w world) error {
 
 // --- capacity --------------------------------------------------------------
 
-// capacity is DIR/capacity: the slot count on the first line, then who set it.
+// capacity is DIR/capacity: the slot count on the first line, then who set it
+// ("pid 123 at 2026-11-05T22:03:32Z"), read as pid and at.
 type capacity struct {
-	n   int
-	who string // "pid 123 at 2026-11-05T22:03:32Z"
+	n       int
+	pid, at string
+}
+
+func (c capacity) who() string {
+	if c.pid == "" {
+		return "an unknown taker"
+	}
+	return "pid " + c.pid + " at " + c.at
 }
 
 // corrupt is a capacity file that holds no capacity: refused, never guessed.
@@ -405,7 +429,11 @@ func readCapacity(dir string) (capacity, bool, error) {
 			filepath.Join(dir, "capacity"), strings.TrimSpace(first)))
 	}
 	who, _, _ := strings.Cut(rest, "\n")
-	return capacity{n, strings.TrimSpace(who)}, true, nil
+	c := capacity{n: n}
+	if f := strings.Fields(who); len(f) == 4 && f[0] == "pid" && f[2] == "at" {
+		c.pid, c.at = f[1], f[3]
+	}
+	return c, true, nil
 }
 
 // writeCapacity is called with gate and all held exclusive. A new file is a
@@ -610,7 +638,7 @@ func (t *taker) storeCapacity() (bool, error) {
 func (t *taker) scan(c capacity) (bool, error) {
 	if t.o.slots > 0 && t.o.slots != c.n {
 		return false, refuse(2, "this machine's capacity is %d (set by %s); you asked %d; run: %s",
-			c.n, cmp.Or(c.who, "an unknown taker"), t.o.slots, t.o.remedy("set", "--slots", strconv.Itoa(t.o.slots)))
+			c.n, c.who(), t.o.slots, t.o.remedy("set", "--slots", strconv.Itoa(t.o.slots)))
 	}
 	for k := 1; k <= c.n; k++ {
 		slot, ok, err := t.w.lock(t.path("slot"+strconv.Itoa(k)), true)
@@ -740,7 +768,7 @@ func status(o options, w world) error {
 	case err != nil:
 		return err
 	case have:
-		fmt.Fprintf(out, "capacity=%d set_by=%s\n", c.n, esc(c.who))
+		fmt.Fprintf(out, "capacity=%d set_by_pid=%s set_at=%s\n", c.n, cmp.Or(c.pid, "?"), cmp.Or(c.at, "?"))
 	default:
 		fmt.Fprintf(out, "capacity=unset # the first run stores its --slots (or CPU count / 4); or: %s\n",
 			o.remedy("set", "--slots", "N"))

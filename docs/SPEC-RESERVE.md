@@ -59,7 +59,7 @@ A hold that must outlive the shell that started it, such as an AI's tool call th
 
 ```
 $ nova-reserve status
-capacity=4 set_by=pid\s123\sat\s2026-11-05T22:00:00Z
+capacity=4 set_by_pid=123 set_at=2026-11-05T22:00:00Z
 slot1 held pid=102933 since=2026-11-05T22:03:32Z why=unit\stests cmd=go\stest\s./...
 slot2 free
 slot3 free
@@ -75,7 +75,8 @@ A SIGKILLed holder's leftover file reads as free. A pid reused after a SIGKILL c
 holder rewrites the file. A corrupt capacity file shows as `capacity=? # corrupt: ...` with its repair command, and the
 slots are still listed. A directory that does not exist is a refusal (exit 2), never "all free".
 
-Field values are escaped onto one word: `\s` space, `\t` tab, `\n` newline, `\\` backslash, `\xHH` other control
+Every field is one word. `set_by_pid` and `set_at` are `?` when the file does not say. Only `why=` and `cmd=` carry
+free text, and they keep oneline escaping: `\s` space, `\t` tab, `\n` newline, `\\` backslash, `\xHH` other control
 bytes.
 
 **set** stores the capacity: `nova-reserve set --slots 4`.
@@ -106,7 +107,7 @@ sleep is cut short, so `--wait` is a bound, not a minimum.
 | 1 | the tool said no: no slot within `--wait`, or `set` while a slot is held |
 | 2 | could not run: a bad flag, value or verb; a `--slots` that differs from the capacity; a corrupt capacity file; a missing `--dir` for status |
 | 126 | the command was found but cannot be executed (before any slot is taken, or when it fails to start) |
-| 127 | the command was not found; no slot was taken |
+| 127 | the command was not found; no slot was taken. The line names the PATH searched: `nova-reserve: mkae: command not found on PATH=/usr/bin:/bin` (a name with a slash: `no such file`) |
 | other | the command's own status; 128 + the signal when a signal ended it |
 
 A timed-out take names who holds what, in status's words:
@@ -115,7 +116,10 @@ A timed-out take names who holds what, in status's words:
 ## The directory
 
 `<dir>` is `--dir`, else `$NOVA_RESERVE_DIR`, else `/var/tmp/nova-reserve` (`C:\ProgramData\nova-reserve` on
-Windows). Every caller on a machine must use the same one. nova-reserve creates it (not its parents) and makes it
+Windows). Every caller on a machine must use the same one. nova-reserve creates it (not its parents). A missing parent is refused,
+exit 2: `nova-reserve: --dir /nonexistent/x: parent /nonexistent does not exist; run: mkdir -p /nonexistent && nova-reserve ...`
+with the whole command line. A parent this user cannot write gets its own line: `... is not writable by this user;
+run: ls -ld <parent>`. nova-reserve and makes it
 world-writable and sticky, so every user on the machine shares one capacity. `/var/tmp` survives a reboot. A cleaner
 of old temporary files (systemd-tmpfiles, after 30 days by default) may still remove it from a machine that went
 unused that long; the next taker then stores a new capacity. Point a machine somewhere no cleaner touches with
