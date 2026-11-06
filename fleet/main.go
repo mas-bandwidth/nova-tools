@@ -91,6 +91,7 @@ func noController(verb string, stderr io.Writer) bool {
 // The exec seam: unit tests replace these.
 var (
 	goos     = runtime.GOOS
+	goarch   = runtime.GOARCH
 	lookPath = exec.LookPath
 	runCmd   = func(bin string, args, env []string) (int, error) {
 		cmd := exec.Command(bin, args...)

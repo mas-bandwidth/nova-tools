@@ -335,3 +335,27 @@ func TestFixPerFamily(t *testing.T) {
 		}
 	}
 }
+
+// check's sops line installs the version and digest the plays pin, read from the same file.
+func TestSopsPinIsThePlays(t *testing.T) {
+	b, err := os.ReadFile("group_vars/all.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, sum := pin("nova_sops_version"), pin("nova_sops_sha256", "linux-amd64")
+	if v == "" || len(sum) != 64 || !strings.Contains(string(b), `nova_sops_version: "`+v+`"`) || !strings.Contains(string(b), "linux-amd64: "+sum) {
+		t.Fatalf("pin read %q %q from group_vars/all.yml", v, sum)
+	}
+	old := goarch
+	t.Cleanup(func() { goarch = old })
+	goarch = "amd64"
+	line := fix("sops", "apt")
+	for _, w := range []string{"/download/v" + v + "/sops-v" + v + ".linux.amd64", "echo '" + sum + "  '", "sha256sum -c"} {
+		if !strings.Contains(line, w) {
+			t.Errorf("fix(sops) = %q lacks %q", line, w)
+		}
+	}
+	if fix("sops", "brew") != "brew install sops" {
+		t.Error("macOS takes sops from Homebrew, as join.yml does")
+	}
+}

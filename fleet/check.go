@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"regexp"
 	"strings"
@@ -44,6 +45,27 @@ func family() string {
 	return ""
 }
 
+// pin reads a value of the embedded group_vars/all.yml: the line "<key>: <value>", or with
+// sub the line "  <sub>: <value>" under "<key>:". The plays read the same file.
+func pin(key string, sub ...string) string {
+	b, _ := fs.ReadFile(tree, "group_vars/all.yml")
+	in := false
+	for _, line := range strings.Split(string(b), "\n") {
+		k, v, _ := strings.Cut(strings.TrimSpace(line), ":")
+		switch {
+		case len(sub) == 0 && line == strings.TrimSpace(line) && k == key:
+			return strings.Trim(strings.TrimSpace(v), `"`)
+		case len(sub) > 0 && line == key+":":
+			in = true
+		case in && strings.HasPrefix(line, "  ") && k == sub[0]:
+			return strings.Trim(strings.TrimSpace(v), `"`)
+		case in && !strings.HasPrefix(line, "  "):
+			in = false
+		}
+	}
+	return ""
+}
+
 // fix is the pasteable command that installs a helper on this machine's family.
 func fix(name, fam string) string {
 	pkg := map[string][3]string{ // apt, dnf, brew
@@ -67,7 +89,10 @@ func fix(name, fam string) string {
 	case name == "sops" && fam == "brew":
 		return "brew install sops"
 	case name == "sops":
-		return "curl -fsSLo ~/.local/bin/sops https://github.com/getsops/sops/releases/download/v3.9.1/sops-v3.9.1.linux.$(dpkg --print-architecture 2>/dev/null || uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/') && chmod +x ~/.local/bin/sops"
+		// The pin is the plays' own (group_vars/all.yml), so this line and join.yml cannot drift.
+		v, sum := pin("nova_sops_version"), pin("nova_sops_sha256", "linux-"+goarch)
+		return "curl -fsSLo ~/.local/bin/sops https://github.com/getsops/sops/releases/download/v" + v + "/sops-v" + v + ".linux." + goarch +
+			" && echo '" + sum + "  '\"$HOME\"/.local/bin/sops | sha256sum -c && chmod +x ~/.local/bin/sops"
 	}
 	p, ok := pkg[name]
 	switch {
