@@ -1,0 +1,48 @@
+// tailscale-acl.json: a starter tailnet policy for a nova fleet (docs/FLEET.md, "tailscale.yml").
+// Paste it into the admin console (Access controls), then edit the owner: replace owner@example.com with the
+// account that owns the tailnet. It is the whole policy: anything not allowed here is denied.
+//
+//   tag:nova     every machine fleet/tailscale.yml joins
+//   tag:runner   a machine with the runner role, which carries tag:nova too
+//
+// tag:nova and tag:runner machines reach each other on 22 (Tailscale SSH), 6379 (the bus's Redis, redis.yml) and
+// 5432 (nova-config's PostgreSQL, postgres.yml), and nothing else. The owner's own devices may SSH to them.
+// The control node runs nova-config against 5432: make it a tag:nova machine, or add "tcp:5432" to the owner's grant.
+{
+	"tagOwners": {
+		"tag:nova":   ["owner@example.com"],
+		"tag:runner": ["owner@example.com"],
+	},
+
+	"grants": [
+		// the fleet, among itself: ssh, the bus, the config store
+		{
+			"src": ["tag:nova", "tag:runner"],
+			"dst": ["tag:nova", "tag:runner"],
+			"ip":  ["tcp:22", "tcp:6379", "tcp:5432"],
+		},
+		// the owner's devices: ssh to the fleet's machines
+		{
+			"src": ["autogroup:member"],
+			"dst": ["tag:nova"],
+			"ip":  ["tcp:22"],
+		},
+	],
+
+	// Tailscale SSH: which identities may log in as which users. A fleet machine to another as the non-root
+	// logins; the owner's devices likewise, after checking the login in the browser now and then.
+	"ssh": [
+		{
+			"action": "accept",
+			"src":    ["tag:nova", "tag:runner"],
+			"dst":    ["tag:nova", "tag:runner"],
+			"users":  ["autogroup:nonroot"],
+		},
+		{
+			"action": "check",
+			"src":    ["autogroup:member"],
+			"dst":    ["tag:nova"],
+			"users":  ["autogroup:nonroot", "root"],
+		},
+	],
+}

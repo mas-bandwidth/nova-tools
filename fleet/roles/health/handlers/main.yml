@@ -1,0 +1,16 @@
+---
+- name: restart journald
+  ansible.builtin.systemd_service: { name: systemd-journald, state: restarted }
+  become: true
+
+- name: load the panic sysctl
+  ansible.builtin.command: sysctl -p /etc/sysctl.d/90-nova-panic.conf
+  become: true
+
+- name: restart ssh
+  ansible.builtin.systemd_service: { name: "{{ nova_health_ssh_unit }}", state: restarted, daemon_reload: true }
+  become: true
+
+- name: reload the system manager
+  ansible.builtin.systemd_service: { daemon_reload: true }
+  become: true

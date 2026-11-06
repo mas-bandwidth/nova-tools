@@ -1,0 +1,15 @@
+---
+# secrets-refresh.yml's defaults (docs/FLEET.md, "secrets-refresh.yml").
+
+# false on a machine that must not pull (the one that writes the store, say):
+# the play removes its timer there and changes nothing else.
+nova_secrets_refresh: true
+
+# How often the store is pulled, in seconds, and where each run's line goes.
+nova_secrets_refresh_every: 600
+nova_secrets_refresh_log: "{{ nova_home }}/.local/state/nova/secrets-refresh.log"
+
+# The store's git URL. Given, a machine with no clone at nova_secrets_store
+# gets one (over the machine's own git credentials); not given, such a
+# machine is skipped and named.
+nova_secrets_repo: ""

@@ -1,0 +1,53 @@
+---
+# The seal role: a password file on this machine set into a seat of the secrets store, on the control node, by
+# `nova-secrets set` (the value on its stdin: never argv, a log or a file in the clear there). Included by redis.yml
+# and postgres.yml with seal_file (the file on this machine) and seal_name (the name in the seat). It runs only when
+# nova_seal_store, nova_seal_seat and nova_seal_key are all given; a name the seat holds already is left as it is, so a
+# second run seals nothing. Pushing the store is the operator's.
+- name: sealing is asked for
+  ansible.builtin.set_fact:
+    seal_asked: "{{ nova_seal_store is defined and nova_seal_seat is defined and nova_seal_key is defined }}"
+
+- name: the names the seat holds (control node; no key, no value read)
+  ansible.builtin.command:
+    argv: ["{{ nova_control_secrets }}", names, --store, "{{ nova_seal_store }}", --as, "{{ nova_seal_seat }}"]
+  delegate_to: localhost
+  become: false
+  register: seal_names
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: seal_asked
+
+- name: the password, read on this machine
+  ansible.builtin.slurp: { src: "{{ seal_file }}" }
+  register: seal_value
+  no_log: true
+  when: seal_asked and seal_name not in (seal_names.stdout_lines | default([])) and not ansible_check_mode
+
+- name: "{{ seal_name }} set into the seat (control node, value on stdin)"
+  ansible.builtin.command:
+    argv: ["{{ nova_control_secrets }}", set, "{{ seal_name }}", --store, "{{ nova_seal_store }}", --key, "{{ nova_seal_key }}",
+           --as, "{{ nova_seal_seat }}", --sops, "{{ nova_control_sops }}"]
+    stdin: "{{ seal_value.content | b64decode | trim }}"
+  delegate_to: localhost
+  become: false
+  no_log: true
+  register: seal_set
+  when: seal_value is not skipped
+
+- name: the seal's receipt
+  ansible.builtin.debug:
+    msg: >-
+      SEAL {{ seal_name }}
+      {%- if not seal_asked %} not asked (give nova_seal_store, nova_seal_seat and nova_seal_key to seal it)
+      {%- elif seal_name in (seal_names.stdout_lines | default([])) %} present in seat {{ nova_seal_seat }}
+      {%- elif ansible_check_mode %} WOULD-SEAL into seat {{ nova_seal_seat }} (check: nothing written)
+      {%- elif seal_set.rc | default(1) == 0 %} SEALED into seat {{ nova_seal_seat }}, committed; next: git -C {{ nova_seal_store }} push
+      {%- else %} FAILED rc={{ seal_set.rc | default('?') }}{% endif %}
+
+- name: the seal landed
+  ansible.builtin.assert:
+    that: seal_set is skipped or seal_set.rc == 0
+    fail_msg: "SEAL {{ seal_name }} into seat {{ nova_seal_seat | default('') }} failed (rc={{ seal_set.rc | default('?') }}; its output is hidden: it ran with the value on stdin)"
+    quiet: true

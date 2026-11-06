@@ -1,0 +1,37 @@
+---
+# Tailscale from its own apt repository (Debian, Ubuntu): the signing key and the source for this release, then the
+# package. Under --check before the source exists apt cannot be asked for the package: it is reported as pending.
+- name: the signing key, there already
+  ansible.builtin.stat: { path: /usr/share/keyrings/tailscale-archive-keyring.gpg }
+  register: ts_key_file
+
+- name: Tailscale's signing key (where it is missing)
+  when: not ts_key_file.stat.exists
+  ansible.builtin.get_url:
+    url: "{{ nova_tailscale_apt_url }}/{{ ansible_distribution | lower }}/{{ ansible_distribution_release }}.noarmor.gpg"
+    dest: /usr/share/keyrings/tailscale-archive-keyring.gpg
+    mode: "0644"
+  become: true
+  register: ts_key
+
+- name: Tailscale's apt source
+  ansible.builtin.copy:
+    dest: /etc/apt/sources.list.d/tailscale.list
+    mode: "0644"
+    # the line Tailscale's own install script writes, so a machine set up by it is left as it is
+    content: |
+      # Tailscale packages for {{ ansible_distribution | lower }} {{ ansible_distribution_release }}
+      deb [arch={{ 'arm64' if ansible_architecture in ['aarch64', 'arm64'] else 'amd64' }} signed-by=/usr/share/keyrings/tailscale-archive-keyring.gpg] {{ nova_tailscale_apt_url }}/{{ ansible_distribution | lower }} {{ ansible_distribution_release }} main
+  become: true
+  register: ts_source
+
+- name: the tailscale package
+  ansible.builtin.apt: { name: tailscale, state: present, update_cache: "{{ ts_key is changed or ts_source is changed }}" }
+  become: true
+  register: ts_pkg
+  when: not (ansible_check_mode and (ts_key is changed or ts_source is changed))
+
+- name: tailscaled enabled and running
+  ansible.builtin.systemd_service: { name: tailscaled, enabled: true, state: started }
+  become: true
+  when: not (ansible_check_mode and (ts_pkg is skipped or ts_pkg is changed))

@@ -1,0 +1,49 @@
+---
+# An ACL change is applied to the running server with ACL LOAD and never restarts it. A restart is requested (the
+# handler `restart nova-redis`, which checkpoints first) only for the config, the unit, or an ACL the running server
+# cannot load because it predates the admin user. users.acl is the only writer of the server's ACL: a hand
+# ACL SETUSER with the file unchanged is not detected.
+- name: the running server answers the admin user (live), refuses it (no-admin), or is not running (down)
+  ansible.builtin.shell: |
+    out=$({{ redis_cli }} PING 2>&1)
+    case "$out" in
+      PONG) echo live ;;
+      *"Connection refused"*|*"Could not connect"*|*"No such file"*) echo down ;;
+      *) echo no-admin ;;
+    esac
+  args: { executable: /bin/bash }
+  register: redis_probe
+  changed_when: false
+  check_mode: false
+
+- name: ACL LOAD (the server keeps running and every key)
+  ansible.builtin.shell: |
+    r=$({{ redis_cli }} ACL LOAD 2>&1)
+    [ "$r" = OK ] || { echo "ACL LOAD refused: $r (the server keeps the ACL it had; fix users.acl and run again)" >&2; exit 1; }
+    {{ redis_acl_applied }}
+    {{ redis_cli }} ACL USERS | grep -c .
+  args: { executable: /bin/bash }
+  register: redis_acl_load
+  when: redis_acl_pending and redis_probe.stdout == 'live' and not ansible_check_mode
+
+- name: what the ACL did, and why a restart is wanted
+  ansible.builtin.set_fact:
+    redis_acl_note: >-
+      {{ ('loaded ' ~ redis_acl_load.stdout ~ ' users') if (redis_acl_load is not skipped and redis_acl_load.stdout is defined)
+         else (('WOULD-LOAD' if ansible_check_mode else 'at-restart') if (redis_acl_pending or redis_acl is changed) else 'same') }}
+    redis_restart_why: >-
+      {{ (['config'] if (redis_conf is changed and redis_started is not changed) else [])
+         + (['unit'] if (redis_unit_written is changed and redis_started is not changed) else [])
+         + (['acl: the running server predates the admin user'] if (redis_acl_pending and redis_probe.stdout == 'no-admin') else []) }}
+
+# a fresh machine under --check has no unit for a handler to reach; its first start is the start
+- name: request a restart (the handler checkpoints first and refuses to restart when the checkpoint fails)
+  ansible.builtin.debug: { msg: "restart requested: {{ redis_restart_why | join('; ') }}" }
+  changed_when: true
+  notify: restart nova-redis
+  when: redis_restart_why | length > 0 and redis_probe.stdout != 'down' and not ansible_check_mode
+
+- name: the restart a run would make (--check)
+  ansible.builtin.debug: { msg: "WOULD-RESTART: {{ redis_restart_why | join('; ') }}" }
+  changed_when: true
+  when: redis_restart_why | length > 0 and redis_probe.stdout != 'down' and ansible_check_mode

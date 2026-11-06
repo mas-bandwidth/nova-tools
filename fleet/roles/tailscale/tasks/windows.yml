@@ -1,0 +1,62 @@
+---
+# Tailscale on Windows (included by main.yml for a Windows host only; needs ansible.windows, fleet/requirements.yml):
+# winget installs it, then the join. Windows has no /dev/stdin for --auth-key=file:, so the key is written to a file
+# only the login can read, in the login's temp directory, for the one command, and removed after it whatever happened.
+- name: tailscale installed (winget)
+  ansible.windows.win_command: >-
+    winget install --id Tailscale.Tailscale --exact --silent --accept-package-agreements --accept-source-agreements
+  args: { creates: "{{ nova_tailscale_win_bin }}" }
+
+- name: the machine's tailnet state (Windows)
+  ansible.windows.win_command: '"{{ nova_tailscale_win_bin }}" status --json'
+  register: ts_status_win
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: the state, parsed (Windows)
+  ansible.builtin.set_fact:
+    ts_self: "{{ (ts_status_win.stdout | from_json).Self | default({}) if (ts_status_win.stdout | default('') | trim).startswith('{') else {} }}"
+    ts_state: "{{ (ts_status_win.stdout | from_json).BackendState | default('Absent') if (ts_status_win.stdout | default('') | trim).startswith('{') else 'Absent' }}"
+
+- name: what the join must do (Windows)
+  ansible.builtin.set_fact:
+    ts_join: "{{ ts_state != 'Running' or (ts_self.Tags | default([]) | sort) != ts_tags }}"
+
+- name: the join has its key (Windows)
+  ansible.builtin.assert:
+    that: lookup('ansible.builtin.env', 'TAILSCALE_AUTHKEY') | length > 0
+    fail_msg: "{{ inventory_hostname }}: tailnet state {{ ts_state }} and no TAILSCALE_AUTHKEY in the environment (nova-secrets exec --only TAILSCALE_AUTHKEY)"
+    quiet: true
+  when: ts_join and not ansible_check_mode
+
+- name: tailscale up (Windows; the key in a file only the login reads, removed after)
+  when: ts_join and not ansible_check_mode
+  block:
+    - name: the key file
+      ansible.windows.win_copy:
+        content: "{{ lookup('ansible.builtin.env', 'TAILSCALE_AUTHKEY') }}"
+        dest: "{{ ansible_env.TEMP }}\\nova-tailscale-authkey"
+      no_log: true
+
+    - name: tailscale up
+      ansible.windows.win_command: >-
+        "{{ nova_tailscale_win_bin }}" up --reset --auth-key=file:{{ ansible_env.TEMP }}\nova-tailscale-authkey
+        --hostname={{ inventory_hostname }} --advertise-tags={{ ts_tags | join(',') }}{{ ' --force-reauth' if ts_state == 'Running' else '' }}
+      register: ts_up
+      no_log: true
+  always:
+    - name: the key file removed
+      ansible.windows.win_file: { path: "{{ ansible_env.TEMP }}\\nova-tailscale-authkey", state: absent }
+
+- name: the state after the join (Windows)
+  ansible.windows.win_command: '"{{ nova_tailscale_win_bin }}" status --json'
+  register: ts_after_win
+  changed_when: false
+  check_mode: false
+  when: ts_up is defined and ts_up is not skipped
+
+- name: the node, as it is now (Windows)
+  ansible.builtin.set_fact:
+    ts_self: "{{ (ts_after_win.stdout | from_json).Self }}"
+  when: ts_after_win is not skipped

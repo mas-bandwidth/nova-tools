@@ -1,0 +1,84 @@
+---
+# The redis role (fleet/redis.yml): one Redis on a Debian or Ubuntu machine, ACL users with a password each, an ACL
+# change applied live with ACL LOAD, a restart only for the config or the unit and only after a checkpoint.
+- name: a Debian-family machine
+  ansible.builtin.assert:
+    that: ansible_os_family == 'Debian'
+    fail_msg: "{{ inventory_hostname }} is {{ ansible_os_family }}: redis.yml installs the distribution's redis-server with apt"
+    quiet: true
+
+- name: the tailnet address (when nova_redis_bind is empty)
+  ansible.builtin.command: tailscale ip -4
+  register: redis_ts
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: nova_redis_bind | length == 0
+
+- name: the addresses to listen on
+  ansible.builtin.set_fact:
+    redis_bind: >-
+      {{ nova_redis_bind if nova_redis_bind | length > 0
+         else ((redis_ts.stdout_lines | default([]))[:1] if redis_ts.rc | default(1) == 0 else []) }}
+
+- name: an address to listen on (the tailnet's, never a public one)
+  ansible.builtin.assert:
+    that: redis_bind | length > 0
+    fail_msg: "{{ inventory_hostname }}: no tailnet address (tailscale ip -4) and no nova_redis_bind; join the tailnet first (tailscale.yml)"
+    quiet: true
+
+- name: the distribution's redis-server package
+  ansible.builtin.apt: { name: redis-server, state: present, update_cache: true, cache_valid_time: 3600 }
+  register: redis_pkg
+
+- name: the server's version
+  ansible.builtin.shell: "redis-server --version 2>/dev/null | sed -n 's/.*v=\\([0-9][0-9.]*\\).*/\\1/p'"
+  register: redis_ver
+  changed_when: false
+  check_mode: false
+
+# the multi-part AOF and the ACL file this config keeps are 7.0's shape; an older server is refused, not started
+- name: the server is 7.0 or newer
+  ansible.builtin.assert:
+    that: redis_ver.stdout is version('7.0', '>=')
+    fail_msg: "redis-server on {{ inventory_hostname }} is '{{ redis_ver.stdout | default('absent', true) }}'; this play needs 7.0 or newer"
+    quiet: true
+  when: not (ansible_check_mode and redis_pkg is changed)
+
+- name: the data directory
+  ansible.builtin.file: { path: "{{ nova_redis_dir }}", state: directory, owner: "{{ nova_redis_owner }}", group: "{{ nova_redis_group }}", mode: "0750" }
+
+- name: the passwords and users.acl (the running server is not touched here)
+  ansible.builtin.include_tasks: acl.yml
+
+- name: the config
+  ansible.builtin.template: { src: nova-redis.conf.j2, dest: "{{ nova_redis_dir }}/nova-redis.conf", owner: "{{ nova_redis_owner }}", group: "{{ nova_redis_group }}", mode: "0640" }
+  register: redis_conf
+
+- name: the unit
+  ansible.builtin.template: { src: nova-redis.service.j2, dest: "/etc/systemd/system/{{ nova_redis_unit }}.service", mode: "0644" }
+  register: redis_unit_written
+
+# a unit systemd has never seen cannot be asked about in check mode: on a fresh machine check mode reports the unit
+# file and counts its first start as pending
+- name: the unit file, as it is now
+  ansible.builtin.stat: { path: "/etc/systemd/system/{{ nova_redis_unit }}.service" }
+  register: redis_unit_file
+
+- name: enabled and running
+  ansible.builtin.systemd_service: { name: "{{ nova_redis_unit }}", enabled: true, state: started, daemon_reload: true }
+  register: redis_started   # a server this run started has read the new config and unit already: no restart for them
+  when: redis_unit_file.stat.exists or not ansible_check_mode
+
+- name: the ACL applied live, and a restart requested only when one is needed
+  ansible.builtin.include_tasks: apply.yml
+
+- name: any restart, now
+  ansible.builtin.meta: flush_handlers
+
+- name: the receipt
+  ansible.builtin.debug:
+    msg: >-
+      REDIS {{ inventory_hostname }} port={{ nova_redis_port }} bind={{ redis_bind | join(',') }} version={{ redis_ver.stdout | default('?') }}
+      acl={{ redis_acl_note }} saved={{ redis_saved_at | default('no') }} restarted={{ 'yes' if (redis_restarted | default(false)) else 'no' }}
+      {{- (' (' ~ (redis_restart_why | join('; ')) ~ ')') if redis_restart_why else '' }}{{ ' (check: nothing changed)' if ansible_check_mode else '' }}

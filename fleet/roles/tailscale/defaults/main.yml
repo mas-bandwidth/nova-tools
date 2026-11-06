@@ -1,0 +1,28 @@
+---
+# tailscale.yml's defaults (docs/FLEET.md, "tailscale.yml").
+
+# The tags a machine joins with: tag:nova, and tag:runner on a machine with the
+# runner role. The auth key (TAILSCALE_AUTHKEY) must be allowed to apply them
+# (tagOwners in fleet/tailscale-acl.json).
+nova_tailscale_tags: "{{ ['tag:nova'] + (['tag:runner'] if inventory_hostname in (groups['runner'] | default([])) else []) }}"
+
+# Tailscale SSH on Linux (the macOS and Windows clients do not serve it).
+nova_tailscale_ssh: true
+
+# The machine's MagicDNS name (<machine>.<tailnet>.ts.net) is written as its
+# address in nova-config, so every later play and the bus reach it there.
+nova_tailscale_record_address: true
+
+# Debian and Ubuntu install from Tailscale's own apt repository.
+nova_tailscale_apt_url: https://pkgs.tailscale.com/stable
+
+# The firewall: on Linux ufw denies incoming on every interface but
+# tailscale0 (plus Tailscale's own UDP port, for direct connections); on macOS
+# the application firewall is on. false leaves the firewall as it is.
+nova_firewall: true
+nova_firewall_allow_udp: [41641]
+
+# The CLI per platform.
+nova_tailscale_bin: >-
+  {{ '/Applications/Tailscale.app/Contents/MacOS/Tailscale' if (ansible_system | default('')) == 'Darwin' else 'tailscale' }}
+nova_tailscale_win_bin: 'C:\Program Files\Tailscale\tailscale.exe'

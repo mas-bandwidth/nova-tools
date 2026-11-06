@@ -1,0 +1,45 @@
+---
+# postgres.yml's defaults (docs/FLEET.md, "postgres.yml"). Override them beside the
+# inventory (group_vars/services.yml, host_vars/<machine>.yml) or with -e.
+
+# One major across the fleet, so a dump from one store restores on the next.
+nova_pg_version: "18"
+nova_pg_cluster: main
+
+# Where postgresql-<version> comes from: distro (the release's main), pgdg (the
+# PostgreSQL project's apt repository, its key pinned by fingerprint), or auto
+# (distro when apt already offers the package, else pgdg).
+nova_pg_source: auto
+nova_pg_pgdg_key_url: https://www.postgresql.org/media/keys/ACCC4CF8.asc
+nova_pg_pgdg_key_fingerprint: B97B0AFCAA1A47F044F244A07FCC7D46ACCC4CF8
+nova_pg_pgdg_keyring: /etc/apt/keyrings/apt.postgresql.org.asc
+nova_pg_pgdg_repo: https://apt.postgresql.org/pub/repos/apt
+
+# The addresses it listens on (empty: the machine's `tailscale ip -4`), its
+# port, the one database, and the network allowed to reach it by password
+# (default: the range tailscale assigns). Everything else is rejected.
+nova_pg_listen: []
+nova_pg_port: 5432
+nova_pg_db: nova
+nova_pg_allow_cidr: 100.64.0.0/10
+nova_pg_shared_buffers: 1GB
+nova_pg_syslog_ident: nova-pg
+
+# The passwords (<role>.pass, root 0600) and the nightly dumps live here.
+nova_pg_dir: /var/lib/nova-pg
+nova_pg_dump_keep_days: 14
+nova_pg_dump_on_calendar: "*-*-* 03:15:00 UTC"
+
+# nova-config's roles: nova_admin owns the database (migrations), nova_config
+# owns schema config (the tool), nova_read reads it. want is the
+# login|createdb|createrole a role must show.
+nova_pg_roles:
+  - { name: nova_admin,  flags: "LOGIN CREATEDB CREATEROLE",     want: "t|t|t" }
+  - { name: nova_config, flags: "LOGIN NOCREATEDB NOCREATEROLE", want: "t|f|f" }
+  - { name: nova_read,   flags: "LOGIN NOCREATEDB NOCREATEROLE", want: "t|f|f" }
+
+# The role whose password is sealed into nova_seal_seat, and the name it is
+# sealed as (nova-config reads NOVA_PG_PASSWORD unless NOVA_PG_PASSWORD_ENV
+# names another).
+nova_pg_seal_role: nova_config
+nova_pg_seal_name: NOVA_PG_PASSWORD
