@@ -308,29 +308,21 @@ func open(store, session, source string, now time.Time, publish string) (openRec
 	case flat:
 		return rec, before, nil
 	case !ok || !rec.found:
-		logSource, logPublish, logIt := source, publish, ok
+		logSource, logPublish := source, publish
 		if !ok {
 			header := fmt.Sprintf("# cairn %s\n\nOpened: %s\nSource: %s\nPublish: %s\n", session, stamp(now), source, publish)
 			if err := writeNew(sessionFile(store, session), []byte(header)); err != nil && !errors.Is(err, os.ErrExist) {
 				return rec, false, err
-			} else if err == nil {
-				logIt = true
 			}
 		} else if hs, hp := headerPolicy(store, session); slices.Contains(policies, hp) {
 			// An open interrupted before its log line: log what its header recorded.
 			logSource, logPublish = hs, hp
 		}
-		if logIt {
-			if err := appendLog(store, "open", session, "", stamp(now), logPublish, logSource); err != nil {
-				return rec, false, err
-			}
+		if err := appendLog(store, "open", session, "", stamp(now), logPublish, logSource); err != nil {
+			return rec, false, err
 		}
 		if rec, err = readOpen(store, session); err != nil {
 			return rec, false, err
-		}
-		if !logIt && !rec.found {
-			hs, hp := headerPolicy(store, session)
-			rec = openRec{hs, hp, now, false}
 		}
 	}
 	if rec.publish != publish || (source != "" && source != rec.source) {
