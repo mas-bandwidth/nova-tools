@@ -1,0 +1,41 @@
+---
+# The first handler on `restart nova-redis`. Before any restart: SAVE (dump.rdb), then BGREWRITEAOF to completion (the
+# AOF base becomes the current dataset, which is what a restart loads with appendonly yes). Any failure fails the
+# host, so the restart handler after this one never runs. A server that predates the admin user cannot be
+# checkpointed: the restart is refused unless -e nova_redis_bootstrap=true says to take it once.
+- name: refuse a restart that cannot be checkpointed
+  ansible.builtin.fail:
+    msg: >-
+      REDIS REFUSED restart ({{ redis_restart_why | join('; ') }}): the running server predates the admin user, so no
+      checkpoint can be taken first. Run once with -e nova_redis_bootstrap=true to restart it into the new users.acl.
+  when: redis_probe.stdout == 'no-admin' and not (nova_redis_bootstrap | bool)
+
+- name: SAVE, then BGREWRITEAOF to completion
+  ansible.builtin.shell: |
+    cli() { {{ redis_cli }} "$@"; }
+    info() { cli INFO persistence | tr -d '\r' | sed -n "s/^$1://p"; }
+    r=$(cli SAVE 2>&1)
+    [ "$r" = OK ] || { echo "REDIS REFUSED restart: SAVE failed: $r" >&2; exit 1; }
+    if [ "$(info aof_enabled)" = 1 ]; then
+      n=$(info aof_rewrites)
+      r=$(cli BGREWRITEAOF 2>&1)
+      case "$r" in *"rewriting started"*|*"rewriting scheduled"*) ;; *) echo "REDIS REFUSED restart: BGREWRITEAOF: $r" >&2; exit 1 ;; esac
+      ok=
+      for _ in $(seq 1 600); do
+        # aof_rewrites (the count) proves THIS rewrite finished; a server without the field waits for idle only
+        if [ "$(info aof_rewrite_in_progress)" = 0 ] && [ "$(info aof_rewrite_scheduled)" = 0 ] && { [ -z "$n" ] || [ "$(info aof_rewrites)" != "$n" ]; }; then ok=1; break; fi
+        sleep 0.1
+      done
+      [ -n "$ok" ] || { echo "REDIS REFUSED restart: the AOF rewrite did not finish in 60 s" >&2; exit 1; }
+      s=$(info aof_last_bgrewrite_status)
+      [ "$s" = ok ] || { echo "REDIS REFUSED restart: aof_last_bgrewrite_status=$s" >&2; exit 1; }
+    fi
+    t=$(info rdb_last_save_time)
+    date -u -d "@$t" +%Y-%m-%dT%H:%M:%SZ
+  args: { executable: /bin/bash }
+  register: redis_checkpoint
+  when: redis_probe.stdout == 'live'
+
+- name: when the checkpoint was taken
+  ansible.builtin.set_fact:
+    redis_saved_at: "{{ redis_checkpoint.stdout if redis_checkpoint is not skipped else 'no (bootstrap)' }}"

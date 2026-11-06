@@ -1,0 +1,15 @@
+---
+# The seal's refusals, before anything changes: redis.yml and postgres.yml include this in their pre_tasks, and the
+# seal itself again (main.yml). All three of nova_seal_store, nova_seal_seat and nova_seal_key, or none.
+- name: sealing is asked for
+  ansible.builtin.set_fact:
+    seal_asked: "{{ nova_seal_store is defined and nova_seal_seat is defined and nova_seal_key is defined }}"
+    seal_missing: >-
+      {{ (['nova_seal_store'] if nova_seal_store is not defined else []) + (['nova_seal_seat'] if nova_seal_seat is not defined else [])
+         + (['nova_seal_key'] if nova_seal_key is not defined else []) }}
+
+- name: all three, or none
+  ansible.builtin.assert:
+    that: seal_missing | length in [0, 3]
+    fail_msg: "SEAL STOP: sealing needs nova_seal_store, nova_seal_seat and nova_seal_key; missing {{ seal_missing | join(', ') }}"
+    quiet: true

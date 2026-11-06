@@ -1,0 +1,11 @@
+# /etc/systemd/system/nova-pg-dump.timer: managed by Ansible (fleet/postgres.yml).
+# {{ nova_pg_dump_on_calendar }}; Persistent catches up a run the machine slept through.
+[Unit]
+Description=nova-pg-dump ({{ nova_pg_dump_on_calendar }})
+
+[Timer]
+OnCalendar={{ nova_pg_dump_on_calendar }}
+Persistent=true
+
+[Install]
+WantedBy=timers.target
