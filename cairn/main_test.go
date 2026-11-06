@@ -239,6 +239,18 @@ func TestSelfTalkInstallationShapes(t *testing.T) {
 	}
 }
 
+// TestBannerListsEachVerbOnce: the banner is one usage line per verb, names
+// where the long text lives, and carries none of the group notes.
+func TestBannerListsEachVerbOnce(t *testing.T) {
+	t.Parallel()
+	code, out, _ := do(t, "", "-h")
+	require.Equal(t, 0, code)
+	assert.Equal(t, 11, strings.Count(out, "\n  nova-cairn "), out)
+	assert.Contains(t, out, "nova-cairn help <verb>")
+	assert.Contains(t, out, "cairn/SPEC.md")
+	assert.NotContains(t, out, "Every write is synced")
+}
+
 func TestMemory(t *testing.T) {
 	t.Parallel()
 	c := "testdata/corpus"
