@@ -17,14 +17,24 @@ type upFake struct {
 	ip      string
 	sent    string
 	fail    string // a call containing this word exits 4
+	store   string
+	key     string
+	offnet  bool // tailscale status fails
 }
 
 func (f *upFake) install(t *testing.T) {
 	t.Helper()
 	t.Setenv("TMPDIR", t.TempDir())
-	for _, e := range []string{"NOVA_SECRETS_STORE", "NOVA_SECRETS_KEY", "NOVA_SECRETS_SEAT"} {
-		t.Setenv(e, "/x/"+strings.ToLower(e))
+	f.store, f.key = filepath.Join(t.TempDir(), "store"), filepath.Join(t.TempDir(), "control.key")
+	if err := os.Mkdir(f.store, 0o700); err != nil {
+		t.Fatal(err)
 	}
+	if err := os.WriteFile(f.key, []byte("AGE-SECRET-KEY-FAKE\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("NOVA_SECRETS_STORE", f.store)
+	t.Setenv("NOVA_SECRETS_KEY", f.key)
+	t.Setenv("NOVA_SECRETS_SEAT", "control")
 	oldLook, oldRun, oldOut := lookPath, runCmd, outCmd
 	t.Cleanup(func() { lookPath, runCmd, outCmd = oldLook, oldRun, oldOut })
 	lookPath = func(name string) (string, error) { return "/bin/" + name, nil }
@@ -55,6 +65,10 @@ func (f *upFake) install(t *testing.T) {
 			return "", f.readErr, 125
 		case strings.Contains(line, "nova-secrets names"):
 			return f.names, "", 0
+		case strings.HasSuffix(line, "--version") || strings.HasSuffix(line, " version"):
+			return filepath.Base(bin) + " version 1.2.3\n", "", 0
+		case strings.HasPrefix(line, "tailscale status") && f.offnet:
+			return "", "Logged out.", 1
 		case strings.HasPrefix(line, "tailscale ip"):
 			return f.ip + "\n", "", 0
 		case strings.Contains(line, "pending"):
@@ -69,7 +83,7 @@ func (f *upFake) plays() []string {
 	var out []string
 	for _, c := range f.calls {
 		w := strings.Fields(c)
-		if i := slices.IndexFunc(w, func(s string) bool { return strings.HasSuffix(s, "ansible-playbook") }); i >= 0 {
+		if i := slices.IndexFunc(w, func(s string) bool { return strings.HasSuffix(s, "ansible-playbook") }); i >= 0 && i+3 < len(w) && w[i+1] == "-i" {
 			out = append(out, w[i+3]+"@"+w[i+2])
 		}
 	}
@@ -118,14 +132,20 @@ func TestUpControlRefusals(t *testing.T) {
 		}
 		return "/bin/" + name, nil
 	}
-	code, _, errs := runArgs("up", "--tools", "v1.0.0", "--runners", "https://github.com/o/r", "a=1.2.3.4")
-	if code != 2 || !strings.HasPrefix(errs, "nova-fleet up: the control node lacks psql, gh, $NOVA_SECRETS_KEY; ") {
-		t.Errorf("code %d stderr %q", code, errs)
+	code, out, errs := runArgs("up", "--tools", "v1.0.0", "--runners", "https://github.com/o/r", "a=1.2.3.4")
+	for _, w := range []string{"CHECK MISSING psql: ", "CHECK MISSING gh: ", "CHECK MISSING key: export NOVA_SECRETS_KEY=",
+		"CHECK MISSING TAILSCALE_AUTHKEY: set the store, key and seat above", "CHECK OK sops 1.2.3"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout lacks %q:\n%s", w, out)
+		}
+	}
+	if code != 2 || !strings.HasPrefix(errs, "UP CONTROL FAILED missing=5;") || len(f.plays()) != 0 {
+		t.Errorf("code %d stderr %q plays %v", code, errs, f.plays())
 	}
 	f = &upFake{readErr: "SECRETS EXEC REFUSED name=TAILSCALE_AUTHKEY reason=not-in-seat\n"}
 	f.install(t)
-	code, out, errs := runArgs("up", "--check", "--tools", "v1.0.0", "a=1.2.3.4")
-	if code != 2 || out != "" || !strings.Contains(errs, "TAILSCALE_AUTHKEY cannot be read from seat /x/nova_secrets_seat (exit 125): SECRETS EXEC REFUSED name=TAILSCALE_AUTHKEY reason=not-in-seat;") {
+	code, out, errs = runArgs("up", "--check", "--tools", "v1.0.0", "a=1.2.3.4")
+	if code != 2 || !strings.Contains(out, "CHECK MISSING TAILSCALE_AUTHKEY: nova-secrets set TAILSCALE_AUTHKEY --as control (the value on stdin); the read said: SECRETS EXEC REFUSED name=TAILSCALE_AUTHKEY reason=not-in-seat") {
 		t.Errorf("a refused secret read under --check: code %d stdout %q stderr %q", code, out, errs)
 	}
 	if len(f.plays()) != 0 {
@@ -150,13 +170,13 @@ func TestUpOrder(t *testing.T) {
 		"nova-secrets exec --only TAILSCALE_AUTHKEY -- true",
 		"nova-secrets exec --only GITHUB_RUNNER_TOKEN -- true",
 		"nova-secrets exec --only TAILSCALE_AUTHKEY -- /bin/ansible-playbook -i first.ini tailscale.yml -e nova_tailscale_record_address=false -e nova_firewall=false",
-		"redis.yml -e nova_seal_store=/x/nova_secrets_store -e nova_seal_seat=/x/nova_secrets_seat -e nova_seal_key=/x/nova_secrets_key",
+		"redis.yml -e nova_seal_store=" + f.store + " -e nova_seal_seat=control -e nova_seal_key=" + f.key,
 		"tailscale ip -4 first",
 		"nova-secrets exec --only NOVA_PG_PASSWORD -- sh -c",
 		"postgres://nova_config@100.64.0.7:5432/nova",
 		"nova-secrets exec --only TAILSCALE_AUTHKEY,NOVA_PG_PASSWORD -- /bin/ansible-playbook -i inventory join.yml -e nova_join_host=first -e nova_join_user=nova -e nova_join_address=203.0.113.7 -e nova_join_os=linux -e nova_join_arch=amd64 -e nova_join_roles=services,bench,runner",
 		"-e nova_join_host=second -e nova_join_user=nova -e nova_join_address=203.0.113.8 -e nova_join_os=linux -e nova_join_arch=amd64 -e nova_join_roles=bench,runner",
-		"git -C /x/nova_secrets_store push --quiet",
+		"git -C " + f.store + " push --quiet",
 		"install.yml -e nova_tools_version=v2.0.0",
 		"github-runners.yml -e github_runner_url=https://github.com/o/r -e github_runner_scope=repo -e runner_count=2",
 		"nova-secrets exec --only NOVA_BUS_PASSWORD -- /bin/nova-bus send --as nova-fleet-up --to nova-fleet-up up check up-",
@@ -239,5 +259,79 @@ func TestUpPlaysAreEmbedded(t *testing.T) {
 	}
 	if f, ok := showable(tree, "tailscale-acl"); !ok || f != "tailscale-acl.json" {
 		t.Errorf("nova-fleet show tailscale-acl resolves to %q %v", f, ok)
+	}
+}
+
+func TestCheck(t *testing.T) {
+	f := &upFake{}
+	f.install(t)
+	code, out, errs := runArgs("check")
+	if code != 0 || errs != "" || !strings.HasSuffix(out, "CHECK OK missing=0\n") {
+		t.Fatalf("all present: code %d stdout %q stderr %q", code, out, errs)
+	}
+	for _, w := range []string{"CHECK OK ansible-playbook 1.2.3\n", "CHECK OK tailscale 1.2.3\n", "CHECK OK nova-config /bin/nova-config\n",
+		"CHECK OK tailnet\n", "CHECK OK store " + f.store + "\n", "CHECK OK seat control\n", "CHECK OK TAILSCALE_AUTHKEY readable in seat control\n"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout lacks %q:\n%s", w, out)
+		}
+	}
+	if strings.Contains(out, "GITHUB_RUNNER_TOKEN") || strings.Contains(out, " gh ") {
+		t.Errorf("runner prerequisites checked without --runners:\n%s", out)
+	}
+	f.offnet = true
+	lookPath = func(name string) (string, error) {
+		if name == "age-keygen" || name == "nova-bus" || name == "gh" {
+			return "", os.ErrNotExist
+		}
+		return "/bin/" + name, nil
+	}
+	code, out, errs = runArgs("check", "--runners", "https://github.com/o/r")
+	for _, w := range []string{"CHECK MISSING age-keygen: ", "CHECK MISSING nova-bus: git clone --depth 1 https://github.com/mas-bandwidth/nova-tools && (cd nova-tools && go build -o ~/.local/bin/nova-bus ./bus)",
+		"CHECK MISSING gh: ", "CHECK MISSING tailnet: sudo tailscale up", "Logged out.", "CHECK OK GITHUB_RUNNER_TOKEN readable"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout lacks %q:\n%s", w, out)
+		}
+	}
+	if code != 1 || errs != "CHECK FAILED missing=4\n" {
+		t.Errorf("code %d stderr %q", code, errs)
+	}
+	for _, tc := range [][]string{{"--bogus"}, {"x"}, {"--runners"}, {"--runners", "https://example.com/x"}} {
+		if code, _, errs := runArgs(append([]string{"check"}, tc...)...); code != 2 || !strings.HasPrefix(errs, "nova-fleet check: ") || !strings.HasSuffix(errs, "; run: nova-fleet check -h\n") {
+			t.Errorf("check %q: code %d stderr %q", tc, code, errs)
+		}
+	}
+}
+
+func TestFixPerFamily(t *testing.T) {
+	dir := t.TempDir()
+	old, oldOS := osRelease, goos
+	t.Cleanup(func() { osRelease, goos = old, oldOS })
+	for _, tc := range []struct{ os, release, want string }{
+		{"linux", "ID=ubuntu\nID_LIKE=debian\n", "apt"},
+		{"linux", "ID=\"rocky\"\nID_LIKE=\"rhel centos fedora\"\n", "dnf"},
+		{"linux", "ID=arch\n", ""},
+		{"darwin", "", "brew"},
+	} {
+		osRelease, goos = filepath.Join(dir, "os-release"), tc.os
+		if err := os.WriteFile(osRelease, []byte(tc.release), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if got := family(); got != tc.want {
+			t.Errorf("%s %q: family %q, want %q", tc.os, tc.release, got, tc.want)
+		}
+	}
+	for _, tc := range []struct{ name, fam, want string }{
+		{"age-keygen", "apt", "sudo apt install -y age"},
+		{"psql", "dnf", "sudo dnf install -y postgresql"},
+		{"psql", "brew", "brew install libpq && brew link --force libpq"},
+		{"gpg", "apt", "sudo apt install -y gnupg"},
+		{"tailscale", "brew", "brew install --cask tailscale"},
+		{"tailscale", "apt", "curl -fsSL https://tailscale.com/install.sh | sh"},
+		{"sops", "brew", "brew install sops"},
+		{"git", "", "install git with this system's package manager"},
+	} {
+		if got := fix(tc.name, tc.fam); got != tc.want {
+			t.Errorf("fix(%s, %s) = %q, want %q", tc.name, tc.fam, got, tc.want)
+		}
 	}
 }
