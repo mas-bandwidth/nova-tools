@@ -80,8 +80,18 @@ func fix(name, fam string) string {
 	case strings.HasPrefix(name, "nova-"):
 		t := strings.TrimPrefix(name, "nova-")
 		return "git clone --depth 1 https://github.com/mas-bandwidth/nova-tools && (cd nova-tools && go build -o ~/.local/bin/" + name + " ./" + t + ")"
+	case name == "ansible-playbook" && fam == "brew":
+		return "brew install ansible"
 	case name == "ansible-playbook":
-		return "python3 -m venv ~/.local/ansible && ~/.local/ansible/bin/pip install ansible-core && export PATH=~/.local/ansible/bin:$PATH"
+		venv := "python3 -m venv ~/.local/ansible && ~/.local/ansible/bin/pip install ansible-core && export PATH=~/.local/ansible/bin:$PATH"
+		if fam == "apt" { // Debian and Ubuntu ship python3 without venv
+			return "sudo apt install -y python3-venv && " + venv
+		}
+		return venv
+	case name == "python3-venv" && fam == "apt":
+		return "sudo apt install -y python3-venv"
+	case name == "python3-venv":
+		return "sudo dnf install -y python3 (its venv module is part of it)"
 	case name == "tailscale" && fam == "brew":
 		return "brew install --cask tailscale"
 	case name == "tailscale":
@@ -139,6 +149,14 @@ func (u *upRun) control(out io.Writer) int {
 			}
 		}
 		fmt.Fprintf(out, "CHECK OK %s %s\n", b, what)
+	}
+	// The ansible-playbook line above makes a venv; say so when this python3 cannot.
+	if u.bin["ansible-playbook"] == "" && fam != "brew" {
+		if py, err := lookPath("python3"); err != nil {
+			miss("python3", fix("python3-venv", fam))
+		} else if _, why, c := outCmd(py, []string{"-c", "import ensurepip, venv"}, os.Environ()); c != 0 {
+			miss("python3-venv", py+" has no venv module ("+oneLine(why)+"); "+fix("python3-venv", fam))
+		}
 	}
 	if p := u.bin["tailscale"]; p != "" {
 		if _, why, c := outCmd(p, []string{"status", "--peers=false"}, os.Environ()); c != 0 {

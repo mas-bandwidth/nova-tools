@@ -27,7 +27,9 @@ git clone --depth 1 https://github.com/mas-bandwidth/nova-tools && cd nova-tools
 ```
 
 The control machine needs ansible-core 2.15 or later on PATH; a Windows host in the inventory also needs the `ansible.windows`
-collection:
+collection. On macOS `brew install ansible`; on Linux a venv (Debian and Ubuntu ship python3 without it, so there the
+line starts `sudo apt install -y python3-venv && `; `nova-fleet check` prints the line for this machine, and says so when
+python3 has no venv module):
 
 ```
 python3 -m venv ~/.local/ansible && ~/.local/ansible/bin/pip install ansible-core
@@ -58,6 +60,8 @@ nova-fleet up --tools v2.0.0 store-1=203.0.113.7 web-1=203.0.113.8
 
 `nova-fleet up` takes a fleet from nothing to running in one fixed order. Its inputs are only what you have: the
 machines' ssh addresses, the Tailscale auth key in your seat, and, for runners, the repository or organization.
+`--grant NAME[,NAME]` names the values each machine's seat is granted (default `NOVA_BUS_PASSWORD`, the one its
+services and nova-bus open).
 
 ```
 nova-fleet up --check --tools v2.0.0 store-1=203.0.113.7 web-1=203.0.113.8 mac-1=mac-1.local/darwin/arm64
@@ -84,11 +88,14 @@ nova-fleet up --tools v2.0.0 --runners https://github.com/OWNER/REPO store-1=203
 | 1 | control | `nova-fleet check`: every helper, the tailnet, the store, key and seat, and `TAILSCALE_AUTHKEY` (and `GITHUB_RUNNER_TOKEN`) read from the seat; anything missing stops the run with its fix line | a run never starts that a missing secret would stop later |
 | 2 | first | on the first machine, from a hand inventory as root: `tailscale` (no address recorded, firewall later), `postgres` and `redis` (their passwords sealed into your seat as `NOVA_PG_PASSWORD` and `NOVA_BUS_PASSWORD`), then `nova-config schema` applied | nova-config's rows live in this PostgreSQL, so it comes before any row |
 | 3 | join | `join` for each machine, the first too (`services,bench`; the others `bench`; `runner` with `--runners`): its row, its login with passwordless sudo, its tailnet name, its firewall, its seat | the store exists now |
-| 4 | store | `git push` of your secrets store, if it has an upstream (else a NOTE) | the new seats reach the machines' clones |
-| 5 | tools | `install` on every machine, from the release `--tools vX.Y.Z` or a local build `--tools DIR` | the services run these binaries |
-| 6 | services | `services` | |
-| 7 | runners | `github-runners`, `--runner-count` per machine (only with `--runners`) | |
-| 8 | bus | a message sent to the inbox `nova-fleet-up` over the first machine's Redis and read back | the fleet is reached end to end |
+| 4 | grant | `nova-secrets grant <--grant names> --to <machine>` for each machine: the values written to that seat's file, encrypted to the seat (and recovery) only; your seat is never a recipient of it ([secrets/SPEC.md](../secrets/SPEC.md)) | the seats exist now, and join pinned each one's public key in the store |
+| 5 | store | `git push` of your secrets store, if it has an upstream (else a NOTE) | the new seats and grants reach the machines' clones |
+| 6 | refresh | `secrets-refresh` on every machine, with `nova_secrets_repo` set to your store's upstream URL so a machine with no clone gets one (it must be able to read that repository) | each clone keeps pulling, so later grants arrive by themselves |
+| 7 | health | `health` on every machine (Linux; a Mac is skipped) | the guards are in place before anything long-running starts |
+| 8 | tools | `install` on every machine, from the release `--tools vX.Y.Z` or a local build `--tools DIR` | the services run these binaries |
+| 9 | services | `services` | each seat holds its granted values now |
+| 10 | runners | `github-runners`, `--runner-count` per machine (only with `--runners`) | |
+| 11 | bus | a message sent to the inbox `nova-fleet-up` over the first machine's Redis and read back | the fleet is reached end to end |
 
 Each play prints its own receipts; each step adds `UP <step> OK` (or `WOULD-...` under `--check`), and the run ends
 with one line per machine: `UP MACHINE <name> OK address=<address> steps=<the steps it passed>`. A failed step prints
@@ -96,10 +103,12 @@ with one line per machine: `UP MACHINE <name> OK address=<address> steps=<the st
 
 **--check** runs every step under `ansible-playbook --check --diff` and reads the secrets all the same. On a fleet
 whose PostgreSQL does not exist yet, the steps after the first machine's plays cannot be checked against anything;
-they are named (`UP FIRST WOULD-RUN ...`), never reported green. Nothing is pushed, applied or sent under `--check`.
+they are named (`UP FIRST WOULD-RUN ...`), never reported green. The grant step reads the `--grant` values from your
+seat and prints `UP GRANT <machine> WOULD-GRANT <names>`; a value it cannot read stops it with the read's reason.
+Nothing is pushed, applied, granted or sent under `--check`.
 
-A machine's seat holds no values until you set them from a key that opens it (`nova-secrets set NAME --as <seat>`):
-join's bus check on a new machine is a `NOTE` until its seat holds `NOVA_BUS_PASSWORD`.
+A machine's seat holds no values until they are granted to it: join's bus check on a new machine is a `NOTE` until
+step 4 has granted `NOVA_BUS_PASSWORD` and the machine's clone has pulled it.
 
 ## The plays
 

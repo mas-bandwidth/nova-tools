@@ -20,6 +20,7 @@ type upFake struct {
 	store   string
 	key     string
 	offnet  bool // tailscale status fails
+	noVenv  bool // python3 -c 'import ensurepip, venv' fails
 }
 
 func (f *upFake) install(t *testing.T) {
@@ -61,6 +62,8 @@ func (f *upFake) install(t *testing.T) {
 	outCmd = func(bin string, args, env []string) (string, string, int) {
 		line := record(bin, slices.Clone(args))
 		switch {
+		case strings.Contains(line, "import ensurepip, venv") && f.noVenv:
+			return "", "ModuleNotFoundError: No module named 'ensurepip'", 1
 		case strings.Contains(line, "-- true") && f.readErr != "":
 			return "", f.readErr, 125
 		case strings.Contains(line, "nova-secrets names"):
@@ -69,6 +72,8 @@ func (f *upFake) install(t *testing.T) {
 			return filepath.Base(bin) + " version 1.2.3\n", "", 0
 		case strings.HasPrefix(line, "tailscale status") && f.offnet:
 			return "", "Logged out.", 1
+		case strings.Contains(line, "ls-remote --get-url"):
+			return "git@example.com:o/store.git\n", "", 0
 		case strings.HasPrefix(line, "tailscale ip"):
 			return f.ip + "\n", "", 0
 		case strings.Contains(line, "pending"):
@@ -161,7 +166,7 @@ func TestUpOrder(t *testing.T) {
 		t.Fatalf("exit %d\n%s\n%s", code, out, errs)
 	}
 	want := []string{"tailscale.yml@first.ini", "postgres.yml@first.ini", "redis.yml@first.ini", "join.yml@inventory", "join.yml@inventory",
-		"install.yml@inventory", "services.yml@inventory", "github-runners.yml@inventory"}
+		"secrets-refresh.yml@inventory", "health.yml@inventory", "install.yml@inventory", "services.yml@inventory", "github-runners.yml@inventory"}
 	if got := f.plays(); !slices.Equal(got, want) {
 		t.Errorf("plays = %v, want %v", got, want)
 	}
@@ -176,7 +181,11 @@ func TestUpOrder(t *testing.T) {
 		"postgres://nova_config@100.64.0.7:5432/nova",
 		"nova-secrets exec --only TAILSCALE_AUTHKEY,NOVA_PG_PASSWORD -- /bin/ansible-playbook -i inventory join.yml -e nova_join_host=first -e nova_join_user=nova -e nova_join_address=203.0.113.7 -e nova_join_os=linux -e nova_join_arch=amd64 -e nova_join_roles=services,bench,runner",
 		"-e nova_join_host=second -e nova_join_user=nova -e nova_join_address=203.0.113.8 -e nova_join_os=linux -e nova_join_arch=amd64 -e nova_join_roles=bench,runner",
+		"nova-secrets grant NOVA_BUS_PASSWORD --to first\n",
+		"nova-secrets grant NOVA_BUS_PASSWORD --to second\n",
+		"nova-secrets grant NOVA_BUS_PASSWORD --to second\ngit -C " + f.store + " rev-parse",
 		"git -C " + f.store + " push --quiet",
+		"secrets-refresh.yml -e nova_secrets_repo=git@example.com:o/store.git\n",
 		"install.yml -e nova_tools_version=v2.0.0",
 		"github-runners.yml -e github_runner_url=https://github.com/o/r -e github_runner_scope=repo -e runner_count=2",
 		"nova-secrets exec --only NOVA_BUS_PASSWORD -- /bin/nova-bus send --as nova-fleet-up --to nova-fleet-up up check up-",
@@ -185,9 +194,9 @@ func TestUpOrder(t *testing.T) {
 			t.Errorf("no call contains %q; calls:\n%s", w, all)
 		}
 	}
-	for _, w := range []string{"UP CONTROL OK", "UP FIRST OK first pg=100.64.0.7:5432", "UP STORE OK", "UP BUS OK 100.64.0.7:6379 round-trip=up-",
-		"UP MACHINE first OK address=203.0.113.7 steps=tailnet,postgres,redis,join,tools,services,runners,bus",
-		"UP MACHINE second OK address=203.0.113.8 steps=join,tools,services,runners,bus"} {
+	for _, w := range []string{"UP CONTROL OK", "UP FIRST OK first pg=100.64.0.7:5432", "UP GRANT first OK NOVA_BUS_PASSWORD", "UP GRANT second OK NOVA_BUS_PASSWORD", "UP STORE OK", "UP BUS OK 100.64.0.7:6379 round-trip=up-",
+		"UP MACHINE first OK address=203.0.113.7 steps=tailnet,postgres,redis,join,grant,refresh,health,tools,services,runners,bus",
+		"UP MACHINE second OK address=203.0.113.8 steps=join,grant,refresh,health,tools,services,runners,bus"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout lacks %q:\n%s", w, out)
 		}
@@ -223,13 +232,30 @@ func TestUpCheck(t *testing.T) {
 	// A fleet that exists: every step runs under --check, nothing is pushed, applied or sent.
 	f = &upFake{names: "NOVA_PG_PASSWORD", ip: "100.64.0.7"}
 	f.install(t)
-	code, out, _ = runArgs("up", "--check", "--tools", "v2.0.0", "first=1.1.1.1")
+	code, out, _ = runArgs("up", "--check", "--grant", "NOVA_BUS_PASSWORD,EXTRA", "--tools", "v2.0.0", "first=1.1.1.1")
 	all := strings.Join(f.calls, "\n")
-	if code != 0 || len(f.plays()) != 6 || strings.Contains(all, "push") || strings.Contains(all, "sh -c") || strings.Contains(all, "nova-bus send") {
+	if code != 0 || len(f.plays()) != 8 || strings.Contains(all, "push") || strings.Contains(all, "sh -c") || strings.Contains(all, "nova-bus send") ||
+		strings.Contains(all, "nova-secrets grant") || !strings.Contains(all, "nova-secrets exec --only NOVA_BUS_PASSWORD,EXTRA -- true") {
 		t.Errorf("code %d plays %v calls:\n%s", code, f.plays(), all)
 	}
-	if !strings.Contains(out, "UP MACHINE first CHECKED") || !strings.Contains(out, "(check: nothing changed)") {
-		t.Errorf("stdout %s", out)
+	for _, w := range []string{"UP GRANT first WOULD-GRANT NOVA_BUS_PASSWORD,EXTRA (check: nothing changed)", "UP MACHINE first CHECKED", "steps=tailnet,postgres,redis,join,grant,refresh,health,tools,services"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout lacks %q:\n%s", w, out)
+		}
+	}
+	// --check reads what it would grant, and stops with the reason when it cannot.
+	f = &upFake{names: "NOVA_PG_PASSWORD", ip: "100.64.0.7"}
+	f.install(t)
+	oldOut := outCmd
+	outCmd = func(bin string, args, env []string) (string, string, int) {
+		if strings.Join(args, " ") == "exec --only NOVA_BUS_PASSWORD -- true" {
+			return "", "seat control holds no NOVA_BUS_PASSWORD", 3
+		}
+		return oldOut(bin, args, env)
+	}
+	code, _, errs = runArgs("up", "--check", "--tools", "v2.0.0", "first=1.1.1.1")
+	if code != 3 || !strings.Contains(errs, "seat control cannot read NOVA_BUS_PASSWORD to grant it: seat control holds no NOVA_BUS_PASSWORD") || !strings.Contains(errs, "UP grant FAILED exit=3") {
+		t.Errorf("unreadable grant: code %d stderr %q", code, errs)
 	}
 }
 
@@ -248,7 +274,7 @@ func TestLocalVersion(t *testing.T) {
 
 // Every play up runs is in the binary.
 func TestUpPlaysAreEmbedded(t *testing.T) {
-	for _, p := range []string{"tailscale", "postgres", "redis", "join", "install", "services", "github-runners"} {
+	for _, p := range []string{"tailscale", "postgres", "redis", "join", "secrets-refresh", "health", "install", "services", "github-runners"} {
 		if !slices.Contains(plays(tree), p) {
 			t.Errorf("up runs %s.yml, which is not embedded", p)
 		}
@@ -295,6 +321,25 @@ func TestCheck(t *testing.T) {
 	if code != 1 || errs != "CHECK FAILED missing=4\n" {
 		t.Errorf("code %d stderr %q", code, errs)
 	}
+	// No ansible-playbook and a python3 without venv: both are said.
+	old := goos
+	t.Cleanup(func() { goos = old })
+	goos, f.offnet, f.noVenv = "linux", false, true
+	lookPath = func(name string) (string, error) {
+		if name == "ansible-playbook" {
+			return "", os.ErrNotExist
+		}
+		return "/bin/" + name, nil
+	}
+	code, out, _ = runArgs("check")
+	if code != 1 || !strings.Contains(out, "CHECK MISSING ansible-playbook: ") ||
+		!strings.Contains(out, "CHECK MISSING python3-venv: /bin/python3 has no venv module (ModuleNotFoundError: No module named 'ensurepip'); ") {
+		t.Errorf("venv-less python3: code %d\n%s", code, out)
+	}
+	f.noVenv = false
+	if _, out, _ = runArgs("check"); strings.Contains(out, "CHECK MISSING python3") {
+		t.Errorf("python3 with venv reported missing:\n%s", out)
+	}
 	for _, tc := range [][]string{{"--bogus"}, {"x"}, {"--runners"}, {"--runners", "https://example.com/x"}} {
 		if code, _, errs := runArgs(append([]string{"check"}, tc...)...); code != 2 || !strings.HasPrefix(errs, "nova-fleet check: ") || !strings.HasSuffix(errs, "; run: nova-fleet check -h\n") {
 			t.Errorf("check %q: code %d stderr %q", tc, code, errs)
@@ -329,6 +374,10 @@ func TestFixPerFamily(t *testing.T) {
 		{"tailscale", "apt", "curl -fsSL https://tailscale.com/install.sh | sh"},
 		{"sops", "brew", "brew install sops"},
 		{"git", "", "install git with this system's package manager"},
+		{"ansible-playbook", "brew", "brew install ansible"},
+		{"ansible-playbook", "apt", "sudo apt install -y python3-venv && python3 -m venv ~/.local/ansible && ~/.local/ansible/bin/pip install ansible-core && export PATH=~/.local/ansible/bin:$PATH"},
+		{"ansible-playbook", "dnf", "python3 -m venv ~/.local/ansible && ~/.local/ansible/bin/pip install ansible-core && export PATH=~/.local/ansible/bin:$PATH"},
+		{"python3-venv", "apt", "sudo apt install -y python3-venv"},
 	} {
 		if got := fix(tc.name, tc.fam); got != tc.want {
 			t.Errorf("fix(%s, %s) = %q, want %q", tc.name, tc.fam, got, tc.want)

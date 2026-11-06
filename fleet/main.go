@@ -217,6 +217,13 @@ func extract(fsys fs.FS) (string, error) {
 	return dir, nil
 }
 
+// inventoryScript writes dir/inventory, a script that execs nova-config inventory.
+func inventoryScript(dir, config string) (string, error) {
+	script := filepath.Join(dir, "inventory")
+	body := fmt.Sprintf("#!/bin/sh\nexec '%s' inventory \"$@\"\n", strings.ReplaceAll(config, "'", `'\''`))
+	return script, os.WriteFile(script, []byte(body), 0o700)
+}
+
 func run(args []string, stdout, stderr io.Writer) int {
 	refuse := func(who, format string, a ...any) int {
 		fmt.Fprintf(stderr, "nova-fleet %s: %s; run: nova-fleet %s -h\n", who, fmt.Sprintf(format, a...), who)
@@ -360,14 +367,11 @@ func runPlay(play string, args []string, stdout, stderr io.Writer, refuse func(s
 		return 2
 	}
 	if wrap {
-		script := filepath.Join(dir, "inventory")
-		body := fmt.Sprintf("#!/bin/sh\nexec '%s' inventory \"$@\"\n", strings.ReplaceAll(inventory, "'", `'\''`))
-		if err := os.WriteFile(script, []byte(body), 0o700); err != nil {
+		if inventory, err = inventoryScript(dir, inventory); err != nil {
 			_ = os.RemoveAll(dir)
 			fmt.Fprintf(stderr, "nova-fleet %s: write the inventory script: %v; run: nova-fleet %s --inventory <file|script>\n", play, err, play)
 			return 2
 		}
-		inventory = script
 	}
 	ansible, err := lookPath("ansible-playbook")
 	if err != nil {
