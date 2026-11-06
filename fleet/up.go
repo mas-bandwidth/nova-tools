@@ -23,7 +23,7 @@ Ansible are not optional: nothing here skips one.
    4 join      every machine joins: its row, login, tailnet name and host key, firewall, seat
    5 grant     nova-secrets grant: the --grant values written to each machine's seat
    6 store     the secrets store pushed to its git upstream, if it has one
-   7 refresh   the encrypted store copied over ssh (rsync) to each machine
+   7 refresh   secrets-refresh: the encrypted store pushed (rsync) to each machine
    8 health    the self-healing guards and the disk report (Linux)
    9 tools     the nova-tools release (TAG) or local build (DIR) on every machine
   10 services  the service units
@@ -316,15 +316,16 @@ func (u *upRun) peer(m *machine) bool {
 	return false
 }
 
-// reach finds how a machine answers: its login over the tailnet when it is a peer or has a row,
-// else root at the address given. A machine that answers nowhere is unreachable.
+// reach finds how a machine answers: its login over the tailnet once it has a row (join closed
+// the address given then), else root at the address given. A machine that answers nowhere is
+// unreachable.
 func (u *upRun) reach(m *machine) {
 	m.user = u.user
 	if user, _ := m.row["user"].(string); user != "" {
 		m.user = user
 	}
 	var try [][2]string
-	if u.peer(m) {
+	if u.peer(m) && m.row != nil {
 		try = append(try, [2]string{m.user, m.dns})
 	}
 	if addr, _ := m.row["address"].(string); addr != "" && addr != m.dns {
@@ -334,6 +335,9 @@ func (u *upRun) reach(m *machine) {
 		try = append(try, [2]string{"root", m.address})
 	} else {
 		try = append(try, [2]string{m.user, m.address})
+	}
+	if m.dns != "" && m.row == nil {
+		try = append(try, [2]string{m.user, m.dns})
 	}
 	var why string
 	for _, t := range try {
@@ -548,25 +552,8 @@ func (u *upRun) steps() int {
 		u.say("UP STORE OK pushed %s", u.store)
 	}
 
-	// 7. refresh: the encrypted store (no .git, stale files deleted, 0700/0600) copied over the
-	// tailnet to each machine, so its seat opens what was granted; a rerun pushes again.
-	push := []string{"-rltp", "--delete", "--exclude=.git", "--chmod=Du=rwx,Dgo=,Fu=rw,Fgo=", "--rsync-path=umask 077 && mkdir -p " + storePath + " && rsync", u.store + "/"}
-	if u.check {
-		push = append([]string{"--dry-run"}, push...)
-	}
-	for _, m := range u.machines {
-		if m.unreachable != "" {
-			continue
-		}
-		if _, why, c := outCmd(u.bin["rsync"], append(push, m.user+"@"+m.dns+":"+storePath), os.Environ()); c != 0 {
-			fmt.Fprintf(u.stderr, "nova-fleet up: push the store to %s@%s: %s\n", m.user, m.dns, oneLine(why))
-			return fail("refresh "+m.name, 1)
-		}
-		u.say("UP REFRESH %s %s %s@%s:%s", m.name, u.would("PUSH"), m.user, m.dns, storePath)
-		mark("refresh", m)
-	}
-
-	// 8-11. the guards, tools, services, runners on every machine that is reached.
+	// 7. refresh: secrets-refresh pushes the encrypted store from this node's clone to each machine
+	// (rsync over the tailnet: no .git, stale files deleted, 0700/0600); a rerun pushes again.
 	limit := []string{"-l", strings.Join(func() (s []string) {
 		for _, m := range u.machines {
 			if m.unreachable == "" {
@@ -575,6 +562,13 @@ func (u *upRun) steps() int {
 		}
 		return
 	}(), ",")}
+	if c := u.play("secrets-refresh", false, pg, append([]string{"-e", "nova_seal_store=" + u.store}, limit...)...); c != 0 {
+		return fail("refresh", c)
+	}
+	mark("refresh", u.machines...)
+	u.say("UP REFRESH %s %s", u.would("PUSH"), u.store)
+
+	// 8-11. the guards, tools, services, runners on every machine that is reached.
 	if c := u.play("health", false, pg, limit...); c != 0 {
 		return fail("health", c)
 	}
@@ -656,9 +650,6 @@ func (u *upRun) end(pass map[string][]string, note string) int {
 	}
 	return 0
 }
-
-// storePath is a machine's copy of the store (the plays' nova_secrets_store), from its home.
-const storePath = ".local/share/nova/secrets/"
 
 func runUp(args []string, stdout, stderr io.Writer) int {
 	u, code := parseUp(args, stderr)
