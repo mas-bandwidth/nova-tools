@@ -176,32 +176,22 @@ func (t tool) main(args []string) int {
 		verb, rest = "seat "+rest[0], rest[1:]
 	}
 	if h, ok := helpFor(verb); ok {
-		if a := beforeDashes(verb, rest); slices.Contains(a, "-h") || slices.Contains(a, "--help") {
+		a := rest // exec's flags end at --: a -h after it is the command's
+		if i := slices.Index(rest, "--"); verb == "exec" && i >= 0 {
+			a = rest[:i]
+		}
+		if slices.Contains(a, "-h") || slices.Contains(a, "--help") {
 			fmt.Fprint(t.stdout, h)
 			return 0
 		}
 	}
 	var err error
-	switch verb {
-	case "init":
-		err = t.initStore(rest)
-	case "names":
-		err = t.names(rest)
-	case "exec":
-		err = t.exec(rest)
-	case "set":
-		err = t.set(rest)
-	case "seat add":
-		err = t.seatAdd(rest)
-	case "seat list":
-		err = t.seatList(rest)
-	case "seat remove":
-		err = t.seatRemove(rest)
-	case "grant":
-		err = t.grant(rest)
-	case "seat":
+	if run, ok := map[string]func(tool, []string) error{"init": tool.initStore, "names": tool.names, "exec": tool.exec, "set": tool.set,
+		"seat add": tool.seatAdd, "seat list": tool.seatList, "seat remove": tool.seatRemove, "grant": tool.grant}[verb]; ok {
+		err = run(t, rest)
+	} else if verb == "seat" {
 		verb, err = "seat add", bad("the seat verbs are: seat add <seat> <age-public-key> --store <dir>, seat list --store <dir>, and seat remove <seat> --store <dir>")
-	default:
+	} else {
 		return t.unknownVerb(verb)
 	}
 	if err == nil {
@@ -226,13 +216,6 @@ func (t tool) main(args []string) int {
 func (t tool) unknownVerb(verb string) int {
 	fmt.Fprintf(t.stderr, "nova-secrets: unknown verb %q (init, seat add, seat list, seat remove, set, grant, names, exec); run: nova-secrets help\n", verb)
 	return 2
-}
-
-func beforeDashes(verb string, args []string) []string {
-	if i := slices.Index(args, "--"); verb == "exec" && i >= 0 {
-		return args[:i]
-	}
-	return args
 }
 
 type opts struct{ store, as, key, sops, only, recovery, to, pins, pub string }
@@ -344,10 +327,7 @@ func (t tool) exec(args []string) error {
 	if i := slices.Index(args, "--"); i >= 0 {
 		flags, argv = args[:i], args[i+1:]
 	}
-	var also []string
-	if len(argv) == 0 {
-		also = []string{"a command after --"}
-	}
+	also := map[bool][]string{true: {"a command after --"}}[len(argv) == 0]
 	o, _, err := t.parse("exec", flags, 0, true, also...)
 	if err != nil {
 		return err
@@ -375,13 +355,9 @@ func (t tool) exec(args []string) error {
 	// The inherited environment loses every name the seat holds (a value left out
 	// must not arrive another way) and every sops identity variable.
 	drop := slices.Concat(slices.Collect(maps.Keys(values)), identityEnv)
-	var env []string
-	for _, kv := range t.environ {
-		k, _, _ := strings.Cut(kv, "=")
-		if !slices.ContainsFunc(drop, func(d string) bool { return d == k || runtime.GOOS == "windows" && strings.EqualFold(d, k) }) {
-			env = append(env, kv)
-		}
-	}
+	env := envWhere(t.environ, func(k string) bool {
+		return !slices.ContainsFunc(drop, func(d string) bool { return d == k || runtime.GOOS == "windows" && strings.EqualFold(d, k) })
+	})
 	for _, k := range pick {
 		env = append(env, k+"="+values[k])
 	}
@@ -445,10 +421,8 @@ func (t tool) set(args []string) error {
 		return err
 	}
 	file := o.as + ".yaml"
-	for _, g := range [][]string{{"add", "--", file}, {"commit", "-q", "-m", "set " + name + " in " + file, "--", file}} {
-		if err := t.git(o.store, g...); err != nil {
-			return fmt.Errorf("%w; the file is written: run: git -C %s status", err, o.store)
-		}
+	if err := t.commit(o, "", "set "+name+" in "+file, "the file is written: run:", file); err != nil {
+		return err
 	}
 	fmt.Fprintf(t.stdout, "SECRETS SET OK as=%s name=%s file=%s committed; run: git -C %s push\n", o.as, name, file, o.store)
 	return nil
@@ -483,10 +457,8 @@ func (t tool) seatAdd(args []string) error {
 	if err := writeFile(cfgPath, out, 0o644); err != nil {
 		return err
 	}
-	for _, g := range [][]string{{"add", "--", ".sops.yaml"}, {"commit", "-q", "-m", "seat " + seat, "--", ".sops.yaml"}} {
-		if err := t.git(o.store, g...); err != nil {
-			return fmt.Errorf("%w; .sops.yaml is written: run: git -C %s status", err, o.store)
-		}
+	if err := t.commit(o, "", "seat "+seat, ".sops.yaml is written: run:", ".sops.yaml"); err != nil {
+		return err
 	}
 	fmt.Fprintf(t.stdout, "SECRETS SEAT ADD OK seat=%s committed; next: the seat's own key runs: nova-secrets set NAME --as %s --store %s --key <file> --pins <dir>\n", seat, seat, o.store)
 	return nil
@@ -560,45 +532,54 @@ func (t tool) seatRemove(args []string) error {
 			}
 		}
 	}
-	for _, g := range [][]string{append([]string{"add", "-A", "--"}, files...), append([]string{"commit", "-q", "-m", "seat remove " + seat, "--"}, files...)} {
-		if err := t.git(o.store, g...); err != nil {
-			return fmt.Errorf("%w; the files are removed: run: git -C %s status", err, o.store)
-		}
+	if err := t.commit(o, "-A", "seat remove "+seat, "the files are removed: run:", files...); err != nil {
+		return err
 	}
 	fmt.Fprintf(t.stdout, "SECRETS SEAT REMOVE OK seat=%s rule=%s files=%d committed; run: git -C %s push\n", seat, map[bool]string{true: "removed", false: "none"}[hadRule], len(files)-map[bool]int{true: 1, false: 0}[hadRule], o.store)
 	return nil
 }
 
 // removeRule is .sops.yaml without the seat's rule, and whether there was one.
-func removeRule(cfg []byte, seat string) ([]byte, bool, error) {
+func removeRule(cfg []byte, seat string) (out []byte, had bool, err error) {
+	pathRegex := `^` + regexp.QuoteMeta(seat) + `\.yaml$`
+	out, err = editRules(cfg, func(rules *yaml.Node) error {
+		kept := rules.Content[:0:0]
+		for _, r := range rules.Content {
+			if pr := field(r, "path_regex"); r.Kind == yaml.MappingNode && pr != nil && pr.Value == pathRegex {
+				continue
+			}
+			kept = append(kept, r)
+		}
+		had = len(kept) != len(rules.Content)
+		rules.Content = kept
+		if len(kept) == 0 {
+			rules.Style = yaml.FlowStyle // back to creation_rules: []
+		}
+		return nil
+	})
+	return out, had, err
+}
+
+// editRules is .sops.yaml after edit has changed its creation_rules list; on any refusal it is left as it was.
+func editRules(cfg []byte, edit func(rules *yaml.Node) error) ([]byte, error) {
 	doc, top, err := parseTop(cfg)
 	if err != nil {
-		return nil, false, refuse(".sops.yaml does not parse as a YAML map; it is left as it was")
+		return nil, refuse(".sops.yaml does not parse as a YAML map; it is left as it was")
 	}
 	rules := field(top, "creation_rules")
 	if rules == nil || rules.Kind != yaml.SequenceNode {
-		return nil, false, refuse(".sops.yaml has no creation_rules list; it is left as it was")
+		return nil, refuse(".sops.yaml has no creation_rules list; it is left as it was")
 	}
-	pathRegex := `^` + regexp.QuoteMeta(seat) + `\.yaml$`
-	kept := rules.Content[:0:0]
-	for _, r := range rules.Content {
-		if pr := field(r, "path_regex"); r.Kind == yaml.MappingNode && pr != nil && pr.Value == pathRegex {
-			continue
-		}
-		kept = append(kept, r)
-	}
-	had := len(kept) != len(rules.Content)
-	rules.Content = kept
-	if len(kept) == 0 {
-		rules.Style = yaml.FlowStyle // back to creation_rules: []
+	if err := edit(rules); err != nil {
+		return nil, err
 	}
 	var buf bytes.Buffer
 	enc := yaml.NewEncoder(&buf)
 	enc.SetIndent(2)
 	if err := enc.Encode(doc); err != nil || enc.Close() != nil {
-		return nil, false, refuse("writing .sops.yaml: %v", err)
+		return nil, refuse("writing .sops.yaml: %v", err)
 	}
-	return buf.Bytes(), had, nil
+	return buf.Bytes(), nil
 }
 
 // seatList prints every seat a rule names or a file exists for, and whether its file exists.
@@ -622,9 +603,7 @@ func (t tool) seatList(args []string) error {
 		}
 	}
 	for _, s := range seatsIn(o.store) {
-		st := seats[s]
-		st.file = true
-		seats[s] = st
+		seats[s] = seatState{file: true, rule: seats[s].rule}
 	}
 	for _, s := range slices.Sorted(maps.Keys(seats)) {
 		yn := map[bool]string{true: "yes", false: "no"}
@@ -636,13 +615,20 @@ func (t tool) seatList(args []string) error {
 
 // sopsEnv is sops's whole environment: PATH, the one key file, and a HOME of its own.
 func (t tool) sopsEnv(key, home string) []string {
-	env := []string{"SOPS_AGE_KEY_FILE=" + key, "HOME=" + home, "XDG_CONFIG_HOME=" + home, "APPDATA=" + home}
-	for _, kv := range t.environ {
-		if k, _, _ := strings.Cut(kv, "="); slices.Contains([]string{"PATH", "TMPDIR", "SYSTEMROOT", "TEMP", "TMP"}, strings.ToUpper(k)) {
-			env = append(env, kv)
+	keep := []string{"PATH", "TMPDIR", "SYSTEMROOT", "TEMP", "TMP"}
+	return append([]string{"SOPS_AGE_KEY_FILE=" + key, "HOME=" + home, "XDG_CONFIG_HOME=" + home, "APPDATA=" + home},
+		envWhere(t.environ, func(k string) bool { return slices.Contains(keep, strings.ToUpper(k)) })...)
+}
+
+// envWhere is the entries of env whose name keep accepts, in order.
+func envWhere(env []string, keep func(name string) bool) []string {
+	var out []string
+	for _, kv := range env {
+		if k, _, _ := strings.Cut(kv, "="); keep(k) {
+			out = append(out, kv)
 		}
 	}
-	return env
+	return out
 }
 
 // sopsRun runs sops in the store with --key as its only identity, after the key
@@ -650,7 +636,8 @@ func (t tool) sopsEnv(key, home string) []string {
 // that is safe to paste: a scratch HOME, and a decrypt that writes to /dev/null.
 func (t tool) sopsRun(o opts, stdin io.Reader, args ...string) ([]byte, error) {
 	if _, err := t.lookPath(o.sops); err != nil {
-		return nil, deny("no-sops", "sops not found at %s; install sops 3.x: %s, or pass --sops <path>", o.sops, sopsInstall())
+		install := map[bool]string{true: "brew install sops", false: "the release binary from https://github.com/getsops/sops/releases on PATH, executable"}[runtime.GOOS == "darwin"]
+		return nil, deny("no-sops", "sops not found at %s; install sops 3.x: %s, or pass --sops <path>", o.sops, install)
 	}
 	if err := checkKey(o.key); err != nil {
 		return nil, err
@@ -698,9 +685,7 @@ func (t tool) diagnose(o opts, seat, file string, fail error) error {
 	return fail
 }
 
-// keyVsRule is the public half of --key (age-keygen -y) and a refusal when the seat's
-// rule in .sops.yaml names another key. It is "" and nil when it cannot tell.
-// publicOf is the public half of --key.
+// publicOf is the public half of --key (age-keygen -y).
 func (t tool) publicOf(o opts) (string, error) {
 	out, err := t.run(nil, t.sopsEnv(o.key, os.TempDir()), o.store, "age-keygen", "-y", o.key)
 	if pub := strings.TrimSpace(string(out)); err == nil && agePub.MatchString(pub) {
@@ -709,10 +694,11 @@ func (t tool) publicOf(o opts) (string, error) {
 	return "", deny("no-key", "age-keygen -y %s did not print an age public key; is it an age key, and is age-keygen on PATH?", o.key)
 }
 
+// keyVsRule is the public half of --key and a refusal when the seat's rule in .sops.yaml names another key. It is
+// "" and nil when it cannot tell.
 func (t tool) keyVsRule(o opts, seat string) (string, error) {
-	out, err := t.run(nil, t.sopsEnv(o.key, os.TempDir()), o.store, "age-keygen", "-y", o.key)
-	pub := strings.TrimSpace(string(out))
-	if err != nil || !agePub.MatchString(pub) {
+	pub, err := t.publicOf(o)
+	if err != nil {
 		return "", nil
 	}
 	file := seat + ".yaml"
@@ -899,10 +885,6 @@ func (t tool) pinnedRecovery(o opts) (string, error) {
 // the public half of --key and the recovery pin: nothing in the store chooses a recipient. The rule must say the
 // same, so exec's checks agree. Model: secrets/tla/Recipients.tla, Set.
 func (t tool) encrypt(o opts, seat string, values map[string]string, rec string) error {
-	plain, err := json.Marshal(values)
-	if err != nil {
-		return refuse("encoding the seat: %v", err)
-	}
 	cfg, err := plainConfig(o)
 	if err != nil {
 		return err
@@ -922,14 +904,22 @@ func (t tool) encrypt(o opts, seat string, values map[string]string, rec string)
 	if age[0] != pub {
 		return deny("key-changed", "the rule for %s.yaml names %s, not --key's %s: the store was edited, or the seat has a new key; fix the rule, then run again", seat, age[0], pub)
 	}
-	out, err := t.sopsRun(o, bytes.NewReader(plain), "--config", os.DevNull, "-e", "--age", pub+","+rec, "--filename-override", seat+".yaml", "--input-type", "json", "--output-type", "yaml", "/dev/stdin")
+	out, err := t.seal(o, values, seat+".yaml", pub, rec)
 	if err != nil {
 		return err
 	}
-	if err := sealedTo(out, seat+".yaml", []string{pub, rec}); err != nil {
-		return err
-	}
 	return writeFile(o.file(seat), out, 0o600)
+}
+
+// seal encrypts values for file with sops --config /dev/null to exactly pub and rec, the plaintext on sops's stdin
+// only, and refuses what sops returns unless it is sealed to those two keys alone (sealedTo).
+func (t tool) seal(o opts, values map[string]string, file, pub, rec string) ([]byte, error) {
+	plain, _ := json.Marshal(values) // ignored: a map of strings always encodes
+	out, err := t.sopsRun(o, bytes.NewReader(plain), "--config", os.DevNull, "-e", "--age", pub+","+rec, "--filename-override", file, "--input-type", "json", "--output-type", "yaml", "/dev/stdin")
+	if err == nil {
+		err = sealedTo(out, file, []string{pub, rec})
+	}
+	return out, err
 }
 
 // plainConfig is .sops.yaml, refused when it is not a plain YAML map: sops resolves anchors, aliases and merge keys
@@ -982,13 +972,8 @@ func (t tool) gitRun(dir string, args ...string) ([]byte, error) {
 	if _, err := t.lookPath("git"); err != nil {
 		return nil, deny("git", "git not found on PATH; install it: apt install git (Debian, Ubuntu), brew install git (macOS), winget install Git.Git (Windows)")
 	}
-	var env []string
-	for _, kv := range t.environ {
-		if k, _, _ := strings.Cut(kv, "="); !slices.Contains([]string{"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"}, k) {
-			env = append(env, kv)
-		}
-	}
-	return t.run(nil, env, dir, "git", args...)
+	repo := []string{"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"}
+	return t.run(nil, envWhere(t.environ, func(k string) bool { return !slices.Contains(repo, k) }), dir, "git", args...)
 }
 
 func (t tool) git(dir string, args ...string) error {
@@ -1002,8 +987,6 @@ func (t tool) toplevel(dir string) (string, error) {
 	out, err := t.gitRun(dir, "rev-parse", "--show-toplevel")
 	return strings.TrimSpace(string(out)), err
 }
-
-func sameDir(a, b string) bool { return realPath(a) == realPath(b) }
 
 // realPath is p absolute, with symlinks resolved along the longest prefix of it that exists.
 func realPath(p string) string {
@@ -1040,14 +1023,6 @@ func writeFile(path string, data []byte, mode os.FileMode) error {
 		return refuse("writing %s: %v; run: ls -ld %s", path, err, filepath.Dir(path))
 	}
 	return nil
-}
-
-// sopsInstall is the install line for this OS.
-func sopsInstall() string {
-	if runtime.GOOS == "darwin" {
-		return "brew install sops"
-	}
-	return "the release binary from https://github.com/getsops/sops/releases on PATH, executable"
 }
 
 // sopsWhy names a sops exit code whose reason carries no value: 51 is a file changed since it was sealed (a MAC
@@ -1157,43 +1132,31 @@ func recipientsOf(data []byte) ([]string, bool) {
 // addRule inserts the seat's rule before the first rule that would shadow it,
 // keeping every existing rule.
 func addRule(cfg []byte, seat, age string) ([]byte, error) {
-	doc, top, err := parseTop(cfg)
-	if err != nil {
-		return nil, refuse(".sops.yaml does not parse as a YAML map; it is left as it was")
-	}
-	rules := field(top, "creation_rules")
-	if rules == nil || rules.Kind != yaml.SequenceNode {
-		return nil, refuse(".sops.yaml has no creation_rules list; it is left as it was")
-	}
 	pathRegex, file := `^`+regexp.QuoteMeta(seat)+`\.yaml$`, seat+".yaml"
-	at := len(rules.Content)
-	for i, r := range rules.Content {
-		if r.Kind != yaml.MappingNode {
-			return nil, refuse(".sops.yaml: a creation rule is not a map; it is left as it was")
+	return editRules(cfg, func(rules *yaml.Node) error {
+		at := len(rules.Content)
+		for i, r := range rules.Content {
+			if r.Kind != yaml.MappingNode {
+				return refuse(".sops.yaml: a creation rule is not a map; it is left as it was")
+			}
+			if pr := field(r, "path_regex"); pr != nil && pr.Value == pathRegex {
+				return refuse(".sops.yaml already has a rule for %s", seat)
+			}
+			if a := field(r, "age"); a != nil && strings.Contains(a.Value, strings.SplitN(age, ",", 2)[0]) {
+				return refuse(".sops.yaml already has a seat with that key")
+			}
+			if at == len(rules.Content) && matches(r, file) {
+				at = i
+			}
 		}
-		if pr := field(r, "path_regex"); pr != nil && pr.Value == pathRegex {
-			return nil, refuse(".sops.yaml already has a rule for %s", seat)
+		str := func(v string) *yaml.Node { return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: v} }
+		rule := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map", Content: []*yaml.Node{str("path_regex"), str(pathRegex), str("age"), str(age)}}
+		if len(rules.Content) == 0 {
+			rules.Style = 0 // creation_rules: [] becomes a block list
 		}
-		if a := field(r, "age"); a != nil && strings.Contains(a.Value, strings.SplitN(age, ",", 2)[0]) {
-			return nil, refuse(".sops.yaml already has a seat with that key")
-		}
-		if at == len(rules.Content) && matches(r, file) {
-			at = i
-		}
-	}
-	str := func(v string) *yaml.Node { return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: v} }
-	rule := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map", Content: []*yaml.Node{str("path_regex"), str(pathRegex), str("age"), str(age)}}
-	if len(rules.Content) == 0 {
-		rules.Style = 0 // creation_rules: [] becomes a block list
-	}
-	rules.Content = slices.Insert(rules.Content, at, rule)
-	var buf bytes.Buffer
-	enc := yaml.NewEncoder(&buf)
-	enc.SetIndent(2)
-	if err := enc.Encode(doc); err != nil || enc.Close() != nil {
-		return nil, refuse("writing .sops.yaml: %v", err)
-	}
-	return buf.Bytes(), nil
+		rules.Content = slices.Insert(rules.Content, at, rule)
+		return nil
+	})
 }
 
 // names prints the names in a seat file. A sops file keeps its keys in the clear;
@@ -1280,7 +1243,7 @@ func (t tool) initStore(args []string) error {
 		return refuse("%s is not empty (it holds %s); init needs a directory that is absent or empty, and never touches files that are there", o.store, strings.Join(names[:min(len(names), 5)], ", "))
 	}
 	top, gerr := t.toplevel(at)
-	if gerr == nil && !sameDir(top, o.store) {
+	if gerr == nil && realPath(top) != realPath(o.store) {
 		return refuse("%s is inside the git work tree %s; make the store a repository of its own: mkdir -p %s && git -C %s init, then run init again", o.store, top, o.store, o.store)
 	}
 	if absent {
@@ -1299,11 +1262,10 @@ func (t tool) initStore(args []string) error {
 			return err
 		}
 	}
-	if err := t.git(o.store, append([]string{"add", "--"}, files...)...); err != nil {
-		return err
-	}
-	if err := t.git(o.store, append([]string{"commit", "-q", "-m", "init secrets store", "--"}, files...)...); err != nil {
-		return err
+	for _, g := range [][]string{append([]string{"add", "--"}, files...), append([]string{"commit", "-q", "-m", "init secrets store", "--"}, files...)} {
+		if err := t.git(o.store, g...); err != nil {
+			return err
+		}
 	}
 	fmt.Fprintf(t.stdout, "SECRETS INIT OK store=%s next: nova-secrets seat add <seat> <age-pubkey> --store %s\n", o.store, o.store)
 	return nil
@@ -1349,13 +1311,10 @@ func (t tool) grant(args []string) error {
 	if err != nil {
 		return err
 	}
-	var names []string
-	for _, n := range strings.Split(pos[0], ",") {
+	names := strings.Split(pos[0], ",")
+	for _, n := range names {
 		if !envName.MatchString(n) {
 			return bad("NAME %q is not an environment variable name", n)
-		}
-		if !slices.Contains(names, n) {
-			names = append(names, n)
 		}
 	}
 	if !seatName.MatchString(o.to) || strings.EqualFold(o.to, o.as) || strings.EqualFold(o.to, "recovery") {
@@ -1412,12 +1371,7 @@ func (t tool) grant(args []string) error {
 	if present && !slices.Equal(slices.Sorted(slices.Values(inFile)), held) { // an absent file is written again from the ledger
 		return deny("grants-changed", "%s names %d value(s), not the %d this node's ledger granted: the store was edited, or the ledger is lost; remove %s from the store, commit, then grant every name again", file, len(inFile), len(held), file)
 	}
-	for _, n := range held {
-		if !slices.Contains(names, n) {
-			names = append(names, n)
-		}
-	}
-	slices.Sort(names)
+	names = slices.Compact(slices.Sorted(slices.Values(append(names, held...))))
 	values := map[string]string{}
 	var absent []string
 	for _, n := range names {
@@ -1449,12 +1403,8 @@ func (t tool) grant(args []string) error {
 		fmt.Fprintf(t.stdout, "SECRETS GRANT OK from=%s to=%s names=%d changed=0 committed (written before, not committed until now); run: git -C %s push\n", o.as, o.to, len(names), o.store)
 		return nil
 	}
-	plain, _ := json.Marshal(values) // ignored: a map of strings always encodes
-	out, err := t.sopsRun(o, bytes.NewReader(plain), "--config", os.DevNull, "-e", "--age", pub+","+rec, "--filename-override", file, "--input-type", "json", "--output-type", "yaml", "/dev/stdin")
+	out, err := t.seal(o, values, file, pub, rec)
 	if err != nil {
-		return err
-	}
-	if err := sealedTo(out, file, []string{pub, rec}); err != nil {
 		return err
 	}
 	if err := writeFile(filepath.Join(o.store, file), out, 0o600); err != nil {
@@ -1470,15 +1420,20 @@ func (t tool) grant(args []string) error {
 	return nil
 }
 
-// commitGrant adds and commits a grants file; the ledger records it already, so a failed commit is finished by the
-// next grant.
-func (t tool) commitGrant(o opts, file string, names []string) error {
-	for _, g := range [][]string{{"add", "-f", "--", file}, {"commit", "-q", "-m", "grant " + strings.Join(names, ",") + " to " + file, "--", file}} { // -f: a pusher's .gitignore does not hide it
+// commit stages files (git add, with flag when one is given) and commits them as msg; a failure says done, what is
+// on disk already, before the git status line that shows it.
+func (t tool) commit(o opts, flag, msg, done string, files ...string) error {
+	for _, g := range [][]string{append(strings.Fields("add "+flag+" --"), files...), append([]string{"commit", "-q", "-m", msg, "--"}, files...)} {
 		if err := t.git(o.store, g...); err != nil {
-			return fmt.Errorf("%w; the file is written and the ledger records it: the next grant commits it, or: git -C %s status", err, o.store)
+			return fmt.Errorf("%w; %s git -C %s status", err, done, o.store)
 		}
 	}
 	return nil
+}
+
+// commitGrant commits a grants file; the ledger records it already, so a failed commit is finished by the next grant.
+func (t tool) commitGrant(o opts, file string, names []string) error { // -f: a pusher's .gitignore does not hide it
+	return t.commit(o, "-f", "grant "+strings.Join(names, ",")+" to "+file, "the file is written and the ledger records it: the next grant commits it, or:", file)
 }
 
 // sealedLine is the ledger's last line, the digest of the ciphertext this node wrote.
