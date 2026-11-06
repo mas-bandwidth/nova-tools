@@ -38,7 +38,7 @@ slot, or with --exclusive every slot, while a command runs or a hold lasts.
 DIR: --dir, else $NOVA_RESERVE_DIR, else /var/tmp/nova-reserve (C:\ProgramData\nova-reserve
 on Windows); one per machine, on a local disk. Exit: 0 done; 1 refused (no slot within
 --wait, capacity in use); 2 could not run; 126 the command cannot be executed; 127 the
-command is not found; else the command's status. docs/SPEC-RESERVE.md has the rest.
+command is not found; else the command's status. reserve/README.md has the rest.
 `
 
 var verbHelp = map[string]string{
