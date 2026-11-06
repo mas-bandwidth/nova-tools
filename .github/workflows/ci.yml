@@ -96,6 +96,8 @@ jobs:
           for d in /usr/lib/postgresql/*/bin; do [ -x "$d/postgres" ] && echo "$d" >> "$GITHUB_PATH"; done
           true
       - name: functional tests
+        env:
+          NOVA_CONTRACT_STRICT: "1" # a missing dependency fails the fault contract rows instead of skipping them
         run: go test -p 4 -tags functional,slow ./...
 
   tlc:

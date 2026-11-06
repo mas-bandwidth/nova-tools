@@ -85,6 +85,28 @@ depends on the runner.
 For a focused check, replace `./...` with the package, such as `./bus`. Do not report a successful build as
 evidence that a sandbox backend or a fleet installation works on a machine.
 
+## Fault contract
+
+`tests/contract` also holds the fault contract, a functional-tier test (build tag
+`functional`, rows run in parallel, a few seconds in all). Each row in
+`tests/contract/faults_<tool>_test.go` provokes one real fault (Redis stopped,
+a missing store, a read-only directory, a corrupt file, a child killed by a signal,
+a fake `ansible-playbook` on PATH, a binary missing from PATH, a bad DSN, an unset
+variable) and holds the tool to the same rules: a non-zero exit, exactly one stderr
+line with a reason and a `run: <command>` remedy, and empty stdout unless the row
+documents otherwise. The remedy is extracted and run where it has no `<placeholder>`,
+to prove it pasteable. A row that fails today carries `Known: "<gap #>"` (the number
+in the audit's ranked gaps); it is skipped with the printed reason and fails the build
+the day it passes, so a fix PR deletes the `Known` and the row becomes the gate.
+`lint_test.go` in the same package refuses a `_ =` on an error without an `ignored:`
+comment, a non-zero exit with nothing written to stderr before it, and a `no_log:`
+task in `fleet/` with no receipt task; its known counts are lowered the same way.
+Run it with `go test -tags functional -run 'Faults|Lint' -v ./tests/contract`; it
+needs `redis-server`, PostgreSQL's `initdb` and `psql`, `sops`, `age-keygen` and `git`,
+and a row whose dependency is missing is counted and skipped, or fails when
+`NOVA_CONTRACT_STRICT=1` is set (the CI functional job sets it). A row that changes a
+mode skips when run as root.
+
 ## Models
 
 Bus delivery, reservations and cairn records have TLA+ models beside their

@@ -13,5 +13,10 @@
 // to the contract. Every failure message starts with an assertion id (A1..A6),
 // then names the tool and verb, what was expected and what was seen.
 //
-// The package is test-only and needs no network and no real store.
+// The functional tier (build tag functional) adds the fault contract: faults_test.go
+// runs the rows of faults_<tool>_test.go against real failures, and lint_test.go
+// reads the source for silent discards, silent exits and no_log tasks with no
+// receipt. docs/TESTING.md has the rules.
+//
+// The CLI contract above is test-only and needs no network and no real store.
 package contract
