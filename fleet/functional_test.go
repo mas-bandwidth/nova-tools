@@ -167,7 +167,8 @@ func TestRunnerTokenRequestFailsWithItsReason(t *testing.T) {
 }
 
 // check on a real machine: every line is CHECK OK or CHECK MISSING with a fix, and an
-// unset store is missing, so the exit is 1 with the count on stderr.
+// empty HOME is a fresh node: no store, key, seat or pins line, and the one TAILSCALE_API_KEY line that makes
+// them, so the exit is 1 with the count on stderr.
 func TestCheckOnThisMachine(t *testing.T) {
 	bin := buildFleet(t)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
@@ -175,11 +176,11 @@ func TestCheckOnThisMachine(t *testing.T) {
 	cmd := exec.CommandContext(ctx, bin, "check")
 	var env []string
 	for _, e := range os.Environ() {
-		if !strings.HasPrefix(e, "NOVA_SECRETS_") {
+		if !strings.HasPrefix(e, "NOVA_SECRETS_") && !strings.HasPrefix(e, "HOME=") {
 			env = append(env, e)
 		}
 	}
-	cmd.Env = env
+	cmd.Env = append(env, "HOME="+t.TempDir())
 	var o, e bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &o, &e
 	err := cmd.Run()
@@ -192,8 +193,13 @@ func TestCheckOnThisMachine(t *testing.T) {
 			t.Errorf("not a CHECK line: %q", line)
 		}
 	}
-	if !strings.Contains(o.String(), "CHECK MISSING store: export NOVA_SECRETS_STORE=") {
-		t.Errorf("an unset store is not named:\n%s", o.String())
+	for _, w := range []string{"CHECK MISSING store", "CHECK MISSING key", "CHECK MISSING seat", "CHECK MISSING pins", "CHECK OK store"} {
+		if strings.Contains(o.String(), w) {
+			t.Errorf("a fresh node has %q:\n%s", w, o.String())
+		}
+	}
+	if !strings.Contains(o.String(), "CHECK MISSING TAILSCALE_API_KEY: nova-secrets set TAILSCALE_API_KEY  # paste the token when it asks") {
+		t.Errorf("no TAILSCALE_API_KEY line:\n%s", o.String())
 	}
 	t.Logf("\n%s%s", o.String(), e.String())
 }

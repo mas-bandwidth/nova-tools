@@ -56,6 +56,11 @@ nova-secrets set NAME --store <dir> --key <file> --pins <dir> [--as <seat>] [--r
   Read one value from stdin (one non-empty line of at most 65536 bytes; on a terminal it asks, and the paste is not shown), set NAME in <seat>.yaml and commit that
   file. Pushing is yours. The file is sealed to --key's public half and the recovery pin <dir>/recovery.pub only;
   --recovery writes that pin when it is absent. Example: pass show db | nova-secrets set DB_PASSWORD --store S --key K --pins P --as web
+  On a fresh node (no store at the default ~/.config/nova-secrets/store, and no key, recovery key or recovery pin
+  either) set makes them first, in one go: recovery.key (0600) beside the key, its public half pinned in
+  <pins>/recovery.pub, the store (init), this node's key (0600) and its seat (seat add); then
+  SECRETS SET NEW ... back up <recovery.key> .... A store absent with any of the others there is refused
+  (reason=partial): nothing that exists is overwritten.
 
 nova-secrets grant NAME[,NAME] --to <seat> --pins <dir> --store <dir> --key <file> [--as <seat>] [--pub <age1>]
   [--recovery <age1>] [--sops <path>]
@@ -81,7 +86,7 @@ is never assumed. --as defaults to $NOVA_SECRETS_SEAT, else the short hostname; 
 to sops on PATH. No verb prints a value. Exit codes: 0 done, 2 refused (exec: 125). A refusal is one stderr line,
 SECRETS <VERB> REFUSED reason=<r>: <why>, r one of no-store no-seat no-key not-recipient no-name no-sops
 no-command sops git other, and for set, grant and the files they read no-pin key-changed untrusted-rule
-wrong-recipients duplicate-name not-regular grants-changed recovery-key. --pins may come from NOVA_SECRETS_PINS.
+wrong-recipients duplicate-name not-regular grants-changed recovery-key partial. --pins may come from NOVA_SECRETS_PINS.
 `
 
 // helpFor is the paragraph for a verb, or the whole text for "".
@@ -286,7 +291,7 @@ func (t tool) parse(verb string, args []string, npos int, needKey bool, also ...
 	if missing = append(missing, also...); len(missing) > 0 {
 		return o, nil, bad("missing %s (no default; the current directory is never assumed)", strings.Join(missing, ", "))
 	}
-	if _, err := os.Stat(o.store); err != nil && verb != "init" {
+	if _, err := os.Stat(o.store); err != nil && verb != "init" && verb != "set" { // set: bootstrap says
 		return o, nil, deny("no-store", "store %s does not exist; run: nova-secrets init --store %s --recovery <age-public-key>", o.store, o.store)
 	}
 	if o.sops == "" {
@@ -439,6 +444,9 @@ func (t tool) set(args []string) error {
 	if value == "" || strings.ContainsAny(value, "\r\n\x00") {
 		return refuse("set: empty or multi-line value on stdin; the value must be one non-empty line; run: nova-secrets set -h")
 	}
+	if err := t.bootstrap(o); err != nil {
+		return err
+	}
 	if _, err := t.toplevel(o.store); err != nil {
 		if errors.As(err, new(refusal)) { // git itself is missing
 			return err
@@ -473,6 +481,58 @@ func (t tool) set(args []string) error {
 		return err
 	}
 	fmt.Fprintf(t.stdout, "SECRETS SET OK as=%s name=%s file=%s committed; run: git -C %s push\n", o.as, name, file, o.store)
+	return nil
+}
+
+// bootstrap makes a fresh node's store when set finds none at the default: a recovery key and this node's key
+// (0600, beside each other), the recovery pin, the store (init) and the seat (seat add), in that order. A store
+// absent elsewhere is no-store; absent with a key, the recovery key or the pin there is partial: a store made now
+// would not match them, and nothing that exists is ever overwritten.
+func (t tool) bootstrap(o opts) error {
+	if _, err := os.Stat(o.store); err == nil {
+		return nil
+	}
+	dir := filepath.Dir(t.keyFile("x"))
+	if o.store != filepath.Join(dir, "store") {
+		return deny("no-store", "store %s does not exist; run: nova-secrets init --store %s --recovery <age-public-key>", o.store, o.store)
+	}
+	rk := filepath.Join(dir, "recovery.key")
+	var there []string
+	for _, p := range []string{o.key, rk, filepath.Join(o.pins, "recovery.pub")} {
+		if _, err := os.Lstat(p); err == nil {
+			there = append(there, p)
+		}
+	}
+	if len(there) > 0 {
+		return deny("partial", "there is no store at %s, but %s: a store made now would not match, and nothing that exists is overwritten; "+
+			"put the store back (git clone <its upstream> %s), or move those aside and run again", o.store, strings.Join(there, " and ")+" exist", o.store)
+	}
+	pub := map[string]string{}
+	for _, k := range []string{rk, o.key} {
+		if err := os.MkdirAll(filepath.Dir(k), 0o700); err != nil {
+			return refuse("creating %s: %v", filepath.Dir(k), err)
+		}
+		if _, err := t.run(nil, t.environ, filepath.Dir(k), "age-keygen", "-o", k); err != nil {
+			return refuse("age-keygen -o %s: %v; install age", k, err)
+		}
+		if err := os.Chmod(k, 0o600); err != nil {
+			return refuse("chmod 600 %s: %v", k, err)
+		}
+		p, err := t.publicOf(opts{store: filepath.Dir(k), key: k})
+		if err != nil {
+			return err
+		}
+		pub[k] = p
+	}
+	quiet := t
+	quiet.stdout = io.Discard
+	if err := quiet.initStore([]string{"--store", o.store, "--recovery", pub[rk], "--pins", o.pins}); err != nil {
+		return err
+	}
+	if err := quiet.seatAdd([]string{o.as, pub[o.key], "--store", o.store}); err != nil {
+		return err
+	}
+	fmt.Fprintf(t.stdout, "SECRETS SET NEW store=%s seat=%s key=%s: back up %s, the recovery key, off this machine now: it opens every seat if a key is lost\n", o.store, o.as, o.key, rk)
 	return nil
 }
 

@@ -3,7 +3,7 @@ cairn  2276
 config  1530
 reserve  1100
 sandbox  2084
-secrets  1731
-fleet  1740
+secrets  1795
+fleet  1760
 tests/boundary  400
 tests/contract  50

@@ -90,10 +90,14 @@ nova-fleet up --tools v2.0.0 store-1=203.0.113.7 -- -e nova_pg_version=17
 2. The control node: ansible-core, `nova-config`, `nova-secrets`, `nova-bus`, `tailscale` (`up` joins it to the
    tailnet and tags it `tag:control`), `psql`, `git`, `gpg`, `sops`, `age`, `age-keygen`, `rsync` and `ssh` on PATH (`gh` too for runners, logged in with `gh auth login`;
    `nova-fleet check` lists what is missing with the line that installs it); a secrets store with this node's seat
-   ([secrets/README.md](../secrets/README.md)) and its pins outside it (`nova-secrets init --pins <dir>` writes the
-   recovery pin there); `NOVA_SECRETS_STORE`, `NOVA_SECRETS_KEY`, `NOVA_SECRETS_SEAT` and `NOVA_SECRETS_PINS` set.
-3. The token in the seat: `nova-secrets set TAILSCALE_API_KEY --as <seat>` (the token on stdin, one line
-   `tskey-api-...`). It expires (90 days by default): a run with an expired one stops at the tailnet step with
+   and its pins outside it ([secrets/README.md](../secrets/README.md)): `NOVA_SECRETS_STORE`, `NOVA_SECRETS_KEY`,
+   `NOVA_SECRETS_SEAT` and `NOVA_SECRETS_PINS`, each defaulting as nova-secrets does (`~/.config/nova-secrets/store`,
+   `~/.config/nova-secrets/<short hostname>.key`, `~/.config/nova-secrets/pins`, the short hostname). `check` and
+   `up` use the same defaults and put them in the environment of what they run; a node laid out that way gets no
+   store, key, seat or pins line, and a fresh node with none of them gets none either: the next step makes them.
+3. The token in the seat: `nova-secrets set TAILSCALE_API_KEY` (it asks; paste the token, one line
+   `tskey-api-...`, and press enter). On a fresh node it first makes the store, a recovery key, this node's key, the
+   pins and the seat, and says to back up the recovery key. It expires (90 days by default): a run with an expired one stops at the tailnet step with
    `HTTP 401: TAILSCALE_API_KEY was refused; ...` and the line that makes a new one.
 4. Each Linux machine reachable as root over ssh at its address, with the control node's key, and its host key
    already in this node's `known_hosts` (ssh to it once by hand; `up` prompts for nothing). A Mac: its login and
@@ -467,8 +471,8 @@ Each machine on the tailnet, its address in nova-config its MagicDNS name, and i
 the tailnet. `join` runs it; run it alone for machines that already have a row.
 
 **What is yours, once, in the Tailscale admin console:** the account, with MagicDNS on (the default), and one API
-access token: Settings > Keys > Generate API access token, stored once with `nova-secrets set TAILSCALE_API_KEY --as
-<seat>` (the token on stdin, one line `tskey-api-...`). It acts with its maker's rights (an admin's), so the merge
+access token: Settings > Keys > Generate API access token, stored once with `nova-secrets set TAILSCALE_API_KEY` (paste
+it at the prompt, one line `tskey-api-...`). It acts with its maker's rights (an admin's), so the merge
 needs no other grant. It expires (90 days by default); a run with an expired one stops with the line that makes a new
 one. On a Mac machine, open the Tailscale app once at its console and approve its VPN configuration.
 

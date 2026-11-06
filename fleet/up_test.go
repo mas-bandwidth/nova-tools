@@ -249,8 +249,8 @@ func TestUpControlRefusals(t *testing.T) {
 		return "/bin/" + name, nil
 	}
 	code, out, errs := runArgs("up", "--tools", "v1.0.0", "--runners", "https://github.com/o/r", "a=1.2.3.4")
-	for _, w := range []string{"CHECK MISSING psql: ", "CHECK MISSING gh: ", "CHECK MISSING key: export NOVA_SECRETS_KEY=",
-		"CHECK MISSING TAILSCALE_API_KEY: nova-secrets set TAILSCALE_API_KEY --as <seat>  # the value on stdin, one line tskey-api-..., from the Tailscale admin console > Settings > Keys > Generate API access token, once the store, key and seat above are set\n", "CHECK OK sops 1.2.3"} {
+	for _, w := range []string{"CHECK MISSING psql: ", "CHECK MISSING gh: ", "CHECK MISSING key: age-keygen -o " + filepath.Join(os.Getenv("HOME"), ".config", "nova-secrets", "control.key") + " && nova-secrets seat add control \"$(age-keygen -y ",
+		"CHECK MISSING TAILSCALE_API_KEY: nova-secrets set TAILSCALE_API_KEY  # paste the token when it asks: one line tskey-api-..., from the Tailscale admin console > Settings > Keys > Generate API access token, once the lines above are done\n", "CHECK OK sops 1.2.3"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout lacks %q:\n%s", w, out)
 		}
@@ -261,7 +261,7 @@ func TestUpControlRefusals(t *testing.T) {
 	f = &upFake{readErr: "SECRETS EXEC REFUSED name=TAILSCALE_API_KEY reason=not-in-seat\n"}
 	f.install(t)
 	code, out, errs = runArgs("up", "--check", "--tools", "v1.0.0", "a=1.2.3.4")
-	if code != 2 || !strings.Contains(out, "CHECK MISSING TAILSCALE_API_KEY: nova-secrets set TAILSCALE_API_KEY --as control  # the value on stdin, one line tskey-api-..., from the Tailscale admin console > Settings > Keys > Generate API access token; the read said: SECRETS EXEC REFUSED name=TAILSCALE_API_KEY reason=not-in-seat\n") {
+	if code != 2 || !strings.Contains(out, "CHECK MISSING TAILSCALE_API_KEY: nova-secrets set TAILSCALE_API_KEY  # paste the token when it asks: one line tskey-api-..., from the Tailscale admin console > Settings > Keys > Generate API access token; the read said: SECRETS EXEC REFUSED name=TAILSCALE_API_KEY reason=not-in-seat\n") {
 		t.Errorf("a refused secret read under --check: code %d stdout %q stderr %q", code, out, errs)
 	}
 	if len(f.plays()) != 0 {
@@ -683,5 +683,64 @@ func TestSopsPinIsThePlays(t *testing.T) {
 	}
 	if fix("sops", "brew") != "brew install sops" {
 		t.Error("macOS takes sops from Homebrew, as join.yml does")
+	}
+}
+
+// A control node laid out as nova-secrets' defaults (no NOVA_SECRETS_*): check prints no store, key, seat or
+// pins line, and what it runs reads the defaults from its environment.
+func TestCheckSecretsDefaults(t *testing.T) {
+	f := &upFake{}
+	f.install(t)
+	host, _ := os.Hostname()
+	seat, _, _ := strings.Cut(host, ".")
+	dir := filepath.Join(os.Getenv("HOME"), ".config", "nova-secrets")
+	for _, d := range []string{filepath.Join(dir, "store"), filepath.Join(dir, "pins")} {
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(dir, seat+".key"), []byte("AGE-SECRET-KEY-FAKE\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range []string{"NOVA_SECRETS_STORE", "NOVA_SECRETS_KEY", "NOVA_SECRETS_SEAT", "NOVA_SECRETS_PINS"} {
+		t.Setenv(e, "")
+	}
+	code, out, errs := runArgs("check")
+	for _, w := range []string{"CHECK OK store", "CHECK OK key", "CHECK OK seat", "CHECK OK pins", "CHECK MISSING", "NOVA_SECRETS_"} {
+		if strings.Contains(out, w) {
+			t.Errorf("stdout has %q:\n%s", w, out)
+		}
+	}
+	if code != 0 || errs != "" || !strings.Contains(out, "CHECK OK TAILSCALE_API_KEY readable in seat "+seat+"\n") {
+		t.Errorf("code %d stderr %q\n%s", code, errs, out)
+	}
+	if os.Getenv("NOVA_SECRETS_KEY") != filepath.Join(dir, seat+".key") || os.Getenv("NOVA_SECRETS_STORE") != filepath.Join(dir, "store") || os.Getenv("NOVA_SECRETS_SEAT") != seat {
+		t.Errorf("the defaults are not in the environment the children get")
+	}
+	// a fresh node (none there): exactly one CHECK MISSING line, TAILSCALE_API_KEY, which makes them all
+	if err := os.RemoveAll(dir); err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range []string{"NOVA_SECRETS_STORE", "NOVA_SECRETS_KEY", "NOVA_SECRETS_SEAT", "NOVA_SECRETS_PINS"} {
+		t.Setenv(e, "")
+	}
+	code, out, errs = runArgs("check")
+	if code != 1 || errs != "CHECK FAILED missing=1\n" || strings.Count(out, "CHECK MISSING") != 1 || strings.Contains(out, "CHECK OK store") ||
+		!strings.Contains(out, "CHECK MISSING TAILSCALE_API_KEY: nova-secrets set TAILSCALE_API_KEY  # paste the token when it asks: one line tskey-api-..., from the Tailscale admin console > Settings > Keys > Generate API access token; on this fresh node it makes the secrets store, the keys and the seat first\n") {
+		t.Errorf("fresh: code %d stderr %q\n%s", code, errs, out)
+	}
+	// part there (a store, no key): the missing one is named with the line that makes it
+	if err := os.MkdirAll(filepath.Join(dir, "store"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range []string{"NOVA_SECRETS_STORE", "NOVA_SECRETS_KEY", "NOVA_SECRETS_SEAT", "NOVA_SECRETS_PINS"} {
+		t.Setenv(e, "") // the run above set the defaults in this process's environment
+	}
+	_, out, _ = runArgs("check")
+	for _, w := range []string{"CHECK MISSING key: age-keygen -o " + filepath.Join(dir, seat+".key") + " && nova-secrets seat add " + seat + " ",
+		"CHECK MISSING pins: mkdir -p " + filepath.Join(dir, "pins") + "  #", "CHECK MISSING TAILSCALE_API_KEY: nova-secrets set TAILSCALE_API_KEY  # paste the token"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout lacks %q:\n%s", w, out)
+		}
 	}
 }
