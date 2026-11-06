@@ -29,7 +29,7 @@ git clone --depth 1 https://github.com/mas-bandwidth/nova-tools && cd nova-tools
 
 The control machine needs ansible-core 2.15 or later on PATH; a Windows host in the inventory also needs the `ansible.windows`
 collection. On macOS `brew install ansible`; on Linux a venv (Debian and Ubuntu ship python3 without it, so there the
-line starts `sudo apt install -y python3-venv && `; `nova-fleet check` prints the line for this machine, and says so when
+line starts `sudo apt-get update -qq && sudo apt-get install -y python3-venv && `; `nova-fleet check` prints the line for this machine, and says so when
 python3 has no venv module):
 
 ```
@@ -164,7 +164,7 @@ reached as root at the address given, as on the first run.
 | `postgres` | the PostgreSQL nova-config keeps the fleet in, on each machine of the services group | `nova_seal_*` to seal its password |
 | `redis` | the Redis nova-bus talks to, on each machine of the services group | `nova_seal_*` to seal its password |
 | `seat` | each machine's seat in the secrets store | `nova_seal_store` |
-| `secrets-refresh` | every machine's clone of the secrets store pulled fast-forward on a timer | `nova_secrets_repo` for a machine with no clone |
+| `secrets-refresh` | the control node's encrypted store pushed to every machine with `ansible.posix.synchronize` (`verify_host: true`, no `.git`, stale files deleted, 0700/0600); with `nova_secrets_repo` set, a timer pulls a clone fast-forward instead | `nova_seal_store` (the control node's clone) to push; `nova_secrets_repo` for pull |
 | `services` | one supervised unit per service record, on the machine the record names | the inventory's `nova_services` |
 | `tailscale` | each machine on the tailnet, its address the MagicDNS name, its firewall closed to all but the tailnet | `TAILSCALE_AUTHKEY` in the environment |
 
