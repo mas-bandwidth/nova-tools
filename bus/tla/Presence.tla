@@ -17,9 +17,10 @@
 \* (TTL plus a refresh: a live duplicate), it gives up, exits 1 and releases
 \* nothing. It claims again when its refresh is due; a refresh that finds
 \* another token ends the hook the same way. The code claims when presenceRefresh has passed and never blocks
-\* a read past that, so a running hook claims at the latest R ticks after its
-\* last: Tick may not pass that. R stands for the refresh interval plus the
-\* time to print and ack one batch.
+\* a read past that, and refreshes before every delivery, so a running hook
+\* claims at the latest R ticks after its last: Tick may not pass that. R
+\* stands for the refresh interval plus one delivery (a wake is bounded by
+\* wakeLimit) and its ack: 10 + 8 + 2 s against a TTL of 30.
 \*
 \* A hook whose stdout blocks (the reader stopped reading) is stuck: it does
 \* not refresh, and Tick is not held for it. When the write returns it claims
@@ -42,6 +43,11 @@
 \*                  exits deletes its successor's key (OnlyOwnerDeletes fails)
 \*   "nowait"       a hook that finds another token refuses at once: a
 \*                  restart after a crash never claims (WaitClaims fails)
+\*   "slowbatch"    a delivery is not bounded: the refresh comes when the
+\*                  batch is done, however long that takes, so time passes
+\*                  the refresh and the key lapses under a running hook
+\*                  (LiveIsPresent fails; the wake was unbounded before
+\*                  2026-11-06)
 \* LiveIsPresentStrict, which counts a stuck hook too, is the property that
 \* is allowed to fail: PresenceStuckStrict.cfg shows it does.
 EXTENDS Naturals
@@ -143,7 +149,7 @@ Expire ==
 \* Time passes, but not past a running hook's refresh (unless it never
 \* refreshes).
 Tick ==
-  /\ ~\E p \in Procs : hs[p] = "up" /\ ~stuck[p] /\ since[p] = R /\ Broken /= "norefresh"
+  /\ ~\E p \in Procs : hs[p] = "up" /\ ~stuck[p] /\ since[p] = R /\ Broken \notin {"norefresh", "slowbatch"}
   /\ keyLeft' = IF keyOn /\ keyTTL /\ keyLeft > 0 THEN keyLeft - 1 ELSE keyLeft
   /\ sinceSet' = Min(sinceSet + 1, TTL)
   /\ since' = [p \in Procs |-> IF hs[p] = "up" THEN Min(since[p] + 1, R) ELSE since[p]]

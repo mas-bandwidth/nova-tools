@@ -39,7 +39,14 @@ type fake struct {
 	trims     []string    // the id of each Trim
 	down      int         // fail this many Add, Count and Presence calls: refused
 	log       []string    // the order of writes to stdout and acks
+	groups    map[string]bool
+	strict    bool // Hooked answers from groups
+	gone      int  // reads after which stdout's reader is gone (0: never)
+	reads     int
 }
+
+// outGone is the fake's poll of stdout: its reader is gone after gone reads.
+func (f *fake) outGone() bool { return f.gone > 0 && f.reads >= f.gone }
 
 var t0 = time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
 
@@ -73,7 +80,22 @@ func (f *fake) Add(_ context.Context, stream string, fields map[string]string) (
 	return id, nil
 }
 
-func (f *fake) Group(context.Context, string) error { return nil }
+func (f *fake) Group(_ context.Context, stream string) error {
+	if f.groups == nil {
+		f.groups = map[string]bool{}
+	}
+	f.groups[stream] = true
+	return nil
+}
+
+// Hooked is true for every stream unless strict, so a test's sends need no
+// hook first; the refusal has its own test.
+func (f *fake) Hooked(_ context.Context, stream string) (bool, error) {
+	if f.isDown() {
+		return false, errRefused
+	}
+	return !f.strict || f.groups[stream], nil
+}
 
 func (f *fake) find(stream, id string) Msg {
 	for _, m := range f.entries[stream] {
@@ -84,27 +106,19 @@ func (f *fake) find(stream, id string) Msg {
 	panic("no entry " + id)
 }
 
-// seq is a fake id's number: "3-0" is 3, "0" is 0.
-func seq(id string) int {
-	var n int
-	fmt.Sscanf(id, "%d", &n)
-	return n
-}
-
-func (f *fake) Read(ctx context.Context, stream, after string, block time.Duration) ([]Msg, error) {
+func (f *fake) Read(ctx context.Context, stream string, pending bool, block time.Duration) ([]Msg, error) {
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
-	if after != ">" {
+	if pending {
 		var out []Msg
 		for _, id := range f.pending[stream] {
-			if seq(id) > seq(after) {
-				out = append(out, f.find(stream, id))
-			}
+			out = append(out, f.find(stream, id))
 		}
 		return out, nil
 	}
 	f.blocks = append(f.blocks, block)
+	f.reads++
 	fresh := f.entries[stream][f.delivered[stream]:]
 	if len(fresh) == 0 {
 		if f.quiet > 0 {
@@ -202,22 +216,23 @@ func (f *fake) Presence(context.Context) (map[string]string, error) {
 	return out, nil
 }
 
-func (f *fake) Ack(ctx context.Context, stream, id string) error {
+func (f *fake) Ack(ctx context.Context, stream, id string) (int64, error) {
 	if ctx.Err() != nil {
-		return ctx.Err()
+		return 0, ctx.Err()
 	}
 	f.log = append(f.log, "ack "+id)
 	if f.failAck > 0 {
 		f.failAck--
-		return errors.New("connection reset")
+		return 0, errors.New("connection reset")
 	}
 	p := f.pending[stream]
 	for i, x := range p {
 		if x == id {
 			f.pending[stream] = append(p[:i:i], p[i+1:]...)
+			return 1, nil
 		}
 	}
-	return nil
+	return 0, nil
 }
 
 const testAddr = "127.0.0.1:1"
@@ -238,7 +253,7 @@ func runHookOnce(t *testing.T, f *fake, name string) (string, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	f.idle = cancel
 	var out bytes.Buffer
-	err := hook(ctx, f, name, testValue, f, &logWriter{&out, f}, io.Discard, func(int64) {}, nil)
+	err := hook(ctx, f, name, testValue, f, &logWriter{&out, f}, io.Discard, func(int64) {}, nil, f.outGone)
 	cancel()
 	return out.String(), err
 }
@@ -289,7 +304,7 @@ func TestHookPrintsPendingThenNew(t *testing.T) {
 	t.Parallel()
 	f := newFake()
 	send(t, f, "one", "1")
-	_, err := f.Read(context.Background(), "bus:beta", ">", time.Second) // handed to an earlier hook, never acked
+	_, err := f.Read(context.Background(), "bus:beta", false, time.Second) // handed to an earlier hook, never acked
 	require.NoError(t, err)
 	code, _, errOut := call(t, f, testEnv, "", "send", "--as", "b", "--to", "beta", "--re", "1-0", "two", "2")
 	require.Equal(t, 0, code, errOut)
@@ -345,9 +360,9 @@ func TestRefusals(t *testing.T) {
 		{"send with three arguments", testEnv, []string{"send", "--as", "a", "--to", "beta", "s", "b", "c"}, "not 3 arguments"},
 		{"send without --to", testEnv, []string{"send", "--as", "a", "s", "b"}, "missing --to <name>;"},
 		{"empty name", testEnv, []string{"send", "--as", "a", "--to", "a,,b", "s", "b"}, "empty name"},
-		{"unknown verb", testEnv, []string{"recv"}, "nova-bus: unknown verb \"recv\"; verbs: send, hook, who, pending, help; run: nova-bus help\n"},
-		{"ack is not a verb", testEnv, []string{"ack", "--as", "beta"}, "unknown verb \"ack\""},
-		{"help for an unknown verb", testEnv, []string{"help", "ack"}, "unknown verb \"ack\""},
+		{"unknown verb", testEnv, []string{"peek"}, "nova-bus: unknown verb \"peek\"; verbs: send, hook, recv, ack, who, pending, show, help; run: nova-bus help\n"},
+		{"delete is not a verb", testEnv, []string{"delete", "--as", "beta"}, "unknown verb \"delete\""},
+		{"help for an unknown verb", testEnv, []string{"help", "delete"}, "unknown verb \"delete\""},
 		{"unknown flag", testEnv, []string{"hook", "--as", "beta", "--nope"}, "nova-bus hook: unknown flag --nope; run: nova-bus hook -h\n"},
 		{"flag without a value", testEnv, []string{"hook", "--as"}, "nova-bus hook: --as needs a value; run: nova-bus hook -h\n"},
 		{"bad bool", testEnv, []string{"pending", "--as", "b", "--list=x"}, "nova-bus pending: bad value for --list; run: nova-bus pending -h\n"},
@@ -411,7 +426,7 @@ func TestHelp(t *testing.T) {
 			assert.Contains(t, out, "  nova-bus "+v, args)
 		}
 	}
-	for _, v := range []string{"send", "hook", "who", "pending"} {
+	for _, v := range []string{"send", "hook", "recv", "ack", "who", "pending", "show"} {
 		for _, args := range [][]string{{v, "-h"}, {v, "--help"}, {"help", v}} {
 			code, out, errOut := call(t, newFake(), nil, "", args...)
 			assert.Equal(t, 0, code, args)
@@ -469,7 +484,7 @@ func TestSignalAfterWriteStillAcks(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	f.onWrite = cancel
 	var out bytes.Buffer
-	err := hook(ctx, f, "beta", testValue, f, &logWriter{&out, f}, io.Discard, func(int64) {}, nil)
+	err := hook(ctx, f, "beta", testValue, f, &logWriter{&out, f}, io.Discard, func(int64) {}, nil, nil)
 	assert.ErrorIs(t, err, context.Canceled)
 	assert.Equal(t, []string{"print 1-0", "ack 1-0"}, f.log)
 	assert.Empty(t, f.pending["bus:beta"])
@@ -516,7 +531,7 @@ func TestRestartWaitsForACrashedHooksKey(t *testing.T) {
 		cancel()
 	}
 	var out, errOut bytes.Buffer
-	code := runHook(ctx, f, "beta", testAddr, f, &out, &errOut, nil)
+	code := runHook(ctx, f, "beta", testAddr, f, &out, &errOut, nil, "again", nil)
 	assert.Equal(t, 0, code, errOut.String())
 	assert.Equal(t, "HOOK WAIT name=beta held_since=2026-11-05T12:00:00Z ttl=30s budget=40s\nHOOK OK name=beta waiting=1\n", errOut.String())
 	assert.Len(t, f.afters, 25, "polled each second from 5 s to 30 s")
@@ -531,7 +546,7 @@ func TestSecondHookOnALiveNameIsRefusedAfterWaiting(t *testing.T) {
 	f := newFake()
 	f.claim(t, "beta", "first\ttoken", time.Hour) // refreshed throughout
 	var out, errOut bytes.Buffer
-	code := runHook(context.Background(), f, "beta", testAddr, f, &out, &errOut, nil)
+	code := runHook(context.Background(), f, "beta", testAddr, f, &out, &errOut, nil, "again", nil)
 	assert.Equal(t, 1, code)
 	assert.Equal(t, "HOOK WAIT name=beta held_since=first ttl=30s budget=40s\nnova-bus hook: name already hooked: beta after 40s; run: nova-bus who\n", errOut.String())
 	assert.Len(t, f.afters, 40)
@@ -547,7 +562,7 @@ func TestWaitingHookStopsOnSignal(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	var out, errOut bytes.Buffer
-	assert.Equal(t, 0, runHook(ctx, f, "beta", testAddr, f, &out, &errOut, nil))
+	assert.Equal(t, 0, runHook(ctx, f, "beta", testAddr, f, &out, &errOut, nil, "again", nil))
 	assert.Equal(t, "first\ttoken", f.presence["beta"], "the release leaves another hook's key")
 }
 
@@ -568,7 +583,7 @@ func TestHookReleasesPresenceOnCleanExit(t *testing.T) {
 		cancel()
 	}
 	var out, errOut bytes.Buffer
-	code := runHook(ctx, f, "beta", testAddr, f, &out, &errOut, nil)
+	code := runHook(ctx, f, "beta", testAddr, f, &out, &errOut, nil, "again", nil)
 	assert.Equal(t, 0, code, errOut.String())
 	assert.NotContains(t, f.presence, "beta")
 }
@@ -582,7 +597,7 @@ func TestHookReleasesPresenceWhenStdoutFails(t *testing.T) {
 	f := newFake()
 	send(t, f, "one", "1")
 	var errOut bytes.Buffer
-	code := runHook(context.Background(), f, "beta", testAddr, f, brokenPipe{}, &errOut, nil)
+	code := runHook(context.Background(), f, "beta", testAddr, f, brokenPipe{}, &errOut, nil, "again", nil)
 	assert.Equal(t, 1, code)
 	assert.Contains(t, errOut.String(), "writing stdout: write |1: broken pipe")
 	assert.NotContains(t, f.presence, "beta")
@@ -599,7 +614,7 @@ func TestLostReadReplyIsPrintedAfterReconnect(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	f.idle = cancel
 	var out, errOut bytes.Buffer
-	code := runHook(ctx, f, "beta", testAddr, f, &out, &errOut, nil)
+	code := runHook(ctx, f, "beta", testAddr, f, &out, &errOut, nil, "again", nil)
 	assert.Equal(t, 0, code)
 	assert.Equal(t, "HOOK OK name=beta waiting=1\nnova-bus hook: cannot reach redis at 127.0.0.1:1 (NOVA_BUS_REDIS): connection lost; reconnecting\n", errOut.String())
 	assert.Equal(t, []time.Duration{time.Second}, f.afters, "the wait is on the injected clock")
@@ -648,7 +663,7 @@ func TestPendingCountsHandedAndUnhandedWithoutConsuming(t *testing.T) {
 	send(t, f, "one", "1")
 	send(t, f, "two\tx", "2")
 	send(t, f, "three", "3")
-	_, err := f.Read(context.Background(), "bus:beta", ">", time.Second) // one handed, not acked
+	_, err := f.Read(context.Background(), "bus:beta", false, time.Second) // one handed, not acked
 	require.NoError(t, err)
 	code, out, errOut := call(t, f, testEnv, "", "pending", "--as", "beta")
 	require.Equal(t, 0, code, errOut)
@@ -716,7 +731,7 @@ func TestReconnectIsLoggedOnceAMinute(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	f.idle = cancel
 	var out, errOut bytes.Buffer
-	code := runHook(ctx, f, "beta", testAddr, f, &out, &errOut, nil)
+	code := runHook(ctx, f, "beta", testAddr, f, &out, &errOut, nil, "again", nil)
 	assert.Equal(t, 0, code)
 	line := "nova-bus hook: cannot reach redis at 127.0.0.1:1 (NOVA_BUS_REDIS): connection refused; reconnecting\n"
 	assert.Equal(t, line+line+"HOOK OK name=beta waiting=0\n", errOut.String())

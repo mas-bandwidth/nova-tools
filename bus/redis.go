@@ -51,10 +51,28 @@ func (r redisStore) Group(ctx context.Context, stream string) error {
 	return err
 }
 
-func (r redisStore) Read(ctx context.Context, stream, after string, block time.Duration) ([]Msg, error) {
-	args := &redis.XReadGroupArgs{Group: group, Consumer: group, Streams: []string{stream, after}, Count: 100, Block: block}
-	if after != ">" {
-		args.Block = -1
+// Hooked is whether the stream has its hook group: XINFO GROUPS on a stream
+// that does not exist is an error naming no such key.
+func (r redisStore) Hooked(ctx context.Context, stream string) (bool, error) {
+	groups, err := r.c.XInfoGroups(ctx, stream).Result()
+	if err != nil && strings.Contains(strings.ToLower(err.Error()), "no such key") {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	for _, g := range groups {
+		if g.Name == group {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (r redisStore) Read(ctx context.Context, stream string, pending bool, block time.Duration) ([]Msg, error) {
+	args := &redis.XReadGroupArgs{Group: group, Consumer: group, Streams: []string{stream, ">"}, Count: 100, Block: block}
+	if pending {
+		args.Streams[1], args.Block = "0", -1
 	}
 	res, err := r.c.XReadGroup(ctx, args).Result()
 	if errors.Is(err, redis.Nil) {
@@ -84,13 +102,17 @@ func toMsgs(xs []redis.XMessage) []Msg {
 
 // Ack acks the entry and deletes it from the stream in one MULTI, so an inbox
 // holds only what is waiting.
-func (r redisStore) Ack(ctx context.Context, stream, id string) error {
+func (r redisStore) Ack(ctx context.Context, stream, id string) (int64, error) {
+	var acked *redis.IntCmd
 	_, err := r.c.TxPipelined(ctx, func(p redis.Pipeliner) error {
-		p.XAck(ctx, stream, group, id)
+		acked = p.XAck(ctx, stream, group, id)
 		p.XDel(ctx, stream, id)
 		return nil
 	})
-	return err
+	if err != nil {
+		return 0, err
+	}
+	return acked.Val(), nil
 }
 
 // Count is one XLEN: an ack deletes its entry, so a stream holds exactly

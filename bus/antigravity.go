@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -11,22 +12,45 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"time"
 	"unicode"
 )
 
-// Antigravity (v1.6.29 cmd/nova-hook/antigravity.go): the workspace's
-// language_server is found in ps by its --workspace_id, which carries its
-// --csrf_token; its listening ports come from lsof unless
-// --antigravity-server names one. The binary's agentapi subcommand, with the
-// port and token in its environment, answers get-conversation-metadata
-// (the start-up check) and send-message, which puts the closed wake text into
-// the conversation as a new turn whether it was idle or busy.
-const agentLimit = 10 * time.Second
+// Antigravity (v1.6.29 cmd/nova-hook/antigravity.go): the candidates are
+// this user's language_servers in ps with a --csrf_token, the workspace's
+// own (--workspace_id) first; Antigravity 2.29 runs one hub server with no
+// --workspace_id. The program is the process's own executable, never its
+// argv, and must not be writable by others. Its agentapi subcommand, with
+// the port (lsof, or --antigravity-server) and the token in its environment,
+// answers get-conversation-metadata: the first candidate that does is taken.
+// send-message puts the closed wake text into the conversation as a new
+// turn. A failed send finds the server once more (Antigravity restarted)
+// and sends again; a second failure ends the hook.
+const (
+	agentLimit = wakeLimit
+	maxError   = 160 // bytes of a harness's error text copied into a receipt
+)
 
 type agWake struct {
-	bin, session, port, dir, name, token string
-	exec                                 func(ctx context.Context, env []string, name string, args ...string) ([]byte, error)
+	bin, session, port, dir, name, token, ws, fixed string
+	s                                               sys
+}
+
+// realShell runs command with sh -c, stdin on its stdin and vars added to
+// the environment, and returns its exit code; -1 when it did not run.
+func realShell(ctx context.Context, vars []string, stdin, command string) (int, error) {
+	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", command)
+	cmd.Env = append(os.Environ(), vars...)
+	cmd.Stdin = strings.NewReader(stdin)
+	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+	err := cmd.Run()
+	var exit *exec.ExitError
+	if errors.As(err, &exit) {
+		return exit.ExitCode(), nil
+	}
+	if err != nil {
+		return -1, err
+	}
+	return 0, nil
 }
 
 func realExec(ctx context.Context, env []string, name string, args ...string) ([]byte, error) {
@@ -35,37 +59,84 @@ func realExec(ctx context.Context, env []string, name string, args ...string) ([
 	return cmd.CombinedOutput()
 }
 
+// realProgram is a process's executable as the kernel has it, never its
+// argv: /proc/<pid>/exe where there is one (Linux), else the file lsof lists
+// as its text (txt) on macOS.
+func realProgram(ctx context.Context, pid string) (string, error) {
+	if p, err := os.Readlink("/proc/" + pid + "/exe"); err == nil {
+		return p, nil
+	}
+	out, err := realExec(ctx, nil, "lsof", "-a", "-p", pid, "-d", "txt", "-Fn")
+	for _, l := range strings.Split(string(out), "\n") {
+		if n, ok := strings.CutPrefix(l, "n"); ok {
+			return n, nil
+		}
+	}
+	return "", fmt.Errorf("no executable for process %s: %v", pid, err)
+}
+
+// checkProgram holds a program to a regular file of this user's or root's
+// that neither group nor others can write.
+func checkProgram(path string, uid int) error {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	owner, _, ok := statOf(fi)
+	if !filepath.IsAbs(path) || !fi.Mode().IsRegular() || fi.Mode().Perm()&0o022 != 0 || !ok || (int(owner) != uid && owner != 0) {
+		return fmt.Errorf("%s is not a program of this user's or root's, closed to others", path)
+	}
+	return nil
+}
+
 func newAntigravity(ctx context.Context, f map[string]string, dir, name string, s sys) (*agWake, error) {
 	ws := f["antigravity-dir"]
 	if fi, err := os.Stat(ws); err != nil || !fi.IsDir() || !filepath.IsAbs(ws) {
-		return nil, missingInput("--antigravity-dir %s is not an absolute workspace directory", ws)
+		return nil, badInput("--antigravity-dir %s is not an absolute workspace directory: name the folder open in Antigravity", ws)
 	}
 	if !safeID(f["antigravity-session"]) {
-		return nil, missingInput("--antigravity-session %q is not a conversation id", f["antigravity-session"])
+		return nil, badInput("--antigravity-session %q is not a conversation id: the folder name under ~/.gemini/antigravity/brain/", f["antigravity-session"])
 	}
-	a := &agWake{session: f["antigravity-session"], dir: dir, name: name, exec: s.exec}
 	port := f["antigravity-server"]
 	if port != "" {
 		if _, p, err := net.SplitHostPort(port); err == nil {
 			port = p
 		}
 		if n, err := strconv.Atoi(port); err != nil || n <= 0 || n > 65535 {
-			return nil, missingInput("--antigravity-server %q is not a port or host:port", f["antigravity-server"])
+			return nil, badInput("--antigravity-server %q is not a port or host:port", f["antigravity-server"])
 		}
 	}
-	ps, err := a.run(ctx, nil, "ps", "-axo", "pid=,uid=,command=")
-	if err != nil {
-		return nil, noAnswer("antigravity: ps: %v", err)
+	a := &agWake{session: f["antigravity-session"], dir: dir, name: name, ws: ws, fixed: port, s: s}
+	if err := a.find(ctx); err != nil {
+		return nil, noAnswer("antigravity: %v", err)
 	}
-	servers := findServers(string(ps), strconv.Itoa(s.uid), workspaceIDs(ws))
+	return a, nil
+}
+
+// find takes the first candidate server whose agentapi answers for the
+// conversation.
+func (a *agWake) find(ctx context.Context) error {
+	ps, err := a.run(ctx, nil, "ps", "-axww", "-o", "pid=,uid=,command=")
+	if err != nil {
+		return fmt.Errorf("ps: %v", err)
+	}
+	servers := findServers(string(ps), strconv.Itoa(a.s.uid), workspaceIDs(a.ws))
 	if len(servers) == 0 {
-		return nil, noAnswer("antigravity: no language_server with a --csrf_token runs for this user: open %s in Antigravity", ws)
+		return fmt.Errorf("no language_server with a --csrf_token runs for this user: open %s in Antigravity", a.ws)
 	}
 	var last error
 	for _, sv := range servers {
-		a.bin, a.token = sv.bin, sv.token
-		ports := []string{port}
-		if port == "" {
+		bin, err := a.s.program(ctx, sv.pid)
+		if err == nil {
+			err = checkProgram(bin, a.s.uid)
+		}
+		if err != nil {
+			last = fmt.Errorf("language_server %s: %v", sv.pid, err)
+			continue
+		}
+		a.bin, a.token = bin, sv.token
+		ports := []string{a.fixed}
+		if a.fixed == "" {
 			out, err := a.run(ctx, nil, "lsof", "-nP", "-a", "-p", sv.pid, "-iTCP", "-sTCP:LISTEN", "-Fn")
 			if err != nil {
 				last = fmt.Errorf("lsof for language_server %s: %v", sv.pid, err)
@@ -84,11 +155,11 @@ func newAntigravity(ctx context.Context, f map[string]string, dir, name string, 
 		for _, p := range ports {
 			a.port = p
 			if last = a.agentapi(ctx, "get-conversation-metadata", a.session); last == nil {
-				return a, nil
+				return nil
 			}
 		}
 	}
-	return nil, noAnswer("antigravity: conversation %s did not answer on any of %d language_servers of this user: %v", a.session, len(servers), last)
+	return fmt.Errorf("conversation %s did not answer on any of %d language_servers of this user: %v", a.session, len(servers), last)
 }
 
 func (a *agWake) wake(ctx context.Context, m Msg) error {
@@ -96,8 +167,18 @@ func (a *agWake) wake(ctx context.Context, m Msg) error {
 	if err != nil {
 		return err
 	}
-	return a.agentapi(ctx, "send-message", "--title=nova-bus", a.session,
-		fmt.Sprintf("nova-bus saved event %s in %s. Read that JSON file and follow local_receiver.", m.ID, path))
+	text := fmt.Sprintf("nova-bus saved event %s in %s. Read that JSON file and follow local_receiver.", m.ID, path)
+	err = a.agentapi(ctx, "send-message", "--title=nova-bus", a.session, text)
+	if err == nil || ctx.Err() != nil {
+		if err != nil { // the send was cut off: it may have arrived
+			return unconfirmed{err}
+		}
+		return nil
+	}
+	if ferr := a.find(ctx); ferr != nil {
+		return fmt.Errorf("%v; found again: %v", err, ferr)
+	}
+	return a.agentapi(ctx, "send-message", "--title=nova-bus", a.session, text)
 }
 
 // agentapi runs one agentapi command; agentapi prints {"error": ...} at
@@ -116,13 +197,16 @@ func (a *agWake) agentapi(ctx context.Context, args ...string) error {
 	if err != nil && a.token != "" {
 		err = fmt.Errorf("%s", strings.ReplaceAll(err.Error(), a.token, "<redacted>"))
 	}
+	if err != nil && len(err.Error()) > maxError {
+		err = fmt.Errorf("%s", strings.ToValidUTF8(err.Error()[:maxError], ""))
+	}
 	return err
 }
 
 func (a *agWake) run(ctx context.Context, env []string, name string, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, agentLimit)
 	defer cancel()
-	return a.exec(ctx, env, name, args...)
+	return a.s.exec(ctx, env, name, args...)
 }
 
 type server struct{ pid, bin, token string }

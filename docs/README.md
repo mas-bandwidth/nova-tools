@@ -69,14 +69,15 @@ sleep 1
 nova-bus hook --as claude > "$work/claude.inbox" 2> "$work/claude.log" &
 hook_pid=$!
 sleep 1
-nova-bus send --as codex --to claude "hello" "are you there?"
+nova-bus send --as codex --to claude --new "hello" "are you there?"
 sleep 1
 cat "$work/claude.log" "$work/claude.inbox"
 nova-bus who
 kill "$hook_pid"
 ```
 
-`send` prints `claude <id>`. The hook's stderr says
+`send` prints `claude <id>` (`--new` because a name no hook has read yet is
+otherwise refused, so a typo never sits unread). The hook's stderr says
 `HOOK OK name=claude waiting=0`, and its stdout has one tab-separated line:
 the id, `codex`, `-` (this message answers none), `hello` and `are you there?`.
 `who` prints `WHO OK present=1` and then `claude` with its uptime. One hook
