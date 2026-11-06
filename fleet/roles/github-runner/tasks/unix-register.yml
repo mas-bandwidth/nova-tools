@@ -1,6 +1,8 @@
 ---
 # Register runner github_runner_dir. The token is read from the task's stdin into the runner's environment by the
-# shell: it is in no argument and no environment of any process Ansible starts, so `ps` on the host never shows it.
+# shell: it is in no argument and no environment of any process Ansible starts, so `ps` on the host never shows it;
+# and the task is pipelined, so the module that carries it runs from the ssh pipe and is never a file on the machine's
+# disk. On the machine the token exists in one place: the environment of config.sh, until it exits.
 - name: register with GitHub (the token reaches the runner on its stdin)
   ansible.builtin.shell: |
     IFS= read -r ACTIONS_RUNNER_INPUT_TOKEN
@@ -12,5 +14,22 @@
     chdir: "{{ github_runner_dir }}"
     creates: "{{ github_runner_dir }}/.runner"
     stdin: "{{ github_runner_token }}"
+  vars: { ansible_pipelining: true }
   no_log: true
+  failed_when: false
   register: github_runner_registration
+
+# no_log hides the whole result, the cause with it: the outcome is printed with the token redacted
+- name: the registration's outcome (token redacted)
+  ansible.builtin.debug:
+    msg: >-
+      RUNNER REGISTER {{ github_runner_name }} rc={{ github_runner_registration.rc | default(-1) }}
+      {{ ((github_runner_registration.stderr | default('')) ~ ' ' ~ (github_runner_registration.stdout | default(''))
+          | replace(github_runner_token, 'REDACTED') | regex_replace('[A-Z0-9]{20,}', 'REDACTED')) | trim | truncate(600) }}
+  when: github_runner_registration.rc | default(0) != 0
+
+- name: the registration landed
+  ansible.builtin.assert:
+    that: github_runner_registration.rc | default(0) == 0
+    fail_msg: "{{ github_runner_name }}: config.sh failed (rc={{ github_runner_registration.rc | default(-1) }}); the redacted cause is above"
+    quiet: true

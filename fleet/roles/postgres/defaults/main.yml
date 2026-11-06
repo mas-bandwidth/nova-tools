@@ -1,5 +1,5 @@
 ---
-# postgres.yml's defaults (docs/FLEET.md, "postgres.yml"). Override them beside the
+# postgres.yml's defaults (fleet/README.md, "postgres"). Override them beside the
 # inventory (group_vars/services.yml, host_vars/<machine>.yml) or with -e.
 
 # One major across the fleet, so a dump from one store restores on the next.

@@ -1,5 +1,5 @@
 ---
-# health.yml's defaults (docs/FLEET.md, "health.yml"). Each guard has one switch;
+# health.yml's defaults (fleet/README.md, "health"). Each guard has one switch;
 # set it false (or the size 0) on a machine that must not have it.
 
 # The journal is kept on disk, with room for the boots before a failure.

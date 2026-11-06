@@ -56,7 +56,9 @@ nova-secrets exec --only NAME[,NAME] --store <dir> --key <file> [--as <seat>] [-
 
 --store and --key are required where a verb lists them (or NOVA_SECRETS_STORE / NOVA_SECRETS_KEY); the
 current directory is never assumed. --as defaults to $NOVA_SECRETS_SEAT, else the short hostname; --sops
-to sops on PATH. No verb prints a value. Exit codes: 0 done, 2 refused (exec: 125).
+to sops on PATH. No verb prints a value. Exit codes: 0 done, 2 refused (exec: 125). A refusal is one stderr line,
+SECRETS <VERB> REFUSED reason=<r>: <why>, r one of no-store no-seat no-key not-recipient no-name no-sops
+no-command sops git other.
 `
 
 // helpFor is the paragraph for a verb, or the whole text for "".
@@ -117,18 +119,24 @@ func runProgram(stdin io.Reader, env []string, dir, name string, args ...string)
 type refusal struct {
 	code  int
 	msg   string
-	usage bool // a malformed invocation: "nova-secrets <verb>: <msg>; run: nova-secrets <verb> -h"
-	sops  bool // sops itself failed
+	usage bool   // a malformed invocation: "nova-secrets <verb>: <msg>; run: nova-secrets <verb> -h"
+	sops  bool   // sops itself failed
+	why   string // the reason= word; "" prints as other
 }
 
 func (r refusal) Error() string { return r.msg }
 
-func refuse(format string, a ...any) error {
-	return refusal{2, fmt.Sprintf(format, a...), false, false}
+func refuse(format string, a ...any) error { return deny("", format, a...) }
+
+// deny is a refusal with its reason word, which a caller (a play under no_log) can show: it names no value.
+func deny(why, format string, a ...any) error {
+	return refusal{2, fmt.Sprintf(format, a...), false, false, why}
 }
 
 // bad is a malformed invocation: exit 2, even for exec.
-func bad(format string, a ...any) error { return refusal{2, fmt.Sprintf(format, a...), true, false} }
+func bad(format string, a ...any) error {
+	return refusal{2, fmt.Sprintf(format, a...), true, false, ""}
+}
 
 func (t tool) main(args []string) int {
 	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" {
@@ -181,7 +189,10 @@ func (t tool) main(args []string) int {
 		fmt.Fprintf(t.stderr, "nova-secrets %s: %s; run: nova-secrets %s -h\n", verb, r.msg, verb)
 		return 2
 	}
-	fmt.Fprintf(t.stderr, "SECRETS %s REFUSED: %v\n", strings.ToUpper(verb), err)
+	if r.why == "" {
+		r.why = "other"
+	}
+	fmt.Fprintf(t.stderr, "SECRETS %s REFUSED reason=%s: %v\n", strings.ToUpper(verb), r.why, err)
 	if verb == "exec" {
 		return 125
 	}
@@ -247,7 +258,7 @@ func (t tool) parse(verb string, args []string, npos int, needKey bool, also ...
 		return o, nil, bad("missing %s (no default; the current directory is never assumed)", strings.Join(missing, ", "))
 	}
 	if _, err := os.Stat(o.store); err != nil && verb != "init" {
-		return o, nil, refuse("store %s does not exist; run: nova-secrets init --store %s --recovery <age-public-key>", o.store, o.store)
+		return o, nil, deny("no-store", "store %s does not exist; run: nova-secrets init --store %s --recovery <age-public-key>", o.store, o.store)
 	}
 	if o.sops == "" {
 		o.sops = "sops"
@@ -305,7 +316,7 @@ func (t tool) exec(args []string) error {
 		return err
 	}
 	if _, err := t.lookPath(argv[0]); err != nil {
-		return refuse("command not found: %s", argv[0])
+		return deny("no-command", "command not found: %s", argv[0])
 	}
 	values, err := t.decrypt(o, o.as)
 	if err != nil {
@@ -322,7 +333,7 @@ func (t tool) exec(args []string) error {
 		pick = append(pick, n)
 	}
 	if len(missing) > 0 {
-		return refuse("unknown secret name(s) %s: %s holds no such name; run: nova-secrets names --store %s --as %s", strings.Join(missing, ", "), o.file(o.as), o.store, o.as)
+		return deny("no-name", "unknown secret name(s) %s: %s holds no such name; run: nova-secrets names --store %s --as %s", strings.Join(missing, ", "), o.file(o.as), o.store, o.as)
 	}
 	// The inherited environment loses every name the seat holds (a value left out
 	// must not arrive another way) and every sops identity variable.
@@ -481,7 +492,7 @@ func (t tool) sopsEnv(key, home string) []string {
 // that is safe to paste: a scratch HOME, and a decrypt that writes to /dev/null.
 func (t tool) sopsRun(o opts, stdin io.Reader, args ...string) ([]byte, error) {
 	if _, err := t.lookPath(o.sops); err != nil {
-		return nil, refuse("sops not found at %s; install sops 3.x", o.sops)
+		return nil, deny("no-sops", "sops not found at %s; install sops 3.x", o.sops)
 	}
 	if err := checkKey(o.key); err != nil {
 		return nil, err
@@ -501,7 +512,7 @@ func (t tool) sopsRun(o opts, stdin io.Reader, args ...string) ([]byte, error) {
 			shown[i] = q(shown[i])
 		}
 		return nil, refusal{2, fmt.Sprintf("sops %s failed (%v); its output is withheld; ran: cd %s && HOME=$(mktemp -d) SOPS_AGE_KEY_FILE=%s %s %s",
-			args[0], exitOf(err), q(o.store), q(o.key), q(o.sops), strings.Join(shown, " ")), false, true}
+			args[0], exitOf(err), q(o.store), q(o.key), q(o.sops), strings.Join(shown, " ")), false, true, "sops"}
 	}
 	return out, nil
 }
@@ -523,7 +534,7 @@ func (t tool) diagnose(o opts, seat string, fail error) error {
 	}
 	data, _ := os.ReadFile(o.file(seat))
 	if rs, ok := recipientsOf(data); ok && !slices.Contains(rs, pub) {
-		return refuse("key %s is the key in .sops.yaml for %s but not among %s's %d recipients: re-key it with: cd %s && SOPS_AGE_KEY_FILE=<recovery.key> sops updatekeys -y %s",
+		return deny("not-recipient", "key %s is the key in .sops.yaml for %s but not among %s's %d recipients: re-key it with: cd %s && SOPS_AGE_KEY_FILE=<recovery.key> sops updatekeys -y %s",
 			pub, seat, file, len(rs), o.store, file)
 	}
 	return fail
@@ -540,7 +551,7 @@ func (t tool) keyVsRule(o opts, seat string) (string, error) {
 	file := seat + ".yaml"
 	cfg, _ := os.ReadFile(filepath.Join(o.store, ".sops.yaml"))
 	if age := field(ruleFor(cfg, file), "age"); age != nil && !slices.Contains(strings.Split(age.Value, ","), pub) {
-		return pub, refuse("key %s is not the key in .sops.yaml for %s (%s): wrong --key/--as, or the key was replaced; edit the seat's age: in .sops.yaml then: cd %s && SOPS_AGE_KEY_FILE=<recovery.key> sops updatekeys -y %s",
+		return pub, deny("not-recipient", "key %s is not the key in .sops.yaml for %s (%s): wrong --key/--as, or the key was replaced; edit the seat's age: in .sops.yaml then: cd %s && SOPS_AGE_KEY_FILE=<recovery.key> sops updatekeys -y %s",
 			pub, seat, strings.Split(age.Value, ",")[0], o.store, file)
 	}
 	return pub, nil
@@ -563,7 +574,7 @@ func noSeatFile(o opts, seat string) error {
 	if s := seatsIn(o.store); len(s) > 0 {
 		have = strings.Join(s, ",")
 	}
-	return refuse("no %s.yaml in %s: wrong --as? seats here: %s; or create it: nova-secrets set NAME --as %s --store %s --key <file>", seat, o.store, have, seat, o.store)
+	return deny("no-seat", "no %s.yaml in %s: wrong --as? seats here: %s; or create it: nova-secrets set NAME --as %s --store %s --key <file>", seat, o.store, have, seat, o.store)
 }
 
 // decrypt opens <seat>.yaml into its flat name -> value map.
@@ -622,7 +633,7 @@ func (t tool) encrypt(o opts, seat string, values map[string]string) error {
 		var r refusal
 		cfg, _ := os.ReadFile(filepath.Join(o.store, ".sops.yaml"))
 		if errors.As(err, &r) && r.sops && ruleFor(cfg, seat+".yaml") == nil {
-			return refuse("no rule for %s.yaml in %s/.sops.yaml (or it does not parse); run: nova-secrets seat add %s <age-public-key> --store %s", seat, o.store, seat, o.store)
+			return deny("no-seat", "no rule for %s.yaml in %s/.sops.yaml (or it does not parse); run: nova-secrets seat add %s <age-public-key> --store %s", seat, o.store, seat, o.store)
 		}
 		return err
 	}
@@ -642,7 +653,7 @@ func (t tool) gitRun(dir string, args ...string) ([]byte, error) {
 
 func (t tool) git(dir string, args ...string) error {
 	if _, err := t.gitRun(dir, args...); err != nil {
-		return refuse("git %s in %s failed (%v)", args[0], dir, exitOf(err))
+		return deny("git", "git %s in %s failed (%v)", args[0], dir, exitOf(err))
 	}
 	return nil
 }

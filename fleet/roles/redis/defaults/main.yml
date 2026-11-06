@@ -1,5 +1,5 @@
 ---
-# redis.yml's defaults (docs/FLEET.md, "redis.yml"). Override them beside the
+# redis.yml's defaults (fleet/README.md, "redis"). Override them beside the
 # inventory (group_vars/services.yml, host_vars/<machine>.yml) or with -e.
 
 # The port of this play's server (fleet/tailscale-acl.json opens it between

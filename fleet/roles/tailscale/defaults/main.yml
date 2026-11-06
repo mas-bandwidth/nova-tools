@@ -1,5 +1,5 @@
 ---
-# tailscale.yml's defaults (docs/FLEET.md, "tailscale.yml").
+# tailscale.yml's defaults (fleet/README.md, "tailscale").
 
 # The tags a machine joins with: tag:nova, and tag:runner on a machine with the
 # runner role. The auth key (TAILSCALE_AUTHKEY) must be allowed to apply them

@@ -21,7 +21,7 @@ RestartSec=10
 Type=oneshot
 {% endif %}
 {% if service_system %}
-User={{ ansible_user_id }}
+User={{ ansible_facts['user_id'] }}
 {% endif %}
 WorkingDirectory={{ nova_home }}
 {% for k, v in service_env | dictsort %}

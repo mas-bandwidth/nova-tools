@@ -10,6 +10,16 @@ Linux with Landlock. The macOS tests read the profile as text, so macOS
 enforcement needs its own check on a Mac. `nova-sandbox probe` checks the wall
 on any host.
 
+## What the command receives
+
+`PATH`, `HOME`, `LANG` and `TERM` are kept. `--env <name>` passes another
+variable by name; the value is never an argument. A name that is not letters,
+digits and underscores, or that is unset on a run, is `bad_env` (exit 2), and
+it is reported together with every other problem. `show` checks the name and
+does not require it to be set. The guide's Go build passes `TMPDIR`, `GOCACHE`,
+`GOMODCACHE` and `GOPROXY` with `--env`. `TMPDIR`, `GOCACHE` and `GOPROXY` point
+inside a `--write`; `GOMODCACHE` points inside a `--read`. `HOME` is kept.
+
 ## System roots
 
 The command can always read and run these paths.

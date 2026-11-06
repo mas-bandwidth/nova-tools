@@ -1,5 +1,7 @@
+# purpose: each machine on the tailnet, its address the MagicDNS name, its firewall closed to all but the tailnet
+#
 # tailscale.yml: each machine on the tailnet, its address the MagicDNS name, its firewall closed to everything but
-# the tailnet (docs/FLEET.md, "tailscale.yml"; join.yml imports it). The adopter owns the account, the auth key and
+# the tailnet (fleet/README.md, "tailscale"; join.yml imports it). The adopter owns the account, the auth key and
 # the policy (fleet/tailscale-acl.json); this play does the rest:
 #
 #   1. Tailscale installed: Tailscale's apt repository on Debian and Ubuntu, Homebrew's cask on macOS, winget on Windows.

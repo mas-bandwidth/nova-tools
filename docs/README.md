@@ -343,7 +343,9 @@ line per step.
 
 The refusal you will meet first is `nova-sandbox: bad_read: ...` (exit 2): a
 grant is relative or missing, or the command is outside every grant. For a Go
-toolchain outside `/usr`, add `--read "$(go env GOROOT)"`. The others are in
+toolchain outside `/usr`, add `--read "$(go env GOROOT)"`. A Go build also needs
+`--env TMPDIR --env GOCACHE --env GOMODCACHE --env GOPROXY`, each set to a path
+inside a `--write` (`GOMODCACHE` inside a `--read`). `HOME` is kept. The others are in
 [sandbox/README.md](../sandbox/README.md#refusals).
 
 The whole tool: [sandbox/README.md](../sandbox/README.md) and

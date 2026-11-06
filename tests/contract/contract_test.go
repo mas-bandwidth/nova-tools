@@ -50,6 +50,8 @@ var toolSpecs = []toolSpec{
 		{"service", "list"}, {"service", "show"}, {"service", "add"}, {"service", "set"}, {"service", "remove"},
 		{"history"}, {"inventory"}, {"schema"}},
 		missing: []missingCase{{[]string{"machine", "list"}, []string{"--pg"}}}},
+	{dir: "fleet", verbs: [][]string{{"plays"}, {"show"}, {"check"}, {"up"}, {"help"}},
+		missing: []missingCase{{[]string{"show"}, []string{"play or file name"}}, {[]string{"up"}, []string{"<name>=<address>", "--tools"}}}},
 	{dir: "reserve", verbs: [][]string{{"set"}, {"hold"}, {"status"}}, extra: []int{126, 127},
 		missing: []missingCase{{[]string{"status", "--dir", "@tmp/no-such-dir"}, []string{"--dir"}}}},
 	{dir: "sandbox", verbs: [][]string{{"check"}, {"probe"}, {"show"}}, extra: []int{125, 126, 127},

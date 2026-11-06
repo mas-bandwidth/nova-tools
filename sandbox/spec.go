@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -23,10 +24,10 @@ func refuse(reason, format string, a ...any) refusal {
 
 // spec is the command line as given.
 type spec struct {
-	reads, writes, netAllow []string
-	netDeny, gpu, unix      bool
-	keepFDs                 bool
-	argv                    []string
+	reads, writes, netAllow, passEnv []string
+	netDeny, gpu, unix               bool
+	keepFDs                          bool
+	argv                             []string
 }
 
 // wall is a checked spec: every path absolute, existing and symlink-free.
@@ -37,6 +38,7 @@ type wall struct {
 	netDeny, gpu  bool
 	unix, keepFDs bool
 	netPorts      []uint16 // --net-allow, loopback only
+	passEnv       []string // --env names, beyond PATH, HOME, LANG and TERM
 	command       string
 	argv          []string
 }
@@ -87,6 +89,13 @@ func build(s spec, goos string) (*wall, []refusal) {
 	resolveAll("--write", s.writes, &w.writes)
 	if goos == "darwin" {
 		w.optRoots = developerDir()
+	}
+	for _, n := range s.passEnv {
+		if !envNameOK(n) {
+			bad = append(bad, refuse("bad_env", "--env wants a name of letters, digits and underscores, got %q", n))
+		} else if !slices.Contains(w.passEnv, n) {
+			w.passEnv = append(w.passEnv, n)
+		}
 	}
 	if len(s.argv) > 0 {
 		spelled, target, rf := resolveCommand(s.argv[0])
@@ -213,4 +222,38 @@ func developerDir() []string {
 		return nil
 	}
 	return []string{t}
+}
+
+// envNameOK is a letter or underscore, then letters, digits and underscores.
+var envNameOK = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`).MatchString
+
+// passedEnv keeps PATH, HOME, LANG, TERM and extra. Never nil: syscall.Exec inherits a nil env.
+func passedEnv(env, extra []string) []string {
+	keep := map[string]bool{"PATH": true, "HOME": true, "LANG": true, "TERM": true}
+	for _, n := range extra {
+		keep[n] = true
+	}
+	out, seen := []string{}, map[string]bool{}
+	for _, e := range env {
+		if n, _, ok := strings.Cut(e, "="); ok && keep[n] && !seen[n] {
+			seen[n], out = true, append(out, e)
+		}
+	}
+	return out
+}
+func missingEnv(env, names []string) (bad []refusal) {
+	have := map[string]bool{}
+	for _, e := range env {
+		if n, _, ok := strings.Cut(e, "="); ok {
+			have[n] = true
+		}
+	}
+	for _, n := range names {
+		if !envNameOK(n) || have[n] {
+			continue
+		}
+		have[n] = true
+		bad = append(bad, refuse("bad_env", "--env %s is not set; set it in the environment, the value is never an argument", n))
+	}
+	return bad
 }

@@ -47,3 +47,9 @@ github_runner_deregister: true
 # NOVA_SECRETS_KEY and NOVA_SECRETS_SEAT from the environment, or set them here.
 github_runner_secrets_bin: nova-secrets
 github_runner_secrets_args: []
+
+# After a run, GitHub's list of runners is read with gh on the control node and every wanted
+# runner must be online (the RUNNERS receipt). gh needs a login with admin on the repository or
+# organization; false skips the check (the receipt is then not printed).
+github_runner_verify: true
+github_runner_gh: gh
