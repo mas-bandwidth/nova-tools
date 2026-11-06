@@ -56,6 +56,7 @@ type machine struct {
 	sshUser, host           string // how up reaches it now: root at the address given, or the login over the tailnet
 	row                     map[string]any
 	unreachable             string // the reason, under --check
+	later                   bool   // under --check, a machine with no row yet: the steps after join wait for it
 }
 
 // upRun is one up: its inputs and what it has learnt so far.
@@ -361,7 +362,7 @@ func (u *upRun) steps() int {
 	pass := map[string][]string{}
 	mark := func(step string, ms ...*machine) {
 		for _, m := range ms {
-			if m.unreachable == "" {
+			if m.unreachable == "" && !m.later {
 				pass[m.name] = append(pass[m.name], step)
 			}
 		}
@@ -496,6 +497,10 @@ func (u *upRun) steps() int {
 		u.peer(m)
 		mark("join", m)
 		u.say("UP JOIN %s %s", m.name, u.would("JOIN"))
+		if u.check && m.row == nil {
+			m.later = true
+			u.say("UP %s PENDING (check: its row does not exist yet; the steps after join run once join has made it)", m.name)
+		}
 		if u.runners != "" && m.row != nil {
 			if roles, _ := m.row["roles"].(string); !slices.Contains(strings.Split(roles, ","), "runner") {
 				args := []string{"machine", "set", m.name, "--roles", roles + ",runner", "--actor", u.seat, "--reason", "nova-fleet up --runners"}
@@ -519,7 +524,7 @@ func (u *upRun) steps() int {
 		return fail("grant", c)
 	}
 	for _, m := range u.machines {
-		if m.unreachable != "" {
+		if m.unreachable != "" || m.later {
 			continue
 		}
 		pub, why, c := outCmd(u.bin["ssh"], []string{"-o", "BatchMode=yes", m.user + "@" + m.dns, "sh", "-c",
@@ -554,14 +559,19 @@ func (u *upRun) steps() int {
 
 	// 7. refresh: secrets-refresh pushes the encrypted store from this node's clone to each machine
 	// (rsync over the tailnet: no .git, stale files deleted, 0700/0600); a rerun pushes again.
-	limit := []string{"-l", strings.Join(func() (s []string) {
-		for _, m := range u.machines {
-			if m.unreachable == "" {
-				s = append(s, m.name)
-			}
+	var in []string
+	for _, m := range u.machines {
+		if m.unreachable == "" && !m.later {
+			in = append(in, m.name)
 		}
-		return
-	}(), ",")}
+	}
+	if len(in) == 0 { // every machine named waits for its row: nothing to check the plays against
+		for _, s := range []string{"REFRESH", "HEALTH", "TOOLS", "SERVICES", "RUNNERS", "BUS"} {
+			wouldRun(s, "once join has made the rows")
+		}
+		return u.end(pass, "")
+	}
+	limit := []string{"-l", strings.Join(in, ",")}
 	if c := u.play("secrets-refresh", false, pg, append([]string{"-e", "nova_seal_store=" + u.store}, limit...)...); c != 0 {
 		return fail("refresh", c)
 	}
@@ -635,6 +645,8 @@ func (u *upRun) end(pass map[string][]string, note string) int {
 		case m.unreachable != "":
 			bad++
 			u.say("UP MACHINE %s UNREACHABLE address=%s steps=none %s", m.name, m.address, m.unreachable)
+		case u.check && m.later:
+			u.say("UP MACHINE %s CHECKED address=%s steps=join (the rest once join has made its row) (check: nothing changed)", m.name, m.address)
 		case u.check:
 			u.say("UP MACHINE %s CHECKED address=%s steps=%s %s(check: nothing changed)", m.name, m.address, strings.Join(pass[m.name], ","), note)
 		default:
