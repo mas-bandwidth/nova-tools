@@ -1,0 +1,45 @@
+---
+# Retire runner number runner_index: stop and remove its service, remove it from GitHub, delete its directory.
+- name: the retiring runner's names
+  ansible.builtin.set_fact:
+    github_runner_dir: "{{ github_runner_base_dir }}/{{ github_runner_slug }}-{{ runner_index }}"
+    github_runner_unit: "github-runner-{{ github_runner_slug }}-{{ runner_index }}"
+    github_runner_label_id: "github-runner.{{ github_runner_slug }}-{{ runner_index }}"
+
+- name: stop and remove the service
+  ansible.builtin.shell: |
+    set -eu
+    if [ "$(uname -s)" = Darwin ]; then
+      f=/Library/LaunchDaemons/{{ github_runner_label_id }}.plist
+      [ -e "$f" ] || { echo ABSENT; exit 0; }
+      launchctl bootout system/{{ github_runner_label_id }} 2>/dev/null || true
+      rm -f "$f"
+    else
+      f=/etc/systemd/system/{{ github_runner_unit }}.service
+      [ -e "$f" ] || { echo ABSENT; exit 0; }
+      systemctl disable --now {{ github_runner_unit }}.service
+      rm -f "$f"
+      systemctl daemon-reload
+    fi
+    echo REMOVED
+  args: { executable: /bin/sh }
+  become: true
+  register: github_runner_stopped
+  changed_when: "'REMOVED' in github_runner_stopped.stdout"
+
+# the token on stdin, as in unix-register.yml: never in an argument or an environment `ps` can show
+- name: remove the runner from GitHub (the token reaches the runner on its stdin)
+  ansible.builtin.shell: |
+    IFS= read -r ACTIONS_RUNNER_INPUT_TOKEN
+    export ACTIONS_RUNNER_INPUT_TOKEN
+    exec ./config.sh remove
+  args:
+    executable: /bin/sh
+    chdir: "{{ github_runner_dir }}"
+    removes: "{{ github_runner_dir }}/.runner"
+    stdin: "{{ github_runner_token | default('') }}"
+  no_log: true
+  when: github_runner_deregister | bool and not ansible_check_mode
+
+- name: delete the directory
+  ansible.builtin.file: { path: "{{ github_runner_dir }}", state: absent }
