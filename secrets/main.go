@@ -75,8 +75,9 @@ nova-secrets exec --only NAME[,NAME] --store <dir> --key <file> [--as <seat>] [-
   runs after it: the shell reports a command killed by a signal as 128+N, as for any process).
   Exit: the command's own status; 125 when exec refused at run time and the command never ran.
 
---store and --key are required where a verb lists them (or NOVA_SECRETS_STORE / NOVA_SECRETS_KEY); the
-current directory is never assumed. --as defaults to $NOVA_SECRETS_SEAT, else the short hostname; --sops
+--store defaults to $NOVA_SECRETS_STORE, else ~/.config/nova-secrets/store; --key is required where a verb
+lists it (or NOVA_SECRETS_KEY; set defaults it to ~/.config/nova-secrets/<seat>.key). The current directory
+is never assumed. --as defaults to $NOVA_SECRETS_SEAT, else the short hostname; --sops
 to sops on PATH. No verb prints a value. Exit codes: 0 done, 2 refused (exec: 125). A refusal is one stderr line,
 SECRETS <VERB> REFUSED reason=<r>: <why>, r one of no-store no-seat no-key not-recipient no-name no-sops
 no-command sops git other, and for set, grant and the files they read no-pin key-changed untrusted-rule
@@ -252,7 +253,7 @@ func (t tool) parse(verb string, args []string, npos int, needKey bool, also ...
 	}
 	if o.store == "" {
 		if o.store = envValue(t.environ, "NOVA_SECRETS_STORE"); o.store == "" {
-			missing = append(missing, "--store <dir> (or NOVA_SECRETS_STORE)")
+			o.store = filepath.Join(filepath.Dir(t.keyFile("x")), "store")
 		}
 	}
 	if verb == "init" && o.recovery == "" {
