@@ -46,6 +46,8 @@ nova_service_retire_all: false
 # (nova-secrets exec requires --store and --key and takes --sops).
 nova_secrets_store: "{{ nova_home }}/.local/share/nova/secrets"
 nova_secrets_key_dir: "{{ nova_home }}/.config/nova-secrets"
+# The pins nova-secrets set seals to on a machine: <dir>/recovery.pub, written by join.yml from the control node's.
+nova_secrets_pins: "{{ nova_home }}/.config/nova-secrets/pins"
 nova_sops: "{{ '/opt/homebrew/bin/sops' if (ansible_system | default('')) == 'Darwin' else nova_bin_dir ~ '/sops' }}"
 
 # The seat a machine opens its secrets as (nova-secrets --as, services.yml's
@@ -73,6 +75,15 @@ nova_join_root_user: root
 nova_join_sudo_group: sudo
 nova_join_hostname: true
 
+# The names join.yml grants into a new machine's seat from the operator's seat
+# (nova_seal_seat, opened with nova_seal_key), and whether it pushes the store
+# clone (nova_seal_store) afterwards so the machine can pull it.
+nova_join_grant: [NOVA_BUS_PASSWORD]
+nova_seal_push: true
+
+# The machines' SSH host keys, pinned by join.yml when a row is added and checked on every later run of it.
+nova_join_known_hosts: "{{ lookup('ansible.builtin.env', 'HOME') }}/.ssh/nova-fleet-known-hosts"
+
 # The control node's side of the secrets store: nova_seal_store (its clone of
 # the store) has no default. seat.yml adds seat rules there; redis.yml and
 # postgres.yml seal a password into the seat nova_seal_seat names, opened with
@@ -81,6 +92,9 @@ nova_join_hostname: true
 nova_control_secrets: nova-secrets
 nova_control_config: nova-config
 nova_control_sops: sops
+# The control node's pins, outside the store: recovery.pub (init --pins writes it) and one <seat>.pub per machine,
+# written by seat.yml from the key read on the machine; set and grant seal to these, whatever the store says.
+nova_seal_pins: "{{ lookup('ansible.builtin.env', 'HOME') }}/.config/nova-secrets/pins"
 
 # The bus a machine's services and join.yml's check reach: nova_bus_redis
 # (host:port) has no default; the user is the redis.yml ACL user nova-bus

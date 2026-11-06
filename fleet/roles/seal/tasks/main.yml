@@ -27,7 +27,7 @@
 
 - name: "{{ seal_name }} set into the seat (control node, value on stdin)"
   ansible.builtin.command:
-    argv: ["{{ nova_control_secrets }}", set, "{{ seal_name }}", --store, "{{ nova_seal_store }}", --key, "{{ nova_seal_key }}",
+    argv: ["{{ nova_control_secrets }}", set, "{{ seal_name }}", --store, "{{ nova_seal_store }}", --pins, "{{ nova_seal_pins }}", --key, "{{ nova_seal_key }}",
            --as, "{{ nova_seal_seat }}", --sops, "{{ nova_control_sops }}"]
     stdin: "{{ seal_value.content | b64decode | trim }}"
   delegate_to: localhost

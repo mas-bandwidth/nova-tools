@@ -257,10 +257,20 @@ yet is in no inventory, so the first play adds the row and reads the inventory a
 4. **The tools a seat needs** (as the login): `nova_bin_dir` on the login PATH; on Linux the pinned `age` and `sops`
    release binaries, checked against their published digests. A darwin machine takes them from Homebrew
    (`brew install age sops`).
-5. **The seat**: `seat.yml` (below).
-6. **The check**: the control node's `tailscale status` shows the machine as an online peer, and `nova-bus who` from
-   the machine reaches the bus. Without `nova_bus_redis`, or before the seat holds `NOVA_BUS_PASSWORD`, the bus check
-   is a `NOTE`, not a failure.
+5. **The tailnet check** (control node): the row's address is now the machine's MagicDNS name, the control node's
+   `tailscale status` shows it as an online peer, and the host key it answers with over the tailnet is the one pinned
+   at the row (`nova_join_known_hosts`). Anything else stops the join before the seat is made.
+6. **The seat**: `seat.yml` (below): the key made on the machine, its rule in the store, its public half pinned on
+   the control node. Then `nova-secrets grant` fills the new seat's grants file with the names in `nova_join_grant`
+   (`NOVA_BUS_PASSWORD` unless you list others) from the control seat `nova_seal_seat`, opened with its key
+   `nova_seal_key`, sealed to the pinned machine key and the pinned recovery key only: the control key cannot open
+   it. The store clone is pushed, the machine gets the recovery pin for its own `set`, and it pulls its own clone
+   once and on a timer (`secrets-refresh.yml`). The values pass from one sops to the other in memory, and a refused
+   grant stops the join with its one-line reason. The control seat is one `seat add` and `set` like any other
+   (secrets/README.md, "A fleet"); no recovery key is needed.
+7. **The check**: the control node's `tailscale status` shows the machine as an online peer, and `nova-bus who` from
+   the machine reaches the bus. Without `nova_bus_redis`, or when the seat holds no `NOVA_BUS_PASSWORD` because no
+   operator seat and key were given, the bus check is a `NOTE`, not a failure.
 
 A Windows machine gets 1 and 3.
 
@@ -269,7 +279,8 @@ nova-secrets exec --only TAILSCALE_AUTHKEY,NOVA_PG_PASSWORD --store S --key K --
   env NOVA_PG_DSN=postgres://nova_config@<store>:5432/nova \
   ansible-playbook -i ./inventory fleet/join.yml --check --diff \
     -e nova_join_host=web-1 -e nova_join_user=fleet -e nova_join_address=203.0.113.7 \
-    -e nova_join_os=linux -e nova_join_arch=amd64 -e nova_seal_store=$HOME/secrets
+    -e nova_join_os=linux -e nova_join_arch=amd64 -e nova_seal_store=$HOME/secrets \
+    -e nova_seal_seat=control -e nova_seal_key=$HOME/.config/nova-secrets/control.key
 ```
 
 The same without `--check --diff` joins it. A join that stopped (a failure, a seat waiting for its push) is resumed by
@@ -287,10 +298,16 @@ running the same command again.
 | `nova_join_authorized_keys` | root's on the machine | a file on the control node to install instead |
 | `nova_join_hostname` | `true` | set the hostname to the machine name |
 | `nova_bus_redis` | unset | `host:port` of the bus, for the check |
+| `nova_seal_seat`, `nova_seal_key` | unset | the control seat and its key file on the control node; without them nothing is granted |
+| `nova_seal_pins` | `~/.config/nova-secrets/pins` | the control node's pins: `recovery.pub` and one `<seat>.pub` per machine |
+| `nova_join_known_hosts` | `~/.ssh/nova-fleet-known-hosts` | the machines' SSH host keys, pinned at the row and checked after |
+| `nova_join_grant` | `[NOVA_BUS_PASSWORD]` | the names granted into the new seat |
+| `nova_seal_push` | `true` | push the store clone after the seat and the grant, so the machine can pull them |
 | `nova_age_version`, `nova_sops_version` and their `*_sha256` | the pinned releases | |
 | `nova_control_config`, `nova_control_secrets`, `nova_control_sops` | `nova-config`, `nova-secrets`, `sops` | the control node's binaries |
 
-**Check.** The receipts `JOIN ROW`, `TAILNET`, `FIREWALL`, `JOIN TOOLS`, `SEAT` and `JOIN CHECK <machine> peer=online
+**Check.** The receipts `JOIN ROW`, `JOIN HOSTKEY`, `TAILNET`, `FIREWALL`, `JOIN TOOLS`, `JOIN PEER`, `SEAT`, `JOIN GRANT <seat> from=<control seat>
+to=<seat> names=<n> changed=<n>` and `JOIN CHECK <machine> peer=online
 bus=WHO OK present=<n>`; a second run's `--check --diff` changes nothing. **Rollback.** `nova-config machine remove
 <name> --actor <you>`, the device removed in the Tailscale admin console, the seat's rule reverted in the store
 (`git revert`), and on the machine `userdel -r <login>` and `rm /etc/sudoers.d/90-nova-<login>`.
@@ -362,8 +379,10 @@ otherwise: the name `nova-secrets --as` and `services.yml` open it by.
 1. On the machine: `<nova_secrets_key_dir>/<seat>.key` made by `age-keygen` where it is missing; never over an
    existing file, never copied. Only the public half leaves the machine.
 2. On the control node, in your clone of the store (`nova_seal_store`): where `.sops.yaml` has no rule for the seat,
-   `nova-secrets seat add <seat> <public half> --store <clone>`, which writes the rule and commits it. A rule that
-   names a different key (a rebuilt machine's old seat) stops the run by name: replacing a seat is yours.
+   `nova-secrets seat add <seat> <public half> --store <clone>`, which writes the rule and commits it. The public
+   half is also pinned outside the store, `<nova_seal_pins>/<seat>.pub`, the key `nova-secrets grant` seals to. A
+   rule or a pin that names a different key (a rebuilt machine's old seat) stops the run by name: replacing a seat
+   is yours.
 
 ```
 ansible-playbook -i ./inventory fleet/seat.yml -l web-1 -e nova_seal_store=$HOME/secrets --check --diff
@@ -371,18 +390,20 @@ ansible-playbook -i ./inventory fleet/seat.yml -l web-1 -e nova_seal_store=$HOME
 git -C $HOME/secrets push
 ```
 
-Then set the seat's values from a machine that holds a key for it: `nova-secrets set NAME --as <seat> --store S
---key K`.
+Then fill the seat from the control seat on the control node, `nova-secrets grant NAME --to <seat> --pins P --as
+<control seat> --store S --key K` (no `--pub`: the pin is there), which is what `join.yml` does, or set a value of its
+own on the machine with its own key and the recovery pin join.yml put there.
 
 | Variable | Default | |
 |---|---|---|
 | `nova_seal_store` | none, required | the control node's clone of the secrets store |
+| `nova_seal_pins` | `~/.config/nova-secrets/pins` | where the seat's public key is pinned on the control node |
 | `nova_seat` | the machine's name | |
 | `nova_secrets_key_dir` | `~/.config/nova-secrets` | where `<seat>.key` lives on the machine |
 | `nova_age_keygen` | `<nova_bin_dir>/age-keygen`, Homebrew's on macOS | |
 
-**Check.** `SEAT PUB <seat> age1...` and `SEAT <seat> host=<machine> rule=present`; `nova-secrets seat list --store S`
-shows `rule=yes`. **Rollback.** Before the push, `git -C S reset --hard HEAD~1`; after it, `git revert` the
+**Check.** `SEAT PUB <seat> age1...` and `SEAT <seat> host=<machine> rule=present pin=present`; `nova-secrets seat list
+--store S` shows `rule=yes`. **Rollback.** Before the push, `git -C S reset --hard HEAD~1`; after it, `git revert` the
 `seat <seat>` commit. The key file on the machine is left; delete it by hand if the machine leaves.
 
 ## redis.yml

@@ -6,7 +6,9 @@
 #   2. on the control node, in the store clone nova_seal_store: where .sops.yaml has no rule for the seat,
 #      `nova-secrets seat add <seat> <public half> --store <clone>`, which writes the rule and commits it. A rule that
 #      names another key (a rebuilt machine's old seat) stops the run by name: replacing a seat is a person's call.
-#      Pushing the commit, and setting the seat's values with nova-secrets set, are the operator's.
+#      The public half is also pinned outside the store, <nova_seal_pins>/<seat>.pub, the key `nova-secrets grant`
+#      seals to; a pin that names another key stops the run the same way.
+#      Pushing the commit is the operator's; join.yml pushes it, and grants the fleet values into the seat.
 #
 #   ansible-playbook -i ./inventory fleet/seat.yml -l <machine> -e nova_seal_store=<store clone> --check --diff
 #   ansible-playbook -i ./inventory fleet/seat.yml -l <machine> -e nova_seal_store=<store clone>
@@ -84,6 +86,34 @@
       loop: "{{ seat_plan | selectattr('state', 'equalto', 'differs') | list }}"
       loop_control: { label: "{{ item.seat }}" }
 
+    - name: the pin directory (private to the control node's user)
+      ansible.builtin.file: { path: "{{ nova_seal_pins }}", state: directory, mode: "0700" }
+
+    - name: the pins there now
+      ansible.builtin.slurp: { src: "{{ nova_seal_pins }}/{{ item.seat }}.pub" }
+      loop: "{{ seat_plan | selectattr('pub', 'match', '^age1') | list }}"
+      loop_control: { label: "{{ item.seat }}" }
+      register: seat_pins
+      failed_when: false
+
+    - name: a pin that names another key is a person's to replace
+      ansible.builtin.fail:
+        msg: >-
+          SEAT STOP {{ item.item.host }}: {{ nova_seal_pins }}/{{ item.item.seat }}.pub pins another key (a rebuilt
+          machine?); this machine's key is {{ item.item.pub }}. Check the machine, remove the pin by hand, and run again.
+      loop: "{{ seat_pins.results }}"
+      loop_control: { label: "{{ item.item.seat }}" }
+      when: item.content is defined and (item.content | b64decode | trim) != item.item.pub
+
+    - name: the seat's key, pinned (the key grant seals to; outside the store)
+      ansible.builtin.copy:
+        content: "{{ item.item.pub }}\n"
+        dest: "{{ nova_seal_pins }}/{{ item.item.seat }}.pub"
+        mode: "0600"
+      loop: "{{ seat_pins.results }}"
+      loop_control: { label: "{{ item.item.seat }}" }
+      when: item.content is not defined
+
     - name: the seat's rule, added and committed (nova-secrets seat add)
       ansible.builtin.command:
         argv: ["{{ nova_control_secrets }}", seat, add, "{{ item.seat }}", "{{ item.pub }}", --store, "{{ nova_seal_store }}"]
@@ -93,9 +123,11 @@
     - name: the seat's receipt
       ansible.builtin.debug:
         msg: >-
+          {%- set pin = seat_pins.results | selectattr('item.seat', 'equalto', item.seat) | list -%}
           SEAT {{ item.seat }} host={{ item.host }} rule={{ {'present': 'present', 'add': ('WOULD-ADD' if ansible_check_mode else 'ADDED'),
-          'no-key': 'none (no key on the machine yet)'}[item.state] }}{{ (' (check: nothing written)' if ansible_check_mode else
-          '; next: git -C ' ~ nova_seal_store ~ ' push, then nova-secrets set NAME --as ' ~ item.seat ~ ' for each value it holds')
+          'no-key': 'none (no key on the machine yet)'}[item.state] }} pin={{ 'none' if not pin else ('present' if (pin | first).content is defined
+          else ('WOULD-ADD' if ansible_check_mode else 'ADDED')) }}{{ (' (check: nothing written)' if ansible_check_mode else
+          '; next: git -C ' ~ nova_seal_store ~ ' push, then nova-secrets grant NAME --to ' ~ item.seat ~ ' with an operator key (join.yml does both)')
           if item.state == 'add' else '' }}
       loop: "{{ seat_plan }}"
       loop_control: { label: "{{ item.seat }}" }

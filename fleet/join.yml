@@ -3,7 +3,9 @@
 #
 #   1. the machine row (control node): `nova-config machine add` where the row of nova_join_host is missing, then the
 #      inventory is read again so the plays below find it. A row that exists is never edited; a row whose user differs
-#      from nova_join_user stops the join by name.
+#      from nova_join_user stops the join by name. The machine's SSH host key is pinned in nova_join_known_hosts
+#      (ssh-keyscan of the row's address, where the file has no line for it), and every play below reaches the
+#      machine with that file alone (StrictHostKeyChecking=yes).
 #   2. the login (Linux, as root): the row's user, no password, in nova_join_sudo_group with passwordless sudo (checked
 #      by visudo before it lands), root's authorized_keys copied to it (or the file nova_join_authorized_keys names on
 #      the control node), linger on, the hostname set to the inventory name.
@@ -11,8 +13,15 @@
 #      machine's address, the firewall closed to everything but the tailnet. From here on the plays reach the machine
 #      over the tailnet.
 #   4. the tools a seat needs (as the login): the bin directory on the login PATH, and on Linux the pinned age and sops.
-#   5. seat.yml: the seat key made on the machine by age-keygen, its rule added to the secrets store.
-#   6. the check: the control node sees the machine as an online tailnet peer, and `nova-bus who` from the machine
+#   5. the tailnet check (control node): the row's address is a tailnet peer name the control node sees online, and
+#      the host key it answers with over the tailnet is the one pinned at the row; else the join stops here, before
+#      any seat is made.
+#   6. seat.yml: the seat key made on the machine by age-keygen, its rule added to the secrets store, its public half
+#      pinned on the control node (nova_seal_pins); then (control node, with nova_seal_seat and nova_seal_key, the
+#      control seat and its key) `nova-secrets grant` writes the seat's grants file with the names in nova_join_grant,
+#      sealed to the pinned machine key and the pinned recovery key only; the store is pushed, the machine gets the
+#      recovery pin for its own `set`, and pulls its clone (secrets-refresh).
+#   7. the check: the control node sees the machine as an online tailnet peer, and `nova-bus who` from the machine
 #      reaches the bus (a NOTE instead when the bus is not configured for it yet).
 #
 # A darwin machine skips 2 (it has no root login: its login and sudo are set up at its console) and takes age and
@@ -24,7 +33,8 @@
 #     env NOVA_PG_DSN=postgres://nova_config@HOST:5432/nova \
 #     ansible-playbook -i ./inventory fleet/join.yml \
 #       -e nova_join_host=<name> -e nova_join_user=<login> -e nova_join_address=<address> \
-#       -e nova_join_os=linux -e nova_join_arch=amd64 -e nova_seal_store=<store clone>
+#       -e nova_join_os=linux -e nova_join_arch=amd64 -e nova_seal_store=<store clone> \
+#       -e nova_seal_seat=<operator seat> -e nova_seal_key=<its key>
 - name: the machine row (control node)
   hosts: localhost
   connection: local
@@ -90,12 +100,45 @@
       when: join_row | length == 0
 
     # read before the root plays below replace ansible_user for their connection
-    - name: the machine's login
+    - name: the machine's login, and the address its host key is pinned by
       ansible.builtin.set_fact:
         nova_join_login: "{{ join_row.user if join_row | length > 0 else nova_join_user }}"
+        nova_join_first_address: "{{ join_row.address if join_row | length > 0 else nova_join_address }}"
+
+    - name: "the machine's SSH host key, pinned in {{ nova_join_known_hosts }} (ssh-keyscan, where the file has no line for the address)"
+      ansible.builtin.shell: |
+        f="{{ nova_join_known_hosts }}"; a="{{ nova_join_first_address }}"
+        umask 077; mkdir -p "$(dirname "$f")"; touch "$f"
+        grep -qs "^$a " "$f" && { echo present; exit 0; }
+        keys=$(ssh-keyscan -T 10 "$a" 2>/dev/null) || true
+        [ -n "$keys" ] || { echo none; exit 0; }
+        {% if not ansible_check_mode %}printf '%s\n' "$keys" >> "$f"{% endif %}
+        echo pinned
+      args: { executable: /bin/bash }
+      register: join_hostkey
+      changed_when: join_hostkey.stdout | trim == 'pinned'
+      check_mode: false
+
+    - name: a machine that answers with no host key is not reached
+      ansible.builtin.assert:
+        that: join_hostkey.stdout | trim != 'none'
+        fail_msg: "JOIN STOP {{ nova_join_host }} at the host key: ssh-keyscan {{ nova_join_first_address }} returned nothing (is it up, and is 22 open to this node?)"
+        quiet: true
+
+    - name: the host key's receipt
+      ansible.builtin.debug:
+        msg: "JOIN HOSTKEY {{ nova_join_first_address }} {{ 'WOULD-PIN' if (ansible_check_mode and join_hostkey.stdout | trim == 'pinned') else join_hostkey.stdout | trim }} ({{ nova_join_known_hosts }})"
 
     - name: the inventory, read again (a new row is a host now)
       ansible.builtin.meta: refresh_inventory
+
+    # the fact rides with the host through every play below, imported ones included
+    - name: every play reaches the machine with the pinned host keys alone
+      ansible.builtin.set_fact:
+        ansible_ssh_common_args: "-o UserKnownHostsFile={{ nova_join_known_hosts }} -o StrictHostKeyChecking=yes"
+      delegate_to: "{{ nova_join_host }}"
+      delegate_facts: true
+      when: join_row | length > 0 or not ansible_check_mode
 
     - name: the row's receipt
       ansible.builtin.debug:
@@ -257,8 +300,166 @@
       ansible.builtin.debug:
         msg: "JOIN TOOLS {{ inventory_hostname }} {{ join_tools.stdout | trim }}{{ ' (darwin: brew install age sops where none)' if ansible_system == 'Darwin' else '' }}"
 
+- name: the tailnet check, before any seat is made (control node)
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    peer_address: "{{ hostvars[nova_join_host].ansible_host | default('') if nova_join_host in hostvars else '' }}"
+  tasks:
+    - name: the control node's view of the tailnet
+      ansible.builtin.command: tailscale status --json
+      register: peer_status
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: the machine among the control node's peers, by the row's address
+      ansible.builtin.set_fact:
+        peer_row: >-
+          {{ ((peer_status.stdout | from_json).Peer | default({})).values() | selectattr('DNSName', 'defined')
+             | selectattr('DNSName', 'equalto', peer_address ~ '.') | list | first | default({})
+             if (peer_status.stdout | default('') | trim).startswith('{') else {} }}
+
+    - name: the row's address is an online tailnet peer name
+      ansible.builtin.assert:
+        that: peer_address | length > 0 and peer_row.Online | default(false)
+        fail_msg: >-
+          JOIN STOP {{ nova_join_host }} at the tailnet check: the row's address {{ peer_address }} is not an online peer in
+          the control node's `tailscale status` (tailscale.yml records the MagicDNS name; the policy must let this node
+          see tag:nova); no seat is made for a machine that is not on the tailnet
+        quiet: true
+      when: not ansible_check_mode
+
+    - name: "the host key over the tailnet is the one pinned at the row ({{ nova_join_known_hosts }})"
+      ansible.builtin.shell: |
+        f="{{ nova_join_known_hosts }}"; a="{{ nova_join_first_address }}"; n="{{ peer_address }}"
+        grep -qs "^$n " "$f" && { echo present; exit 0; }
+        new=$(ssh-keyscan -T 10 "$n" 2>/dev/null) || true
+        [ -n "$new" ] || { echo none; exit 0; }
+        old=$(grep "^$a " "$f" | awk '{print $2" "$3}' | sort)
+        nk=$(printf '%s\n' "$new" | awk '{print $2" "$3}' | sort)
+        [ "$old" = "$nk" ] || { echo differs; exit 0; }
+        {% if not ansible_check_mode %}printf '%s\n' "$new" >> "$f"{% endif %}
+        echo pinned
+      args: { executable: /bin/bash }
+      register: peer_hostkey
+      changed_when: peer_hostkey.stdout | trim == 'pinned'
+      check_mode: false
+      when: peer_address | length > 0
+
+    - name: a tailnet name that answers with another host key is not this machine
+      ansible.builtin.assert:
+        that: peer_hostkey.stdout | default('present') | trim in ['present', 'pinned']
+        fail_msg: >-
+          JOIN STOP {{ nova_join_host }} at the tailnet check: {{ peer_address }} answers with
+          {{ 'no host key' if peer_hostkey.stdout | trim == 'none' else 'a host key that is not the one pinned for ' ~ nova_join_first_address }}
+          ({{ nova_join_known_hosts }}); a person settles which machine this is
+        quiet: true
+      when: not ansible_check_mode
+
+    - name: the tailnet check's receipt
+      ansible.builtin.debug:
+        msg: >-
+          JOIN PEER {{ nova_join_host }} address={{ peer_address }} peer={{ 'online' if peer_row.Online | default(false) else ('WOULD-CHECK' if ansible_check_mode else 'missing') }}
+          hostkey={{ 'WOULD-PIN' if (ansible_check_mode and peer_hostkey.stdout | default('') | trim == 'pinned') else peer_hostkey.stdout | default('none') | trim }}
+
 - name: the seat
   ansible.builtin.import_playbook: seat.yml
+
+- name: the fleet values, granted into the seat (control node)
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    grant_seat: "{{ hostvars[nova_join_host].nova_seat | default(nova_join_host) if nova_join_host in hostvars else nova_join_host }}"
+    # the machine's key as seat.yml read it on the machine: grant pins it, or checks it against the pin
+    grant_pub: "{{ hostvars[nova_join_host].seat_pub | default('') if nova_join_host in hostvars else '' }}"
+  tasks:
+    - name: nova_join_grant is a list of names
+      ansible.builtin.assert:
+        that: nova_join_grant is iterable and nova_join_grant is not string and nova_join_grant is not mapping
+        fail_msg: "JOIN STOP {{ nova_join_host }} at the fleet values: nova_join_grant is a list, as -e '{\"nova_join_grant\": [\"A\", \"B\"]}'"
+        quiet: true
+
+    - name: granting is asked for
+      ansible.builtin.set_fact:
+        grant_asked: "{{ nova_seal_seat is defined and nova_seal_key is defined and (nova_join_grant | length) > 0 }}"
+
+    # grant reads the values from the control seat and writes the new seat's grants file in memory, sealed to the pinned
+    # machine key and the pinned recovery key: no value is an argument or an output, so the task needs no no_log, and a
+    # refusal is one line that names no value
+    - name: "{{ nova_join_grant | join(',') }} granted into the new seat (nova-secrets grant)"
+      ansible.builtin.command:
+        argv: >-
+          {{ [nova_control_secrets, 'grant', nova_join_grant | join(','), '--to', grant_seat, '--pins', nova_seal_pins,
+              '--store', nova_seal_store, '--key', nova_seal_key, '--as', nova_seal_seat, '--sops', nova_control_sops]
+             + (['--pub', grant_pub] if grant_pub is match('^age1') else []) }}
+      register: join_grant
+      changed_when: "'committed' in join_grant.stdout"
+      failed_when: false
+      when: grant_asked and not ansible_check_mode
+
+    - name: a refused grant stops the join with its reason
+      ansible.builtin.fail:
+        msg: >-
+          JOIN STOP {{ nova_join_host }} at the fleet values:
+          {{ join_grant.stderr_lines | select('match', '^(SECRETS GRANT REFUSED|nova-secrets grant:) ') | first | default('rc=' ~ join_grant.rc) }}
+      when: join_grant is not skipped and join_grant.rc != 0
+
+    - name: commits the machine needs that are not pushed yet (its rule, its values)
+      ansible.builtin.command: { argv: [git, -C, "{{ nova_seal_store }}", rev-list, --count, "@{u}..HEAD"] }
+      register: join_ahead
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      when: nova_seal_push | bool
+
+    - name: the store, pushed (the machine pulls its clone next)
+      ansible.builtin.command: { argv: [git, -C, "{{ nova_seal_store }}", push, -q] }
+      when: nova_seal_push | bool and join_ahead.rc | default(1) == 0 and (join_ahead.stdout | default('0') | int) > 0 and not ansible_check_mode
+
+    - name: the grant's receipt
+      ansible.builtin.debug:
+        msg: >-
+          JOIN GRANT {{ grant_seat }}
+          {%- if not grant_asked %} not asked (give nova_seal_seat, the operator's seat, and nova_seal_key, its key)
+          {%- elif ansible_check_mode %} WOULD-GRANT {{ nova_join_grant | join(',') }} from {{ nova_seal_seat }} (check: nothing written)
+          {%- else %} {{ join_grant.stdout | trim | regex_replace('^SECRETS GRANT OK ', '') | regex_replace(';.*$', '') }}{% endif %}
+          {%- if nova_seal_push | bool and join_ahead.rc | default(0) != 0 %} NOTE not pushed: the clone has no upstream (git -C {{ nova_seal_store }} push -u origin HEAD, then run again)
+          {%- elif nova_seal_push | bool and (join_ahead.stdout | default('0') | int) > 0 %} pushed={{ 'WOULD-PUSH' if ansible_check_mode else join_ahead.stdout | trim }}{% endif %}
+
+- name: the store, pulled on the machine
+  hosts: "{{ nova_join_host | default('!all') }}"
+  gather_facts: true
+  gather_subset: [min]
+  pre_tasks:
+    - name: the control node's recovery pin
+      ansible.builtin.stat: { path: "{{ nova_seal_pins }}/recovery.pub" }
+      delegate_to: localhost
+      become: false
+      register: join_rec_pin
+      when: ansible_os_family != 'Windows'
+
+    - name: the machine's pin directory (private)
+      ansible.builtin.file: { path: "{{ nova_secrets_pins }}", state: directory, mode: "0700" }
+      when: ansible_os_family != 'Windows' and join_rec_pin.stat.exists | default(false)
+
+    - name: "the recovery pin on the machine, from the control node's (what its own `set` seals to)"
+      ansible.builtin.copy:
+        src: "{{ nova_seal_pins }}/recovery.pub"
+        dest: "{{ nova_secrets_pins }}/recovery.pub"
+        mode: "0600"
+      when: ansible_os_family != 'Windows' and join_rec_pin.stat.exists | default(false)
+  roles:
+    - role: secrets-refresh
+      when: ansible_os_family != 'Windows'
+  tasks:
+    - name: one pull now, so the check below sees what was pushed (the timer keeps it current)
+      ansible.builtin.command: { argv: ["{{ nova_bin_dir }}/nova-secrets-refresh", "{{ nova_secrets_store }}", "{{ nova_secrets_refresh_log }}"] }
+      changed_when: false
+      failed_when: false
+      when: ansible_os_family != 'Windows' and nova_secrets_refresh | bool and not ansible_check_mode
 
 - name: the join's check
   hosts: "{{ nova_join_host | default('!all') }}"   # no machine named, no host
@@ -331,4 +532,5 @@
           JOIN CHECK {{ inventory_hostname }} peer={{ 'online' if check_peer.Online | default(false) else ('WOULD-CHECK' if ansible_check_mode else 'missing') }}
           {%- if check_who is not skipped %} bus={{ check_who.stdout_lines | first | default('?') }}
           {%- elif nova_bus_redis is not defined %} NOTE bus not checked: no nova_bus_redis (host:port) given
-          {%- else %} NOTE bus not checked: seat {{ nova_seat }} holds no {{ nova_redis_seal_name | default('NOVA_BUS_PASSWORD') }} yet (nova-secrets set it, then run again){% endif %}
+          {%- elif nova_seal_seat is defined and nova_seal_key is defined %} NOTE bus not checked: seat {{ nova_seat }} holds no {{ nova_redis_seal_name | default('NOVA_BUS_PASSWORD') }} in this machine's clone yet (the grant is not pushed, or not pulled here: see JOIN GRANT, then run again)
+          {%- else %} NOTE bus not checked: seat {{ nova_seat }} holds no {{ nova_redis_seal_name | default('NOVA_BUS_PASSWORD') }} yet (give -e nova_seal_seat=<the operator's seat> -e nova_seal_key=<its key> and run again: the join grants it){% endif %}
