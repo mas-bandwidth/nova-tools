@@ -168,3 +168,35 @@ func TestRunnerTokenReadFailsWithItsReason(t *testing.T) {
 		t.Errorf("the refusal does not carry nova-secrets' reason:\n%s", out)
 	}
 }
+
+// check on a real machine: every line is CHECK OK or CHECK MISSING with a fix, and an
+// unset store is missing, so the exit is 1 with the count on stderr.
+func TestCheckOnThisMachine(t *testing.T) {
+	bin := buildFleet(t)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, bin, "check")
+	var env []string
+	for _, e := range os.Environ() {
+		if !strings.HasPrefix(e, "NOVA_SECRETS_") {
+			env = append(env, e)
+		}
+	}
+	cmd.Env = env
+	var o, e bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &o, &e
+	err := cmd.Run()
+	var ee *exec.ExitError
+	if !errors.As(err, &ee) || ee.ExitCode() != 1 || !strings.HasPrefix(e.String(), "CHECK FAILED missing=") {
+		t.Fatalf("check with no store: %v, stderr %q", err, e.String())
+	}
+	for _, line := range strings.Split(strings.TrimSpace(o.String()), "\n") {
+		if !strings.HasPrefix(line, "CHECK OK ") && !(strings.HasPrefix(line, "CHECK MISSING ") && strings.Contains(line, ": ")) {
+			t.Errorf("not a CHECK line: %q", line)
+		}
+	}
+	if !strings.Contains(o.String(), "CHECK MISSING store: export NOVA_SECRETS_STORE=") {
+		t.Errorf("an unset store is not named:\n%s", o.String())
+	}
+	t.Logf("\n%s%s", o.String(), e.String())
+}

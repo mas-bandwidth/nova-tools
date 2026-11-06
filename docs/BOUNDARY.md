@@ -65,10 +65,11 @@ include `boundary` itself (`tests/boundary`, 400).
   (`HOOK OK`, `WHO OK`, `PENDING OK`), the holder and budget in `HOOK WAIT`,
   and an unreachable server said plainly with the reconnect log rate-limited.
 
-- `fleet` 50 -> 815 (2026-11-05): fleet became nova-fleet, a `package main`
-  that embeds the plays and runs them (`fleet/README.md`), and `nova-fleet up`
-  runs them in the one fixed order from nothing to a fleet; 50 was the budget
-  of a `doc.go` with no program.
+- `fleet` 50 -> 1000 (2026-11-05): fleet became nova-fleet, a `package main`
+  that embeds the plays and runs them (`fleet/README.md`); `nova-fleet up` runs
+  them in the one fixed order from nothing to a fleet, and `nova-fleet check`
+  says what the control node lacks and the line that fixes each; 50 was the
+  budget of a `doc.go` with no program.
 
 ## Adding a tool
 

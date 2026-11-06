@@ -34,6 +34,24 @@ python3 -m venv ~/.local/ansible && ~/.local/ansible/bin/pip install ansible-cor
 ansible-galaxy collection install -r <extracted>/requirements.yml   # nova-fleet prints the path when it is missing
 ```
 
+## Fleet with Tailscale, go!
+
+The whole path, in order. Each step's output says what to do next.
+
+1. `nova-fleet check` on the control node: one line per prerequisite, `CHECK OK sops 3.9.1` or `CHECK MISSING
+   age-keygen: sudo apt install -y age` (the fix for this OS, pasteable), then the tailnet, the secrets store, key
+   and seat, and the secrets `up` will read (`--runners URL` adds `gh` and `GITHUB_RUNNER_TOKEN`). Run each fix line,
+   then `nova-fleet check` again until it ends `CHECK OK missing=0` (exit 0; 1 while anything is missing).
+2. Your part in the Tailscale admin console, once ("tailscale" below: the account, `nova-fleet show tailscale-acl`
+   pasted, a tagged pre-authorized auth key stored as `TAILSCALE_AUTHKEY`).
+3. `nova-fleet up --check ...` with your machines, then `nova-fleet up ...` ("up" below).
+
+```
+nova-fleet check
+nova-fleet up --check --tools v2.0.0 store-1=203.0.113.7 web-1=203.0.113.8
+nova-fleet up --tools v2.0.0 store-1=203.0.113.7 web-1=203.0.113.8
+```
+
 ## up
 
 `nova-fleet up` takes a fleet from nothing to running in one fixed order. Its inputs are only what you have: the
@@ -49,7 +67,8 @@ nova-fleet up --tools v2.0.0 --runners https://github.com/OWNER/REPO store-1=203
 1. The Tailscale account and its policy, and a reusable, pre-authorized auth key tagged `tag:nova` (and `tag:runner`
    for runners) ("tailscale" below: what is yours, once).
 2. The control node: ansible-core, `nova-config`, `nova-secrets`, `nova-bus`, `tailscale` (on the tailnet), `psql`,
-   `git`, `sops` and `age` on PATH (`gh` too for runners); a secrets store with this node's seat
+   `git`, `gpg`, `sops`, `age` and `age-keygen` on PATH (`gh` too for runners; `nova-fleet check` lists what is
+   missing with the line that installs it); a secrets store with this node's seat
    ([secrets/SPEC.md](../secrets/SPEC.md)); `NOVA_SECRETS_STORE`, `NOVA_SECRETS_KEY` and `NOVA_SECRETS_SEAT` set.
 3. The key in the seat: `nova-secrets set TAILSCALE_AUTHKEY --as <seat>` (the value on stdin), and for runners
    `GITHUB_RUNNER_TOKEN` as in "github-runners".
@@ -60,7 +79,7 @@ nova-fleet up --tools v2.0.0 --runners https://github.com/OWNER/REPO store-1=203
 
 | # | Step | What runs | Why here |
 |---|---|---|---|
-| 1 | control | every helper and variable above found (all missing ones named at once); `TAILSCALE_AUTHKEY` (and `GITHUB_RUNNER_TOKEN`) read from the seat | a run never starts that a missing secret would stop later |
+| 1 | control | `nova-fleet check`: every helper, the tailnet, the store, key and seat, and `TAILSCALE_AUTHKEY` (and `GITHUB_RUNNER_TOKEN`) read from the seat; anything missing stops the run with its fix line | a run never starts that a missing secret would stop later |
 | 2 | first | on the first machine, from a hand inventory as root: `tailscale` (no address recorded, firewall later), `postgres` and `redis` (their passwords sealed into your seat as `NOVA_PG_PASSWORD` and `NOVA_BUS_PASSWORD`), then `nova-config schema` applied | nova-config's rows live in this PostgreSQL, so it comes before any row |
 | 3 | join | `join` for each machine, the first too (`services,bench`; the others `bench`; `runner` with `--runners`): its row, its login with passwordless sudo, its tailnet name, its firewall, its seat | the store exists now |
 | 4 | store | `git push` of your secrets store, if it has an upstream (else a NOTE) | the new seats reach the machines' clones |

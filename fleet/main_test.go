@@ -198,7 +198,7 @@ func TestRefusals(t *testing.T) {
 		{[]string{"install", "localhost"}, "nova-fleet install: unexpected argument localhost (ansible-playbook arguments go after --); run: nova-fleet install -h\n"},
 		{[]string{"install", "--inventory"}, "nova-fleet install: --inventory wants a file or script; run: nova-fleet install -h\n"},
 		{[]string{"install", "--inventory", "/no/such/inv"}, "nova-fleet install: --inventory /no/such/inv: no such file; run: nova-fleet install --inventory <an existing file or script>\n"},
-		{[]string{"nope"}, "nova-fleet: unknown verb or play nope; verbs: plays, show, up, help; plays: " + strings.Join(plays(tree), ", ") + "; run: nova-fleet help\n"},
+		{[]string{"nope"}, "nova-fleet: unknown verb or play nope; verbs: plays, show, check, up, help; plays: " + strings.Join(plays(tree), ", ") + "; run: nova-fleet help\n"},
 		{[]string{"show"}, "nova-fleet show: want one play or file name; run: nova-fleet show -h\n"},
 		{[]string{"show", "nope"}, "nova-fleet show: no play or file nope (plays: " + strings.Join(plays(tree), ", ") + "); run: nova-fleet show -h\n"},
 		{[]string{"plays", "x"}, "nova-fleet plays: takes no arguments, got x; run: nova-fleet plays -h\n"},

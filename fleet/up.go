@@ -15,7 +15,7 @@ import (
 const upHelp = `nova-fleet up [--check] [--user LOGIN] --tools TAG|DIR [--runners URL [--runner-count N]] <name>=<address>[/<os>/<arch>]...
 
 From nothing to a fleet, in a fixed order (fleet/README.md, "up"):
-  1 control   the helpers on PATH, NOVA_SECRETS_STORE/KEY/SEAT set, and the secrets read
+  1 control   nova-fleet check: the helpers, the tailnet, the store, key and seat, the secrets
   2 first     the first machine named: the tailnet, PostgreSQL, Redis, nova-config's tables
   3 join      every machine joins (the first too): its row, login, tailnet, seat
   4 store     the secrets store pushed, so the machines' clones see their seats
@@ -345,43 +345,12 @@ func runUp(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	// 1. the control node: every helper and input at once, then the secrets read.
-	want := []string{"ansible-playbook", "nova-config", "nova-secrets", "nova-bus", "tailscale", "psql", "git", "sops", "age"}
-	if u.runners != "" {
-		want = append(want, "gh")
-	}
-	u.bin = map[string]string{}
-	var missing []string
-	for _, b := range want {
-		if p, err := lookPath(b); err == nil {
-			u.bin[b] = p
-		} else {
-			missing = append(missing, b)
-		}
-	}
-	for _, e := range []string{"NOVA_SECRETS_STORE", "NOVA_SECRETS_KEY", "NOVA_SECRETS_SEAT"} {
-		if os.Getenv(e) == "" {
-			missing = append(missing, "$"+e)
-		}
-	}
-	if len(missing) > 0 {
-		fmt.Fprintf(stderr, "nova-fleet up: the control node lacks %s; run: nova-fleet up -h, then fleet/README.md \"up\" (what is yours, once)\n", strings.Join(missing, ", "))
+	// 1. the control node: nova-fleet check, every prerequisite and secret at once.
+	if n := u.control(stdout); n > 0 {
+		fmt.Fprintf(stderr, "UP CONTROL FAILED missing=%d; fix each CHECK MISSING line above (nova-fleet check shows them again), then run the same nova-fleet up\n", n)
 		return 2
 	}
-	u.store, u.key, u.seat = os.Getenv("NOVA_SECRETS_STORE"), os.Getenv("NOVA_SECRETS_KEY"), os.Getenv("NOVA_SECRETS_SEAT")
-	read := []string{"TAILSCALE_AUTHKEY"}
-	if u.runners != "" {
-		read = append(read, "GITHUB_RUNNER_TOKEN")
-	}
-	for _, name := range read {
-		_, why, c := outCmd(u.bin["nova-secrets"], u.secrets([]string{name}, "true")[1:], os.Environ())
-		if c != 0 {
-			fmt.Fprintf(stderr, "nova-fleet up: %s cannot be read from seat %s (exit %d): %s; store it: nova-secrets set %s --as %s (the value on stdin)\n",
-				name, u.seat, c, strings.TrimSpace(why), name, u.seat)
-			return 2
-		}
-	}
-	u.say("UP CONTROL OK seat=%s store=%s secrets=%s", u.seat, u.store, strings.Join(read, ","))
+	u.say("UP CONTROL OK seat=%s store=%s", u.seat, u.store)
 
 	dir, err := extract(tree)
 	if err != nil {

@@ -34,10 +34,11 @@ const banner = `nova-fleet: the fleet's Ansible plays, in one binary
 
   nova-fleet plays                  list the plays and what each does
   nova-fleet show <play|file>       print a play (or an embedded file, e.g. tailscale-acl)
+  nova-fleet check [--runners URL]  what this control node lacks, and the line that fixes each
   nova-fleet up [--check] --tools TAG|DIR [--runners URL] <name>=<address>...
                                     from nothing to a fleet, in a fixed order
   nova-fleet <play> [<argument>] [--inventory FILE|SCRIPT] [--check] [--diff] [-- ansible-playbook args]
-  nova-fleet help [plays|show|up|<play>]
+  nova-fleet help [plays|show|check|up|<play>]
 
 A run extracts the plays to a private temporary directory, writes an inventory
 script there that execs nova-config inventory (found on PATH; --inventory names
@@ -58,8 +59,9 @@ Print the text of an embedded play (install prints install.yml) or of another
 top-level embedded file by name (tailscale-acl prints tailscale-acl.json). Payload:
 the file's bytes, on stdout.
 `,
-	"up": upHelp,
-	"help": `nova-fleet help [plays|show|up|<play>]
+	"up":    upHelp,
+	"check": checkHelp,
+	"help": `nova-fleet help [plays|show|check|up|<play>]
 
 Print the banner, or the help of a verb or a play.
 `,
@@ -250,6 +252,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 	switch verb {
 	case "up":
 		return runUp(rest, stdout, stderr)
+	case "check":
+		return runCheck(rest, stdout, stderr)
 	case "plays", "show":
 		if len(rest) > 0 && isHelp(rest[0]) {
 			fmt.Fprint(stdout, verbHelp[verb])
@@ -282,7 +286,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 	if !slices.Contains(all, verb) {
-		fmt.Fprintf(stderr, "nova-fleet: unknown verb or play %s; verbs: plays, show, up, help; plays: %s; run: nova-fleet help\n", verb, strings.Join(all, ", "))
+		fmt.Fprintf(stderr, "nova-fleet: unknown verb or play %s; verbs: plays, show, check, up, help; plays: %s; run: nova-fleet help\n", verb, strings.Join(all, ", "))
 		return 2
 	}
 	return runPlay(verb, rest, stdout, stderr, refuse)
