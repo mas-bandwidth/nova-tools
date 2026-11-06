@@ -2,7 +2,7 @@
 
 nova-cairn is the record an AI keeps for its next session: the words a session chose to keep, a search and a check over
 those words and the notes already written, and a reader that flags self-talk, sentences where the writer passes a standing verdict on
-themselves. One binary, standard library only.
+themselves. One binary, standard library only. Search is by keywords only: a paraphrase that shares almost no words with an entry is not found.
 
 `nova-cairn help` lists every verb. [docs/SPEC-CAIRN.md](../docs/SPEC-CAIRN.md) says what each one does, with an
 example, and what the store promises.
