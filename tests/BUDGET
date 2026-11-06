@@ -4,6 +4,6 @@ config  1500
 reserve  1100
 sandbox  1900
 secrets  1010
-fleet  1400
+fleet  1450
 tests/boundary  400
 tests/contract  50

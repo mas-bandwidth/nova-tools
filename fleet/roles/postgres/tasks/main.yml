@@ -84,7 +84,22 @@
   loop: "{{ nova_pg_roles }}"
   loop_control: { label: "{{ item.name }}" }
   no_log: true
+  failed_when: false
   register: pg_pass
+
+# no_log hides the whole result, the cause with it: a failure is printed with any value redacted
+- name: a password file that could not be made (value redacted)
+  ansible.builtin.debug:
+    msg: "PG PASS {{ item.item.name }} rc={{ item.rc }} {{ (item.stderr | default('') ~ ' ' ~ item.stdout | default('')) | regex_replace('[0-9a-f]{64}', 'REDACTED') | trim | truncate(400) }}"
+  loop: "{{ pg_pass.results }}"
+  loop_control: { label: "{{ item.item.name }}" }
+  when: item.rc | default(0) != 0
+
+- name: every password file is there
+  ansible.builtin.assert:
+    that: pg_pass.results | map(attribute='rc', default=0) | select('ne', 0) | list | length == 0
+    fail_msg: "{{ inventory_hostname }}: a password file could not be made; the redacted cause is above"
+    quiet: true
 
 - name: conf.d/nova.conf (a change restarts the cluster)
   ansible.builtin.template: { src: nova-postgresql.conf.j2, dest: "{{ pg_conf_dir }}/conf.d/nova.conf", owner: postgres, group: postgres, mode: "0644" }
@@ -246,6 +261,21 @@
   loop_control: { label: "{{ item.name }}" }
   when: pg_pw_plan[item.name] != 'current'
   no_log: true
+  failed_when: false
+  register: pg_pw_set
+
+- name: a password that could not be set (the statement and any value redacted)
+  ansible.builtin.debug:
+    msg: "PG PASSWORD {{ item.item.name }} rc={{ item.rc }} {{ (item.stderr | default('') ~ ' ' ~ item.stdout | default('')) | regex_replace(\"PASSWORD '[^']*'\", \"PASSWORD 'REDACTED'\") | regex_replace('[0-9a-f]{64}', 'REDACTED') | trim | truncate(400) }}"
+  loop: "{{ pg_pw_set.results }}"
+  loop_control: { label: "{{ item.item.name }}" }
+  when: item.rc | default(0) != 0
+
+- name: every password was set
+  ansible.builtin.assert:
+    that: pg_pw_set.results | map(attribute='rc', default=0) | select('ne', 0) | list | length == 0
+    fail_msg: "{{ inventory_hostname }}: ALTER ROLE failed; the redacted cause is above"
+    quiet: true
 
 - name: every role answers now
   ansible.builtin.shell: "PGPASSWORD=\"$(tr -d '\\n' < {{ nova_pg_dir }}/{{ item.name }}.pass)\" PGCONNECT_TIMEOUT=5 psql -X -w -qAt -h {{ pg_listen[0] }} -p {{ nova_pg_port }} -U {{ item.name }} -d {{ nova_pg_db }} -c 'select 1'"

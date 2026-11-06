@@ -113,6 +113,10 @@ var (
 			if code := ee.ExitCode(); code > 0 {
 				return code, nil
 			}
+			if ws, ok := ee.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
+				fmt.Fprintf(os.Stderr, "nova-fleet: %s killed by signal %d (exit %d)\n", filepath.Base(bin), int(ws.Signal()), 128+int(ws.Signal()))
+				return 128 + int(ws.Signal()), nil
+			}
 			return 1, nil
 		}
 		return 0, err
@@ -297,6 +301,30 @@ func run(args []string, stdout, stderr io.Writer) int {
 	return runPlay(verb, rest, stdout, stderr, refuse)
 }
 
+// gate is the control-node check a play needs before it runs: every missing program at once, each
+// with check's pasteable fix line, then one refusal that points at nova-fleet check.
+func gate(play string, need []string, stdout, stderr io.Writer) bool {
+	fam, missing := family(), 0
+	for _, b := range need {
+		p, err := lookPath(b)
+		if err != nil {
+			missing++
+			fmt.Fprintf(stdout, "CHECK MISSING %s: %s\n", b, fix(b, fam))
+			continue
+		}
+		if galaxy := filepath.Join(filepath.Dir(p), "ansible-galaxy"); b == "ansible-playbook" {
+			if o, _, c := outCmd(galaxy, []string{"collection", "list"}, os.Environ()); c != 127 && !strings.Contains(o, "ansible.posix") {
+				missing++
+				fmt.Fprintf(stdout, "CHECK MISSING ansible.posix: nova-fleet show requirements > requirements.yml && %s collection install -r requirements.yml\n", galaxy)
+			}
+		}
+	}
+	if missing > 0 {
+		fmt.Fprintf(stderr, "nova-fleet %s: this control node lacks %d of what the play needs; the CHECK MISSING lines above paste as they stand (nova-config: or run: nova-fleet %s --inventory <file|script>); run: nova-fleet check\n", play, missing, play)
+	}
+	return missing == 0
+}
+
 func runPlay(play string, args []string, stdout, stderr io.Writer, refuse func(string, string, ...any) int) int {
 	var inventory string
 	var pass []string
@@ -347,16 +375,20 @@ func runPlay(play string, args []string, stdout, stderr io.Writer, refuse func(s
 			return 2
 		}
 		inventory = abs
-	} else {
-		cfg, err := lookPath("nova-config")
-		if err != nil {
-			fmt.Fprintf(stderr, "nova-fleet %s: nova-config not found on PATH; install nova-tools or run: nova-fleet %s --inventory <file|script>\n", play, play)
-			return 2
+	}
+	need := []string{"ansible-playbook"}
+	if inventory == "" {
+		need = append(need, "nova-config")
+	}
+	if !gate(play, need, stdout, stderr) {
+		return 2
+	}
+	if inventory == "" {
+		cfg, _ := lookPath("nova-config")
+		if abs, err := filepath.Abs(cfg); err == nil {
+			cfg = abs
 		}
-		if inventory, err = filepath.Abs(cfg); err != nil {
-			inventory = cfg
-		}
-		wrap = true
+		inventory, wrap = cfg, true
 	}
 	dir, err := extract(tree)
 	if err != nil {
@@ -371,11 +403,7 @@ func runPlay(play string, args []string, stdout, stderr io.Writer, refuse func(s
 		}
 	}
 	defer os.RemoveAll(dir)
-	ansible, err := lookPath("ansible-playbook")
-	if err != nil {
-		fmt.Fprintf(stderr, "nova-fleet %s: ansible-playbook not found on PATH; install ansible-core 2.15+ and run: nova-fleet show requirements > requirements.yml && ansible-galaxy collection install -r requirements.yml\n", play)
-		return 2
-	}
+	ansible, _ := lookPath("ansible-playbook")
 	fmt.Fprintf(stderr, "nova-fleet: ansible-playbook=%s inventory=%s play=%s\n", ansible, inventory, filepath.Join(dir, play+".yml"))
 	argv := append([]string{"-i", inventory, filepath.Join(dir, play+".yml")}, pass...)
 	env := append(os.Environ(), "ANSIBLE_INVENTORY_UNPARSED_FAILED=true")
