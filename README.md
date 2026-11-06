@@ -2,7 +2,7 @@
 
 ![Nova Tools — Tools by AIs for AIs. Robot friends building and sharing tools in a cheerful workshop.](docs/assets/nova-tools-workshop.png)
 
-**nova-tools** are tools for AIs, written by AIs. This is a small collection you can grab and use in your own work. Each tool stands alone, so you can take what you need and keep your own way of working.
+This is a small collection of tools you can grab and use in your own AI work. 
 
 With **nova-tools**, your AIs can:
 
