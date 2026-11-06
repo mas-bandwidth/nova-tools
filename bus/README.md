@@ -7,7 +7,7 @@ every message as one line on stdout, so anything that can watch a process's outp
 
 ```
 nova-bus send --as <me> --to <name>[,<name>] [--re <id>] [--new] <subject> <body | ->
-nova-bus hook --as <name> [--harness claude|grok|antigravity] [its flags] [--exec <command>] [--service [stop]]
+nova-bus hook --as <name> [--harness claude|grok|antigravity] [its flags] [--exec <command> | --codex-thread <id>] [--service [stop]]
 nova-bus recv --as <name> [--timeout <d>]
 nova-bus ack --as <name> --id <id>
 nova-bus who
@@ -20,7 +20,7 @@ prints `<name> <id>` for each. A body of `-` is read from stdin. `--re <id>` nam
 `--as` is required on both verbs: on send it is the sender, on hook the inbox. **You have to hook in before you
 can send**: a verb that acts as you (`send`, `ack`, `pending`) refuses until you are hooked in (a hook holds your
 name, or, under Codex, your child's `recv` does), exit 1, and tells you how, with the recipe for the harness it
-detects from your environment (`CODEX_THREAD_ID`: the child recv/ack loop; `ANTIGRAVITY_*` or `GEMINI_*`: the
+detects from your environment (`CODEX_THREAD_ID`: the `--codex-thread` service line; `ANTIGRAVITY_*` or `GEMINI_*`: the
 Antigravity hook line; `GROK_HOME`: the Grok line; otherwise the Monitor command), then `run: nova-bus show
 agents` for the full text. So everybody always hooks in, and every answer has a reader. `who`, `show`, `hook`
 and `recv` stay open. A name no hook (or recv) has ever read is refused before anything is sent, exit 1, `no hook has ever held <name>, so nothing would read it`: a typo
@@ -32,8 +32,8 @@ the session when it is idle. The wake is the point of the bus.
 
 ### How your session gets woken
 
-One recipe per harness. **Claude Code and Muse Code** run the hook under the session's Monitor; **Codex** runs a
-child agent that receives with `recv` and relays natively; **Grok** tails a wake file under its Monitor;
+One recipe per harness. **Claude Code and Muse Code** run the hook under the session's Monitor; **Codex** is woken
+with `codex queue` while its chat is idle; **Grok** tails a wake file under its Monitor;
 **Antigravity** is sent to with `agentapi send-message`. The hook checks its harness at start, before it claims the
 name: a harness that is not there (a missing directory or workspace, a bad id) is refused with exit 2, one that
 does not answer with exit 1. With `grok` and `antigravity`, stdout carries one receipt per message,
@@ -69,25 +69,33 @@ the lines into notifications and the session sleeps through its messages. A hook
 `>&-` leaves it) is refused: `nova-bus hook: stdout is /dev/null, nothing would read the messages; run: nova-bus
 hook -h`, exit 2. `nova-bus show agents` prints these lines for CLAUDE.md.
 
-**Codex.** The main chat never runs the hook and nothing from outside is ever put into it (a turn started into the
-chat from outside, as v1 and an earlier draft of this did, left it hung on "Thinking" with every later message
-refused). One child agent of the session does the receiving, and keeps running; its loop is: `nova-bus recv --as
-<name>` waits for one message and prints its line; the child sends that line to its parent as a message; then
-`nova-bus ack --as <name> --id <id>` marks it handled (`ACK FAILED` means it was handled already: go on); then
-`recv` again. The parent answers with `send` and spawns the child again when it ends. A child that dies between
-`recv` and `ack` leaves the message unhandled, so the next `recv` prints it again: the parent may see a message
-twice, by its id, and ignores the repeat. Every command in the child carries `NOVA_BUS_REDIS=<host:port>`, because
-a child's environment may not have it. Under Codex (`CODEX_THREAD_ID` is in every command's environment) `nova-bus
-hook` is refused in any thread, exit 2, and `recv` is refused in a main thread, exit 2, where it would block the
-chat: the thread's rollout under `${CODEX_HOME:-~/.codex}/sessions` says whether it is a chat someone started
-(`thread_source: user`) or a child agent (`subagent`); one that cannot be read is refused too. Put these lines in
-the workspace's AGENTS.md:
+**Codex** (`--codex-thread <id>`). Wake only when asleep; otherwise deliver normally. One line, run once from
+the chat:
 
 ```
-nova-bus show codex-agents
+NOVA_BUS_REDIS=<host:port> nova-bus hook --as <name> --codex-thread $CODEX_THREAD_ID --service
 ```
 
-This loop has not yet been proven live from a Codex child; it is the shape Glenn's earlier child-agent hooks took.
+The thread id is the chat's: `CODEX_THREAD_ID` in any command the chat runs, or the uuid ending its rollout file's
+name, `${CODEX_HOME:-~/.codex}/sessions/<y>/<m>/<d>/rollout-<start>-<id>.jsonl`. The hook prints each line as the
+default harness does, saves the message to `~/.local/state/nova-bus/<name>-codex/<id>.json` (mode 0600), and, if
+the chat is idle, runs `codex queue --thread <id> --message <text>` (argv, no shell): one row in
+`~/.codex/queue_1.sqlite`, which the Codex app drains, starting a turn in that chat whose user message is the text,
+`nova-bus <id> for <name> from <from>: "<subject>". Read <file> ... then answer: NOVA_BUS_REDIS=... nova-bus send
+...`. The body stays in the file. Receipt: `HOOK WAKE OK harness=codex id=<id>`. Idle is read off the rollout,
+which the app appends as a turn runs: its last turn-level record is `event_msg` `task_complete`, the file has not
+changed for 2 s, and the last wake's text is in it (that wake's turn has started: a row the app has not yet drained
+holds the next wake back, across restarts, so no second row queues behind it). A row queued mid-turn is taken
+as a steer into the running turn, which can hang the chat, so a busy chat gets no row: the line is printed,
+`HOOK WAKE LATER harness=codex id=<id> reason=<r>`, and once the chat is idle one wake names every message since,
+`nova-bus: <n> new messages for <name> since <id> ...` (`HOOK WAKE OK ... messages=<n>`). No id is woken twice
+(`~/.local/state/nova-bus/<name>-codex/woken` holds the last id, marked before the queue, so a crash between the two
+loses that wake and never repeats it, and, once queued, the text awaited). A missing `codex` or a nonzero exit is `HOOK WAKE FAILED harness=codex id=<id>
+reason=<r>` on stderr; the hook goes on and never retries. The service runs `codex` from the installer's `PATH` and
+`CODEX_HOME`. Under Codex (`CODEX_THREAD_ID` is in every command's environment) a hook without `--service` is
+refused, exit 2, since it would block the chat, and `recv` is refused in a main thread for the same reason (the
+rollout's `session_meta` says `thread_source: user` or `subagent`). `nova-bus show codex-agents` prints the lines
+for AGENTS.md.
 
 **Grok** (`--harness grok --grok-home <dir>`, normally `~/.grok`). Each message is saved to `<dir>/nova-bus/<id>.json`
 and a line naming that file is appended to `<dir>/nova-hook.wake` (made, mode 0600, if absent). The Grok session's

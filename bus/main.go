@@ -35,8 +35,8 @@ var verbUsage = map[string]string{
       for the harness this runs under. A failed send prints SEND FAILED and
       exits 1; it is never retried.
 `,
-	"hook": `  nova-bus hook --as <name> [--harness <harness> <its flags> | --exec <command>]
-                [--service [stop]]
+	"hook": `  nova-bus hook --as <name> [--harness <harness> <its flags> | --exec <command>
+                | --codex-thread <id>] [--service [stop]]
       Deliver every waiting message for <name>, then each new one as it arrives,
       into the session that runs the hook, waking it when it is idle.
       --exec <command>: run the command (sh -c) for each message, its line on
@@ -45,8 +45,16 @@ var verbUsage = map[string]string{
       delivery (HOOK EXEC OK id=<id> on stdout), and only then is the message
       marked handled. Any other exit is HOOK EXEC FAILED id=<id> exit=<n> on
       stderr and the hook ends, exit 1, the message unhandled for the next hook.
-      Under Codex (CODEX_THREAD_ID set) the hook is refused, exit 2: Codex
-      receives with recv in a child agent (nova-bus show codex-agents).
+      --codex-thread <id>: print each line as claude does, save the message to
+      ~/.local/state/nova-bus/<name>-codex/<id>.json, and wake the Codex chat
+      <id> with codex queue --thread <id> --message <one line naming the file>,
+      only while the chat is idle (its rollout under ~/.codex/sessions ends in
+      task_complete and has settled): HOOK WAKE OK harness=codex id=<id>
+      [messages=<n>]. Busy, nothing is queued (HOOK WAKE LATER id=<id>
+      reason=<r>); once it is idle, one wake names every message since. A
+      failed codex queue is HOOK WAKE FAILED on stderr; the hook goes on, and
+      no id is woken twice. Under Codex (CODEX_THREAD_ID set) the hook runs
+      only with --service, exit 2 otherwise (nova-bus show codex-agents).
       How your session gets woken, per --harness:
         claude (the default): each message is one line on stdout,
           id<TAB>from<TAB>re<TAB>subject<TAB>body (re is - when none; \n, \r,
@@ -54,9 +62,7 @@ var verbUsage = map[string]string{
           RECONNECTED, HOOK BAD). Claude Code and Muse Code run the hook under
           the session's Monitor tool, never with & or into a file: the
           Monitor turns each line into a notification, and that is the wake.
-          Codex never runs it: a child agent loops recv, a message to its
-          parent, ack (the README says how). Refused (exit 2) when stdout is
-          /dev/null.
+          Refused (exit 2) when stdout is /dev/null.
         grok --grok-home <dir>: each message is saved to <dir>/nova-bus/<id>.json
           and a line naming that file is appended to <dir>/nova-hook.wake;
           the session's Monitor runs tail -n 0 -F <dir>/nova-hook.wake first.
@@ -81,8 +87,8 @@ var verbUsage = map[string]string{
       waits for the unit's HOOK OK and prints HOOK SERVICE OK name=<name>
       unit=<unit> log=<log> changed=<bool>. Run again with the same flags, it
       changes nothing; with new ones, it rewrites and restarts the unit.
-      --service stop stops and removes the unit. Not for claude: its wake is
-      the Monitor of the session itself.
+      --service stop stops and removes the unit. Not for claude without
+      --codex-thread: its wake is the Monitor of the session itself.
       One hook per name: a hook that finds the name held waits up to 40 s for
       it to lapse (a restart after a crash), then claims it or, if it is still
       held, exits 1 "name already hooked". On stderr: HOOK HARNESS OK once the
@@ -122,8 +128,8 @@ var verbUsage = map[string]string{
 	"show": `  nova-bus show agents | codex-agents
       Print the lines for your harness's standing instructions file (AGENTS.md,
       CLAUDE.md) that make every fresh session run the hook unasked: agents is
-      the Monitor form (Claude Code, Muse Code); codex-agents the child-agent
-      form (Codex). Nothing else is read or written.
+      the Monitor form (Claude Code, Muse Code); codex-agents the
+      --codex-thread service form (Codex). Nothing else is read or written.
 `,
 	"help": `  nova-bus help [<verb>] | <verb> -h
       Print this, or one verb's usage.
@@ -148,7 +154,7 @@ func usage() string {
 }
 
 // verbs maps each verb to the flags it takes.
-var verbs = map[string][]string{"send": {"as", "to", "re", "new"}, "hook": append([]string{"as", "harness", "service", "exec"}, slices.Sorted(maps.Keys(flagWants))...),
+var verbs = map[string][]string{"send": {"as", "to", "re", "new"}, "hook": append([]string{"as", "harness", "service", "exec", "codex-thread"}, slices.Sorted(maps.Keys(flagWants))...),
 	"recv": {"as", "timeout"}, "ack": {"as", "id"}, "who": {}, "pending": {"as", "list"}, "show": {}}
 
 // Group is the consumer group, and consumer, every hook reads its inbox with.
@@ -285,6 +291,7 @@ func run(ctx context.Context, args []string, env func(string) string, stdin io.R
 	harness := fs.String("harness", "claude", "")
 	service := fs.Bool("service", false, "")
 	command := fs.String("exec", "", "")
+	codexThread := fs.String("codex-thread", "", "")
 	timeout := fs.Duration("timeout", 0, "")
 	id := fs.String("id", "", "")
 	hflags := map[string]*string{}
@@ -378,11 +385,13 @@ func run(ctx context.Context, args []string, env func(string) string, stdin io.R
 		return misuse(stderr, verb, "empty subject")
 	case verb == "hook" && *command != "" && *harness != "claude":
 		return misuse(stderr, verb, "--exec delivers each message to a command of yours; it takes no --harness")
+	case verb == "hook" && *codexThread != "" && (*command != "" || *harness != "claude"):
+		return misuse(stderr, verb, "--codex-thread wakes a Codex chat beside the stdout lines; it takes no --exec or --harness")
 	case verb == "hook" && *command != "" && strings.TrimSpace(*command) == "":
 		return misuse(stderr, verb, "--exec wants a command")
-	case verb == "hook" && *service && !stop && *harness == "claude" && *command == "":
-		return misuse(stderr, verb, "--service with --harness claude wakes nothing: Claude Code's wake is the session's Monitor; run the hook under the Monitor tool, or give --exec a command to run beside the session")
-	case verb == "hook" && !*service && *harness == "claude" && *command == "" && stdoutIsNull(s):
+	case verb == "hook" && *service && !stop && *harness == "claude" && *command == "" && *codexThread == "":
+		return misuse(stderr, verb, "--service with --harness claude wakes nothing: Claude Code's wake is the session's Monitor; run the hook under the Monitor tool, give --exec a command to run beside the session, or --codex-thread a Codex chat to wake")
+	case verb == "hook" && !*service && *harness == "claude" && *command == "" && *codexThread == "" && stdoutIsNull(s):
 		return misuse(stderr, verb, "stdout is /dev/null, nothing would read the messages")
 	}
 	if verb == "show" {
@@ -416,6 +425,10 @@ func run(ctx context.Context, args []string, env func(string) string, stdin io.R
 		var err error
 		if *command != "" {
 			w = execWake{*command, s}
+		} else if *codexThread != "" {
+			if w, err = newCodex(*codexThread, *as, env("NOVA_BUS_REDIS"), env, s, clk, stderr); err != nil {
+				return misuse(stderr, verb, "%v", err)
+			}
 		} else if w, err = newWaker(ctx, *harness, *as, f, s, stderr); err != nil {
 			var se startError
 			if errors.As(err, &se) && se.bad {
@@ -427,6 +440,9 @@ func run(ctx context.Context, args []string, env func(string) string, stdin io.R
 			unitArgs := []string{"hook", "--as", *as, "--harness", *harness}
 			if *command != "" {
 				unitArgs = append(unitArgs, "--exec", *command)
+			}
+			if *codexThread != "" {
+				unitArgs = append(unitArgs, "--codex-thread", *codexThread)
 			}
 			for _, k := range slices.Sorted(maps.Keys(flagWants)) {
 				if slices.Contains(given, k) {
@@ -681,6 +697,13 @@ func hook(ctx context.Context, store Store, name, value string, clk Clock, out, 
 		if gone != nil && gone() {
 			return writeError{errors.New("stdout closed: its reader is gone")}
 		}
+		// A quiet read is when a Codex chat that was busy is seen idle and
+		// woken for what waits (codex.go).
+		if c, ok := w.(*codexWake); ok && len(msgs) == 0 {
+			if _, err := c.poll(ctx, out, stderr); err != nil {
+				return asWrite(err)
+			}
+		}
 		if pending && len(msgs) == 0 {
 			pending = false
 		}
@@ -731,6 +754,9 @@ func (e wakeFailed) Error() string { return e.err.Error() }
 // receipt: HOOK WAKE OK on stdout (confirmed=no when its outcome is
 // unknown), or HOOK WAKE FAILED on stderr and a wakeFailed.
 func deliver(ctx context.Context, w waker, m Msg, out, stderr io.Writer) error {
+	if c, ok := w.(*codexWake); ok {
+		return c.deliver(ctx, m, out, stderr)
+	}
 	if w == nil {
 		if _, err := io.WriteString(out, line(m)); err != nil {
 			return writeError{err}

@@ -189,11 +189,11 @@ func TestVerbsRefuseUntilHookedIn(t *testing.T) {
 	}{
 		{nil, "run `NOVA_BUS_REDIS=127.0.0.1:1 nova-bus hook --as alpha` as the Monitor tool's command; run: nova-bus show agents"},
 		{[]string{"HOME=/h", "TERM_PROGRAM=Muse"}, "run `NOVA_BUS_REDIS=127.0.0.1:1 nova-bus hook --as alpha` as the Monitor tool's command; run: nova-bus show agents"},
-		{[]string{"CODEX_THREAD_ID=t1", "ANTIGRAVITY_CSRF_TOKEN=1"}, "spawn a child agent that loops `NOVA_BUS_REDIS=127.0.0.1:1 nova-bus recv --as alpha`, a message to you, `NOVA_BUS_REDIS=127.0.0.1:1 nova-bus ack --as alpha --id <id>`; run: nova-bus show codex-agents"},
+		{[]string{"CODEX_THREAD_ID=t1", "ANTIGRAVITY_CSRF_TOKEN=1"}, "`NOVA_BUS_REDIS=127.0.0.1:1 nova-bus hook --as alpha --codex-thread $CODEX_THREAD_ID --service`; run: nova-bus show codex-agents"},
 		{[]string{"GROK_HOME=/Users/me/.grok"}, "Monitor: tail -n 0 -F $GROK_HOME/nova-hook.wake, then `NOVA_BUS_REDIS=127.0.0.1:1 nova-bus hook --as alpha --harness grok --grok-home $GROK_HOME --service`; run: nova-bus hook -h"},
 		{[]string{"GROK_HOME=/x", "ANTIGRAVITY_AGENT_PORT=1"}, "`NOVA_BUS_REDIS=127.0.0.1:1 nova-bus hook --as alpha --harness antigravity --antigravity-dir <workspace> --antigravity-session <conversation id> --antigravity-events-dir ~/.gemini/antigravity/nova-bus-alpha --service`; run: nova-bus hook -h"},
 		{[]string{"GEMINI_API_KEY=k", "CLAUDECODE=1", "ANTIGRAVITY_AGENT_PORT=1"}, "run `NOVA_BUS_REDIS=127.0.0.1:1 nova-bus hook --as alpha` as the Monitor tool's command; run: nova-bus show agents"},
-		{[]string{"CLAUDECODE=1", "CODEX_THREAD_ID=t1"}, "spawn a child agent that loops `NOVA_BUS_REDIS=127.0.0.1:1 nova-bus recv --as alpha`, a message to you, `NOVA_BUS_REDIS=127.0.0.1:1 nova-bus ack --as alpha --id <id>`; run: nova-bus show codex-agents"},
+		{[]string{"CLAUDECODE=1", "CODEX_THREAD_ID=t1"}, "`NOVA_BUS_REDIS=127.0.0.1:1 nova-bus hook --as alpha --codex-thread $CODEX_THREAD_ID --service`; run: nova-bus show codex-agents"},
 		{[]string{"GROK_HOME=/g", "CLAUDECODE=1"}, "run `NOVA_BUS_REDIS=127.0.0.1:1 nova-bus hook --as alpha` as the Monitor tool's command; run: nova-bus show agents"},
 		{[]string{"GEMINI_API_KEY=k"}, "run `NOVA_BUS_REDIS=127.0.0.1:1 nova-bus hook --as alpha` as the Monitor tool's command; run: nova-bus show agents"},
 		{[]string{"GEMINI_CLI_CSRF_TOKEN=1"}, "`NOVA_BUS_REDIS=127.0.0.1:1 nova-bus hook --as alpha --harness antigravity --antigravity-dir <workspace> --antigravity-session <conversation id> --antigravity-events-dir ~/.gemini/antigravity/nova-bus-alpha --service`; run: nova-bus hook -h"},
