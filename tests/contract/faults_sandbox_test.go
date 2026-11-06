@@ -24,7 +24,7 @@ func init() {
 			Want: Want{Exit: []int{2}, Reason: []string{"absolute"}}},
 		Fault{Tool: "sandbox", Name: "grant is not an existing directory", Argv: []string{"--read", "{dir}/nodir", "--", "true"},
 			Want: Want{Exit: []int{2}, Reason: []string{"not an existing directory"}}},
-				Fault{Tool: "sandbox", Name: "--net-allow without --net-deny", Argv: []string{"--net-allow", "127.0.0.1:1", "--read", "{dir}", "--", "true"},
+		Fault{Tool: "sandbox", Name: "--net-allow without --net-deny", Argv: []string{"--net-allow", "127.0.0.1:1", "--read", "{dir}", "--", "true"},
 			Want: Want{Exit: []int{2}, Reason: []string{"--net-allow"}}},
 		Fault{Tool: "sandbox", Name: "no command after the flags", Argv: []string{"--read", "{dir}"},
 			Want: Want{Exit: []int{2}, Reason: []string{"command|--"}}},
