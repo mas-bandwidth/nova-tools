@@ -421,7 +421,7 @@ command's own status. On Linux:
 ```text
 sh: 1: cannot create /home/<you>/sandbox-escape.txt: Permission denied
 exit 2
-CHECK OK backend=landlock abi=4 net=enforceable note=landlock abi 4; seccomp available; net-deny landlock_tcp+seccomp; signals scoped to the wall at abi 6+
+CHECK OK backend=landlock abi=4 net=enforceable note=landlock abi 4; seccomp available; net-deny landlock_tcp+seccomp; signals scoped to the wall at abi 6+ next: nova-sandbox probe
 ```
 
 On macOS:
@@ -429,13 +429,15 @@ On macOS:
 ```text
 sh: /Users/<you>/sandbox-escape.txt: Operation not permitted
 exit 1
-CHECK OK backend=sandbox-exec abi=- net=enforceable note=the wall is the profile it applies (/usr/bin/sandbox-exec)
+CHECK OK backend=sandbox-exec abi=- net=enforceable note=the wall is the profile it applies (/usr/bin/sandbox-exec) next: nova-sandbox probe
 ```
 `nova-sandbox probe` tests each of the sandbox's limits on this machine, one
 line per step.
 
 The refusal you will meet first is `nova-sandbox: bad_read: ...` (exit 2): a
-grant is relative or missing, or the command is outside every grant. For a Go
+grant is relative or missing, or the command is outside every grant. A working
+directory outside every grant is `SANDBOX REFUSED reason=cwd` (exit 125, not 2):
+cd into a grant or `--read` that directory. For a Go
 toolchain outside `/usr`, add `--read "$(go env GOROOT)"`. A Go build also needs
 `--env TMPDIR --env GOCACHE --env GOMODCACHE --env GOPROXY`, each set to a path
 inside a `--write` (`GOMODCACHE` inside a `--read`). `HOME` is kept. The others are in

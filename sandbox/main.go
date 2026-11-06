@@ -7,9 +7,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
+	"os/signal"
+	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
+	"syscall"
 )
 
 const runFlags = `  --read <dir>          readable and executable, recursively. Repeatable.
@@ -43,10 +47,15 @@ const usage = `nova-sandbox: run one command inside a kernel-enforced wall.
 
 ` + runFlags + `
 Beyond the system roots, only what you name is reachable. Every path must be absolute,
-exist and be a directory; none is created. The command must lie under a system root,
-a --read or a --write; it runs with argv[0] exactly as you give it. cd into a directory
-the wall grants, and point HOME and TMPDIR inside a --write. Pass TMPDIR with --env;
-PATH, HOME, LANG and TERM are kept, and an unset --env name is refused.
+exist and be a directory. A missing --write names mkdir -p of that path. The command
+must lie under a system root, a --read or a --write; it runs with argv[0] exactly as you
+give it. cd into a directory the wall grants. A working directory outside the system roots
+and every grant is refused (exit 125, not 2): cd <granted dir> or add --read <cwd>.
+Before the command starts, and when that directory is refused, stderr gets one line:
+WALL grants=none net=open, or WALL with the read and write paths and net=open or net=denied.
+If a signal kills the command, nova-sandbox prints command killed by signal N and exits 128+N.
+Point HOME and TMPDIR inside a --write. Pass TMPDIR with --env; PATH, HOME, LANG and TERM
+are kept, and an unset --env name is refused.
 
 show    prints the wall a flag set would apply here, without running anything.
 check   says which backend this machine has and whether it works.
@@ -77,7 +86,7 @@ const checkUsage = `nova-sandbox check: say which backend this machine has and w
 
   nova-sandbox check
 
-One line on stdout: CHECK OK backend=<b> abi=<n> net=enforceable|unavailable note=<text>,
+One line on stdout: CHECK OK backend=<b> abi=<n> net=enforceable|unavailable note=<text> next: nova-sandbox probe,
 or CHECK FAILED backend=<b> abi=<n> reason=<text>. It applies nothing to a command.
 net=unavailable means --net-deny will be refused here.
 
@@ -153,6 +162,8 @@ func run(args []string, stdout, stderr io.Writer, env []string) int {
 		return show(args[1:], stdout, stderr)
 	case clientVerb: // hidden: the probe's act inside the wall
 		return probeClient(args[1:])
+	case applyVerb: // hidden child: exec in place. The parent waits so a signal can be reported.
+		return launch(args[1:], stderr, env, false)
 	}
 	if !strings.HasPrefix(args[0], "-") {
 		return malformed(stderr, "", fmt.Sprintf("unknown verb %s; the verbs are show check probe help (see nova-sandbox help), or flags then -- <cmd>", args[0]))
@@ -161,12 +172,97 @@ func run(args []string, stdout, stderr io.Writer, env []string) int {
 		fmt.Fprint(stdout, usage)
 		return 0
 	}
+	return launch(args, stderr, env, true)
+}
+
+// applyVerb is the hidden child. A parent has to remain so a killed command can be
+// reported; the child still execs in place, and it must not wait or it would loop.
+const applyVerb = "wall-apply"
+
+// launch checks a run. The parent (wait) prints one WALL line and stays up for the
+// command. The child applies the wall and execs. A malformed invocation stays one line
+// and does not get a WALL line; a cwd refusal does, so a silent open network is visible.
+func launch(args []string, stderr io.Writer, env []string, wait bool) int {
 	w, pass, bad := parseAndBuild(args, true)
 	bad = append(bad, missingEnv(env, pass)...)
-	if len(bad) == 0 {
-		bad = execWall(w, passedEnv(env, pass))
+	if w != nil {
+		bad = append(bad, cwdRefusal(w)...)
 	}
-	return report(stderr, "", bad)
+	badUse := slices.ContainsFunc(bad, func(r refusal) bool { return slices.Contains(usageReasons, r.reason) })
+	if wait && w != nil && !badUse {
+		fmt.Fprintln(stderr, wallLine(w))
+	}
+	if len(bad) > 0 {
+		return report(stderr, "", bad)
+	}
+	kept := passedEnv(env, pass)
+	if !wait {
+		return report(stderr, "", execWall(w, kept))
+	}
+	return supervise(args, kept, stderr)
+}
+
+// cwdRefusal resolves the working directory and refuses one outside the wall.
+func cwdRefusal(w *wall) []refusal {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return []refusal{refuse("cwd", "the working directory could not be read: %v", err)}
+	}
+	if resolved, err := filepath.EvalSymlinks(cwd); err == nil {
+		cwd = resolved
+	}
+	if r, ok := outsideCwd(cwd, w, runtime.GOOS); ok {
+		return []refusal{r}
+	}
+	return nil
+}
+
+// signalText is what stderr gets when signal n kills the command. The exit is 128+n.
+func signalText(n int) string {
+	return fmt.Sprintf("nova-sandbox: command killed by signal %d (exit %d)", n, 128+n)
+}
+
+// supervise runs the hidden child and returns the command's status. A signalled child
+// is reported from here; SIGINT and SIGTERM are passed to the child's process group
+// so the waiter can outlive them and still print the line.
+func supervise(args []string, env []string, stderr io.Writer) int {
+	self, err := os.Executable()
+	if err != nil {
+		return report(stderr, "", []refusal{refuse("sandbox_failed", "this binary could not be found: %v", err)})
+	}
+	cmd := exec.Command(self, append([]string{applyVerb}, args...)...)
+	cmd.Stdin, cmd.Stdout, cmd.Stderr, cmd.Env = os.Stdin, os.Stdout, os.Stderr, env
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err = cmd.Start(); err != nil {
+		return report(stderr, "", []refusal{refuse("sandbox_failed", "the command could not be started: %v", err)})
+	}
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
+	done := make(chan struct{})
+	go func() {
+		select {
+		case s := <-sigs:
+			if sig, ok := s.(syscall.Signal); ok {
+				syscall.Kill(-cmd.Process.Pid, sig)
+			}
+		case <-done:
+		}
+	}()
+	err = cmd.Wait()
+	close(done)
+	signal.Stop(sigs)
+	if ee, ok := err.(*exec.ExitError); ok {
+		if ws, ok := ee.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
+			n := int(ws.Signal())
+			fmt.Fprintln(stderr, signalText(n))
+			return 128 + n
+		}
+		return ee.ExitCode()
+	}
+	if err != nil {
+		return report(stderr, "", []refusal{refuse("sandbox_failed", "the command could not be started: %v", err)})
+	}
+	return 0
 }
 
 // beforeDashes is args up to the first --: a -h after it belongs to the command.
@@ -292,7 +388,7 @@ func check(stdout io.Writer) int {
 	if !netOK {
 		net = "unavailable"
 	}
-	fmt.Fprintf(stdout, "CHECK OK backend=%s abi=%s net=%s note=%s\n", backendName, abi, net, note)
+	fmt.Fprintf(stdout, "CHECK OK backend=%s abi=%s net=%s note=%s next: nova-sandbox probe\n", backendName, abi, net, note)
 	return 0
 }
 

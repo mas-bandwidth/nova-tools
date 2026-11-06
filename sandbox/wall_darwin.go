@@ -10,9 +10,8 @@ import (
 )
 
 // The wall on macOS is a sandbox-exec profile filled for this one run and passed inline
-// with -p, so no profile file exists to be replaced or left behind. sandbox-exec is
-// exec'd in place and execs the command in place, so no tool process stays behind and
-// the command's exit status is the tool's.
+// with -p, so no profile file exists to be replaced or left behind. The child execs
+// sandbox-exec in place; the parent waits so a killed command can be reported.
 const backendName = "sandbox-exec"
 
 func sandboxExec() (string, bool) {
