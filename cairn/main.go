@@ -18,8 +18,7 @@ import (
 	"unicode/utf8"
 )
 
-const intro = `nova-cairn: the record an AI keeps for its next session: kept words, keyword search, and a self-talk check. Plain files; nothing is ever sent anywhere. Search is by
-keywords only: a paraphrase that shares almost no words with the entry is not found.
+const intro = `nova-cairn: the record an AI keeps for its next session: kept words, keyword search, and a self-talk check. Plain files; nothing is ever sent anywhere. Search is by keywords only: a paraphrase that shares almost no words with the entry is not found.
 `
 const exits = "Exit 0 done, 1 a finding or a conflict, 2 could not run. Every refusal ends with what to run next.\n"
 
@@ -29,38 +28,31 @@ var groups = []struct {
 	verbs        [][2]string // verb path, synopsis after "nova-cairn "
 }{
 	{"Keep a session's words (a store is a directory you name):", `
-      Append to a session that does not exist yet opens it (publish=manual unless named); only open creates a store. Every write is synced to disk before OK. An entry is never overwritten: the same id
-      with the same words is duplicate=true (exit 0), with other words a conflict (exit 1).
-      The words, new ids and source must be valid UTF-8, so what is accepted is kept
-      byte for byte. receipt takes --store, --session and --entry (no stamp) and reads that entry
-      back as stored. --publish records a policy for later: nothing is sent, and append and
-      receipt say published=false. --max <n> caps each kind index lists (default 20, 0
-      lists all); a capped kind ends with one MORE line for that kind.`, [][2]string{
+      Append to a session that does not exist yet opens it (publish=manual unless named); only open creates a store. Every write is synced to disk before OK. An entry is never overwritten: the same id with the same
+words is duplicate=true (exit 0), with other words a conflict (exit 1). The words, new ids and source must be valid UTF-8, so what is accepted is kept byte for byte. receipt takes --store, --session and
+--entry (no stamp) and reads that entry back as stored. --publish records a policy for later: nothing is sent, and append and receipt say published=false. --max <n> caps each kind index lists (default 20, 0
+lists all); a capped kind ends with one MORE line for that kind.
+`, [][2]string{
 		{"open", "open    --store <dir> --session <id> --publish <never|manual|deferred|immediate> [--source <ptr>]"},
 		{"append", "append  --store <dir> --session <id> --entry <id> (--text <words> | --file <path|->) [--source <ptr>] [--publish <policy>]"},
 		{"index", "index   --store <dir> [--session <id>] [--max <n>]"},
 		{"receipt", "receipt --store <dir> --session <id> --entry <id> [--text]"},
 	}},
 	{"Search and check the memory (each --root: .md notes, and the entries of any store in it):", `
-      Every memory verb takes --exclude <glob>, repeatable, and writes nothing; the index is
-      built in memory each run. search prints the k best files for the words, one hit each:
-      its best paragraph. A hit from a store entry names its store, session, entry and
-      stamp, for receipt. check does the same for each paragraph of a draft, and never
-      judges. verify (notes only) always needs --links gate or info; --links info with no
-      --coverage and no --frontmatter is refused, since it could not fail. It exits 1 on a
-      note no index names (--coverage), a link to a missing file, a note with no
-      frontmatter name: (--frontmatter), or with --links gate a [[wikilink]] to nothing.
-      A capped kind of finding ends with one MORE line for that kind (--fail-max).
-      Its globs match paths relative to --root (notes/*.md, not ~/memory/notes/*.md).`, [][2]string{
+      Every memory verb takes --exclude <glob>, repeatable, and writes nothing; the index is built in memory each run. search prints the k best files for the words, one hit each: its best paragraph. A hit from a
+store entry names its store, session, entry and stamp, for receipt. check does the same for each paragraph of a draft, and never judges. verify (notes only) always needs --links gate or info; --links info with
+no --coverage and no --frontmatter is refused, since it could not fail. It exits 1 on a note no index names (--coverage), a link to a missing file, a note with no frontmatter name: (--frontmatter), or with
+--links gate a [[wikilink]] to nothing. A capped kind of finding ends with one MORE line for that kind (--fail-max). Its globs match paths relative to --root (notes/*.md, not ~/memory/notes/*.md).
+`, [][2]string{
 		{"memory search", "memory search --root <dir>... --channels bm25 --k <n> <words>..."},
 		{"memory check", "memory check  --root <dir>... --channels bm25 --k <n> <file|->"},
 		{"memory stats", "memory stats  --root <dir>..."},
 		{"memory verify", "memory verify --root <dir> --links <gate|info> [--coverage <A:B>]... [--frontmatter <glob>]...\n                           [--exempt <prefix>]... [--fail-max <n>]"},
 	}},
 	{"Check self-talk:", `
-      Flags a first-person claim with a word of failure (STANDING), or a standing verdict in
-      neutral words (RANKING, FORECLOSURE, VERDICT-IDIOM, TRAIT). A dated claim is a record,
-      never flagged. Exit 1 on findings. A green clears the known shapes, never the file.`, [][2]string{
+      Flags a first-person claim with a word of failure (STANDING), or a standing verdict in neutral words (RANKING, FORECLOSURE, VERDICT-IDIOM, TRAIT). A dated claim is a record, never flagged. Exit 1 on findings.
+A green clears the known shapes, never the file.
+`, [][2]string{
 		{"self-talk", "self-talk [--skip <basename>]... [--rule-doc <basename>]... [--max <n>] <file|->..."},
 	}},
 	{"Other:", `
