@@ -42,6 +42,8 @@ The whole path, in order. Each step's output says what to do next.
    age-keygen: sudo apt install -y age` (the fix for this OS, pasteable), then the tailnet, the secrets store, key
    and seat, and the secrets `up` will read (`--runners URL` adds `gh` and `GITHUB_RUNNER_TOKEN`). Run each fix line,
    then `nova-fleet check` again until it ends `CHECK OK missing=0` (exit 0; 1 while anything is missing).
+   The sops it installs is the one the plays pin: one line, `nova_sops_version` in `group_vars/all.yml` (with its
+   digests in `nova_sops_sha256`), sets the version for `check`'s install line and for `join` alike.
 2. Your part in the Tailscale admin console, once ("tailscale" below: the account, `nova-fleet show tailscale-acl`
    pasted, a tagged pre-authorized auth key stored as `TAILSCALE_AUTHKEY`).
 3. `nova-fleet up --check ...` with your machines, then `nova-fleet up ...` ("up" below).
