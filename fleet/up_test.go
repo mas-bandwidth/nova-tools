@@ -65,7 +65,7 @@ func (a *fakeAPI) call(method, path, ctype, ifMatch string, body []byte) (int, s
 		return 200, "", nil, nil
 	case method == "POST" && path == "/tailnet/-/keys":
 		a.keys++
-		return 200, "", []byte(`{"key":"tskey-auth-SECRET` + strconv.Itoa(a.keys) + `"}`), nil
+		return 200, "", []byte(`{"key":"` + fakeKey("auth", "SECRET") + strconv.Itoa(a.keys) + `"}`), nil
 	case method == "POST" && strings.HasPrefix(path, "/device/"):
 		return 200, "", nil, nil
 	}
@@ -100,7 +100,7 @@ func (f *upFake) install(t *testing.T) {
 		f.api = &fakeAPI{policy: "{}"}
 	}
 	newTailnet = func(key string) tsAPI {
-		if key != "tskey-api-kSECRET" {
+		if key != fakeKey("api", "kSECRET") {
 			t.Errorf("the API client got %q", key)
 		}
 		return f.api
@@ -150,7 +150,7 @@ func (f *upFake) install(t *testing.T) {
 		case strings.Contains(line, "-- true") && f.readErr != "":
 			return "", f.readErr, 125
 		case strings.HasSuffix(line, `printf %s "$TAILSCALE_API_KEY"`):
-			return "tskey-api-kSECRET\n", "", 0
+			return fakeKey("api", "kSECRET") + "\n", "", 0
 		case strings.Contains(line, "nova-secrets names"):
 			return f.names, "", 0
 		case strings.Contains(line, "machine list --json"):
@@ -265,7 +265,7 @@ func TestUpControlRefusals(t *testing.T) {
 	}
 	code, out, errs := runArgs("up", "--tools", "v1.0.0", "--runners", "https://github.com/o/r", "a=1.2.3.4")
 	for _, w := range []string{"CHECK MISSING psql: ", "CHECK MISSING gh: ", "CHECK MISSING key: age-keygen -o " + filepath.Join(os.Getenv("HOME"), ".config", "nova-secrets", "control.key") + " && nova-secrets seat add control \"$(age-keygen -y ",
-		"CHECK MISSING TAILSCALE_API_KEY: nova-secrets set TAILSCALE_API_KEY  # paste the token when it asks: one line tskey-api-..., from the Tailscale admin console > Settings > Keys > Generate API access token, once the lines above are done\n", "CHECK OK sops 1.2.3"} {
+		"CHECK MISSING TAILSCALE_API_KEY: nova-secrets set TAILSCALE_API_KEY  # paste the token when it asks: one line " + fakeKey("api", "") + "..., from the Tailscale admin console > Settings > Keys > Generate API access token, once the lines above are done\n", "CHECK OK sops 1.2.3"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout lacks %q:\n%s", w, out)
 		}
@@ -276,7 +276,7 @@ func TestUpControlRefusals(t *testing.T) {
 	f = &upFake{readErr: "SECRETS EXEC REFUSED name=TAILSCALE_API_KEY reason=not-in-seat\n"}
 	f.install(t)
 	code, out, errs = runArgs("up", "--check", "--tools", "v1.0.0", "a=1.2.3.4")
-	if code != 2 || !strings.Contains(out, "CHECK MISSING TAILSCALE_API_KEY: nova-secrets set TAILSCALE_API_KEY  # paste the token when it asks: one line tskey-api-..., from the Tailscale admin console > Settings > Keys > Generate API access token; the read said: SECRETS EXEC REFUSED name=TAILSCALE_API_KEY reason=not-in-seat\n") {
+	if code != 2 || !strings.Contains(out, "CHECK MISSING TAILSCALE_API_KEY: nova-secrets set TAILSCALE_API_KEY  # paste the token when it asks: one line "+fakeKey("api", "")+"..., from the Tailscale admin console > Settings > Keys > Generate API access token; the read said: SECRETS EXEC REFUSED name=TAILSCALE_API_KEY reason=not-in-seat\n") {
 		t.Errorf("a refused secret read under --check: code %d stdout %q stderr %q", code, out, errs)
 	}
 	if len(f.plays()) != 0 {
@@ -325,11 +325,11 @@ func TestUpOrder(t *testing.T) {
 		"gh auth status",
 		"ssh -o BatchMode=yes -o ConnectTimeout=10 root@203.0.113.7 true",
 		"ssh -o BatchMode=yes -o ConnectTimeout=10 root@203.0.113.8 true",
-		"ansible-playbook -i first.ini tailscale.yml -e nova_tailscale_record_address=false -e nova_firewall=false [env TAILSCALE_AUTHKEY=tskey-auth-SECRET1]",
+		"ansible-playbook -i first.ini tailscale.yml -e nova_tailscale_record_address=false -e nova_firewall=false [env TAILSCALE_AUTHKEY=" + fakeKey("auth", "SECRET1") + "]",
 		"ansible-playbook -i first.ini postgres.yml -e nova_seal_store=" + f.store + " -e nova_seal_seat=control -e nova_seal_key=" + f.key + " -e nova_store_hosts=first\n",
 		"ansible-playbook -i first.ini redis.yml -e nova_seal_store=",
 		"nova-secrets exec --only NOVA_PG_PASSWORD -- /bin/ansible-playbook -i inventory join.yml -e nova_join_host=first -e nova_join_user=nova -e nova_join_address=203.0.113.7 -e nova_join_root_user=root -e nova_join_os=linux -e nova_join_arch=amd64 -e nova_join_roles=services,bench,runner -e nova_seal_store=" + f.store + " -e nova_bus_redis=first.ts.example:6379",
-		"-e nova_join_host=second -e nova_join_user=nova -e nova_join_address=203.0.113.8 -e nova_join_root_user=root -e nova_join_os=linux -e nova_join_arch=amd64 -e nova_join_roles=bench,runner -e nova_seal_store=" + f.store + " -e nova_bus_redis=first.ts.example:6379 [env TAILSCALE_AUTHKEY=tskey-auth-SECRET2]",
+		"-e nova_join_host=second -e nova_join_user=nova -e nova_join_address=203.0.113.8 -e nova_join_root_user=root -e nova_join_os=linux -e nova_join_arch=amd64 -e nova_join_roles=bench,runner -e nova_seal_store=" + f.store + " -e nova_bus_redis=first.ts.example:6379 [env TAILSCALE_AUTHKEY=" + fakeKey("auth", "SECRET2") + "]",
 		"nova-secrets exec --only NOVA_BUS_PASSWORD -- true",
 		"ssh -o BatchMode=yes nova@first.ts.example sh -c 'PATH=$HOME/.local/bin:/opt/homebrew/bin:$PATH age-keygen -y $HOME/.config/nova-secrets/first.key'",
 		"nova-secrets grant NOVA_BUS_PASSWORD --to first --pub age1fakenova@first.ts.example\n",
@@ -741,7 +741,7 @@ func TestCheckSecretsDefaults(t *testing.T) {
 	}
 	code, out, errs = runArgs("check")
 	if code != 1 || errs != "CHECK FAILED missing=1\n" || strings.Count(out, "CHECK MISSING") != 1 || strings.Contains(out, "CHECK OK store") ||
-		!strings.Contains(out, "CHECK MISSING TAILSCALE_API_KEY: nova-secrets set TAILSCALE_API_KEY  # paste the token when it asks: one line tskey-api-..., from the Tailscale admin console > Settings > Keys > Generate API access token; on this fresh node it makes the secrets store, the keys and the seat first\n") {
+		!strings.Contains(out, "CHECK MISSING TAILSCALE_API_KEY: nova-secrets set TAILSCALE_API_KEY  # paste the token when it asks: one line "+fakeKey("api", "")+"..., from the Tailscale admin console > Settings > Keys > Generate API access token; on this fresh node it makes the secrets store, the keys and the seat first\n") {
 		t.Errorf("fresh: code %d stderr %q\n%s", code, errs, out)
 	}
 	// part there (a store, no key): the missing one is named with the line that makes it
