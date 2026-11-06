@@ -13,7 +13,7 @@ import (
 )
 
 // A waker puts one message into a session, waking it if it is idle: the wake
-// is the bus (docs/SPEC-BUS.md, Waking a session). Claude Code has none, its
+// is the bus (bus/README.md, How your session gets woken). Claude Code has none, its
 // Monitor turns each stdout line into a notification; every other harness
 // has one, and stdout carries its receipts. A failed wake is never retried:
 // the message stays unhandled for the next hook (tla/Bus.tla, WakeFails).
