@@ -118,7 +118,7 @@ Crash ==
 
 Restart ==
   /\ ~up
-  /\ up' = TRUE /\ mode' = IF Broken = "newfirst" THEN "new" ELSE "pending" /\ after' = 0
+  /\ up' = TRUE /\ mode' = (IF Broken = "newfirst" THEN "new" ELSE "pending") /\ after' = 0
   /\ UNCHANGED <<sent, delivered, pend, acked, cur, stage, crashes, printed, badPrint>>
 
 Next == Send \/ ReadPending \/ ReadNew \/ Print \/ FailWake \/ Ack \/ Crash \/ Restart

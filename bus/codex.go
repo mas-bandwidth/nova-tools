@@ -77,10 +77,14 @@ func connectCodex(ctx context.Context, socket string) (frames, error) {
 			return nil, err
 		}
 		uid, _, ok := statOf(fi)
-		if !ok || int(uid) != os.Getuid() || fi.Mode()&os.ModeSymlink != 0 || fi.Mode().Perm()&0o022 != 0 {
-			return nil, fmt.Errorf("%s is not this user's private file", p)
-		}
-		if p == socket && fi.Mode()&os.ModeSocket == 0 {
+		switch {
+		case !ok || int(uid) != os.Getuid():
+			return nil, fmt.Errorf("%s is not this user's", p)
+		case fi.Mode()&os.ModeSymlink != 0:
+			return nil, fmt.Errorf("%s is a symlink", p)
+		case fi.Mode().Perm()&0o022 != 0:
+			return nil, fmt.Errorf("%s is group or world writable (mode %o)", p, fi.Mode().Perm())
+		case p == socket && fi.Mode()&os.ModeSocket == 0:
 			return nil, fmt.Errorf("%s is not a socket", p)
 		}
 	}
