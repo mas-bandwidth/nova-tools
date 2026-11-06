@@ -81,13 +81,3 @@ nova_join_hostname: true
 nova_control_secrets: nova-secrets
 nova_control_config: nova-config
 nova_control_sops: sops
-
-# The bus a machine's services and join.yml's check reach: nova_bus_redis
-# (host:port) has no default; the user is the redis.yml ACL user nova-bus
-# sends, its password the seat's NOVA_BUS_PASSWORD.
-nova_bus_user: bus
-
-# The machines meet over Tailscale (tailscale.yml, join.yml). false: they are on a
-# private network of your own; give it on the command line (-e nova_tailnet=false),
-# since tailscale.yml reads it before any host's variables.
-nova_tailnet: true

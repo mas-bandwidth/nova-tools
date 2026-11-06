@@ -3,33 +3,40 @@
 #
 #   1. on the machine: the seat key <nova_secrets_key_dir>/<seat>.key made by age-keygen where it is missing, never over
 #      an existing file and never copied; only its public half leaves the machine.
-#   2. on the control node, in the store clone nova_seal_store: where .sops.yaml has no rule for the seat,
+#   2. on the control node, in the store clone nova_seal_store (each machine's task delegated there, one at a time):
+#      where .sops.yaml has no rule for the seat,
 #      `nova-secrets seat add <seat> <public half> --store <clone>`, which writes the rule and commits it. A rule that
 #      names another key (a rebuilt machine's old seat) stops the run by name: replacing a seat is a person's call.
 #      Pushing the commit, and setting the seat's values with nova-secrets set, are the operator's.
 #
 #   ansible-playbook -i ./inventory fleet/seat.yml -l <machine> -e nova_seal_store=<store clone> --check --diff
 #   ansible-playbook -i ./inventory fleet/seat.yml -l <machine> -e nova_seal_store=<store clone>
-- name: the seat key, made on the machine
+- name: the seat key, made on the machine, and its rule in the store
   hosts: "{{ nova_join_host | default('all') }}"
   gather_facts: true
   gather_subset: [min]
   tasks:
+    - name: the store clone is given
+      ansible.builtin.assert:
+        that: nova_seal_store is defined and nova_seal_store | length > 0
+        fail_msg: "SEAT STOP: -e nova_seal_store=<the control node's clone of the secrets store> (docs/FLEET.md, \"seat.yml\")"
+        quiet: true
+
     - name: the control node has what the run needs
       ansible.builtin.include_role: { name: preflight }
       vars:
-        preflight_control: "{{ [{'cmd': nova_control_secrets, 'for': 'the seat rule: nova-secrets seat add'}, {'cmd': 'git', 'for': 'nova-secrets commits the store'}] }}"
+        preflight_control: "{{ [{'cmd': nova_control_secrets, 'for': 'the seat rule: nova-secrets seat add', 'v2': true}, {'cmd': 'git', 'for': 'nova-secrets commits the store'}] }}"
 
     - name: an age-keygen on the machine
       ansible.builtin.command: "{{ nova_age_keygen }} --version"
-      register: seat_keygen
+      register: seat_keygen_version
       changed_when: false
       failed_when: false
       check_mode: false
 
     - name: age-keygen is there (join.yml installs it on Linux, brew install age on macOS)
       ansible.builtin.assert:
-        that: seat_keygen.rc == 0 or ansible_check_mode
+        that: seat_keygen_version.rc == 0 or ansible_check_mode
         fail_msg: "SEAT STOP {{ inventory_hostname }}: no {{ nova_age_keygen }} on the machine (nova_age_keygen); install age, then run again"
         quiet: true
 
@@ -55,7 +62,7 @@
       changed_when: false
       check_mode: false
 
-    - name: the public half, kept for the control node
+    - name: the public half
       ansible.builtin.set_fact:
         seat_pub: "{{ seat_pub_read.stdout | trim }}"
 
@@ -63,57 +70,41 @@
       ansible.builtin.debug:
         msg: "SEAT PUB {{ nova_seat }} {{ seat_pub if seat_pub is match('^age1') else ('WOULD-MAKE (check: nothing changed)' if ansible_check_mode else 'none') }}"
 
-- name: the seat's rule in the store (control node)
-  hosts: localhost
-  connection: local
-  gather_facts: false
-  tasks:
-    - name: the store clone is given
-      ansible.builtin.assert:
-        that: nova_seal_store is defined and nova_seal_store | length > 0
-        fail_msg: "SEAT STOP: -e nova_seal_store=<the control node's clone of the secrets store> (docs/FLEET.md, \"seat.yml\")"
-        quiet: true
-
-    - name: the store's rules
+    # ---- the rule, on the control node, for this machine (so -l <machine> adds it too) ----
+    - name: the store's rules (control node)
       ansible.builtin.slurp: { src: "{{ nova_seal_store }}/.sops.yaml" }
+      delegate_to: localhost
+      become: false
       register: seat_sops_yaml
 
     # nova-secrets seat add writes one rule per seat: path_regex ^<seat>\.yaml$, age "<seat key>,<recovery key>"
-    - name: the rule of each machine's seat, and what it would take
+    - name: this seat's rule, and what it would take
       ansible.builtin.set_fact:
-        seat_plan: >-
+        seat_state: >-
           {%- set rules = ((seat_sops_yaml.content | b64decode | from_yaml) or {}).get('creation_rules') or [] -%}
-          {%- set out = [] -%}
-          {%- for h in groups['all'] if hostvars[h].seat_pub is defined -%}
-          {%-   set seat = hostvars[h].nova_seat -%}
-          {%-   set pub = hostvars[h].seat_pub -%}
-          {%-   set rule = rules | selectattr('path_regex', 'defined') | selectattr('path_regex', 'equalto', '^' ~ seat ~ '\\.yaml$') | list -%}
-          {%-   set have = ((rule | first).get('age', '') | string).split(',') | first | trim if rule else '' -%}
-          {%-   set state = 'present' if (rule and have == pub) else ('differs' if rule else ('add' if pub is match('^age1') else 'no-key')) -%}
-          {%-   set _ = out.append({'host': h, 'seat': seat, 'pub': pub, 'state': state}) -%}
-          {%- endfor -%}
-          {{ out }}
+          {%- set rule = rules | selectattr('path_regex', 'defined') | selectattr('path_regex', 'equalto', '^' ~ nova_seat ~ '\\.yaml$') | list -%}
+          {%- set have = ((rule | first).get('age', '') | string).split(',') | first | trim if rule else '' -%}
+          {{ 'present' if (rule and have == seat_pub) else ('differs' if rule else ('add' if seat_pub is match('^age1') else 'no-key')) }}
 
     - name: a rule that names another key is a person's to replace
       ansible.builtin.fail:
         msg: >-
-          SEAT STOP {{ item.host }}: .sops.yaml in {{ nova_seal_store }} has a rule for {{ item.seat }} with another key (a
-          rebuilt machine?); this machine's key is {{ item.pub }}. Remove the old rule by hand, commit, and run again.
-      loop: "{{ seat_plan | selectattr('state', 'equalto', 'differs') | list }}"
-      loop_control: { label: "{{ item.seat }}" }
+          SEAT STOP {{ inventory_hostname }}: .sops.yaml in {{ nova_seal_store }} has a rule for {{ nova_seat }} with another
+          key (a rebuilt machine?); this machine's key is {{ seat_pub }}. Remove the old rule by hand, commit, and run again.
+      when: seat_state == 'differs'
 
-    - name: the seat's rule, added and committed (nova-secrets seat add)
+    - name: the seat's rule, added and committed (control node, one machine at a time)
       ansible.builtin.command:
-        argv: ["{{ nova_control_secrets }}", seat, add, "{{ item.seat }}", "{{ item.pub }}", --store, "{{ nova_seal_store }}"]
-      loop: "{{ seat_plan | selectattr('state', 'equalto', 'add') | list }}"
-      loop_control: { label: "{{ item.seat }}" }
+        argv: ["{{ nova_control_secrets }}", seat, add, "{{ nova_seat }}", "{{ seat_pub }}", --store, "{{ nova_seal_store }}"]
+      delegate_to: localhost
+      become: false
+      throttle: 1
+      when: seat_state == 'add'
 
     - name: the seat's receipt
       ansible.builtin.debug:
         msg: >-
-          SEAT {{ item.seat }} host={{ item.host }} rule={{ {'present': 'present', 'add': ('WOULD-ADD' if ansible_check_mode else 'ADDED'),
-          'no-key': 'none (no key on the machine yet)'}[item.state] }}{{ (' (check: nothing written)' if ansible_check_mode else
-          '; next: git -C ' ~ nova_seal_store ~ ' push, then nova-secrets set NAME --as ' ~ item.seat ~ ' for each value it holds')
-          if item.state == 'add' else '' }}
-      loop: "{{ seat_plan }}"
-      loop_control: { label: "{{ item.seat }}" }
+          SEAT {{ nova_seat }} host={{ inventory_hostname }} rule={{ {'present': 'present', 'add': ('WOULD-ADD' if ansible_check_mode else 'ADDED'),
+          'no-key': 'none (no key on the machine yet)'}[seat_state] }}{{ (' (check: nothing written)' if ansible_check_mode else
+          '; next: git -C ' ~ nova_seal_store ~ ' push, then nova-secrets set NAME --as ' ~ nova_seat ~ ' for each value it holds')
+          if seat_state == 'add' else '' }}

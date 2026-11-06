@@ -4,17 +4,21 @@
 #   1. the machine row (control node): `nova-config machine add` where the row of nova_join_host is missing, then the
 #      inventory is read again so the plays below find it. A row that exists is never edited; a row whose user differs
 #      from nova_join_user stops the join by name.
-#   2. the login (Linux, as root): the row's user, no password, in nova_join_sudo_group with passwordless sudo (checked
-#      by visudo before it lands), root's authorized_keys copied to it (or the file nova_join_authorized_keys names on
-#      the control node), linger on, the hostname set to the inventory name.
+#   2. the login (Linux, as root over the address given; skipped once the address is the MagicDNS name): rsync (the control node pushes the secrets store with it), the row's user, no
+#      password, in nova_join_sudo_group with passwordless sudo (checked by visudo before it lands), root's
+#      authorized_keys copied to it (or the file nova_join_authorized_keys names on the control node), linger on, the
+#      hostname set to the inventory name.
 #   3. tailscale.yml: Tailscale installed and up with the adopter's tagged auth key, the MagicDNS name recorded as the
 #      machine's address, the firewall closed to everything but the tailnet. From here on the plays reach the machine
-#      over the tailnet. With -e nova_tailnet=false (a private network of the adopter's own) this step and the peer
-#      check are skipped, and the machine keeps the address its row has.
+#      over the tailnet, as the login: a run that finds the row's address already the MagicDNS name (the joined
+#      state) skips 2 and starts here.
 #   4. the tools a seat needs (as the login): the bin directory on the login PATH, and on Linux the pinned age and sops.
 #   5. seat.yml: the seat key made on the machine by age-keygen, its rule added to the secrets store.
-#   6. the check: the control node sees the machine as an online tailnet peer, and `nova-bus who` from the machine
-#      reaches the bus (a NOTE instead when the bus is not configured for it yet).
+#   6. the check: the control node sees the machine as an online tailnet peer. The bus is not checked here (the login
+#      has no nova-bus until the tools are installed); nova-fleet does that after install and refresh.
+#
+# The machine's SSH host key is pinned into the control node's known_hosts at the first connection (the address
+# given), and the MagicDNS name's once tailscale.yml records it.
 #
 # A darwin machine skips 2 (it has no root login: its login and sudo are set up at its console) and takes age and
 # sops from Homebrew. A Windows machine gets 1 and 3 only.
@@ -43,9 +47,10 @@
       ansible.builtin.include_role: { name: preflight }
       vars:
         preflight_control: >-
-          {{ [{'cmd': nova_control_config, 'for': 'the machine row'}, {'cmd': nova_control_secrets, 'for': 'the seat'},
+          {{ [{'cmd': nova_control_config, 'for': 'the machine row', 'v2': true}, {'cmd': nova_control_secrets, 'for': 'the seat', 'v2': true},
               {'cmd': 'git', 'for': 'the seat: nova-secrets commits the store'}]
-             + ([{'cmd': 'tailscale', 'for': 'the check: the control node sees the peer'}] if (nova_tailnet | bool) else []) }}
+             + [{'cmd': 'rsync', 'for': 'the push of the store to the machine'}, {'cmd': 'ssh-keyscan', 'for': 'pinning the host key'},
+                {'cmd': 'tailscale', 'for': 'the check: the control node sees the peer'}] }}
 
     - name: nova-config's store is in the environment
       ansible.builtin.assert:
@@ -102,6 +107,12 @@
     - name: the machine's login
       ansible.builtin.set_fact:
         nova_join_login: "{{ join_row.user if join_row | length > 0 else nova_join_user }}"
+        nova_join_row_address: "{{ join_row.address if join_row | length > 0 else nova_join_address }}"
+
+    - name: the machine's host key, pinned at the first connection
+      ansible.builtin.include_role: { name: hostkey }
+      vars: { hostkey_name: "{{ nova_join_row_address }}" }
+      when: nova_join_row_address | length > 0
 
     - name: the inventory, read again (a new row is a host now)
       ansible.builtin.meta: refresh_inventory
@@ -123,6 +134,17 @@
       ansible.builtin.meta: end_host
       when: (nova_os | default('linux')) != 'linux'
 
+    # the joined state: the row's address is the MagicDNS name, so the login was made before the tailnet step and
+    # root is no longer let in (the policy allows no root over Tailscale SSH; ufw closed the public address)
+    - name: the login, made already (the address is the tailnet name)
+      ansible.builtin.debug:
+        msg: "JOIN LOGIN {{ inventory_hostname }} joined already: {{ ansible_host }} is the tailnet name; the plays from the tailnet step on run as {{ join_login }} over it"
+      when: ansible_host | default('') is match('.*\\.ts\\.net$')
+
+    - name: nothing to do as root on a joined machine
+      ansible.builtin.meta: end_host
+      when: ansible_host | default('') is match('.*\\.ts\\.net$')
+
     - name: the machine has a login to make
       ansible.builtin.assert:
         that: join_login | length > 0 and join_login != nova_join_root_user
@@ -138,6 +160,10 @@
         that: (nova_system | default(ansible_facts['system'])) == 'Linux'
         fail_msg: "{{ inventory_hostname }} reports {{ (nova_system | default(ansible_facts['system'])) }}; its row says os={{ nova_os | default('') }}"
         quiet: true
+
+    - name: rsync, which the control node pushes the secrets store with (Debian, Ubuntu)
+      ansible.builtin.apt: { name: rsync, state: present, update_cache: true, cache_valid_time: 3600 }
+      when: ansible_facts['os_family'] == 'Debian'
 
     - name: "the login {{ join_login }} (no password, bash, group {{ nova_join_sudo_group }})"
       ansible.builtin.user:
@@ -271,8 +297,7 @@
 
 - name: the join's check
   hosts: "{{ nova_join_host | default('!all') }}"   # no machine named, no host
-  gather_facts: true
-  gather_subset: [min]
+  gather_facts: false
   tasks:
     - name: the control node's view of the tailnet
       ansible.builtin.command: tailscale status --json
@@ -282,7 +307,6 @@
       changed_when: false
       failed_when: false
       check_mode: false
-      when: nova_tailnet | bool
 
     - name: the machine among the control node's peers
       ansible.builtin.set_fact:
@@ -290,7 +314,6 @@
           {{ ((check_peers.stdout | from_json).Peer | default({})).values() | selectattr('DNSName', 'defined')
              | selectattr('DNSName', 'equalto', (ansible_host | default('')) ~ '.') | list | first | default({})
              if (check_peers.stdout | default('') | trim).startswith('{') else {} }}
-      when: nova_tailnet | bool
 
     - name: the peer is online
       ansible.builtin.assert:
@@ -299,47 +322,8 @@
           JOIN CHECK {{ inventory_hostname }}: the control node's `tailscale status` has no online peer {{ ansible_host | default('') }}
           (the control node must be on the same tailnet, and the policy must let it see tag:nova)
         quiet: true
-      when: nova_tailnet | bool and not ansible_check_mode
-
-    - name: the bus password in the machine's seat (names only; no value read)
-      ansible.builtin.command:
-        argv: ["{{ nova_bin_dir }}/nova-secrets", names, --store, "{{ nova_secrets_store }}", --as, "{{ nova_seat }}"]
-      register: check_names
-      changed_when: false
-      failed_when: false
-      check_mode: false
-      when: ansible_facts['os_family'] != 'Windows' and nova_bus_redis is defined
-
-    - name: nova-bus who, from the machine
-      ansible.builtin.command:
-        argv:
-          - "{{ nova_bin_dir }}/nova-secrets"
-          - exec
-          - --only
-          - "{{ nova_redis_seal_name | default('NOVA_BUS_PASSWORD') }}"
-          - --store
-          - "{{ nova_secrets_store }}"
-          - --key
-          - "{{ nova_secrets_key_dir }}/{{ nova_seat }}.key"
-          - --as
-          - "{{ nova_seat }}"
-          - --sops
-          - "{{ nova_sops }}"
-          - --
-          - env
-          - "NOVA_BUS_REDIS={{ nova_bus_redis | default('') }}"
-          - "NOVA_BUS_USER={{ nova_bus_user }}"
-          - "{{ nova_bin_dir }}/nova-bus"
-          - who
-      register: check_who
-      changed_when: false
-      check_mode: false
-      when: check_names is not skipped and (nova_redis_seal_name | default('NOVA_BUS_PASSWORD')) in check_names.stdout_lines
+      when: not ansible_check_mode
 
     - name: the check's receipt
       ansible.builtin.debug:
-        msg: >-
-          JOIN CHECK {{ inventory_hostname }} peer={{ 'no-tailnet' if not (nova_tailnet | bool) else ('online' if (check_peer | default({})).Online | default(false) else ('WOULD-CHECK' if ansible_check_mode else 'missing')) }}
-          {%- if check_who is not skipped %} bus={{ check_who.stdout_lines | first | default('?') }}
-          {%- elif nova_bus_redis is not defined %} NOTE bus not checked: no nova_bus_redis (host:port) given
-          {%- else %} NOTE bus not checked: seat {{ nova_seat }} holds no {{ nova_redis_seal_name | default('NOVA_BUS_PASSWORD') }} yet (nova-secrets set it, then run again){% endif %}
+        msg: "JOIN CHECK {{ inventory_hostname }} peer={{ 'online' if check_peer.Online | default(false) else ('WOULD-CHECK' if ansible_check_mode else 'missing') }} seat=present"

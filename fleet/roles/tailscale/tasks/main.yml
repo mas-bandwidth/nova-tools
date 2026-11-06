@@ -156,6 +156,11 @@
   changed_when: not ansible_check_mode
   when: nova_tailscale_record_address | bool and ts_dns | length > 0 and ts_dns != (ansible_host | default(''))
 
+- name: the MagicDNS name's host key (Tailscale SSH's), pinned on the control node
+  ansible.builtin.include_role: { name: hostkey }
+  vars: { hostkey_name: "{{ ts_dns }}" }
+  when: ts_recorded is not skipped and not ansible_check_mode
+
 - name: the receipt
   ansible.builtin.debug:
     msg: >-

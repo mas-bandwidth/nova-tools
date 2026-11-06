@@ -1,7 +1,10 @@
 ---
-# The secrets-refresh role (fleet/secrets-refresh.yml): a timer that pulls the machine's clone of the secrets store,
-# fast-forward only. Linux: a systemd user timer (linger on), or a crontab line where the login has no user manager.
-# darwin: a LaunchAgent in the login's GUI domain.
+# The secrets-refresh role (fleet/secrets-refresh.yml): the machine's copy of the secrets store, kept current.
+# Push mode (nova_secrets_repo empty, the default): the control node puts the store's files at nova_secrets_store over
+# the SSH the play already has (rsync, no .git, 0700 directories and 0600 files); this role pushes them when it is
+# given the control node's clone (nova_seal_store), installs no timer and removes one, and fails when the store is
+# not there. Pull mode (nova_secrets_repo set): a timer pulls a git clone fast-forward only. Linux: a systemd user
+# timer (linger on), or a crontab line where the login has no user manager. darwin: a LaunchAgent in the GUI domain.
 - name: the paths
   ansible.builtin.set_fact:
     sr_script: "{{ nova_bin_dir }}/nova-secrets-refresh"
@@ -9,10 +12,11 @@
     sr_darwin: "{{ (nova_system | default(ansible_facts['system'])) == 'Darwin' }}"
     sr_xdg: "/run/user/{{ ansible_facts['user_uid'] }}"
     sr_user_dir: "{{ nova_home }}/.config/systemd/user"
+    sr_mode: "{{ 'pull' if nova_secrets_repo | length > 0 else 'push' }}"
 
-# ---- a machine that must not pull: its timer goes, nothing else changes ----
-- name: the timer removed (nova_secrets_refresh is false here)
-  when: not (nova_secrets_refresh | bool)
+# ---- no timer: a machine that must not pull, and every machine in push mode ----
+- name: the timer removed (push mode, or nova_secrets_refresh false)
+  when: not (nova_secrets_refresh | bool) or sr_mode == 'push'
   block:
     - name: the Linux units, stopped and removed
       ansible.builtin.shell: |
@@ -31,9 +35,17 @@
       check_mode: false
       when: not sr_darwin
 
+    - name: is there a crontab binary (off)
+      ansible.builtin.command: sh -c 'command -v crontab'
+      register: sr_off_crontab
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      when: not sr_darwin
+
     - name: the cron line removed
       ansible.builtin.cron: { name: nova-secrets-refresh, state: absent }
-      when: not sr_darwin
+      when: not sr_darwin and sr_off_crontab.rc == 0
 
     - name: the LaunchAgent, unloaded and removed
       ansible.builtin.shell: |
@@ -49,10 +61,65 @@
       check_mode: false
       when: sr_darwin
 
-    - name: the receipt
+    - name: the receipt (off)
       ansible.builtin.debug: { msg: "SECRETS-REFRESH {{ inventory_hostname }} off (nova_secrets_refresh false)" }
+      when: not (nova_secrets_refresh | bool)
 
-    - name: nothing more here
+    - name: nothing more here (off)
+      ansible.builtin.meta: end_host
+      when: not (nova_secrets_refresh | bool)
+
+# ---- push mode: the control node's files, put here; no timer ----
+- name: push mode
+  when: sr_mode == 'push'
+  block:
+    - name: the store directory (0700)
+      ansible.builtin.file: { path: "{{ nova_secrets_store }}", state: directory, mode: "0700" }
+      when: nova_seal_store is defined
+      register: sr_push_dir
+
+    # the same settings nova-fleet up uses: no .git, deletes what the control node's copy lacks, 0700/0600
+    - name: the store pushed from the control node's clone (nova_seal_store)
+      ansible.posix.synchronize:
+        src: "{{ nova_seal_store | regex_replace('/*$', '') }}/"
+        dest: "{{ nova_secrets_store }}/"
+        mode: push
+        archive: false
+        recursive: true
+        links: true
+        times: true
+        perms: true
+        delete: true
+        rsync_opts: ["--exclude=.git", "--chmod=Du=rwx,Dgo=,Fu=rw,Fgo="]
+      register: sr_push
+      when: nova_seal_store is defined and not (ansible_check_mode and sr_push_dir is changed)
+
+    - name: the files the store holds here
+      ansible.builtin.shell: |
+        [ -d {{ nova_secrets_store | quote }} ] || { echo missing; exit 0; }
+        find {{ nova_secrets_store | quote }} -path '*/.git' -prune -o -type f -print | wc -l | tr -d ' '
+      register: sr_files
+      changed_when: false
+      check_mode: false
+
+    - name: the receipt (push)
+      ansible.builtin.debug:
+        msg: >-
+          SECRETS-REFRESH {{ inventory_hostname }} mode=push
+          {{- ' missing' if sr_files.stdout == 'missing' else (' files=' ~ sr_files.stdout) }}
+          {{- (' pushed' if (sr_push is changed) else ' same') if nova_seal_store is defined and sr_push is not skipped else '' }}
+          {{- ' WOULD-PUSH' if (ansible_check_mode and sr_push_dir is changed) else '' }}
+          {{- ' (check: nothing changed)' if ansible_check_mode else '' }}
+
+    - name: the store is here (pushed by the control node; -e nova_seal_store=<its clone> pushes it from this play)
+      ansible.builtin.assert:
+        that: sr_files.stdout != 'missing' or (ansible_check_mode and sr_push_dir is changed)
+        fail_msg: >-
+          SECRETS-REFRESH {{ inventory_hostname }} mode=push missing: no store at {{ nova_secrets_store }}; push it from
+          the control node (-e nova_seal_store=<its clone>), or set nova_secrets_repo for pull mode
+        quiet: true
+
+    - name: nothing more here (push)
       ansible.builtin.meta: end_host
 
 # ---- git, which the pull needs ----
@@ -79,22 +146,13 @@
   ansible.builtin.stat: { path: "{{ nova_secrets_store }}/.git" }
   register: sr_store
 
-- name: the store, cloned (nova_secrets_repo given, no clone yet)
+- name: the store, cloned (pull mode, no clone yet)
   ansible.builtin.git:
     repo: "{{ nova_secrets_repo }}"
     dest: "{{ nova_secrets_store }}"
     update: false
   environment: { GIT_TERMINAL_PROMPT: "0", GIT_SSH_COMMAND: "ssh -o BatchMode=yes -o ConnectTimeout=20" }
-  when: not sr_store.stat.exists and nova_secrets_repo | length > 0
-
-- name: a clone, or a repo to clone
-  ansible.builtin.assert:
-    that: sr_store.stat.exists or nova_secrets_repo | length > 0
-    fail_msg: >-
-      SECRETS-REFRESH {{ inventory_hostname }} STOP: no clone at {{ nova_secrets_store }} (nova_secrets_store) and no
-      nova_secrets_repo to clone; give -e nova_secrets_repo=<the store's git URL>, or -e nova_secrets_refresh=false for
-      a machine that does not pull
-    quiet: true
+  when: not sr_store.stat.exists
 
 # ---- the script ----
 - name: the directories
@@ -219,5 +277,5 @@
 - name: the receipt
   ansible.builtin.debug:
     msg: >-
-      SECRETS-REFRESH {{ inventory_hostname }} via={{ 'launchd' if sr_darwin else ('systemd-user-timer' if sr_systemd else 'cron') }}
+      SECRETS-REFRESH {{ inventory_hostname }} mode=pull via={{ 'launchd' if sr_darwin else ('systemd-user-timer' if sr_systemd else 'cron') }}
       every={{ nova_secrets_refresh_every }}s last: {{ (sr_last.stdout | default('') | trim) or 'no run yet' }}
