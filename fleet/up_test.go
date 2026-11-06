@@ -28,6 +28,7 @@ type upFake struct {
 	offnet      bool // tailscale status fails
 	noVenv      bool // python3 -c 'import ensurepip, venv' fails
 	untagged    bool // the control node lacks tag:control
+	noPosix     bool // ansible.posix is not installed
 }
 
 func (f *upFake) install(t *testing.T) {
@@ -99,6 +100,8 @@ func (f *upFake) install(t *testing.T) {
 			return f.names, "", 0
 		case strings.Contains(line, "machine list --json"):
 			return f.rows, "", 0
+		case strings.HasSuffix(line, "collection list") && !f.noPosix:
+			return "ansible.posix   2.2.2\nansible.windows 2.0.0\n", "", 0
 		case strings.HasPrefix(line, "go version"):
 			return "go version go1.99.0 linux/amd64\n", "", 0
 		case strings.HasSuffix(line, "--version") || strings.HasSuffix(line, " version"):
@@ -244,7 +247,7 @@ func TestUpOrder(t *testing.T) {
 		t.Fatalf("exit %d\n%s\n%s", code, out, errs)
 	}
 	want := []string{"tailscale.yml@first.ini", "postgres.yml@first.ini", "redis.yml@first.ini", "join.yml@inventory", "join.yml@inventory",
-		"health.yml@inventory", "install.yml@inventory", "services.yml@inventory", "github-runners.yml@inventory"}
+		"secrets-refresh.yml@inventory", "health.yml@inventory", "install.yml@inventory", "services.yml@inventory", "github-runners.yml@inventory"}
 	if got := f.plays(); !slices.Equal(got, want) {
 		t.Errorf("plays = %v, want %v", got, want)
 	}
@@ -264,7 +267,7 @@ func TestUpOrder(t *testing.T) {
 		"nova-secrets grant NOVA_BUS_PASSWORD --to first --pub age1fakenova@first.ts.example\n",
 		"nova-secrets grant NOVA_BUS_PASSWORD --to second --pub age1fake",
 		"git -C " + f.store + " push --quiet",
-		"rsync -rltp --delete --exclude=.git --chmod=Du=rwx,Dgo=,Fu=rw,Fgo= --rsync-path=umask 077 && mkdir -p .local/share/nova/secrets/ && rsync " + f.store + "/ nova@second.ts.example:.local/share/nova/secrets/",
+		"secrets-refresh.yml -e nova_seal_store=" + f.store + " -l first,second\n",
 		"health.yml -l first,second\n",
 		"install.yml -e nova_tools_version=v2.0.0 -l first,second\n",
 		"github-runners.yml -e github_runner_url=https://github.com/o/r -e github_runner_scope=repo -e runner_count=2 -e {\"github_runner_secrets_args\":[\"--store\",\"" + f.store + "\",\"--key\",\"" + f.key + "\",\"--as\",\"control\"]} -l first,second\n",
@@ -275,7 +278,7 @@ func TestUpOrder(t *testing.T) {
 		}
 	}
 	for _, w := range []string{"UP CONTROL OK", "UP REACH first OK root@203.0.113.7", "UP HOSTKEY first OK pinned=1", "UP FIRST first OK pg=first.ts.example:5432 bus=first.ts.example:6379",
-		"UP JOIN first OK", "UP JOIN second OK", "UP GRANT first OK NOVA_BUS_PASSWORD", "UP STORE OK", "UP REFRESH second OK nova@second.ts.example:.local/share/nova/secrets/",
+		"UP JOIN first OK", "UP JOIN second OK", "UP GRANT first OK NOVA_BUS_PASSWORD", "UP STORE OK", "UP REFRESH OK " + f.store,
 		"UP HEALTH OK", "UP TOOLS OK v2.0.0", "UP SERVICES OK", "UP RUNNERS OK https://github.com/o/r", "UP BUS OK first.ts.example:6379 round-trip=up-",
 		"UP MACHINE first OK address=203.0.113.7 steps=tailnet,postgres,redis,join,grant,refresh,health,tools,services,runners,bus",
 		"UP MACHINE second OK address=203.0.113.8 steps=join,grant,refresh,health,tools,services,runners,bus",
@@ -309,7 +312,7 @@ func TestUpAddsAMachine(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d\n%s\n%s", code, out, errs)
 	}
-	if got := f.plays(); !slices.Equal(got, []string{"join.yml@inventory", "join.yml@inventory", "health.yml@inventory", "install.yml@inventory", "services.yml@inventory", "github-runners.yml@inventory"}) {
+	if got := f.plays(); !slices.Equal(got, []string{"join.yml@inventory", "join.yml@inventory", "secrets-refresh.yml@inventory", "health.yml@inventory", "install.yml@inventory", "services.yml@inventory", "github-runners.yml@inventory"}) {
 		t.Errorf("plays = %v", got)
 	}
 	all := strings.Join(f.calls, "\n")
@@ -347,16 +350,16 @@ func TestUpResumes(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d\n%s\n%s", code, out, errs)
 	}
-	if got := f.plays(); !slices.Equal(got, []string{"tailscale.yml@first.ini", "postgres.yml@first.ini", "redis.yml@first.ini", "join.yml@inventory", "join.yml@inventory", "health.yml@inventory", "install.yml@inventory", "services.yml@inventory"}) {
+	if got := f.plays(); !slices.Equal(got, []string{"tailscale.yml@first.ini", "postgres.yml@first.ini", "redis.yml@first.ini", "join.yml@inventory", "join.yml@inventory", "secrets-refresh.yml@inventory", "health.yml@inventory", "install.yml@inventory", "services.yml@inventory"}) {
 		t.Errorf("plays = %v", got)
 	}
 	all := strings.Join(f.calls, "\n")
-	for _, w := range []string{"ssh -o BatchMode=yes -o ConnectTimeout=10 nova@first.ts.example true", "ansible-playbook -i first.ini tailscale.yml", "nova_join_host=first -e nova_join_user=nova -e nova_join_address=first.ts.example -e nova_join_root_user=nova"} {
+	for _, w := range []string{"ssh -o BatchMode=yes -o ConnectTimeout=10 root@203.0.113.7 true", "ansible-playbook -i first.ini tailscale.yml", "nova_join_host=first -e nova_join_user=nova -e nova_join_address=203.0.113.7 -e nova_join_root_user=root"} {
 		if !strings.Contains(all, w) {
 			t.Errorf("no call contains %q; calls:\n%s", w, all)
 		}
 	}
-	if !strings.Contains(out, "UP REACH first OK nova@first.ts.example") || !strings.Contains(out, "UP DONE next: export NOVA_PG_DSN=postgres://nova_config@first.ts.example:5432/nova") {
+	if !strings.Contains(out, "UP REACH first OK root@203.0.113.7") || !strings.Contains(out, "UP DONE next: export NOVA_PG_DSN=postgres://nova_config@first.ts.example:5432/nova") {
 		t.Errorf("stdout:\n%s", out)
 	}
 }
@@ -421,14 +424,14 @@ func TestUpCheck(t *testing.T) {
 	t.Setenv("NOVA_PG_DSN", "postgres://nova_config@store-1.ts.example:5432/nova")
 	code, out, _ = runArgs("up", "--check", "--grant", "NOVA_BUS_PASSWORD,EXTRA", "--runners", "https://github.com/o/r", "--tools", "v2.0.0", "first=1.1.1.1")
 	all := strings.Join(f.calls, "\n")
-	if code != 0 || len(f.plays()) != 5 || strings.Contains(all, "push") || strings.Contains(all, "nova-bus send") || strings.Contains(all, "nova-secrets grant") ||
-		!strings.Contains(all, "rsync --dry-run -rltp --delete") || !strings.Contains(all, "nova-secrets exec --only NOVA_BUS_PASSWORD,EXTRA -- true") ||
+	if code != 0 || len(f.plays()) != 6 || strings.Contains(all, "push") || strings.Contains(all, "nova-bus send") || strings.Contains(all, "nova-secrets grant") ||
+		!strings.Contains(all, "secrets-refresh.yml --check --diff -e nova_seal_store=") || !strings.Contains(all, "nova-secrets exec --only NOVA_BUS_PASSWORD,EXTRA -- true") ||
 		!strings.Contains(all, "machine set first --roles bench,runner --actor control --reason nova-fleet up --runners --dry-run") {
 		t.Errorf("code %d plays %v calls:\n%s", code, f.plays(), all)
 	}
 	for _, w := range []string{"UP REACH first OK nova@first.ts.example", "UP JOIN first WOULD-JOIN (check: nothing changed)", "UP ROLE first WOULD-SET (check: nothing changed) runner",
 		"UP GRANT first WOULD-GRANT NOVA_BUS_PASSWORD,EXTRA to age1fakenova@first.ts.example (check: nothing changed)", "UP STORE WOULD-PUSH",
-		"UP REFRESH first WOULD-PUSH (check: nothing changed) nova@first.ts.example:.local/share/nova/secrets/", "UP RUNNERS WOULD-RUN (check: nothing changed) https://github.com/o/r",
+		"UP REFRESH WOULD-PUSH (check: nothing changed) " + f.store, "UP RUNNERS WOULD-RUN (check: nothing changed) https://github.com/o/r",
 		"UP BUS WOULD-SEND", "UP MACHINE first CHECKED address=1.1.1.1 steps=join,grant,refresh,health,tools,services,runners (check: nothing changed)"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout lacks %q:\n%s", w, out)
@@ -484,7 +487,7 @@ func TestCheck(t *testing.T) {
 	if code != 0 || errs != "" || !strings.HasSuffix(out, "CHECK OK missing=0\n") {
 		t.Fatalf("all present: code %d stdout %q stderr %q", code, out, errs)
 	}
-	for _, w := range []string{"CHECK OK ansible-playbook 1.2.3\n", "CHECK OK tailscale 1.2.3\n", "CHECK OK nova-config /bin/nova-config\n", "CHECK OK ssh /bin/ssh\n",
+	for _, w := range []string{"CHECK OK ansible-playbook 1.2.3\n", "CHECK OK ansible.posix\n", "CHECK OK tailscale 1.2.3\n", "CHECK OK nova-config /bin/nova-config\n", "CHECK OK ssh /bin/ssh\n",
 		"CHECK OK tailnet\n", "CHECK OK tag:control\n", "CHECK OK store " + f.store + "\n", "CHECK OK seat control\n", "CHECK OK pins " + os.Getenv("NOVA_SECRETS_PINS") + "\n",
 		"CHECK OK TAILSCALE_AUTHKEY readable in seat control\n", "CHECK OK NOVA_PG_DSN none yet (a new fleet: up prints it)\n"} {
 		if !strings.Contains(out, w) {
@@ -512,7 +515,7 @@ func TestCheck(t *testing.T) {
 		t.Errorf("code %d stderr %q", code, errs)
 	}
 	// A go too old for the nova-* lines, and a control node that is on the tailnet but not tagged.
-	f.untagged, f.offnet = true, false
+	f.untagged, f.offnet, f.noPosix = true, false, true
 	outCmd2 := outCmd
 	outCmd = func(bin string, args, env []string) (string, string, int) {
 		if filepath.Base(bin) == "go" {
@@ -521,10 +524,11 @@ func TestCheck(t *testing.T) {
 		return outCmd2(bin, args, env)
 	}
 	code, out, _ = runArgs("check")
-	if code != 1 || !strings.Contains(out, "CHECK MISSING go: go version go1.19.8 linux/amd64 is older than go1.") || !strings.Contains(out, "CHECK MISSING tag:control: this node is not tagged tag:control") {
+	if code != 1 || !strings.Contains(out, "CHECK MISSING go: go version go1.19.8 linux/amd64 is older than go1.") || !strings.Contains(out, "CHECK MISSING tag:control: this node is not tagged tag:control") ||
+		!strings.Contains(out, "CHECK MISSING ansible.posix: nova-fleet show requirements > requirements.yml && /bin/ansible-galaxy collection install -r requirements.yml") {
 		t.Errorf("old go, untagged: code %d\n%s", code, out)
 	}
-	outCmd, f.untagged = outCmd2, false
+	outCmd, f.untagged, f.noPosix = outCmd2, false, false
 	// No ansible-playbook and a python3 without venv: both are said.
 	old := goos
 	t.Cleanup(func() { goos = old })

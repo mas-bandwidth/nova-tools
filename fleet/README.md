@@ -46,7 +46,8 @@ The whole path, in order. Each step's output says what to do next.
    `nova-*` build lines), then the tailnet and this node's `tag:control`, the secrets store, key, seat and pins, the
    secrets `up` will read (`--runners URL` adds `gh` and `GITHUB_RUNNER_TOKEN`), and `NOVA_PG_DSN` once a fleet
    exists. Run each fix line, then `nova-fleet check` again until it ends `CHECK OK missing=0` (exit 0; 1 while
-   anything is missing). Tailscale, PostgreSQL, Redis and Ansible are not optional: `check` requires Tailscale and
+   anything is missing; the collections of `requirements.yml` count, `ansible.posix` for the push of the store).
+   Tailscale, PostgreSQL, Redis and Ansible are not optional: `check` requires Tailscale and
    Ansible on this node, `up` puts PostgreSQL and Redis on the first machine and requires them after, and no variable
    of nova-fleet skips one.
    The sops it installs is the one the plays pin: one line, `nova_sops_version` in `group_vars/all.yml` (with its
@@ -103,12 +104,12 @@ machine is the one nova-config's rows say ("Adding a machine" below). Nothing he
 | # | Step | What runs | Why here |
 |---|---|---|---|
 | 1 | control | `nova-fleet check`: every helper, the tailnet and `tag:control`, the store, key, seat and pins, `TAILSCALE_AUTHKEY` (and `GITHUB_RUNNER_TOKEN`) read from the seat, `NOVA_PG_DSN` when a fleet exists; anything missing stops the run with its fix line | a run never starts that a missing secret would stop later |
-| 2 | reach | one `ssh -o BatchMode=yes ... true` per machine: as its login at its tailnet name once it is a peer (or at its row's address), else as root at the address given; `UP REACH <machine> OK <who>@<where>` | a run never starts a play on a machine it cannot reach |
+| 2 | reach | one `ssh -o BatchMode=yes ... true` per machine: as its login at its tailnet name once it has a row (join closed the address given then), else as root at the address given; `UP REACH <machine> OK <who>@<where>` | a run never starts a play on a machine it cannot reach |
 | 3 | first | on a new fleet's first machine, from a hand inventory: `tailscale` (no address recorded, firewall later), then `postgres` (nova-config's roles, grants and tables, loaded on the machine as `nova_admin`) and `redis`, their passwords sealed into your seat as `NOVA_PG_PASSWORD` and `NOVA_BUS_PASSWORD` | nova-config's rows live in this PostgreSQL, so it comes before any row |
 | 4 | join | `join` for each machine (`services,bench` for the first; the others `bench`; `runner` with `--runners`): its row, its login with passwordless sudo, its tailnet name and host key, its firewall, its seat; with `--runners`, a row that lacks the `runner` role gets it (`UP ROLE <machine> OK runner`) | the store exists now |
 | 5 | grant | `nova-secrets grant <--grant names> --to <machine> --pub <its seat key>` for each machine: the values written to that seat's grants file, encrypted to the seat's key (read from the machine over the tailnet, public half only, and pinned in `NOVA_SECRETS_PINS`) and the recovery key; your seat is never a recipient ([secrets/SPEC.md](../secrets/SPEC.md)) | the seats exist now |
 | 6 | store | `git push` of your secrets store to its upstream, if it has one (else a NOTE): a copy off this node; the machines never read it | |
-| 7 | refresh | the encrypted store copied over the tailnet with rsync to `<login>@<machine>:~/.local/share/nova/secrets/` (no `.git`, stale files deleted, 0700/0600); under `--check` a dry run | each seat opens what step 5 granted; a rerun of `up` pushes again |
+| 7 | refresh | `secrets-refresh` with `nova_seal_store` set to your clone: the encrypted store pushed over the tailnet with rsync to `~/.local/share/nova/secrets/` on each machine (no `.git`, stale files deleted, 0700/0600) | each seat opens what step 5 granted; a rerun of `up`, or `nova-fleet secrets-refresh -- -e nova_seal_store=S`, pushes again |
 | 8 | health | `health` on every machine (Linux; a Mac is skipped) | the guards are in place before anything long-running starts |
 | 9 | tools | `install` on every machine, from the release `--tools vX.Y.Z` or a local build `--tools DIR` | the services run these binaries |
 | 10 | services | `services` | each seat holds its granted values now |
