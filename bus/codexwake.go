@@ -58,6 +58,7 @@ type codexWake struct {
 	waiting                               []Msg  // saved, not yet named in a wake
 	tries, limit                          int    // definite failures of the waiting wake, and how many it gets
 	checked                               int64  // the rollout's size when unknown faults were last looked for
+	recovered                             bool   // recover has run, under the name's claim
 }
 
 var (
@@ -181,12 +182,28 @@ func newCodex(thread, name, addr string, env func(string) string, s sys, clk Clo
 			c.bin, program = p, p
 		}
 	}
-	if err := os.MkdirAll(filepath.Dir(c.dir), 0o700); err != nil {
-		return nil, badInput("the codex events directory: %v", err)
-	}
-	if err := privateDir("the codex events directory", c.dir, s.uid); err != nil {
+	if err := dirShape("the codex events directory", c.dir); err != nil {
 		return nil, err
 	}
+	if err := ownDir(c.dir, s.uid, 0o077); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, badInput("the codex events directory %s: %v: run chmod 700 %s", c.dir, err, c.dir)
+	}
+	fmt.Fprintf(stderr, "HOOK HARNESS OK harness=codex thread=%s rollout=%s program=%s events=%s\n", thread, escaper.Replace(c.rollout), escaper.Replace(program), c.dir)
+	return c, nil
+}
+
+// recover reads, and repairs, the wake state; only a hook that holds the
+// name runs it (hook, after the claim), never a --service preflight or a
+// hook still waiting for the name: another hook may be mid-queue on it.
+// Before it, nothing under dir is written.
+func (c *codexWake) recover(stderr io.Writer) error {
+	if err := os.MkdirAll(filepath.Dir(c.dir), 0o700); err != nil {
+		return err
+	}
+	if err := privateDir("the codex events directory", c.dir, c.s.uid); err != nil {
+		return err
+	}
+	name := c.name
 	// Another thread's outstanding messages: kept, and named in one line.
 	others, _ := filepath.Glob(filepath.Join(filepath.Dir(c.dir), name+"-codex-*")) // ignored: the pattern is well formed
 	for _, d := range others {
@@ -204,30 +221,32 @@ func newCodex(thread, name, addr string, env func(string) string, s sys, clk Clo
 		if has, _ := c.rolloutHas(in.size, in.start); has { // ignored: unreadable is no evidence
 			c.woken, c.sentAt, c.pending = maxID(c.woken, in.last), in.size, ""
 		} else if err := writeFault(c.dir, codexFault{last: in.last, first: in.first, result: "unknown", size: in.size, start: in.start, err: "the hook stopped during codex queue"}); err != nil {
-			return nil, badInput("the codex events directory %s: %v", c.dir, err)
+			return err
 		} else {
 			c.woken = maxID(c.woken, in.last)
 			fmt.Fprintf(stderr, "HOOK WAKE FAULT harness=codex id=%s result=unknown file=%s\n", in.last, filepath.Join(c.dir, in.last+".json"))
 		}
 		if err := c.mark(); err != nil {
-			return nil, badInput("the codex events directory %s: %v", c.dir, err)
+			return err
 		}
 	}
 	for _, f := range readFaults(c.dir) { // a start retries every definite failure once
 		if f.result == "failed" {
 			f.result = "retry"
 			if err := writeFault(c.dir, f); err != nil {
-				return nil, badInput("the codex events directory %s: %v", c.dir, err)
+				return err
 			}
 		}
 	}
-	for _, id := range saved(c.dir, "", "") { // saved by an earlier hook and never named in a wake: they still wait
-		if idAfter(id, c.woken) {
+	faulted := readFaults(c.dir)
+	for _, id := range saved(c.dir, "", "") { // saved by an earlier hook and never named in a wake (nor under a fault): they still wait
+		if idAfter(id, c.woken) && !slices.ContainsFunc(faulted, func(f codexFault) bool { return idCmp(id, f.first) >= 0 && idCmp(id, f.last) <= 0 }) {
 			c.waiting = append(c.waiting, Msg{ID: id})
 		}
 	}
-	fmt.Fprintf(stderr, "HOOK HARNESS OK harness=codex thread=%s rollout=%s program=%s events=%s waiting=%d faults=%d\n", thread, escaper.Replace(c.rollout), escaper.Replace(program), c.dir, len(c.waiting), len(readFaults(c.dir)))
-	return c, nil
+	fmt.Fprintf(stderr, "HOOK WAKE STATE harness=codex thread=%s waiting=%d faults=%d\n", c.thread, len(c.waiting), len(readFaults(c.dir)))
+	c.recovered = true
+	return nil
 }
 
 // idCmp orders two stream ids (idShape, or "" before every id).
@@ -295,7 +314,8 @@ func (c *codexWake) deliver(ctx context.Context, m Msg, out, stderr io.Writer) e
 
 func asWrite(err error) error {
 	var we writeError
-	if err == nil || errors.As(err, &we) {
+	var wf wakeFailed
+	if err == nil || errors.As(err, &we) || errors.As(err, &wf) {
 		return err
 	}
 	return writeError{err}
@@ -321,7 +341,8 @@ func (c *codexWake) poll(ctx context.Context, out, stderr io.Writer) (string, er
 			continue
 		}
 		if has, _ := c.rolloutHas(f.size, f.start); f.result == "unknown" && f.start != "" && has { // ignored: unreadable is no evidence
-			if err := os.Remove(filepath.Join(c.dir, "faults", f.last)); err != nil {
+			c.woken = maxID(c.woken, f.last)
+			if err := settle(c.dir, f.last, c.mark); err != nil {
 				fmt.Fprintf(stderr, "HOOK WAKE FAILED harness=codex id=%s reason=%s\n", f.last, escaper.Replace(err.Error()))
 			} else if _, err := fmt.Fprintf(out, "HOOK WAKE OK harness=codex id=%s first=%s result=reconciled\n", f.last, f.first); err != nil {
 				return "", err
@@ -376,34 +397,35 @@ func (c *codexWake) poll(ctx context.Context, out, stderr io.Writer) (string, er
 		}
 	}
 	tries := c.tries
-	c.woken, c.waiting, c.tries, c.limit = maxID(c.woken, last), nil, 0, codexTries
-	if retry != nil && retry.last != last {
-		if rerr := os.Remove(filepath.Join(c.dir, "faults", retry.last)); rerr != nil {
-			fmt.Fprintf(stderr, "HOOK WAKE FAILED harness=codex id=%s reason=%s\n", retry.last, escaper.Replace(rerr.Error()))
-		}
-	}
 	if outcome != "queued" {
 		f := codexFault{last: last, first: first, result: "failed", attempts: tries, err: err.Error()}
 		if outcome == "unknown" {
 			f.result, f.attempts, f.size, f.start = "unknown", tries+1, size, start
 		}
-		if ferr := writeFault(c.dir, f); ferr != nil {
+		if ferr := writeFault(c.dir, f); ferr != nil { // the intent stays, the only record of it: the hook stops, and its next start faults it
 			fmt.Fprintf(stderr, "HOOK WAKE FAILED harness=codex id=%s reason=recording the fault: %s\n", last, escaper.Replace(ferr.Error()))
+			return "", wakeFailed{last, ferr}
 		}
-		fmt.Fprintf(stderr, "HOOK WAKE FAULT harness=codex id=%s result=%s first=%s file=%s\n", last, f.result, first, filepath.Join(c.dir, last+".json"))
-		if merr := os.Remove(filepath.Join(c.dir, "intent")); merr != nil && !errors.Is(merr, os.ErrNotExist) {
-			fmt.Fprintf(stderr, "HOOK WAKE FAILED harness=codex id=%s reason=%s\n", last, escaper.Replace(merr.Error()))
-		}
+	}
+	c.woken, c.waiting, c.tries, c.limit = maxID(c.woken, last), nil, 0, codexTries
+	old := "" // the retried fault, settled by this outcome (a new fault for last replaces one of the same name)
+	if retry != nil && (outcome == "queued" || retry.last != last) {
+		old = retry.last
+	}
+	if outcome == "queued" {
+		c.sentAt, c.pending = size, start
+	} else {
+		result := map[bool]string{true: "unknown", false: "failed"}[outcome == "unknown"]
+		fmt.Fprintf(stderr, "HOOK WAKE FAULT harness=codex id=%s result=%s first=%s file=%s\n", last, result, first, filepath.Join(c.dir, last+".json"))
+	}
+	if merr := settle(c.dir, old, c.mark); merr != nil { // woken first, the intent gone, then the settled fault
+		// Not durable: the intent stays, and this hook ends, so no later wake
+		// overwrites it before a start reconciles it.
+		fmt.Fprintf(stderr, "HOOK WAKE FAULT harness=codex id=%s result=unrecorded reason=%s\n", last, escaper.Replace(merr.Error()))
+		return "", wakeFailed{last, merr}
+	}
+	if outcome != "queued" {
 		return "", nil
-	}
-	c.sentAt, c.pending = size, start
-	if merr := c.mark(); merr != nil {
-		fmt.Fprintf(stderr, "HOOK WAKE FAILED harness=codex id=%s reason=marking woken: %s\n", last, escaper.Replace(merr.Error()))
-	}
-	if retry != nil {
-		if rerr := os.Remove(filepath.Join(c.dir, "faults", retry.last)); rerr != nil && !errors.Is(rerr, os.ErrNotExist) {
-			fmt.Fprintf(stderr, "HOOK WAKE FAILED harness=codex id=%s reason=%s\n", retry.last, escaper.Replace(rerr.Error()))
-		}
 	}
 	receipt := "HOOK WAKE OK harness=codex id=" + last
 	if len(msgs) > 1 {
@@ -427,6 +449,23 @@ func queueOutcome(err error, out []byte, cut error) string {
 		return "failed"
 	}
 	return "unknown"
+}
+
+// settle is every terminal outcome of a wake (queued, reconciled from the
+// rollout, resolved woken): first the durable woken mark, by mark, then the
+// fault for last (if any) goes, so no path leaves an id to be rebuilt as
+// waiting and queued again.
+func settle(dir, last string, mark func() error) error {
+	if err := mark(); err != nil {
+		return err
+	}
+	if last == "" {
+		return nil
+	}
+	if err := os.Remove(filepath.Join(dir, "faults", last)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
 }
 
 // mark writes woken and removes intent.
@@ -504,7 +543,7 @@ func codexResolve(s sys, name, thread, arg string, stdout, stderr io.Writer) int
 		f = codexFault{last: in.last, first: in.first, result: "unknown", size: in.size, start: in.start, err: "the hook stopped during codex queue"}
 		w, _ := readRecord(dir, "woken") // ignored: absent is the zero record, nothing woken
 		w.last = maxID(w.last, in.last)
-		if err := writeRecord(dir, "woken", w); err != nil {
+		if err := settle(dir, "", func() error { return writeRecord(dir, "woken", w) }); err != nil {
 			return fail(stderr, "hook", "HOOK RESOLVE FAILED id=%s reason=%s", id, escaper.Replace(err.Error()))
 		}
 		if err := os.Remove(filepath.Join(dir, "intent")); err != nil {
@@ -516,9 +555,11 @@ func codexResolve(s sys, name, thread, arg string, stdout, stderr io.Writer) int
 	case f.last == "":
 		return fail(stderr, "hook", "no fault or intent holds %s for %s on thread %s; %s", id, name, thread, again)
 	case how == "woken":
-		if err = os.Remove(filepath.Join(dir, "faults", f.last)); errors.Is(err, os.ErrNotExist) {
-			err = nil
-		}
+		err = settle(dir, f.last, func() error {
+			w, _ := readRecord(dir, "woken") // ignored: absent is the zero record, nothing woken
+			w.last = maxID(w.last, f.last)
+			return writeRecord(dir, "woken", w)
+		})
 	default:
 		f.result, f.attempts = "retry", 0
 		err = writeFault(dir, f)

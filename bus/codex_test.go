@@ -58,10 +58,20 @@ func codexSetup(t *testing.T, content string, age time.Duration) (*codexWake, *c
 	writeRollout(t, rollout, content, f.clock.Add(-age))
 	s := sys{uid: os.Getuid(), home: home, exec: r.exec, look: func(string) (string, error) { return "/opt/bin/codex", nil }}
 	var errOut bytes.Buffer
-	c, err := newCodex(testThread, "beta", "127.0.0.1:1", func(string) string { return "" }, s, f, &errOut)
+	c, err := startCodex(testThread, s, f, &errOut)
 	require.NoError(t, err)
-	assert.Equal(t, "HOOK HARNESS OK harness=codex thread="+testThread+" rollout="+rollout+" program=/opt/bin/codex events="+c.dir+" waiting=0 faults=0\n", errOut.String())
+	assert.Equal(t, "HOOK HARNESS OK harness=codex thread="+testThread+" rollout="+rollout+" program=/opt/bin/codex events="+c.dir+"\nHOOK WAKE STATE harness=codex thread="+testThread+" waiting=0 faults=0\n", errOut.String())
 	return c, r, f, rollout
+}
+
+// startCodex is a hook's start for beta: the check, then, under the name's
+// claim, recover.
+func startCodex(thread string, s sys, clk Clock, stderr io.Writer) (*codexWake, error) {
+	c, err := newCodex(thread, "beta", "127.0.0.1:1", func(string) string { return "" }, s, clk, stderr)
+	if err == nil {
+		err = c.recover(stderr)
+	}
+	return c, err
 }
 
 func writeRollout(t *testing.T, path, content string, mtime time.Time) {
@@ -98,7 +108,7 @@ func TestCodexIdleChatIsWokenOnce(t *testing.T) {
 	assert.Len(t, r.calls, 1)
 
 	// A restarted hook reads dir/woken: still never twice.
-	c2, err := newCodex(testThread, "beta", "127.0.0.1:1", func(string) string { return "" }, c.s, c.clk, io.Discard)
+	c2, err := startCodex(testThread, c.s, c.clk, io.Discard)
 	require.NoError(t, err)
 	out.Reset()
 	require.NoError(t, deliver(context.Background(), c2, msgN("7-0", "hi"), &out, &errOut))
@@ -148,7 +158,7 @@ func TestCodexBusyChatGetsNothingThenOneCatchUp(t *testing.T) {
 	assert.Len(t, r.calls, 1)
 
 	// A restarted hook still waits for that turn, and 9-0 still waits.
-	c2, err := newCodex(testThread, "beta", "127.0.0.1:1", func(string) string { return "" }, c.s, f, io.Discard)
+	c2, err := startCodex(testThread, c.s, f, io.Discard)
 	require.NoError(t, err)
 	require.Len(t, c2.waiting, 1)
 	why, err = c2.poll(ctx, &out, &errOut)
@@ -261,7 +271,7 @@ func TestCodexIntentAtStartIsReconciledNotRequeued(t *testing.T) {
 		}
 		writeRollout(t, rollout, content, f.clock.Add(-time.Minute))
 		var errOut bytes.Buffer
-		c2, err := newCodex(testThread, "beta", "127.0.0.1:1", func(string) string { return "" }, c.s, f, &errOut)
+		c2, err := startCodex(testThread, c.s, f, &errOut)
 		require.NoError(t, err)
 		if drained {
 			assert.NotContains(t, errOut.String(), "FAULT")
@@ -313,10 +323,11 @@ func TestCodexThreadChangeFaultsTheOldThreadsFiles(t *testing.T) {
 	dir := filepath.Join(c.s.home, ".codex", "sessions", "2026", "11", "05")
 	writeRollout(t, filepath.Join(dir, "rollout-2026-11-05T12-00-00-"+next+".jsonl"), rolloutMeta+rolloutTurn+rolloutComplete, f.clock.Add(-time.Minute))
 	errOut.Reset()
-	c2, err := newCodex(next, "beta", "127.0.0.1:1", func(string) string { return "" }, c.s, f, &errOut)
+	c2, err := startCodex(next, c.s, f, &errOut)
 	require.NoError(t, err)
-	assert.Equal(t, "HOOK WAKE FAULT harness=codex thread="+testThread+" result=thread-changed files="+filepath.Join(c.dir, "7-0.json")+","+filepath.Join(c.dir, "8-0.json")+"\n"+
-		"HOOK HARNESS OK harness=codex thread="+next+" rollout="+filepath.Join(dir, "rollout-2026-11-05T12-00-00-"+next+".jsonl")+" program=/opt/bin/codex events="+c2.dir+" waiting=0 faults=0\n", errOut.String())
+	assert.Equal(t, "HOOK HARNESS OK harness=codex thread="+next+" rollout="+filepath.Join(dir, "rollout-2026-11-05T12-00-00-"+next+".jsonl")+" program=/opt/bin/codex events="+c2.dir+"\n"+
+		"HOOK WAKE FAULT harness=codex thread="+testThread+" result=thread-changed files="+filepath.Join(c.dir, "7-0.json")+","+filepath.Join(c.dir, "8-0.json")+"\n"+
+		"HOOK WAKE STATE harness=codex thread="+next+" waiting=0 faults=0\n", errOut.String())
 	assert.NotEqual(t, c.dir, c2.dir, "state is per name and thread")
 	for _, id := range []string{"7-0", "8-0"} {
 		_, err := os.Stat(filepath.Join(c.dir, id+".json"))
@@ -444,7 +455,7 @@ func TestCodexFaultsShowAndResolve(t *testing.T) {
 
 	// A restart retries the failed one (once), not the unknown one.
 	var startErr bytes.Buffer
-	c2, err := newCodex(testThread, "beta", "127.0.0.1:1", func(string) string { return "" }, c.s, f, &startErr)
+	c2, err := startCodex(testThread, c.s, f, &startErr)
 	require.NoError(t, err)
 	assert.Contains(t, startErr.String(), "waiting=0 faults=2")
 	assert.Equal(t, "retry", readFaults(c.dir)[0].result)
@@ -562,4 +573,203 @@ func TestCodexUnknownIsReconciledFromTheRollout(t *testing.T) {
 	assert.Equal(t, "HOOK WAKE OK harness=codex id=7-0 first=7-0 result=reconciled\n", out.String())
 	assert.Empty(t, readFaults(c.dir))
 	assert.Len(t, r.calls, 1)
+}
+
+// An unknown outcome survives a restart as a fault: the restarted hook
+// queues nothing for it until it is resolved.
+func TestCodexUnknownIsNotRequeuedAfterARestart(t *testing.T) {
+	t.Parallel()
+	c, r, f, _ := codexSetup(t, rolloutMeta+rolloutTurn+rolloutComplete, time.Minute)
+	r.err, r.out = errors.New("exit status 1"), "error\n"
+	var out, errOut bytes.Buffer
+	ctx := context.Background()
+	require.NoError(t, deliver(ctx, c, msgN("7-0", "hi"), &out, &errOut))
+	require.Len(t, r.calls, 1)
+	w, ok := readRecord(c.dir, "woken")
+	require.True(t, ok, "woken is written past the fault")
+	assert.Equal(t, "7-0", w.last)
+	r.err, r.out = nil, ""
+	c2, err := startCodex(testThread, c.s, f, io.Discard)
+	require.NoError(t, err)
+	assert.Empty(t, c2.waiting, "a faulted id is not waiting")
+	for range 3 {
+		_, err := c2.poll(ctx, &out, &errOut)
+		require.NoError(t, err)
+	}
+	assert.Len(t, r.calls, 1, "nothing queued until resolve")
+	// Even with woken lost, the fault keeps it out of waiting.
+	require.NoError(t, os.Remove(filepath.Join(c.dir, "woken")))
+	c3, err := startCodex(testThread, c.s, f, io.Discard)
+	require.NoError(t, err)
+	assert.Empty(t, c3.waiting)
+	_, err = c3.poll(ctx, &out, &errOut)
+	require.NoError(t, err)
+	assert.Len(t, r.calls, 1)
+	require.Equal(t, 0, codexResolve(c.s, "beta", testThread, "7-0=retry", &out, &errOut))
+	_, err = c3.poll(ctx, &out, &errOut)
+	require.NoError(t, err)
+	assert.Len(t, r.calls, 2, "resolve retry queues it once")
+}
+
+// A fault that cannot be recorded keeps the intent and stops the hook; the
+// next start faults the intent.
+func TestCodexFaultWriteFailureKeepsTheIntent(t *testing.T) {
+	t.Parallel()
+	c, r, f, _ := codexSetup(t, rolloutMeta+rolloutTurn+rolloutComplete, time.Minute)
+	require.NoError(t, os.WriteFile(filepath.Join(c.dir, "faults"), nil, 0o600)) // a file where the faults directory goes
+	r.err = errors.New("exit status 1")
+	var out, errOut bytes.Buffer
+	err := deliver(context.Background(), c, msgN("7-0", "hi"), &out, &errOut)
+	var wf wakeFailed
+	require.ErrorAs(t, err, &wf)
+	assert.Contains(t, errOut.String(), "HOOK WAKE FAILED harness=codex id=7-0 reason=recording the fault: ")
+	in, ok := readRecord(c.dir, "intent")
+	require.True(t, ok, "the intent is kept")
+	assert.Equal(t, "7-0", in.last)
+	_, ok = readRecord(c.dir, "woken")
+	assert.False(t, ok, "woken is not advanced")
+	require.NoError(t, os.Remove(filepath.Join(c.dir, "faults")))
+	var startErr bytes.Buffer
+	c2, err := startCodex(testThread, c.s, f, &startErr)
+	require.NoError(t, err)
+	assert.Contains(t, startErr.String(), "HOOK WAKE FAULT harness=codex id=7-0 result=unknown")
+	assert.Empty(t, c2.waiting)
+	r.err = nil
+	_, err = c2.poll(context.Background(), &out, &errOut)
+	require.NoError(t, err)
+	assert.Len(t, r.calls, 1, "never requeued")
+}
+
+// Every terminal outcome writes the durable woken mark (settle): an unknown
+// fault with no woken record behind it, left alone, reconciled from the
+// rollout, or resolved woken, is never queued after a restart.
+func TestCodexTerminalOutcomesAreDurable(t *testing.T) {
+	t.Parallel()
+	started := `{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"nova-bus 7-0 for beta from alpha"}]}}` + "\n" + rolloutComplete
+	for _, path := range []string{"restart", "reconciled", "resolved"} {
+		c, r, f, rollout := codexSetup(t, rolloutMeta+rolloutTurn+rolloutComplete, time.Minute)
+		_, err := save(c.dir, "beta", msgN("7-0", "hi"))
+		require.NoError(t, err)
+		require.NoError(t, writeFault(c.dir, codexFault{last: "7-0", first: "7-0", result: "unknown", attempts: 1, size: 1, start: "nova-bus 7-0 for beta from "}))
+		_, ok := readRecord(c.dir, "woken")
+		require.False(t, ok, "%s: no woken record behind the fault", path)
+		var out, errOut bytes.Buffer
+		switch path {
+		case "reconciled":
+			writeRollout(t, rollout, rolloutMeta+rolloutTurn+rolloutComplete+started, f.clock.Add(-time.Minute))
+			c1, err := startCodex(testThread, c.s, f, io.Discard)
+			require.NoError(t, err)
+			_, err = c1.poll(context.Background(), &out, &errOut)
+			require.NoError(t, err)
+			assert.Contains(t, out.String(), "result=reconciled", path)
+		case "resolved":
+			require.Equal(t, 0, codexResolve(c.s, "beta", testThread, "7-0=woken", &out, &errOut), errOut.String())
+		}
+		if path != "restart" {
+			w, ok := readRecord(c.dir, "woken")
+			require.True(t, ok, path)
+			assert.Equal(t, "7-0", w.last, "%s writes the durable woken mark", path)
+			assert.Empty(t, readFaults(c.dir), path)
+		}
+		c2, err := startCodex(testThread, c.s, f, io.Discard)
+		require.NoError(t, err)
+		assert.Empty(t, c2.waiting, path)
+		for range 3 {
+			_, err := c2.poll(context.Background(), &out, &errOut)
+			require.NoError(t, err)
+		}
+		assert.Empty(t, r.calls, "%s: nothing queued after the restart", path)
+	}
+}
+
+// snapshot is every file under dir and its bytes.
+func snapshot(t *testing.T, dir string) map[string]string {
+	t.Helper()
+	out := map[string]string{}
+	err := filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		b, _ := os.ReadFile(p) // ignored: a directory reads as empty
+		out[p] = string(b)
+		return nil
+	})
+	if !errors.Is(err, os.ErrNotExist) {
+		require.NoError(t, err)
+	}
+	return out
+}
+
+// codexState leaves an unresolved intent and a failed fault in beta's dir.
+func codexState(t *testing.T, c *codexWake) {
+	t.Helper()
+	for _, id := range []string{"5-0", "7-0"} {
+		_, err := save(c.dir, "beta", msgN(id, "x"))
+		require.NoError(t, err)
+	}
+	require.NoError(t, writeFault(c.dir, codexFault{last: "5-0", first: "5-0", result: "failed", attempts: 3}))
+	require.NoError(t, writeRecord(c.dir, "intent", codexRecord{last: "7-0", size: 1, first: "7-0", start: "nova-bus 7-0 for beta from "}))
+}
+
+// A hook that has not got the name (another holds it, perhaps mid-queue)
+// changes nothing in the wake state.
+func TestCodexRecoveryWaitsForTheName(t *testing.T) {
+	t.Parallel()
+	c, r, f, _ := codexSetup(t, rolloutMeta+rolloutTurn+rolloutComplete, time.Minute)
+	codexState(t, c)
+	before := snapshot(t, c.dir)
+	second, err := newCodex(testThread, "beta", "127.0.0.1:1", func(string) string { return "" }, c.s, f, io.Discard)
+	require.NoError(t, err)
+	f.claim(t, "beta", "first\ttoken", time.Hour) // the first hook, refreshing throughout
+	var out, errOut bytes.Buffer
+	err = hook(context.Background(), f, "beta", testValue, f, &out, &errOut, func(int64) {}, second, nil)
+	require.ErrorIs(t, err, errHooked)
+	assert.Equal(t, before, snapshot(t, c.dir), "no state written without the name")
+	assert.False(t, second.recovered)
+	assert.Empty(t, r.calls)
+}
+
+// --service checks the wake, installs the unit, and writes no wake state
+// (the running hook may be mid-queue); run again, the same.
+func TestCodexServicePreflightWritesNoWakeState(t *testing.T) {
+	t.Parallel()
+	m := &mgr{}
+	s, home := serviceSys(t, "darwin", m)
+	dir := filepath.Join(home, ".codex", "sessions", "2026", "11", "05")
+	require.NoError(t, os.MkdirAll(dir, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "rollout-2026-11-05T11-00-00-"+testThread+".jsonl"), []byte(rolloutMeta), 0o600))
+	c := &codexWake{dir: codexDir(s, "beta", testThread)}
+	require.NoError(t, os.MkdirAll(c.dir, 0o700))
+	codexState(t, c)
+	before := snapshot(t, c.dir)
+	for range 2 {
+		code, _, errOut := callSys(t, s, serviceEnv, "hook", "--as", "beta", "--codex-thread", testThread, "--service")
+		require.Equal(t, 0, code, errOut)
+		assert.Equal(t, before, snapshot(t, c.dir))
+	}
+	// A first install, with no state yet, makes none.
+	other := "019a5c1e-0000-7000-8000-0000000000cc"
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "rollout-2026-11-05T12-00-00-"+other+".jsonl"), []byte(rolloutMeta), 0o600))
+	code, _, errOut := callSys(t, s, serviceEnv, "hook", "--as", "beta", "--codex-thread", other, "--service")
+	require.Equal(t, 0, code, errOut)
+	_, err := os.Stat(codexDir(s, "beta", other))
+	assert.True(t, errors.Is(err, os.ErrNotExist), "no directory made by the preflight")
+}
+
+// A queued wake whose woken mark cannot be written keeps the intent and
+// ends the hook, so no later wake overwrites it.
+func TestCodexUnrecordedQueueEndsTheHook(t *testing.T) {
+	t.Parallel()
+	c, r, _, _ := codexSetup(t, rolloutMeta+rolloutTurn+rolloutComplete, time.Minute)
+	require.NoError(t, os.Mkdir(filepath.Join(c.dir, "woken.tmp"), 0o700)) // the mark's temp name is taken
+	var out, errOut bytes.Buffer
+	err := deliver(context.Background(), c, msgN("7-0", "hi"), &out, &errOut)
+	var wf wakeFailed
+	require.ErrorAs(t, err, &wf)
+	require.Len(t, r.calls, 1)
+	assert.Contains(t, errOut.String(), "HOOK WAKE FAULT harness=codex id=7-0 result=unrecorded reason=")
+	in, ok := readRecord(c.dir, "intent")
+	require.True(t, ok, "the intent is kept")
+	assert.Equal(t, "7-0", in.last)
+	assert.NotContains(t, out.String(), "HOOK WAKE OK")
 }

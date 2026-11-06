@@ -694,6 +694,14 @@ func hook(ctx context.Context, store Store, name, value string, clk Clock, out, 
 	if err != nil {
 		return err
 	}
+	// The name is held: only now is a Codex wake's state read and repaired
+	// (no other hook can be mid-queue on it).
+	if c, ok := w.(*codexWake); ok && !c.recovered {
+		if err := c.recover(stderr); err != nil {
+			fmt.Fprintf(stderr, "HOOK WAKE FAILED harness=codex reason=recovering the wake state: %s\n", escaper.Replace(err.Error()))
+			return wakeFailed{"-", err}
+		}
+	}
 	onClaim(waiting)
 	due := clk.Now().Add(presenceRefresh)
 	refresh := func() error {
