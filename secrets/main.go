@@ -69,6 +69,8 @@ nova-secrets names --store <dir> [--as <seat>]
 
 nova-secrets exec --only NAME[,NAME] --store <dir> --key <file> [--as <seat>] [--sops <path>] -- <cmd> [args...]
   Decrypt <seat>.yaml and <seat>.grants.yaml (a name in both is refused) and become <cmd> with only the --only values added to its environment.
+  Prints SECRETS EXEC STARTING as=<seat> keys=<n> cmd=<name> on stderr, then becomes the command (nothing of the tool
+  runs after it: the shell reports a command killed by a signal as 128+N, as for any process).
   Exit: the command's own status; 125 when exec refused at run time and the command never ran.
 
 --store and --key are required where a verb lists them (or NOVA_SECRETS_STORE / NOVA_SECRETS_KEY); the
@@ -383,7 +385,7 @@ func (t tool) exec(args []string) error {
 	for _, k := range pick {
 		env = append(env, k+"="+values[k])
 	}
-	fmt.Fprintf(t.stderr, "SECRETS EXEC OK as=%s keys=%d cmd=%s\n", o.as, len(pick), filepath.Base(argv[0]))
+	fmt.Fprintf(t.stderr, "SECRETS EXEC STARTING as=%s keys=%d cmd=%s\n", o.as, len(pick), filepath.Base(argv[0])) // the tool is replaced next: nothing of it runs after
 	if err := t.become(argv, env); err != nil {
 		return refuse("exec %s: %v; the command never started", argv[0], err)
 	}
@@ -414,6 +416,9 @@ func (t tool) set(args []string) error {
 		return refuse("set: empty or multi-line value on stdin; the value must be one non-empty line; run: nova-secrets set -h")
 	}
 	if _, err := t.toplevel(o.store); err != nil {
+		if errors.As(err, new(refusal)) { // git itself is missing
+			return err
+		}
 		return refuse("%s is not a git repository; run: git -C %s init && git -C %s add -A && git -C %s commit -m store", o.store, o.store, o.store, o.store)
 	}
 	rec, err := t.pinnedRecovery(o)
@@ -500,7 +505,16 @@ func (t tool) seatRemove(args []string) error {
 		return bad("usage: seat remove <seat>; the seat is letters, digits, - and _")
 	}
 	if _, err := t.toplevel(o.store); err != nil {
+		if errors.As(err, new(refusal)) {
+			return err
+		}
 		return refuse("%s is not a git repository; run: git -C %s status", o.store, o.store)
+	}
+	if err := t.pinsOutside(o); err != nil { // a real pin directory, not any empty one: its silence is the guard
+		return err
+	}
+	if _, err := pinned(o.pins, "recovery", ""); err != nil {
+		return err
 	}
 	if _, err := os.Lstat(filepath.Join(o.pins, seat+".ledger")); err == nil {
 		return refuse("this node granted %s values (%s/%s.ledger); delete that ledger and the pin %s/%s.pub first, then run again", seat, o.pins, seat, o.pins, seat)
@@ -636,7 +650,7 @@ func (t tool) sopsEnv(key, home string) []string {
 // that is safe to paste: a scratch HOME, and a decrypt that writes to /dev/null.
 func (t tool) sopsRun(o opts, stdin io.Reader, args ...string) ([]byte, error) {
 	if _, err := t.lookPath(o.sops); err != nil {
-		return nil, deny("no-sops", "sops not found at %s; install sops 3.x", o.sops)
+		return nil, deny("no-sops", "sops not found at %s; install sops 3.x: %s, or pass --sops <path>", o.sops, sopsInstall())
 	}
 	if err := checkKey(o.key); err != nil {
 		return nil, err
@@ -655,8 +669,9 @@ func (t tool) sopsRun(o opts, stdin io.Reader, args ...string) ([]byte, error) {
 		for i := range shown {
 			shown[i] = q(shown[i])
 		}
-		return nil, refusal{2, fmt.Sprintf("sops %s failed (%v); its output is withheld; ran: cd %s && HOME=$(mktemp -d) SOPS_AGE_KEY_FILE=%s %s %s",
-			args[0], exitOf(err), q(o.store), q(o.key), q(o.sops), strings.Join(shown, " ")), false, true, "sops"}
+		_, keyErr := t.publicOf(o) // a key file that is no age key explains an exit 128 better than "wrong --key"
+		return nil, refusal{2, fmt.Sprintf("sops %s failed (%v)%s; its output is withheld; run: cd %s && HOME=$(mktemp -d) SOPS_AGE_KEY_FILE=%s %s %s",
+			args[0], exitOf(err), sopsWhy(err, o, args[len(args)-1], keyErr == nil), q(o.store), q(o.key), q(o.sops), strings.Join(shown, " ")), false, true, "sops"}
 	}
 	return out, nil
 }
@@ -964,6 +979,9 @@ func sealedTo(out []byte, file string, want []string) error {
 
 // gitRun runs git in dir without the caller's repository variables.
 func (t tool) gitRun(dir string, args ...string) ([]byte, error) {
+	if _, err := t.lookPath("git"); err != nil {
+		return nil, deny("git", "git not found on PATH; install it: apt install git (Debian, Ubuntu), brew install git (macOS), winget install Git.Git (Windows)")
+	}
 	var env []string
 	for _, kv := range t.environ {
 		if k, _, _ := strings.Cut(kv, "="); !slices.Contains([]string{"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"}, k) {
@@ -1019,9 +1037,41 @@ func writeFile(path string, data []byte, mode os.FileMode) error {
 	}
 	if err != nil {
 		_ = os.Remove(tmp) // ignored: the write already failed, and that is the error reported
-		return refuse("writing %s: %v", path, err)
+		return refuse("writing %s: %v; run: ls -ld %s", path, err, filepath.Dir(path))
 	}
 	return nil
+}
+
+// sopsInstall is the install line for this OS.
+func sopsInstall() string {
+	if runtime.GOOS == "darwin" {
+		return "brew install sops"
+	}
+	return "the release binary from https://github.com/getsops/sops/releases on PATH, executable"
+}
+
+// sopsWhy names a sops exit code whose reason carries no value: 51 is a file changed since it was sealed (a MAC
+// mismatch; a seat's own file is restored from git, a grants file by a fresh grant), 128 a file no given key opens
+// (or a key file that is no age key at all). Anything else stays withheld.
+func sopsWhy(err error, o opts, file string, keyOK bool) string {
+	var ee interface{ ExitCode() int } // *exec.ExitError, or a fake's
+	if !errors.As(err, &ee) {
+		return ""
+	}
+	base := filepath.Base(file)
+	switch ee.ExitCode() {
+	case 51:
+		if seat, ok := strings.CutSuffix(base, ".grants.yaml"); ok {
+			return fmt.Sprintf(": the file changed since it was sealed (MAC mismatch); a fresh grant from the control node writes it again: nova-secrets grant <names> --to %s --pins <dir> --store %s", seat, q(o.store))
+		}
+		return fmt.Sprintf(": the file changed since it was sealed (MAC mismatch); restore it: git -C %s checkout -- %s, or seal it again", q(o.store), q(base))
+	case 128:
+		if !keyOK {
+			return fmt.Sprintf(": the key file is not an age key (age-keygen -y %s prints none); the seat's key is AGE-SECRET-KEY-1..., one line", q(o.key))
+		}
+		return ": no key given opens it (wrong --key, or the file was sealed to other keys)"
+	}
+	return ""
 }
 
 func exitOf(err error) string {

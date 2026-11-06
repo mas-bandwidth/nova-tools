@@ -99,7 +99,7 @@ nova-secrets exec --only TOKEN,LABEL --store "$secrets_dir" --key "$key_dir/web.
 ```
 
 ```text
-SECRETS EXEC OK as=web keys=2 cmd=sh
+SECRETS EXEC STARTING as=web keys=2 cmd=sh
 13 13
 ```
 
@@ -108,8 +108,10 @@ added to its environment. The command's environment is the caller's, except
 that names the seat holds are removed, sops identity variables and
 `NOVA_SECRETS_KEY`, `NOVA_SECRETS_STORE` and `NOVA_SECRETS_SEAT` are removed,
 and the selected values are added. The command never learns where the key is.
-On Unix `exec` replaces the tool and sets the core-file size limit to zero.
-The exit status is the command's.
+On Unix `exec` replaces the tool and sets the core-file size limit to zero,
+so the `STARTING` line is the last thing the tool prints: the command's exit
+status is yours to read, and a command killed by a signal is reported by the
+shell as 128+N, as for any process. The exit status is the command's.
 
 ### Defaults and help
 `--store` may come from `NOVA_SECRETS_STORE`, `--key` from `NOVA_SECRETS_KEY`,
@@ -155,7 +157,7 @@ SECRETS SET OK as=web name=NOVA_BUS_PASSWORD file=web.yaml committed; run: git -
 SECRETS SEAT ADD OK seat=db committed; next: the seat's own key runs: nova-secrets set NAME --as db --store /tmp/tmp.k3Jd9x/store --key <file> --pins <dir>
 SECRETS GRANT OK from=web to=db names=1 changed=1 committed; run: git -C /tmp/tmp.k3Jd9x/store push
 SECRETS GRANT OK from=web to=db names=1 changed=0 unchanged
-SECRETS EXEC OK as=db keys=1 cmd=sh
+SECRETS EXEC STARTING as=db keys=1 cmd=sh
 20
 SECRETS EXEC REFUSED reason=not-recipient: key age1... is not the key in .sops.yaml for db (age1...): wrong --key/--as, or the key was replaced; ...
 exit 125
@@ -268,7 +270,9 @@ status through.
 | `nova-secrets set: value is over 65536 bytes; a secret is a key or token` (exit 2) | Store a key or token, not a file. Nothing was written. |
 | Unknown selected secret | Check `names`, then fix `--only` or `set` it. |
 | `"bad-key" is not an environment variable name, or its value holds a NUL` | `exec` refuses the whole file, exit 125; `names` lists the other names and counts it in `refused=`. Remove the key with sops. |
-| sops or git failed | The output is withheld because it can hold a value. Run the command shown in the error; after a git failure inspect `git status`, since files may be written. |
+| sops or git failed | The output is withheld because it can hold a value. Run the `run:` command shown in the error; after a git failure inspect `git status`, since files may be written. Two sops exits are named: 51, the file changed since it was sealed (restore it with `git checkout -- <file>`, or seal it again); 128, no key given opens it. |
+| `git not found on PATH` or `sops not found at <path>` (`git`, `no-sops`) | The install line for this OS is in the message; `--sops <path>` names a sops elsewhere. |
+| `key file K does not exist` (`no-key`) | Make the seat's key once, on its machine: `age-keygen -o K && chmod 600 K`. |
 
 ## Guarantees and limits
 

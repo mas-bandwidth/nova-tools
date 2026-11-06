@@ -40,7 +40,17 @@
     stdin: "{{ github_runner_token | default('') }}"
   vars: { ansible_pipelining: true }
   no_log: true
+  register: github_runner_removal
+  failed_when: false
   when: github_runner_deregister | bool and not ansible_check_mode
+
+- name: a failed removal says why (the token, if it ever appeared, redacted)
+  ansible.builtin.fail:
+    msg: >-
+      GITHUB RUNNER REMOVE {{ inventory_hostname }} rc={{ github_runner_removal.rc }}:
+      {%- set s = (github_runner_removal.stderr | default('') ~ ' ' ~ github_runner_removal.stdout | default('')) | trim | truncate(600) %}
+      {{ s | regex_replace(github_runner_token | regex_escape, 'REDACTED') if github_runner_token | default('') | length > 0 else s }}
+  when: github_runner_removal is not skipped and github_runner_removal.rc | default(0) != 0
 
 - name: delete the directory
   ansible.builtin.file: { path: "{{ github_runner_dir }}", state: absent }

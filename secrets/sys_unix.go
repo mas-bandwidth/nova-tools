@@ -3,6 +3,7 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"syscall"
@@ -13,6 +14,9 @@ import (
 // checkKey refuses a key file that is not a regular file of mode 0600 owned by this user.
 func checkKey(path string) error {
 	fi, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return deny("no-key", "key file %s does not exist; a seat's key is made once, on its machine: age-keygen -o %s && chmod 600 %s", path, path, path)
+	}
 	if err != nil {
 		return deny("no-key", "key file %s: %v", path, err)
 	}

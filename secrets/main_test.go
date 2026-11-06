@@ -43,6 +43,8 @@ type harness struct {
 	env         []string // the environment exec handed the command
 	failEnc     bool
 	failDec     bool
+	decExit     int    // the fake sops -d's exit when it fails; 128 when 0
+	noGit       bool   // git is not on PATH
 	extraKey    string // the fake sops seals to this key too, as a hostile config would make it
 	sopsMissing bool
 	noAgeKeygen bool
@@ -127,6 +129,7 @@ func (h *harness) open(seat string) map[string]string {
 type exitErr int
 
 func (e exitErr) Error() string { return fmt.Sprintf("exit status %d", int(e)) }
+func (e exitErr) ExitCode() int { return int(e) }
 
 func (h *harness) run(stdin io.Reader, env []string, dir, name string, args ...string) ([]byte, error) {
 	c := call{env: env, dir: dir, name: name, args: args}
@@ -138,6 +141,9 @@ func (h *harness) run(stdin io.Reader, env []string, dir, name string, args ...s
 	switch {
 	case name == "sops" && args[0] == "-d":
 		if h.failDec {
+			if h.decExit != 0 {
+				return nil, exitErr(h.decExit)
+			}
 			return nil, exitErr(128)
 		}
 		data, err := os.ReadFile(filepath.Join(dir, args[len(args)-1]))
@@ -202,7 +208,7 @@ func (h *harness) main(args ...string) int {
 		stdin: strings.NewReader(h.stdin), stdout: &h.stdout, stderr: &h.stderr, environ: h.environ, run: h.run,
 		become: func(argv, env []string) error { h.became, h.env = argv, env; return nil },
 		lookPath: func(name string) (string, error) {
-			if name == "no-such-program-here" || name == "sops" && h.sopsMissing || name == "age-keygen" && h.noAgeKeygen {
+			if name == "no-such-program-here" || name == "sops" && h.sopsMissing || name == "age-keygen" && h.noAgeKeygen || name == "git" && h.noGit {
 				return "", errors.New("not found")
 			}
 			return "/bin/" + name, nil
@@ -260,7 +266,7 @@ func TestExecDeliversOnlyTheNamedValues(t *testing.T) {
 	assert.NotContains(t, env, "OTHER")
 	assert.NotContains(t, env, "SOPS_AGE_KEY")
 	assert.Equal(t, "yes", env["KEEP"])
-	assert.Equal(t, "SECRETS EXEC OK as=ada keys=1 cmd=true\n", h.stderr.String())
+	assert.Equal(t, "SECRETS EXEC STARTING as=ada keys=1 cmd=true\n", h.stderr.String())
 	sops := envMap(h.calls[0].env)
 	assert.Equal(t, h.key, sops["SOPS_AGE_KEY_FILE"])
 	assert.NotEqual(t, "/home/ada", sops["HOME"], "sops gets a HOME of its own, so no keys.txt of the caller's is read")
@@ -696,7 +702,22 @@ func TestWrongKeyRemedies(t *testing.T) {
 	file(pubB)
 	got := exec()
 	assert.Contains(t, got, "reason=sops: ")
-	assert.Contains(t, got, "sops -d failed (exit status 128); its output is withheld; ran: cd "+h.store+" && HOME=$(mktemp -d) SOPS_AGE_KEY_FILE="+h.key+" sops -d --output /dev/null --output-type json ada.yaml")
+	assert.Contains(t, got, "sops -d failed (exit status 128): no key given opens it (wrong --key, or the file was sealed to other keys); its output is withheld; run: cd "+h.store+" && HOME=$(mktemp -d) SOPS_AGE_KEY_FILE="+h.key+" sops -d --output /dev/null --output-type json ada.yaml")
+	// A file changed since it was sealed: sops exit 51, named, with the restore line.
+	h.failDec, h.decExit = true, 51
+	got = exec()
+	assert.Contains(t, got, "sops -d failed (exit status 51): the file changed since it was sealed (MAC mismatch); restore it: git -C "+h.store+" checkout -- ada.yaml, or seal it again; its output is withheld; run: ")
+	// A key file that is no age key: said so, instead of "wrong --key".
+	h.decExit, h.keyPub = 128, "garbage"
+	got = exec()
+	assert.Contains(t, got, "sops -d failed (exit status 128): the key file is not an age key (age-keygen -y "+h.key+" prints none)")
+	h.failDec, h.decExit, h.keyPub = false, 0, pubB
+	// No git on PATH: said so, with the install line, not "not a git repository".
+	h.noGit = true
+	h.stdin = "value-x-xyz\n"
+	assert.Equal(t, 2, h.main(h.set("X")...))
+	assert.Contains(t, h.stderr.String(), "SECRETS SET REFUSED reason=git: git not found on PATH; install it: apt install git")
+	h.noGit = false
 	// No age-keygen: say so.
 	h.noAgeKeygen = true
 	assert.Contains(t, exec(), "age-keygen not found")

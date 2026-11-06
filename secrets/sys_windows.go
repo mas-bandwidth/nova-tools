@@ -12,7 +12,9 @@ import (
 // checkKey refuses a key file that is not a regular file owned by this user whose
 // access list allows only this user, SYSTEM and Administrators (Windows has no mode bits).
 func checkKey(path string) error {
-	if fi, err := os.Lstat(path); err != nil || !fi.Mode().IsRegular() {
+	if fi, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
+		return deny("no-key", "key file %s does not exist; a seat's key is made once, on its machine: age-keygen -o %s", path, path)
+	} else if err != nil || !fi.Mode().IsRegular() {
 		return deny("no-key", "key file %s is absent or not a regular file", path)
 	}
 	if !private(path) {
