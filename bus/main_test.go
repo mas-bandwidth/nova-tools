@@ -84,14 +84,23 @@ func (f *fake) find(stream, id string) Msg {
 	panic("no entry " + id)
 }
 
-func (f *fake) Read(ctx context.Context, stream string, pending bool, block time.Duration) ([]Msg, error) {
+// seq is a fake id's number: "3-0" is 3, "0" is 0.
+func seq(id string) int {
+	var n int
+	fmt.Sscanf(id, "%d", &n)
+	return n
+}
+
+func (f *fake) Read(ctx context.Context, stream, after string, block time.Duration) ([]Msg, error) {
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
-	if pending {
+	if after != ">" {
 		var out []Msg
 		for _, id := range f.pending[stream] {
-			out = append(out, f.find(stream, id))
+			if seq(id) > seq(after) {
+				out = append(out, f.find(stream, id))
+			}
 		}
 		return out, nil
 	}
@@ -219,7 +228,7 @@ func call(t *testing.T, f *fake, env map[string]string, stdin string, args ...st
 	t.Helper()
 	var out, errOut bytes.Buffer
 	dial := func(string, string, string) Store { return f }
-	code := run(context.Background(), args, func(k string) string { return env[k] }, strings.NewReader(stdin), &out, &errOut, dial, f)
+	code := run(context.Background(), args, func(k string) string { return env[k] }, strings.NewReader(stdin), &out, &errOut, dial, f, sys{})
 	return code, out.String(), errOut.String()
 }
 
@@ -229,7 +238,7 @@ func runHookOnce(t *testing.T, f *fake, name string) (string, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	f.idle = cancel
 	var out bytes.Buffer
-	err := hook(ctx, f, name, testValue, f, &logWriter{&out, f}, io.Discard, func(int64) {})
+	err := hook(ctx, f, name, testValue, f, &logWriter{&out, f}, io.Discard, func(int64) {}, nil)
 	cancel()
 	return out.String(), err
 }
@@ -280,7 +289,7 @@ func TestHookPrintsPendingThenNew(t *testing.T) {
 	t.Parallel()
 	f := newFake()
 	send(t, f, "one", "1")
-	_, err := f.Read(context.Background(), "bus:beta", false, time.Second) // handed to an earlier hook, never acked
+	_, err := f.Read(context.Background(), "bus:beta", ">", time.Second) // handed to an earlier hook, never acked
 	require.NoError(t, err)
 	code, _, errOut := call(t, f, testEnv, "", "send", "--as", "b", "--to", "beta", "--re", "1-0", "two", "2")
 	require.Equal(t, 0, code, errOut)
@@ -385,7 +394,7 @@ func TestSendFailedIsNotRetried(t *testing.T) {
 	var out, errOut bytes.Buffer
 	dial := func(string, string, string) Store { return failingAdd{f} }
 	code := run(context.Background(), []string{"send", "--as", "a", "--to", "beta,gamma,delta", "s", "b"},
-		func(k string) string { return testEnv[k] }, nil, &out, &errOut, dial, f)
+		func(k string) string { return testEnv[k] }, nil, &out, &errOut, dial, f, sys{})
 	assert.Equal(t, 1, code)
 	assert.Equal(t, "beta 1-0\n", out.String(), "the names before the failure were sent")
 	assert.Equal(t, "nova-bus send: SEND FAILED to gamma: cannot reach redis at 127.0.0.1:1 (NOVA_BUS_REDIS): connection lost\n", errOut.String())
@@ -460,7 +469,7 @@ func TestSignalAfterWriteStillAcks(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	f.onWrite = cancel
 	var out bytes.Buffer
-	err := hook(ctx, f, "beta", testValue, f, &logWriter{&out, f}, io.Discard, func(int64) {})
+	err := hook(ctx, f, "beta", testValue, f, &logWriter{&out, f}, io.Discard, func(int64) {}, nil)
 	assert.ErrorIs(t, err, context.Canceled)
 	assert.Equal(t, []string{"print 1-0", "ack 1-0"}, f.log)
 	assert.Empty(t, f.pending["bus:beta"])
@@ -507,7 +516,7 @@ func TestRestartWaitsForACrashedHooksKey(t *testing.T) {
 		cancel()
 	}
 	var out, errOut bytes.Buffer
-	code := runHook(ctx, f, "beta", testAddr, f, &out, &errOut)
+	code := runHook(ctx, f, "beta", testAddr, f, &out, &errOut, nil)
 	assert.Equal(t, 0, code, errOut.String())
 	assert.Equal(t, "HOOK WAIT name=beta held_since=2026-11-05T12:00:00Z ttl=30s budget=40s\nHOOK OK name=beta waiting=1\n", errOut.String())
 	assert.Len(t, f.afters, 25, "polled each second from 5 s to 30 s")
@@ -522,7 +531,7 @@ func TestSecondHookOnALiveNameIsRefusedAfterWaiting(t *testing.T) {
 	f := newFake()
 	f.claim(t, "beta", "first\ttoken", time.Hour) // refreshed throughout
 	var out, errOut bytes.Buffer
-	code := runHook(context.Background(), f, "beta", testAddr, f, &out, &errOut)
+	code := runHook(context.Background(), f, "beta", testAddr, f, &out, &errOut, nil)
 	assert.Equal(t, 1, code)
 	assert.Equal(t, "HOOK WAIT name=beta held_since=first ttl=30s budget=40s\nnova-bus hook: name already hooked: beta after 40s; run: nova-bus who\n", errOut.String())
 	assert.Len(t, f.afters, 40)
@@ -538,7 +547,7 @@ func TestWaitingHookStopsOnSignal(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	var out, errOut bytes.Buffer
-	assert.Equal(t, 0, runHook(ctx, f, "beta", testAddr, f, &out, &errOut))
+	assert.Equal(t, 0, runHook(ctx, f, "beta", testAddr, f, &out, &errOut, nil))
 	assert.Equal(t, "first\ttoken", f.presence["beta"], "the release leaves another hook's key")
 }
 
@@ -559,7 +568,7 @@ func TestHookReleasesPresenceOnCleanExit(t *testing.T) {
 		cancel()
 	}
 	var out, errOut bytes.Buffer
-	code := runHook(ctx, f, "beta", testAddr, f, &out, &errOut)
+	code := runHook(ctx, f, "beta", testAddr, f, &out, &errOut, nil)
 	assert.Equal(t, 0, code, errOut.String())
 	assert.NotContains(t, f.presence, "beta")
 }
@@ -573,7 +582,7 @@ func TestHookReleasesPresenceWhenStdoutFails(t *testing.T) {
 	f := newFake()
 	send(t, f, "one", "1")
 	var errOut bytes.Buffer
-	code := runHook(context.Background(), f, "beta", testAddr, f, brokenPipe{}, &errOut)
+	code := runHook(context.Background(), f, "beta", testAddr, f, brokenPipe{}, &errOut, nil)
 	assert.Equal(t, 1, code)
 	assert.Contains(t, errOut.String(), "writing stdout: write |1: broken pipe")
 	assert.NotContains(t, f.presence, "beta")
@@ -590,7 +599,7 @@ func TestLostReadReplyIsPrintedAfterReconnect(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	f.idle = cancel
 	var out, errOut bytes.Buffer
-	code := runHook(ctx, f, "beta", testAddr, f, &out, &errOut)
+	code := runHook(ctx, f, "beta", testAddr, f, &out, &errOut, nil)
 	assert.Equal(t, 0, code)
 	assert.Equal(t, "HOOK OK name=beta waiting=1\nnova-bus hook: cannot reach redis at 127.0.0.1:1 (NOVA_BUS_REDIS): connection lost; reconnecting\n", errOut.String())
 	assert.Equal(t, []time.Duration{time.Second}, f.afters, "the wait is on the injected clock")
@@ -639,7 +648,7 @@ func TestPendingCountsHandedAndUnhandedWithoutConsuming(t *testing.T) {
 	send(t, f, "one", "1")
 	send(t, f, "two\tx", "2")
 	send(t, f, "three", "3")
-	_, err := f.Read(context.Background(), "bus:beta", false, time.Second) // one handed, not acked
+	_, err := f.Read(context.Background(), "bus:beta", ">", time.Second) // one handed, not acked
 	require.NoError(t, err)
 	code, out, errOut := call(t, f, testEnv, "", "pending", "--as", "beta")
 	require.Equal(t, 0, code, errOut)
@@ -707,7 +716,7 @@ func TestReconnectIsLoggedOnceAMinute(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	f.idle = cancel
 	var out, errOut bytes.Buffer
-	code := runHook(ctx, f, "beta", testAddr, f, &out, &errOut)
+	code := runHook(ctx, f, "beta", testAddr, f, &out, &errOut, nil)
 	assert.Equal(t, 0, code)
 	line := "nova-bus hook: cannot reach redis at 127.0.0.1:1 (NOVA_BUS_REDIS): connection refused; reconnecting\n"
 	assert.Equal(t, line+line+"HOOK OK name=beta waiting=0\n", errOut.String())

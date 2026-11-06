@@ -89,7 +89,7 @@ const probeUsage = `nova-sandbox probe: prove the wall on this machine by runnin
 
 It walls children of this binary in a scratch directory and prints one line per step,
 PROBE STEP name=<step> expect=allow|deny got=<what happened>, then PROBE OK or
-PROBE FAILED. The steps are listed in docs/SPEC-SANDBOX.md.
+PROBE FAILED. The steps are listed in sandbox/SPEC.md.
 
 Exit: 0 PROBE OK; 1 PROBE FAILED; 2 the invocation is malformed.
 `

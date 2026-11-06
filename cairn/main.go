@@ -21,7 +21,8 @@ import (
 const intro = `nova-cairn: the record an AI keeps for its next session. It keeps the words a
 session chose to keep, searches them with the notes already written, and flags
 self-talk: sentences where the writer passes a standing verdict on themselves.
-Plain files, standard library only; nothing is ever sent anywhere.
+Plain files, standard library only; nothing is ever sent anywhere. Search is by
+keywords only: a paraphrase that shares almost no words with the entry is not found.
 `
 
 const exits = "Exit 0 done, 1 a finding or a conflict, 2 could not run. Every refusal ends with what to run next.\n"

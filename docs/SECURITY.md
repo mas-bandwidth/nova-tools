@@ -1,162 +1,71 @@
 # Security
 
-## The threat model here is not nova's
+nova-tools runs commands, reads configuration, delivers messages and installs
+software with the caller's permissions. Each tool has its own boundary.
+Read its guide before relying on a restriction.
 
-[nova](https://github.com/mas-bandwidth/nova) ships prose. A line reads it,
-weighs it against what it already holds, and keeps what fits. A hole in that
-guidance is a bad idea offered to someone whose whole job at that moment is to
-judge it. Its
-[SECURITY.md](https://github.com/mas-bandwidth/nova/blob/main/SECURITY.md) is
-the hardening catalog for a self, and it stays the home of that doctrine.
+## Boundaries
 
-This repository ships binaries. You build them from a checkout and run them
-against your own self repo, on your own machine, under your own account, and
-nothing weighs them before they act. A defect here executes with your
-privileges rather than arriving as a suggestion. That is why the bar in
-[CONTRIBUTING.md](CONTRIBUTING.md) is set where it is, and why this page is
-this repository's own rather than a copy of nova's.
+| Piece | Boundary |
+|---|---|
+| [bus](../bus/README.md) | Redis holds inboxes. The receiver process, called a hook, reads an inbox onto stdout and records recent presence. A sender supplies its own name. The receiver acknowledges a message after writing it; this does not prove that a person or model read it or completed the work. |
+| [config](../config/README.md) | PostgreSQL holds machine settings and programs kept running or scheduled. A write records the supplied actor in history. An actor name is an audit label, not authentication. |
+| [sandbox](../sandbox/README.md) | Kernel rules restrict a command's filesystem access and, when requested, network access within the documented OS limits. System roots are readable. The environment and standard streams pass through; descriptors above stderr are closed on exec unless `--keep-fds` preserves them. |
+| [secrets](../secrets/README.md) | A seat names a decryption identity with an age key. sops decrypts its file, and `exec --only` passes selected values to the command's environment. The command and its children can use or disclose those values. Recipient keys, including any recovery key, control who can decrypt the file. |
+| [reserve](../reserve/README.md) | File locks coordinate cooperating callers. They do not impose CPU, memory or process limits on a command. |
+| [cairn](../cairn/README.md) | Saved session records and notes are plain files protected by filesystem permissions. A receipt reads a record back; search and note checks do not establish its truth or detect all edits. Publish policy is a recorded label; the tool sends nothing. |
+| [fleet](../fleet/README.md) | Ansible installs binaries and supervised commands on the selected hosts. Inventory, program arguments, variables and release sources are trusted inputs. |
 
-## What counts as a vulnerability here
+Restrict access to the Redis and PostgreSQL services and to the files and keys
+these tools use. Message bodies are external data, even when their sender name
+is familiar. Installing a hook does not make its messages instructions to run.
 
-**[`SPEC.md`](SPEC.md) is the contract, and this page does not restate it.**
-Which verbs are walls, which assert nothing, what each check says NO to, and
-what every exit code means are all specified there, normatively. Read
-it for the rule and treat this page as the shape. **Where the two disagree,
-`SPEC.md` governs, and the disagreement is itself worth reporting** — a page
-that restates a contract is a second copy of it, and the copy is what rots.
+The sandbox's network limits differ by OS. Read the [sandbox guide](../sandbox/README.md)
+for the grants and checks on your machine. The wall does not clear the environment
+or limit CPU and memory use. A granted directory can contain private data; a
+read grant allows the command to read that data.
 
-So the classes, stated so they do not depend on an enumeration that can rot:
+`--keep-fds` preserves descriptors above stderr, including access through an open
+file or socket. On Linux, `--unix` permits Unix-domain socket creation. Use it
+only when the command may contact the local services those sockets expose.
 
-**A check that passes a case its own "says NO when" list covers.** Some verbs
-here exist to refuse and `SPEC.md` says which; a green from one of those is a
-thing you will act on. A wall that passes what it was built to stop is worse
-than no wall, because you stop looking. This is the most valuable finding you
-can bring us.
+The install play checks downloaded assets against the selected release's
+`SHA256SUMS`. This detects a mismatch with that file; it is not an independent
+signature of the release or protection against a compromised release account.
 
-**A verb whose exit 0 asserts more than it verified.** Some verbs answer and
-assert nothing; some report a state; some, on success, are claiming they read the
-result back. `SPEC.md` says which is which. An exit 0 claiming more than was
-checked is the same defect as a wall passing a bad case, one layer along.
+## What to report
 
-**Reading or writing anything, a file, the environment, a process, or the network,
-that is neither named on the command line nor derived from the files those name.**
-No location here is guessed, none is defaulted, and no destination is reached that the
-caller did not name, so anything outside that closure is a hole, and so is overwriting a
-path that was named only as an input. Paths the spec derives are not: a manifest's file
-list, a ledger's homes, a link target deliberately stat-ed in order to fail it, a temp file
-beside the box.
+Report a tool violating its documented boundary, disclosing secret values,
+modifying an unintended path, corrupting stored data or reporting success when
+an operation failed. An inaccurate security claim in a guide is also worth
+reporting. A missing feature or a documented limit can be discussed as an
+ordinary issue without including sensitive details.
 
-**Content changing what a tool does rather than what it reports.** These binaries
-read untrusted text by design, and that text is data. Anything that lets it steer
-execution is the most serious class we can receive.
-
-**Losing a fuse — any fuse, quarantine or lockdown.** The property is that a
-box is reported clear when it is not provably clear, or is cleared by a route
-`SPEC.md` does not authorize: an unreadable box read as
-clear, a recorded state that a lookup fails to find, a surface whose spelling
-escapes a match `SPEC.md` says is insensitive to case and whitespace. `SPEC.md`
-is explicit that absent and unreadable are different answers and that
-collapsing them is the fail-open this package exists to prevent.
-
-**Untrusted content reaching a tool's own reported lines.** `SPEC.md` publishes a
-machine-scannable output grammar, which is an invitation to parse it, and some of
-what these tools print comes from files an attacker may control. Anything that
-lets such content reach a reader, human, terminal or model, as something the tool
-said rather than something it quoted, or that carries more of a protected record than its
-grammar requires, is a finding, and it is not excluded by the execution class above: that one
-is about what a tool does, this one about what it says.
-
-**Hostile or malformed input leaving state half-written**, and an input a hostile party can arrange so a check cannot run, or cannot finish, where
-the refusal or the hang suppresses something someone was relying on.
-
-**Anything distributing something that answers to these names** and is not
-built from `github.com/mas-bandwidth/nova-tools`.
-
-**And what is not.** A check being stricter than you would like, or a missing
-feature. Disagreeing with a judgment from an instrument `SPEC.md`
-declares advisory, where it flags so that you decide. And anything `SPEC.md` declares:
-it names its permanent misses, its blind spots, its accepted collapses and the
-lists it says are not exhaustive, and each of those is the spec working rather
-than a hole. **If a declared limit looks wrong to you, that is a finding about
-the spec, and we want it as one.**
+Include the tool and version or commit, operating system, expected behavior and
+what you observed. Remove secret values and private records from the report.
 
 ## Reporting
 
-Email <glenn@mas-bandwidth.com>. That is the route that works today, and it is
-the whole route.
+Email <glenn@mas-bandwidth.com>. Do not put sensitive findings in public issues
+or pull requests. If no acknowledgment arrives after about a week, email
+<rowan@mas-bandwidth.com> with `SECURITY` in the subject.
 
-GitHub private vulnerability reporting is switched off on this repository and
-on nova as of 2026-08. Where a repository has that feature enabled, GitHub puts
-a **Report a vulnerability** button on the Security tab; this one does not have
-it enabled, so there is no button and the advisory form is not a route you can
-use.
+This project publishes no encrypted intake key. Email is not an anonymous or
+authenticated reporting channel; send only what you are comfortable disclosing
+through it. If a report needs another channel, describe that need without the
+sensitive details. Any new channel or key is also published in this file; check
+its [history](https://github.com/mas-bandwidth/nova-tools/commits/main/docs/SECURITY.md)
+before using one offered by email. Repository history does not protect against
+a compromised repository account.
 
-Email is not encrypted, and this project publishes no key, so we cannot offer
-an encrypted intake and will not pretend otherwise. Arranging another channel
-over unencrypted mail is not merely visible, it is **unauthenticated**: with no
-published key you have no way to tell a reply from us apart from a reply from
-someone who is reading the wire. Judge what to send against that rather than
-against a promise we cannot keep. If a finding is sensitive enough that sending
-it as text is the wrong call, say that much and nothing more, and we will work
-out something with you knowing the arranging is in the clear too. **Treat any
-reply as unverified, including one that appears to come from us** — that is
-what unauthenticated means, and the arranging step is exactly where an
-adversary on the wire would answer first. So here is an anchor you can check
-without trusting mail: **we will never propose a channel or publish a key by
-mail alone. Anything we offer will also appear in a commit to this file**, so
-read [this file's
-history](https://github.com/mas-bandwidth/nova-tools/commits/main/docs/SECURITY.md)
-before you use a channel someone has offered you, and expect that record to
-begin with the commit that first published this page. The anchor proves a
-commit is in this repository's history; it does not prove which of us put it there, and a
-stolen credential defeats it. **And silence is not only
-neglect.** The party best placed to read this mail is also best placed to drop
-it, so if nothing comes back, consider that the message may never have arrived.
+We aim to acknowledge reports within a few days and ask before publishing a
+reporter's name in release notes. Please withhold a working bypass while a fix
+is being prepared. If neither reporting address answers, further disclosure is
+your decision; this policy does not require indefinite silence.
 
-Nothing about this route is anonymous, and we would rather say so than let the
-word *private* imply it. It is mail from your address to a named person at a
-named domain. You may use an address that does not identify you and we will not ask who
-you are, but be clear about what that trades: we have no prior relationship with
-a new address either, so neither of us can tell the other from someone on the
-wire, and the credit offer below becomes one you cannot later claim.
+## Updates
 
-We aim to acknowledge within a few days. If about a week passes with no reply,
-that is a failure on our side and not a judgment on your report — send it again
-to <rowan@mas-bandwidth.com> with SECURITY in the subject, since that address
-also takes general mail and the word is how it gets found. That gets you a
-different pair of eyes rather than a faster answer, and it is no more private
-than the first: same unencrypted medium, same domain.
-
-If neither answers, you have done everything that could reasonably be asked of
-you, and what you do next is your own call on your own timeline. We would still
-rather hear from you first, and we are not owed silence.
-
-Short of that, please do not chase a security report in public. Saying that a
-report is outstanding announces both that an unfixed hole exists and that
-nobody is minding it, and it does that whether or not you include any technical
-detail.
-
-**Whatever you decide, please do not publish a working bypass before it is fixed.**
-That matters more here than it does for a page of guidance: these are binaries with
-an installed base and no update channel, so nothing we ship reaches a copy
-somebody already built, and the gap between a technique going public and an
-adopter rebuilding is entirely theirs to absorb.
-
-We credit you in the release notes unless you would rather stay uncredited. Say
-which, and if you say nothing we will ask before publishing anything with your
-name in it.
-
-## If you have already built a version
-
-These tools have no update channel and no telemetry. Nothing here reaches a
-binary you have built, and we would not want it to. So the honest instruction
-is that you find out by looking: watch
-[releases](https://github.com/mas-bandwidth/nova-tools/releases), and rebuild
-from a checkout you verified rather than trusting a binary whose provenance you
-no longer remember.
-
-When a fix ships for something reported here, the release notes say what it was
-and which versions carried it. If a check was passing something it should have
-refused, that sentence is the one you need, because it tells you that every
-green that check gave you in that window answered a smaller question than you
-thought it did.
+Watch the [releases](https://github.com/mas-bandwidth/nova-tools/releases) for
+fixes and affected versions. Installed binaries do not update themselves.
+Rebuild from a verified checkout or explicitly install a selected release with
+the [fleet install play](../fleet/README.md).
