@@ -509,7 +509,7 @@ seccomp action=allow rule="everything else"
 	assert.Empty(t, entries, "show runs nothing and writes nothing")
 }
 
-// TestSpecWorkedExample runs the worked example in docs/SPEC-SANDBOX.md as written, with
+// TestSpecWorkedExample runs a Go build walled as sandbox/README.md shows, with
 // /work as a scratch directory and /home/me/go/pkg/mod as this host's module cache: a Go
 // module with a dependency builds walled under --net-deny, HOME and TMPDIR inside the
 // --write, the module cache only read.

@@ -1,59 +1,155 @@
 # nova-reserve
 
-nova-reserve: reservations on a machine's shared resources so people and AIs can coordinate. A command, or a hold,
-reserves one of the machine's N slots, so builds, test runs, benches and CI jobs queue instead of piling onto one box
-and timing each other out. The slots are OS file locks in one directory (flock on Linux, macOS and the BSDs,
-LockFileEx on Windows): the kernel frees the slot of a holder that ends or dies, SIGKILL included. There is no daemon,
-no server and no PID file to clean up. The directory (default `/var/tmp/nova-reserve`, `C:\ProgramData\nova-reserve`
-on Windows) must be on a local disk.
+nova-reserve limits how many jobs run at once on a machine. Each job holds a
+**slot**; when every slot is taken, the next job waits its turn. The number of
+slots is the machine's **capacity**.
 
-A machine has one capacity, N, stored in `<dir>/capacity`. The first caller stores its `--slots` (or the CPU count /
-4); a caller whose `--slots` differs is refused (exit 2) and told to run `nova-reserve set --slots N`, which is refused
-while any slot is held (exit 1).
+Build it with Go:
 
-The full contract (verbs, flags, exit codes, the files in the directory, platforms) is
-[docs/SPEC-RESERVE.md](../docs/SPEC-RESERVE.md).
-
-## Usage
-
-```
-nova-reserve [run] [--slots N | --exclusive] [--wait D] [--why TEXT] [--dir DIR] -- <cmd> [args...]
-nova-reserve hold [--for D] [--slots N | --exclusive] [--wait D] [--why TEXT] [--dir DIR]
-nova-reserve status [--dir DIR]
-nova-reserve set --slots N [--dir DIR]
-nova-reserve help [run|hold|status|set]
+```sh
+git clone -q https://github.com/mas-bandwidth/nova-tools
+go build -C nova-tools -o "$PWD/bin/nova-reserve" ./reserve
+export PATH="$PWD/bin:$PATH"
 ```
 
-- **run** finds the command, waits for a slot, runs it, frees the slot, and exits with its status.
-- **hold** holds a slot until SIGTERM, SIGINT or SIGHUP, or `--for D`; it never reads stdin. Without `--for` it also
-  ends when its parent exits. It prints `HELD ...`, then `RELEASED reason=signal|for|parent_exit held_for=...`.
-- **status** prints the capacity, each slot's holder (pid, since, why, cmd), the `gate` and `all` locks, and
-  `free=<n>/<capacity>` (0 during an `--exclusive` run). It takes no lock: it reads the holder files whose pid is alive.
-- **set** stores the capacity.
+The examples below use a new temporary directory,
+set once with `NOVA_RESERVE_DIR`. Everything that should share the limit must
+use the same directory. For example, `/var/tmp/nova-reserve` is a good
+choice on Linux and macOS (it is the default); use a local disk.
 
-Exit: 0 done; 1 refused (no slot within `--wait`, capacity in use); 2 could not run (a bad flag, value or verb, a
-`--slots` that differs from the capacity, a corrupt capacity file, `--wait 0`); 126 not executable; 127 not found,
-before any slot is taken; else the command's status. A flag a verb does not take is a refusal, never ignored.
-
-## Build and test
-
-```
-go build -o nova-reserve .
-go test .                       # unit tests: an in-memory lock table, a fake clock, a fake command
-go test -tags functional .      # real processes on real locks
+```sh
+export NOVA_RESERVE_DIR=$(mktemp -d)
 ```
 
-## Models
+You can pass `--dir DIR` to any command instead. The directory is created, but
+its parent must already exist.
 
-`tla/SlotCount.tla` is the guarantee: at most N shared holders, an exclusive holder alone. `tla/SlotFiles.tla` is the
-lock layout for a fixed N (gate, all, slot1..slotN, the scan over them, crashes anywhere) and refines it.
-`tla/Capacity.tla` is the capacity file beside the slot array, the gate and all: every holder was let in under the one
-stored capacity, never more holders than it, set changes it only when no one holds, and two first takers both get
-slots even while holders never finish (`CapacityTwoFirst.cfg`; liveness in `CapacityLive.cfg` runs on two callers,
-since three take too long under strong fairness). The `*Broken*.cfg` files are
-reversed witnesses TLC must fail: a slot taken without its lock, a shared holder that skips `all`, an exclusive taker
-that skips the gate, a crashed holder whose locks are never freed, a crashed holder whose command runs on (macOS and
-the BSDs on SIGKILL), a count that is not checked, a taker that counts its own `--slots` (the per-caller bug), two
-first takers that both write the capacity, a set that writes while slots are held, a claimer that never sees the
-stored capacity, and a status that probes slots by locking them. `CASES.tsv` lists them;
-`tests/tla/check.sh <jar> reserve/tla` runs them.
+## Set the capacity
+
+```sh
+nova-reserve set --slots 4
+```
+
+```text
+CAPACITY SET slots=4
+```
+
+If you never run `set`, the first reservation stores `--slots`, or the CPU
+count divided by four (at least one). Setting the value it already has prints
+`CAPACITY SET slots=4 note=unchanged`.
+
+## Run a command
+
+```sh
+nova-reserve --wait 15m --why "unit tests" -- sleep 1
+```
+
+```text
+nova-reserve: HELD mode=shared slot=1/4 pid=811078
+```
+
+The command runs once a slot is free, its output passes through, and
+nova-reserve exits with its status. The `HELD` line goes to stderr. Process IDs
+and times in these examples will differ on your machine.
+
+`--wait D` gives up after a time such as `90s` or `15m`; the default waits for
+ever. `--why TEXT` labels the job in `status`. Flags take `--wait 1s`,
+`--wait=1s`, `-wait 1s` or `-wait=1s`.
+
+## Reserve the whole machine
+
+```sh
+nova-reserve --exclusive --wait 1m -- sleep 1
+```
+
+```text
+nova-reserve: HELD mode=exclusive slot=all pid=811079
+```
+
+An exclusive job waits for every running job to finish. While it waits, no
+new job can start; once it has run, the others go on.
+
+## Hold a reservation without a command
+
+`hold` keeps a slot until it gets SIGTERM, SIGINT or SIGHUP, or until `--for`
+runs out. Without `--for` it also ends when the shell that started it exits.
+Give `--for` when the hold must outlast the shell.
+
+```sh
+nova-reserve hold --for 2h --why "bench sweep" &
+reservation_pid=$!
+sleep 1
+nova-reserve status
+kill "$reservation_pid"
+wait "$reservation_pid"
+```
+
+```text
+HELD mode=shared slot=1/4 pid=820774
+capacity=4 set_by_pid=820683 set_at=2026-11-05T23:45:53Z
+slot1 held pid=820774 since=2026-11-05T23:45:54Z why=bench\ssweep
+slot2 free
+slot3 free
+slot4 free
+gate free # held by an --exclusive run from when it starts waiting until it ends
+all free # the exclusive lock: held by an --exclusive run while it runs
+free=3/4
+RELEASED reason=signal signal=SIGTERM held_for=1.001s
+```
+
+`hold` prints its lines on stdout. The release reason is `signal`, `for` or
+`parent_exit`. On Windows, stop a hold with Ctrl+C or use `--for`.
+
+## Read the state
+
+```sh
+nova-reserve status
+```
+
+`status` shows the capacity (who stored it and when), each slot as `free` or
+`held` with the holder's PID, start time, reason and command, and
+`free=<n>/<capacity>`. `gate` and `all` are the locks an exclusive job uses.
+It is a snapshot; it can lag a moment behind the locks. Spaces in values show
+as `\s`.
+
+## Refusals and what to do next
+
+Every refusal is one line on stderr.
+
+| You see | Exit | What to do |
+|---|---|---|
+| `no slot within 1s: ...` | 1 | Every slot was held for the whole wait. The line names the holders; run `nova-reserve status`, then retry or wait longer. |
+| `this machine's capacity is 8 (...); you asked 3; run: nova-reserve set --slots 3 ...` | 2 | Drop `--slots` to use the stored count, or run `set` while no job holds a slot. |
+| `capacity in use (...)` | 1 | `set` needs a free machine. Retry when the holders finish. |
+| `NAME: command not found on PATH=...` | 127 | Fix PATH or give the full path. A name with a slash prints `NAME: no such file`. No slot was taken. |
+| `NAME: not executable` | 126 | Fix the file's permissions. No slot was taken. |
+| `--dir DIR: parent PARENT does not exist; run: mkdir -p PARENT && ...` | 2 | Run the printed `mkdir` and repeat the command. |
+| `... is not a reservation directory ...` | 2 | `status` found no reservation there. Use the directory your jobs use. |
+| `no parent to watch (parent pid 1); run: nova-reserve hold --for ...` | 2 | An untimed `hold` started by init, systemd or launchd needs `--for`. |
+| `capacity=? # corrupt: ...` | 0 | The capacity file is damaged. Run the printed `set` command while no job holds a slot. |
+
+A bad or repeated flag, a missing command, a number outside 1 to 1024, or a
+`--wait` or `--for` not above zero exits 2; `nova-reserve help run` (or `hold`,
+`status`, `set`) shows the usage. A run that starts returns the
+command's own status; if a signal ended it, 128 plus the signal number.
+
+## Guarantees and limits
+
+Guarantees:
+- No more jobs hold slots than the capacity, and an exclusive job holds all of them.
+- The operating system frees a slot when its process ends, even if killed.
+- Slots go to whichever waiter polls first after one frees (waiters poll once a
+  second); a shared job takes the lowest free number.
+- The capacity changes only while no job holds a slot.
+
+Limits:
+- Only jobs that use nova-reserve with the same directory share the limit.
+- The directory must be on a local disk. Keep it out of places that clean
+  temporary files, or the stored capacity is lost.
+- On macOS and the BSDs, killing nova-reserve with SIGKILL can leave its
+  command running with no slot. On Linux and Windows the command ends too.
+- On Windows a hold notices its parent's exit by PID only; a reused PID can
+  keep an untimed hold alive.
+- Release builds cover Linux amd64 and arm64, macOS arm64 and Windows amd64.
+
+How the tool is tested is in [SPEC.md](SPEC.md).

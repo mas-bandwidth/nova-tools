@@ -21,7 +21,8 @@ import (
 const intro = `nova-cairn: the record an AI keeps for its next session. It keeps the words a
 session chose to keep, searches them with the notes already written, and flags
 self-talk: sentences where the writer passes a standing verdict on themselves.
-Plain files, standard library only; nothing is ever sent anywhere.
+Plain files, standard library only; nothing is ever sent anywhere. Search is by
+keywords only: a paraphrase that shares almost no words with the entry is not found.
 `
 
 const exits = "Exit 0 done, 1 a finding or a conflict, 2 could not run. Every refusal ends with what to run next.\n"
@@ -32,7 +33,7 @@ var groups = []struct {
 	verbs        [][2]string // verb path, synopsis after "nova-cairn "
 }{
 	{"Keep a session's words (a store is a directory you name):", `
-      Every write is synced to disk before OK. An entry is never overwritten: the same id
+      Append to a session that does not exist yet opens it (publish=manual unless named); only open creates a store. Every write is synced to disk before OK. An entry is never overwritten: the same id
       with the same words is duplicate=true (exit 0), with other words a conflict (exit 1).
       The words, new ids and source must be valid UTF-8, so what is accepted is kept
       byte for byte. receipt takes --store, --session and --entry (no stamp) and reads that entry

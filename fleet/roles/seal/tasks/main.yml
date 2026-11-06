@@ -7,7 +7,35 @@
 - name: the refusals
   ansible.builtin.include_tasks: check.yml
 
-- name: the names the seat holds (control node; no key, no value read)
+# a seat's file is made by its first `nova-secrets set`: a seat with a rule and no file yet holds no names, and is
+# not a failure (the first seal on a fresh store makes the file)
+- name: the seats the store has (control node; rule and file per seat)
+  ansible.builtin.command:
+    argv: ["{{ nova_control_secrets }}", seat, list, --store, "{{ nova_seal_store }}"]
+  delegate_to: localhost
+  become: false
+  register: seal_seats
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: seal_asked
+
+- name: this seat's line
+  ansible.builtin.set_fact:
+    seal_seat_line: "{{ seal_seats.stdout_lines | default([]) | select('match', '^' ~ (nova_seal_seat | regex_escape) ~ ' ') | first | default('') }}"
+  when: seal_asked
+
+- name: the seat has a rule in the store
+  ansible.builtin.assert:
+    that: seal_seats.rc == 0 and 'rule=yes' in seal_seat_line
+    fail_msg: >-
+      SEAL {{ seal_name }} STOP: the store {{ nova_seal_store | default('') }} has no rule for seat {{ nova_seal_seat | default('') }}
+      (`{{ nova_control_secrets }} seat list` rc={{ seal_seats.rc | default('?') }}: {{ seal_seat_line or 'no such seat' }});
+      add it first (seat.yml, or nova-secrets seat add)
+    quiet: true
+  when: seal_asked
+
+- name: the names the seat holds (control node; no key, no value read; none when the file is not made yet)
   ansible.builtin.command:
     argv: ["{{ nova_control_secrets }}", names, --store, "{{ nova_seal_store }}", --as, "{{ nova_seal_seat }}"]
   delegate_to: localhost
@@ -16,11 +44,11 @@
   changed_when: false
   failed_when: false
   check_mode: false
-  when: seal_asked
+  when: seal_asked and 'file=yes' in seal_seat_line
 
 - name: the seat's names were read
   ansible.builtin.assert:
-    that: seal_names.rc == 0
+    that: seal_names is skipped or seal_names.rc == 0
     fail_msg: >-
       SEAL {{ seal_name }} FAILED: `{{ nova_control_secrets }} names --store {{ nova_seal_store | default('') }} --as {{ nova_seal_seat | default('') }}`
       exited rc={{ seal_names.rc | default('?') }}: {{ (seal_names.stderr | default(seal_names.msg | default(''))) | trim | truncate(300) }}

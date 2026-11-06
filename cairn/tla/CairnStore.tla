@@ -169,7 +169,10 @@ OpenCrash(s, pub, src) ==
                    logged, indexed, persisted, reported, writtenText>>
 
 \* Append: stores exact prose under stable id; retry is Duplicate=true; conflicting prose refused;
-\* persisted=true before success reported .
+\* persisted=true before success reported. In the code a first append to a session
+\* nobody opened performs Open(s, pub, src) and then this action in one command;
+\* Next keeps the two as separate steps, so another process's step may land
+\* between them, which is the interleaving the store is built to survive.
 Append(s, e, text) ==
     /\ sessions[s].open   \* a flat record is read, never appended to
     /\ IF entries[s, e] /= None
