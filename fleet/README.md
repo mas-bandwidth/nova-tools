@@ -640,7 +640,7 @@ roles and the dumps are left.
 ## secrets-refresh
 
 The usual way a machine's copy of the store stays fresh is a push from the control node (rsync over the ssh the
-play has, the machine's host key verified as everywhere else; the play installs rsync on a Debian or Ubuntu machine): `nova-fleet up` step 6
+play has, the machine's host key verified as everywhere else; rsync on the machine comes from join): `nova-fleet up` step 6
 copies the encrypted store over the ssh it already has (rsync: no `.git`, stale files deleted, 0700/0600) to each
 machine's `nova_secrets_store`, and running `up` again pushes again. No machine needs read access to the store's
 repository. The pull timer below is the optional form, for an adopter who gives `nova_secrets_repo` and lets each

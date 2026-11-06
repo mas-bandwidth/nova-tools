@@ -124,11 +124,6 @@
       when: nova_seal_store is defined
       register: sr_push_dir
 
-    - name: rsync, which the push lands with (Debian, Ubuntu)
-      ansible.builtin.apt: { name: rsync, state: present, update_cache: true, cache_valid_time: 3600 }
-      become: true
-      when: ansible_facts['os_family'] == 'Debian' and nova_seal_store is defined
-
     # the same settings nova-fleet up uses: no .git (one left from pull mode is removed), deletes what the control
     # node's copy lacks, 0700/0600; symlinks are never copied. verify_host keeps ssh's host key check on (synchronize
     # turns it off by default, which no play here ever does). Changed only for a file sent, removed or re-moded, read
