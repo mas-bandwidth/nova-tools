@@ -11,9 +11,9 @@ var kindOps = []string{"list", "show", "add", "set", "remove"}
 // verbs are the root verbs, for an unknown-verb refusal.
 const verbs = "machine, service, history, inventory, schema, help"
 
-const writeLine = "--actor <name> [--reason <line>] [--dry-run]"
+const writeLine = "[--actor <name>] [--reason <line>] [--dry-run]"
 
-const historyLine = "nova-config history [<kind> [<name>]] [--since <duration|RFC3339>] [--max <n>]"
+const historyLine = "nova-config history [<kind> [<name>]] [--since <duration|RFC3339>] [--max <n>] [--json]"
 
 const trailer = `Store: --pg <dsn> or NOVA_PG_DSN (postgres://user@host:port/db, no password; the password is read from the variable
 NOVA_PG_PASSWORD_ENV names, else NOVA_PG_PASSWORD). Exit codes: 0 done, 1 refused, 2 could not run.
@@ -31,7 +31,7 @@ var usage = func() string {
 	return b.String() + "  " + historyLine + "\n  nova-config inventory [--list | --host <name>]\n  nova-config schema\n  nova-config help [<verb>]\n\n" +
 		kinds["machine"].fieldsLine() + "\n" + kinds["service"].fieldsLine() + "\n" +
 		`Every verb takes -h or --help. Use inventory as an Ansible script: #!/bin/sh, then: exec nova-config inventory "$@".
-Make a store current with: nova-config schema | psql "$NOVA_PG_DSN"
+Make a store current with: nova-config schema | PGPASSWORD="$NOVA_PG_PASSWORD" psql "$NOVA_PG_DSN"
 ` + trailer
 }()
 
@@ -89,7 +89,7 @@ func helpText(path []string) (string, bool) {
 	case "inventory":
 		return "usage: nova-config inventory [--list | --host <name>]\nPrints Ansible's dynamic inventory as JSON; the groups are all, bench, runner and services.\n", true
 	case "schema":
-		return "usage: nova-config schema\nPrints schema.sql: apply it with: nova-config schema | psql \"$NOVA_PG_DSN\"\n", true
+		return "usage: nova-config schema\nPrints schema.sql: apply it with: nova-config schema | PGPASSWORD=\"$NOVA_PG_PASSWORD\" psql \"$NOVA_PG_DSN\"\n", true
 	case "help":
 		return "usage: nova-config help [<verb>]\n", true
 	}

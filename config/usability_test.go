@@ -168,9 +168,10 @@ func pe(code, msg string) *pgconn.PgError {
 
 func TestStoreErrors(t *testing.T) {
 	t.Parallel()
+	login := `postgres refused the login for nova: check NOVA_PG_PASSWORD; run: PGPASSWORD="$NOVA_PG_PASSWORD" psql "$NOVA_PG_DSN" -c 'select 1'`
 	for code, want := range map[string]string{
 		"42P01": schemaMissing, "42703": schemaMissing, "3F000": schemaMissing,
-		"28P01": "postgres refused the login for nova: check NOVA_PG_PASSWORD", "28000": "postgres refused the login for nova: check NOVA_PG_PASSWORD",
+		"28P01": login, "28000": login,
 		"42501": "nova may not add machines",
 		"57014": "store error (SQLSTATE 57014): canceling statement due to timeout",
 	} {
@@ -191,10 +192,11 @@ func TestConnectErrors(t *testing.T) {
 	t.Parallel()
 	cfg, err := pgx.ParseConfig("postgres://nova@db.example:5432/mydb")
 	require.NoError(t, err)
-	assert.EqualError(t, connectError(cfg, pe("3D000", "database \"mydb\" does not exist")), "database mydb does not exist on db.example")
-	assert.EqualError(t, connectError(cfg, pe("28P01", "password authentication failed")), "postgres refused the login for nova: check NOVA_PG_PASSWORD")
-	assert.EqualError(t, connectError(cfg, fmt.Errorf("dial: %w", syscall.ECONNREFUSED)), "cannot reach postgres at db.example:5432 (NOVA_PG_DSN): connection refused")
-	for dsn, want := range map[string]string{"postgres://u@h:99999/x": "port 99999 out of range", "mysql://u@h/x": "not a postgres:// URL", "h=1": "not a postgres:// URL", "postgres://u@h:5432/x": ""} {
+	assert.EqualError(t, connectError(cfg, pe("3D000", "database \"mydb\" does not exist")), "database mydb does not exist on db.example; run: createdb -h db.example -p 5432 -U nova mydb")
+	assert.EqualError(t, connectError(cfg, pe("28P01", "password authentication failed")), `postgres refused the login for nova: check NOVA_PG_PASSWORD; run: PGPASSWORD="$NOVA_PG_PASSWORD" psql "$NOVA_PG_DSN" -c 'select 1'`)
+	assert.EqualError(t, connectError(cfg, fmt.Errorf("dial: %w", syscall.ECONNREFUSED)), `cannot reach postgres at db.example:5432 (NOVA_PG_DSN): connection refused; check NOVA_PG_DSN or run: psql "$NOVA_PG_DSN" -c 'select 1'`)
+	notURL := "not a postgres:// URL (want postgres://USER@HOST:PORT/DB?sslmode=disable)"
+	for dsn, want := range map[string]string{"postgres://u@h:99999/x": "port 99999 out of range", "mysql://u@h/x": notURL, "h=1": notURL, "postgres://u@h:5432/x": ""} {
 		assert.Equal(t, want, dsnProblem(dsn), dsn)
 	}
 	_, err = openPG(t.Context(), "postgres://u:secret@h:99999/x", "")
@@ -207,12 +209,12 @@ func TestDiagnose(t *testing.T) {
 	machine := kinds["machine"]
 	after := Row{Name: "l1", F: map[string]string{"machine": "ghost"}}
 	err := diagnose(pe("23503", "insert violates foreign key"), service, "add", "l1", after, []string{"a", "b", "c"}, nil)
-	assert.EqualError(t, err, "no machine ghost; the machines are a,b,c")
-	assert.EqualError(t, diagnose(pe("23503", "x"), service, "set", "l1", after, nil, nil), "no machine ghost; the machines are (none)")
+	assert.EqualError(t, err, "no machine ghost; the machines are a,b,c; run: nova-config machine add ghost --user <user>")
+	assert.EqualError(t, diagnose(pe("23503", "x"), service, "set", "l1", after, nil, nil), "no machine ghost; the machines are (none); run: nova-config machine add ghost --user <user>")
 	err = diagnose(pe("23503", "delete violates foreign key"), machine, "remove", "m1", Row{}, nil, []string{"l1", "l2"})
 	assert.EqualError(t, err, "machine m1 still runs services l1,l2; remove them first: nova-config service remove l1 --actor <you>")
 	err = diagnose(pe("23505", "duplicate key value violates unique constraint"), machine, "add", "m1", Row{}, nil, nil)
-	assert.EqualError(t, err, "machine m1 exists; use: nova-config machine set")
+	assert.EqualError(t, err, "machine m1 exists; use: nova-config machine set m1")
 	err = diagnose(pe("23514", "new row violates\ncheck constraint \"x\""), machine, "add", "m1", Row{}, nil, nil)
 	assert.EqualError(t, err, `machine m1: new row violates check constraint "x"`)
 	for _, e := range []error{err, diagnose(pe("23503", "x"), machine, "remove", "m1", Row{}, nil, []string{"l1"})} {

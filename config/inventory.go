@@ -84,7 +84,10 @@ func runInventory(ctx context.Context, args []string, d deps, stdout io.Writer) 
 	if h, err := d.hostname(); local == "" && err == nil {
 		local = strings.ToLower(strings.Split(h, ".")[0])
 	}
-	inv := build(rows["machine"], rows["service"], local)
+	inv, err := build(rows["machine"], rows["service"], local)
+	if err != nil {
+		return err
+	}
 	var out any = inv
 	if host != "" {
 		hv, ok := inv.Meta.Hostvars[host]
@@ -104,13 +107,18 @@ func runInventory(ctx context.Context, args []string, d deps, stdout io.Writer) 
 // build is the inventory of the rows: every machine in all, grouped by its
 // roles and its runners, with its row facts and its services as host variables.
 // A fact the row leaves empty is left out.
-func build(machines []Row, services []Row, local string) *inventory {
+func build(machines []Row, services []Row, local string) (*inventory, error) {
 	inv := &inventory{}
 	inv.Meta.Hostvars = map[string]map[string]any{}
 	byMachine := map[string][]invService{}
 	for _, l := range services {
+		for _, f := range []string{"argv", "env", "every"} {
+			if _, err := kinds["service"].findField(f).canonical(l.F[f]); err != nil {
+				return nil, refused("service %s has corrupt %s (%v); run: nova-config service set %s --%s <value>", l.Name, f, err, l.Name, f)
+			}
+		}
 		il := invService{Name: l.Name, Seat: l.F["seat"], Keys: []string{}, Env: map[string]unsafeText{}, Log: unsafeText(cmp.Or(l.F["log"], serviceLogDir+"/"+l.Name+".log"))}
-		_ = json.Unmarshal([]byte(l.F["argv"]), &il.Argv) // ignored: the row's argv was canonical when written
+		_ = json.Unmarshal([]byte(l.F["argv"]), &il.Argv) // ignored: checked above
 		_ = json.Unmarshal([]byte(l.F["env"]), &il.Env)   // ignored: likewise
 		if l.F["keys"] != "" {
 			il.Keys = strings.Split(l.F["keys"], ",")
@@ -149,5 +157,5 @@ func build(machines []Row, services []Row, local string) *inventory {
 	}
 	inv.All = group{Hosts: all}
 	inv.Bench, inv.Runner, inv.Services = group{Hosts: groups["bench"]}, group{Hosts: groups["runner"]}, group{Hosts: groups["services"]}
-	return inv
+	return inv, nil
 }

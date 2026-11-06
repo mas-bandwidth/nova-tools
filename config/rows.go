@@ -186,14 +186,15 @@ func (v valueError) Error() string { return v.msg }
 
 // newRow is the row add writes: the given fields, the rest at their zero.
 func (k *kind) newRow(name string, raw map[string]string) (Row, error) {
-	if len(name) > 128 || !namePattern.MatchString(name) {
-		return Row{}, valueError{fmt.Sprintf("name %q: want lower-case letters, digits and dashes, starting with a letter or digit", name)}
-	}
 	empty := Row{Name: name, F: map[string]string{}}
 	for _, f := range k.fields {
 		empty.F[f.name] = f.zero()
 	}
-	return k.merge(empty, raw)
+	r, err := k.merge(empty, raw)
+	if len(name) > 128 || !namePattern.MatchString(name) {
+		return Row{}, valueError{strings.TrimSuffix(fmt.Sprintf("name %q: want lower-case letters, digits and dashes, starting with a letter or digit; %v", name, err), "; <nil>")}
+	}
+	return r, err
 }
 
 // merge is the row a set leaves: cur with the given fields, checked whole.
@@ -202,33 +203,39 @@ func (k *kind) merge(cur Row, raw map[string]string) (Row, error) {
 	var problems []string // of the values given
 	for _, f := range k.fields {
 		if v, ok := raw[f.name]; ok {
-			c, err := f.canonical(v)
-			if err != nil {
+			if c, err := f.canonical(v); err != nil {
 				problems = append(problems, err.Error())
+			} else {
+				next.F[f.name] = c
 			}
-			next.F[f.name] = c
+		}
+	}
+	if k.check != nil {
+		if err := k.check(next); err != nil {
+			if len(problems) == 0 {
+				return Row{}, err
+			}
+			problems = append(problems, err.Error())
 		}
 	}
 	if len(problems) > 0 {
 		return Row{}, valueError{strings.Join(problems, "; ")}
 	}
-	if k.check != nil {
-		if err := k.check(next); err != nil {
-			return Row{}, err
-		}
-	}
 	return next, nil
 }
 
 func checkService(r Row) error {
-	periodic, kept := r.F["every"] != "0", r.F["keepalive"] == "true"
-	switch {
-	case periodic && kept:
-		return fmt.Errorf("service %s has --every %s and --keepalive true; a service runs every n seconds or is kept alive, so set one: --every 0 or --keepalive false", r.Name, r.F["every"])
-	case !periodic && !kept:
-		return fmt.Errorf("service %s has neither --every nor --keepalive; want --every <seconds> or --keepalive true", r.Name)
-	case r.F["keys"] != "" && r.F["seat"] == "":
-		return fmt.Errorf("service %s names secrets (--keys %s) and no --seat to open them from", r.Name, r.F["keys"])
+	var p []string
+	if r.F["every"] != "0" && r.F["keepalive"] == "true" {
+		p = append(p, fmt.Sprintf("service %s has --every %s and --keepalive true; a service runs every n seconds or is kept alive, so set one: --every 0 or --keepalive false", r.Name, r.F["every"]))
+	} else if r.F["every"] == "0" && r.F["keepalive"] != "true" {
+		p = append(p, fmt.Sprintf("service %s has neither --every nor --keepalive; want --every <seconds> or --keepalive true", r.Name))
+	}
+	if r.F["keys"] != "" && r.F["seat"] == "" {
+		p = append(p, fmt.Sprintf("service %s names secrets (--keys %s) and no --seat to open them from", r.Name, r.F["keys"]))
+	}
+	if len(p) > 0 {
+		return fmt.Errorf("%s", strings.Join(p, "; "))
 	}
 	return nil
 }

@@ -89,6 +89,8 @@ fleet read from nova-config, each machine reached as its login over the tailnet
 with pinned host keys, every step with its receipt and its `--check` form, and
 a child killed by a signal said so.
 
+`config` went from 1500 to 1530 (2026-11-05) to check every write flag, row constraint and store DSN in one pass before dialing PostgreSQL, refuse corrupt service rows in `inventory`, and add `history --json`, `--actor` environment defaults, and `next:` breadcrumbs.
+
 ## Adding a tool
 
 Create a top-level `package main` directory with a `README.md` guide. Add the
