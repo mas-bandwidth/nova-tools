@@ -29,8 +29,11 @@ var verbUsage = map[string]string{
       trailing newline. --re takes an id as hook prints it. A name no hook (or
       recv) has ever read is refused before anything is sent, exit 1 (a typo
       would otherwise sit unread forever): --new sends to it anyway, for the
-      first message to a name that is about to hook in. A failed send prints
-      SEND FAILED and exits 1; it is never retried.
+      first message to a name that is about to hook in. send, ack and pending
+      act as <me> and run only while <me> is hooked in (a hook holds the name,
+      or a Codex child's recv does): otherwise exit 1 with the hook-in recipe
+      for the harness this runs under. A failed send prints SEND FAILED and
+      exits 1; it is never retried.
 `,
 	"hook": `  nova-bus hook --as <name> [--harness <harness> <its flags> | --exec <command>]
                 [--service [stop]]
@@ -126,7 +129,8 @@ var verbOrder = []string{"send", "hook", "recv", "ack", "who", "pending", "show"
 
 const usageFooter = `
 A name is letters, digits, '.', '_' and '-'. Exit 0 ok, 1 refused or failed,
-2 usage error. Environment: NOVA_BUS_REDIS=host:port (required),
+2 usage error. A verb that acts as you (send, ack, pending) refuses until you
+are hooked in, and says how. Environment: NOVA_BUS_REDIS=host:port (required),
 NOVA_BUS_USER and NOVA_BUS_PASSWORD (optional; AUTH as that user, else default).
 `
 
@@ -209,8 +213,9 @@ func (realClock) After(d time.Duration) <-chan time.Time { return time.After(d) 
 type writeError struct{ error }
 
 var (
-	errHooked = errors.New("name already hooked")
-	errTaken  = errors.New("name taken by another hook")
+	errHooked       = errors.New("name already hooked")
+	errHookedByRecv = errors.New("name already hooked by a recv")
+	errTaken        = errors.New("name taken by another hook")
 )
 
 // main stops a hook cleanly on SIGINT or SIGTERM, releasing its presence, and
@@ -223,7 +228,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	home, _ := os.UserHomeDir()
 	exe, _ := os.Executable()
-	s := sys{uid: os.Getuid(), goos: runtime.GOOS, home: home, exe: exe, devOf: realDevOf, outGone: stdoutGone,
+	s := sys{uid: os.Getuid(), goos: runtime.GOOS, home: home, exe: exe, devOf: realDevOf, outGone: stdoutGone, environ: os.Environ,
 		exec: realExec, look: exec.LookPath, program: realProgram, shell: realShell}
 	code := run(ctx, os.Args[1:], os.Getenv, os.Stdin, os.Stdout, os.Stderr, dialRedis, realClock{}, s)
 	stop()
@@ -412,6 +417,25 @@ func run(ctx context.Context, args []string, env func(string) string, stdin io.R
 	}
 	addr := env("NOVA_BUS_REDIS")
 	store := dial(addr, env("NOVA_BUS_USER"), env("NOVA_BUS_PASSWORD"))
+	// A verb that acts as <me> runs only while <me> is hooked in (a hook
+	// holds the name, or a Codex child's recv does): everybody hooks in, so
+	// every answer has a reader. who, show, hook and recv stay open.
+	if verb == "send" || verb == "ack" || verb == "pending" {
+		present, err := store.Presence(ctx)
+		if err != nil && verb == "send" {
+			return fail(stderr, verb, "SEND FAILED to %s: %s", names[0], describe(err, addr))
+		}
+		if err != nil {
+			return fail(stderr, verb, "%s", describe(err, addr))
+		}
+		if _, ok := present[*as]; !ok {
+			var environ []string
+			if s.environ != nil {
+				environ = s.environ()
+			}
+			return fail(stderr, verb, "%s is not hooked in, so nothing would read an answer; hook in first: %s", *as, hookInRecipe(harnessOf(environ), *as, addr))
+		}
+	}
 	switch verb {
 	case "hook":
 		return runHook(ctx, store, *as, addr, clk, stdout, stderr, w, again, s.outGone)
@@ -495,6 +519,9 @@ func runHook(ctx context.Context, store Store, name, addr string, clk Clock, std
 		err := hook(ctx, store, name, value, clk, stdout, stderr, onClaim, w, gone)
 		var we writeError
 		var wf wakeFailed
+		if errors.Is(err, errHookedByRecv) {
+			return fail(stderr, "hook", "name already hooked by a recv: %s after %s; a recv claims the name while it waits: stop it first; run: nova-bus who", name, presenceTTL+presenceRefresh)
+		}
 		if errors.Is(err, errHooked) {
 			return fail(stderr, "hook", "name already hooked: %s after %s; run: nova-bus who", name, presenceTTL+presenceRefresh)
 		}
@@ -554,6 +581,9 @@ func hook(ctx context.Context, store Store, name, value string, clk Clock, out, 
 	}
 	if err == nil && held != "" {
 		err = errHooked
+		if strings.HasSuffix(held, "\trecv") {
+			err = errHookedByRecv
+		}
 	}
 	if err != nil {
 		return err

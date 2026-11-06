@@ -192,6 +192,7 @@ type ag struct {
 	send      string            // what send-message prints
 	sendFails int               // fail this many send-messages with exit 1
 	onSend    func()            // called before each send-message
+	cutOff    int               // answer this many send-messages as cut off by the deadline
 	calls     [][]string
 	envs      [][]string
 }
@@ -216,6 +217,10 @@ func (a *ag) exec(_ context.Context, env []string, name string, args ...string) 
 	}
 	if a.onSend != nil {
 		a.onSend()
+	}
+	if a.cutOff > 0 {
+		a.cutOff--
+		return nil, context.DeadlineExceeded
 	}
 	if a.sendFails > 0 {
 		a.sendFails--
@@ -312,6 +317,15 @@ func TestAntigravityFindsTheServerAgainAfterAFailedSend(t *testing.T) {
 	var u unconfirmed
 	assert.ErrorAs(t, err, &u, "it may have arrived: acked, never sent twice")
 	assert.Equal(t, agentWake, w.(*agWake).limit(), "two sends and a find, inside the presence TTL")
+
+	// A first send cut off by its own per-call deadline (the exec returns
+	// the deadline's error): unconfirmed at once, no find, no second send.
+	fake.onSend, fake.sendFails, fake.cutOff = nil, 0, 1
+	n = len(fake.calls)
+	err = w.wake(context.Background(), testMsg)
+	assert.ErrorAs(t, err, &u, "%v", err)
+	assert.ErrorContains(t, err, "cut off after 5s")
+	assert.Len(t, fake.calls, n+1, "one send, nothing after it")
 }
 
 func TestAntigravityStartRefusals(t *testing.T) {
@@ -463,7 +477,7 @@ func TestFailedWakeExitsOneAndReleasesPresence(t *testing.T) {
 	assert.Equal(t, 1, code)
 	assert.Equal(t, "HOOK OK name=beta waiting=1\nHOOK WAKE FAILED harness=antigravity id=1-0 reason=socket gone\\nsecond line\n"+
 		"nova-bus hook: the wake of 1-0 failed and it waits unhandled; once the harness answers, run: nova-bus hook --as beta --harness grok --grok-home /h\n", errOut.String())
-	assert.Empty(t, f.presence)
+	assert.NotContains(t, f.presence, "beta", "released")
 }
 
 func TestReceiptNamesTheHarness(t *testing.T) {

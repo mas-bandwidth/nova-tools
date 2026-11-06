@@ -28,7 +28,7 @@ import (
 // and sends again; a second failure ends the hook.
 const (
 	agentLimit = 5 * time.Second  // one ps, lsof or agentapi call
-	agentWake  = 16 * time.Second // one wake: a send, a find and a second send
+	agentWake  = 12 * time.Second // one wake: a send, and a find and a second send after a refusal
 	maxError   = 160              // bytes of a harness's error text copied into a receipt
 )
 
@@ -173,17 +173,18 @@ func (a *agWake) wake(ctx context.Context, m Msg) error {
 	}
 	text := fmt.Sprintf("nova-bus saved event %s in %s. Read that JSON file and follow local_receiver.", m.ID, path)
 	err = a.agentapi(ctx, "send-message", "--title=nova-bus", a.session, text)
-	if err == nil || ctx.Err() != nil {
-		if err != nil { // the send was cut off: it may have arrived
-			return unconfirmed{err}
-		}
+	var cut cutOff
+	switch {
+	case err == nil:
 		return nil
+	case errors.As(err, &cut) || ctx.Err() != nil:
+		return unconfirmed{err} // the send was cut off: it may have arrived, so it is never sent again
 	}
 	if ferr := a.find(ctx); ferr != nil {
 		return fmt.Errorf("%v; found again: %v", err, ferr)
 	}
 	err = a.agentapi(ctx, "send-message", "--title=nova-bus", a.session, text)
-	if err != nil && ctx.Err() != nil { // cut off again: it may have arrived
+	if err != nil && (errors.As(err, &cut) || ctx.Err() != nil) {
 		return unconfirmed{err}
 	}
 	return err
@@ -196,6 +197,8 @@ func (a *agWake) agentapi(ctx context.Context, args ...string) error {
 	env := []string{"ANTIGRAVITY_CLI_ALIAS=agy", "ANTIGRAVITY_AGENT_PORT=" + a.port, "ANTIGRAVITY_LS_ADDRESS=localhost:" + a.port,
 		"ANTIGRAVITY_CSRF_TOKEN=" + a.token, "GEMINI_CLI_CSRF_TOKEN=" + a.token}
 	out, err := a.run(ctx, env, a.bin, append([]string{"agentapi"}, args...)...)
+	var cut cutOff
+	wasCut := errors.As(err, &cut)
 	var reply struct{ Error string }
 	if t := strings.TrimSpace(string(out)); strings.HasPrefix(t, "{") && json.Unmarshal([]byte(t), &reply) == nil && reply.Error != "" {
 		err = fmt.Errorf("agentapi %s: %s", args[0], reply.Error)
@@ -208,13 +211,24 @@ func (a *agWake) agentapi(ctx context.Context, args ...string) error {
 	if err != nil && len(err.Error()) > maxError {
 		err = fmt.Errorf("%s", strings.ToValidUTF8(err.Error()[:maxError], ""))
 	}
+	if err != nil && wasCut {
+		return cutOff{err}
+	}
 	return err
 }
+
+// cutOff is a call cut off by its own deadline (agentLimit) or the wake's:
+// it may have been acted on.
+type cutOff struct{ error }
 
 func (a *agWake) run(ctx context.Context, env []string, name string, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, agentLimit)
 	defer cancel()
-	return a.s.exec(ctx, env, name, args...)
+	out, err := a.s.exec(ctx, env, name, args...)
+	if err != nil && (ctx.Err() != nil || errors.Is(err, context.DeadlineExceeded)) {
+		err = cutOff{fmt.Errorf("%v (cut off after %s)", err, agentLimit)}
+	}
+	return out, err
 }
 
 type server struct{ pid, bin, token string }

@@ -31,7 +31,7 @@ type unconfirmed struct{ error }
 // wakeLimit bounds one wake; a waker with a limit() of its own (antigravity:
 // two sends and a find, agentWake) is bounded by that instead. The hook
 // refreshes its presence before each wake, so presence is set at most
-// presenceRefresh + the limit + cleanupTimeout apart (20 s, or 28 s for
+// presenceRefresh + the limit + cleanupTimeout apart (20 s, or 24 s for
 // antigravity), inside presenceTTL (30 s) (tla/Presence.tla R).
 const wakeLimit = 8 * time.Second
 
@@ -59,6 +59,7 @@ type sys struct {
 	devOf   func(name string) (rdev uint64, char bool, err error) // name is "stdout" or a path
 	exec    func(ctx context.Context, env []string, name string, args ...string) ([]byte, error)
 	outGone func() bool                                           // stdout's reader is gone
+	environ func() []string                                       // os.Environ: the harness this runs under
 	look    func(name string) (string, error)                     // exec.LookPath
 	program func(ctx context.Context, pid string) (string, error) // a process's executable
 	shell   func(ctx context.Context, env []string, stdin, command string) (int, error)

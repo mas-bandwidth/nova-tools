@@ -274,8 +274,18 @@ func (l *logWriter) Write(p []byte) (int, error) {
 	return n, err
 }
 
+// hookedIn plants name's presence, as a hook of its own would, for a day of
+// the fake clock: a verb that acts as name runs only while it is hooked in.
+func hookedIn(t *testing.T, f *fake, name string) {
+	t.Helper()
+	if !f.live(name) { // planted, not claimed: the claims a test counts are the hook's own
+		f.presence[name], f.deadline[name] = "2026-11-05T11:00:00Z\thook-of-"+name, f.clock.Add(24*time.Hour)
+	}
+}
+
 func send(t *testing.T, f *fake, subject, body string) {
 	t.Helper()
+	hookedIn(t, f, "alpha")
 	code, _, errOut := call(t, f, testEnv, "", "send", "--as", "alpha", "--to", "beta", subject, body)
 	require.Equal(t, 0, code, errOut)
 }
@@ -283,6 +293,7 @@ func send(t *testing.T, f *fake, subject, body string) {
 func TestSendToTwoNames(t *testing.T) {
 	t.Parallel()
 	f := newFake()
+	hookedIn(t, f, "alpha")
 	code, out, errOut := call(t, f, testEnv, "", "send", "--as", "alpha", "--to", "beta,gamma", "--re", "9-0", "hello", "the body")
 	require.Equal(t, 0, code, errOut)
 	assert.Equal(t, "beta 1-0\ngamma 1-0\n", out)
@@ -295,6 +306,7 @@ func TestSendToTwoNames(t *testing.T) {
 func TestSendBodyFromStdin(t *testing.T) {
 	t.Parallel()
 	f := newFake()
+	hookedIn(t, f, "delta")
 	code, _, errOut := call(t, f, testEnv, "from stdin\n\n", "send", "--as", "delta", "--to", "beta", "s", "-")
 	require.Equal(t, 0, code, errOut)
 	assert.Equal(t, "from stdin\n", f.entries["bus:beta"][0].Fields["body"], "exactly one trailing newline trimmed")
@@ -306,6 +318,7 @@ func TestHookPrintsPendingThenNew(t *testing.T) {
 	send(t, f, "one", "1")
 	_, err := f.Read(context.Background(), "bus:beta", false, time.Second) // handed to an earlier hook, never acked
 	require.NoError(t, err)
+	hookedIn(t, f, "b")
 	code, _, errOut := call(t, f, testEnv, "", "send", "--as", "b", "--to", "beta", "--re", "1-0", "two", "2")
 	require.Equal(t, 0, code, errOut)
 	out, _ := runHookOnce(t, f, "beta")
@@ -406,6 +419,7 @@ func (f failingAdd) Add(ctx context.Context, stream string, fields map[string]st
 func TestSendFailedIsNotRetried(t *testing.T) {
 	t.Parallel()
 	f := newFake()
+	hookedIn(t, f, "a")
 	var out, errOut bytes.Buffer
 	dial := func(string, string, string) Store { return failingAdd{f} }
 	code := run(context.Background(), []string{"send", "--as", "a", "--to", "beta,gamma,delta", "s", "b"},
@@ -665,6 +679,7 @@ func TestPendingCountsHandedAndUnhandedWithoutConsuming(t *testing.T) {
 	send(t, f, "three", "3")
 	_, err := f.Read(context.Background(), "bus:beta", false, time.Second) // one handed, not acked
 	require.NoError(t, err)
+	hookedIn(t, f, "beta")
 	code, out, errOut := call(t, f, testEnv, "", "pending", "--as", "beta")
 	require.Equal(t, 0, code, errOut)
 	assert.Equal(t, "PENDING OK waiting=3\n", out)
@@ -673,6 +688,7 @@ func TestPendingCountsHandedAndUnhandedWithoutConsuming(t *testing.T) {
 	assert.Equal(t, "PENDING OK waiting=3\n1-0\talpha\tone\n2-0\talpha\ttwo\\tx\n3-0\talpha\tthree\n", out)
 	assert.Equal(t, 1, f.delivered["bus:beta"], "pending consumes nothing")
 	assert.Equal(t, []string{"1-0"}, f.pending["bus:beta"])
+	hookedIn(t, f, "nobody")
 	code, out, _ = call(t, f, testEnv, "", "pending", "--as", "nobody")
 	assert.Equal(t, 0, code)
 	assert.Equal(t, "PENDING OK waiting=0\n", out)
@@ -681,6 +697,7 @@ func TestPendingCountsHandedAndUnhandedWithoutConsuming(t *testing.T) {
 func TestSendDedupesRecipients(t *testing.T) {
 	t.Parallel()
 	f := newFake()
+	hookedIn(t, f, "a")
 	code, out, errOut := call(t, f, testEnv, "", "send", "--as", "a", "--to", "beta, beta,gamma,beta", "s", "b")
 	require.Equal(t, 0, code, errOut)
 	assert.Equal(t, "beta 1-0\ngamma 1-0\n", out)

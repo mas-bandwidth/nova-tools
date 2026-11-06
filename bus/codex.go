@@ -133,3 +133,40 @@ func threadSource(home, thread string) (string, error) {
 	}
 	return row.Payload.ThreadSource, nil
 }
+
+// harnessOf is the harness a command runs under, read from its environment:
+// Codex sets CODEX_THREAD_ID, Antigravity and Gemini CLI ANTIGRAVITY_* or
+// GEMINI_* variables, Grok GROK_HOME; anything else is taken for Claude Code
+// or Muse Code, whose recipe is the Monitor.
+func harnessOf(environ []string) string {
+	h := "claude"
+	for _, kv := range environ {
+		k, _, _ := strings.Cut(kv, "=")
+		switch {
+		case k == "CODEX_THREAD_ID":
+			return "codex"
+		case strings.HasPrefix(k, "ANTIGRAVITY_") || strings.HasPrefix(k, "GEMINI_"):
+			h = "antigravity"
+		case k == "GROK_HOME" && h == "claude":
+			h = "grok"
+		}
+	}
+	return h
+}
+
+// hookInRecipe is the one or two lines that hook name in on harness: what a
+// verb that acts as name says when name is not hooked in (Glenn,
+// 2026-11-06: "you have to hook in before you can send messages on nova-bus
+// ... if you try to send without hooking in, it tells you how to hook in").
+func hookInRecipe(harness, name, addr string) string {
+	cmd := "NOVA_BUS_REDIS=" + addr + " nova-bus"
+	switch harness {
+	case "codex":
+		return "spawn a child agent that loops `" + cmd + " recv --as " + name + "`, a message to you, `" + cmd + " ack --as " + name + " --id <id>`; run: nova-bus show codex-agents"
+	case "grok":
+		return "Monitor: tail -n 0 -F $GROK_HOME/nova-hook.wake, then `" + cmd + " hook --as " + name + " --harness grok --grok-home $GROK_HOME --service`; run: nova-bus hook -h"
+	case "antigravity":
+		return "`" + cmd + " hook --as " + name + " --harness antigravity --antigravity-dir <workspace> --antigravity-session <conversation id> --antigravity-events-dir ~/.gemini/antigravity/nova-bus-" + name + " --service`; run: nova-bus hook -h"
+	}
+	return "run `" + cmd + " hook --as " + name + "` as the Monitor tool's command; run: nova-bus show agents"
+}

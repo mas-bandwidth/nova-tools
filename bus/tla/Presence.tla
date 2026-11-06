@@ -20,7 +20,8 @@
 \* a read past that, and refreshes before every delivery, so a running hook
 \* claims at the latest R ticks after its last: Tick may not pass that. R
 \* stands for the refresh interval plus one delivery (a wake is bounded by
-\* wakeLimit) and its ack: 10 + 8 + 2 s against a TTL of 30.
+\* wakeLimit, 8 s, or agentWake, 12 s, for Antigravity) and its ack:
+\* 10 + 8 + 2 = 20 s, or 10 + 12 + 2 = 24 s, against a TTL of 30.
 \*
 \* A hook whose stdout blocks (the reader stopped reading) is stuck: it does
 \* not refresh, and Tick is not held for it. When the write returns it claims

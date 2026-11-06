@@ -143,6 +143,7 @@ func TestSendRefusesANameNoHookHasHeld(t *testing.T) {
 	t.Parallel()
 	f := newFake()
 	f.strict = true
+	hookedIn(t, f, "alpha")
 	code, out, errOut := call(t, f, testEnv, "", "send", "--as", "alpha", "--to", "beta,bob", "s", "b")
 	assert.Equal(t, 1, code)
 	assert.Empty(t, out)
@@ -173,4 +174,48 @@ func TestHookEndsWhenStdoutsReaderIsGone(t *testing.T) {
 	assert.Equal(t, "HOOK OK name=beta waiting=0\nnova-bus hook: writing stdout: stdout closed: its reader is gone\n", errOut.String())
 	assert.Equal(t, 2, f.reads, "seen on the read after the reader went")
 	assert.Empty(t, f.presence, "the name is freed")
+}
+
+// A verb that acts as a name runs only while that name is hooked in; the
+// refusal carries the hook-in recipe of the harness in the environment.
+func TestVerbsRefuseUntilHookedIn(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		environ []string
+		want    string
+	}{
+		{nil, "run `NOVA_BUS_REDIS=127.0.0.1:1 nova-bus hook --as alpha` as the Monitor tool's command; run: nova-bus show agents"},
+		{[]string{"HOME=/h", "TERM_PROGRAM=Muse"}, "run `NOVA_BUS_REDIS=127.0.0.1:1 nova-bus hook --as alpha` as the Monitor tool's command; run: nova-bus show agents"},
+		{[]string{"CODEX_THREAD_ID=t1", "GEMINI_X=1"}, "spawn a child agent that loops `NOVA_BUS_REDIS=127.0.0.1:1 nova-bus recv --as alpha`, a message to you, `NOVA_BUS_REDIS=127.0.0.1:1 nova-bus ack --as alpha --id <id>`; run: nova-bus show codex-agents"},
+		{[]string{"GROK_HOME=/Users/me/.grok"}, "Monitor: tail -n 0 -F $GROK_HOME/nova-hook.wake, then `NOVA_BUS_REDIS=127.0.0.1:1 nova-bus hook --as alpha --harness grok --grok-home $GROK_HOME --service`; run: nova-bus hook -h"},
+		{[]string{"GROK_HOME=/x", "ANTIGRAVITY_AGENT_PORT=1"}, "`NOVA_BUS_REDIS=127.0.0.1:1 nova-bus hook --as alpha --harness antigravity --antigravity-dir <workspace> --antigravity-session <conversation id> --antigravity-events-dir ~/.gemini/antigravity/nova-bus-alpha --service`; run: nova-bus hook -h"},
+		{[]string{"GEMINI_CLI=1"}, "`NOVA_BUS_REDIS=127.0.0.1:1 nova-bus hook --as alpha --harness antigravity --antigravity-dir <workspace> --antigravity-session <conversation id> --antigravity-events-dir ~/.gemini/antigravity/nova-bus-alpha --service`; run: nova-bus hook -h"},
+	} {
+		s := sys{environ: func() []string { return tc.environ }}
+		for _, args := range [][]string{{"send", "--as", "alpha", "--to", "beta", "--new", "s", "b"}, {"ack", "--as", "alpha", "--id", "1-0"}, {"pending", "--as", "alpha"}} {
+			code, out, errOut := callSys(t, s, testEnv, args...)
+			assert.Equal(t, 1, code, "%v %v", tc.environ, args)
+			assert.Empty(t, out)
+			assert.Equal(t, "nova-bus "+args[0]+": alpha is not hooked in, so nothing would read an answer; hook in first: "+tc.want+"\n", errOut, "%v %v", tc.environ, args)
+		}
+	}
+	f := newFake()
+	hookedIn(t, f, "beta")
+	for _, args := range [][]string{{"who"}, {"show", "agents"}, {"pending", "--as", "beta"}} {
+		code, _, errOut := call(t, f, testEnv, "", args...)
+		assert.Equal(t, 0, code, "%v: %s", args, errOut)
+	}
+	// A Codex child mid-loop: recv claimed the name, so its ack and send run.
+	send(t, f, "s", "b")
+	delete(f.presence, "beta") // the planted hook is gone; recv claims the name itself
+	code, out, _ := call(t, f, testEnv, "", "recv", "--as", "beta")
+	require.Equal(t, 0, code)
+	assert.Equal(t, "1-0\talpha\t-\ts\tb\n", out)
+	assert.Equal(t, "2026-11-05T12:00:00Z\trecv", f.presence["beta"])
+	code, out, errOut := call(t, f, testEnv, "", "send", "--as", "beta", "--to", "alpha", "--re", "1-0", "re", "ok")
+	assert.Equal(t, 0, code, errOut)
+	assert.Equal(t, "alpha 1-0\n", out)
+	code, out, errOut = call(t, f, testEnv, "", "ack", "--as", "beta", "--id", "1-0")
+	assert.Equal(t, 0, code, errOut)
+	assert.Equal(t, "ACK OK id=1-0\n", out)
 }

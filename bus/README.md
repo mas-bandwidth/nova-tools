@@ -17,8 +17,13 @@ nova-bus pending --as <name> [--list]
 
 **send** appends one message (from, to, subject, body, re) to the stream `bus:<name>` of each recipient and
 prints `<name> <id>` for each. A body of `-` is read from stdin. `--re <id>` names the message this one answers.
-`--as` is required on both verbs: on send it is the sender, on hook the inbox. A name no hook (or recv) has ever
-read is refused before anything is sent, exit 1, `no hook has ever held <name>, so nothing would read it`: a typo
+`--as` is required on both verbs: on send it is the sender, on hook the inbox. **You have to hook in before you
+can send**: a verb that acts as you (`send`, `ack`, `pending`) refuses until you are hooked in (a hook holds your
+name, or, under Codex, your child's `recv` does), exit 1, and tells you how, with the recipe for the harness it
+detects from your environment (`CODEX_THREAD_ID`: the child recv/ack loop; `ANTIGRAVITY_*` or `GEMINI_*`: the
+Antigravity hook line; `GROK_HOME`: the Grok line; otherwise the Monitor command), then `run: nova-bus show
+agents` for the full text. So everybody always hooks in, and every answer has a reader. `who`, `show`, `hook`
+and `recv` stay open. A name no hook (or recv) has ever read is refused before anything is sent, exit 1, `no hook has ever held <name>, so nothing would read it`: a typo
 would otherwise sit unread forever. `--new` sends to it anyway, for the first message to a name about to hook in.
 
 **hook** delivers every message still waiting for `<name>`, including ones an earlier hook delivered but did not
