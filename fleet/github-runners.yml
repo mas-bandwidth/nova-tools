@@ -4,12 +4,12 @@
 # labelled with the machine's roles, os and arch. fleet/README.md, "github-runners".
 #
 #   nova-fleet github-runners --check --diff -- -e github_runner_url=https://github.com/<owner>/<repo> -e github_runner_scope=repo
-#   nova-fleet github-runners -- -e github_runner_url=https://github.com/<owner>/<repo> -e github_runner_scope=repo -K
+#   nova-fleet github-runners -- -e github_runner_url=https://github.com/<owner>/<repo> -e github_runner_scope=repo
 #
 # The registration token is read on the control node with
 # `nova-secrets exec --only GITHUB_RUNNER_TOKEN`; it is not an argument, a variable of the inventory or a file.
 # A host's count is its machine row's `runners`; a host with none is refused, not read as 0.
-# -e runner_count=<n> sets it for a run (0 retires every runner). Variables: roles/github-runner/defaults/main.yml. Linux and macOS use sudo for the service files (-K);
+# -e runner_count=<n> sets it for a run (0 retires every runner). Variables: roles/github-runner/defaults/main.yml. Linux and macOS write the service files with sudo, so the login needs passwordless sudo (join.yml sets it on Linux; on macOS set it at the console): never -K;
 # a Windows host needs the ansible.windows collection (requirements.yml) and an administrator login.
 - name: GitHub Actions runners
   hosts: runner

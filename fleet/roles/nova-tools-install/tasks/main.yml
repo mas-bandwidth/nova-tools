@@ -11,13 +11,13 @@
   ansible.builtin.assert:
     quiet: true
     that:
-      - nova_tools_version is match('^v[0-9]+[.][0-9]+[.][0-9]+(-[0-9A-Za-z.]+)?$')
+      - nova_tools_version is match('^v[0-9]+[.][0-9]+[.][0-9]+(-[0-9A-Za-z.]+)?$') or (nova_tools_local_dir | length > 0 and nova_tools_version is match('^[0-9A-Za-z][0-9A-Za-z.-]*$'))
       - nova_tools_names | length > 0
       - nova_tools_names | reject('match', '^[a-z0-9][a-z0-9-]*$') | list | length == 0
       - nova_tools_remove | reject('match', '^[a-z0-9][a-z0-9-]*$') | list | length == 0
       - nova_tools_remove | intersect(nova_tools_names) | length == 0
     fail_msg: >-
-      nova-tools-install: name the release (-e nova_tools_version=vX.Y.Z), give a non-empty nova_tools_names, and keep
+      nova-tools-install: name the release (-e nova_tools_version=vX.Y.Z, or with nova_tools_local_dir the version its file names carry), give a non-empty nova_tools_names, and keep
       nova_tools_names and nova_tools_remove to plain tool names with nothing in both lists (a tool cannot be installed and retired)
 
 - name: the platform
@@ -39,6 +39,21 @@
   register: nova_tools_sums
   check_mode: false
   changed_when: false
+  when: nova_tools_local_dir | length == 0
+
+# The local mode: binaries built on the control node, laid out as a release is (the file
+# names and SHA256SUMS of fleet/README.md, "install"), copied instead of downloaded.
+- name: the local build's checksum file, read on the control node
+  ansible.builtin.set_fact:
+    nova_tools_sums: { content: "{{ lookup('ansible.builtin.file', nova_tools_local_dir ~ '/SHA256SUMS') }}" }
+  when: nova_tools_local_dir | length > 0
+
+- name: the local mode is for Linux and macOS
+  ansible.builtin.assert:
+    quiet: true
+    that: not nova_tools_win
+    fail_msg: "nova-tools-install: nova_tools_local_dir copies to Linux and macOS only; install {{ inventory_hostname }} from a release"
+  when: nova_tools_local_dir | length > 0
 
 - name: each asset's digest, by the asset's name in SHA256SUMS
   ansible.builtin.set_fact:
@@ -57,7 +72,7 @@
   ansible.builtin.assert:
     quiet: true
     that: item.sha256 is match('^[0-9a-f]{64}$')
-    fail_msg: "nova-tools-install: {{ item.asset }} is not listed in {{ nova_tools_version }}'s SHA256SUMS"
+    fail_msg: "nova-tools-install: {{ item.asset }} is not listed in {{ (nova_tools_local_dir ~ '/SHA256SUMS') if nova_tools_local_dir | length > 0 else (nova_tools_version ~ \"'s SHA256SUMS\") }}"
   loop: "{{ nova_tools_plan }}"
   loop_control: { label: "{{ item.asset }}" }
 
@@ -86,7 +101,39 @@
   loop: "{{ nova_tools_plan }}"
   loop_control: { label: "{{ item.dest }}" }
   register: nova_tools_installed
-  when: not nova_tools_win and not (ansible_check_mode and nova_tools_unix_dir is changed)
+  when: not nova_tools_win and nova_tools_local_dir | length == 0 and not (ansible_check_mode and nova_tools_unix_dir is changed)
+
+- name: each local binary's digest, on the control node
+  ansible.builtin.stat:
+    path: "{{ nova_tools_local_dir }}/{{ item.asset }}"
+    checksum_algorithm: sha256
+  loop: "{{ nova_tools_plan }}"
+  loop_control: { label: "{{ item.asset }}" }
+  delegate_to: localhost
+  become: false
+  register: nova_tools_local_stat
+  when: nova_tools_local_dir | length > 0
+
+- name: each local binary is the one its SHA256SUMS names
+  ansible.builtin.assert:
+    quiet: true
+    that: item.stat.exists and item.stat.checksum == item.item.sha256
+    fail_msg: >-
+      nova-tools-install: {{ nova_tools_local_dir }}/{{ item.item.asset }}
+      {{ 'does not match its SHA256SUMS line' if item.stat.exists else 'is missing' }}; rebuild the directory (fleet/README.md, "install")
+  loop: "{{ nova_tools_local_stat.results | default([]) }}"
+  loop_control: { label: "{{ item.item.asset }}" }
+  when: nova_tools_local_dir | length > 0
+
+- name: the binaries, copied from the local build
+  ansible.builtin.copy:
+    src: "{{ nova_tools_local_dir }}/{{ item.asset }}"
+    dest: "{{ nova_tools_bin_dir }}/{{ item.dest }}"
+    mode: "0755"
+  loop: "{{ nova_tools_plan }}"
+  loop_control: { label: "{{ item.dest }}" }
+  register: nova_tools_installed_local
+  when: not nova_tools_win and nova_tools_local_dir | length > 0 and not (ansible_check_mode and nova_tools_unix_dir is changed)
 
 # The Windows tasks live in windows.yml and are included only for a Windows host:
 # include_tasks resolves its modules when it runs, so a Linux or macOS inventory
@@ -101,7 +148,7 @@
   loop: "{{ nova_tools_restart_commands }}"
   when:
     - nova_tools_restart | bool
-    - (nova_tools_installed.changed | default(false)) or (nova_tools_installed_win.changed | default(false))
+    - (nova_tools_installed.changed | default(false)) or (nova_tools_installed_local.changed | default(false)) or (nova_tools_installed_win.changed | default(false))
 
 # Retiring: only on a Unix machine, only when asked, and only after the install
 # above succeeded (a failed task ends the role). A retired binary is moved into

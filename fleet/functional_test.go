@@ -5,10 +5,13 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -88,5 +91,80 @@ func TestFleetBinaryAgainstAnsible(t *testing.T) {
 		if code, out, errs := runFleet(t, bin, p, "--inventory", inv, "--", "--syntax-check"); code != 0 {
 			t.Errorf("%s --syntax-check: exit %d\n%s\n%s", p, code, out, errs)
 		}
+	}
+}
+
+// install from a local build: a directory laid out as a release, copied after each
+// file is checked against its SHA256SUMS line; a second run changes nothing, and a
+// file that does not match its line is refused.
+func TestInstallFromALocalBuild(t *testing.T) {
+	if _, err := exec.LookPath("ansible-playbook"); err != nil {
+		t.Skip("ansible-core is not installed on this machine")
+	}
+	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
+		t.Skip("the local mode copies to Linux and macOS")
+	}
+	bin := buildFleet(t)
+	dist := t.TempDir()
+	asset := "nova-fleet_local_" + runtime.GOOS + "_" + runtime.GOARCH
+	b, err := os.ReadFile(bin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dist, asset), b, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(b)
+	if err := os.WriteFile(filepath.Join(dist, "SHA256SUMS"), []byte(hex.EncodeToString(sum[:])+"  "+asset+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	inv := filepath.Join(t.TempDir(), "hosts.ini")
+	if err := os.WriteFile(inv, []byte("localhost ansible_connection=local ansible_python_interpreter=auto_silent\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	binDir := filepath.Join(t.TempDir(), "bin")
+	args := []string{"install", "--inventory", inv, "--", "-e", "nova_tools_version=local", "-e", "nova_tools_local_dir=" + dist,
+		"-e", "nova_bin_dir=" + binDir, "-e", `{"nova_tools_names":["nova-fleet"]}`}
+	if code, out, errs := runFleet(t, bin, args...); code != 0 {
+		t.Fatalf("install from %s: exit %d\n%s\n%s", dist, code, out, errs)
+	}
+	got, err := os.ReadFile(filepath.Join(binDir, "nova-fleet"))
+	if err != nil || !bytes.Equal(got, b) {
+		t.Fatalf("the installed nova-fleet is not the local build: %v", err)
+	}
+	code, out, _ := runFleet(t, bin, append([]string{"install", "--check"}, args[1:]...)...)
+	if code != 0 || !strings.Contains(out, "changed=0") {
+		t.Errorf("a second run under --check: exit %d, want changed=0:\n%s", code, out)
+	}
+	if err := os.WriteFile(filepath.Join(dist, asset), append(b, 0), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	code, out, _ = runFleet(t, bin, args...)
+	if code == 0 || !strings.Contains(out, "does not match its SHA256SUMS line") {
+		t.Errorf("a file that does not match its line: exit %d, want the refusal:\n%s", code, out)
+	}
+}
+
+// github-runners reads its token under --check too, and a read that fails says why.
+func TestRunnerTokenReadFailsWithItsReason(t *testing.T) {
+	if _, err := exec.LookPath("ansible-playbook"); err != nil {
+		t.Skip("ansible-core is not installed on this machine")
+	}
+	bin := buildFleet(t)
+	secrets := filepath.Join(t.TempDir(), "nova-secrets")
+	if out, err := exec.Command("go", "build", "-o", secrets, "../secrets").CombinedOutput(); err != nil {
+		t.Fatalf("go build ../secrets: %v: %s", err, out)
+	}
+	inv := filepath.Join(t.TempDir(), "hosts.ini")
+	if err := os.WriteFile(inv, []byte("[runner]\nlocalhost ansible_connection=local ansible_python_interpreter=auto_silent runners=1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errs := runFleet(t, bin, "github-runners", "--check", "--inventory", inv, "--", "-e", "github_runner_url=https://github.com/o/r",
+		"-e", "github_runner_scope=repo", "-e", "github_runner_secrets_bin="+secrets, "-e", "github_runner_base_dir="+t.TempDir())
+	if code == 0 || !strings.Contains(out, "GITHUB_RUNNER_TOKEN cannot be read on the control node") || strings.Contains(out, "censored") {
+		t.Fatalf("--check with no store: exit %d, want the token refusal with its reason:\n%s\n%s", code, out, errs)
+	}
+	if !strings.Contains(out, "store") {
+		t.Errorf("the refusal does not carry nova-secrets' reason:\n%s", out)
 	}
 }

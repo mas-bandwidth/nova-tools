@@ -33,8 +33,10 @@ const banner = `nova-fleet: the fleet's Ansible plays, in one binary
 
   nova-fleet plays                  list the plays and what each does
   nova-fleet show <play|file>       print a play (or an embedded file, e.g. tailscale-acl)
+  nova-fleet up [--check] --tools TAG|DIR [--runners URL] <name>=<address>...
+                                    from nothing to a fleet, in a fixed order
   nova-fleet <play> [<argument>] [--inventory FILE|SCRIPT] [--check] [--diff] [-- ansible-playbook args]
-  nova-fleet help [plays|show|<play>]
+  nova-fleet help [plays|show|up|<play>]
 
 A run extracts the plays to a private temporary directory, writes an inventory
 script there that execs nova-config inventory (found on PATH; --inventory names
@@ -55,7 +57,8 @@ Print the text of an embedded play (install prints install.yml) or of another
 top-level embedded file by name (tailscale-acl prints tailscale-acl.json). Payload:
 the file's bytes, on stdout.
 `,
-	"help": `nova-fleet help [plays|show|<play>]
+	"up": upHelp,
+	"help": `nova-fleet help [plays|show|up|<play>]
 
 Print the banner, or the help of a verb or a play.
 `,
@@ -99,6 +102,22 @@ var (
 			return 1, nil
 		}
 		return 0, err
+	}
+	// outCmd runs a command to its end and returns its stdout, stderr and exit code
+	// (127 when it could not start).
+	outCmd = func(bin string, args, env []string) (string, string, int) {
+		cmd := exec.Command(bin, args...)
+		var o, e strings.Builder
+		cmd.Stdout, cmd.Stderr, cmd.Env = &o, &e, env
+		err := cmd.Run()
+		var ee *exec.ExitError
+		switch {
+		case errors.As(err, &ee):
+			return o.String(), e.String(), max(ee.ExitCode(), 1)
+		case err != nil:
+			return o.String(), err.Error(), 127
+		}
+		return o.String(), e.String(), 0
 	}
 )
 
@@ -218,6 +237,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		verb, rest = rest[0], args[1:]
 	}
 	switch verb {
+	case "up":
+		return runUp(rest, stdout, stderr)
 	case "plays", "show":
 		if len(rest) > 0 && isHelp(rest[0]) {
 			fmt.Fprint(stdout, verbHelp[verb])
@@ -250,7 +271,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 	if !slices.Contains(all, verb) {
-		fmt.Fprintf(stderr, "nova-fleet: unknown verb or play %s; verbs: plays, show, help; plays: %s; run: nova-fleet help\n", verb, strings.Join(all, ", "))
+		fmt.Fprintf(stderr, "nova-fleet: unknown verb or play %s; verbs: plays, show, up, help; plays: %s; run: nova-fleet help\n", verb, strings.Join(all, ", "))
 		return 2
 	}
 	return runPlay(verb, rest, stdout, stderr, refuse)
