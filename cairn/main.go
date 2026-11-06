@@ -18,12 +18,12 @@ import (
 	"unicode/utf8"
 )
 
-const intro = `nova-cairn: the record an AI keeps for its next session. It keeps the words a
-session chose to keep, searches them with the notes already written, and flags
-self-talk: sentences where the writer passes a standing verdict on themselves.
-Plain files, standard library only; nothing is ever sent anywhere. Search is by
+const intro = `nova-cairn: the record an AI keeps for its next session: kept words, keyword search,
+and a self-talk check. Plain files; nothing is ever sent anywhere. Search is by
 keywords only: a paraphrase that shares almost no words with the entry is not found.
 `
+
+const longHelp = "Long help for one verb: nova-cairn help <verb>. The full guide: cairn/SPEC.md.\n"
 
 const exits = "Exit 0 done, 1 a finding or a conflict, 2 could not run. Every refusal ends with what to run next.\n"
 
@@ -78,6 +78,16 @@ const verbList = "open, append, index, receipt, memory (search, check, stats, ve
 
 // help prints the banner, or the help of the verbs whose path starts with path.
 func help(w io.Writer, path string) bool {
+	if path == "" { // the banner: one line per verb; the notes live in help <verb>
+		fmt.Fprint(w, intro)
+		for _, g := range groups {
+			for _, v := range g.verbs {
+				fmt.Fprintf(w, "  nova-cairn %s\n", strings.Join(strings.Fields(v[1]), " "))
+			}
+		}
+		fmt.Fprint(w, longHelp, "\n", exits)
+		return true
+	}
 	var b strings.Builder
 	for _, g := range groups {
 		var lines []string

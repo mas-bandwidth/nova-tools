@@ -409,6 +409,9 @@ func appendEntry(store, session, id, text, source string, now time.Time, publish
 		if info, serr := os.Stat(store); serr != nil || !info.IsDir() {
 			return r, false, false, refuse(command("open", "--store", store, "--session", session, "--publish", cmp.Or(publish, "manual")), "store %q does not exist; open it first, or fix --store", store)
 		}
+		if info, serr := os.Stat(filepath.Join(store, "sessions")); !regular(logFile(store)) && (serr != nil || !info.IsDir()) {
+			return r, false, false, refuse(command("open", "--store", store, "--session", session, "--publish", cmp.Or(publish, "manual")), "directory %q holds no store; open it first, or fix --store", store)
+		}
 		if !slices.Contains(policies, publish) {
 			publish = "manual"
 		}
@@ -640,7 +643,9 @@ func runStore(verb string, args []string, stdin io.Reader, stdout, stderr io.Wri
 		name, v string
 		ok      bool
 	}{{"store", *store, true}, {"session", *session, verb != "index"}, {"entry", *entry, verb == "append" || verb == "receipt"}, {"publish", *publish, verb == "open"}} {
-		if want.ok && want.v == "" {
+		if want.ok && want.v == "" && want.name == "publish" {
+			problems = append(problems, "--publish is required: one of "+strings.Join(policies, ", ")+"; manual is the usual choice")
+		} else if want.ok && want.v == "" {
 			problems = append(problems, "--"+want.name+" is required")
 		}
 	}
@@ -666,8 +671,12 @@ func runStore(verb string, args []string, stdin io.Reader, stdout, stderr io.Wri
 	// fail prints a refusal (exit 2) or a conflict, a FAILED event (exit 1), as one line on stderr.
 	fail := func(err error) int {
 		rf, ok := err.(*refusal)
-		if !ok { // the file system said no: look at the store
-			rf = &refusal{msg: err.Error(), remedy: shell("ls", "-ld", *store), code: 2}
+		if !ok { // the file system said no: look at the store, or its parent when there is none
+			look := *store
+			if _, serr := os.Stat(look); serr != nil {
+				look = filepath.Dir(look)
+			}
+			rf = &refusal{msg: err.Error(), remedy: shell("ls", "-ld", look), code: 2}
 		}
 		if rf.code == 2 {
 			return refused(stderr, verb, rf.msg, rf.remedy)
@@ -683,7 +692,7 @@ func runStore(verb string, args []string, stdin io.Reader, stdout, stderr io.Wri
 		return fail(refuse("", "%s", strings.Join(problems, "; ")))
 	}
 	if info, err := os.Stat(*store); (verb == "index" || verb == "receipt") && (err != nil || !info.IsDir()) {
-		return fail(refuse(shell("ls", "-ld", *store), "--store %q is not a directory I can open; name the directory open wrote", *store))
+		return fail(refuse(command("open", "--store", *store, "--session", cmp.Or(*session, "first"), "--publish", "manual"), "--store %q is not a directory I can open; name the directory open wrote", *store))
 	}
 
 	now := time.Now().UTC()
@@ -700,7 +709,7 @@ func runStore(verb string, args []string, stdin io.Reader, stdout, stderr io.Wri
 				now = rec.opened
 			}
 		}
-		line(stdout, "OPEN OK", append(kv, "stamp", stamp(now))...)
+		line(stdout, "OPEN OK", append(kv, "stamp", stamp(now), "next", command("append", "--store", *store, "--session", *session, "--entry", "first", "--text", "the words to keep"))...)
 	case "append":
 		words := []byte(*text)
 		if given["file"] {

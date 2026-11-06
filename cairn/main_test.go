@@ -55,7 +55,7 @@ func TestStoreRoundTrip(t *testing.T) {
 	store := filepath.Join(t.TempDir(), "s")
 	code, out, _ := do(t, "", "open", "--store", store, "--session", "s1", "--source", "src", "--publish", "manual")
 	require.Equal(t, 0, code)
-	assert.Regexp(t, `^OPEN OK session=s1 store=\S+ source=src publish=manual stamp=\S+\n$`, out)
+	assert.Contains(t, out, ` next=nova-cairn\x20append\x20--store\x20`+store+`\x20--session\x20s1\x20--entry\x20first`)
 
 	code, out, _ = do(t, "", "append", "--store", store, "--session", "s1", "--entry", "e1", "--text", "the words")
 	require.Equal(t, 0, code)
@@ -94,13 +94,18 @@ func TestAppendOpensMissingSession(t *testing.T) {
 	t.Parallel()
 	store := filepath.Join(t.TempDir(), "s")
 	require.NoError(t, os.MkdirAll(store, 0o755))
+	code, _, errs := do(t, "", "append", "--store", store, "--session", "s1", "--entry", "e1", "--text", "the words")
+	assert.Equal(t, 2, code, "an append does not turn an empty directory into a store")
+	assert.Contains(t, errs, "holds no store")
+	code, _, errs = do(t, "", "open", "--store", store, "--session", "s0", "--publish", "manual")
+	require.Equal(t, 0, code, errs)
 	code, out, _ := do(t, "", "append", "--store", store, "--session", "s1", "--entry", "e1", "--text", "the words")
 	require.Equal(t, 0, code)
 	assert.Contains(t, out, "APPEND OK session=s1 entry=e1")
 	assert.Contains(t, out, "publish=manual")
 	assert.Contains(t, out, "opened=true")
 
-	code, _, errs := do(t, "", "append", "--store", filepath.Join(t.TempDir(), "nope"), "--session", "s1", "--entry", "e1", "--text", "x")
+	code, _, errs = do(t, "", "append", "--store", filepath.Join(t.TempDir(), "nope"), "--session", "s1", "--entry", "e1", "--text", "x")
 	assert.Equal(t, 2, code, "an append does not create a store")
 	assert.Contains(t, errs, "does not exist")
 
@@ -111,6 +116,24 @@ func TestAppendOpensMissingSession(t *testing.T) {
 	code, out, _ = do(t, "", "append", "--store", store, "--session", "s2", "--entry", "e1", "--text", "x", "--publish", "never")
 	require.Equal(t, 0, code)
 	assert.Contains(t, out, "publish=never")
+}
+
+// TestOpenRemedies: a missing --publish names its values, and an open under an
+// unwritable parent is remedied by looking at the parent, not the store.
+func TestOpenRemedies(t *testing.T) {
+	t.Parallel()
+	_, _, errs := do(t, "", "open", "--store", "s", "--session", "s1")
+	assert.Contains(t, errs, "--publish is required: one of never, manual, deferred, immediate; manual is the usual choice")
+	if os.Geteuid() == 0 {
+		t.Skip("root writes anywhere")
+	}
+	parent := filepath.Join(t.TempDir(), "locked")
+	require.NoError(t, os.MkdirAll(parent, 0o755))
+	require.NoError(t, os.Chmod(parent, 0o500))
+	defer os.Chmod(parent, 0o755)
+	code, _, errs := do(t, "", "open", "--store", filepath.Join(parent, "store"), "--session", "s1", "--publish", "manual")
+	assert.Equal(t, 2, code)
+	assert.True(t, strings.HasSuffix(errs, "; run: ls -ld "+parent+"\n"), errs)
 }
 
 // TestFilesOnDisk pins the formats on disk, so cairns already written keep reading.
@@ -262,6 +285,18 @@ func TestSelfTalkInstallationShapes(t *testing.T) {
 		got, _ := installation(passes)
 		assert.Empty(t, got, passes)
 	}
+}
+
+// TestBannerListsEachVerbOnce: the banner is one usage line per verb, names
+// where the long text lives, and carries none of the group notes.
+func TestBannerListsEachVerbOnce(t *testing.T) {
+	t.Parallel()
+	code, out, _ := do(t, "", "-h")
+	require.Equal(t, 0, code)
+	assert.Equal(t, 11, strings.Count(out, "\n  nova-cairn "), out)
+	assert.Contains(t, out, "nova-cairn help <verb>")
+	assert.Contains(t, out, "cairn/SPEC.md")
+	assert.NotContains(t, out, "Every write is synced")
 }
 
 func TestMemory(t *testing.T) {
@@ -467,7 +502,7 @@ func TestARuntimeFailureNamesTheNextCommand(t *testing.T) {
 
 	missing := filepath.Join(root, "absent")
 	_, _, errs = do(t, "", "index", "--store", missing)
-	assert.True(t, strings.HasSuffix(errs, "; run: ls -ld "+missing+"\n"), errs)
+	assert.True(t, strings.HasSuffix(errs, "; run: nova-cairn open --store "+missing+" --session first --publish manual\n"), errs)
 	_, _, errs = do(t, "", "self-talk", missing)
 	assert.True(t, strings.HasSuffix(errs, "; run: ls -l "+missing+"\n"), errs)
 	bad := filepath.Join(root, "bad.md")
