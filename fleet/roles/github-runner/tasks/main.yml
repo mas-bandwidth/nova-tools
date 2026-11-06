@@ -51,14 +51,15 @@
       {{ ansible_facts['service_mgr'] | default('?') }} is not supported: Linux amd64/arm64 with systemd (WSL2 needs
       systemd=true), macOS, native Windows; log in as the user the runners run as, never root
 
-# The labels: the machine's roles (its inventory groups, but `all`), os and arch (the machine row's, else the host's own), then
-# the extras. Sorted and unique, so the label list is the same on every run.
+# The labels: the machine's roles (its inventory groups, but `all`), the host's own os and arch (from its facts: a
+# machine row's os/arch fields are how it is reached, never a label), then the extras. Sorted and unique, so the
+# label list is the same on every run.
 - name: the labels
   ansible.builtin.set_fact:
     github_runner_label_list: >-
       {{ (group_names | difference(['ungrouped', 'all']))
-         + [nova_os | default({'win': 'windows', 'osx': 'darwin', 'linux': 'linux'}[github_runner_os])]
-         + [nova_arch | default({'x64': 'amd64', 'arm64': 'arm64'}[github_runner_arch])]
+         + [{'win': 'windows', 'osx': 'darwin', 'linux': 'linux'}[github_runner_os]]
+         + [{'x64': 'amd64', 'arm64': 'arm64'}[github_runner_arch]]
          + github_runner_labels | list | unique | sort }}
 - name: the label string
   ansible.builtin.set_fact:

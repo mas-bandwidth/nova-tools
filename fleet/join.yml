@@ -7,9 +7,11 @@
 #   1. the machine row (control node): `nova-config machine add` where the row of nova_join_host is missing, then the
 #      inventory is read again so the plays below find it. A row that exists is never edited; a row whose user differs
 #      from nova_join_user stops the join by name.
-#   2. the login (Linux, as root): the row's user, no password, in nova_join_sudo_group with passwordless sudo (checked
-#      by visudo before it lands), root's authorized_keys copied to it (or the file nova_join_authorized_keys names on
-#      the control node), linger on, the hostname set to the inventory name.
+#   2. the login (Linux, as root over the address given; on a rerun of a joined machine, as the login itself over the
+#      tailnet with -e nova_join_root_user=<login>, since the policy lets no one in as root there): the row's user, no
+#      password, in nova_join_sudo_group with passwordless sudo (checked by visudo before it lands), root's
+#      authorized_keys copied to it (or the file nova_join_authorized_keys names on the control node), linger on, the
+#      hostname set to the inventory name.
 #   3. tailscale.yml: Tailscale installed and up with the adopter's tagged auth key, the MagicDNS name recorded as the
 #      machine's address, the firewall closed to everything but the tailnet. From here on the plays reach the machine
 #      over the tailnet. With -e nova_tailnet=false (a private network of the adopter's own) this step and the peer
@@ -115,9 +117,10 @@
           JOIN ROW {{ nova_join_host }} user={{ nova_join_login }}
           {{ 'present' if join_row | length > 0 else ('WOULD-ADD (check: nothing written; the plays below match no host)' if ansible_check_mode else 'ADDED') }}
 
-- name: the login (Linux, as root)
+- name: the login (Linux, as root at first; as the login itself with sudo once the machine is joined)
   hosts: "{{ nova_join_host | default('!all') }}"   # no machine named, no host
   gather_facts: false
+  become: true
   vars:
     ansible_user: "{{ nova_join_root_user }}"
     join_login: "{{ hostvars['localhost']['nova_join_login'] }}"
@@ -128,8 +131,8 @@
 
     - name: the machine has a login to make
       ansible.builtin.assert:
-        that: join_login | length > 0 and join_login != nova_join_root_user
-        fail_msg: "JOIN STOP {{ inventory_hostname }}: its machine row has no user other than {{ nova_join_root_user }} (nova-config machine set {{ inventory_hostname }} --user <login>)"
+        that: join_login | length > 0 and join_login != 'root'
+        fail_msg: "JOIN STOP {{ inventory_hostname }}: its machine row has no user other than root (nova-config machine set {{ inventory_hostname }} --user <login>)"
         quiet: true
 
     - name: the machine's facts, as root

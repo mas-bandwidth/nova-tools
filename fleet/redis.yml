@@ -9,7 +9,7 @@
 # (the seal role); a client then runs with NOVA_BUS_REDIS=<host>:<port>, NOVA_BUS_USER=bus and NOVA_BUS_PASSWORD.
 #
 # The machines are the `services` group, or the hosts -e nova_store_hosts names (the first store, from a one-machine
-# inventory: docs/FLEET.md, "The first machine").
+# inventory: fleet/README.md, "The first machine").
 #
 #   ansible-playbook -i ./inventory fleet/redis.yml --check --diff
 #   ansible-playbook -i ./inventory fleet/redis.yml -e nova_seal_store=S -e nova_seal_seat=SEAT -e nova_seal_key=K
