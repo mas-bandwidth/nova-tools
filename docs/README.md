@@ -117,10 +117,16 @@ Ansible reads for that host: `ansible_host`, `ansible_user`, `runners` and the
 
 Now let Ansible plan the service. Ansible comes from pip here; the inventory
 script runs `nova-config inventory`. `ansible_connection=local` stands in for
-SSH so the plan runs on this machine:
+SSH so the plan runs on this machine. On Debian and Ubuntu `python3 -m venv`
+fails until `python3-venv` is installed, because those systems ship Python's
+venv support as a separate package, so the first line installs it when the
+venv cannot be made. Without sudo, use `python3 -m venv --without-pip "$work/venv"`
+and then `pip --python "$work/venv/bin/python" install ansible-core` with any
+pip you already have.
 
 ```sh
-python3 -m venv "$work/venv" && "$work/venv/bin/pip" install -q ansible-core
+python3 -m venv "$work/venv" || { rm -rf "$work/venv"; sudo apt install -y python3-venv && python3 -m venv "$work/venv"; }
+"$work/venv/bin/pip" install -q ansible-core
 export PATH="$work/venv/bin:$PATH"
 printf '#!/bin/sh\nexec nova-config inventory "$@"\n' > "$work/inventory" && chmod +x "$work/inventory"
 cd "$work/nova-tools"
