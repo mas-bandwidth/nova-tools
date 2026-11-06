@@ -1,7 +1,7 @@
 # nova-secrets
 
 sops + age + git: secrets live in a sops-encrypted file per seat in a git store; `exec` hands the named ones to one
-command's environment. A new store takes four commands (init, seat add, set, exec); `docs/SPEC-SECRETS.md` starts with them.
+command's environment. Every refusal is one stderr line, `SECRETS <VERB> REFUSED reason=<word>: <why>`, that names no value. A new store takes four commands (init, seat add, set, exec); `docs/SPEC-SECRETS.md` starts with them.
 
 ```
 nova-secrets init --store <dir> --recovery <age-public-key>

@@ -135,7 +135,7 @@ A malformed invocation is one line on stderr and exit 2, for `exec` too: `nova-s
 It names every missing flag at once, for example `nova-secrets exec: missing --only NAME[,NAME], --store <dir> (or NOVA_SECRETS_STORE), --key <file> (or NOVA_SECRETS_KEY), a command after -- (no default; the current directory is never assumed); run: nova-secrets exec -h`.
 An unknown verb is named and listed, and points at `nova-secrets help`.
 
-A runtime refusal is one line on stderr: `SECRETS <VERB> REFUSED: <why>; run: <next command>`. These are the common ones.
+A runtime refusal is one line on stderr: `SECRETS <VERB> REFUSED reason=<reason>: <why>; run: <next command>`. The reason is one word: `no-store`, `no-seat`, `no-key`, `not-recipient`, `no-name`, `no-sops`, `no-command`, `sops`, `git` or `other`. Neither it nor the rest of the line holds a value, so a caller that hides a command's output (an Ansible task with `no_log`) can show the line when exec exits 125 or 2: the command never ran, and the line is all the tool printed. These are the common ones.
 
 | refusal | next command |
 | --- | --- |

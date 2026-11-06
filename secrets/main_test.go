@@ -237,7 +237,7 @@ func TestExecRefusalsAre125AndNeverRun(t *testing.T) {
 			h.seed("ada", map[string]string{"API_KEY": "sk-sealed-two", "OTHER": "sealed-three"})
 			assert.Equal(t, 125, h.main(h.seat("exec", args...)...))
 			assert.Nil(t, h.became)
-			assert.Contains(t, h.stderr.String(), "SECRETS EXEC REFUSED: ")
+			assert.Regexp(t, `^SECRETS EXEC REFUSED reason=(no-name|no-command): `, h.stderr.String())
 			h.noLeak("sk-sealed-two", "sealed-three")
 		})
 	}
@@ -644,14 +644,15 @@ func TestWrongKeyRemedies(t *testing.T) {
 	}
 	// The rule names pubA, the key is pubB.
 	file(pubA)
-	assert.Equal(t, "SECRETS EXEC REFUSED: key "+pubB+" is not the key in .sops.yaml for ada ("+pubA+"): wrong --key/--as, or the key was replaced; edit the seat's age: in .sops.yaml then: cd "+h.store+" && SOPS_AGE_KEY_FILE=<recovery.key> sops updatekeys -y ada.yaml\n", exec())
+	assert.Equal(t, "SECRETS EXEC REFUSED reason=not-recipient: key "+pubB+" is not the key in .sops.yaml for ada ("+pubA+"): wrong --key/--as, or the key was replaced; edit the seat's age: in .sops.yaml then: cd "+h.store+" && SOPS_AGE_KEY_FILE=<recovery.key> sops updatekeys -y ada.yaml\n", exec())
 	// The rule names the key, the file does not: the file is stale.
 	h.sopsYAML("creation_rules:\n  - path_regex: ^ada\\.yaml$\n    age: " + pubB + "," + pubRec + "\n")
 	file(pubA)
-	assert.Contains(t, exec(), "is the key in .sops.yaml for ada but not among ada.yaml's 2 recipients: re-key it with: cd "+h.store+" && SOPS_AGE_KEY_FILE=<recovery.key> sops updatekeys -y ada.yaml")
+	assert.Contains(t, exec(), "reason=not-recipient: key "+pubB+" is the key in .sops.yaml for ada but not among ada.yaml's 2 recipients: re-key it with: cd "+h.store+" && SOPS_AGE_KEY_FILE=<recovery.key> sops updatekeys -y ada.yaml")
 	// Everything agrees: sops's own failure, with the command that ran, pasteable.
 	file(pubB)
 	got := exec()
+	assert.Contains(t, got, "reason=sops: ")
 	assert.Contains(t, got, "sops -d failed (exit status 128); its output is withheld; ran: cd "+h.store+" && HOME=$(mktemp -d) SOPS_AGE_KEY_FILE="+h.key+" sops -d --output /dev/null --output-type json ada.yaml")
 	// No age-keygen: say so.
 	h.noAgeKeygen = true
@@ -664,7 +665,7 @@ func TestOtherRemedies(t *testing.T) {
 	h.seed("ada", map[string]string{"A": "v"})
 	h.sopsMissing = true
 	assert.Equal(t, 125, h.main(h.seat("exec", "--only", "A", "--", "true")...))
-	assert.Contains(t, h.stderr.String(), "sops not found at sops; install sops 3.x")
+	assert.Contains(t, h.stderr.String(), "reason=no-sops: sops not found at sops; install sops 3.x")
 
 	h = newHarness(t)
 	h.notRepo = true
@@ -677,7 +678,7 @@ func TestOtherRemedies(t *testing.T) {
 	h.seed("bo", map[string]string{"B": "v"})
 	h.seed("cy", map[string]string{"C": "v"})
 	assert.Equal(t, 125, h.main(h.seat("exec", "--only", "A", "--", "true")...))
-	assert.Contains(t, h.stderr.String(), "no ada.yaml in "+h.store+": wrong --as? seats here: bo,cy; or create it: nova-secrets set NAME --as ada --store "+h.store+" --key <file>")
+	assert.Contains(t, h.stderr.String(), "reason=no-seat: no ada.yaml in "+h.store+": wrong --as? seats here: bo,cy; or create it: nova-secrets set NAME --as ada --store "+h.store+" --key <file>")
 
 	h = newHarness(t)
 	require.NoError(t, os.Remove(filepath.Join(h.store, "recovery.pub")))
@@ -701,6 +702,7 @@ func TestOtherRemedies(t *testing.T) {
 	h.failGit = true
 	h.stdin = "v\n"
 	assert.Equal(t, 2, h.main(h.set("NEW")...))
+	assert.Contains(t, h.stderr.String(), "reason=git: ")
 	assert.Contains(t, h.stderr.String(), "the file is written: run: git -C "+h.store+" status")
 	h.notRepo, h.stderr = true, bytes.Buffer{}
 	assert.Equal(t, 2, h.main("init", "--store", filepath.Join(t.TempDir(), "n"), "--recovery", pubRec))
@@ -869,4 +871,36 @@ func TestSetRefusesAnEndlessStdin(t *testing.T) {
 	assert.Equal(t, 2, tl.main(h.set("NEW")))
 	assert.Contains(t, h.stderr.String(), "value is over 65536 bytes")
 	assert.Less(t, in.read, 1<<20, "it stops reading")
+}
+
+// Each way exec can fail to read prints one line with its reason word and no value; the command never runs.
+func TestExecRefusalReasons(t *testing.T) {
+	t.Parallel()
+	for want, c := range map[string]func(h *harness) []string{
+		"no-store": func(h *harness) []string {
+			return []string{"exec", "--only", "A", "--store", h.store + "-gone", "--key", h.key, "--as", "ada", "--", "true"}
+		},
+		"no-key": func(h *harness) []string {
+			return []string{"exec", "--only", "A", "--store", h.store, "--key", h.key + "-gone", "--as", "ada", "--sops", "sops", "--", "true"}
+		},
+		"no-seat":    func(h *harness) []string { return h.seat("exec", "--only", "A", "--as", "cy", "--", "true") },
+		"no-name":    func(h *harness) []string { return h.seat("exec", "--only", "A,NOPE", "--", "true") },
+		"no-command": func(h *harness) []string { return h.seat("exec", "--only", "A", "--", "no-such-program-here") },
+		"not-recipient": func(h *harness) []string {
+			h.keyPub, h.failDec = pubB, true
+			return h.seat("exec", "--only", "A", "--", "true")
+		},
+		"no-sops": func(h *harness) []string { h.sopsMissing = true; return h.seat("exec", "--only", "A", "--", "true") },
+		"sops":    func(h *harness) []string { h.failDec = true; return h.seat("exec", "--only", "A", "--", "true") },
+	} {
+		t.Run(want, func(t *testing.T) {
+			t.Parallel()
+			h := newHarness(t)
+			h.seed("ada", map[string]string{"A": "a-sealed-one"})
+			assert.Equal(t, 125, h.main(c(h)...))
+			assert.Regexp(t, `^SECRETS EXEC REFUSED reason=`+want+`: [^\n]+\n$`, h.stderr.String())
+			assert.Nil(t, h.became)
+			h.noLeak("a-sealed-one")
+		})
+	}
 }
