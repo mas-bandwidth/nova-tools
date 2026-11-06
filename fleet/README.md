@@ -77,14 +77,16 @@ changed, and `retired` the units it removed. A run limited with
 
 **Warning: a full run removes units.** The play marks every unit it writes.
 On each host, a run without `nova_service_only` stops and removes every marked
-unit that no row names. A host whose `nova_services` list is empty loses every
-unit the play wrote there. Always read the `WOULD-RETIRE` lines of a check run
+unit that no row names. Always read the `WOULD-RETIRE` lines of a check run
 before you apply. `nova_service_only=a,b` limits a run to those rows and
-removes nothing.
+removes nothing. A host whose `nova_services` list is empty, but which still
+has units the play wrote, is refused rather than emptied; pass
+`-e nova_service_retire_all=true` when you mean to remove them all.
 
 | Refusal | What to do |
 |---|---|
 | `<host> has no nova_services: ...` | Give the host a `nova_services` list. An empty list is valid. |
+| `<host> has no service rows, and this run would retire <n> unit(s): <files>. ...` | Check the inventory. If the empty list is meant, pass `-e nova_service_retire_all=true`. |
 | `nova_service_only names <x>, which no service record of this run's machines is ...` | Fix the name. Nothing was written. `nova_service_restart` is refused the same way. |
 | `<host>: service <name> runs <program>, which is not on its unit PATH ...` (macOS) | Give `argv` an absolute path. |
 | `<host> wrote the unit file of <name> and did not restart it ...` (Linux) | Run the play again, or restart the unit by hand as the line says. |

@@ -93,9 +93,9 @@ SECRETS EXEC OK as=web keys=2 cmd=sh
 
 `exec` decrypts the seat file and starts the command, with `--only` values
 added to its environment. The command's environment is the caller's, except
-that names the seat holds are removed, sops identity variables are removed,
-and the selected values are added. A variable you set yourself, such as
-`NOVA_SECRETS_KEY`, reaches the command, so the command learns the key path.
+that names the seat holds are removed, sops identity variables and
+`NOVA_SECRETS_KEY`, `NOVA_SECRETS_STORE` and `NOVA_SECRETS_SEAT` are removed,
+and the selected values are added. The command never learns where the key is.
 On Unix `exec` replaces the tool and sets the core-file size limit to zero.
 The exit status is the command's.
 
@@ -130,9 +130,9 @@ and exits 2.
 | Key file must be mode 0600 and owned by you | `chmod 600` the file. On Windows the owner may be you, SYSTEM or Administrators, and only those may have access. |
 | Key is not the key in `.sops.yaml` for the seat | Use the right `--key` and `--as`. To change a seat's key, edit `.sops.yaml` and run `sops updatekeys` with the recovery key, as the refusal shows. |
 | `set: empty or multi-line value on stdin; the value must be one non-empty line` | Pipe one non-empty line without a NUL byte; a terminal is refused. |
+| `nova-secrets set: value is over 65536 bytes; a secret is a key or token` (exit 2) | Store a key or token, not a file. Nothing was written. |
 | Unknown selected secret | Check `names`, then fix `--only` or `set` it. |
 | `"bad-key" is not an environment variable name, or its value holds a NUL` | `exec` refuses the whole file, exit 125; `names` lists the other names and counts it in `refused=`. Remove the key with sops. |
-| `SECRETS EXEC REFUSED: exec <cmd>: argument list too long; ...`, after the `SECRETS EXEC OK` line | The command never started. Store a value under 128 KiB. |
 | sops or git failed | The output is withheld because it can hold a value. Run the command shown in the error; after a git failure inspect `git status`, since files may be written. |
 
 ## Guarantees and limits
@@ -145,7 +145,6 @@ Guarantees:
 Limits:
 
 - The command can read, print, save or send its values, and so can its children.
-- `set` reads at most 1 MiB of stdin and cuts a longer value to 1 MiB, exiting 0.
-- `exec` refuses a value over about 128 KiB (the operating system limit on one environment entry). Keep values under 128 KiB.
+- A value is at most 65536 bytes; `set` refuses a longer one and writes nothing.
 
 How the tool is tested is in [TESTING.md](../docs/TESTING.md).
