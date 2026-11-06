@@ -44,7 +44,7 @@
     - name: what the join must do
       ansible.builtin.set_fact:
         ts_join: "{{ ts_state != 'Running' }}"
-        ts_retag: "{{ ts_state == 'Running' and (ts_self.Tags | default([]) | sort) != ts_tags }}"
+        ts_retag: "{{ ts_state == 'Running' and (ts_self.Tags | default([], true) | sort) != ts_tags }}"
         ts_ssh_flag: "{{ ['--ssh'] if (ts_os == 'debian' and nova_tailscale_ssh | bool) else [] }}"
 
     # Changing a running node's tags needs `tailscale up --reset` with a new key: that drops the node's other
@@ -52,7 +52,7 @@
     - name: a running node keeps its tags (retagging is done at its console)
       ansible.builtin.fail:
         msg: >-
-          TAILNET STOP {{ inventory_hostname }}: it is Running with tags {{ ts_self.Tags | default([]) | join(',') or 'none' }},
+          TAILNET STOP {{ inventory_hostname }}: it is Running with tags {{ ts_self.Tags | default([], true) | join(',') or 'none' }},
           and {{ ts_tags | join(',') }} is wanted. Retag it at the machine's own console (not over the tailnet: the command
           drops the connection), with a key allowed those tags:
           printf %s "$TAILSCALE_AUTHKEY" | sudo tailscale up --reset --force-reauth --auth-key=file:/dev/stdin
@@ -64,7 +64,7 @@
       ansible.builtin.assert:
         that: lookup('ansible.builtin.env', 'TAILSCALE_AUTHKEY') | length > 0
         fail_msg: >-
-          {{ inventory_hostname }}: tailnet state {{ ts_state }} (tags {{ ts_self.Tags | default([]) }}, want {{ ts_tags }}) and no
+          {{ inventory_hostname }}: tailnet state {{ ts_state }} (tags {{ ts_self.Tags | default([], true) }}, want {{ ts_tags }}) and no
           TAILSCALE_AUTHKEY in the environment; run the play under nova-secrets exec --only TAILSCALE_AUTHKEY (docs/FLEET.md, "tailscale.yml")
         quiet: true
       when: ts_join and not ansible_check_mode
@@ -165,6 +165,6 @@
   ansible.builtin.debug:
     msg: >-
       TAILNET {{ inventory_hostname }} dns={{ ts_dns or ('WOULD-JOIN' if ansible_check_mode else 'none') }}
-      ip={{ (ts_self.TailscaleIPs | default(['none']) | first) }} tags={{ ts_self.Tags | default([]) | join(',') or 'none' }}
+      ip={{ ((ts_self.TailscaleIPs | default([], true)) or ['none']) | first }} tags={{ ts_self.Tags | default([], true) | join(',') or 'none' }}
       address={{ ('WOULD-SET ' if ansible_check_mode else 'SET ') ~ ts_dns if ts_recorded is not skipped else 'kept' }}
       {{- ' (check: nothing changed)' if ansible_check_mode else '' }}

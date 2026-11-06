@@ -76,7 +76,10 @@
 
     - name: the firewall's receipt (Linux)
       ansible.builtin.debug:
-        msg: "FIREWALL {{ inventory_hostname }} ufw {{ 'set: ' ~ (fw_plan.stdout | trim) if (fw_plan.stdout | default('x') | trim | length > 0) else 'as declared' }}{{ ' (check: nothing changed)' if ansible_check_mode else '' }}"
+        # fw_plan is skipped under --check while ufw is not installed yet: then the whole of it is what a run would set
+        msg: "FIREWALL {{ inventory_hostname }} ufw {{ (('WOULD-SET: ' if ansible_check_mode else 'set: ') ~ fw_want) if fw_want | length > 0 else 'as declared' }}{{ ' (check: nothing changed)' if ansible_check_mode else '' }}"
+      vars:
+        fw_want: "{{ fw_plan.stdout | default('install, then all of it') | trim }}"
 
 - name: the application firewall (macOS)
   when: (nova_system | default(ansible_facts['system'])) == 'Darwin'

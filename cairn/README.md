@@ -47,7 +47,10 @@ facts and its quoted words. Stamps vary. Give words with `--text` or
 that is not valid UTF-8 is refused. The same `append` again gives
 `duplicate=true`. `index` takes `--session <id>` and `--max <n>` (default 20,
 `0` for all). An id is one path component with no whitespace and none of
-`/ \ : * ? " < > |`.
+`/ \ : * ? " < > |`. A session the store does not hold yet is opened by the
+append itself, with publish=manual unless the line names a policy, and the
+OK line then ends `opened=true`; a store that does not exist is refused,
+because only `open` creates one.
 
 ## Search your notes
 

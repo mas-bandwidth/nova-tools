@@ -163,12 +163,17 @@ func TestRefusalsExit2And126And127(t *testing.T) {
 func TestEnvironmentAndDirectoryPassThrough(t *testing.T) {
 	t.Parallel()
 	job, _ := scratch(t)
-	code, stdout, stderr := sandbox(t, job, "--write", job, "--", "/bin/sh", "-c", "pwd; echo $TMPDIR; mktemp")
-	require.Equal(t, 0, code, stderr)
-	lines := strings.Split(strings.TrimSpace(stdout), "\n")
-	require.Len(t, lines, 3)
-	assert.Equal(t, []string{job, job}, lines[:2], "the caller's cwd and TMPDIR are the command's")
-	assert.True(t, strings.HasPrefix(lines[2], job+"/"), "a temp file lands in the TMPDIR the caller pointed inside a --write: "+lines[2])
+	cmd := exec.Command(bin(t), "--write", job, "--env", "TMPDIR", "--", "/bin/sh", "-c", `pwd; printf '%s\n' "$TMPDIR" "$TOKEN"; mktemp`)
+	cmd.Dir = job
+	cmd.Env = []string{"PATH=/usr/bin:/bin", "HOME=" + job, "TMPDIR=" + job, "TOKEN=secret"}
+	var out, errb bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &errb
+	require.NoError(t, cmd.Run(), errb.String())
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	require.Len(t, lines, 4)
+	assert.Equal(t, []string{job, job}, lines[:2], "the caller's cwd passes through, and TMPDIR passes because --env names it")
+	assert.Empty(t, lines[2], "a variable that is not named does not arrive")
+	assert.True(t, strings.HasPrefix(lines[3], job+"/"), "a temp file lands in the TMPDIR the caller pointed inside a --write: "+lines[3])
 }
 
 func TestArgv0IsVerbatim(t *testing.T) {
@@ -542,7 +547,7 @@ func TestSpecWorkedExample(t *testing.T) {
 		t.Skip("testify v1.12.1 is not in this host's module cache: " + string(out))
 	}
 	wall := append([]string{"--write", src, "--write", scr, "--read", mod}, toolchain...)
-	cmd := exec.Command(bin(t), append(wall, "--net-deny", "--", "go", "build", "./...")...)
+	cmd := exec.Command(bin(t), append(wall, "--net-deny", "--env", "TMPDIR", "--env", "GOCACHE", "--env", "GOMODCACHE", "--env", "GOPROXY", "--", "go", "build", "./...")...)
 	cmd.Dir = src
 	cmd.Env = []string{"PATH=" + filepath.Dir(goBin) + ":/usr/bin:/bin", "HOME=" + filepath.Join(scr, "home"), "TMPDIR=" + filepath.Join(scr, "tmp"),
 		"GOCACHE=" + filepath.Join(scr, "gocache"), "GOMODCACHE=" + mod, "GOPROXY=off"}

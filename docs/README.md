@@ -35,12 +35,12 @@ optional.
 
 ## Get the binaries and check they run
 
-Build them with Go from a clone of the branch this guide is on. The blocks
+Build them with Go from a clone. The blocks
 below use a throwaway directory, `$work`, and put the tools on PATH from there.
 
 ```sh
 work=$(mktemp -d) && cd "$work"
-git clone -q -b docs/v2 https://github.com/mas-bandwidth/nova-tools
+git clone -q https://github.com/mas-bandwidth/nova-tools
 for t in bus cairn config reserve sandbox secrets; do
   go build -C nova-tools -o "$work/bin/nova-$t" "./$t"
 done
@@ -87,10 +87,10 @@ itself start a turn in your harness. How a session is woken by its hook is in
 The refusal you will meet first is
 `cannot reach redis at <host:port> (NOVA_BUS_REDIS): connection refused`
 (exit 1): the address is wrong or Redis is down. The others are in
-[docs/SPEC-BUS.md](SPEC-BUS.md#exit-codes-and-refusals).
+[bus/README.md](../bus/README.md#exit-codes-and-refusals).
 
-The whole tool: [bus/README.md](../bus/README.md) and
-[docs/SPEC-BUS.md](SPEC-BUS.md); how it is tested: [bus/SPEC.md](../bus/SPEC.md).
+The whole tool: [bus/README.md](../bus/README.md); how it is tested:
+[bus/SPEC.md](../bus/SPEC.md).
 
 ## Set up and run a fleet of machines connected by tailscale
 
@@ -343,7 +343,9 @@ line per step.
 
 The refusal you will meet first is `nova-sandbox: bad_read: ...` (exit 2): a
 grant is relative or missing, or the command is outside every grant. For a Go
-toolchain outside `/usr`, add `--read "$(go env GOROOT)"`. The others are in
+toolchain outside `/usr`, add `--read "$(go env GOROOT)"`. A Go build also needs
+`--env TMPDIR --env GOCACHE --env GOMODCACHE --env GOPROXY`, each set to a path
+inside a `--write` (`GOMODCACHE` inside a `--read`). `HOME` is kept. The others are in
 [sandbox/README.md](../sandbox/README.md#refusals).
 
 The whole tool: [sandbox/README.md](../sandbox/README.md) and

@@ -83,7 +83,7 @@
     owner: root
     group: root
     mode: "0644"
-  become: true
+  become: "{{ not ansible_check_mode }}"
   register: github_runner_unit_file
   when: ansible_facts['system'] == 'Linux'
 
@@ -108,7 +108,7 @@
     owner: root
     group: wheel
     mode: "0644"
-  become: true
+  become: "{{ not ansible_check_mode }}"
   register: github_runner_unit_file
   when: ansible_facts['system'] == 'Darwin'
 
@@ -118,7 +118,7 @@
 
 - name: is the daemon loaded (macOS)
   ansible.builtin.command: "launchctl print system/{{ github_runner_label_id }}"
-  become: true
+  become: "{{ not ansible_check_mode }}"
   register: github_runner_loaded
   changed_when: false
   failed_when: false
@@ -136,7 +136,7 @@
     launchctl bootstrap system "/Library/LaunchDaemons/{{ github_runner_label_id }}.plist"
     echo BOOTSTRAPPED
   args: { executable: /bin/sh }
-  become: true
+  become: "{{ not ansible_check_mode }}"
   register: github_runner_boot
   changed_when: "'BOOTSTRAPPED' in github_runner_boot.stdout"
   when: ansible_facts['system'] == 'Darwin' and (github_runner_loaded.rc != 0 or github_runner_unit_file is changed)
