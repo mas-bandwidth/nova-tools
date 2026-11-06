@@ -8,7 +8,7 @@
     github_runner_label_id: "github-runner.{{ github_runner_slug }}-{{ runner_index }}"
 
 - name: the directory
-  ansible.builtin.file: { path: "{{ github_runner_dir }}", state: directory, mode: "0755" }
+  ansible.builtin.file: { path: "{{ github_runner_dir }}", state: directory }
   register: github_runner_made
 
 - name: unpack the runner where config.sh is missing
@@ -114,7 +114,7 @@
   when: ansible_facts['system'] == 'Darwin'
 
 - name: the log directory (macOS)
-  ansible.builtin.file: { path: "{{ github_runner_dir }}/_diag", state: directory, mode: "0755" }
+  ansible.builtin.file: { path: "{{ github_runner_dir }}/_diag", state: directory }
   when: ansible_facts['system'] == 'Darwin' and not (ansible_check_mode and github_runner_made is changed)
 
 - name: is the daemon loaded (macOS)

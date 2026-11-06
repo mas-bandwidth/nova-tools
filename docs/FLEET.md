@@ -1,7 +1,8 @@
 # The fleet
 
 `fleet/` is how the fleet is managed: which machines there are and what they run (nova-config), the services they keep
-running (`services.yml`), the nova-tools release each one holds (`nova-tools-install.yml`), and the reservations that keep
+running (`services.yml`), the nova-tools release each one holds (`nova-tools-install.yml`), the GitHub Actions runners
+on them (`github-runners.yml`), and the reservations that keep
 builds and tests from piling onto one box (`nova-reserve`). It is Ansible plus two Go tools, nothing else; nothing here
 names a machine or a person. Those are rows in nova-config.
 
@@ -10,6 +11,8 @@ fleet/
   nova-tools-install.yml            install one release, by tag
   roles/nova-tools-install/         the role the play runs
   services.yml                      one launchd or systemd unit per service row
+  github-runners.yml                GitHub Actions runners on the runner group
+  roles/github-runner/              the role the play runs
   templates/nova-service.*.j2       the unit templates
   group_vars/all.yml                the generic defaults both plays read
   retired-tools.txt                 binaries nova-tools shipped and ships no more
@@ -169,6 +172,57 @@ the unit and does not load it.
   changed> retired=<units retired>`, then ` only=<names>` when `nova_service_only` was given and
   ` (check: nothing changed)` under `--check`.
 
+## github-runners.yml
+
+GitHub Actions runners on every machine of the `runner` group: as many as the machine row's `runners` says, each
+registered to one repository or organization, run as a service that starts at boot, labelled with the machine's roles,
+`os` and `arch`. Linux (amd64, arm64; WSL2 with systemd on counts as Linux), macOS (a LaunchDaemon dropped to the
+login) and native Windows (the runner's own Windows service; `ansible.windows` and an administrator login). Linux and
+macOS use sudo for the service files: add `-K`.
+
+| Variable | |
+|---|---|
+| `github_runner_url` | no default. `https://github.com/<owner>/<repo>`, or `https://github.com/<org>` |
+| `github_runner_scope` | no default. `repo` or `org`; refused if the url is the other shape |
+| `github_runner_labels` | extra labels, a list (default none). Added to the machine's roles, `os` and `arch` |
+
+```
+ansible-playbook -i ./inventory fleet/github-runners.yml -e github_runner_url=https://github.com/OWNER/REPO -e github_runner_scope=repo -K
+```
+
+**The token.** The play reads `GITHUB_RUNNER_TOKEN` on the control node with `nova-secrets exec --only
+GITHUB_RUNNER_TOKEN` and hands it to the runner through its environment: never an argument, never the inventory, never
+a file. Put it in the store the hour you run (a registration token expires in an hour; set `NOVA_SECRETS_STORE` and
+`NOVA_SECRETS_KEY` as `docs/SPEC-SECRETS.md` says, or pass `-e '{"github_runner_secrets_args":["--store","S","--key","K"]}'`):
+
+```
+gh api -X POST repos/OWNER/REPO/actions/runners/registration-token -q .token | nova-secrets set GITHUB_RUNNER_TOKEN
+```
+
+For an organization the path is `orgs/ORG/actions/runners/registration-token`. The token is read only when a runner
+needs registering, and never under `--check`.
+
+**What it does.** Per runner: the pinned release, checked against GitHub's published digest, unpacked in
+`<home>/actions-runner/<owner>-<repo>-<i>` (Windows `C:\actions-runner`); registered as `<machine>-<i>` unless
+`.runner` is already there; one service per runner, enabled at boot (systemd unit on Linux). The labels are fixed at
+registration: change them and the play says `LABEL-DRIFT` and leaves the runner alone. A changed unit restarts its
+runner, which ends a job running on it. A machine whose count drops has its highest-numbered runners retired.
+`-e runner_count=N` overrides the row for one run; `github_runner_version` and `github_runner_sha256` move the pin.
+
+**The check.** A second run changes nothing, and `--check --diff` prints no change:
+
+```
+ansible-playbook -i ./inventory fleet/github-runners.yml -e github_runner_url=... -e github_runner_scope=repo -K --check --diff
+```
+
+**The rollback.** Retire every runner of that url on the machines: services stopped and removed, runners removed from
+GitHub, directories deleted. Store a removal token first (`.../actions/runners/remove-token`, same `nova-secrets set`);
+with `-e github_runner_deregister=false` no token is read and the runner entry stays in GitHub for you to delete.
+
+```
+ansible-playbook -i ./inventory fleet/github-runners.yml -e github_runner_url=... -e github_runner_scope=repo -e github_runner_state=absent -K
+```
+
 ## Reservations
 
 `nova-reserve` runs a command holding a reservation of one of N slots on the machine, so builds, tests and benches queue instead of
@@ -196,7 +250,3 @@ files above:
 - **tailscale role.** Install and join each machine to the fleet's network, with the host name from the machine row.
 - **Health and self-heal role.** Checking each machine (disk, load, services alive, tools at the right version) and
   repairing what can be repaired without a person.
-- **GitHub CI runner role.** Install, register and update the self-hosted runners that `.github/workflows/ci.yml`
-  runs on, from the machine rows (the `runner` group).
-
-Until they exist, those are done by hand, and the hand work is the thing to automate next.

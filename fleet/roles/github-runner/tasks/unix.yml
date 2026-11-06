@@ -42,7 +42,7 @@
   loop_control: { loop_var: runner_index }
 
 - name: the cache directory
-  ansible.builtin.file: { path: "{{ github_runner_base_dir }}/.cache", state: directory, mode: "0755" }
+  ansible.builtin.file: { path: "{{ github_runner_base_dir }}/.cache", state: directory }
   register: github_runner_cache
   when: github_runner_want | length > 0
 
