@@ -184,6 +184,18 @@ func (f *fake) Claim(ctx context.Context, name, value string, ttl time.Duration)
 	return "", nil
 }
 
+func (f *fake) Hold(ctx context.Context, name, value string, ttl time.Duration) (string, error) {
+	if ctx.Err() != nil {
+		return "", ctx.Err()
+	}
+	if f.live(name) && !strings.Contains(f.presence[name], "\trecv") {
+		return f.presence[name], nil
+	}
+	f.presence[name], f.deadline[name] = value, f.clock.Add(ttl)
+	f.claims = append(f.claims, f.clock)
+	return "", nil
+}
+
 // claim is Claim for a test's setup: it must succeed.
 func (f *fake) claim(t *testing.T, name, value string, ttl time.Duration) {
 	t.Helper()

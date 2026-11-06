@@ -143,6 +143,10 @@ redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[2])
 return ''`)
 	release = redis.NewScript(`if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) end
 return 0`)
+	hold = redis.NewScript(`local v = redis.call('GET', KEYS[1])
+if v and not string.find(v, '\trecv', 1, true) then return v end
+redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[2])
+return ''`)
 	ackScript = redis.NewScript(`local n = redis.call('XACK', KEYS[1], ARGV[1], ARGV[2])
 if n == 1 then redis.call('XDEL', KEYS[1], ARGV[2]) end
 return n`)
@@ -150,6 +154,10 @@ return n`)
 
 func (r redisStore) Claim(ctx context.Context, name, value string, ttl time.Duration) (string, error) {
 	return claim.Run(ctx, r.c, []string{presenceKey(name)}, value, ttl.Milliseconds()).Text()
+}
+
+func (r redisStore) Hold(ctx context.Context, name, value string, ttl time.Duration) (string, error) {
+	return hold.Run(ctx, r.c, []string{presenceKey(name)}, value, ttl.Milliseconds()).Text()
 }
 
 func (r redisStore) Release(ctx context.Context, name, value string) error {

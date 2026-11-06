@@ -164,7 +164,10 @@ per name: a hook that finds another hook's token present waits up to 40 s for it
 crash), then claims the name, or exits 1 if the other hook is still refreshing it. **who** prints `WHO OK present=<n>`, then `<name><TAB><uptime>` for each present name, sorted; a crashed hook
 drops out within 30 s. **pending** prints `PENDING OK waiting=<n>` for `<name>`'s unacked messages, and with `--list` their
 `<id><TAB><from><TAB><subject>` (the subject only, never the body), consuming nothing. To read one waiting
-message whole without a hook, use **recv**, which acks nothing. **recv** prints one message (the oldest unhandled first, as hook
+message whole without a hook, use **recv**, which acks nothing. Once recv has printed a message it holds the name
+naming it (`who` shows `<name><TAB><uptime><TAB>recv holding <id>`) for 15 minutes, or until `ack` or the next
+`recv`: a slow relay, its ack and the parent's reply all pass the hook-in gate; a reader that died leaves the
+claim to lapse, and the next recv hands the message out again. **recv** prints one message (the oldest unhandled first, as hook
 orders them) and exits 0 without marking it handled, or `RECV NONE name=<name> waited=<d>` on stderr and exit 1 when
 `--timeout` passes with none; it records `<name>`'s presence like a hook but takes no lock, and does not coexist
 with a hook for the same name (they would take the same messages). **ack** marks a received message handled:

@@ -32,7 +32,10 @@ Keep tests for these cases, which the guide does not show:
   recv prints it again); ack marks it, and a second ack of the same id fails
   without deleting anything (XDEL only after an XACK of 1, in one script).
   A recv beside a live hook is refused, "name hooked"; a waiting recv claims
-  the key again every 10 s.
+  the key again every 10 s, and one that has printed a message holds the
+  name naming it for 15 minutes: an ack at 31 s and at 14 minutes passes
+  the gate, at 16 minutes the claim has lapsed and the next recv hands the
+  message out again.
 - The wakes and the service are unit-tested on fake seams (exec, shell,
   devOf, the service manager): no socket, process or device is reached.
 

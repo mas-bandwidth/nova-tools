@@ -134,21 +134,30 @@ func threadSource(home, thread string) (string, error) {
 	return row.Payload.ThreadSource, nil
 }
 
-// harnessOf is the harness a command runs under, read from its environment:
-// Codex sets CODEX_THREAD_ID, Antigravity and Gemini CLI ANTIGRAVITY_* or
-// GEMINI_* variables, Grok GROK_HOME; anything else is taken for Claude Code
-// or Muse Code, whose recipe is the Monitor.
+// harnessOf is the harness a command runs under, read from its environment.
+// Codex sets CODEX_THREAD_ID in every command it runs; Claude Code sets
+// CLAUDECODE=1 (checked next, so a Claude Code session that happens to hold
+// a GEMINI_API_KEY is not taken for Antigravity); Antigravity's agent runs
+// its commands with ANTIGRAVITY_AGENT_PORT, ANTIGRAVITY_LS_ADDRESS,
+// ANTIGRAVITY_CSRF_TOKEN and GEMINI_CLI_CSRF_TOKEN (the variables v1.6.29
+// nova-hook read from its shell and passed on to agentapi), and only those
+// count; Grok sets GROK_HOME. Anything else is taken for Claude Code or
+// Muse Code, whose recipe is the Monitor.
 func harnessOf(environ []string) string {
 	h := "claude"
 	for _, kv := range environ {
 		k, _, _ := strings.Cut(kv, "=")
-		switch {
-		case k == "CODEX_THREAD_ID":
+		switch k {
+		case "CODEX_THREAD_ID":
 			return "codex"
-		case strings.HasPrefix(k, "ANTIGRAVITY_") || strings.HasPrefix(k, "GEMINI_"):
+		case "CLAUDECODE":
+			return "claude"
+		case "ANTIGRAVITY_AGENT_PORT", "ANTIGRAVITY_LS_ADDRESS", "ANTIGRAVITY_CSRF_TOKEN", "GEMINI_CLI_CSRF_TOKEN":
 			h = "antigravity"
-		case k == "GROK_HOME" && h == "claude":
-			h = "grok"
+		case "GROK_HOME":
+			if h == "claude" {
+				h = "grok"
+			}
 		}
 	}
 	return h

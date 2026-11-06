@@ -24,7 +24,8 @@ func TestRecvPrintsTheOldestUnhandledAndAckMarksIt(t *testing.T) {
 	assert.Equal(t, "1-0\talpha\t-\ts1\tb1\n", out)
 	assert.Empty(t, errOut)
 	assert.Equal(t, []string{"1-0"}, f.pending["bus:beta"], "handed, not handled")
-	assert.Equal(t, "2026-11-05T12:00:00Z\trecv", f.presence["beta"], "recv records presence")
+	assert.Equal(t, "2026-11-05T12:00:00Z\trecv\t1-0", f.presence["beta"], "recv records presence, holding the message it handed out")
+	assert.Equal(t, f.clock.Add(checkoutTTL), f.deadline["beta"], "for as long as a relay may take")
 
 	code, out, _ = call(t, f, testEnv, "", "recv", "--as", "beta")
 	require.Equal(t, 0, code)
@@ -34,6 +35,8 @@ func TestRecvPrintsTheOldestUnhandledAndAckMarksIt(t *testing.T) {
 	require.Equal(t, 0, code, errOut)
 	assert.Equal(t, "ACK OK id=1-0\n", out)
 	assert.Empty(t, f.pending["bus:beta"])
+	assert.Equal(t, "2026-11-05T12:00:00Z\trecv", f.presence["beta"], "the ack ends the checkout")
+	assert.Equal(t, f.clock.Add(presenceTTL), f.deadline["beta"])
 
 	code, _, errOut = call(t, f, testEnv, "", "ack", "--as", "beta", "--id", "1-0")
 	assert.Equal(t, 1, code)
@@ -92,8 +95,8 @@ func TestRecvKeepsItsFirstPresenceAndLeavesAHooksAlone(t *testing.T) {
 	f.presence["beta"], f.deadline["beta"] = "2026-11-05T11:00:00Z\trecv", f.clock.Add(presenceTTL)
 	code, _, _ := call(t, f, testEnv, "", "recv", "--as", "beta")
 	require.Equal(t, 0, code)
-	assert.Equal(t, "2026-11-05T11:00:00Z\trecv", f.presence["beta"], "uptime since the first recv")
-	assert.Equal(t, f.clock.Add(presenceTTL), f.deadline["beta"], "set again")
+	assert.Equal(t, "2026-11-05T11:00:00Z\trecv\t1-0", f.presence["beta"], "uptime since the first recv, holding the message")
+	assert.Equal(t, f.clock.Add(checkoutTTL), f.deadline["beta"], "set again")
 
 	f.presence["beta"], f.deadline["beta"] = testValue, f.clock.Add(presenceTTL)
 	code, out, errOut := call(t, f, testEnv, "", "recv", "--as", "beta")
@@ -186,10 +189,12 @@ func TestVerbsRefuseUntilHookedIn(t *testing.T) {
 	}{
 		{nil, "run `NOVA_BUS_REDIS=127.0.0.1:1 nova-bus hook --as alpha` as the Monitor tool's command; run: nova-bus show agents"},
 		{[]string{"HOME=/h", "TERM_PROGRAM=Muse"}, "run `NOVA_BUS_REDIS=127.0.0.1:1 nova-bus hook --as alpha` as the Monitor tool's command; run: nova-bus show agents"},
-		{[]string{"CODEX_THREAD_ID=t1", "GEMINI_X=1"}, "spawn a child agent that loops `NOVA_BUS_REDIS=127.0.0.1:1 nova-bus recv --as alpha`, a message to you, `NOVA_BUS_REDIS=127.0.0.1:1 nova-bus ack --as alpha --id <id>`; run: nova-bus show codex-agents"},
+		{[]string{"CODEX_THREAD_ID=t1", "ANTIGRAVITY_CSRF_TOKEN=1"}, "spawn a child agent that loops `NOVA_BUS_REDIS=127.0.0.1:1 nova-bus recv --as alpha`, a message to you, `NOVA_BUS_REDIS=127.0.0.1:1 nova-bus ack --as alpha --id <id>`; run: nova-bus show codex-agents"},
 		{[]string{"GROK_HOME=/Users/me/.grok"}, "Monitor: tail -n 0 -F $GROK_HOME/nova-hook.wake, then `NOVA_BUS_REDIS=127.0.0.1:1 nova-bus hook --as alpha --harness grok --grok-home $GROK_HOME --service`; run: nova-bus hook -h"},
 		{[]string{"GROK_HOME=/x", "ANTIGRAVITY_AGENT_PORT=1"}, "`NOVA_BUS_REDIS=127.0.0.1:1 nova-bus hook --as alpha --harness antigravity --antigravity-dir <workspace> --antigravity-session <conversation id> --antigravity-events-dir ~/.gemini/antigravity/nova-bus-alpha --service`; run: nova-bus hook -h"},
-		{[]string{"GEMINI_CLI=1"}, "`NOVA_BUS_REDIS=127.0.0.1:1 nova-bus hook --as alpha --harness antigravity --antigravity-dir <workspace> --antigravity-session <conversation id> --antigravity-events-dir ~/.gemini/antigravity/nova-bus-alpha --service`; run: nova-bus hook -h"},
+		{[]string{"GEMINI_API_KEY=k", "CLAUDECODE=1", "ANTIGRAVITY_AGENT_PORT=1"}, "run `NOVA_BUS_REDIS=127.0.0.1:1 nova-bus hook --as alpha` as the Monitor tool's command; run: nova-bus show agents"},
+		{[]string{"GEMINI_API_KEY=k"}, "run `NOVA_BUS_REDIS=127.0.0.1:1 nova-bus hook --as alpha` as the Monitor tool's command; run: nova-bus show agents"},
+		{[]string{"GEMINI_CLI_CSRF_TOKEN=1"}, "`NOVA_BUS_REDIS=127.0.0.1:1 nova-bus hook --as alpha --harness antigravity --antigravity-dir <workspace> --antigravity-session <conversation id> --antigravity-events-dir ~/.gemini/antigravity/nova-bus-alpha --service`; run: nova-bus hook -h"},
 	} {
 		s := sys{environ: func() []string { return tc.environ }}
 		for _, args := range [][]string{{"send", "--as", "alpha", "--to", "beta", "--new", "s", "b"}, {"ack", "--as", "alpha", "--id", "1-0"}, {"pending", "--as", "alpha"}} {
@@ -211,11 +216,45 @@ func TestVerbsRefuseUntilHookedIn(t *testing.T) {
 	code, out, _ := call(t, f, testEnv, "", "recv", "--as", "beta")
 	require.Equal(t, 0, code)
 	assert.Equal(t, "1-0\talpha\t-\ts\tb\n", out)
-	assert.Equal(t, "2026-11-05T12:00:00Z\trecv", f.presence["beta"])
+	assert.Equal(t, "2026-11-05T12:00:00Z\trecv\t1-0", f.presence["beta"], "held, naming the message out")
 	code, out, errOut := call(t, f, testEnv, "", "send", "--as", "beta", "--to", "alpha", "--re", "1-0", "re", "ok")
 	assert.Equal(t, 0, code, errOut)
 	assert.Equal(t, "alpha 1-0\n", out)
 	code, out, errOut = call(t, f, testEnv, "", "ack", "--as", "beta", "--id", "1-0")
 	assert.Equal(t, 0, code, errOut)
 	assert.Equal(t, "ACK OK id=1-0\n", out)
+}
+
+// A recv's checkout outlasts a slow relay: the ack (and the parent's reply)
+// pass the hook-in gate at 31 s and at 14 min; a reader that died leaves the
+// claim to lapse at 15 min, and the next recv hands the message out again.
+func TestRecvCheckoutOutlastsASlowRelay(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		after time.Duration
+		acked bool
+	}{{31 * time.Second, true}, {14 * time.Minute, true}, {16 * time.Minute, false}} {
+		f := newFake()
+		send(t, f, "s", "b")
+		code, out, _ := call(t, f, testEnv, "", "recv", "--as", "beta")
+		require.Equal(t, 0, code)
+		assert.Equal(t, "1-0\talpha\t-\ts\tb\n", out)
+		_, out, _ = call(t, f, testEnv, "", "who")
+		assert.Equal(t, "WHO OK present=2\nalpha\t1h0m0s\nbeta\t0s\trecv holding 1-0\n", out)
+		f.clock = f.clock.Add(tc.after)
+		code, out, errOut := call(t, f, testEnv, "", "send", "--as", "beta", "--to", "alpha", "--re", "1-0", "re", "ok")
+		assert.Equal(t, map[bool]int{true: 0, false: 1}[tc.acked], code, "%s: the reply to the parent: %s", tc.after, errOut)
+		code, out, errOut = call(t, f, testEnv, "", "ack", "--as", "beta", "--id", "1-0")
+		if tc.acked {
+			require.Equal(t, 0, code, "%s: %s", tc.after, errOut)
+			assert.Equal(t, "ACK OK id=1-0\n", out)
+			assert.Empty(t, f.pending["bus:beta"])
+			continue
+		}
+		assert.Equal(t, 1, code, tc.after)
+		assert.Contains(t, errOut, "beta is not hooked in", "the claim lapsed with the reader")
+		code, out, _ = call(t, f, testEnv, "", "recv", "--as", "beta")
+		require.Equal(t, 0, code)
+		assert.Equal(t, "1-0\talpha\t-\ts\tb\n", out, "handed out again")
+	}
 }

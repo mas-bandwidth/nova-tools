@@ -105,9 +105,10 @@ var verbUsage = map[string]string{
       handled already.
 `,
 	"who": `  nova-bus who
-      Print WHO OK present=<n>, then each name whose hook is running and how
-      long it has been up, one per line, name<TAB>uptime, sorted by name. A
-      crashed hook drops out within 30 seconds.
+      Print WHO OK present=<n>, then each name whose hook is running (or
+      whose recv is reading) and how long it has been up, one per line,
+      name<TAB>uptime[<TAB>recv holding <id>], sorted by name. A crashed hook
+      drops out within 30 seconds.
 `,
 	"pending": `  nova-bus pending --as <name> [--list]
       Print PENDING OK waiting=<n>, the messages for <name> no hook has handled;
@@ -159,6 +160,7 @@ const group = "hook"
 // lapsed by then, a live one's has been refreshed.
 const (
 	presenceTTL     = 30 * time.Second
+	checkoutTTL     = 15 * time.Minute // a recv's claim while its message is out, unacked
 	presenceRefresh = 10 * time.Second
 	readBlock       = time.Second
 	cleanupTimeout  = 2 * time.Second
@@ -194,6 +196,9 @@ type Store interface {
 	// present, which it returns ("" when claimed); Release deletes it only if
 	// it still holds value.
 	Claim(ctx context.Context, name, value string, ttl time.Duration) (string, error)
+	// Hold is Claim for a recv: it sets the key unless a value that is not a
+	// recv's (no "\trecv" in it: a hook's) is present, which it returns.
+	Hold(ctx context.Context, name, value string, ttl time.Duration) (string, error)
 	Release(ctx context.Context, name, value string) error
 	// Presence returns every present name and its value ("" if unreadable).
 	Presence(ctx context.Context) (map[string]string, error)
@@ -725,19 +730,22 @@ func recv(ctx context.Context, store Store, name, addr string, timeout time.Dura
 	if err != nil {
 		return fail(stderr, "recv", "%s", describe(err, addr))
 	}
-	if v, ok := present[name]; ok && !strings.HasSuffix(v, "\trecv") {
+	if v, ok := present[name]; ok && !strings.Contains(v, "\trecv") {
 		return fail(stderr, "recv", "name hooked: a hook holds %s and would take the same messages; run: nova-bus who", name)
 	} else if ok {
 		value = v // the uptime is since the first recv
 	}
-	claim := func() error {
-		held, err := store.Claim(ctx, name, value, presenceTTL)
+	if holding := strings.Count(value, "\t"); holding == 2 { // the last recv's message is still checked out
+		value = value[:strings.LastIndex(value, "\t")]
+	}
+	claim := func(v string, ttl time.Duration) error {
+		held, err := store.Hold(ctx, name, v, ttl)
 		if err == nil && held != "" {
 			err = fmt.Errorf("name hooked: a hook took %s; run: nova-bus who", name)
 		}
 		return err
 	}
-	if err := claim(); err != nil {
+	if err := claim(value, presenceTTL); err != nil {
 		return fail(stderr, "recv", "%s", describe(err, addr))
 	}
 	due := clk.Now().Add(presenceRefresh)
@@ -754,7 +762,7 @@ func recv(ctx context.Context, store Store, name, addr string, timeout time.Dura
 			break
 		}
 		if t := clk.Now(); !t.Before(due) { // present while it waits
-			if err = claim(); err != nil {
+			if err = claim(value, presenceTTL); err != nil {
 				break
 			}
 			due = t.Add(presenceRefresh)
@@ -767,6 +775,14 @@ func recv(ctx context.Context, store Store, name, addr string, timeout time.Dura
 	if len(msgs) == 0 {
 		fmt.Fprintf(stderr, "RECV NONE name=%s waited=%s\n", name, clk.Now().Sub(start).Truncate(time.Second))
 		return 1
+	}
+	// Checked out: the name stays held, naming the message, until it is
+	// acked or the next recv, for as long as a relay may take (checkoutTTL),
+	// so the reader's ack and its parent's reply pass the gate however slow
+	// the relay; a reader that dies leaves it to lapse, and the next recv
+	// hands the message out again.
+	if err := claim(value+"\t"+msgs[0].ID, checkoutTTL); err != nil {
+		return fail(stderr, "recv", "%s", describe(err, addr))
 	}
 	if _, err := io.WriteString(stdout, line(msgs[0])); err != nil {
 		return fail(stderr, "recv", "writing stdout: %v", err)
@@ -782,6 +798,12 @@ func ack(ctx context.Context, store Store, name, addr, id string, stdout, stderr
 	}
 	if n == 0 {
 		return fail(stderr, "ack", "ACK FAILED id=%s reason=not received by recv, or handled already; run: nova-bus pending --as %s --list", id, name)
+	}
+	// The ack ends the checkout: the recv's claim goes back to its 30 s.
+	if present, err := store.Presence(ctx); err == nil && strings.HasSuffix(present[name], "\trecv\t"+id) {
+		if _, err := store.Hold(ctx, name, strings.TrimSuffix(present[name], "\t"+id), presenceTTL); err != nil {
+			return fail(stderr, "ack", "%s", describe(err, addr))
+		}
 	}
 	fmt.Fprintf(stdout, "ACK OK id=%s\n", id)
 	return 0
@@ -802,9 +824,12 @@ func who(ctx context.Context, store Store, addr string, now time.Time, stdout, s
 	sort.Strings(names)
 	for _, n := range names {
 		up := "?"
-		start, _, _ := strings.Cut(present[n], "\t")
+		start, rest, _ := strings.Cut(present[n], "\t")
 		if t, err := time.Parse(time.RFC3339, start); err == nil {
 			up = max(now.Sub(t), 0).Truncate(time.Second).String()
+		}
+		if token, id, ok := strings.Cut(rest, "\t"); ok && token == "recv" { // a recv's checked-out message
+			up += "\trecv holding " + id
 		}
 		fmt.Fprintf(stdout, "%s\t%s\n", n, up)
 	}
