@@ -17,7 +17,9 @@ Supporting directories are `tla`, `docs`, `boundary`, `contract` and `.github`.
 The root files are `README.md`, `LICENSE`, `go.mod`, `go.sum`, `.gitignore`,
 `.gitattributes` and `BUDGET`. Git metadata is allowed too.
 
-Put other documentation and images under `docs/`. Keep build outputs outside
+Each tool's guide is its own `README.md`, with a `SPEC.md` beside it when it
+has tests or models to explain. Put shared documentation and images under
+`docs/`. Keep build outputs outside
 the checkout. An extra top-level entry fails the layout test, even when Git
 ignores it.
 
@@ -27,7 +29,7 @@ contents of `docs/`.
 
 ## Independence
 
-There is no `pkg`, `internal` or `cmd` layer. A tool must not import another
+Each tool is one directory of `package main` files. A tool must not import another
 package from this module. A few repeated lines are preferable to a shared layer
 that ties the tools together.
 
@@ -117,19 +119,14 @@ The count includes comments and blank lines in `.go` files, but excludes
 `_test.go` files. A directory with Go files needs a budget entry. The boundary
 and contract test packages have entries as well.
 
-A new tool's budget is its size when its spec was settled, plus 50 lines.
+A new tool's budget is its size when its design was settled, plus 50 lines.
 If a change exceeds its budget, first look for work the tool no longer needs
 to do. A budget increase needs a reason in the same PR. Lower the budget when
 code is removed, and remove temporary headroom after the work it covers lands.
 
 ## Adding a tool
 
-Create a top-level `package main` directory and a spec under `docs/`. Add the
+Create a top-level `package main` directory with a `README.md` guide. Add the
 directory to `allowedTop`, `mainTools` and `BUDGET`. Explain the single job it
 does and why the existing tools do not already cover it. Keep its dependencies
 and examples small enough that a new reader can follow them.
-
-## History
-
-On 2026-11-05 the repository went from 239,138 lines to 14,247, when the
-sprint's machinery moved out.

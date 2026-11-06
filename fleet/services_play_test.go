@@ -11,7 +11,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// services_play_test.go pins fleet/services.yml's Linux unit state (docs/FLEET.md, "services.yml").
+// services_play_test.go pins fleet/services.yml's Linux unit state (fleet/README.md).
 // The state of ansible.builtin.systemd_service is built before the module call,
 // because the ansible-core templar stops at a parenthesised ternary chained to a
 // second `if ... else` ("expected token ')', got 'else'"): service_unit_changed,

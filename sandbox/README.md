@@ -1,47 +1,148 @@
 # nova-sandbox
 
-Give a command the directories it needs for its work. nova-sandbox applies
-kernel restrictions with Landlock and seccomp on Linux, or a `sandbox-exec`
-profile on macOS. System roots remain readable, with a few documented writable
-paths; your flags add grants to that baseline. There is no Windows backend.
+Run one command inside a kernel-enforced wall. You name the directories the
+command may read and write, and you can close its network; everything else is
+out of reach. Linux uses Landlock and seccomp. macOS uses `sandbox-exec`.
+Other systems are refused.
+
+Words used below: the **wall** is the set of kernel restrictions applied to the
+command. A **grant** is a directory you name with `--read` or `--write`. The
+**system roots** are paths the command can always read and run, such as `/usr`,
+`/bin`, `/lib` and `/etc` (`nova-sandbox show` lists them all).
+
+## Install
+
+```sh
+git clone -q https://github.com/mas-bandwidth/nova-tools
+go build -C nova-tools -o "$PWD/bin/nova-sandbox" ./sandbox
+export PATH="$PWD/bin:$PATH"
+```
+
+## Run a command
 
 ```text
 nova-sandbox [--read <dir>]... [--write <dir>]... [--net-deny [--net-allow <host:port>]...] [--gpu] [--unix] [--keep-fds] -- <cmd> <args...>
-nova-sandbox show [the same flags] [-- <cmd> <args...>]
-nova-sandbox check
-nova-sandbox probe
-nova-sandbox help [<verb>]
 ```
 
-Paths must be absolute, existing directories. The command itself must be in
-a system root or one of your grants. Set its working directory and environment
-before launching the tool; both pass through unchanged. Descriptors above
-stderr are closed on exec by default; `--keep-fds` preserves them.
+| Flag | Effect |
+|---|---|
+| `--read <dir>` | Read, list and run files beneath the directory. |
+| `--write <dir>` | Also create, change, rename and delete beneath it. |
+| `--net-deny` | Close the network, or refuse to start if the host cannot. |
+| `--net-allow <host:port>` | Under `--net-deny`, allow connections to one loopback port. |
+| `--gpu` | macOS only: allow Metal and video services. On Linux, use `--write /dev/dri`. |
+| `--unix` | Linux only: leave Unix-domain sockets open. |
+| `--keep-fds` | Keep inherited descriptors above stderr open (they are closed by default). |
 
-On Linux, `--net-deny` requires Landlock and seccomp. It denies IP sockets;
-`--net-allow` opens TCP client access to the named port on every address.
-On macOS, an allowed localhost port permits TCP and UDP. `show` previews
-the host rules without running a command. Linux also restricts Unix-domain sockets
-by default, which can prevent logging, agent access or local-service calls.
-`--unix` relaxes those restrictions and requires trust in the command's access
-to local services. `--gpu` is for macOS only.
-
-The [specification](../docs/SPEC-SANDBOX.md) describes grants, OS limits,
-`show`, `check`, `probe` and exit codes. Read those limits before relying on the wall.
-The macOS profile is in [darwin.sb.tmpl](darwin.sb.tmpl); the Landlock rules
-are in [rules.go](rules.go).
-
-## Build and test
-
-From the repository root, on a build machine:
+Flags go before `--`; everything after it is the command. Directories must be
+absolute and exist. The command must lie under a system root or a
+grant, so for a program in `~/bin`, add `--read ~/bin`. Environment and working
+directory pass through: point `HOME` and `TMPDIR` inside a `--write` grant, and
+start in a granted directory.
 
 ```sh
-build_dir=$(mktemp -d)
-go build -o "$build_dir/nova-sandbox" ./sandbox
-"$build_dir/nova-sandbox" help
-go test ./sandbox                    # parsing, generated rules and refusals
+work_dir=$(mktemp -d)
+cd "$work_dir"
+nova-sandbox --write "$work_dir" --net-deny -- /bin/sh -c 'printf "hello\n" > result.txt'
+cat result.txt
 ```
 
-[TESTING.md](../docs/TESTING.md) describes functional checks and their prerequisites.
-A build or unit-test result alone does not establish that a backend works on
-a particular host.
+`cat` prints `hello`. The exit status is the command's own. A Go toolchain outside the system roots
+needs `--read "$(go env GOROOT)"`.
+
+## Preview the wall: `show`
+
+`show` takes the run flags and prints the rules without starting anything.
+
+```sh
+nova-sandbox show --write "$work_dir" --net-deny --net-allow localhost:5432 | grep -E '^(wall|net|fds)'
+```
+
+```text
+wall backend=landlock abi=4 seccomp=on
+net rule=tcp_allow tcp_connect=allow ports=5432 tcp_bind=deny by=landlock listen=deny accept=deny fastopen=deny udp=deny raw=deny packet=deny by=seccomp dns=/etc/hosts_or_a_resolver_on_an_allowed_tcp_port note=landlock filters by port: an allowed port is open on every address
+fds close=above_stderr
+```
+
+Exit 0 means the wall can start here, 1 means it would be refused.
+
+## Check the host: `check`
+
+```sh
+nova-sandbox check
+```
+
+```text
+CHECK OK backend=landlock abi=4 net=enforceable note=landlock abi 4; seccomp available; net-deny landlock_tcp+seccomp; signals scoped to the wall at abi 6+
+```
+
+Exit 1 prints `CHECK FAILED ... reason=...`. `net=unavailable` means
+`--net-deny` will be refused here.
+
+## Test the wall: `probe`
+
+```sh
+nova-sandbox probe | tail -3
+```
+
+```text
+PROBE STEP name=dns_control expect=allow got=allow
+PROBE STEP name=dns_deny expect=deny got=deny
+PROBE OK backend=landlock abi=4
+```
+
+`probe` walls test children in a scratch directory and prints one
+`PROBE STEP name=<step> expect=allow|deny got=<result>` line per step (20 on
+Linux). `got` can also be `wall_refused` or `untested` (with a `note=`, and it
+proves nothing). The last line is `PROBE OK` (exit 0) or `PROBE FAILED` (exit 1).
+
+## Refusals
+
+`nova-sandbox`, `help` and `-h` print help and exit 0; `help <verb>` and
+`<verb> -h` print a verb's help. `help` takes no flags (`help -h` exits 2).
+A malformed command line exits 2 with one line naming every problem:
+
+```text
+nova-sandbox: <reason>: <text>; run: nova-sandbox -h
+```
+
+```sh
+nova-sandbox --read -- true || echo "exit $?"
+```
+
+```text
+nova-sandbox: bad_value: --read wants an absolute path, got "--"; run: nova-sandbox -h
+exit 2
+```
+
+A wall that cannot start prints `SANDBOX REFUSED reason=<reason>: <text>`, for
+example `SANDBOX REFUSED reason=not_found: nosuchcmd is on no PATH entry or does not exist`.
+
+| Reason | Exit | Cause and next step |
+|---|---|---|
+| `bad_flag` | 2 | Unknown flag or missing value. Read `nova-sandbox -h`. |
+| `bad_value` | 2 | A flag's value starts with `--`, so the flag took the next flag or `--`. Give the flag its value. |
+| `no_command` | 2 | No `--`, or nothing after it. Put the command after `--`. |
+| `bad_read`, `bad_write` | 2 | Directory is relative, missing or has unsupported characters, or the command is outside every grant. Create it, use its absolute path, or `--read` the command's directory. |
+| `bad_net` | 2 | Bad loopback `host:port`, or `--net-allow` without `--net-deny`. |
+| `bad_gpu` | 2 | `--gpu` on Linux. Use `--write /dev/dri`. |
+| `not_found` | 127 | Command is on no PATH entry. Fix PATH or the path. |
+| `not_executable` | 126 | Not an executable file. Fix its permissions. |
+| `no_sandbox`, `no_seccomp`, `net_unenforceable`, `sandbox_failed` | 125 | The host cannot apply the wall. Run `check` and use a host that can. |
+
+## Guarantees
+
+- Outside the system roots and your grants, the command cannot open, list, run, create, rename or delete files. It can write only beneath `--write` grants, plus `/dev/null`, `/dev/tty` and, on Linux, `/dev/shm`.
+- Restrictions pass to every child process.
+- Without `--net-deny` the network is unrestricted. With it, Linux allows no TCP, UDP or raw sockets, and macOS no outbound IP or DNS socket. Names in `/etc/hosts` resolve on Linux. If the host cannot enforce this, the tool refuses to start.
+- With `--net-allow`, Linux allows TCP connect to that port on every address; listen and accept are refused. macOS allows TCP and UDP to localhost on it.
+- Linux also refuses `ptrace`, `io_uring` and, unless you pass `--unix`, Unix-domain sockets (syslog, D-Bus and agents fail).
+
+## Limits
+
+- Needs Linux 5.13 or later (Landlock; `--net-deny` needs ABI 4). `check` reports yours.
+- `--unix` lets the command reach any local socket by path, so use it only for trusted commands.
+- A kept descriptor (`--keep-fds`) can carry access past the grants.
+- CPU, memory, processes and disk use are not limited.
+
+How the tool is tested is in [SPEC.md](SPEC.md).

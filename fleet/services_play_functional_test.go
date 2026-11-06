@@ -19,7 +19,7 @@ import (
 
 // services_play_functional_test.go renders fleet/services.yml's Linux unit state
 // through ansible-core's own templar. It carries //go:build functional
-// (docs/STANDARD.md section 8) so the unit tier does not compile the ansible
+// (docs/TESTING.md) so the unit tier does not compile the ansible
 // render.
 //
 // The render runs the task as the play holds it: its own vars block and its

@@ -2,16 +2,18 @@
 
 Start with `<tool> help`. Use `<tool> help <verb>`, `<tool> <verb> -h` or
 `<tool> <verb> --help` for one operation. Help prints to stdout, returns 0
-and makes no changes. Each guide shows setup and a working example.
+and makes no changes. `help` itself takes no flags: on bus, sandbox, secrets
+and reserve, `help -h` is refused with exit 2. Each guide shows setup and a
+working example.
 
-| Tool | Reference | Main operations |
+| Tool | Guide | Main operations |
 |---|---|---|
-| `nova-bus` | [Bus](SPEC-BUS.md) | `send`, `hook`, `who`, `pending` |
-| `nova-config` | [Config](SPEC-CONFIG.md) | `machine`, `service`, `history`, `schema`, `inventory` |
-| `nova-sandbox` | [Sandbox](SPEC-SANDBOX.md) | a command after `--`, `show`, `check`, `probe` |
-| `nova-secrets` | [Secrets](SPEC-SECRETS.md) | `init`, `seat add`, `set`, `names`, `exec` |
-| `nova-reserve` | [Reserve](SPEC-RESERVE.md) | `run`, `hold`, `status`, `set` |
-| `nova-cairn` | [Cairn](SPEC-CAIRN.md) | `open`, `append`, `index`, `receipt`, `memory`, `self-talk` |
+| `nova-bus` | [Bus](../bus/README.md) | `send`, `hook`, `who`, `pending` |
+| `nova-config` | [Config](../config/README.md) | `machine`, `service`, `history`, `schema`, `inventory` |
+| `nova-sandbox` | [Sandbox](../sandbox/README.md) | a command after `--`, `show`, `check`, `probe` |
+| `nova-secrets` | [Secrets](../secrets/README.md) | `init`, `seat add`, `set`, `names`, `exec` |
+| `nova-reserve` | [Reserve](../reserve/README.md) | `run`, `hold`, `status`, `set` |
+| `nova-cairn` | [Cairn](../cairn/README.md) | `open`, `append`, `index`, `receipt`, `memory`, `self-talk` |
 
 ## Arguments
 
@@ -48,8 +50,8 @@ Cairn prints named result lines and counts. An entry's `receipt --text`
 includes its saved words in a quoted field. Check findings use stderr;
 read the final status as well as any earlier results.
 
-There is no shared JSON or escaping format. Parse the format described by
-the tool you use. A successful item can precede a later failure.
+Each tool has its own output format. Parse the one its guide describes. A
+successful item can precede a later failure.
 
 ## Exit codes
 
@@ -60,14 +62,14 @@ the tool you use. A successful item can precede a later failure.
 | 2 | The invocation was wrong or the operation could not run. |
 | 125 | The sandbox refused to start, or secrets `exec` could not launch its command. |
 | 126 | A command was found but could not be executed. |
-| 127 | A command was not found or could not be launched. |
+| 127 | Sandbox or reserve could not find the command. Reserve names the PATH it searched. |
 | Child status | A wrapper returns its command's status after launch. The same number can therefore have a different cause. |
 
 Config uses 2 for connection and execution failures. Secrets operations other
 than `exec` also use 2 for runtime refusals. Bus uses 1 for Redis-operation
 failures. Sandbox `show`, `check` and `probe` use 0/1 for their result;
 a macOS profile compilation failure can return the platform's own status.
-The individual specs list the full distinctions.
+Each guide lists the full distinctions.
 
 Read stderr as well as the status. Missing input is different from a valid
 empty result. An existing empty inbox, search with no matches or idempotent
@@ -93,9 +95,9 @@ capacity recorded in their reservation directory. A **cairn** is a saved
 session record; its directory is explicit, and its publish policy records
 intent without sending anything.
 
-Defaults belong to each tool. There is no common version command; cairn has
-`version`. Record the installed release tag or source commit when reporting
-a problem.
+Defaults belong to each tool. Cairn prints its version with `version`. For
+the other tools, record the release tag or source commit you installed when
+you report a problem.
 
 ## Checks for contributors
 

@@ -3,7 +3,7 @@ package main
 // The seccomp-bpf program, built for one architecture from the wall's options. It is
 // pure, so unit tests build and interpret it on every OS for every architecture.
 // seccomp_linux.go installs it. What each rule is for, and what was measured, is in
-// docs/SPEC-SANDBOX.md; the rule names below are what show prints.
+// sandbox/SPEC.md; the rule names below are what show prints.
 
 const (
 	// An action the kernel does not know is treated as a kill, so KILL_PROCESS is safe
