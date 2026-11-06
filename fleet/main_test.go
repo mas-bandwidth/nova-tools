@@ -223,13 +223,15 @@ func TestMissingHelpers(t *testing.T) {
 	}
 	f.found["nova-config"] = "/b/nova-config"
 	code, _, errs = runArgs("install")
-	prefix := "nova-fleet install: ansible-playbook not found on PATH; install ansible-core 2.15+ and run: ansible-galaxy collection install -r "
-	req, ok := strings.CutPrefix(strings.TrimSuffix(errs, "\n"), prefix)
-	if code != 2 || !ok {
+	if code != 2 || errs != "nova-fleet install: ansible-playbook not found on PATH; install ansible-core 2.15+ and run: nova-fleet show requirements > requirements.yml && ansible-galaxy collection install -r requirements.yml\n" {
 		t.Fatalf("no ansible-playbook: code %d stderr %q", code, errs)
 	}
-	if _, err := os.Stat(req); err != nil {
-		t.Errorf("the remedy's %s does not exist: %v", req, err)
+	// the remedy's show works, and the extracted directory is gone (every exit removes it)
+	if code, out, _ := runArgs("show", "requirements"); code != 0 || !strings.Contains(out, "collections") {
+		t.Errorf("show requirements: code %d %q", code, out)
+	}
+	if left, _ := filepath.Glob(filepath.Join(os.Getenv("TMPDIR"), "nova-fleet-*")); len(left) != 0 {
+		t.Errorf("extracted directories left behind: %v", left)
 	}
 }
 

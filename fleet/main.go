@@ -370,12 +370,12 @@ func runPlay(play string, args []string, stdout, stderr io.Writer, refuse func(s
 			return 2
 		}
 	}
+	defer os.RemoveAll(dir)
 	ansible, err := lookPath("ansible-playbook")
 	if err != nil {
-		fmt.Fprintf(stderr, "nova-fleet %s: ansible-playbook not found on PATH; install ansible-core 2.15+ and run: ansible-galaxy collection install -r %s\n", play, filepath.Join(dir, "requirements.yml"))
+		fmt.Fprintf(stderr, "nova-fleet %s: ansible-playbook not found on PATH; install ansible-core 2.15+ and run: nova-fleet show requirements > requirements.yml && ansible-galaxy collection install -r requirements.yml\n", play)
 		return 2
 	}
-	defer os.RemoveAll(dir)
 	fmt.Fprintf(stderr, "nova-fleet: ansible-playbook=%s inventory=%s play=%s\n", ansible, inventory, filepath.Join(dir, play+".yml"))
 	argv := append([]string{"-i", inventory, filepath.Join(dir, play+".yml")}, pass...)
 	env := append(os.Environ(), "ANSIBLE_INVENTORY_UNPARSED_FAILED=true")
