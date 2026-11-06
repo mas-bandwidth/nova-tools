@@ -13,7 +13,23 @@
   register: github_runner_token_read
   no_log: true
   changed_when: false
+  failed_when: false
   check_mode: false
+
+# no_log hides the whole result, the reason with it. What is shown is a line nova-secrets itself printed (SECRETS EXEC
+# REFUSED, nova-secrets exec:), which names no value; the match on that line is the guard, not the exit code (exec
+# passes the command's own status through, so 2 or 125 can be the command's). With no such line, a 2 or 125 means
+# nova-secrets could not run (not found: 2 or 127; not executable: 13 or 126); any other failure is the printing command's, and shows its
+# status only, since its output can hold the token.
+- name: a refused token read says why
+  ansible.builtin.fail:
+    msg: >-
+      GITHUB RUNNER TOKEN {{ inventory_hostname }}:
+      {{ (github_runner_token_read.stderr_lines | select('match', '^(SECRETS EXEC REFUSED |nova-secrets exec: )') | first)
+         | default(('the nova-secrets command could not run, rc=' ~ github_runner_token_read.rc ~ ' (is ' ~ github_runner_secrets_bin ~ ' installed and executable?)')
+                   if github_runner_token_read.rc in [2, 13, 125, 126, 127] else
+                   ('the command that prints the token failed, rc=' ~ github_runner_token_read.rc ~ ' (its output is hidden: it can hold the token)'), true) }}
+  when: github_runner_token_read.rc != 0
 
 - name: the token is held for this host
   ansible.builtin.set_fact:

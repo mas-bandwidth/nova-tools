@@ -115,10 +115,22 @@ takes no flags: `help -h` exits 2.
 
 ## Refusals
 
-Runtime refusals print `SECRETS <VERB> REFUSED: <why>` on stderr and exit 2
-(`exec`: 125, and the command never starts, including a command not found).
-A bad invocation prints `nova-secrets <verb>: <why>; run: nova-secrets <verb> -h`
-and exits 2.
+Runtime refusals print one line, `SECRETS <VERB> REFUSED reason=<reason>: <why>`,
+on stderr and exit 2 (`exec`: 125, and the command never starts, including a
+command not found). A bad invocation prints
+`nova-secrets <verb>: <why>; run: nova-secrets <verb> -h` and exits 2.
+
+The reason is one word, and neither it nor the rest of the line holds a value.
+`no-store` means the store directory is absent, `no-seat` that the seat has no
+file or no rule, `no-key` that the key file is missing or not private, and
+`not-recipient` that the key is not among the seat's recipients, in the rule or
+in the file. `no-name` means a selected name is absent from the seat, `no-sops`
+that sops was not found, and `no-command` that exec's command was not found.
+`sops` and `git` mean that program failed, and `other` covers the rest. A caller
+that hides a command's output, such as an Ansible task with `no_log`, can show
+this line by matching it (`SECRETS EXEC REFUSED`, `nova-secrets exec:`): the
+match is the guard, never the exit code, since `exec` passes the command's own
+status through.
 
 | Refusal | Next step |
 |---|---|

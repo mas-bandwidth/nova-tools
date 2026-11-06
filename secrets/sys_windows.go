@@ -13,9 +13,9 @@ import (
 // access list allows only this user, SYSTEM and Administrators (Windows has no mode bits).
 func checkKey(path string) error {
 	if fi, err := os.Lstat(path); err != nil || !fi.Mode().IsRegular() {
-		return refuse("key file %s is absent or not a regular file", path)
+		return deny("no-key", "key file %s is absent or not a regular file", path)
 	}
-	bad := refuse("key file %s must be owned by you and private to you; run: icacls %q /inheritance:r /grant:r %%USERNAME%%:F", path, path)
+	bad := deny("no-key", "key file %s must be owned by you and private to you; run: icacls %q /inheritance:r /grant:r %%USERNAME%%:F", path, path)
 	sd, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
 	if err != nil {
 		return bad
