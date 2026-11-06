@@ -10,9 +10,9 @@
         "nova_services": [
           {
             "name": "bus-hook",
-            "argv": ["nova-bus", "hook", "--as", "reader"],
-            "env": { "NOVA_BUS_REDIS": "redis-host:6379" },
-            "log": "~/.local/state/nova/services/bus-hook.log",
+            "argv": [{ "__ansible_unsafe": "nova-bus" }, { "__ansible_unsafe": "hook" }, { "__ansible_unsafe": "--as" }, { "__ansible_unsafe": "reader" }],
+            "env": { "NOVA_BUS_REDIS": { "__ansible_unsafe": "redis-host:6379" } },
+            "log": { "__ansible_unsafe": "~/.local/state/nova/services/bus-hook.log" },
             "seat": "",
             "keys": [],
             "every": 0,
@@ -21,13 +21,24 @@
           },
           {
             "name": "secret-sweep",
-            "argv": ["nova-secrets", "names"],
+            "argv": [{ "__ansible_unsafe": "nova-secrets" }, { "__ansible_unsafe": "names" }],
             "env": {},
-            "log": "~/.cache/nova/secret-sweep.log",
+            "log": { "__ansible_unsafe": "~/.cache/nova/secret-sweep.log" },
             "seat": "reader",
             "keys": ["BUS_TOKEN"],
             "every": 300,
             "keepalive": false,
+            "enabled": true
+          },
+          {
+            "name": "hostile-text",
+            "argv": [{ "__ansible_unsafe": "sh" }, { "__ansible_unsafe": "-c" }, { "__ansible_unsafe": "echo ${#HOME} {# x #} {{ y }} {% z %}" }],
+            "env": { "NOTE": { "__ansible_unsafe": "${#X} {# e #} {{ 3 }}" } },
+            "log": { "__ansible_unsafe": "~/.local/state/nova/services/hostile-text.log" },
+            "seat": "",
+            "keys": [],
+            "every": 0,
+            "keepalive": true,
             "enabled": true
           }
         ]

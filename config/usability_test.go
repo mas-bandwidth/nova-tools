@@ -94,14 +94,14 @@ func TestArgvAndValuesRoundTrip(t *testing.T) {
 func TestEnvAndLog(t *testing.T) {
 	t.Parallel()
 	h := fleet(t)
-	h.ok(t, "service", "add", "e1", "--machine", "bench-a", "--argv", `["p"]`, "--every", "5", "--env", `{"B_VAR":"2","A_VAR":"x=y z"}`, "--log", "/var/log/e1.log", "--actor", "t")
+	h.ok(t, "service", "add", "e1", "--machine", "bench-a", "--argv", `["sh","-c","echo ${#HOME} {# x #} {{ y }}"]`, "--every", "5", "--env", `{"B_VAR":"2","A_VAR":"x=y z"}`, "--log", "/var/log/e1.log", "--actor", "t")
 	assert.Equal(t, `{"A_VAR":"x=y z","B_VAR":"2"}`, h.st.rows["service"]["e1"].F["env"], "keys sorted, canonical")
 	_, out, _ := h.run(t, "inventory", "--host", "bench-a")
-	assert.JSONEq(t, `{"ansible_host":"bench-a","ansible_user":"nova","runners":0,"nova_services":[{"name":"e1","argv":["p"],"seat":"","keys":[],"every":5,"keepalive":false,"enabled":true,
-		"env":{"A_VAR":"x=y z","B_VAR":"2"},"log":"/var/log/e1.log"}]}`, out)
+	assert.JSONEq(t, `{"ansible_host":"bench-a","ansible_user":"nova","runners":0,"nova_services":[{"name":"e1","argv":[{"__ansible_unsafe":"sh"},{"__ansible_unsafe":"-c"},{"__ansible_unsafe":"echo ${#HOME} {# x #} {{ y }}"}],"seat":"","keys":[],"every":5,"keepalive":false,"enabled":true,
+		"env":{"A_VAR":{"__ansible_unsafe":"x=y z"},"B_VAR":{"__ansible_unsafe":"2"}},"log":{"__ansible_unsafe":"/var/log/e1.log"}}]}`, out)
 	h.ok(t, "service", "set", "e1", "--env", "{}", "--log", "", "--actor", "t")
 	_, out, _ = h.run(t, "inventory", "--host", "bench-a")
-	assert.Contains(t, out, `"log": "~/.local/state/nova/services/e1.log"`)
+	assert.Contains(t, out, `"__ansible_unsafe": "~/.local/state/nova/services/e1.log"`)
 	for _, bad := range []string{`{"lower":"1"}`, `{"1A":"1"}`, `{"A-B":"1"}`, `{"A":1}`, `["A"]`, `A=1`, `{"A":"1"} x`} {
 		code, _, errs := h.run(t, "service", "set", "e1", "--env", bad, "--actor", "t")
 		assert.Equal(t, 2, code, bad)

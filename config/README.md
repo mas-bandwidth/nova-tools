@@ -4,6 +4,8 @@ nova-config keeps a fleet's machines and services as rows in PostgreSQL, every w
 them as an Ansible dynamic inventory. The tables, verbs and inventory format are in `docs/SPEC-CONFIG.md`;
 `nova-config help` prints the verbs.
 
+In the inventory, argv, env values and log are printed marked unsafe, so Ansible never templates them.
+
 ## Schema
 
 `nova-config schema` prints the embedded `schema.sql`; a fresh or older store is made current with
