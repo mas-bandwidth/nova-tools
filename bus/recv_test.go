@@ -193,6 +193,8 @@ func TestVerbsRefuseUntilHookedIn(t *testing.T) {
 		{[]string{"GROK_HOME=/Users/me/.grok"}, "Monitor: tail -n 0 -F $GROK_HOME/nova-hook.wake, then `NOVA_BUS_REDIS=127.0.0.1:1 nova-bus hook --as alpha --harness grok --grok-home $GROK_HOME --service`; run: nova-bus hook -h"},
 		{[]string{"GROK_HOME=/x", "ANTIGRAVITY_AGENT_PORT=1"}, "`NOVA_BUS_REDIS=127.0.0.1:1 nova-bus hook --as alpha --harness antigravity --antigravity-dir <workspace> --antigravity-session <conversation id> --antigravity-events-dir ~/.gemini/antigravity/nova-bus-alpha --service`; run: nova-bus hook -h"},
 		{[]string{"GEMINI_API_KEY=k", "CLAUDECODE=1", "ANTIGRAVITY_AGENT_PORT=1"}, "run `NOVA_BUS_REDIS=127.0.0.1:1 nova-bus hook --as alpha` as the Monitor tool's command; run: nova-bus show agents"},
+		{[]string{"CLAUDECODE=1", "CODEX_THREAD_ID=t1"}, "spawn a child agent that loops `NOVA_BUS_REDIS=127.0.0.1:1 nova-bus recv --as alpha`, a message to you, `NOVA_BUS_REDIS=127.0.0.1:1 nova-bus ack --as alpha --id <id>`; run: nova-bus show codex-agents"},
+		{[]string{"GROK_HOME=/g", "CLAUDECODE=1"}, "run `NOVA_BUS_REDIS=127.0.0.1:1 nova-bus hook --as alpha` as the Monitor tool's command; run: nova-bus show agents"},
 		{[]string{"GEMINI_API_KEY=k"}, "run `NOVA_BUS_REDIS=127.0.0.1:1 nova-bus hook --as alpha` as the Monitor tool's command; run: nova-bus show agents"},
 		{[]string{"GEMINI_CLI_CSRF_TOKEN=1"}, "`NOVA_BUS_REDIS=127.0.0.1:1 nova-bus hook --as alpha --harness antigravity --antigravity-dir <workspace> --antigravity-session <conversation id> --antigravity-events-dir ~/.gemini/antigravity/nova-bus-alpha --service`; run: nova-bus hook -h"},
 	} {
@@ -257,4 +259,33 @@ func TestRecvCheckoutOutlastsASlowRelay(t *testing.T) {
 		require.Equal(t, 0, code)
 		assert.Equal(t, "1-0\talpha\t-\ts\tb\n", out, "handed out again")
 	}
+}
+
+// A hook started while a recv holds the name (waiting, or with a message
+// checked out) says so, with the message and the time its claim has left.
+func TestHookNamesTheRecvThatHoldsItsName(t *testing.T) {
+	t.Parallel()
+	f := newFake()
+	send(t, f, "s", "b")
+	code, _, _ := call(t, f, testEnv, "", "recv", "--as", "beta")
+	require.Equal(t, 0, code)
+	f.clock = f.clock.Add(5 * time.Minute)
+	var out, errOut bytes.Buffer
+	ctx, cancel := context.WithCancel(context.Background())
+	f.idle = cancel
+	code = runHook(ctx, f, "beta", testAddr, f, &out, &errOut, nil, "again", nil)
+	assert.Equal(t, 1, code)
+	assert.Contains(t, errOut.String(), "nova-bus hook: name already hooked by a recv: beta after 40s; a recv holds message 1-0 checked out, for 9m20s more unless it is acked: stop that reader first, or ack; run: nova-bus who\n")
+
+	f = newFake()
+	f.presence["beta"], f.deadline["beta"] = "2026-11-05T12:00:00Z\trecv", f.clock.Add(presenceTTL)
+	f.onWrite = nil
+	errOut.Reset()
+	// the waiting recv keeps claiming: plant it far ahead so the hook gives up
+	f.deadline["beta"] = f.clock.Add(time.Hour)
+	ctx, cancel = context.WithCancel(context.Background())
+	f.idle = cancel
+	code = runHook(ctx, f, "beta", testAddr, f, &out, &errOut, nil, "again", nil)
+	assert.Equal(t, 1, code)
+	assert.Contains(t, errOut.String(), "a recv is waiting on it and claims it every 10 s: stop that reader first, or ack; run: nova-bus who\n")
 }

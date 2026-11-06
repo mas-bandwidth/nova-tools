@@ -204,6 +204,13 @@ func (f *fake) claim(t *testing.T, name, value string, ttl time.Duration) {
 	require.Empty(t, held)
 }
 
+func (f *fake) Left(_ context.Context, name string) (time.Duration, error) {
+	if !f.live(name) {
+		return 0, nil
+	}
+	return f.deadline[name].Sub(f.clock), nil
+}
+
 func (f *fake) Release(ctx context.Context, name, value string) error {
 	if ctx.Err() != nil {
 		return ctx.Err()

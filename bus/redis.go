@@ -156,6 +156,14 @@ func (r redisStore) Claim(ctx context.Context, name, value string, ttl time.Dura
 	return claim.Run(ctx, r.c, []string{presenceKey(name)}, value, ttl.Milliseconds()).Text()
 }
 
+func (r redisStore) Left(ctx context.Context, name string) (time.Duration, error) {
+	d, err := r.c.PTTL(ctx, presenceKey(name)).Result()
+	if err != nil || d < 0 {
+		return 0, err
+	}
+	return d, nil
+}
+
 func (r redisStore) Hold(ctx context.Context, name, value string, ttl time.Duration) (string, error) {
 	return hold.Run(ctx, r.c, []string{presenceKey(name)}, value, ttl.Milliseconds()).Text()
 }

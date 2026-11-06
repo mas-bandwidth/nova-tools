@@ -134,33 +134,34 @@ func threadSource(home, thread string) (string, error) {
 	return row.Payload.ThreadSource, nil
 }
 
-// harnessOf is the harness a command runs under, read from its environment.
-// Codex sets CODEX_THREAD_ID in every command it runs; Claude Code sets
-// CLAUDECODE=1 (checked next, so a Claude Code session that happens to hold
-// a GEMINI_API_KEY is not taken for Antigravity); Antigravity's agent runs
-// its commands with ANTIGRAVITY_AGENT_PORT, ANTIGRAVITY_LS_ADDRESS,
-// ANTIGRAVITY_CSRF_TOKEN and GEMINI_CLI_CSRF_TOKEN (the variables v1.6.29
-// nova-hook read from its shell and passed on to agentapi), and only those
-// count; Grok sets GROK_HOME. Anything else is taken for Claude Code or
-// Muse Code, whose recipe is the Monitor.
+// harnessOf is the harness a command runs under, read from its whole
+// environment and decided in a fixed order, whatever the variables' order.
+// Codex sets CODEX_THREAD_ID in every command it runs, and wins: a Codex
+// session started inside a Claude Code session inherits CLAUDECODE and has
+// no Monitor. Claude Code sets CLAUDECODE=1, next (so a Claude Code session
+// that happens to hold a GEMINI_API_KEY is not taken for Antigravity).
+// Antigravity's agent runs its commands with ANTIGRAVITY_AGENT_PORT,
+// ANTIGRAVITY_LS_ADDRESS, ANTIGRAVITY_CSRF_TOKEN and GEMINI_CLI_CSRF_TOKEN
+// (the variables v1.6.29 nova-hook read from its shell and passed on to
+// agentapi), and only those count. Grok sets GROK_HOME. Anything else is
+// taken for Claude Code or Muse Code, whose recipe is the Monitor.
 func harnessOf(environ []string) string {
-	h := "claude"
+	set := map[string]bool{}
 	for _, kv := range environ {
 		k, _, _ := strings.Cut(kv, "=")
-		switch k {
-		case "CODEX_THREAD_ID":
-			return "codex"
-		case "CLAUDECODE":
-			return "claude"
-		case "ANTIGRAVITY_AGENT_PORT", "ANTIGRAVITY_LS_ADDRESS", "ANTIGRAVITY_CSRF_TOKEN", "GEMINI_CLI_CSRF_TOKEN":
-			h = "antigravity"
-		case "GROK_HOME":
-			if h == "claude" {
-				h = "grok"
-			}
-		}
+		set[k] = true
 	}
-	return h
+	switch {
+	case set["CODEX_THREAD_ID"]:
+		return "codex"
+	case set["CLAUDECODE"]:
+		return "claude"
+	case set["ANTIGRAVITY_AGENT_PORT"] || set["ANTIGRAVITY_LS_ADDRESS"] || set["ANTIGRAVITY_CSRF_TOKEN"] || set["GEMINI_CLI_CSRF_TOKEN"]:
+		return "antigravity"
+	case set["GROK_HOME"]:
+		return "grok"
+	}
+	return "claude"
 }
 
 // hookInRecipe is the one or two lines that hook name in on harness: what a

@@ -200,6 +200,8 @@ type Store interface {
 	// recv's (no "\trecv" in it: a hook's) is present, which it returns.
 	Hold(ctx context.Context, name, value string, ttl time.Duration) (string, error)
 	Release(ctx context.Context, name, value string) error
+	// Left is how long name's presence key has to live (0: none).
+	Left(ctx context.Context, name string) (time.Duration, error)
 	// Presence returns every present name and its value ("" if unreadable).
 	Presence(ctx context.Context) (map[string]string, error)
 }
@@ -222,6 +224,16 @@ var (
 	errHookedByRecv = errors.New("name already hooked by a recv")
 	errTaken        = errors.New("name taken by another hook")
 )
+
+// hookedByRecv is errHookedByRecv with what the recv holds: a checked-out
+// message (id, and how long its claim has left) or nothing (it is waiting).
+type hookedByRecv struct {
+	id   string
+	left time.Duration
+}
+
+func (hookedByRecv) Error() string        { return errHookedByRecv.Error() }
+func (hookedByRecv) Is(target error) bool { return target == errHookedByRecv }
 
 // main stops a hook cleanly on SIGINT or SIGTERM, releasing its presence, and
 // ignores SIGPIPE so a closed stdout is a write error (EPIPE) and the same
@@ -524,8 +536,13 @@ func runHook(ctx context.Context, store Store, name, addr string, clk Clock, std
 		err := hook(ctx, store, name, value, clk, stdout, stderr, onClaim, w, gone)
 		var we writeError
 		var wf wakeFailed
-		if errors.Is(err, errHookedByRecv) {
-			return fail(stderr, "hook", "name already hooked by a recv: %s after %s; a recv claims the name while it waits: stop it first; run: nova-bus who", name, presenceTTL+presenceRefresh)
+		var byRecv hookedByRecv
+		if errors.As(err, &byRecv) {
+			what := "a recv is waiting on it and claims it every 10 s"
+			if byRecv.id != "" {
+				what = fmt.Sprintf("a recv holds message %s checked out, for %s more unless it is acked", byRecv.id, byRecv.left.Truncate(time.Second))
+			}
+			return fail(stderr, "hook", "name already hooked by a recv: %s after %s; %s: stop that reader first, or ack; run: nova-bus who", name, presenceTTL+presenceRefresh, what)
 		}
 		if errors.Is(err, errHooked) {
 			return fail(stderr, "hook", "name already hooked: %s after %s; run: nova-bus who", name, presenceTTL+presenceRefresh)
@@ -586,8 +603,9 @@ func hook(ctx context.Context, store Store, name, value string, clk Clock, out, 
 	}
 	if err == nil && held != "" {
 		err = errHooked
-		if strings.HasSuffix(held, "\trecv") {
-			err = errHookedByRecv
+		if _, rest, ok := strings.Cut(held, "\trecv"); ok { // a recv's claim: waiting, or holding a message
+			left, _ := store.Left(ctx, name) // 0 when it cannot be read
+			err = hookedByRecv{strings.TrimPrefix(rest, "\t"), left}
 		}
 	}
 	if err != nil {
