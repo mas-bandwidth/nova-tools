@@ -120,6 +120,7 @@ func TestAHookKilledAndRestarted(t *testing.T) {
 		return p.Count
 	}
 
+	hookIn(t, c, "alpha")
 	send("one", "first\nline")
 	send("two", "second")
 	first := startHook(t, bin, addr)
@@ -168,6 +169,8 @@ func TestPresenceWhoAndPending(t *testing.T) {
 		return string(out)
 	}
 
+	hookIn(t, c, "alpha") // the sender, and beta for pending: both act as their name
+	hookIn(t, c, "beta")
 	assert.Equal(t, "PENDING OK waiting=0\n", bus("pending", "--as", "beta"), "no stream yet")
 	one := strings.Fields(bus("send", "--as", "alpha", "--to", "beta", "--new", "one", "1"))[1]
 	two := strings.Fields(bus("send", "--as", "alpha", "--to", "beta", "--new", "two", "2"))[1]
@@ -184,6 +187,14 @@ func TestPresenceWhoAndPending(t *testing.T) {
 	assert.Error(t, rerr)
 	assert.Equal(t, "nova-bus send: no hook has ever held nobody, so nothing would read it; run: nova-bus who, or send --new to a name about to hook in\n", string(rout), "XINFO GROUPS on a missing stream is no hook")
 	assert.True(t, strings.HasPrefix(bus("send", "--as", "alpha", "--to", "beta", "three", "3"), "beta "), "a name with the group takes a send without --new")
+	assert.Regexp(t, `^WHO OK present=2\nalpha\t\d+[hms0-9]*\nbeta\t`, bus("who"), "the planted keys show as present")
+	unhook(t, c, "alpha")
+	unhook(t, c, "beta")
+	notIn := exec.Command(bin, "pending", "--as", "beta")
+	notIn.Env = append(os.Environ(), "NOVA_BUS_REDIS="+addr)
+	nout, nerr := notIn.CombinedOutput()
+	assert.Error(t, nerr)
+	assert.Equal(t, "nova-bus pending: beta is not hooked in, so nothing would read an answer; hook in first: run `NOVA_BUS_REDIS="+addr+" nova-bus hook --as beta` as the Monitor tool's command; run: nova-bus show agents\n", string(nout))
 	assert.Equal(t, "WHO OK present=0\n", bus("who"))
 
 	h := startHook(t, bin, addr)
@@ -234,6 +245,7 @@ func TestHookOnAClosedPipe(t *testing.T) {
 	c := redis.NewClient(&redis.Options{Addr: addr})
 	t.Cleanup(func() { _ = c.Close() }) // ignored: closing a test client
 	env := append(os.Environ(), "NOVA_BUS_REDIS="+addr)
+	hookIn(t, c, "alpha")
 	send := exec.Command(bin, "send", "--as", "alpha", "--to", "beta", "--new", "one", "1")
 	send.Env = env
 	out, err := send.CombinedOutput()
@@ -343,6 +355,10 @@ func TestNamedACLUser(t *testing.T) {
 		_ = cmd.Run() // the exit code is the result
 		return cmd.ProcessState.ExitCode(), so.String(), se.String()
 	}
+	ac := redis.NewClient(&redis.Options{Addr: addr, Username: "bus", Password: "secret"})
+	t.Cleanup(func() { _ = ac.Close() }) // ignored: closing a test client
+	hookIn(t, ac, "alpha")
+	hookIn(t, ac, "beta")
 	code, _, errOut := bus("", "send", "--as", "alpha", "--to", "beta", "--new", "s", "b")
 	assert.Equal(t, 1, code, "the default user is off")
 	assert.Contains(t, errOut, "SEND FAILED to beta")
@@ -351,6 +367,8 @@ func TestNamedACLUser(t *testing.T) {
 	assert.Regexp(t, `^beta \d+-\d+\n$`, out)
 	_, out, _ = bus("bus", "pending", "--as", "beta")
 	assert.Equal(t, "PENDING OK waiting=1\n", out)
+	unhook(t, ac, "alpha")
+	unhook(t, ac, "beta") // the hook claims beta itself
 
 	cmd := exec.Command(bin, "hook", "--as", "beta")
 	cmd.Env = append(env, "NOVA_BUS_USER=bus")
@@ -363,6 +381,18 @@ func TestNamedACLUser(t *testing.T) {
 	assert.True(t, strings.HasSuffix(line, "\talpha\t-\ts\tb\n"), line)
 	_, out, _ = bus("bus", "who")
 	assert.Regexp(t, `^WHO OK present=1\nbeta\t`, out, "presence, claim and scan all work as the bus user")
+}
+
+// hookIn plants name's presence through c, as a hook of its own would: a verb
+// that acts as name runs only while it is hooked in. unhook removes it.
+func hookIn(t *testing.T, c *redis.Client, name string) {
+	t.Helper()
+	require.NoError(t, c.Set(context.Background(), "bus:presence:"+name, "2026-11-05T12:00:00Z\tplanted", time.Minute).Err())
+}
+
+func unhook(t *testing.T, c *redis.Client, name string) {
+	t.Helper()
+	require.NoError(t, c.Del(context.Background(), "bus:presence:"+name).Err())
 }
 
 func buildBus(t *testing.T) string {
