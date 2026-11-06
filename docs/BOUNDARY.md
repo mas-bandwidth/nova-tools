@@ -87,7 +87,9 @@ that embeds the plays, checks the control node (`check`, which every play verb
 runs its part of first) and takes a fleet from nothing to running (`up`): the
 fleet read from nova-config, each machine reached as its login over the tailnet
 with pinned host keys, every step with its receipt and its `--check` form, and
-a child killed by a signal said so.
+a child killed by a signal said so. A contraction pass the same day took it to 1393 lines
+(budget 1443) with no change in behaviour: one refusal and one flag-value helper for every verb,
+the brew install lines in one table, and the ssh attempts kept as login@host strings.
 
 ## Adding a tool
 

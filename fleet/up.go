@@ -63,28 +63,24 @@ type machine struct {
 
 // upRun is one up: its inputs and what it has learnt so far.
 type upRun struct {
-	check                bool
-	user, tools, runners string
-	grant                string
-	runnerCount          int
-	machines             []*machine
-	pass                 []string
-	dir, store, seat     string
-	key, pins, dsn       string
-	bus                  string // the Redis the bus is at, host:port
-	stdout, stderr       io.Writer
-	bin                  map[string]string
+	check                       bool
+	user, tools, runners, grant string
+	runnerCount                 int
+	machines                    []*machine
+	pass                        []string
+	dir, store, seat, key, pins string
+	dsn                         string
+	bus                         string // the Redis the bus is at, host:port
+	stdout, stderr              io.Writer
+	bin                         map[string]string
 }
 
 func parseUp(args []string, stderr io.Writer) (*upRun, int) {
 	u := &upRun{user: "nova", grant: "NOVA_BUS_PASSWORD", runnerCount: 1, stderr: stderr}
-	refuse := func(format string, a ...any) (*upRun, int) {
-		fmt.Fprintf(stderr, "nova-fleet up: %s; run: nova-fleet up -h\n", fmt.Sprintf(format, a...))
-		return nil, 2
-	}
+	no := func(format string, a ...any) (*upRun, int) { return nil, refuse(stderr, "up", format, a...) }
 	for i := 0; i < len(args); i++ {
 		a := args[i]
-		flag, val, hasVal := strings.Cut(a, "=")
+		flag, _, _ := strings.Cut(a, "=")
 		takes := map[string]*string{"--user": &u.user, "--tools": &u.tools, "--runners": &u.runners, "--grant": &u.grant}
 		switch {
 		case a == "-h" || a == "--help":
@@ -95,52 +91,49 @@ func parseUp(args []string, stderr io.Writer) (*upRun, int) {
 			rest := args[i+1:]
 			for j := 0; j < len(rest); j++ {
 				if rest[j] != "-e" && rest[j] != "--extra-vars" {
-					return refuse("after -- only -e name=value is passed on, got %s", rest[j])
+					return no("after -- only -e name=value is passed on, got %s", rest[j])
 				}
 				if j+1 >= len(rest) {
-					return refuse("-e wants name=value")
+					return no("-e wants name=value")
 				}
 				name, _, ok := strings.Cut(rest[j+1], "=")
 				if !ok || name == "" || strings.ContainsAny(name, "{@ ") {
-					return refuse("-e wants name=value, got %s", rest[j+1])
+					return no("-e wants name=value, got %s", rest[j+1])
 				}
 				if slices.Contains(own, name) {
-					return refuse("-e %s is up's own (or skips a pillar: Tailscale, PostgreSQL, Redis and Ansible are not optional)", name)
+					return no("-e %s is up's own (or skips a pillar: Tailscale, PostgreSQL, Redis and Ansible are not optional)", name)
 				}
 				u.pass, j = append(u.pass, "-e", rest[j+1]), j+1
 			}
 			i = len(args)
 		case takes[flag] != nil || flag == "--runner-count":
-			if !hasVal {
-				if i+1 >= len(args) {
-					return refuse("%s wants a value", flag)
-				}
-				i++
-				val = args[i]
+			val, ok := value(args, &i)
+			if !ok {
+				return no("%s wants a value", flag)
 			}
 			if flag == "--runner-count" {
 				n, err := strconv.Atoi(val)
 				if err != nil || n < 1 {
-					return refuse("--runner-count wants a number of at least 1, got %s", val)
+					return no("--runner-count wants a number of at least 1, got %s", val)
 				}
 				u.runnerCount = n
 			} else {
 				*takes[flag] = val
 			}
 		case strings.HasPrefix(a, "-"):
-			return refuse("unknown flag %s", a)
+			return no("unknown flag %s", a)
 		default:
 			name, addr, ok := strings.Cut(a, "=")
 			parts := strings.Split(addr, "/")
 			if !ok || name == "" || addr == "" || (len(parts) != 1 && len(parts) != 3) || !nameRE.MatchString(name) {
-				return refuse("want a machine as <name>=<address>[/<os>/<arch>] (a lowercase name), got %s", a)
+				return no("want a machine as <name>=<address>[/<os>/<arch>] (a lowercase name), got %s", a)
 			}
 			m := &machine{name: name, address: parts[0], os: "linux", arch: "amd64"}
 			if len(parts) == 3 {
 				m.os, m.arch = parts[1], parts[2]
 			}
 			if slices.ContainsFunc(u.machines, func(o *machine) bool { return o.name == m.name }) {
-				return refuse("machine %s is named twice", m.name)
+				return no("machine %s is named twice", m.name)
 			}
 			u.machines = append(u.machines, m)
 		}
@@ -153,13 +146,13 @@ func parseUp(args []string, stderr io.Writer) (*upRun, int) {
 		missing = append(missing, "--tools")
 	}
 	if len(missing) > 0 {
-		return refuse("missing %s", strings.Join(missing, " and "))
+		return no("missing %s", strings.Join(missing, " and "))
 	}
 	if u.grant == "" || slices.Contains(strings.Split(u.grant, ","), "") {
-		return refuse("--grant wants NAME[,NAME], got %q", u.grant)
+		return no("--grant wants NAME[,NAME], got %q", u.grant)
 	}
 	if u.runners != "" && runnerScope(u.runners) == "" {
-		return refuse("--runners wants https://github.com/<owner>/<repo> or https://github.com/<org>, got %s", u.runners)
+		return no("--runners wants https://github.com/<owner>/<repo> or https://github.com/<org>, got %s", u.runners)
 	}
 	return u, 0
 }
@@ -236,10 +229,6 @@ func (u *upRun) play(play string, hand bool, names []string, extra ...string) in
 	return code
 }
 
-func (u *upRun) seal() []string {
-	return []string{"-e", "nova_seal_store=" + u.store, "-e", "nova_seal_seat=" + u.seat, "-e", "nova_seal_key=" + u.key}
-}
-
 // config runs nova-config under the store's password and parses its --json items' fields.
 func (u *upRun) config(args ...string) ([]map[string]any, string, int) {
 	out, why, c := outCmd(u.bin["nova-secrets"], u.secrets([]string{"NOVA_PG_PASSWORD"}, append([]string{u.bin["nova-config"]}, args...)...)[1:], u.env())
@@ -314,36 +303,27 @@ func (u *upRun) reach(m *machine) {
 	if user, _ := m.row["user"].(string); user != "" {
 		m.user = user
 	}
-	var try [][2]string
+	var try []string // login@host, in order
 	if u.peer(m) && m.row != nil {
-		try = append(try, [2]string{m.user, m.dns})
+		try = append(try, m.user+"@"+m.dns)
 	}
 	if addr, _ := m.row["address"].(string); addr != "" && addr != m.dns {
-		try = append(try, [2]string{m.user, addr})
+		try = append(try, m.user+"@"+addr)
 	}
-	if m.os != "darwin" {
-		try = append(try, [2]string{"root", m.address})
-	} else {
-		try = append(try, [2]string{m.user, m.address})
-	}
+	try = append(try, map[bool]string{true: m.user, false: "root"}[m.os == "darwin"]+"@"+m.address)
 	if m.dns != "" && m.row == nil {
-		try = append(try, [2]string{m.user, m.dns})
+		try = append(try, m.user+"@"+m.dns)
 	}
 	var why string
 	for _, t := range try {
-		_, e, c := outCmd(u.bin["ssh"], []string{"-o", "BatchMode=yes", "-o", "ConnectTimeout=10", t[0] + "@" + t[1], "true"}, os.Environ())
+		_, e, c := outCmd(u.bin["ssh"], []string{"-o", "BatchMode=yes", "-o", "ConnectTimeout=10", t, "true"}, os.Environ())
 		if c == 0 {
-			m.sshUser, m.host = t[0], t[1]
+			m.sshUser, m.host, _ = strings.Cut(t, "@")
 			return
 		}
 		why = oneLine(e)
 	}
-	m.unreachable = why + " (tried " + strings.Join(func() (s []string) {
-		for _, t := range try {
-			s = append(s, t[0]+"@"+t[1])
-		}
-		return
-	}(), ", ") + ")"
+	m.unreachable = why + " (tried " + strings.Join(try, ", ") + ")"
 }
 
 // steps runs the fixed order; it returns the exit code and the steps each machine passed.
@@ -444,7 +424,7 @@ func (u *upRun) steps() int {
 				break
 			}
 			for _, p := range []string{"postgres", "redis"} {
-				if c := u.play(p, true, nil, append(u.seal(), "-e", "nova_store_hosts="+first.name)...); c != 0 {
+				if c := u.play(p, true, nil, "-e", "nova_seal_store="+u.store, "-e", "nova_seal_seat="+u.seat, "-e", "nova_seal_key="+u.key, "-e", "nova_store_hosts="+first.name); c != 0 {
 					return fail("first "+p, c)
 				}
 			}

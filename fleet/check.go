@@ -10,7 +10,6 @@ import (
 	"regexp"
 	"runtime"
 	"slices"
-	"strconv"
 	"strings"
 )
 
@@ -86,29 +85,24 @@ func fix(name, fam string) string {
 		"ssh":          {"openssh-client", "openssh-clients", "openssh"},
 		"python3-venv": {"python3-venv", "python3", "python3"},
 	}
+	if b, ok := map[string]string{"go": "go", "ansible-playbook": "ansible", "tailscale": "--cask tailscale", "sops": "sops"}[name]; ok && fam == "brew" {
+		return "brew install " + b
+	}
 	switch {
 	case strings.HasPrefix(name, "nova-"):
 		t := strings.TrimPrefix(name, "nova-")
 		return "mkdir -p ~/.local/bin && ([ -d nova-tools ] || git clone --depth 1 https://github.com/mas-bandwidth/nova-tools) && go build -C nova-tools -o ~/.local/bin/" + name + " ./" + t
-	case name == "go" && fam == "brew":
-		return "brew install go"
 	case name == "go":
 		v := strings.TrimPrefix(runtime.Version(), "go")
 		return "curl -fsSL https://go.dev/dl/go" + v + ".linux-" + goarch + ".tar.gz | sudo tar -C /usr/local -xz && export PATH=/usr/local/go/bin:$PATH && echo 'export PATH=/usr/local/go/bin:$PATH' >> ~/.profile"
-	case name == "ansible-playbook" && fam == "brew":
-		return "brew install ansible"
 	case name == "ansible-playbook":
 		venv := "python3 -m venv ~/.local/ansible && ~/.local/ansible/bin/pip install ansible-core && export PATH=~/.local/ansible/bin:$PATH && echo 'export PATH=~/.local/ansible/bin:$PATH' >> ~/.profile"
 		if fam == "apt" { // Debian and Ubuntu ship python3 without venv
 			return "sudo apt-get update -qq && sudo apt-get install -y python3-venv && " + venv
 		}
 		return venv
-	case name == "tailscale" && fam == "brew":
-		return "brew install --cask tailscale"
 	case name == "tailscale":
 		return "curl -fsSL https://tailscale.com/install.sh | sh"
-	case name == "sops" && fam == "brew":
-		return "brew install sops"
 	case name == "sops":
 		// The pin is the plays' own (group_vars/all.yml), so this line and join.yml cannot drift.
 		v, sum := pin("nova_sops_version"), pin("nova_sops_sha256", "linux-"+goarch)
@@ -132,10 +126,7 @@ func fix(name, fam string) string {
 // goVersion is major.minor of a "goX.Y[.Z]" string, or 0 0.
 func goVersion(s string) (int, int) {
 	var a, b int
-	if f := strings.FieldsFunc(strings.TrimPrefix(versionRE.FindString(s), "go"), func(r rune) bool { return r == '.' }); len(f) >= 2 {
-		a, _ = strconv.Atoi(f[0])
-		b, _ = strconv.Atoi(f[1])
-	}
+	_, _ = fmt.Sscanf(strings.TrimPrefix(versionRE.FindString(s), "go"), "%d.%d", &a, &b)
 	return a, b
 }
 
@@ -158,7 +149,6 @@ func (u *upRun) control(out io.Writer) int {
 	u.bin = map[string]string{}
 	for _, b := range want {
 		if needGo && b == "nova-config" { // the nova-* lines build from source: Go at least this binary's
-			needGo = false
 			wantMajor, wantMinor := goVersion(runtime.Version())
 			if p, err := lookPath("go"); err != nil {
 				miss("go", fix("go", fam))
@@ -270,30 +260,23 @@ func oneLine(s string) string { return strings.Join(strings.Fields(s), " ") }
 func runCheck(args []string, stdout, stderr io.Writer) int {
 	u := &upRun{stderr: stderr}
 	for i := 0; i < len(args); i++ {
-		switch a, v, has := args[i], "", false; {
+		switch a := args[i]; {
 		case a == "-h" || a == "--help":
 			fmt.Fprint(stdout, checkHelp)
 			return 0
 		case a == "--runners" || strings.HasPrefix(a, "--runners="):
-			if _, v, has = strings.Cut(a, "="); !has {
-				if i+1 >= len(args) {
-					fmt.Fprintln(stderr, "nova-fleet check: --runners wants a URL; run: nova-fleet check -h")
-					return 2
-				}
-				i++
-				v = args[i]
+			v, ok := value(args, &i)
+			if !ok {
+				return refuse(stderr, "check", "--runners wants a URL")
 			}
 			if runnerScope(v) == "" {
-				fmt.Fprintf(stderr, "nova-fleet check: --runners wants https://github.com/<owner>/<repo> or https://github.com/<org>, got %s; run: nova-fleet check -h\n", v)
-				return 2
+				return refuse(stderr, "check", "--runners wants https://github.com/<owner>/<repo> or https://github.com/<org>, got %s", v)
 			}
 			u.runners = v
 		case strings.HasPrefix(a, "-"):
-			fmt.Fprintf(stderr, "nova-fleet check: unknown flag %s; run: nova-fleet check -h\n", a)
-			return 2
+			return refuse(stderr, "check", "unknown flag %s", a)
 		default:
-			fmt.Fprintf(stderr, "nova-fleet check: unexpected argument %s; run: nova-fleet check -h\n", a)
-			return 2
+			return refuse(stderr, "check", "unexpected argument %s", a)
 		}
 	}
 	if n := u.control(stdout); n > 0 {

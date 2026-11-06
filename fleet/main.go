@@ -225,11 +225,26 @@ func inventoryScript(dir, config string) (string, error) {
 	return script, os.WriteFile(script, []byte(body), 0o700)
 }
 
-func run(args []string, stdout, stderr io.Writer) int {
-	refuse := func(who, format string, a ...any) int {
-		fmt.Fprintf(stderr, "nova-fleet %s: %s; run: nova-fleet %s -h\n", who, fmt.Sprintf(format, a...), who)
-		return 2
+// refuse says what is wrong with an invocation of who and points at its help; it returns 2.
+func refuse(stderr io.Writer, who, format string, a ...any) int {
+	fmt.Fprintf(stderr, "nova-fleet %s: %s; run: nova-fleet %s -h\n", who, fmt.Sprintf(format, a...), who)
+	return 2
+}
+
+// value is the value of the flag at args[*i]: after its =, else the next argument (and *i moves to
+// it); false when there is none.
+func value(args []string, i *int) (string, bool) {
+	if _, v, ok := strings.Cut(args[*i], "="); ok {
+		return v, true
 	}
+	if *i+1 >= len(args) {
+		return "", false
+	}
+	*i++
+	return args[*i], true
+}
+
+func run(args []string, stdout, stderr io.Writer) int {
 	isHelp := func(a string) bool { return a == "-h" || a == "--help" }
 	all := plays(tree)
 	if len(args) == 0 {
@@ -250,10 +265,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 			return 0
 		}
 		if strings.HasPrefix(rest[0], "-") {
-			return refuse("help", "unknown flag %s", rest[0])
+			return refuse(stderr, "help", "unknown flag %s", rest[0])
 		}
 		if len(rest) > 1 {
-			return refuse("help", "want at most one verb or play, got %d", len(rest))
+			return refuse(stderr, "help", "want at most one verb or play, got %d", len(rest))
 		}
 		args = []string{rest[0], "-h"}
 		verb, rest = rest[0], args[1:]
@@ -270,12 +285,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 		}
 		for _, a := range rest {
 			if strings.HasPrefix(a, "-") {
-				return refuse(verb, "unknown flag %s", a)
+				return refuse(stderr, verb, "unknown flag %s", a)
 			}
 		}
 		if verb == "plays" {
 			if len(rest) > 0 {
-				return refuse("plays", "takes no arguments, got %s", rest[0])
+				return refuse(stderr, "plays", "takes no arguments, got %s", rest[0])
 			}
 			for _, p := range all {
 				b, _ := fs.ReadFile(tree, p+".yml")
@@ -284,11 +299,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 			return 0
 		}
 		if len(rest) != 1 {
-			return refuse("show", "want one play or file name")
+			return refuse(stderr, "show", "want one play or file name")
 		}
 		f, ok := showable(tree, rest[0])
 		if !ok {
-			return refuse("show", "no play or file %s (plays: %s)", rest[0], strings.Join(all, ", "))
+			return refuse(stderr, "show", "no play or file %s (plays: %s)", rest[0], strings.Join(all, ", "))
 		}
 		b, _ := fs.ReadFile(tree, f)
 		_, _ = stdout.Write(b)
@@ -298,7 +313,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "nova-fleet: unknown verb or play %s; verbs: plays, show, check, up, help; plays: %s; run: nova-fleet help\n", verb, strings.Join(all, ", "))
 		return 2
 	}
-	return runPlay(verb, rest, stdout, stderr, refuse)
+	return runPlay(verb, rest, stdout, stderr)
 }
 
 // gate is the control-node check a play needs before it runs: every missing program at once, each
@@ -325,10 +340,9 @@ func gate(play string, need []string, stdout, stderr io.Writer) bool {
 	return missing == 0
 }
 
-func runPlay(play string, args []string, stdout, stderr io.Writer, refuse func(string, string, ...any) int) int {
+func runPlay(play string, args []string, stdout, stderr io.Writer) int {
 	var inventory string
 	var pass []string
-	wrap := false
 	text, _ := fs.ReadFile(tree, play+".yml")
 	argVar, argSet := header(string(text), "argument"), false
 	for i := 0; i < len(args); i++ {
@@ -347,22 +361,17 @@ func runPlay(play string, args []string, stdout, stderr io.Writer, refuse func(s
 		case a == "--check" || a == "--diff":
 			pass = append(pass, a)
 		case a == "--inventory" || strings.HasPrefix(a, "--inventory="):
-			v, ok := strings.CutPrefix(a, "--inventory=")
-			if !ok {
-				if i+1 >= len(args) {
-					return refuse(play, "--inventory wants a file or script")
-				}
-				i++
-				v = args[i]
+			var ok bool
+			if inventory, ok = value(args, &i); !ok {
+				return refuse(stderr, play, "--inventory wants a file or script")
 			}
-			inventory = v
 		case strings.HasPrefix(a, "-"):
-			return refuse(play, "unknown flag %s (ansible-playbook flags go after --)", a)
+			return refuse(stderr, play, "unknown flag %s (ansible-playbook flags go after --)", a)
 		case argVar != "" && !argSet:
 			ev, _ := json.Marshal(map[string]string{argVar: a})
 			pass, argSet = append(pass, "-e", string(ev)), true
 		default:
-			return refuse(play, "unexpected argument %s (ansible-playbook arguments go after --)", a)
+			return refuse(stderr, play, "unexpected argument %s (ansible-playbook arguments go after --)", a)
 		}
 	}
 	if noController(play, stderr) {
@@ -376,33 +385,29 @@ func runPlay(play string, args []string, stdout, stderr io.Writer, refuse func(s
 		}
 		inventory = abs
 	}
-	need := []string{"ansible-playbook"}
-	if inventory == "" {
+	need, wrap := []string{"ansible-playbook"}, inventory == ""
+	if wrap {
 		need = append(need, "nova-config")
 	}
 	if !gate(play, need, stdout, stderr) {
 		return 2
-	}
-	if inventory == "" {
-		cfg, _ := lookPath("nova-config")
-		if abs, err := filepath.Abs(cfg); err == nil {
-			cfg = abs
-		}
-		inventory, wrap = cfg, true
 	}
 	dir, err := extract(tree)
 	if err != nil {
 		fmt.Fprintf(stderr, "nova-fleet %s: extract the plays: %v; run: nova-fleet %s again with TMPDIR set to a writable directory\n", play, err, play)
 		return 2
 	}
+	defer os.RemoveAll(dir)
 	if wrap {
-		if inventory, err = inventoryScript(dir, inventory); err != nil {
-			_ = os.RemoveAll(dir)
+		cfg, _ := lookPath("nova-config")
+		if abs, err := filepath.Abs(cfg); err == nil {
+			cfg = abs
+		}
+		if inventory, err = inventoryScript(dir, cfg); err != nil {
 			fmt.Fprintf(stderr, "nova-fleet %s: write the inventory script: %v; run: nova-fleet %s --inventory <file|script>\n", play, err, play)
 			return 2
 		}
 	}
-	defer os.RemoveAll(dir)
 	ansible, _ := lookPath("ansible-playbook")
 	fmt.Fprintf(stderr, "nova-fleet: ansible-playbook=%s inventory=%s play=%s\n", ansible, inventory, filepath.Join(dir, play+".yml"))
 	argv := append([]string{"-i", inventory, filepath.Join(dir, play+".yml")}, pass...)
