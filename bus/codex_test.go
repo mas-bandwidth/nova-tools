@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -39,6 +40,9 @@ type codexRunner struct {
 
 func (r *codexRunner) exec(_ context.Context, _ []string, name string, args ...string) ([]byte, error) {
 	r.calls = append(r.calls, append([]string{name}, args...))
+	if r.out == "" && r.err == nil {
+		return []byte("Queued message 41 for thread " + args[2] + "\n"), nil // as codex queue prints it
+	}
 	return []byte(r.out), r.err
 }
 
@@ -56,7 +60,7 @@ func codexSetup(t *testing.T, content string, age time.Duration) (*codexWake, *c
 	var errOut bytes.Buffer
 	c, err := newCodex(testThread, "beta", "127.0.0.1:1", func(string) string { return "" }, s, f, &errOut)
 	require.NoError(t, err)
-	assert.Equal(t, "HOOK HARNESS OK harness=codex thread="+testThread+" rollout="+rollout+" program=/opt/bin/codex events="+c.dir+" waiting=0\n", errOut.String())
+	assert.Equal(t, "HOOK HARNESS OK harness=codex thread="+testThread+" rollout="+rollout+" program=/opt/bin/codex events="+c.dir+" waiting=0 faults=0\n", errOut.String())
 	return c, r, f, rollout
 }
 
@@ -86,11 +90,11 @@ func TestCodexIdleChatIsWokenOnce(t *testing.T) {
 	require.NoError(t, err)
 	b, err := os.ReadFile(filepath.Join(c.dir, "woken"))
 	require.NoError(t, err)
-	assert.Equal(t, fmt.Sprintf("7-0\t%d\tnova-bus 7-0 for beta from \n", len(rolloutMeta+rolloutTurn+rolloutComplete)), string(b), "the id, the rollout's size, the text awaited")
+	assert.Equal(t, fmt.Sprintf("7-0\t%d\t7-0\tnova-bus 7-0 for beta from \n", len(rolloutMeta+rolloutTurn+rolloutComplete)), string(b), "the id, the rollout's size, the text awaited")
 
 	out.Reset()
 	require.NoError(t, deliver(context.Background(), c, msgN("7-0", "hi"), &out, &errOut))
-	assert.Equal(t, "7-0\talpha\t-\thi\tthe body stays in the file\nHOOK WAKE SKIPPED harness=codex id=7-0 reason=woken already\n", out.String(), "delivered again (a lost ack), never woken again")
+	assert.Equal(t, "7-0\talpha\t-\thi\tthe body stays in the file\nHOOK WAKE SKIPPED harness=codex id=7-0 reason=woken-already\n", out.String(), "delivered again (a lost ack), never woken again")
 	assert.Len(t, r.calls, 1)
 
 	// A restarted hook reads dir/woken: still never twice.
@@ -187,29 +191,142 @@ func TestCodexIdleReadsOnlyTurnRecords(t *testing.T) {
 	assert.Contains(t, why, "rollout open "+rollout+": no such file or directory")
 }
 
-func TestCodexQueueFailureIsReportedAndTheHookGoesOn(t *testing.T) {
+func TestCodexDefiniteFailureIsRetriedThreeTimesThenFaulted(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		err  error
-		out  string
-		want string
+		err    error
+		out    string
+		reason string
 	}{
-		{&os.PathError{Op: "exec", Path: "codex", Err: errors.New("executable file not found in $PATH")}, "", "HOOK WAKE FAILED harness=codex id=7-0 reason=codex queue: exec codex: executable file not found in $PATH: \n"},
-		{errors.New("exit status 1"), "error: no such thread\n", "HOOK WAKE FAILED harness=codex id=7-0 reason=codex queue: exit status 1: error: no such thread\n"},
+		{&exec.Error{Name: "codex", Err: exec.ErrNotFound}, "", `codex queue: exec: "codex": executable file not found in $PATH: `},
+		{&os.PathError{Op: "fork/exec", Path: "/opt/bin/codex", Err: errors.New("permission denied")}, "", "codex queue: fork/exec /opt/bin/codex: permission denied: "},
 	} {
 		c, r, _, _ := codexSetup(t, rolloutMeta+rolloutTurn+rolloutComplete, time.Minute)
 		r.err, r.out = tc.err, tc.out
 		var out, errOut bytes.Buffer
-		require.NoError(t, deliver(context.Background(), c, msgN("7-0", "hi"), &out, &errOut), "the hook goes on")
+		ctx := context.Background()
+		require.NoError(t, deliver(ctx, c, msgN("7-0", "hi"), &out, &errOut), "the hook goes on")
 		assert.Equal(t, "7-0\talpha\t-\thi\tthe body stays in the file\n", out.String(), "the message is still delivered")
-		assert.Equal(t, tc.want, errOut.String())
-		_, err := c.poll(context.Background(), &out, &errOut)
-		require.NoError(t, err)
-		assert.Len(t, r.calls, 1, "never retried")
-		assert.Empty(t, c.pending, "no row was queued, so nothing is awaited")
-		require.NoError(t, deliver(context.Background(), c, msgN("8-0", "next"), &out, &errOut))
-		assert.Len(t, r.calls, 2, "the next message is woken for")
+		assert.Equal(t, "HOOK WAKE FAILED harness=codex id=7-0 try=1/3 reason="+tc.reason+"\n", errOut.String())
+		assert.Len(t, c.waiting, 1, "still waiting, for the next idle poll")
+		_, err := os.Stat(filepath.Join(c.dir, "intent"))
+		assert.True(t, errors.Is(err, os.ErrNotExist), "a definite failure leaves no intent")
+		for range 4 {
+			_, err := c.poll(ctx, &out, &errOut)
+			require.NoError(t, err)
+		}
+		assert.Len(t, r.calls, 3, "three tries in all")
+		assert.Equal(t, "HOOK WAKE FAILED harness=codex id=7-0 try=1/3 reason="+tc.reason+"\n"+
+			"HOOK WAKE FAILED harness=codex id=7-0 try=2/3 reason="+tc.reason+"\n"+
+			"HOOK WAKE FAILED harness=codex id=7-0 try=3/3 reason="+tc.reason+"\n"+
+			"HOOK WAKE FAULT harness=codex id=7-0 result=failed first=7-0 file="+filepath.Join(c.dir, "7-0.json")+"\n", errOut.String())
+		assert.Equal(t, []codexFault{{last: "7-0", first: "7-0", result: "failed", attempts: 3, err: tc.reason}}, readFaults(c.dir))
+		_, err = os.Stat(filepath.Join(c.dir, "7-0.json"))
+		require.NoError(t, err, "the message file is kept")
+		r.err, r.out = nil, ""
+		require.NoError(t, deliver(ctx, c, msgN("8-0", "next"), &out, &errOut))
+		assert.Len(t, r.calls, 4, "the next message is woken for")
+		assert.True(t, strings.HasPrefix(r.calls[3][5], "nova-bus 8-0 for beta"), r.calls[3][5])
 	}
+}
+
+// A queue cut off by the wake limit may have written its row: faulted,
+// never queued again.
+func TestCodexUnknownResultIsFaultedNotRequeued(t *testing.T) {
+	t.Parallel()
+	c, r, _, _ := codexSetup(t, rolloutMeta+rolloutTurn+rolloutComplete, time.Minute)
+	r.err = context.DeadlineExceeded
+	var out, errOut bytes.Buffer
+	require.NoError(t, deliver(context.Background(), c, msgN("7-0", "hi"), &out, &errOut))
+	assert.Equal(t, "HOOK WAKE FAULT harness=codex id=7-0 result=unknown first=7-0 file="+filepath.Join(c.dir, "7-0.json")+"\n", errOut.String())
+	_, err := c.poll(context.Background(), &out, &errOut)
+	require.NoError(t, err)
+	assert.Len(t, r.calls, 1)
+}
+
+// An intent left by a hook that died during codex queue: its text in the
+// rollout is evidence the row was queued (woken, no fault); without it the
+// result is unknown (one fault line, never queued again).
+func TestCodexIntentAtStartIsReconciledNotRequeued(t *testing.T) {
+	t.Parallel()
+	for _, drained := range []bool{true, false} {
+		c, r, f, rollout := codexSetup(t, rolloutMeta+rolloutTurn+rolloutComplete, time.Minute)
+		_, err := save(c.dir, "beta", msgN("7-0", "hi"))
+		require.NoError(t, err)
+		size := int64(len(rolloutMeta + rolloutTurn + rolloutComplete))
+		require.NoError(t, writeRecord(c.dir, "intent", codexRecord{last: "7-0", size: size, first: "7-0", start: "nova-bus 7-0 for beta from "}))
+		content := rolloutMeta + rolloutTurn + rolloutComplete
+		if drained {
+			content += `{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"nova-bus 7-0 for beta from alpha"}]}}` + "\n" + rolloutComplete
+		}
+		writeRollout(t, rollout, content, f.clock.Add(-time.Minute))
+		var errOut bytes.Buffer
+		c2, err := newCodex(testThread, "beta", "127.0.0.1:1", func(string) string { return "" }, c.s, f, &errOut)
+		require.NoError(t, err)
+		if drained {
+			assert.NotContains(t, errOut.String(), "FAULT")
+		} else {
+			assert.Contains(t, errOut.String(), "HOOK WAKE FAULT harness=codex id=7-0 result=unknown file="+filepath.Join(c.dir, "7-0.json")+"\n")
+		}
+		assert.Contains(t, errOut.String(), "waiting=0 faults="+map[bool]string{true: "0", false: "1"}[drained])
+		assert.Equal(t, "7-0", c2.woken)
+		_, err = os.Stat(filepath.Join(c.dir, "intent"))
+		assert.True(t, errors.Is(err, os.ErrNotExist))
+		var out bytes.Buffer
+		require.NoError(t, deliver(context.Background(), c2, msgN("7-0", "hi"), &out, &errOut))
+		assert.Contains(t, out.String(), "HOOK WAKE SKIPPED harness=codex id=7-0 reason=woken-already")
+		assert.Empty(t, r.calls, "never queued again")
+	}
+}
+
+// A message that cannot be saved is not printed and not acked: the hook
+// ends, and the message stays in the bus.
+func TestCodexSaveFailureKeepsTheMessageInTheBus(t *testing.T) {
+	t.Parallel()
+	if os.Getuid() == 0 {
+		t.Skip("root writes through mode 0500")
+	}
+	c, r, f, _ := codexSetup(t, rolloutMeta+rolloutTurn+rolloutComplete, time.Minute)
+	require.NoError(t, os.Chmod(c.dir, 0o500))
+	t.Cleanup(func() { _ = os.Chmod(c.dir, 0o700) }) // ignored: TempDir removal reports its own error
+	_, err := f.Add(context.Background(), "bus:beta", map[string]string{"from": "alpha", "subject": "s", "body": "b"})
+	require.NoError(t, err)
+	var out, errOut bytes.Buffer
+	err = hook(context.Background(), f, "beta", testValue, f, &out, &errOut, func(int64) {}, c, nil)
+	var wf wakeFailed
+	require.ErrorAs(t, err, &wf)
+	assert.Empty(t, out.String(), "not printed")
+	assert.Contains(t, errOut.String(), "HOOK WAKE FAILED harness=codex id=1-0 reason=saving ")
+	assert.Equal(t, []string{"1-0"}, f.pending["bus:beta"], "not acked")
+	assert.Empty(t, r.calls)
+}
+
+// A new thread for the same name: the old thread's outstanding messages are
+// kept and named in one fault line; they never block the new thread.
+func TestCodexThreadChangeFaultsTheOldThreadsFiles(t *testing.T) {
+	t.Parallel()
+	c, r, f, _ := codexSetup(t, rolloutMeta+rolloutTurn, time.Minute) // busy: both wait
+	var out, errOut bytes.Buffer
+	require.NoError(t, deliver(context.Background(), c, msgN("7-0", "one"), &out, &errOut))
+	require.NoError(t, deliver(context.Background(), c, msgN("8-0", "two"), &out, &errOut))
+	const next = "019a5c1e-0000-7000-8000-00000000000b"
+	dir := filepath.Join(c.s.home, ".codex", "sessions", "2026", "11", "05")
+	writeRollout(t, filepath.Join(dir, "rollout-2026-11-05T12-00-00-"+next+".jsonl"), rolloutMeta+rolloutTurn+rolloutComplete, f.clock.Add(-time.Minute))
+	errOut.Reset()
+	c2, err := newCodex(next, "beta", "127.0.0.1:1", func(string) string { return "" }, c.s, f, &errOut)
+	require.NoError(t, err)
+	assert.Equal(t, "HOOK WAKE FAULT harness=codex thread="+testThread+" result=thread-changed files="+filepath.Join(c.dir, "7-0.json")+","+filepath.Join(c.dir, "8-0.json")+"\n"+
+		"HOOK HARNESS OK harness=codex thread="+next+" rollout="+filepath.Join(dir, "rollout-2026-11-05T12-00-00-"+next+".jsonl")+" program=/opt/bin/codex events="+c2.dir+" waiting=0 faults=0\n", errOut.String())
+	assert.NotEqual(t, c.dir, c2.dir, "state is per name and thread")
+	for _, id := range []string{"7-0", "8-0"} {
+		_, err := os.Stat(filepath.Join(c.dir, id+".json"))
+		require.NoError(t, err, "kept")
+	}
+	out.Reset()
+	require.NoError(t, deliver(context.Background(), c2, msgN("9-0", "three"), &out, &errOut))
+	assert.Contains(t, out.String(), "HOOK WAKE OK harness=codex id=9-0\n", "the new thread is not blocked")
+	require.Len(t, r.calls, 1)
+	assert.Equal(t, next, r.calls[0][3])
 }
 
 func TestCodexStartRefusals(t *testing.T) {
@@ -286,4 +403,163 @@ func TestCodexServiceCarriesTheThreadAndPath(t *testing.T) {
 	} {
 		assert.Contains(t, string(b), want)
 	}
+}
+
+// A fault is per wake, not a stop: later ids are woken while it stands. A
+// restart retries a definite failure once; an unknown waits for resolve.
+// show codex-wake lists them; hook --resolve settles them.
+func TestCodexFaultsShowAndResolve(t *testing.T) {
+	t.Parallel()
+	c, r, f, _ := codexSetup(t, rolloutMeta+rolloutTurn+rolloutComplete, time.Minute)
+	ctx := context.Background()
+	var out, errOut bytes.Buffer
+	r.err = &exec.Error{Name: "codex", Err: exec.ErrNotFound}
+	require.NoError(t, deliver(ctx, c, msgN("7-0", "one"), &out, &errOut))
+	for range 2 {
+		_, err := c.poll(ctx, &out, &errOut)
+		require.NoError(t, err)
+	}
+	r.err, r.out = errors.New("exit status 1"), "error: something\n"
+	require.NoError(t, deliver(ctx, c, msgN("8-0", "two"), &out, &errOut))
+	r.err, r.out = nil, ""
+	out.Reset()
+	require.NoError(t, deliver(ctx, c, msgN("9-0", "three"), &out, &errOut))
+	assert.Contains(t, out.String(), "HOOK WAKE OK harness=codex id=9-0\n", "two faults behind it, 9-0 is woken")
+	require.Len(t, r.calls, 5)
+	assert.Equal(t, []codexFault{
+		{last: "7-0", first: "7-0", result: "failed", attempts: 3, err: `codex queue: exec: "codex": executable file not found in $PATH: `},
+		{last: "8-0", first: "8-0", result: "unknown", attempts: 1, size: int64(len(rolloutMeta + rolloutTurn + rolloutComplete)), start: "nova-bus 8-0 for beta from ", err: "codex queue: exit status 1: error: something"},
+	}, readFaults(c.dir), "a nonzero exit is unknown, tried once")
+
+	run := func(args ...string) (int, string, string) {
+		var o, e bytes.Buffer
+		code := run(ctx, args, func(string) string { return "" }, nil, &o, &e, func(string, string, string) Store { return f }, f, c.s)
+		return code, o.String(), e.String()
+	}
+	code, show, _ := run("show", "codex-wake", "--as", "beta", "--codex-thread", testThread)
+	require.Equal(t, 0, code)
+	assert.Equal(t, "CODEX WAKE OK name=beta thread="+testThread+" dir="+c.dir+" woken=9-0 awaiting=yes faults=2\n"+
+		"7-0\tfault\tresult=failed attempts=3 first=7-0 error=codex queue: exec: \"codex\": executable file not found in $PATH: \t"+filepath.Join(c.dir, "7-0.json")+"\n"+
+		"8-0\tfault\tresult=unknown attempts=1 first=8-0 error=codex queue: exit status 1: error: something\t"+filepath.Join(c.dir, "8-0.json")+"\n", show)
+
+	// A restart retries the failed one (once), not the unknown one.
+	var startErr bytes.Buffer
+	c2, err := newCodex(testThread, "beta", "127.0.0.1:1", func(string) string { return "" }, c.s, f, &startErr)
+	require.NoError(t, err)
+	assert.Contains(t, startErr.String(), "waiting=0 faults=2")
+	assert.Equal(t, "retry", readFaults(c.dir)[0].result)
+	assert.Equal(t, "unknown", readFaults(c.dir)[1].result)
+	c2.pending = "" // the 9-0 turn has started
+	out.Reset()
+	_, err = c2.poll(ctx, &out, &errOut)
+	require.NoError(t, err)
+	assert.Equal(t, "HOOK WAKE OK harness=codex id=7-0\n", out.String())
+	require.Len(t, r.calls, 6)
+	assert.True(t, strings.HasPrefix(r.calls[5][5], "nova-bus: 1 new messages for beta since 7-0:"), r.calls[5][5])
+	assert.Len(t, readFaults(c.dir), 1, "the retried fault is gone")
+	c2.pending = ""
+	for range 3 {
+		_, err = c2.poll(ctx, &out, &errOut)
+		require.NoError(t, err)
+	}
+	assert.Len(t, r.calls, 6, "the unknown is not retried")
+
+	// Resolve: retry marks it for one try; woken removes it.
+	code, o, e := run("hook", "--as", "beta", "--codex-thread", testThread, "--resolve", "8-0=retry")
+	require.Equal(t, 0, code, e)
+	assert.Equal(t, "HOOK RESOLVE OK id=8-0 first=8-0 result=retry\n", o)
+	out.Reset()
+	_, err = c2.poll(ctx, &out, &errOut)
+	require.NoError(t, err)
+	assert.Equal(t, "HOOK WAKE OK harness=codex id=8-0\n", out.String())
+	assert.Empty(t, readFaults(c.dir))
+
+	require.NoError(t, writeFault(c.dir, codexFault{last: "8-0", first: "8-0", result: "unknown", attempts: 1}))
+	code, o, _ = run("hook", "--as", "beta", "--codex-thread", testThread, "--resolve", "8-0=woken")
+	require.Equal(t, 0, code)
+	assert.Equal(t, "HOOK RESOLVE OK id=8-0 first=8-0 result=woken\n", o)
+	assert.Empty(t, readFaults(c.dir))
+	_, err = os.Stat(filepath.Join(c.dir, "8-0.json"))
+	require.NoError(t, err, "files are kept")
+
+	code, _, e = run("hook", "--as", "beta", "--codex-thread", testThread, "--resolve", "8-0=woken")
+	assert.Equal(t, 1, code)
+	assert.Equal(t, "nova-bus hook: no fault or intent holds 8-0 for beta on thread "+testThread+"; run: nova-bus show codex-wake --as beta --codex-thread "+testThread+"\n", e)
+	for _, tc := range []struct{ args []string }{
+		{[]string{"hook", "--as", "beta", "--codex-thread", testThread, "--resolve", "8-0=maybe"}},
+		{[]string{"hook", "--as", "beta", "--resolve", "8-0=woken"}},
+		{[]string{"show", "codex-wake", "--as", "beta"}},
+		{[]string{"show", "codex-wake", "--codex-thread", testThread}},
+		{[]string{"show", "agents", "--as", "beta"}},
+	} {
+		code, _, _ := run(tc.args...)
+		assert.Equal(t, 2, code, tc.args)
+	}
+}
+
+// An intent left when the hook stopped is reported by show and settled by
+// resolve: woken records it as woken.
+func TestCodexResolveAnIntent(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	s := sys{uid: os.Getuid(), home: home}
+	dir := codexDir(s, "beta", testThread)
+	require.NoError(t, os.MkdirAll(dir, 0o700))
+	require.NoError(t, writeRecord(dir, "intent", codexRecord{last: "8-0", size: 10, first: "7-0", start: "nova-bus: 2 new messages for beta since 7-0:"}))
+	var out, errOut bytes.Buffer
+	codexShow(s, "beta", testThread, &out)
+	assert.Equal(t, "CODEX WAKE OK name=beta thread="+testThread+" dir="+dir+" woken=- awaiting=no faults=0\n8-0\tintent-unknown\tfirst=7-0\t"+filepath.Join(dir, "8-0.json")+"\n", out.String())
+	out.Reset()
+	require.Equal(t, 0, codexResolve(s, "beta", testThread, "7-0=woken", &out, &errOut), errOut.String())
+	assert.Equal(t, "HOOK RESOLVE OK id=8-0 first=7-0 result=woken\n", out.String())
+	w, ok := readRecord(dir, "woken")
+	require.True(t, ok)
+	assert.Equal(t, "8-0", w.last)
+	_, err := os.Stat(filepath.Join(dir, "intent"))
+	assert.True(t, errors.Is(err, os.ErrNotExist))
+}
+
+func TestCodexQueueOutcome(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		err  error
+		out  string
+		cut  error
+		want string
+	}{
+		{nil, "Queued message 41 for thread x\n", nil, "queued"},
+		{nil, "warning: slow\nQueued message 41\n", nil, "queued"},
+		{nil, "", nil, "unknown"},                                            // exit 0 without the line
+		{errors.New("exit status 1"), "Queued message 41\n", nil, "unknown"}, // a nonzero exit is never retried
+		{&exec.Error{Name: "codex", Err: exec.ErrNotFound}, "", nil, "failed"},
+		{&os.PathError{Op: "fork/exec", Path: "/x/codex", Err: errors.New("permission denied")}, "", nil, "failed"},
+		{errors.New("signal: killed"), "", context.DeadlineExceeded, "unknown"},
+		{context.DeadlineExceeded, "", nil, "unknown"},
+	} {
+		assert.Equal(t, tc.want, queueOutcome(tc.err, []byte(tc.out), tc.cut), "%v %q", tc.err, tc.out)
+	}
+}
+
+// An unknown wake whose text later shows in the rollout was delivered: its
+// fault goes by itself; one with no such text stays for --resolve.
+func TestCodexUnknownIsReconciledFromTheRollout(t *testing.T) {
+	t.Parallel()
+	c, r, f, rollout := codexSetup(t, rolloutMeta+rolloutTurn+rolloutComplete, time.Minute)
+	r.out = "no line\n"
+	var out, errOut bytes.Buffer
+	ctx := context.Background()
+	require.NoError(t, deliver(ctx, c, msgN("7-0", "hi"), &out, &errOut))
+	assert.Contains(t, errOut.String(), "HOOK WAKE FAULT harness=codex id=7-0 result=unknown first=7-0 file=")
+	require.Len(t, readFaults(c.dir), 1)
+	_, err := c.poll(ctx, &out, &errOut)
+	require.NoError(t, err)
+	require.Len(t, readFaults(c.dir), 1, "no evidence yet: it stays")
+	assert.Len(t, r.calls, 1, "never tried again")
+	writeRollout(t, rollout, rolloutMeta+rolloutTurn+rolloutComplete+`{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"nova-bus 7-0 for beta from alpha"}]}}`+"\n"+rolloutComplete, f.clock.Add(-time.Minute))
+	out.Reset()
+	_, err = c.poll(ctx, &out, &errOut)
+	require.NoError(t, err)
+	assert.Equal(t, "HOOK WAKE OK harness=codex id=7-0 first=7-0 result=reconciled\n", out.String())
+	assert.Empty(t, readFaults(c.dir))
+	assert.Len(t, r.calls, 1)
 }

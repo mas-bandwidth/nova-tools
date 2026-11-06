@@ -66,12 +66,18 @@ the key lapses under a running hook (the wake is bounded by 8 s, with a
 refresh before every delivery, so the design passes `Presence.cfg`).
 
 `bus/tla/CodexWake.tla` models `--codex-thread`: a chat that runs turns, an
-app that drains a queued row into a turn once the chat is idle, and a hook
-that can crash between marking an id woken and queueing it. It checks that no
-row is queued into a running turn or behind one not yet drained, that no id
-is named in two rows, and that every printed message has a wake attempted for
-it; the reversed witnesses drop the idle check, the wait for the last row's
-turn, the woken mark, and the catch-up, one each.
+app that drains a queued row into a new turn once the chat is idle, and a
+hook whose wake is two steps (the idle check, then intent and codex queue)
+with a turn able to start between them, definite failures retried then
+faulted, a queue cut off faulted as unknown, and a crash anywhere, after
+which a start reconciles the intent. It checks that the hook never queues
+for a chat it saw busy, that no id is in two rows, that there is at most one
+undrained row unless a crash left a result unknown, that every printed id is
+named in a row or recorded as a fault, and that every row drains. A row
+queued in the race lands in a busy chat and is drained after that turn; the
+model lets the race happen and does not show it absent. The reversed
+witnesses drop the idle check, the wait for the last row's turn, the fault
+for an unknown intent (requeued instead), and the catch-up, one each.
 
 Run the models with TLC, with Java on PATH and the jar pinned in
 [tests/tla/tla2tools.sha256](../tests/tla/tla2tools.sha256), at an absolute path:

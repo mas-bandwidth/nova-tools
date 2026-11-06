@@ -1,113 +1,159 @@
 ------------------------------ MODULE CodexWake ------------------------------
-\* nova-bus hook --codex-thread (bus/codex.go codexWake): a hook that prints
-\* every message and wakes a Codex chat with codex queue only while it is
-\* idle, a chat that runs turns, and an app that drains a queued row into a
-\* new turn once the chat is idle. A row queued into a running turn is a
-\* steer, which can hang the chat; a second row behind one not yet drained
-\* is counted as one too.
+\* nova-bus hook --codex-thread (bus/codexwake.go): a hook that prints every
+\* message and wakes a Codex chat with codex queue, a chat that runs turns,
+\* and an app that drains a queued row into a new turn once the chat is idle.
 \*
-\* The state: chat ("idle" or "busy", as the rollout shows it); rows, queued
-\* and not drained; sent, the messages printed (each saved to its file
-\* before the wake reads it); woken, the last id named in a wake (dir/woken,
-\* kept across a crash); awaiting, a queued row whose turn has not started
-\* (dir/woken's text, kept across a crash); up, crashes, fails. Waiting,
-\* the saved ids after woken, is what a restarted hook reads from the files.
-\* The outside: named, every id in a queued row; tried, every id a wake was
-\* attempted for (queued, failed, or lost to a crash between the mark and the
-\* queue); steer and twice, set when a row is queued into a busy chat or
-\* behind an undrained row, or names an id already named.
+\* The hook's wake is two steps, as in poll: Check reads the rollout (idle,
+\* and the last wake's turn started), then Exec writes the intent and runs
+\* codex queue. A turn may start between them. The model shows what that
+\* costs: the row lands in a busy chat (raced) and the app drains it as a
+\* new turn once the chat is idle again (observed of the app; Drain needs
+\* idle here). It does not show the race absent: it is a property of the
+\* timing that the model lets happen.
 \*
-\* The idle read and the queue are one step here; in the code they are
-\* milliseconds apart, and a turn started in that window is not modelled.
+\* State: chat ("idle"/"busy"); rows, queued and not drained; sent, the ids
+\* printed (each saved first); woken (dir/woken), awaiting (its text not yet
+\* in the rollout), intent (dir/intent, 0 for none), all kept across a crash;
+\* faults (dir/faults: ids whose wake failed or whose result is unknown);
+\* stage ("none", "checked", "queued": a row is out, not yet marked), hi
+\* (the last id of the wake in hand), tries, up, crashes. The outside:
+\* named (ids in a queued row), raced, twice (an id in two rows), extra (a
+\* second undrained row: only after a crash left an unknown).
 \*
 \* Broken = "none" is the design. Reversed witnesses:
-\*   "nocheck"   the wake does not wait for idle: NoSteer fails
-\*   "noawait"   the wake does not wait for the last row's turn: a second
-\*               row queues behind it, NoSteer fails
-\*   "nomark"    woken is not advanced: a later wake names the id again,
-\*               NoTwice fails
-\*   "nocatchup" a message printed while the chat is busy is passed over,
-\*               never named: EveryTried fails
+\*   "nocheck"   Check does not wait for idle: a row is queued into a turn
+\*               the hook saw running, SeenIdle fails
+\*   "noawait"   Check does not wait for the last row's turn: a second row
+\*               queues behind it with no crash, OneRow fails
+\*   "requeue"   an intent found at start is queued again rather than
+\*               faulted: an id in two rows, NoTwice fails
+\*   "nocatchup" an id printed while the chat is busy is passed over:
+\*               EveryHandled fails
 EXTENDS Naturals, FiniteSets
 
-CONSTANTS N, MaxCrash, MaxFail, Broken
+CONSTANTS N, MaxCrash, Limit, Broken
 
-VARIABLES chat, rows, sent, woken, awaiting, up, crashes, fails, named, tried, steer, twice
+VARIABLES chat, rows, sent, woken, awaiting, intent, faults, stage, hi, tries, up, crashes,
+          named, raced, seenBusy, twice, unknowns
 
-vars == <<chat, rows, sent, woken, awaiting, up, crashes, fails, named, tried, steer, twice>>
+vars == <<chat, rows, sent, woken, awaiting, intent, faults, stage, hi, tries, up, crashes,
+          named, raced, seenBusy, twice, unknowns>>
 Ids == 1..N
-
-Waiting == {m \in 1..sent : m > woken}
+Range(a, b) == {m \in Ids : a < m /\ m <= b}
+Waiting == Range(woken, sent)
 
 TypeOK ==
-  /\ chat \in {"idle", "busy"} /\ rows \in 0..N /\ sent \in 0..N /\ woken \in 0..N
-  /\ awaiting \in BOOLEAN /\ up \in BOOLEAN /\ crashes \in 0..MaxCrash /\ fails \in 0..MaxFail
-  /\ named \subseteq Ids /\ tried \subseteq Ids /\ steer \in BOOLEAN /\ twice \in BOOLEAN
+  /\ chat \in {"idle", "busy"} /\ rows \in 0..N+1 /\ sent \in 0..N /\ woken \in 0..N
+  /\ awaiting \in BOOLEAN /\ intent \in 0..N /\ faults \subseteq Ids
+  /\ stage \in {"none", "checked", "queued"} /\ hi \in 0..N /\ tries \in 0..Limit
+  /\ up \in BOOLEAN /\ crashes \in 0..MaxCrash /\ named \subseteq Ids
+  /\ raced \in BOOLEAN /\ seenBusy \in BOOLEAN /\ twice \in BOOLEAN /\ unknowns \in BOOLEAN
 
 Init ==
-  /\ chat = "idle" /\ rows = 0 /\ sent = 0 /\ woken = 0 /\ awaiting = FALSE
-  /\ up = TRUE /\ crashes = 0 /\ fails = 0
-  /\ named = {} /\ tried = {} /\ steer = FALSE /\ twice = FALSE
+  /\ chat = "idle" /\ rows = 0 /\ sent = 0 /\ woken = 0 /\ awaiting = FALSE /\ intent = 0
+  /\ faults = {} /\ stage = "none" /\ hi = 0 /\ tries = 0 /\ up = TRUE /\ crashes = 0
+  /\ named = {} /\ raced = FALSE /\ seenBusy = FALSE /\ twice = FALSE /\ unknowns = FALSE
 
-\* A message is printed and saved ("nocatchup": one printed while the chat
-\* is busy is marked woken without a wake).
+Hook == <<chat, rows, awaiting, intent, faults, hi, tries, up, crashes, named, raced, seenBusy, twice, unknowns>>
+
 Deliver ==
-  /\ up /\ sent < N
+  /\ up /\ sent < N /\ stage = "none"
   /\ sent' = sent + 1
   /\ woken' = IF Broken = "nocatchup" /\ chat = "busy" THEN sent + 1 ELSE woken
-  /\ UNCHANGED <<chat, rows, awaiting, up, crashes, fails, named, tried, steer, twice>>
+  /\ UNCHANGED <<stage>> /\ UNCHANGED Hook
 
-\* poll: one wake names every waiting id, marked woken first; it is queued,
-\* or codex queue fails (reported, never retried), or the hook crashes
-\* between the mark and the queue (the wake is lost, the id never repeated).
-Wake ==
-  /\ up /\ Waiting /= {}
+\* busy(): idle, and the last wake's turn has started.
+Check ==
+  /\ up /\ stage = "none" /\ Waiting /= {}
   /\ (Broken /= "nocheck" => chat = "idle")
   /\ (Broken /= "noawait" => ~awaiting)
-  /\ woken' = IF Broken = "nomark" THEN woken ELSE sent
-  /\ tried' = tried \cup Waiting
-  /\ \/ /\ rows' = rows + 1 /\ named' = named \cup Waiting /\ awaiting' = TRUE
-        /\ steer' = (steer \/ chat = "busy" \/ rows > 0)
-        /\ twice' = (twice \/ Waiting \cap named /= {})
-        /\ UNCHANGED <<up, crashes, fails>>
-     \/ /\ fails < MaxFail /\ fails' = fails + 1
-        /\ UNCHANGED <<rows, named, awaiting, steer, twice, up, crashes>>
-     \/ /\ crashes < MaxCrash /\ crashes' = crashes + 1 /\ up' = FALSE
-        /\ UNCHANGED <<rows, named, awaiting, steer, twice, fails>>
-  /\ UNCHANGED <<chat, sent>>
+  /\ stage' = "checked" /\ hi' = sent /\ seenBusy' = (seenBusy \/ chat = "busy")
+  /\ UNCHANGED <<chat, rows, sent, woken, awaiting, intent, faults, tries, up, crashes, named, raced, twice, unknowns>>
 
-\* Someone starts a turn; a turn ends.
-UserTurn == chat = "idle" /\ chat' = "busy" /\ UNCHANGED <<rows, sent, woken, awaiting, up, crashes, fails, named, tried, steer, twice>>
-TurnEnd == chat = "busy" /\ chat' = "idle" /\ UNCHANGED <<rows, sent, woken, awaiting, up, crashes, fails, named, tried, steer, twice>>
+\* intent, then codex queue (queueOutcome): exit 0 with its Queued message
+\* line, the row is out (marked next); the program did not start, a definite
+\* failure (tried again up to Limit, then a fault); anything else, unknown
+\* (a fault, a row may or may not be out, never tried again by the hook). Each settles the ids
+\* through hi: a fault holds back nothing after it.
+ExecOk ==
+  /\ up /\ stage = "checked"
+  /\ rows' = rows + 1 /\ intent' = hi /\ stage' = "queued"
+  /\ named' = named \cup Range(woken, hi) /\ twice' = (twice \/ Range(woken, hi) \cap named /= {})
+  /\ raced' = (raced \/ chat = "busy")
+  /\ UNCHANGED <<chat, sent, woken, awaiting, faults, hi, tries, up, crashes, seenBusy, unknowns>>
 
-\* The app drains a row into a turn: its text is in the rollout.
+ExecFail ==
+  /\ up /\ stage = "checked"
+  /\ IF tries + 1 < Limit
+       THEN tries' = tries + 1 /\ UNCHANGED <<woken, faults>>
+       ELSE tries' = 0 /\ woken' = hi /\ faults' = faults \cup Range(woken, hi)
+  /\ stage' = "none"
+  /\ UNCHANGED <<chat, rows, sent, awaiting, intent, hi, up, crashes, named, raced, seenBusy, twice, unknowns>>
+
+ExecCutOff ==
+  /\ up /\ stage = "checked"
+  /\ \/ /\ rows' = rows + 1 /\ named' = named \cup Range(woken, hi) /\ twice' = (twice \/ Range(woken, hi) \cap named /= {})
+     \/ UNCHANGED <<rows, named, twice>>
+  /\ woken' = hi /\ faults' = faults \cup Range(woken, hi) /\ stage' = "none" /\ tries' = 0
+  /\ unknowns' = TRUE
+  /\ UNCHANGED <<chat, sent, awaiting, intent, hi, up, crashes, raced, seenBusy>>
+
+\* mark: woken takes the intent's record, and the hook waits for the row's
+\* turn, unless it has already started (its text is after the size the
+\* check read, so a row drained before the mark is seen as drained).
+Mark ==
+  /\ up /\ stage = "queued"
+  /\ woken' = hi /\ awaiting' = (rows > 0) /\ intent' = 0 /\ stage' = "none" /\ tries' = 0
+  /\ UNCHANGED <<chat, rows, sent, faults, hi, up, crashes, named, raced, seenBusy, twice, unknowns>>
+
+UserTurn == chat = "idle" /\ chat' = "busy" /\ UNCHANGED <<rows, sent, woken, awaiting, intent, faults, stage, hi, tries, up, crashes, named, raced, seenBusy, twice, unknowns>>
+TurnEnd == chat = "busy" /\ chat' = "idle" /\ UNCHANGED <<rows, sent, woken, awaiting, intent, faults, stage, hi, tries, up, crashes, named, raced, seenBusy, twice, unknowns>>
+
+\* The app drains a row into a new turn once the chat is idle; the turn's
+\* text is in the rollout, so the hook's wait for it ends.
 Drain ==
   /\ chat = "idle" /\ rows > 0
   /\ rows' = rows - 1 /\ chat' = "busy" /\ awaiting' = FALSE
-  /\ UNCHANGED <<sent, woken, up, crashes, fails, named, tried, steer, twice>>
+  /\ UNCHANGED <<sent, woken, intent, faults, stage, hi, tries, up, crashes, named, raced, seenBusy, twice, unknowns>>
 
 Crash ==
   /\ up /\ crashes < MaxCrash
-  /\ up' = FALSE /\ crashes' = crashes + 1
-  /\ UNCHANGED <<chat, rows, sent, woken, awaiting, fails, named, tried, steer, twice>>
+  /\ up' = FALSE /\ crashes' = crashes + 1 /\ stage' = "none" /\ tries' = 0
+  /\ UNCHANGED <<chat, rows, sent, woken, awaiting, intent, faults, hi, named, raced, seenBusy, twice, unknowns>>
 
-Restart == ~up /\ up' = TRUE /\ UNCHANGED <<chat, rows, sent, woken, awaiting, crashes, fails, named, tried, steer, twice>>
+\* A start reconciles an intent: its text in the rollout (the row drained)
+\* is evidence, and it is woken; else a fault, result unknown, never queued
+\* again ("requeue": its ids wait again). A row still undrained then may
+\* have a second behind it: unknowns says so.
+Restart ==
+  /\ ~up /\ up' = TRUE
+  /\ IF intent = 0 THEN UNCHANGED <<woken, faults, unknowns>>
+     ELSE IF Broken = "requeue" THEN UNCHANGED <<woken, faults, unknowns>>
+     ELSE /\ woken' = intent
+          /\ faults' = IF rows = 0 THEN faults ELSE faults \cup Range(woken, intent)
+          /\ unknowns' = (unknowns \/ rows > 0)
+  /\ intent' = 0 /\ awaiting' = (awaiting /\ intent = 0)
+  /\ UNCHANGED <<chat, rows, sent, stage, hi, tries, crashes, named, raced, seenBusy, twice>>
 
-Next == Deliver \/ Wake \/ UserTurn \/ TurnEnd \/ Drain \/ Crash \/ Restart
+Next == Deliver \/ Check \/ ExecOk \/ ExecFail \/ ExecCutOff \/ Mark \/ UserTurn \/ TurnEnd \/ Drain \/ Crash \/ Restart
 
-\* A turn always ends; the app drains a row, and the hook wakes, whenever
-\* the chat is idle again and again (strong fairness: a person may keep
-\* starting turns, and the app drains at the end of one).
 Spec == Init /\ [][Next]_vars
-          /\ WF_vars(Deliver) /\ WF_vars(TurnEnd) /\ WF_vars(Restart)
-          /\ SF_vars(Drain) /\ SF_vars(Wake)
+          /\ WF_vars(Deliver) /\ WF_vars(TurnEnd) /\ WF_vars(Restart) /\ WF_vars(Mark)
+          /\ WF_vars(ExecOk \/ ExecFail \/ ExecCutOff)
+          /\ SF_vars(Drain) /\ SF_vars(Check)
 
-\* No row is queued into a running turn, or behind one not yet drained.
-NoSteer == ~steer
+\* The hook never queues for a chat it saw busy.
+SeenIdle == ~seenBusy
 
-\* No id is named in two rows.
+\* No id is in two rows.
 NoTwice == ~twice
 
-\* Every message printed is named in a wake, or its wake was attempted.
-EveryTried == \A m \in Ids : <>(m \in tried)
+\* At most one undrained row, unless a crash left a result unknown.
+OneRow == rows <= 1 \/ unknowns
+
+\* Every printed id is named in a row or recorded as a fault.
+EveryHandled == \A m \in Ids : <>(m \in named \cup faults)
+
+\* Every row is drained.
+Drained == <>[](rows = 0)
 =============================================================================

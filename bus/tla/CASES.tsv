@@ -14,7 +14,7 @@ PresenceBrokenNoClaimCheck.cfg	Presence.tla	invariant	StartOnlyWhenFree	check
 PresenceBrokenNoDelCheck.cfg	Presence.tla	invariant	OnlyOwnerDeletes	check
 PresenceBrokenNoWait.cfg	Presence.tla	temporal	WaitClaims	check
 CodexWake.cfg	CodexWake.tla	pass	-	check
-CodexWakeBrokenNoCheck.cfg	CodexWake.tla	invariant	NoSteer	check
-CodexWakeBrokenNoAwait.cfg	CodexWake.tla	invariant	NoSteer	check
-CodexWakeBrokenNoMark.cfg	CodexWake.tla	invariant	NoTwice	check
-CodexWakeBrokenNoCatchUp.cfg	CodexWake.tla	temporal	EveryTried	check
+CodexWakeBrokenNoCheck.cfg	CodexWake.tla	invariant	SeenIdle	check
+CodexWakeBrokenNoAwait.cfg	CodexWake.tla	invariant	OneRow	check
+CodexWakeBrokenRequeue.cfg	CodexWake.tla	invariant	NoTwice	check
+CodexWakeBrokenNoCatchUp.cfg	CodexWake.tla	temporal	EveryHandled	check

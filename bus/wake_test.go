@@ -677,7 +677,7 @@ func TestShowPrintsTheStandingInstructions(t *testing.T) {
 	for _, args := range [][]string{{"show"}, {"show", "x"}, {"show", "agents", "x"}} {
 		code, _, errOut := call(t, newFake(), nil, "", args...)
 		assert.Equal(t, 2, code, args)
-		assert.Equal(t, "nova-bus show: show takes one of agents, codex-agents; run: nova-bus show -h\n", errOut)
+		assert.Equal(t, "nova-bus show: show takes one of agents, codex-agents, codex-wake; run: nova-bus show -h\n", errOut)
 	}
 }
 
