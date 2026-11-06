@@ -544,16 +544,22 @@ func runMemory(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintf(stdout, "MEMORY OK candidates=%d source=%s k=%d channels=bm25 files=%d entries=%d skipped=%d chunks=%d\n", len(candidates), field(source), *k, len(c.files), c.entries, len(c.skipped), len(c.chunks))
 	fmt.Fprintf(stdout, "MEMORY CAL %s probe=unrelated-control\n", cal)
-	dated := false
+	dated, missed := false, false
 	for i, cand := range candidates {
 		fmt.Fprintf(stdout, "MEMORY CAND n=%d: %s\n", i+1, strconv.Quote(truncate(strings.TrimSpace(cand), 100)))
 		hits := c.retrieve(cand, *k)
+		if len(hits) == 0 {
+			missed = true
+		}
 		for _, h := range hits {
 			if c.chunks[h.chunk].class == "log" {
 				dated = true
 			}
 		}
 		c.printHits(stdout, "MEMORY", fmt.Sprintf("cand=%d ", i+1), hits)
+	}
+	if missed {
+		fmt.Fprintf(stdout, "MEMORY NOTE %s\n", noteLex)
 	}
 	if dated {
 		fmt.Fprintln(stdout, "MEMORY NOTE a hit in a dated log class is evidence the event was recorded, not that the lesson was banked — the class on each receipt is the distinction")

@@ -291,6 +291,11 @@ func TestMemory(t *testing.T) {
 	assert.Contains(t, out, "MEMORY HIT cand=1 rank=1 ")
 	assert.Contains(t, out, "notes/lantern.md:")
 	assert.NotContains(t, out, "MEMORY NOTE", "no dated-log hit, so no note")
+
+	code, out, _ = do(t, "zzzzqq wwwwww vvvvvv uuuuuu.\n", "memory", "check", "--root", c, "--channels", "bm25", "--k", "1", "-")
+	assert.Equal(t, 0, code)
+	assert.Contains(t, out, "MEMORY MISS")
+	assert.Contains(t, out, "MEMORY NOTE lexical only", "a check miss explains itself like a search miss")
 }
 
 // TestSearchCalBelowExactHit: the unrelated control must score below an exact
