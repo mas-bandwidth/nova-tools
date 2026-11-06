@@ -63,6 +63,6 @@ go test -tags functional .          # against a real redis-server on a free loca
 ```
 
 `docs/SPEC-BUS.md` is the full description. `tla/Presence.tla` models the presence key and hooks that compete for it;
-`tla/CASES.tsv` names every case and what TLC must find (`tla/check.sh JAR bus/tla` runs them). `tla/Bus.tla` models the inbox, the sender and a hook that crashes between print and ack: no message is acked before
+`tla/CASES.tsv` names every case and what TLC must find (`tests/tla/check.sh JAR bus/tla` runs them). `tla/Bus.tla` models the inbox, the sender and a hook that crashes between print and ack: no message is acked before
 it is printed, no acked message is printed again, every sent message is printed. `tla/BusBroken*.cfg` are reversed
 witnesses (ack before print; a restarted hook that skips its pending messages) that TLC must fail.

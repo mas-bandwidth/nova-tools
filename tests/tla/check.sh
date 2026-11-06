@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # check.sh: run TLC over every model case in the repository, in parallel.
 #
-#   tla/check.sh JAR            every tla/ directory that holds a module (tla/ and */tla/)
-#   tla/check.sh JAR DIR...     only these directories
+#   tests/tla/check.sh JAR      every <tool>/tla directory that holds a module
+#   tests/tla/check.sh JAR DIR...     only these directories
 #
 # A directory with a CASES.tsv runs its rows (config, module, expected,
 # property, deadlock). Expected is "pass", or the kind of violation the case
@@ -54,20 +54,20 @@ if [ "${1:-}" = "--case" ]; then
 	exit 1
 fi
 
-[ $# -ge 1 ] || { echo "usage: tla/check.sh JAR [DIR...]" >&2; exit 2; }
+[ $# -ge 1 ] || { echo "usage: tests/tla/check.sh JAR [DIR...]" >&2; exit 2; }
 TLC_JAR=$1
 shift
 [ -f "$TLC_JAR" ] || { echo "no TLC jar at $TLC_JAR" >&2; exit 2; }
-root=$(cd "$(dirname "$0")/.." && pwd)
+root=$(cd "$(dirname "$0")/../.." && pwd)
 cd "$root"
-want=$(cut -d' ' -f1 tla/tla2tools.sha256)
+want=$(cut -d' ' -f1 tests/tla/tla2tools.sha256)
 have=$( (sha256sum "$TLC_JAR" 2>/dev/null || shasum -a 256 "$TLC_JAR") | cut -d' ' -f1)
 [ "$want" = "$have" ] || { echo "TLC jar $TLC_JAR is not the pinned tla2tools.jar ($have, want $want)" >&2; exit 2; }
 export TLC_JAR
 
 dirs=("$@")
 if [ ${#dirs[@]} -eq 0 ]; then
-	for d in tla */tla; do compgen -G "$d/*.tla" >/dev/null && dirs+=("$d"); done
+	for d in */tla; do compgen -G "$d/*.tla" >/dev/null && dirs+=("$d"); done
 fi
 
 cases=$(mktemp)

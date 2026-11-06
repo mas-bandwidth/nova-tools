@@ -203,8 +203,8 @@ that exited or crashed is absent within the TTL; a waiting hook whose rival
 crashed sees the name claimed; and every wait ends in a claim or a refusal. A stuck hook is allowed to
 drop out, and `PresenceStuckStrict.cfg` shows that it does. The reversed
 witnesses remove the TTL, the refresh, the claim's check, the release's check
-and the wait, one each. `Presence.cfg` checks two hooks; `PresenceThree.cfg` checks three (about 3.9M states, minutes on many workers, so it is run by hand rather than by `tla/check.sh`). `bus/tla/Bus.tla` models delivery. `bus/tla/CASES.tsv` names
-every case with the outcome TLC must reach; `tla/check.sh JAR bus/tla` runs
+and the wait, one each. `Presence.cfg` checks two hooks; `PresenceThree.cfg` checks three (about 3.9M states, minutes on many workers, so it is run by hand rather than by `tests/tla/check.sh`). `bus/tla/Bus.tla` models delivery. `bus/tla/CASES.tsv` names
+every case with the outcome TLC must reach; `tests/tla/check.sh JAR bus/tla` runs
 them.
 
 ## An example session
