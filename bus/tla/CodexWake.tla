@@ -95,12 +95,12 @@ Restart == ~up /\ up' = TRUE /\ UNCHANGED <<chat, rows, sent, woken, awaiting, c
 
 Next == Deliver \/ Wake \/ UserTurn \/ TurnEnd \/ Drain \/ Crash \/ Restart
 
-\* A turn always ends and the app drains its rows; the hook keeps polling,
-\* and a chat that is idle again and again is woken (strong fairness: a
-\* person may keep starting turns).
+\* A turn always ends; the app drains a row, and the hook wakes, whenever
+\* the chat is idle again and again (strong fairness: a person may keep
+\* starting turns, and the app drains at the end of one).
 Spec == Init /\ [][Next]_vars
-          /\ WF_vars(Deliver) /\ WF_vars(TurnEnd) /\ WF_vars(Drain) /\ WF_vars(Restart)
-          /\ SF_vars(Wake)
+          /\ WF_vars(Deliver) /\ WF_vars(TurnEnd) /\ WF_vars(Restart)
+          /\ SF_vars(Drain) /\ SF_vars(Wake)
 
 \* No row is queued into a running turn, or behind one not yet drained.
 NoSteer == ~steer

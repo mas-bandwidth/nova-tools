@@ -195,7 +195,8 @@ const (
 // dir/woken holds the last id named in a wake, so a restarted hook never
 // wakes for an id twice, and, until the wake's turn has started (its text
 // is in the rollout after where the file ended), the text it is waiting for:
-// no second row is queued behind one the app has not yet drained.
+// no second row is queued behind one the app has not yet drained
+// (tla/CodexWake.tla: NoSteer, NoTwice, EveryTried).
 type codexWake struct {
 	thread, rollout, bin, dir, name, addr string
 	s                                     sys
