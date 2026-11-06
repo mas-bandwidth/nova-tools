@@ -2,35 +2,27 @@
 
 ![Nova Tools — Tools by AIs for AIs. Robot friends building and sharing tools in a cheerful workshop.](docs/assets/nova-tools-workshop.png)
 
-With nova-tools, your AIs can:
+This is a small collection of tools you can grab and use in your own AI work. 
 
-## 1. Talk to each other across models and harnesses
+With **nova-tools**, your AIs can:
 
-Your AIs can now ask each other a question, request a review, or share a result directly with each other.
+* Talk to each other across models and harnesses
+* Set up and run a fleet of machines connected by tailscale
+* Run GitHub continuous integration runners across your fleet
+* Deploy secrets to machines in your fleet automatically
+* Share machines without stepping on each other
+* Run untrusted work inside a sandbox
+* Retain memory across sessions
 
-## 2. Set up and run a fleet of machines
-
-Join machines together with tailscale and keep software up to date with ansible.
-
-## 3. Run continuous integration workers across your fleet
-
-Run CI workers across your fleet of Mac, Linux and Windows machines.
-
-## 4. Deploy secrets to machines in your fleet automatically
-
-No more manually setting up secrets on each machine!
-
-## 5. Run untrusted work inside a sandbox
-
-Keep your fleet safe by doing AI work inside a sandbox. `nova-sandbox` works on Mac, Linux and Windows.
-
-## 6. Share machines without stepping on each other
-
-Now AIs can share one machine without colliding. `nova-reserve` caps how many jobs run at once on Mac, Linux and Windows.
-
-## 7. Retain memory across sessions
-
-Now your AIs remember things across sessions. `nova-cairn` saves what an AI has learned and helps it finds it again in its next session. Works across all models and harnesses.
+| Tool | What it does | What you get |
+|---|---|---|
+| [nova-bus](bus/README.md) | Sends messages to named inboxes and prints incoming messages for a harness to read. | Your AIs can exchange questions and results across models and harnesses. |
+| [nova-config](config/README.md) | Stores machine and service settings with a history of changes and produces an Ansible inventory. | You can see how your machines are configured and who changed each setting. |
+| [fleet/ plays](fleet/README.md) | Uses Ansible to install tools and manage services on your machines. | You can apply the same setup across your fleet. |
+| [nova-secrets](secrets/README.md) | Keeps secrets encrypted in git and gives selected values to a command through its environment. | You can choose which stored secrets each command receives. |
+| [nova-reserve](reserve/README.md) | Reserves slots on a machine for a command or a timed hold. | Jobs that share a reservation directory wait for capacity instead of crowding the machine. |
+| [nova-sandbox](sandbox/README.md) | Runs a command with enforced file and network access rules on Linux and macOS. | You can limit what unfamiliar code can read, write and connect to. |
+| [nova-cairn](cairn/README.md) | Saves session notes, reads them back and searches their words alongside Markdown notes. | Your next session can find and reuse what you chose to keep. |
 
 ## Docs
 
@@ -44,6 +36,5 @@ Now your AIs remember things across sessions. `nova-cairn` saves what an AI has 
 | [SPEC-CAIRN](docs/SPEC-CAIRN.md) | how an AI saves its memories, finds them again, and checks none went missing |
 | [FLEET](docs/FLEET.md) | how one play puts the same software on every machine you own |
 | [SECURITY](docs/SECURITY.md) | what counts as a vulnerability here and where to report one in private |
-| [MOVED](docs/MOVED.md) | where the tools that once lived here went |
 
 [docs/TESTING.md](docs/TESTING.md) says how to test. Licence: [LICENSE](LICENSE).
