@@ -21,6 +21,26 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// childArg gates the helper child: the test binary re-executed with it as its only
+// argument exits 0 at once, standing in for /bin/true so no test needs a host binary.
+const childArg = "nova-sandbox-test-child"
+
+// child is the path of the test binary itself, run inside the wall as a no-op command.
+var child = os.Args[0]
+
+// withChild appends the no-op child to a wall's arguments, granting --read of the
+// test binary's directory, which is under no system root (a build cache on CI).
+func withChild(args ...string) []string {
+	return append(slices.Clone(args), "--read", filepath.Dir(child), "--", child, childArg)
+}
+
+func TestMain(m *testing.M) {
+	if len(os.Args) == 2 && os.Args[1] == childArg {
+		os.Exit(0)
+	}
+	os.Exit(m.Run())
+}
+
 var (
 	buildOnce sync.Once
 	binary    string
@@ -143,28 +163,28 @@ func TestExitStatusPassesThrough(t *testing.T) {
 func TestWallLineCwdAndMkdir(t *testing.T) {
 	t.Parallel()
 	job, out := scratch(t)
-	code, _, stderr := sandbox(t, "/usr", "--", "/bin/true")
+	code, _, stderr := sandbox(t, "/usr", withChild()...)
 	require.Equal(t, 0, code, stderr)
-	assert.Contains(t, stderr, "WALL grants=none net=open\n")
+	assert.Contains(t, stderr, "WALL read="+filepath.Dir(child)+" net=open\n")
 
-	code, _, stderr = sandbox(t, out, "--write", job, "--", "/bin/true")
+	code, _, stderr = sandbox(t, out, withChild("--write", job)...)
 	assert.Equal(t, 125, code, stderr)
-	assert.Contains(t, stderr, "WALL write="+job+" net=open\n")
+	assert.Contains(t, stderr, "WALL read="+filepath.Dir(child)+" write="+job+" net=open\n")
 	assert.Contains(t, stderr, "SANDBOX REFUSED reason=cwd")
 	assert.Contains(t, stderr, "cd "+job+" or add --read "+out)
 	assert.NotContains(t, stderr, "; run:")
 
-	code, _, stderr = sandbox(t, job, "--write", job, "--net-deny", "--", "/bin/true")
+	code, _, stderr = sandbox(t, job, withChild("--write", job, "--net-deny")...)
 	require.Equal(t, 0, code, stderr)
-	assert.Contains(t, stderr, "WALL write="+job+" net=denied\n")
+	assert.Contains(t, stderr, "WALL read="+filepath.Dir(child)+" write="+job+" net=denied\n")
 
 	missing := filepath.Join(job, "missing")
-	code, _, stderr = sandbox(t, job, "--write", missing, "--", "/bin/true")
+	code, _, stderr = sandbox(t, job, withChild("--write", missing)...)
 	assert.Equal(t, 2, code, stderr)
 	assert.Contains(t, stderr, "mkdir -p "+missing)
 	file := filepath.Join(job, "f")
 	require.NoError(t, os.WriteFile(file, nil, 0o600))
-	code, _, stderr = sandbox(t, job, "--write", file, "--", "/bin/true")
+	code, _, stderr = sandbox(t, job, withChild("--write", file)...)
 	assert.Equal(t, 2, code, stderr)
 	assert.NotContains(t, stderr, "mkdir")
 }
@@ -172,7 +192,7 @@ func TestWallLineCwdAndMkdir(t *testing.T) {
 func TestRefusalsExit2And126And127(t *testing.T) {
 	t.Parallel()
 	job, out := scratch(t)
-	code, _, stderr := sandbox(t, job, "--write", "relative", "--", "/bin/true")
+	code, _, stderr := sandbox(t, job, withChild("--write", "relative")...)
 	assert.Equal(t, 2, code, "a malformed invocation is 2")
 	assert.Contains(t, stderr, "nova-sandbox: bad_write: ")
 	script := filepath.Join(out, "x.sh")
@@ -318,7 +338,7 @@ func TestSystemdRunEscapeIsClosed(t *testing.T) {
 	if err != nil {
 		t.Skip("no systemd-run on this host")
 	}
-	if out, err := exec.Command(sr, "--user", "--wait", "--pipe", "/bin/true").CombinedOutput(); err != nil {
+	if out, err := exec.Command(sr, "--user", "--wait", "--pipe", child, childArg).CombinedOutput(); err != nil {
 		t.Skip("systemd --user is not available here: " + string(out))
 	}
 	job, out := scratch(t)

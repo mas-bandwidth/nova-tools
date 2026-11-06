@@ -17,7 +17,9 @@ export PATH="$PWD/bin:$PATH"
 Pass the connection string (DSN) with `--pg <dsn>` or `NOVA_PG_DSN`. Put the
 password in `NOVA_PG_PASSWORD`, or in the variable `NOVA_PG_PASSWORD_ENV` names,
 never in the DSN. `nova-config schema` prints the SQL to apply with psql
-(`nova-config schema | PGPASSWORD="$NOVA_PG_PASSWORD" psql "$NOVA_PG_DSN"`).
+(`nova-config schema | PGPASSWORD="$NOVA_PG_PASSWORD" psql "$NOVA_PG_DSN"`), connected as the
+database owner: the SQL creates schema `config`, so a role that owns only that schema (`nova_config` in a
+fleet) is refused with `permission denied for database`.
 
 This block starts a throwaway server on port 54329 (it needs `initdb`,
 `pg_ctl` and `createdb` on PATH). Run all the blocks in one shell.

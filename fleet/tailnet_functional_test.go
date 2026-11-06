@@ -18,7 +18,7 @@ func TestTailnetHTTP(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		log = append(log, r.Method+" "+r.URL.Path)
-		if r.Header.Get("Authorization") != "Bearer tskey-api-k-S" {
+		if r.Header.Get("Authorization") != "Bearer "+fakeKey("api", "k-S") {
 			w.WriteHeader(401)
 			return
 		}
@@ -44,7 +44,7 @@ func TestTailnetHTTP(t *testing.T) {
 				}
 			}
 			_ = json.Unmarshal(body, &req)
-			_, _ = io.WriteString(w, `{"id":"k1","key":"tskey-auth-k1-`+strings.Join(req.Capabilities.Devices.Create.Tags, ",")+`"}`)
+			_, _ = io.WriteString(w, `{"id":"k1","key":"`+fakeKey("auth", "k1-")+strings.Join(req.Capabilities.Devices.Create.Tags, ",")+`"}`)
 		default:
 			w.WriteHeader(404)
 		}
@@ -53,7 +53,7 @@ func TestTailnetHTTP(t *testing.T) {
 	old := tsBase
 	t.Cleanup(func() { tsBase = old })
 	tsBase = srv.URL
-	api := newTailnet("tskey-api-k-S")
+	api := newTailnet(fakeKey("api", "k-S"))
 	if got, err := policy(api, false); err != nil || got != "merged" {
 		t.Fatalf("policy = %q %v (%v)", got, err, log)
 	}
@@ -63,10 +63,10 @@ func TestTailnetHTTP(t *testing.T) {
 	if !strings.HasPrefix(doc, "// the human's own note\n{\"acls\": [{\"action\": \"accept\", \"src\": [\"*\"], \"dst\": [\"*:*\"]}], // allow all\n") || !strings.Contains(doc, `"tag:control":["autogroup:admin"]`) {
 		t.Errorf("policy written: %s", doc)
 	}
-	if k, err := mintKey(api, []string{"tag:nova"}); err != nil || k != "tskey-auth-k1-tag:nova" {
+	if k, err := mintKey(api, []string{"tag:nova"}); err != nil || k != fakeKey("auth", "k1-tag:nova") {
 		t.Errorf("mintKey = %q %v", k, err)
 	}
-	if _, err := policy(newTailnet("tskey-api-wrong"), false); err == nil || !strings.Contains(err.Error(), "HTTP 401: TAILSCALE_API_KEY was refused") || strings.Contains(err.Error(), "wrong") {
+	if _, err := policy(newTailnet(fakeKey("api", "wrong")), false); err == nil || !strings.Contains(err.Error(), "HTTP 401: TAILSCALE_API_KEY was refused") || strings.Contains(err.Error(), "wrong") {
 		t.Errorf("a refused token: %v", err)
 	}
 }

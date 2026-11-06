@@ -298,10 +298,10 @@ func TestWallCwdMkdirAndSignalText(t *testing.T) {
 
 	// The test process is not inside root, so this refuses before any exec.
 	var out, errb strings.Builder
-	code := run([]string{"--write", root, "--", "/usr/bin/true"}, &out, &errb, []string{"PATH=/usr/bin:/bin"})
+	code := run([]string{"--write", root, "--read", filepath.Dir(os.Args[0]), "--", os.Args[0]}, &out, &errb, []string{"PATH=/usr/bin:/bin"})
 	assert.Equal(t, 125, code, errb.String())
 	assert.Empty(t, out.String())
-	assert.Contains(t, errb.String(), "WALL write=")
+	assert.Contains(t, errb.String(), " write=")
 	assert.Contains(t, errb.String(), "net=open")
 	assert.Contains(t, errb.String(), "SANDBOX REFUSED reason=cwd")
 	assert.Contains(t, errb.String(), "or add --read")
