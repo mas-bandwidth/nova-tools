@@ -342,8 +342,9 @@ the row and reads the inventory again.
 1. **The row** (control node). `nova-config machine add` where the row is missing. A row that exists is never edited;
    one whose user is not `nova_join_user` stops the join by name. The address's SSH host key is pinned into the
    control node's `known_hosts`: the key you give as `nova_join_host_key` (from the provider's console; this proves
-   which machine it is), else what the address answers at this first connection (this proves only that it is the
-   same machine from here on).
+   which machine it is), else what the address answers at this first connection (trust on first use: this proves only that it is the
+   same machine from here on). A nova-config row write plus a join admits a machine to the fleet: the tailnet-peer
+   check and `nova_join_host_key` are the mitigation, and push access to the config store is the trust boundary.
 2. **The login** (Linux, connecting as root). The row's user: no password, in `nova_join_sudo_group` with
    passwordless sudo (`/etc/sudoers.d/90-nova-<login>`, checked by `visudo` before it lands), root's
    `authorized_keys` copied to it (or the control node's file `nova_join_authorized_keys` names), linger on, the

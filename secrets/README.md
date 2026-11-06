@@ -193,6 +193,31 @@ refused as `not-regular`, so no edit to the store can make a grant rewrite
 another seat's file. Pushing the store, or copying it to each machine, is yours;
 the tool needs no remote.
 
+### seat remove
+```sh
+nova-secrets seat remove db --store "$secrets_dir" --pins "$work/pins" || echo "exit $?"
+rm "$work/pins/db.ledger" "$work/pins/db.pub"
+nova-secrets seat remove db --store "$secrets_dir" --pins "$work/pins"
+nova-secrets seat list --store "$secrets_dir"
+```
+
+```text
+SECRETS SEAT REMOVE REFUSED reason=other: this node granted db values (/tmp/tmp.k3Jd9x/pins/db.ledger); delete that ledger and the pin /tmp/tmp.k3Jd9x/pins/db.pub first, then run again
+exit 2
+SECRETS SEAT REMOVE OK seat=db rule=removed files=1 committed; run: git -C /tmp/tmp.k3Jd9x/store push
+web file=yes rule=yes
+SECRETS SEAT LIST OK seats=1
+```
+
+`seat remove` takes a machine's rule and both its files out of the store in one
+commit, for a machine that has left the fleet. It is refused while
+`<pins>/<seat>.ledger` says this node granted the seat values, and for this
+node's own seat while any ledger remains, so a seat is never removed under a
+standing grant by accident; the two files to delete are named. Its key on the
+machine is not this tool's to find. A single value is removed from a seat with
+sops, which seals the file again to its own recipients:
+`sops unset "$secrets_dir/web.yaml" '["LABEL"]'`.
+
 ## Refusals
 
 Runtime refusals print one line, `SECRETS <VERB> REFUSED reason=<reason>: <why>`,
@@ -265,6 +290,9 @@ Limits:
 
 - The command can read, print, save or send its values, and so can its children.
 - The control node's seat holds every fleet value, so its key opens them all in that seat; keep it on that machine.
+- Anyone with push access to the store can write any file in it: a pushed `control.grants.yaml` holding a fleet name
+  stops the control node's `exec` (`duplicate-name`) and its grants until it is removed, and a re-sealed grants file
+  feeds a machine the pusher's value until the next grant rewrites it. Push access is the trust boundary.
 - Recipients are public keys, so anyone with push access can write a valid file for any seat: a pusher can replace
   the value a seat reads from its own file, and a grants file until the next grant rewrites it. The store's history
   is the record; review pushes to it like code, and keep push access to the people who hold values.
