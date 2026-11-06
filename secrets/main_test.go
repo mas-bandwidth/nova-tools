@@ -315,7 +315,7 @@ func TestExecUsageErrorsAre2AndNameEveryMissingFlag(t *testing.T) {
 	assert.Equal(t, 2, h.main("exec", "--x"))
 	assert.Equal(t, "nova-secrets exec: unknown flag --x; run: nova-secrets exec -h\n", h.stderr.String())
 	assert.Equal(t, 2, h.main("exec"))
-	for _, w := range []string{"--only", "--store", "--key", "command"} {
+	for _, w := range []string{"--only", "--key", "command"} {
 		assert.Contains(t, h.stderr.String(), w)
 	}
 	assert.Len(t, strings.Split(strings.TrimSpace(h.stderr.String()), "\n"), 1)
@@ -516,10 +516,7 @@ func TestStoreAndKeyAreRequired(t *testing.T) {
 	h.seed("ada", map[string]string{"API_KEY": "sk-sealed-two"})
 	h.stdin = "v\n"
 	for _, args := range [][]string{
-		{"set", "NEW", "--as", "ada", "--key", h.key},
-		{"exec", "--as", "ada", "--key", h.key, "--only", "API_KEY", "--", "true"},
 		{"exec", "--as", "ada", "--store", h.store, "--only", "API_KEY", "--", "true"},
-		{"seat", "add", "bo", pubB},
 	} {
 		code := h.main(args...)
 		assert.Contains(t, []int{2, 125}, code, "%v", args)

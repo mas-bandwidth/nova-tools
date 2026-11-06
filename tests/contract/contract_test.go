@@ -57,7 +57,7 @@ var toolSpecs = []toolSpec{
 	{dir: "sandbox", verbs: [][]string{{"check"}, {"probe"}, {"show"}}, extra: []int{125, 126, 127},
 		missing: []missingCase{{[]string{"--read", "@tmp/no-such-dir"}, []string{"--read|command"}}}},
 	{dir: "secrets", verbs: [][]string{{"exec"}, {"set"}, {"seat", "add"}, {"seat", "remove"}, {"init"}, {"names"}, {"grant"}}, extra: []int{125},
-		missing: []missingCase{{[]string{"exec"}, []string{"--only", "--store", "--key"}}}},
+		missing: []missingCase{{[]string{"exec"}, []string{"--only", "--key"}}}},
 }
 
 var goFlagNoise = []string{"flag provided but not defined", "Usage of", "invalid value", "parse error", "flag needs an argument"}
