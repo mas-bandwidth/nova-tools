@@ -27,10 +27,10 @@ by hand. Keep tests for these cases, which the guide does not show:
 - Redis down under a hook: one `reconnecting` line, then at most one a minute.
 
 Run the models with TLC, with Java on PATH and the jar pinned in
-[tla/tla2tools.sha256](../tla/tla2tools.sha256), at an absolute path:
+[tests/tla/tla2tools.sha256](../tests/tla/tla2tools.sha256), at an absolute path:
 
 ```sh
-tla/check.sh /opt/tla/tla2tools.jar bus/tla
+tests/tla/check.sh /opt/tla/tla2tools.jar bus/tla
 ```
 
 Each line starts with `ok` when the case came out as `bus/tla/CASES.tsv` says.

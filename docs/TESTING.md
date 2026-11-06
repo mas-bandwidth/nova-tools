@@ -56,8 +56,8 @@ The unit jobs run on Linux and macOS, and the functional job runs on Linux.
 Top-level `ci-ok` requires every job to succeed. Fork pull requests do not run
 on the repository's self-hosted machines.
 
-The `boundary` package checks layout, imports, dependencies and line budgets.
-The `contract` package builds each tool and checks help, unknown verbs and
+`tests/boundary` checks layout, imports, dependencies and the line budgets in
+`tests/BUDGET`. `tests/contract` builds each tool and checks help, unknown verbs and
 flags, missing inputs and allowed exits. Both run as part of `go test ./...`.
 Neither needs a live store. These tests cover the named rules, not every
 claim in a guide.
@@ -92,12 +92,12 @@ code. The examples below assume the jar is at `/opt/tla/tla2tools.jar`; use
 your own absolute path. Run every model, or name the model directories:
 
 ```sh
-tla/check.sh /opt/tla/tla2tools.jar
-tla/check.sh /opt/tla/tla2tools.jar bus/tla reserve/tla cairn/tla
+tests/tla/check.sh /opt/tla/tla2tools.jar
+tests/tla/check.sh /opt/tla/tla2tools.jar bus/tla reserve/tla cairn/tla
 ```
 
 The runner requires Java, Bash, GNU `timeout` and `xargs`, and the jar matching
-[tla/tla2tools.sha256](../tla/tla2tools.sha256). Use an absolute jar path because
+[tests/tla/tla2tools.sha256](../tests/tla/tla2tools.sha256). Use an absolute jar path because
 each case runs in a temporary copy of its model directory. CI takes that path
 from the repository variable `TLC_JAR`.
 

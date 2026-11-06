@@ -11,10 +11,10 @@ that opening a session twice with the same policy changes nothing, and that a
 session has one policy. Four broken cases must fail.
 
 Run the models with TLC, with Java on PATH and the jar pinned in
-[tla/tla2tools.sha256](../tla/tla2tools.sha256), at an absolute path:
+[tests/tla/tla2tools.sha256](../tests/tla/tla2tools.sha256), at an absolute path:
 
 ```sh
-tla/check.sh /opt/tla/tla2tools.jar cairn/tla
+tests/tla/check.sh /opt/tla/tla2tools.jar cairn/tla
 ```
 
 Each line starts with `ok` when the case came out as expected:

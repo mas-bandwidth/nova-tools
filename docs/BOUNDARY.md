@@ -3,7 +3,7 @@
 Each tool lives in one top-level directory and runs on its own. It should be
 useful without knowing the workflow of the team that built it.
 
-[The boundary tests](../boundary/boundary_test.go) check the repository layout,
+[The boundary tests](../tests/boundary/boundary_test.go) check the repository layout,
 package imports, dependencies and line budgets during `go test ./...`.
 They need no outside service.
 
@@ -13,9 +13,12 @@ The six binaries live in `bus`, `config`, `sandbox`, `secrets`, `reserve` and
 `cairn`. Each uses `package main`. The seventh piece, `fleet`, holds Ansible
 plays, Go tests and a package comment; it has no command-line program.
 
-Supporting directories are `tla`, `docs`, `boundary`, `contract` and `.github`.
-The root files are `README.md`, `LICENSE`, `go.mod`, `go.sum`, `.gitignore`,
-`.gitattributes` and `BUDGET`. Git metadata is allowed too.
+Beside them are `docs` and `tests`, and `.github` holds CI. `tests` holds the
+checks that span tools: `tests/boundary` (the layout test), `tests/contract` (the
+command-line contract), `tests/tla` (the TLC runner and the pinned jar
+checksum) and `tests/BUDGET`. Each tool's models stay in `<tool>/tla/`. The
+root files are `README.md`, `LICENSE`, `go.mod`, `go.sum`, `.gitignore` and
+`.gitattributes`. Git metadata is allowed too.
 
 Each tool's guide is its own `README.md`, with a `SPEC.md` beside it when it
 has tests or models to explain. Put shared documentation and images under
@@ -111,7 +114,7 @@ as named in `allowedTools`. Adding another requires updating that list too.
 
 ## Line budgets
 
-[BUDGET](../BUDGET) gives each Go directory a maximum number of non-test source
+[tests/BUDGET](../tests/BUDGET) gives each Go directory a maximum number of non-test source
 lines. Each line contains a directory name and an integer, separated by spaces.
 Comments, blank lines and duplicate names are rejected.
 
@@ -127,6 +130,6 @@ code is removed, and remove temporary headroom after the work it covers lands.
 ## Adding a tool
 
 Create a top-level `package main` directory with a `README.md` guide. Add the
-directory to `allowedTop`, `mainTools` and `BUDGET`. Explain the single job it
+directory to `allowedTop`, `mainTools` and `tests/BUDGET`. Explain the single job it
 does and why the existing tools do not already cover it. Keep its dependencies
 and examples small enough that a new reader can follow them.

@@ -68,4 +68,4 @@ your decision; this policy does not require indefinite silence.
 Watch the [releases](https://github.com/mas-bandwidth/nova-tools/releases) for
 fixes and affected versions. Installed binaries do not update themselves.
 Rebuild from a verified checkout or explicitly install a selected release with
-the [fleet install play](../fleet/README.md#install-a-release).
+the [fleet install play](../fleet/README.md).

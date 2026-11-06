@@ -10,10 +10,10 @@ capacity. `CASES.tsv` has 16 cases. The models do not cover what a platform does
 to a child process when its parent is killed.
 
 Run the models with TLC, with Java on PATH and the jar pinned in
-[tla/tla2tools.sha256](../tla/tla2tools.sha256), at an absolute path:
+[tests/tla/tla2tools.sha256](../tests/tla/tla2tools.sha256), at an absolute path:
 
 ```sh
-tla/check.sh /opt/tla/tla2tools.jar reserve/tla
+tests/tla/check.sh /opt/tla/tla2tools.jar reserve/tla
 ```
 
 Each line starts with `ok` when the case came out as `reserve/tla/CASES.tsv` says.
