@@ -146,8 +146,9 @@ Limits:
 - Only jobs that use nova-reserve with the same directory share the limit.
 - The directory must be on a local disk. Keep it out of places that clean
   temporary files, or the stored capacity is lost.
-- On macOS and the BSDs, killing nova-reserve with SIGKILL can leave its
-  command running with no slot. On Linux and Windows the command ends too.
+- On macOS and the BSDs, a watchdog process (nova-reserve --watch) polls once a
+  second and kills the command's process group after a SIGKILL of nova-reserve.
+  Linux uses Pdeathsig and Windows a job object.
 - On Windows a hold notices its parent's exit by PID only; a reused PID can
   keep an untimed hold alive.
 - Release builds cover Linux amd64 and arm64, macOS arm64 and Windows amd64.

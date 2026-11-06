@@ -43,13 +43,22 @@ func osLock(path string, exclusive bool) (func(), bool, error) {
 	return func() { _ = f.Close() }, true, nil
 }
 
-// tie starts cmd with this OS's tie to nova-reserve (sysAttr). On Linux that is
-// Pdeathsig, which fires when the starting thread ends, so the thread stays
-// locked to this goroutine, which waits for the command.
+// tie starts cmd with this OS's tie to nova-reserve (sysAttr, watchdog). On Linux
+// that is Pdeathsig, which fires when the starting thread ends, so the thread
+// stays locked to this goroutine, which waits for the command.
 func tie(cmd *exec.Cmd) (func(), error) {
 	runtime.LockOSThread()
 	cmd.SysProcAttr = sysAttr()
-	return func() {}, cmd.Start()
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+	untie, err := watchdog(cmd.Process.Pid)
+	if err != nil {
+		// ignored: a command with no watchdog is not left running
+		_ = cmd.Process.Kill()
+		return nil, err
+	}
+	return untie, nil
 }
 
 // forward passes an interrupt to the command, or to its process group.
