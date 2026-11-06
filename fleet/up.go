@@ -12,19 +12,23 @@ import (
 	"strings"
 )
 
-const upHelp = `nova-fleet up [--check] [--user LOGIN] --tools TAG|DIR [--runners URL [--runner-count N]] <name>=<address>[/<os>/<arch>]...
+const upHelp = `nova-fleet up [--check] [--user LOGIN] [--grant NAME[,NAME]] --tools TAG|DIR [--runners URL [--runner-count N]] <name>=<address>[/<os>/<arch>]...
 
 From nothing to a fleet, in a fixed order (fleet/README.md, "up"):
-  1 control   nova-fleet check: the helpers, the tailnet, the store, key and seat, the secrets
-  2 first     the first machine named: the tailnet, PostgreSQL, Redis, nova-config's tables
-  3 join      every machine joins (the first too): its row, login, tailnet, seat
-  4 store     the secrets store pushed, so the machines' clones see their seats
-  5 tools     the nova-tools release (TAG) or local build (DIR) on every machine
-  6 services  the service units
-  7 runners   GitHub Actions runners (only with --runners)
-  8 bus       a message sent and read back over the bus
+   1 control   nova-fleet check: the helpers, the tailnet, the store, key and seat, the secrets
+   2 first     the first machine named: the tailnet, PostgreSQL, Redis, nova-config's tables
+   3 join      every machine joins (the first too): its row, login, tailnet, seat
+   4 grant     nova-secrets grant: the --grant values written to each machine's seat
+   5 store     the secrets store pushed, so the machines' clones see their seats and grants
+   6 refresh   secrets-refresh: each machine's clone pulled on a timer
+   7 health    the self-healing guards and the disk report (Linux)
+   8 tools     the nova-tools release (TAG) or local build (DIR) on every machine
+   9 services  the service units
+  10 runners   GitHub Actions runners (only with --runners)
+  11 bus       a message sent and read back over the bus
   <name>=<address>  a machine, reached at first as root over ssh at <address>; os/arch default linux/amd64
   --user LOGIN      the login join makes on each machine (default nova)
+  --grant NAMES     the values each machine's seat is granted (default NOVA_BUS_PASSWORD)
   --tools TAG|DIR   a release tag (vX.Y.Z) or a directory laid out as a release
   --runners URL     https://github.com/<owner>/<repo> or https://github.com/<org>
   --runner-count N  runners per machine (default 1)
@@ -40,6 +44,7 @@ type machine struct{ name, address, os, arch string }
 type upRun struct {
 	check                bool
 	user, tools, runners string
+	grant                string
 	runnerCount          int
 	machines             []machine
 	dir, store, seat     string
@@ -49,7 +54,7 @@ type upRun struct {
 }
 
 func parseUp(args []string, stderr io.Writer) (*upRun, int) {
-	u := &upRun{user: "nova", runnerCount: 1, stderr: stderr}
+	u := &upRun{user: "nova", grant: "NOVA_BUS_PASSWORD", runnerCount: 1, stderr: stderr}
 	refuse := func(format string, a ...any) (*upRun, int) {
 		fmt.Fprintf(stderr, "nova-fleet up: %s; run: nova-fleet up -h\n", fmt.Sprintf(format, a...))
 		return nil, 2
@@ -57,7 +62,7 @@ func parseUp(args []string, stderr io.Writer) (*upRun, int) {
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		flag, val, hasVal := strings.Cut(a, "=")
-		takes := map[string]*string{"--user": &u.user, "--tools": &u.tools, "--runners": &u.runners}
+		takes := map[string]*string{"--user": &u.user, "--tools": &u.tools, "--runners": &u.runners, "--grant": &u.grant}
 		switch {
 		case a == "-h" || a == "--help":
 			return nil, -1
@@ -107,6 +112,9 @@ func parseUp(args []string, stderr io.Writer) (*upRun, int) {
 	}
 	if len(missing) > 0 {
 		return refuse("missing %s", strings.Join(missing, " and "))
+	}
+	if u.grant == "" || slices.Contains(strings.Split(u.grant, ","), "") {
+		return refuse("--grant wants NAME[,NAME], got %q", u.grant)
 	}
 	if u.runners != "" && runnerScope(u.runners) == "" {
 		return refuse("--runners wants https://github.com/<owner>/<repo> or https://github.com/<org>, got %s", u.runners)
@@ -263,7 +271,24 @@ func (u *upRun) steps() int {
 		mark("join", m)
 	}
 
-	// 4. the store pushed: the seats join added reach the machines' clones.
+	// 4. each machine's seat granted the values its services open, written encrypted to
+	// that seat; the operator is never one of its recipients. --check reads them here.
+	if _, why, c := outCmd(u.bin["nova-secrets"], u.secrets(strings.Split(u.grant, ","), "true")[1:], os.Environ()); u.check && c != 0 {
+		fmt.Fprintf(u.stderr, "nova-fleet up: seat %s cannot read %s to grant it: %s\n", u.seat, u.grant, oneLine(why))
+		return fail("grant", c)
+	}
+	for _, m := range u.machines {
+		if u.check {
+			u.say("UP GRANT %s WOULD-GRANT %s (check: nothing changed)", m.name, u.grant)
+		} else if c, err := runCmd(u.bin["nova-secrets"], []string{"grant", u.grant, "--to", m.name}, os.Environ()); err != nil || c != 0 {
+			return fail("grant "+m.name, max(c, 2))
+		} else {
+			u.say("UP GRANT %s OK %s", m.name, u.grant)
+		}
+		mark("grant", m)
+	}
+
+	// 5. the store pushed: the seats join added and the grants reach the machines' clones.
 	if _, _, c := outCmd(u.bin["git"], []string{"-C", u.store, "rev-parse", "--abbrev-ref", "@{u}"}, os.Environ()); c != 0 {
 		u.say("UP STORE NOTE %s has no upstream: push it where the machines clone it from", u.store)
 	} else if u.check {
@@ -274,7 +299,21 @@ func (u *upRun) steps() int {
 		u.say("UP STORE OK pushed %s", u.store)
 	}
 
-	// 5-7. tools, services, runners on every machine.
+	// 6-7. each clone pulled on a timer (cloned from the store's upstream where there is
+	// none), then the guards.
+	repo, _, _ := outCmd(u.bin["git"], []string{"-C", u.store, "ls-remote", "--get-url"}, os.Environ())
+	refresh := map[string][]string{}
+	if repo = strings.TrimSpace(repo); repo != "" && repo != "origin" {
+		refresh["secrets-refresh"] = []string{"-e", "nova_secrets_repo=" + repo}
+	}
+	for _, p := range []string{"secrets-refresh", "health"} {
+		if c := u.play(p, false, pg, refresh[p]...); c != 0 {
+			return fail(strings.TrimPrefix(p, "secrets-"), c)
+		}
+		mark(strings.TrimPrefix(p, "secrets-"), u.machines...)
+	}
+
+	// 8-10. tools, services, runners on every machine.
 	tools := []string{"-e", "nova_tools_version=" + u.tools}
 	if fi, err := os.Stat(u.tools); err == nil && fi.IsDir() {
 		abs, _ := filepath.Abs(u.tools)
@@ -301,7 +340,7 @@ func (u *upRun) steps() int {
 		mark("runners", u.machines...)
 	}
 
-	// 8. the bus: a message to this control node's own inbox, read back.
+	// 11. the bus: a message to this control node's own inbox, read back.
 	nonce := make([]byte, 8)
 	_, _ = rand.Read(nonce)
 	word := "up-" + hex.EncodeToString(nonce)
@@ -359,8 +398,7 @@ func runUp(args []string, stdout, stderr io.Writer) int {
 	}
 	defer os.RemoveAll(dir)
 	u.dir = dir
-	script := fmt.Sprintf("#!/bin/sh\nexec '%s' inventory \"$@\"\n", strings.ReplaceAll(u.bin["nova-config"], "'", `'\''`))
-	if err := os.WriteFile(filepath.Join(dir, "inventory"), []byte(script), 0o700); err != nil {
+	if _, err := inventoryScript(dir, u.bin["nova-config"]); err != nil {
 		fmt.Fprintf(stderr, "nova-fleet up: write the inventory script: %v\n", err)
 		return 2
 	}
