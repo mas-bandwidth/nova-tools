@@ -21,10 +21,8 @@ import (
 	"unicode/utf8"
 )
 
-// memory searches the notes already written (markdown) and checks a draft against them.
-// The index (BM25 over paragraphs) is rebuilt in memory every run, so there
-// is nothing to go stale and nothing is ever written. Every ordering is total:
-// ties break by chunk id, so the same corpus gives the same bytes.
+// memory searches the notes already written and checks a draft against them. The index is rebuilt
+// every run and never written; ties break by chunk id, so the same corpus gives the same bytes.
 
 const (
 	schema   = "nova-memory/2" // the token scheme: normalizer + tokenizer + chunking
@@ -187,11 +185,8 @@ func (r *roots) load(root string) (files []string, texts map[string]string, size
 	return files, texts, size, nil
 }
 
-// walk lists what memory reads under root, as sorted slash paths: the markdown
-// notes, and the entry files of any store in the tree (.../entries/<session>/<id>.json).
-// A store's own sessions/<session>.md is not a note: its words are in the entries.
-// It skips .git, anything excluded, and anything that is not a regular file (a
-// symlink is never followed).
+// walk lists what memory reads under root, as sorted slash paths: the markdown notes, and the
+// entry files of any store in the tree (a store's sessions/<session>.md is not a note). It skips .git, excluded paths and symlinks.
 func (r *roots) walk(root string) (notes, entries []string, err error) {
 	err = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		rel, _ := filepath.Rel(root, p)
@@ -383,8 +378,7 @@ func (c *corpus) query(text string) []hit {
 	return hits
 }
 
-// retrieve is the k best files for text: each file's best paragraph, fused= 1/(60+rank).
-// A tail of hits whose score rounds to 0.00 is dropped unless every hit does.
+// retrieve is the k best files for text; a tail scoring 0.00 is dropped unless every hit does.
 func (c *corpus) retrieve(text string, k int) []hit {
 	var out []hit
 	seen := map[string]bool{}
@@ -414,8 +408,8 @@ func (c *corpus) printHits(w io.Writer, head, prefix string, hits []hit) {
 		if e := ch.entry; e != nil { // what receipt needs to fetch the entry
 			where = fmt.Sprintf(" store=%s session=%s entry=%s stamp=%s", dash(ch.store), dash(e.Session), dash(e.ID), dash(e.Stamp))
 		}
-		fmt.Fprintf(w, "%s HIT %srank=%d score=%.2f score-channel=bm25 fused=%.5f class=%s name=%s type=%s root=%s%s: %s:%d %q\n",
-			head, prefix, i+1, h.score, 1/(60+float64(h.rank)), dash(ch.class), dash(ch.fmName), dash(ch.fmType), dash(ch.root), where, esc(ch.file), ch.line, truncate(ch.text, 120))
+		fmt.Fprintf(w, "%s HIT %srank=%d score=%.2f score-channel=bm25 class=%s name=%s type=%s root=%s%s: %s:%d %q\n",
+			head, prefix, i+1, h.score, dash(ch.class), dash(ch.fmName), dash(ch.fmType), dash(ch.root), where, esc(ch.file), ch.line, truncate(ch.text, 120))
 	}
 }
 
@@ -537,17 +531,26 @@ func runMemory(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "SEARCH OK hits=%d k=%d channels=bm25 files=%d entries=%d skipped=%d chunks=%d: query=%s\n", len(hits), *k, len(c.files), c.entries, len(c.skipped), len(c.chunks), strconv.Quote(q))
 		fmt.Fprintf(stdout, "SEARCH CAL %s probe=unrelated-control\n", cal)
 		c.printHits(stdout, "SEARCH", "", hits)
-		fmt.Fprintf(stdout, "SEARCH NOTE %s\n", noteLex)
+		if len(hits) == 0 {
+			fmt.Fprintf(stdout, "SEARCH NOTE %s\n", noteLex)
+		}
 		return 0
 	}
 	fmt.Fprintf(stdout, "MEMORY OK candidates=%d source=%s k=%d channels=bm25 files=%d entries=%d skipped=%d chunks=%d\n", len(candidates), field(source), *k, len(c.files), c.entries, len(c.skipped), len(c.chunks))
 	fmt.Fprintf(stdout, "MEMORY CAL %s probe=unrelated-control\n", cal)
+	dated, missed := false, false
 	for i, cand := range candidates {
 		fmt.Fprintf(stdout, "MEMORY CAND n=%d: %s\n", i+1, strconv.Quote(truncate(strings.TrimSpace(cand), 100)))
-		c.printHits(stdout, "MEMORY", fmt.Sprintf("cand=%d ", i+1), c.retrieve(cand, *k))
+		hits := c.retrieve(cand, *k)
+		missed = missed || len(hits) == 0
+		dated = dated || slices.ContainsFunc(hits, func(h hit) bool { return c.chunks[h.chunk].class == "log" })
+		c.printHits(stdout, "MEMORY", fmt.Sprintf("cand=%d ", i+1), hits)
 	}
-	fmt.Fprintf(stdout, "MEMORY NOTE %s\n", noteLex)
-	fmt.Fprintln(stdout, "MEMORY NOTE this verb asserts nothing and never exits 1: it hands you k receipts and the verdict stays yours")
-	fmt.Fprintln(stdout, "MEMORY NOTE a hit in a dated log class is evidence the event was recorded, not that the lesson was banked — the class on each receipt is the distinction")
+	if missed {
+		fmt.Fprintf(stdout, "MEMORY NOTE %s\n", noteLex)
+	}
+	if dated {
+		fmt.Fprintln(stdout, "MEMORY NOTE a hit in a dated log class is evidence the event was recorded, not that the lesson was banked — the class on each receipt is the distinction")
+	}
 	return 0
 }

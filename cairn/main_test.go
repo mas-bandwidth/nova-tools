@@ -275,11 +275,14 @@ func TestMemory(t *testing.T) {
 	assert.Equal(t, 0, code)
 	assert.Contains(t, out, `SEARCH OK hits=2 k=2 channels=bm25 files=6 entries=0 skipped=0 chunks=20: query="lantern brass"`)
 	assert.Contains(t, out, "SEARCH CAL score=2.54 score-channel=bm25 probe=unrelated-control")
-	assert.Contains(t, out, "SEARCH HIT rank=1 score=3.88 score-channel=bm25 fused=0.01667 class=notes name=- type=- root=testdata/corpus: notes/index-notes.md:8 ")
-	assert.Contains(t, out, "SEARCH HIT rank=2 score=3.29 score-channel=bm25 fused=0.01639 class=notes name=lantern-care type=measured")
+	assert.Contains(t, out, "SEARCH HIT rank=1 score=3.88 score-channel=bm25 class=notes name=- type=- root=testdata/corpus: notes/index-notes.md:8 ")
+	assert.Contains(t, out, "SEARCH HIT rank=2 score=3.29 score-channel=bm25 class=notes name=lantern-care type=measured")
+	assert.NotContains(t, out, "fused=")
+	assert.NotContains(t, out, "SEARCH NOTE", "a search with hits needs no note")
 
 	_, out, _ = do(t, "", "memory", "search", "--root", c, "--channels", "bm25", "--k", "2", "zzzzqq")
 	assert.Contains(t, out, "SEARCH MISS every query term is out of vocabulary for this corpus")
+	assert.Contains(t, out, "SEARCH NOTE lexical only", "a miss is where the note changes the next move")
 
 	draft := "The lantern glazing needs clean cloths for brass and glass every week.\n\nToo short.\n"
 	code, out, _ = do(t, draft, "memory", "check", "--root", c, "--channels", "bm25", "--k", "1", "-")
@@ -287,6 +290,12 @@ func TestMemory(t *testing.T) {
 	assert.Contains(t, out, "MEMORY OK candidates=1 source=- k=1 channels=bm25 files=6 entries=0 skipped=0 chunks=20")
 	assert.Contains(t, out, "MEMORY HIT cand=1 rank=1 ")
 	assert.Contains(t, out, "notes/lantern.md:")
+	assert.NotContains(t, out, "MEMORY NOTE", "no dated-log hit, so no note")
+
+	code, out, _ = do(t, "zzzzqq wwwwww vvvvvv uuuuuu.\n", "memory", "check", "--root", c, "--channels", "bm25", "--k", "1", "-")
+	assert.Equal(t, 0, code)
+	assert.Contains(t, out, "MEMORY MISS")
+	assert.Contains(t, out, "MEMORY NOTE lexical only", "a check miss explains itself like a search miss")
 }
 
 // TestSearchCalBelowExactHit: the unrelated control must score below an exact

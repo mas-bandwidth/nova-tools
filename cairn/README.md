@@ -75,9 +75,9 @@ nova-cairn memory check --root notes --root store --channels bm25 --k 2 draft.tx
 
 ```text
 SEARCH OK hits=1 k=3 channels=bm25 files=2 entries=1 skipped=0 chunks=2: query="brass lantern"
-SEARCH HIT rank=1 score=1.39 score-channel=bm25 fused=0.01667 class=. name=lantern type=note root=notes: lantern.md:6 "The brass lantern lights the harbor at night."
-MEMORY HIT cand=1 rank=1 score=3.02 score-channel=bm25 fused=0.01667 class=. name=lantern type=note root=notes: lantern.md:6 "The brass lantern lights the harbor at night."
-MEMORY HIT cand=1 rank=2 score=0.18 score-channel=bm25 fused=0.01639 class=entries name=- type=- root=store store=store session=2026-11-05 entry=lesson-1 stamp=2026-11-05T23:45:59.433149355Z: entries/2026-11-05/lesson-1.json:1 "Read the file before claiming what it says."
+SEARCH HIT rank=1 score=1.39 score-channel=bm25 class=. name=lantern type=note root=notes: lantern.md:6 "The brass lantern lights the harbor at night."
+MEMORY HIT cand=1 rank=1 score=3.02 score-channel=bm25 class=. name=lantern type=note root=notes: lantern.md:6 "The brass lantern lights the harbor at night."
+MEMORY HIT cand=1 rank=2 score=0.18 score-channel=bm25 class=entries name=- type=- root=store store=store session=2026-11-05 entry=lesson-1 stamp=2026-11-05T23:45:59.433149355Z: entries/2026-11-05/lesson-1.json:1 "Read the file before claiming what it says."
 ```
 
 `OK`, `CAND`, `NOTE` and `CAL` lines are partly left out. `search` and `check` need
@@ -90,7 +90,6 @@ reads stdin) and never exits 1. `--exclude <glob>` skips paths and repeats.
 |---|---|
 | `CAL` (not shown above) | The score of a fixed unrelated sentence. A hit near it is weak. A `MISS` line means no query term occurs in the corpus. |
 | `rank`, `score`, `score-channel` | Place in the list from 1, the BM25 score, and `bm25`. |
-| `fused` | `1/(60+r)`, where `r` is the paragraph's place among all scoring paragraphs, from 0. |
 | `class` | First directory of the path under the root, or `.`. |
 | `name`, `type`, `root` | The note's frontmatter `name:` and `type:` (or `-`), and its `--root`. |
 | `store`, `session`, `entry`, `stamp` | Entry hits only: pass the first three to `receipt` to read the entry. |
