@@ -65,7 +65,7 @@
         that: lookup('ansible.builtin.env', 'TAILSCALE_AUTHKEY') | length > 0
         fail_msg: >-
           {{ inventory_hostname }}: tailnet state {{ ts_state }} (tags {{ ts_self.Tags | default([]) }}, want {{ ts_tags }}) and no
-          TAILSCALE_AUTHKEY in the environment; run the play under nova-secrets exec --only TAILSCALE_AUTHKEY (docs/FLEET.md, "tailscale.yml")
+          TAILSCALE_AUTHKEY in the environment; run the play under nova-secrets exec --only TAILSCALE_AUTHKEY (fleet/README.md, "tailscale")
         quiet: true
       when: ts_join and not ansible_check_mode
 

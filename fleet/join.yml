@@ -1,4 +1,7 @@
-# join.yml: a new machine joins the fleet (docs/FLEET.md, "join.yml"). In order, each play only after the one before
+# purpose: a new machine joins the fleet: its row, its login, the tailnet, the tools a seat needs, its seat
+# argument: nova_join_host
+#
+# join.yml: a new machine joins the fleet (fleet/README.md, "join"). In order, each play only after the one before
 # passed, all idempotent, so a join that stopped is resumed by running the same command again:
 #
 #   1. the machine row (control node): `nova-config machine add` where the row of nova_join_host is missing, then the
@@ -50,7 +53,7 @@
     - name: nova-config's store is in the environment
       ansible.builtin.assert:
         that: lookup('ansible.builtin.env', 'NOVA_PG_DSN') | length > 0
-        fail_msg: "JOIN STOP {{ nova_join_host }} at the machine row: no NOVA_PG_DSN in the environment (the password in NOVA_PG_PASSWORD, under nova-secrets exec; docs/FLEET.md, \"join.yml\")"
+        fail_msg: "JOIN STOP {{ nova_join_host }} at the machine row: no NOVA_PG_DSN in the environment (the password in NOVA_PG_PASSWORD, under nova-secrets exec; fleet/README.md, \"join\")"
         quiet: true
 
     - name: the machine row now

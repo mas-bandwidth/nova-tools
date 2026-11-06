@@ -225,3 +225,16 @@ func TestLocalVersion(t *testing.T) {
 		t.Error("no SHA256SUMS: want an error")
 	}
 }
+
+// Every play up runs is in the binary.
+func TestUpPlaysAreEmbedded(t *testing.T) {
+	for _, p := range []string{"tailscale", "postgres", "redis", "join", "install", "services", "github-runners"} {
+		if !slices.Contains(plays(tree), p) {
+			t.Errorf("up runs %s.yml, which is not embedded", p)
+		}
+	}
+	b, _ := os.ReadFile("join.yml")
+	if header(string(b), "argument") != "nova_join_host" {
+		t.Error("join.yml does not take its machine as the argument (# argument: nova_join_host)")
+	}
+}
