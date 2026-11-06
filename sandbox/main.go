@@ -30,11 +30,12 @@ const runFlags = `  --read <dir>          readable and executable, recursively. 
   --keep-fds            do not close inherited descriptors above stderr before exec.
                         Without it every fd > 2 is closed, so an inherited open socket
                         or file cannot be used inside the wall.
+  --env <name>          pass NAME from the environment, never as an argument. Repeatable. PATH, HOME, LANG, TERM pass without it; unset is refused.
 `
 
 const usage = `nova-sandbox: run one command inside a kernel-enforced wall.
 
-  nova-sandbox [--read <dir>]... [--write <dir>]... [--net-deny [--net-allow <host:port>]...] [--gpu] [--unix] [--keep-fds] -- <cmd> <args...>
+  nova-sandbox [--read <dir>]... [--write <dir>]... [--net-deny [--net-allow <host:port>]...] [--gpu] [--unix] [--keep-fds] [--env <name>]... -- <cmd> <args...>
   nova-sandbox show [the same flags] [-- <cmd> <args...>]
   nova-sandbox check
   nova-sandbox probe
@@ -43,9 +44,9 @@ const usage = `nova-sandbox: run one command inside a kernel-enforced wall.
 ` + runFlags + `
 Beyond the system roots, only what you name is reachable. Every path must be absolute,
 exist and be a directory; none is created. The command must lie under a system root,
-a --read or a --write; it runs with argv[0] exactly as you give it. The environment and
-working directory pass through unchanged: point TMPDIR and HOME inside a --write, and
-start from a directory the wall grants.
+a --read or a --write; it runs with argv[0] exactly as you give it. cd into a directory
+the wall grants, and point HOME and TMPDIR inside a --write. Pass TMPDIR with --env;
+PATH, HOME, LANG and TERM are kept, and an unset --env name is refused.
 
 show    prints the wall a flag set would apply here, without running anything.
 check   says which backend this machine has and whether it works.
@@ -59,10 +60,10 @@ why); 126 the command is not executable; 127 it is on no PATH entry.
 
 const showUsage = `nova-sandbox show: print the wall a flag set would apply here, without running anything.
 
-  nova-sandbox show [--read <dir>]... [--write <dir>]... [--net-deny [--net-allow <host:port>]...] [--gpu] [--unix] [--keep-fds] [-- <cmd> <args...>]
+  nova-sandbox show [--read <dir>]... [--write <dir>]... [--net-deny [--net-allow <host:port>]...] [--gpu] [--unix] [--keep-fds] [--env <name>]... [-- <cmd> <args...>]
 
-The flags are the run flags (nova-sandbox -h), checked the same way. The command is
-optional; given, its resolved path and argv are shown too.
+The flags are the run flags (nova-sandbox -h), checked the same way (--env need not be
+set). The command is optional; given, its resolved path and argv are shown too.
 
 Output: one block on stdout, one rule per line in the order applied: paths, net,
 seccomp rules by name, scope, descriptors; on macOS the generated profile, verbatim.
@@ -121,7 +122,7 @@ func run(args []string, stdout, stderr io.Writer, env []string) int {
 	switch v := args[0]; v {
 	case "help":
 		switch {
-		case len(args) == 1:
+		case len(args) == 1 || (len(args) == 2 && isHelp(args[1])):
 			fmt.Fprint(stdout, usage)
 		case len(args) == 2 && verbUsage[args[1]] != "":
 			fmt.Fprint(stdout, verbUsage[args[1]])
@@ -143,7 +144,7 @@ func run(args []string, stdout, stderr io.Writer, env []string) int {
 		if v == "check" {
 			return check(stdout)
 		}
-		return probe(stdout, env)
+		return probe(stdout, passedEnv(env, nil))
 	case "show":
 		if slices.ContainsFunc(beforeDashes(args[1:]), isHelp) {
 			fmt.Fprint(stdout, showUsage)
@@ -160,9 +161,10 @@ func run(args []string, stdout, stderr io.Writer, env []string) int {
 		fmt.Fprint(stdout, usage)
 		return 0
 	}
-	w, bad := parseAndBuild(args, true)
+	w, pass, bad := parseAndBuild(args, true)
+	bad = append(bad, missingEnv(env, pass)...)
 	if len(bad) == 0 {
-		bad = execWall(w, env)
+		bad = execWall(w, passedEnv(env, pass))
 	}
 	return report(stderr, "", bad)
 }
@@ -176,7 +178,7 @@ func beforeDashes(args []string) []string {
 }
 
 // usageReasons are the refusals that mean the invocation itself is malformed.
-var usageReasons = []string{"bad_flag", "bad_value", "no_command", "bad_read", "bad_write", "bad_net", "bad_gpu"}
+var usageReasons = []string{"bad_flag", "bad_value", "no_command", "bad_read", "bad_write", "bad_net", "bad_gpu", "bad_env"}
 
 // report prints the refusals and returns the exit status. A malformed invocation is one
 // CLI-STYLE line naming every problem at once, exit 2. Otherwise each refusal is a
@@ -209,13 +211,13 @@ func report(stderr io.Writer, verb string, bad []refusal) int {
 
 // parseAndBuild parses and checks the flags, and reports every problem in both at
 // once: a bad path is named beside a missing --.
-func parseAndBuild(args []string, needCommand bool) (*wall, []refusal) {
+func parseAndBuild(args []string, needCommand bool) (*wall, []string, []refusal) {
 	s, bad := parseArgs(args, needCommand)
 	if len(bad) == 1 && bad[0].reason == "bad_value" {
-		return nil, bad // a swallowed value: nothing else is reported
+		return nil, nil, bad // a swallowed value: nothing else is reported
 	}
 	w, more := build(s, runtime.GOOS)
-	return w, append(bad, more...)
+	return w, s.passEnv, append(bad, more...)
 }
 
 // texts is each refusal as "reason: text", for the one malformed-invocation line.
@@ -254,18 +256,18 @@ func parseArgs(args []string, needCommand bool) (s spec, bad []refusal) {
 			s.keepFDs = true
 			continue
 		}
-		dst := map[string]*[]string{"--read": &s.reads, "--write": &s.writes, "--net-allow": &s.netAllow}[a]
+		dst := map[string]*[]string{"--read": &s.reads, "--write": &s.writes, "--net-allow": &s.netAllow, "--env": &s.passEnv}[a]
 		switch {
 		case dst == nil:
-			bad = append(bad, refuse("bad_flag", "unknown flag %s; the flags are --read --write --net-deny --net-allow --gpu --unix --keep-fds", a))
+			bad = append(bad, refuse("bad_flag", "unknown flag %s; the flags are --read --write --net-deny --net-allow --gpu --unix --keep-fds --env", a))
 		case i+1 >= len(args):
 			bad = append(bad, refuse("bad_flag", "%s wants a value", a))
 		case strings.HasPrefix(args[i+1], "--"):
 			// The flag swallowed the next flag, or the --: every later complaint would be
 			// a consequence, so this is the only one.
 			want := "an absolute path"
-			if a == "--net-allow" {
-				want = "host:port"
+			if a == "--net-allow" || a == "--env" {
+				want = map[string]string{"--net-allow": "host:port", "--env": "a name"}[a]
 			}
 			return s, []refusal{refuse("bad_value", "%s wants %s, got %q", a, want, args[i+1])}
 		default:
@@ -296,7 +298,7 @@ func check(stdout io.Writer) int {
 
 // show prints the wall the flags would apply here and runs nothing.
 func show(args []string, stdout, stderr io.Writer) int {
-	w, bad := parseAndBuild(args, false)
+	w, _, bad := parseAndBuild(args, false)
 	if len(bad) > 0 { // the same codes as a run: 2 malformed, 126/127 the command alone
 		return report(stderr, "show", bad)
 	}
