@@ -149,7 +149,7 @@ the helpers and is on a tailnet, two lines are left, and the run ends
 
 ```text
 CHECK MISSING tag:control: sudo tailscale up --advertise-tags=tag:control --auth-key=<a key allowed that tag>  # or tag this node in the admin console: ...
-CHECK MISSING TAILSCALE_AUTHKEY: nova-secrets set TAILSCALE_AUTHKEY --as here  # the value on stdin; the read said: SECRETS EXEC REFUSED reason=no-seat: ...
+CHECK MISSING TAILSCALE_AUTHKEY: nova-secrets set TAILSCALE_AUTHKEY --as here  # the value on stdin; the read said: SECRETS EXEC REFUSED reason=no-name: ...
 ```
 
 Each `CHECK MISSING` line ends with the command that fixes it. These two are
@@ -261,7 +261,7 @@ nova-fleet check --runners https://github.com/OWNER/REPO | grep -E 'gh|GITHUB_RU
 ```text
 CHECK FAILED missing=3
 CHECK OK gh <version>
-CHECK MISSING GITHUB_RUNNER_TOKEN: nova-secrets set GITHUB_RUNNER_TOKEN --as here  # the value on stdin; the read said: SECRETS EXEC REFUSED reason=no-seat: ...
+CHECK MISSING GITHUB_RUNNER_TOKEN: nova-secrets set GITHUB_RUNNER_TOKEN --as here  # the value on stdin; the read said: SECRETS EXEC REFUSED reason=no-name: ...
 ```
 
 The `CHECK FAILED` line is on stderr, so the grep leaves it through; the
@@ -344,7 +344,7 @@ nova-secrets exec --only NOVA_BUS_PASSWORD --as db -- true || echo "exit $?"
 
 ```text
 SECRETS SET OK as=here name=NOVA_BUS_PASSWORD file=here.yaml committed; run: git -C <store> push
-SECRETS SEAT ADD OK seat=db committed next=nova-secrets\x20set\x20DB_PASSWORD\x20--as\x20db\x20--store\x20/tmp/tmp.k3Jd9x/store\x20--key\x20/home/you/.config/nova-secrets/db.key\x20--pins\x20/tmp/tmp.k3Jd9x/pins
+SECRETS SEAT ADD OK seat=db committed next=nova-secrets\x20set\x20DB_PASSWORD\x20--as\x20here\x20--store\x20/tmp/tmp.k3Jd9x/store\x20--key\x20/tmp/tmp.k3Jd9x/keys/here.key\x20--pins\x20/tmp/tmp.k3Jd9x/pins
 SECRETS GRANT OK from=here to=db names=1 changed=1 committed; run: git -C <store> push
 SECRETS GRANT OK from=here to=db names=1 changed=0 unchanged
 SECRETS EXEC STARTING as=db keys=1 cmd=sh
