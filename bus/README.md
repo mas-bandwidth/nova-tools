@@ -116,7 +116,9 @@ Inspect local wake state independently of the Redis inbox:
 nova-bus show codex-wake --as <name> --codex-thread <thread>
 ```
 
-The output lists waiting messages, intents, and faults with their saved files. `nova-bus pending` counts bus
+The output lists waiting messages, intents, and faults with their saved files. Its `woken` field is an id
+checkpoint, not proof that every message through that id was read: inspect the fault rows and model replies.
+`nova-bus pending` counts bus
 messages, so it can be empty while local wake work remains. The service log is
 `~/.local/state/nova-bus/<name>.log`. On a thread change, `result=thread-changed` names outstanding files from the
 old thread; they remain available for recovery rather than being silently moved to a different conversation.
