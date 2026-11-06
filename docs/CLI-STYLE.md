@@ -53,6 +53,13 @@ read the final status as well as any earlier results.
 Each tool has its own output format. Parse the one its guide describes. A
 successful item can precede a later failure.
 
+An OK line may end with one `next=<command>` field: the command to run next,
+built with the tool's command helper so it is shell-quoted, then field-escaped
+like every other field. It is a real command with a real example value, such as
+`next=nova-cairn append --store /tmp/c --session s1 --entry first`, so it pastes
+and runs. It is never a `<placeholder>` or `...`, and nothing follows it, so
+there is no free text such as `next: ...` after the fields.
+
 ## Exit codes
 
 | Code | Meaning |
@@ -64,6 +71,12 @@ successful item can precede a later failure.
 | 126 | A command was found but could not be executed. |
 | 127 | Sandbox or reserve could not find the command. Reserve names the PATH it searched. |
 | Child status | A wrapper returns its command's status after launch. The same number can therefore have a different cause. |
+
+Exit 2 covers a wrong invocation and any operation that could not run: the
+store is unreachable, the schema is not loaded, a required binary is missing,
+or a login failed. Exit 1 means the tool ran and said no: a refused row, a held
+name, a policy. A caller that retries on 2 and reads 1 as an answer is then
+correct.
 
 Config uses 2 for connection and execution failures. Secrets operations other
 than `exec` also use 2 for runtime refusals. Bus uses 1 for Redis-operation

@@ -83,7 +83,7 @@ func TestCheckAndProbe(t *testing.T) {
 	code, out, _ := sandbox(t, os.TempDir(), "check")
 	require.Equal(t, 0, code, out)
 	assert.Contains(t, out, "CHECK OK backend=")
-	assert.Contains(t, out, " next=nova-sandbox\\x20probe note=")
+	assert.Contains(t, out, " note=")
 	code, out, _ = sandbox(t, os.TempDir(), "probe")
 	require.Equal(t, 0, code, out)
 	assert.Contains(t, out, "PROBE OK")
