@@ -21,8 +21,7 @@ type upFake struct {
 	rows        string            // nova-config machine list --json
 	peers       map[string]string // tailnet peers: name -> ip
 	unreachable map[string]bool   // addresses that answer no ssh at all
-	sent        string
-	fail        string // a call containing this word exits 4
+	fail        string            // a call containing this word exits 4
 	store       string
 	key         string
 	offnet      bool // tailscale status fails
@@ -68,9 +67,6 @@ func (f *upFake) install(t *testing.T) {
 	}
 	runCmd = func(bin string, args, env []string) (int, error) {
 		line := record(bin, slices.Clone(args))
-		if strings.Contains(line, "nova-bus send") {
-			f.sent = args[len(args)-2]
-		}
 		if f.fail != "" && strings.Contains(line, f.fail) {
 			return 4, nil
 		}
@@ -128,8 +124,8 @@ func (f *upFake) install(t *testing.T) {
 			return "", "", 0
 		case strings.Contains(line, "age-keygen -y"):
 			return "age1fake" + strings.Fields(line)[3] + "\n", "", 0
-		case strings.Contains(line, "pending"):
-			return "1\tnova-fleet-up\t" + f.sent + "\n", "", 0
+		case strings.Contains(line, "nova-bus who"):
+			return "WHO OK present=2\nclaude\t1m0s\ncodex\t2m0s\n", "", 0
 		}
 		return "", "", 0
 	}
@@ -271,7 +267,7 @@ func TestUpOrder(t *testing.T) {
 		"health.yml -l first,second\n",
 		"install.yml -e nova_tools_version=v2.0.0 -l first,second\n",
 		"github-runners.yml -e github_runner_url=https://github.com/o/r -e github_runner_scope=repo -e runner_count=2 -e {\"github_runner_secrets_args\":[\"--store\",\"" + f.store + "\",\"--key\",\"" + f.key + "\",\"--as\",\"control\"]} -l first,second\n",
-		"nova-secrets exec --only NOVA_BUS_PASSWORD -- /bin/nova-bus send --as nova-fleet-up --to nova-fleet-up up-",
+		"nova-secrets exec --only NOVA_BUS_PASSWORD -- /bin/nova-bus who",
 	} {
 		if !strings.Contains(all, w) {
 			t.Errorf("no call contains %q; calls:\n%s", w, all)
@@ -279,7 +275,7 @@ func TestUpOrder(t *testing.T) {
 	}
 	for _, w := range []string{"UP CONTROL OK", "UP REACH first OK root@203.0.113.7", "UP HOSTKEY first OK pinned=1", "UP FIRST first OK pg=first.ts.example:5432 bus=first.ts.example:6379",
 		"UP JOIN first OK", "UP JOIN second OK", "UP GRANT first OK NOVA_BUS_PASSWORD", "UP STORE OK", "UP REFRESH OK " + f.store,
-		"UP HEALTH OK", "UP TOOLS OK v2.0.0", "UP SERVICES OK", "UP RUNNERS OK https://github.com/o/r", "UP BUS OK first.ts.example:6379 round-trip=up-",
+		"UP HEALTH OK", "UP TOOLS OK v2.0.0", "UP SERVICES OK", "UP RUNNERS OK https://github.com/o/r", "UP BUS OK first.ts.example:6379 present=2",
 		"UP MACHINE first OK address=203.0.113.7 steps=tailnet,postgres,redis,join,grant,refresh,health,tools,services,runners,bus",
 		"UP MACHINE second OK address=203.0.113.8 steps=join,grant,refresh,health,tools,services,runners,bus",
 		"UP DONE next: export NOVA_PG_DSN=postgres://nova_config@first.ts.example:5432/nova"} {
@@ -425,7 +421,7 @@ func TestUpCheck(t *testing.T) {
 	t.Setenv("NOVA_PG_DSN", "postgres://nova_config@store-1.ts.example:5432/nova")
 	code, out, _ = runArgs("up", "--check", "--grant", "NOVA_BUS_PASSWORD,EXTRA", "--runners", "https://github.com/o/r", "--tools", "v2.0.0", "first=1.1.1.1")
 	all := strings.Join(f.calls, "\n")
-	if code != 0 || len(f.plays()) != 5 || strings.Contains(all, "push") || strings.Contains(all, "nova-bus send") || strings.Contains(all, "nova-secrets grant") ||
+	if code != 0 || len(f.plays()) != 5 || strings.Contains(all, "push") || strings.Contains(all, "nova-bus who") || strings.Contains(all, "nova-secrets grant") ||
 		!strings.Contains(all, "secrets-refresh.yml --check --diff -e nova_seal_store=") || !strings.Contains(all, "nova-secrets exec --only NOVA_BUS_PASSWORD,EXTRA -- true") ||
 		!strings.Contains(all, "machine set first --roles bench,runner --actor control --reason nova-fleet up --runners --dry-run") {
 		t.Errorf("code %d plays %v calls:\n%s", code, f.plays(), all)
@@ -433,7 +429,7 @@ func TestUpCheck(t *testing.T) {
 	for _, w := range []string{"UP REACH first OK nova@first.ts.example", "UP JOIN first WOULD-JOIN (check: nothing changed)", "UP ROLE first WOULD-SET (check: nothing changed) runner",
 		"UP GRANT first WOULD-GRANT NOVA_BUS_PASSWORD,EXTRA to age1fakenova@first.ts.example (check: nothing changed)", "UP STORE WOULD-PUSH",
 		"UP REFRESH WOULD-PUSH (check: nothing changed) " + f.store, "UP RUNNERS WOULD-RUN (check: once the runner role is on the rows)",
-		"UP BUS WOULD-SEND", "UP MACHINE first CHECKED address=1.1.1.1 steps=join,grant,refresh,health,tools,services (check: nothing changed)"} {
+		"UP BUS WOULD-ASK", "UP MACHINE first CHECKED address=1.1.1.1 steps=join,grant,refresh,health,tools,services (check: nothing changed)"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout lacks %q:\n%s", w, out)
 		}

@@ -1,8 +1,6 @@
 package main
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -605,25 +603,19 @@ func (u *upRun) steps() int {
 		}
 	}
 
-	// 12. the bus: a message to this control node's own inbox, read back by its subject.
-	nonce := make([]byte, 8)
-	_, _ = rand.Read(nonce)
-	word := "up-" + hex.EncodeToString(nonce)
+	// 12. the bus: `nova-bus who` with the fleet's credentials; it reads presence and sends nothing as a name.
 	busEnv := append(os.Environ(), "NOVA_BUS_REDIS="+u.bus, "NOVA_BUS_USER=bus")
-	bus := []string{"NOVA_BUS_PASSWORD"}
 	if u.check {
-		u.say("UP BUS WOULD-SEND to nova-fleet-up via %s (check: nothing changed)", u.bus)
+		u.say("UP BUS WOULD-ASK who is present via %s (check: nothing changed)", u.bus)
 	} else {
-		if c, err := runCmd(u.bin["nova-secrets"], u.secrets(bus, u.bin["nova-bus"], "send", "--as", "nova-fleet-up", "--to", "nova-fleet-up", word, "nova-fleet up: the bus answers")[1:], busEnv); err != nil || c != 0 {
-			return fail("bus send", max(c, 1))
-		}
-		out, _, c := outCmd(u.bin["nova-secrets"], u.secrets(bus, u.bin["nova-bus"], "pending", "--as", "nova-fleet-up", "--list")[1:], busEnv)
-		if c != 0 || !strings.Contains(out, word) {
-			fmt.Fprintf(u.stderr, "nova-fleet up: the message %s sent to nova-fleet-up is not pending there (exit %d)\n", word, c)
+		out, _, c := outCmd(u.bin["nova-secrets"], u.secrets([]string{"NOVA_BUS_PASSWORD"}, u.bin["nova-bus"], "who")[1:], busEnv)
+		first, _, _ := strings.Cut(out, "\n")
+		if c != 0 || !strings.HasPrefix(first, "WHO OK present=") {
+			fmt.Fprintf(u.stderr, "nova-fleet up: nova-bus who did not answer at %s (exit %d)\n", u.bus, c)
 			return fail("bus", 1)
 		}
 		mark("bus", u.machines...)
-		u.say("UP BUS OK %s round-trip=%s", u.bus, word)
+		u.say("UP BUS OK %s %s", u.bus, strings.TrimPrefix(first, "WHO OK "))
 	}
 	return u.end(pass, "")
 }

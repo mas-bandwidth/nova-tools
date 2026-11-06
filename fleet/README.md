@@ -116,7 +116,7 @@ machine is the one nova-config's rows say ("Adding a machine" below). Nothing he
 | 9 | tools | `install` on every machine, from the release `--tools vX.Y.Z` or a local build `--tools DIR` | the services run these binaries |
 | 10 | services | `services` | each seat holds its granted values now |
 | 11 | runners | `github-runners`, `--runner-count` per machine, the store, key and seat passed to it as `github_runner_secrets_args` (only with `--runners`) | |
-| 12 | bus | a message sent to the inbox `nova-fleet-up` over the store machine's Redis, its subject a nonce, and found pending there | the fleet is reached end to end |
+| 12 | bus | `nova-bus who` over the store machine's Redis with the fleet's `NOVA_BUS_PASSWORD`; it names no inbox and sends nothing as a person (receipt `UP BUS OK <redis> present=<n>`) | the fleet is reached end to end |
 
 Each play prints its own receipts; each step adds `UP <step> OK` (or `WOULD-...` under `--check`), and the run ends
 with one line per machine, `UP MACHINE <name> OK address=<address> steps=<the steps it passed>`, and on a new fleet
