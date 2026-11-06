@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -217,19 +218,22 @@ func TestRefusals(t *testing.T) {
 func TestMissingHelpers(t *testing.T) {
 	f := &fake{found: map[string]string{}}
 	f.install(t)
-	code, _, errs := runArgs("install")
-	if code != 2 || errs != "nova-fleet install: nova-config not found on PATH; install nova-tools or run: nova-fleet install --inventory <file|script>\n" {
-		t.Errorf("no nova-config: code %d stderr %q", code, errs)
+	code, out, errs := runArgs("install")
+	if code != 2 || !strings.HasPrefix(out, "CHECK MISSING ansible-playbook: ") || !strings.Contains(out, "\nCHECK MISSING nova-config: mkdir -p ~/.local/bin && ") ||
+		errs != "nova-fleet install: this control node lacks 2 of what the play needs; the CHECK MISSING lines above paste as they stand (nova-config: or run: nova-fleet install --inventory <file|script>); run: nova-fleet check\n" {
+		t.Errorf("nothing on PATH: code %d stdout %q stderr %q", code, out, errs)
 	}
 	f.found["nova-config"] = "/b/nova-config"
-	code, _, errs = runArgs("install")
-	prefix := "nova-fleet install: ansible-playbook not found on PATH; install ansible-core 2.15+ and run: ansible-galaxy collection install -r "
-	req, ok := strings.CutPrefix(strings.TrimSuffix(errs, "\n"), prefix)
-	if code != 2 || !ok {
-		t.Fatalf("no ansible-playbook: code %d stderr %q", code, errs)
+	code, out, errs = runArgs("install")
+	if code != 2 || strings.Contains(out, "nova-config") || !strings.HasPrefix(out, "CHECK MISSING ansible-playbook: ") || !strings.Contains(errs, "lacks 1 of what the play needs") {
+		t.Fatalf("no ansible-playbook: code %d stdout %q stderr %q", code, out, errs)
 	}
-	if _, err := os.Stat(req); err != nil {
-		t.Errorf("the remedy's %s does not exist: %v", req, err)
+	// the remedy's show works, and the extracted directory is gone (every exit removes it)
+	if code, out, _ := runArgs("show", "requirements"); code != 0 || !strings.Contains(out, "collections") {
+		t.Errorf("show requirements: code %d %q", code, out)
+	}
+	if left, _ := filepath.Glob(filepath.Join(os.Getenv("TMPDIR"), "nova-fleet-*")); len(left) != 0 {
+		t.Errorf("extracted directories left behind: %v", left)
 	}
 }
 
@@ -297,5 +301,15 @@ func TestNoWindowsController(t *testing.T) {
 	}
 	if code, _, errs := runArgs("install", "--bogus"); code != 2 || !strings.Contains(errs, "unknown flag --bogus") {
 		t.Errorf("a malformed run on windows is refused as malformed first: %q", errs)
+	}
+}
+
+// A child killed by a signal is reported as such, with exit 128+N, never as a plain 1.
+func TestSignalReported(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("no signals")
+	}
+	if code, err := runCmd("sh", []string{"-c", "kill -9 $$"}, os.Environ()); err != nil || code != 137 {
+		t.Errorf("killed child: code %d err %v, want 137", code, err)
 	}
 }

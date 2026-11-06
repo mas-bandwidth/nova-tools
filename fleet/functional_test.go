@@ -81,9 +81,9 @@ func TestFleetBinaryAgainstAnsible(t *testing.T) {
 		t.Fatalf("install --check: ansible-playbook did not run the play on localhost (exit %d):\n%s\n%s", code, out, errs)
 	}
 	// v0 is a tag no release carries: the role's version check refuses it, and
-	// nova-fleet exits with ansible-playbook's status for that (2, a failed host).
-	if code != 2 || !strings.Contains(out, "nova-tools-install: name the release") {
-		t.Errorf("install --check -e nova_tools_version=v0: exit %d, want ansible-playbook's 2 with the role's refusal:\n%s\n%s", code, out, errs)
+	// nova-fleet exits 1 naming ansible-playbook's status for that (2, a failed host).
+	if code != 1 || !strings.Contains(out, "nova-tools-install: name the release") || !strings.Contains(errs, "nova-fleet install: FAILED ansible-playbook exit=2") {
+		t.Errorf("install --check -e nova_tools_version=v0: exit %d, want 1 with the role's refusal and ansible-playbook's 2 named:\n%s\n%s", code, out, errs)
 	}
 
 	// Every play extracted from the binary passes ansible-playbook --syntax-check.

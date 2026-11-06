@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -23,7 +24,7 @@ Ansible are not optional: nothing here skips one.
    4 join      every machine joins: its row, login, tailnet name and host key, firewall, seat
    5 grant     nova-secrets grant: the --grant values written to each machine's seat
    6 store     the secrets store pushed to its git upstream, if it has one
-   7 refresh   the encrypted store copied over ssh (rsync) to each machine
+   7 refresh   secrets-refresh: the encrypted store pushed (rsync) to each machine
    8 health    the self-healing guards and the disk report (Linux)
    9 tools     the nova-tools release (TAG) or local build (DIR) on every machine
   10 services  the service units
@@ -56,6 +57,8 @@ type machine struct {
 	sshUser, host           string // how up reaches it now: root at the address given, or the login over the tailnet
 	row                     map[string]any
 	unreachable             string // the reason, under --check
+	later                   bool   // under --check, a machine with no row yet: the steps after join wait for it
+	roleLater               bool   // under --check, a row that lacks the runner role: the runners wait for it
 }
 
 // upRun is one up: its inputs and what it has learnt so far.
@@ -129,7 +132,7 @@ func parseUp(args []string, stderr io.Writer) (*upRun, int) {
 		default:
 			name, addr, ok := strings.Cut(a, "=")
 			parts := strings.Split(addr, "/")
-			if !ok || name == "" || addr == "" || (len(parts) != 1 && len(parts) != 3) || !machineName(name) {
+			if !ok || name == "" || addr == "" || (len(parts) != 1 && len(parts) != 3) || !nameRE.MatchString(name) {
 				return refuse("want a machine as <name>=<address>[/<os>/<arch>] (a lowercase name), got %s", a)
 			}
 			m := &machine{name: name, address: parts[0], os: "linux", arch: "amd64"}
@@ -161,14 +164,7 @@ func parseUp(args []string, stderr io.Writer) (*upRun, int) {
 	return u, 0
 }
 
-func machineName(s string) bool {
-	for i, c := range s {
-		if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '-' && i > 0) {
-			return false
-		}
-	}
-	return s != ""
-}
+var nameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 
 // runnerScope is repo or org for a GitHub URL, "" for anything else.
 func runnerScope(url string) string {
@@ -189,11 +185,8 @@ func localVersion(dir string) (string, error) {
 		return "", err
 	}
 	for _, line := range strings.Split(string(b), "\n") {
-		f := strings.Fields(line)
-		if len(f) == 2 {
-			if p := strings.Split(strings.TrimPrefix(f[1], "*"), "_"); len(p) == 4 {
-				return p[1], nil
-			}
+		if f := strings.Fields(line); len(f) == 2 && strings.Count(f[1], "_") == 3 {
+			return strings.Split(f[1], "_")[1], nil
 		}
 	}
 	return "", fmt.Errorf("no <tool>_<version>_<os>_<arch> line in %s", filepath.Join(dir, "SHA256SUMS"))
@@ -203,10 +196,7 @@ func (u *upRun) say(format string, a ...any) { fmt.Fprintf(u.stdout, format+"\n"
 
 // would is the state word of a step under --check.
 func (u *upRun) would(did string) string {
-	if u.check {
-		return "WOULD-" + did + " (check: nothing changed)"
-	}
-	return "OK"
+	return map[bool]string{true: "WOULD-" + did + " (check: nothing changed)", false: "OK"}[u.check]
 }
 
 // secrets wraps argv in nova-secrets exec with only the named values.
@@ -289,12 +279,17 @@ func (u *upRun) peer(m *machine) bool {
 			fmt.Fprintf(u.stderr, "nova-fleet up: %s has no Tailscale SSH host key in tailscale status; its ssh over the tailnet is not pinned (is Tailscale SSH on?)\n", m.name)
 			return true
 		}
-		path := filepath.Join(os.Getenv("HOME"), ".ssh", "known_hosts")
+		home, _ := os.UserHomeDir()
+		path := filepath.Join(home, ".ssh", "known_hosts")
 		have, _ := os.ReadFile(path)
 		var add []string
 		for _, k := range p.SSH_HostKeys {
 			line := strings.Join([]string{m.name, m.dns, p.TailscaleIPs[0]}, ",") + " " + k
-			if !strings.Contains(string(have), " "+k) {
+			pinned := slices.ContainsFunc(strings.Split(string(have), "\n"), func(l string) bool {
+				hosts, key, _ := strings.Cut(l, " ")
+				return key == k && slices.Contains(strings.Split(hosts, ","), m.dns)
+			})
+			if !pinned {
 				add = append(add, line)
 			}
 		}
@@ -311,15 +306,16 @@ func (u *upRun) peer(m *machine) bool {
 	return false
 }
 
-// reach finds how a machine answers: its login over the tailnet when it is a peer or has a row,
-// else root at the address given. A machine that answers nowhere is unreachable.
+// reach finds how a machine answers: its login over the tailnet once it has a row (join closed
+// the address given then), else root at the address given. A machine that answers nowhere is
+// unreachable.
 func (u *upRun) reach(m *machine) {
 	m.user = u.user
 	if user, _ := m.row["user"].(string); user != "" {
 		m.user = user
 	}
 	var try [][2]string
-	if u.peer(m) {
+	if u.peer(m) && m.row != nil {
 		try = append(try, [2]string{m.user, m.dns})
 	}
 	if addr, _ := m.row["address"].(string); addr != "" && addr != m.dns {
@@ -329,6 +325,9 @@ func (u *upRun) reach(m *machine) {
 		try = append(try, [2]string{"root", m.address})
 	} else {
 		try = append(try, [2]string{m.user, m.address})
+	}
+	if m.dns != "" && m.row == nil {
+		try = append(try, [2]string{m.user, m.dns})
 	}
 	var why string
 	for _, t := range try {
@@ -352,7 +351,7 @@ func (u *upRun) steps() int {
 	pass := map[string][]string{}
 	mark := func(step string, ms ...*machine) {
 		for _, m := range ms {
-			if m.unreachable == "" {
+			if m.unreachable == "" && !m.later {
 				pass[m.name] = append(pass[m.name], step)
 			}
 		}
@@ -365,13 +364,22 @@ func (u *upRun) steps() int {
 	names, _, _ := outCmd(u.bin["nova-secrets"], []string{"names", "--as", u.seat}, os.Environ())
 	haveStore := slices.Contains(strings.Fields(names), "NOVA_PG_PASSWORD")
 
-	// the fleet that exists, if one does: NOVA_PG_DSN names its store; its services row is the store machine.
+	// The fleet that exists, if one does: NOVA_PG_DSN names its store. Without it, a seat that holds
+	// the store's password means a run got as far as PostgreSQL: the first machine named must be
+	// that store (a resume), and its rows say what the fleet is.
 	var first, store *machine
-	switch u.dsn = os.Getenv("NOVA_PG_DSN"); {
-	case u.dsn != "":
+	if u.dsn = os.Getenv("NOVA_PG_DSN"); u.dsn == "" && haveStore {
+		first = u.machines[0]
+		if !u.peer(first) {
+			fmt.Fprintf(u.stderr, "nova-fleet up: seat %s holds NOVA_PG_PASSWORD, so a fleet exists, and %s is not on the tailnet, so it is not its store; run: export NOVA_PG_DSN=postgres://nova_config@<the store machine's tailnet name>:5432/nova\n", u.seat, first.name)
+			return 2
+		}
+		u.dsn = "postgres://nova_config@" + first.dns + ":5432/nova"
+	}
+	if u.dsn != "" {
 		rows, why, c := u.config("machine", "list", "--json")
 		if c != 0 {
-			fmt.Fprintf(u.stderr, "nova-fleet up: the fleet's rows (nova-config machine list via NOVA_PG_DSN=%s): %s\n", u.dsn, why)
+			fmt.Fprintf(u.stderr, "nova-fleet up: the fleet's rows (nova-config machine list via NOVA_PG_DSN=%s): %s; run: export NOVA_PG_DSN=postgres://nova_config@<the store machine's tailnet name>:5432/nova\n", u.dsn, why)
 			return 2
 		}
 		for _, r := range rows {
@@ -385,14 +393,15 @@ func (u *upRun) steps() int {
 				store = &machine{name: name, dns: addr}
 			}
 		}
-		if store == nil {
+		switch {
+		case store == nil && first == nil:
 			fmt.Fprintf(u.stderr, "nova-fleet up: no machine row has the role services (the store machine); run: nova-config machine set <name> --roles services,bench --actor %s\n", u.seat)
 			return 2
+		case store != nil && first != nil && store.name != first.name:
+			fmt.Fprintf(u.stderr, "nova-fleet up: the store machine is %s (its row has the role services), not %s; run: export NOVA_PG_DSN=postgres://nova_config@%s:5432/nova, then name the machines to add\n", store.name, first.name, store.dns)
+			return 2
 		}
-	case haveStore:
-		fmt.Fprintf(u.stderr, "nova-fleet up: seat %s holds NOVA_PG_PASSWORD, so a fleet exists; run: export NOVA_PG_DSN=postgres://nova_config@<the store machine's tailnet name>:5432/nova\n", u.seat)
-		return 2
-	default:
+	} else {
 		first = u.machines[0]
 	}
 
@@ -477,6 +486,10 @@ func (u *upRun) steps() int {
 		u.peer(m)
 		mark("join", m)
 		u.say("UP JOIN %s %s", m.name, u.would("JOIN"))
+		if u.check && m.row == nil {
+			m.later = true
+			u.say("UP %s PENDING (check: its row does not exist yet; the steps after join run once join has made it)", m.name)
+		}
 		if u.runners != "" && m.row != nil {
 			if roles, _ := m.row["roles"].(string); !slices.Contains(strings.Split(roles, ","), "runner") {
 				args := []string{"machine", "set", m.name, "--roles", roles + ",runner", "--actor", u.seat, "--reason", "nova-fleet up --runners"}
@@ -488,6 +501,7 @@ func (u *upRun) steps() int {
 					return fail("join "+m.name, c)
 				}
 				u.say("UP ROLE %s %s runner", m.name, u.would("SET"))
+				m.roleLater = u.check
 			}
 		}
 	}
@@ -500,7 +514,7 @@ func (u *upRun) steps() int {
 		return fail("grant", c)
 	}
 	for _, m := range u.machines {
-		if m.unreachable != "" {
+		if m.unreachable != "" || m.later {
 			continue
 		}
 		pub, why, c := outCmd(u.bin["ssh"], []string{"-o", "BatchMode=yes", m.user + "@" + m.dns, "sh", "-c",
@@ -533,33 +547,23 @@ func (u *upRun) steps() int {
 		u.say("UP STORE OK pushed %s", u.store)
 	}
 
-	// 7. refresh: the encrypted store (no .git, stale files deleted, 0700/0600) copied over the
-	// tailnet to each machine, so its seat opens what was granted; a rerun pushes again.
-	push := []string{"-rltp", "--delete", "--exclude=.git", "--chmod=Du=rwx,Dgo=,Fu=rw,Fgo=", "--rsync-path=umask 077 && mkdir -p " + storePath + " && rsync", u.store + "/"}
-	if u.check {
-		push = append([]string{"--dry-run"}, push...)
-	}
-	for _, m := range u.machines {
-		if m.unreachable != "" {
-			continue
+	// 7. refresh: secrets-refresh pushes the encrypted store from this node's clone to each machine
+	// (rsync over the tailnet: no .git, stale files deleted, 0700/0600); a rerun pushes again.
+	in := u.ready(false)
+	if len(in) == 0 { // every machine named waits for its row: nothing to check the plays against
+		for _, s := range []string{"REFRESH", "HEALTH", "TOOLS", "SERVICES", "RUNNERS", "BUS"} {
+			wouldRun(s, "once join has made the rows")
 		}
-		if _, why, c := outCmd(u.bin["rsync"], append(push, m.user+"@"+m.dns+":"+storePath), os.Environ()); c != 0 {
-			fmt.Fprintf(u.stderr, "nova-fleet up: push the store to %s@%s: %s\n", m.user, m.dns, oneLine(why))
-			return fail("refresh "+m.name, 1)
-		}
-		u.say("UP REFRESH %s %s %s@%s:%s", m.name, u.would("PUSH"), m.user, m.dns, storePath)
-		mark("refresh", m)
+		return u.end(pass, "")
 	}
+	limit := []string{"-l", strings.Join(in, ",")}
+	if c := u.play("secrets-refresh", false, pg, append([]string{"-e", "nova_seal_store=" + u.store}, limit...)...); c != 0 {
+		return fail("refresh", c)
+	}
+	mark("refresh", u.machines...)
+	u.say("UP REFRESH %s %s", u.would("PUSH"), u.store)
 
 	// 8-11. the guards, tools, services, runners on every machine that is reached.
-	limit := []string{"-l", strings.Join(func() (s []string) {
-		for _, m := range u.machines {
-			if m.unreachable == "" {
-				s = append(s, m.name)
-			}
-		}
-		return
-	}(), ",")}
 	if c := u.play("health", false, pg, limit...); c != 0 {
 		return fail("health", c)
 	}
@@ -586,13 +590,19 @@ func (u *upRun) steps() int {
 	mark("services", u.machines...)
 	u.say("UP SERVICES %s", u.would("RUN"))
 	if u.runners != "" {
+		on := u.ready(true) // the machines whose row has the runner role, so the play finds them in its group
 		seat, _ := json.Marshal(map[string][]string{"github_runner_secrets_args": {"--store", u.store, "--key", u.key, "--as", u.seat}})
-		if c := u.play("github-runners", false, pg, append([]string{"-e", "github_runner_url=" + u.runners, "-e", "github_runner_scope=" + runnerScope(u.runners),
-			"-e", "runner_count=" + strconv.Itoa(u.runnerCount), "-e", string(seat)}, limit...)...); c != 0 {
+		if len(on) == 0 {
+			wouldRun("RUNNERS", "once the runner role is on the rows")
+		} else if c := u.play("github-runners", false, pg, "-e", "github_runner_url="+u.runners, "-e", "github_runner_scope="+runnerScope(u.runners),
+			"-e", "runner_count="+strconv.Itoa(u.runnerCount), "-e", string(seat), "-l", strings.Join(on, ",")); c != 0 {
 			return fail("runners", c)
+		} else {
+			for _, m := range u.machines {
+				pass[m.name] = append(pass[m.name], map[bool][]string{true: {"runners"}}[slices.Contains(on, m.name)]...)
+			}
+			u.say("UP RUNNERS %s %s", u.would("RUN"), u.runners)
 		}
-		mark("runners", u.machines...)
-		u.say("UP RUNNERS %s %s", u.would("RUN"), u.runners)
 	}
 
 	// 12. the bus: a message to this control node's own inbox, read back by its subject.
@@ -618,6 +628,16 @@ func (u *upRun) steps() int {
 	return u.end(pass, "")
 }
 
+// ready names the machines a play can run on: reached, with a row (and the runner role, with roles).
+func (u *upRun) ready(roles bool) (names []string) {
+	for _, m := range u.machines {
+		if m.unreachable == "" && !m.later && !(roles && m.roleLater) {
+			names = append(names, m.name)
+		}
+	}
+	return
+}
+
 // end prints one line per machine and, after a run, the store's DSN for the next up.
 func (u *upRun) end(pass map[string][]string, note string) int {
 	bad := 0
@@ -626,6 +646,8 @@ func (u *upRun) end(pass map[string][]string, note string) int {
 		case m.unreachable != "":
 			bad++
 			u.say("UP MACHINE %s UNREACHABLE address=%s steps=none %s", m.name, m.address, m.unreachable)
+		case u.check && m.later:
+			u.say("UP MACHINE %s CHECKED address=%s steps=join (the rest once join has made its row) (check: nothing changed)", m.name, m.address)
 		case u.check:
 			u.say("UP MACHINE %s CHECKED address=%s steps=%s %s(check: nothing changed)", m.name, m.address, strings.Join(pass[m.name], ","), note)
 		default:
@@ -641,9 +663,6 @@ func (u *upRun) end(pass map[string][]string, note string) int {
 	}
 	return 0
 }
-
-// storePath is a machine's copy of the store (the plays' nova_secrets_store), from its home.
-const storePath = ".local/share/nova/secrets/"
 
 func runUp(args []string, stdout, stderr io.Writer) int {
 	u, code := parseUp(args, stderr)
