@@ -33,7 +33,7 @@ var lintTools = []string{"bus", "cairn", "config", "fleet", "reserve", "sandbox"
 // Files that break rule 1 or 2 today and how many places each has (the audit's section 8).
 var knownDiscards = map[string]int{
 	"bus/main.go": 3, "bus/service.go": 3, "bus/wake.go": 1, "cairn/main.go": 1, "cairn/memory.go": 1, "cairn/store.go": 6, "config/inventory.go": 2, "config/rows.go": 1, "config/store.go": 1,
-	"fleet/check.go": 5, "fleet/main.go": 13, "fleet/up.go": 7, "reserve/main.go": 5, "reserve/os_windows.go": 2,
+	"fleet/check.go": 5, "fleet/main.go": 13, "fleet/up.go": 6, "reserve/main.go": 5, "reserve/os_windows.go": 2,
 	"sandbox/closefds.go": 2, "sandbox/probe.go": 1, "sandbox/probeclient_linux.go": 1, "sandbox/seccomp_linux.go": 1,
 	"secrets/main.go": 16,
 }

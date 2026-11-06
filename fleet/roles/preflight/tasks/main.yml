@@ -20,7 +20,7 @@
   args: { executable: /bin/bash }
   vars:
     # a usage line of a verb of this release, whatever the program is called: `<prog> grant NAME`, `<prog> schema`, `<prog> who`
-    preflight_v2_marker: '^[[:space:]]*[^[:space:]]+ (grant NAME|schema|who)([[:space:]]|$)'
+    preflight_v2_marker: '^[[:space:]]*[^[:space:]]+ (grant NAME|schema|who)'
   delegate_to: localhost
   become: false
   run_once: true
