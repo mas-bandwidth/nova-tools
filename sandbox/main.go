@@ -7,13 +7,10 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
-	"os/signal"
 	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
-	"syscall"
 )
 
 const runFlags = `  --read <dir>          readable and executable, recursively. Repeatable.
@@ -86,7 +83,7 @@ const checkUsage = `nova-sandbox check: say which backend this machine has and w
 
   nova-sandbox check
 
-One line on stdout: CHECK OK backend=<b> abi=<n> net=enforceable|unavailable note=<text> next: nova-sandbox probe,
+One line on stdout: CHECK OK backend=<b> abi=<n> net=enforceable|unavailable next=nova-sandbox\x20probe note=<text>,
 or CHECK FAILED backend=<b> abi=<n> reason=<text>. It applies nothing to a command.
 net=unavailable means --net-deny will be refused here.
 
@@ -222,49 +219,6 @@ func signalText(n int) string {
 	return fmt.Sprintf("nova-sandbox: command killed by signal %d (exit %d)", n, 128+n)
 }
 
-// supervise runs the hidden child and returns the command's status. A signalled child
-// is reported from here; SIGINT and SIGTERM are passed to the child's process group
-// so the waiter can outlive them and still print the line.
-func supervise(args []string, env []string, stderr io.Writer) int {
-	self, err := os.Executable()
-	if err != nil {
-		return report(stderr, "", []refusal{refuse("sandbox_failed", "this binary could not be found: %v", err)})
-	}
-	cmd := exec.Command(self, append([]string{applyVerb}, args...)...)
-	cmd.Stdin, cmd.Stdout, cmd.Stderr, cmd.Env = os.Stdin, os.Stdout, os.Stderr, env
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	if err = cmd.Start(); err != nil {
-		return report(stderr, "", []refusal{refuse("sandbox_failed", "the command could not be started: %v", err)})
-	}
-	sigs := make(chan os.Signal, 1)
-	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
-	done := make(chan struct{})
-	go func() {
-		select {
-		case s := <-sigs:
-			if sig, ok := s.(syscall.Signal); ok {
-				syscall.Kill(-cmd.Process.Pid, sig)
-			}
-		case <-done:
-		}
-	}()
-	err = cmd.Wait()
-	close(done)
-	signal.Stop(sigs)
-	if ee, ok := err.(*exec.ExitError); ok {
-		if ws, ok := ee.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
-			n := int(ws.Signal())
-			fmt.Fprintln(stderr, signalText(n))
-			return 128 + n
-		}
-		return ee.ExitCode()
-	}
-	if err != nil {
-		return report(stderr, "", []refusal{refuse("sandbox_failed", "the command could not be started: %v", err)})
-	}
-	return 0
-}
-
 // beforeDashes is args up to the first --: a -h after it belongs to the command.
 func beforeDashes(args []string) []string {
 	if i := slices.Index(args, "--"); i >= 0 {
@@ -388,7 +342,7 @@ func check(stdout io.Writer) int {
 	if !netOK {
 		net = "unavailable"
 	}
-	fmt.Fprintf(stdout, "CHECK OK backend=%s abi=%s net=%s note=%s next: nova-sandbox probe\n", backendName, abi, net, note)
+	fmt.Fprintf(stdout, "CHECK OK backend=%s abi=%s net=%s next=nova-sandbox\\x20probe note=%s\n", backendName, abi, net, note)
 	return 0
 }
 

@@ -421,7 +421,7 @@ command's own status. On Linux:
 ```text
 sh: 1: cannot create /home/<you>/sandbox-escape.txt: Permission denied
 exit 2
-CHECK OK backend=landlock abi=4 net=enforceable note=landlock abi 4; seccomp available; net-deny landlock_tcp+seccomp; signals scoped to the wall at abi 6+ next: nova-sandbox probe
+CHECK OK backend=landlock abi=4 net=enforceable next=nova-sandbox\x20probe note=landlock abi 4; seccomp available; net-deny landlock_tcp+seccomp; signals scoped to the wall at abi 6+
 ```
 
 On macOS:
@@ -429,7 +429,7 @@ On macOS:
 ```text
 sh: /Users/<you>/sandbox-escape.txt: Operation not permitted
 exit 1
-CHECK OK backend=sandbox-exec abi=- net=enforceable note=the wall is the profile it applies (/usr/bin/sandbox-exec) next: nova-sandbox probe
+CHECK OK backend=sandbox-exec abi=- net=enforceable next=nova-sandbox\x20probe note=the wall is the profile it applies (/usr/bin/sandbox-exec)
 ```
 `nova-sandbox probe` tests each of the sandbox's limits on this machine, one
 line per step.

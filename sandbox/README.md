@@ -90,7 +90,7 @@ nova-sandbox check
 ```
 
 ```text
-CHECK OK backend=landlock abi=4 net=enforceable note=landlock abi 4; seccomp available; net-deny landlock_tcp+seccomp; signals scoped to the wall at abi 6+ next: nova-sandbox probe
+CHECK OK backend=landlock abi=4 net=enforceable next=nova-sandbox\x20probe note=landlock abi 4; seccomp available; net-deny landlock_tcp+seccomp; signals scoped to the wall at abi 6+
 ```
 
 Exit 1 prints `CHECK FAILED ... reason=...`. `net=unavailable` means
@@ -165,6 +165,6 @@ If the command is killed by signal N, stderr gains
 - `--unix` lets the command reach any local socket by path, so use it only for trusted commands.
 - A kept descriptor (`--keep-fds`) can carry access past the grants.
 - CPU, memory, processes and disk use are not limited.
-- nova-sandbox waits for the command so it can report a signal. SIGKILL of that waiter is not reported. SIGINT and SIGTERM are passed to the command.
+- nova-sandbox waits for the command, in the same process group, so a terminal read keeps working. SIGINT, SIGTERM, SIGHUP and SIGQUIT are forwarded to the command. On Linux the command is killed when the waiter dies. On macOS, SIGKILL of the waiter can leave the command running. [SPEC.md](SPEC.md) states both.
 
 How the tool is tested is in [SPEC.md](SPEC.md).

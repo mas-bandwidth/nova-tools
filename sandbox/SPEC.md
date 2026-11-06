@@ -33,11 +33,22 @@ not 2). The text is `<cwd> is outside the wall; cd <granted dir> or add --read <
 A missing `--write` includes `mkdir -p` of that path. A path that exists and is
 not a directory keeps the old text and does not say mkdir.
 
-The parent stays for the command's lifetime. The child is a re-exec of this
+The parent stays for the command's lifetime and in the same process group as
+the command, so a terminal read is not stopped. The child is a re-exec of this
 binary (`wall-apply`, not a public verb) that applies the wall and execs in
 place. A command killed by signal N makes the parent print
 `nova-sandbox: command killed by signal N (exit 128+N)` and exit 128+N.
-`check` OK ends with `next: nova-sandbox probe`.
+SIGINT, SIGTERM, SIGHUP and SIGQUIT delivered to the waiter are forwarded to
+the command's pid.
+
+On Linux the child is started with `Pdeathsig` SIGKILL. When the waiter dies
+for any reason, including SIGKILL, the kernel kills the command. On macOS
+there is no `Pdeathsig`. The four signals above are forwarded only while the
+waiter is still alive to do it. SIGKILL of the waiter is not caught, and the
+command can keep running.
+
+`check` OK carries the field `next=nova-sandbox\x20probe` before `note=`.
+The `\x20` is a space, escaped the way cairn escapes a field.
 
 ## System roots
 
