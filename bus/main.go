@@ -50,7 +50,8 @@ var verbUsage = map[string]string{
       How your session gets woken, per --harness:
         claude (the default): each message is one line on stdout,
           id<TAB>from<TAB>re<TAB>subject<TAB>body (re is - when none; \n, \r,
-          \t and \\ escaped). Claude Code and Muse Code run the hook under
+          \t and \\ escaped); a line starting "HOOK " is status, not mail (HOOK
+          RECONNECTED, HOOK BAD). Claude Code and Muse Code run the hook under
           the session's Monitor tool, never with & or into a file: the
           Monitor turns each line into a notification, and that is the wake.
           Codex never runs it: a child agent loops recv, a message to its
@@ -86,7 +87,10 @@ var verbUsage = map[string]string{
       it to lapse (a restart after a crash), then claims it or, if it is still
       held, exits 1 "name already hooked". On stderr: HOOK HARNESS OK once the
       harness answered, HOOK WAIT while waiting, HOOK OK name=<name>
-      waiting=<n> once claimed.
+      waiting=<n> next="<the send line>" once claimed. On stdout, where the
+      Monitor sees it: HOOK RECONNECTED name=<name> waiting=<n> once a lost
+      connection is back, and HOOK BAD id=<id> missing=<fields> for an entry
+      send did not write (acked, never delivered as mail).
 `,
 	"recv": `  nova-bus recv --as <name> [--timeout <duration>]
       Wait for one message for <name> (the oldest unhandled first, as hook
@@ -507,13 +511,40 @@ func idShape(id string) bool {
 
 // describe names a Redis error, saying an unreachable or lost server plainly.
 func describe(err error, addr string) string {
+	msg := err.Error()
 	for _, c := range [][2]string{{"connection refused", "connection refused"}, {"no such host", "no such host"}, {"timeout", "timed out"},
 		{"connection reset", "connection lost"}, {"broken pipe", "connection lost"}, {io.EOF.Error(), "connection lost"}} {
-		if strings.Contains(err.Error(), c[0]) {
-			return fmt.Sprintf("cannot reach redis at %s (NOVA_BUS_REDIS): %s", addr, c[1])
+		if strings.Contains(msg, c[0]) {
+			return fmt.Sprintf("cannot reach redis at %s (NOVA_BUS_REDIS): %s; check that NOVA_BUS_REDIS=%s is the fleet's Redis and that it is up", addr, c[1], addr)
 		}
 	}
-	return err.Error()
+	// Redis's own words are never shown raw: a login that is missing, wrong
+	// or short of permission, a client that talked before logging in, an
+	// address that is not Redis (a protocol error, or a reply that does not
+	// parse), and anything else, which is named as Redis's after "redis:".
+	switch {
+	case strings.Contains(msg, "NOAUTH") || strings.Contains(msg, "unauthenticated"):
+		return fmt.Sprintf("redis at %s wants a login: set NOVA_BUS_USER and NOVA_BUS_PASSWORD", addr)
+	case strings.Contains(msg, "WRONGPASS"):
+		return fmt.Sprintf("redis at %s refused the login: check NOVA_BUS_USER and NOVA_BUS_PASSWORD", addr)
+	case strings.Contains(msg, "NOPERM"):
+		return fmt.Sprintf("the login lacks permission on this stream at %s: ask whoever runs Redis for the bus ACL (see the README)", addr)
+	case strings.Contains(msg, "Protocol error") || strings.Contains(msg, "parse"):
+		return fmt.Sprintf("%s is not talking Redis protocol: check that NOVA_BUS_REDIS=%s is the fleet's Redis", addr, addr)
+	}
+	return fmt.Sprintf("redis at %s (NOVA_BUS_REDIS) answered with an error; redis: %s", addr, msg)
+}
+
+// missingFields names the fields an inbox entry must carry to be a message
+// (send writes them all): one without them was not written by send.
+func missingFields(m Msg) string {
+	var missing []string
+	for _, k := range []string{"from", "subject"} {
+		if m.Fields[k] == "" {
+			missing = append(missing, k)
+		}
+	}
+	return strings.Join(missing, ",")
 }
 
 // runHook runs hook, reconnecting after an error, until ctx ends (exit 0) or
@@ -526,10 +557,13 @@ func runHook(ctx context.Context, store Store, name, addr string, clk Clock, std
 	value := clk.Now().UTC().Format(time.RFC3339) + "\t" + rand.Text()
 	var logged time.Time
 	announced := false
-	onClaim := func(waiting int64) { // HOOK OK once, not on each reconnect
+	onClaim := func(waiting int64) { // HOOK OK once; after a reconnect, HOOK RECONNECTED where the Monitor sees it
 		if !announced {
-			fmt.Fprintf(stderr, "HOOK OK name=%s waiting=%d\n", name, waiting)
+			fmt.Fprintf(stderr, "HOOK OK name=%s waiting=%d next=\"NOVA_BUS_REDIS=%s nova-bus send --as %s --to <name> <subject> <body>\"\n", name, waiting, addr, name)
 			announced = true
+		} else if !logged.IsZero() {
+			fmt.Fprintf(stdout, "HOOK RECONNECTED name=%s waiting=%d\n", name, waiting)
+			logged = time.Time{}
 		}
 	}
 	for {
@@ -666,7 +700,13 @@ func hook(ctx context.Context, store Store, name, value string, clk Clock, out, 
 			if err := refresh(); err != nil {
 				return err
 			}
-			if err := deliver(ctx, w, m, out, stderr); err != nil {
+			// An entry send did not write (no from or subject) is not mail:
+			// said where the Monitor sees it, then acked, so it never blocks.
+			if missing := missingFields(m); missing != "" {
+				if _, err := fmt.Fprintf(out, "HOOK BAD id=%s missing=%s\n", m.ID, missing); err != nil {
+					return writeError{err}
+				}
+			} else if err := deliver(ctx, w, m, out, stderr); err != nil {
 				return err
 			}
 			ack, cancel := context.WithTimeout(context.WithoutCancel(ctx), cleanupTimeout)
@@ -792,6 +832,13 @@ func recv(ctx context.Context, store Store, name, addr string, timeout time.Dura
 	}
 	if len(msgs) == 0 {
 		fmt.Fprintf(stderr, "RECV NONE name=%s waited=%s\n", name, clk.Now().Sub(start).Truncate(time.Second))
+		return 1
+	}
+	if missing := missingFields(msgs[0]); missing != "" { // not mail: acked away, and the next recv reads on
+		fmt.Fprintf(stderr, "RECV BAD id=%s missing=%s\n", msgs[0].ID, missing)
+		if _, err := store.Ack(ctx, stream, msgs[0].ID); err != nil {
+			return fail(stderr, "recv", "%s", describe(err, addr))
+		}
 		return 1
 	}
 	// Checked out: the name stays held, naming the message, until it is

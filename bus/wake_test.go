@@ -475,7 +475,7 @@ func TestFailedWakeExitsOneAndReleasesPresence(t *testing.T) {
 	var out, errOut bytes.Buffer
 	code := runHook(context.Background(), f, "beta", testAddr, f, &out, &errOut, &wakeFake{fail: map[string]bool{"1-0": true}}, "nova-bus hook --as beta --harness grok --grok-home /h", nil)
 	assert.Equal(t, 1, code)
-	assert.Equal(t, "HOOK OK name=beta waiting=1\nHOOK WAKE FAILED harness=antigravity id=1-0 reason=socket gone\\nsecond line\n"+
+	assert.Equal(t, "HOOK OK name=beta waiting=1 next=\"NOVA_BUS_REDIS=127.0.0.1:1 nova-bus send --as beta --to <name> <subject> <body>\"\nHOOK WAKE FAILED harness=antigravity id=1-0 reason=socket gone\\nsecond line\n"+
 		"nova-bus hook: the wake of 1-0 failed and it waits unhandled; once the harness answers, run: nova-bus hook --as beta --harness grok --grok-home /h\n", errOut.String())
 	assert.NotContains(t, f.presence, "beta", "released")
 }
@@ -669,9 +669,11 @@ func TestShowPrintsTheStandingInstructions(t *testing.T) {
 		assert.Contains(t, out, "nova-bus send --as <name> --to <from> --re <id>")
 	}
 	assert.Equal(t, 3, strings.Count(agentsSnippets["codex-agents"], "NOVA_BUS_REDIS=<host:port> nova-bus "), "recv, ack and send each carry the address")
-	assert.Contains(t, agentsSnippets["codex-agents"], "ACK FAILED means it was handled already: go on")
+	assert.Contains(t, agentsSnippets["codex-agents"], "ACK FAILED: handled already, go on")
+	assert.Contains(t, agentsSnippets["codex-agents"], "RECV BAD or RECV NONE means recv again")
+	assert.Contains(t, agentsSnippets["agents"], `except a line starting "HOOK " (status: HOOK RECONNECTED, HOOK BAD)`)
 	assert.Contains(t, agentsSnippets["codex-agents"], "Never run nova-bus hook or recv in this thread")
-	assert.Contains(t, agentsSnippets["codex-agents"], "send that line to your\nparent as a message")
+	assert.Contains(t, agentsSnippets["codex-agents"], "send that line to your parent as a message, exactly")
 	assert.Contains(t, agentsSnippets["agents"], "as the Monitor tool's command itself")
 	for _, args := range [][]string{{"show"}, {"show", "x"}, {"show", "agents", "x"}} {
 		code, _, errOut := call(t, newFake(), nil, "", args...)
