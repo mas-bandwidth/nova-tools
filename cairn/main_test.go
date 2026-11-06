@@ -92,10 +92,16 @@ func TestStoreRoundTrip(t *testing.T) {
 func TestAppendOpensMissingSession(t *testing.T) {
 	t.Parallel()
 	store := filepath.Join(t.TempDir(), "s")
+	require.NoError(t, os.MkdirAll(store, 0o755))
 	code, out, _ := do(t, "", "append", "--store", store, "--session", "s1", "--entry", "e1", "--text", "the words")
 	require.Equal(t, 0, code)
 	assert.Contains(t, out, "APPEND OK session=s1 entry=e1")
 	assert.Contains(t, out, "publish=manual")
+	assert.Contains(t, out, "opened=true")
+
+	code, _, errs := do(t, "", "append", "--store", filepath.Join(t.TempDir(), "nope"), "--session", "s1", "--entry", "e1", "--text", "x")
+	assert.Equal(t, 2, code, "an append does not create a store")
+	assert.Contains(t, errs, "does not exist")
 
 	code, out, _ = do(t, "", "receipt", "--store", store, "--session", "s1", "--entry", "e1", "--text")
 	assert.Equal(t, 0, code)
@@ -352,9 +358,9 @@ func TestMemoryFindsStoreEntries(t *testing.T) {
 	at := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
 	_, _, err := open(store, "s1", "", at, "manual")
 	require.NoError(t, err)
-	_, _, err = appendEntry(store, "s1", "e1", "The brass lantern illuminates the harbor.", "", at, "manual")
+	_, _, _, err = appendEntry(store, "s1", "e1", "The brass lantern illuminates the harbor.", "", at, "manual")
 	require.NoError(t, err)
-	_, _, err = appendEntry(store, "s1", "e2", "tide tables", "", at.Add(time.Second), "manual")
+	_, _, _, err = appendEntry(store, "s1", "e2", "tide tables", "", at.Add(time.Second), "manual")
 	require.NoError(t, err)
 
 	code, out, _ := do(t, "", "memory", "search", "--root", store, "--channels", "bm25", "--k", "2", "brass", "lantern")

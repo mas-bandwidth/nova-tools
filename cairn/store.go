@@ -309,20 +309,34 @@ func open(store, session, source string, now time.Time, publish string) (openRec
 		return rec, before, nil
 	case !ok || !rec.found:
 		logSource, logPublish := source, publish
+		// The call that creates the session file logs the open; a call that
+		// finds the file already there (a race, or a crashed open) heals only
+		// when the file predates it, so one session gets one open line.
+		logIt := ok
 		if !ok {
 			header := fmt.Sprintf("# cairn %s\n\nOpened: %s\nSource: %s\nPublish: %s\n", session, stamp(now), source, publish)
 			if err := writeNew(sessionFile(store, session), []byte(header)); err != nil && !errors.Is(err, os.ErrExist) {
 				return rec, false, err
+			} else if err == nil {
+				logIt = true
 			}
 		} else if hs, hp := headerPolicy(store, session); slices.Contains(policies, hp) {
 			// An open interrupted before its log line: log what its header recorded.
 			logSource, logPublish = hs, hp
 		}
-		if err := appendLog(store, "open", session, "", stamp(now), logPublish, logSource); err != nil {
-			return rec, false, err
+		if logIt {
+			if err := appendLog(store, "open", session, "", stamp(now), logPublish, logSource); err != nil {
+				return rec, false, err
+			}
 		}
 		if rec, err = readOpen(store, session); err != nil {
 			return rec, false, err
+		}
+		if !logIt && !rec.found {
+			// Lost the file race and the winner has not logged yet: the
+			// header it wrote is the record to agree with.
+			hs, hp := headerPolicy(store, session)
+			rec = openRec{hs, hp, now, false}
 		}
 	}
 	if rec.publish != publish || (source != "" && source != rec.source) {
@@ -400,37 +414,58 @@ func flatRows(path, session string) ([]row, []string, error) {
 
 // appendEntry stores the exact words under a stable id: a retry of the same words
 // is a duplicate, other words under the same id a conflict, never an overwrite.
-func appendEntry(store, session, id, text, source string, now time.Time, publish string) (r row, dup bool, err error) {
+func appendEntry(store, session, id, text, source string, now time.Time, publish string) (r row, dup, created bool, err error) {
 	if text == "" {
-		return r, false, refuse("", "empty words store nothing; give the words to keep with --text or --file")
+		return r, false, false, refuse("", "empty words store nothing; give the words to keep with --text or --file")
 	}
 	_, flat, ok := locate(store, session)
 	if !ok {
 		// A first append opens the session it names, with publish=manual
 		// unless the line names a policy, so keeping words takes one command.
+		// Only open creates a store: an append into a missing store is more
+		// likely a mistyped --store than a first word worth keeping.
+		if info, serr := os.Stat(store); serr != nil || !info.IsDir() {
+			return r, false, false, refuse(command("open", "--store", store, "--session", session, "--publish", cmp.Or(publish, "manual")),
+				"store %q does not exist; open it first, or fix --store", store)
+		}
 		if !slices.Contains(policies, publish) {
 			publish = "manual"
 		}
 		if _, _, err := open(store, session, source, now, publish); err != nil {
-			return r, false, err
+			return r, false, false, err
 		}
+		created = true
 	} else if flat {
-		return r, false, refuse("", "session %q is a flat record, which this tool reads but does not append to; append to it by hand, or open another session id", session)
+		return r, false, false, refuse("", "session %q is a flat record, which this tool reads but does not append to; append to it by hand, or open another session id", session)
 	}
 	opened, err := readOpen(store, session)
 	if err != nil {
-		return r, false, err
+		return r, false, created, err
 	}
 	named := source
 	source = cmp.Or(source, opened.source)
 	if publish == "" {
+		if !opened.found {
+			// The session file is there but its open record is not: a first
+			// append (or an open) in another process is between the two, or
+			// crashed there. Take the open path, which logs the record from
+			// the header, instead of refusing.
+			publish = healPolicy(store, session)
+			if _, _, err := open(store, session, source, now, publish); err != nil {
+				return r, false, created, err
+			}
+			if opened, err = readOpen(store, session); err != nil {
+				return r, false, created, err
+			}
+			source = cmp.Or(named, opened.source)
+		}
 		if !slices.Contains(policies, opened.publish) {
-			return r, false, refuse(command("open", "--store", store, "--session", session, "--publish", healPolicy(store, session)),
+			return r, false, created, refuse(command("open", "--store", store, "--session", session, "--publish", healPolicy(store, session)),
 				"--publish is required: session %q has no open record naming a policy in %s; open it to log one", session, logFile(store))
 		}
 		publish = opened.publish
 	} else if opened.found && slices.Contains(policies, opened.publish) && publish != opened.publish {
-		return r, false, conflict(command("append", "--store", store, "--session", session, "--entry", id, "--publish", opened.publish),
+		return r, false, created, conflict(command("append", "--store", store, "--session", session, "--entry", id, "--publish", opened.publish),
 			"session %q holds publish=%s; --publish %s names another", session, opened.publish, publish)
 	}
 	final := entryPath(store, session, id)
@@ -438,32 +473,32 @@ func appendEntry(store, session, id, text, source string, now time.Time, publish
 		if _, err := os.Stat(final); err == nil {
 			prev, t, err := readEntry(store, session, id)
 			if err != nil {
-				return r, false, err
+				return r, false, created, err
 			}
 			if prev.Text != text {
-				return r, false, conflict(command("receipt", "--store", store, "--session", session, "--entry", id, "--text"),
+				return r, false, created, conflict(command("receipt", "--store", store, "--session", session, "--entry", id, "--text"),
 					"entry %q already holds different words; append these under a new --entry id, or read what it holds", id)
 			}
 			if named != "" && named != prev.Source { // a retry's --source is never ignored
-				return r, false, conflict(command("receipt", "--store", store, "--session", session, "--entry", id),
+				return r, false, created, conflict(command("receipt", "--store", store, "--session", session, "--entry", id),
 					"entry %q already holds these words with source=%s; --source %s names another", id, cmp.Or(prev.Source, "-"), named)
 			}
-			return prev.row(t), true, ensurePointer(store, session, id, t)
+			return prev.row(t), true, created, ensurePointer(store, session, id, t)
 		} else if !os.IsNotExist(err) {
-			return r, false, err
+			return r, false, created, err
 		}
 		rec, _ := json.Marshal(entryFile{session, id, stamp(now), source, publish, text})
 		if err := writeNew(final, rec); errors.Is(err, os.ErrExist) && try == 0 {
 			continue // lost a race to another writer: read the winner
 		} else if err != nil {
-			return r, false, err
+			return r, false, created, err
 		}
 		break
 	}
 	if err := ensurePointer(store, session, id, now); err != nil {
-		return r, false, err
+		return r, false, created, err
 	}
-	return row{session, id, source, publish, now, len(text)}, false, appendLog(store, "append", session, id, stamp(now), publish, source)
+	return row{session, id, source, publish, now, len(text)}, false, created, appendLog(store, "append", session, id, stamp(now), publish, source)
 }
 
 // ensurePointer lands the ENTRY line in the readable record, once (it heals an interrupted append).
@@ -712,12 +747,16 @@ func runStore(verb string, args []string, stdin io.Reader, stdout, stderr io.Wri
 			}
 			return fail(refuse(next, "text is not valid UTF-8 at byte %d; convert it first (iconv -f <its encoding> -t UTF-8)", at))
 		}
-		r, dup, err := appendEntry(*store, *session, *entry, string(words), *source, now, *publish)
+		r, dup, created, err := appendEntry(*store, *session, *entry, string(words), *source, now, *publish)
 		if err != nil {
 			return fail(err)
 		}
-		line(stdout, "APPEND OK", "session", *session, "entry", *entry, "source", r.source, "persisted", true,
-			"published", false, "publish", r.policy, "duplicate", dup, "stamp", stamp(r.stamp))
+		kv := []any{"session", *session, "entry", *entry, "source", r.source, "persisted", true,
+			"published", false, "publish", r.policy, "duplicate", dup, "stamp", stamp(r.stamp)}
+		if created {
+			kv = append(kv, "opened", true)
+		}
+		line(stdout, "APPEND OK", kv...)
 	case "receipt":
 		r, words, err := receipt(*store, *session, *entry)
 		if err != nil {
