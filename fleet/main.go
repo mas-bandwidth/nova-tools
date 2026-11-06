@@ -150,11 +150,8 @@ func plays(fsys fs.FS) []string {
 	return out
 }
 
-// purpose is the text of the play's "# purpose:" line in its leading comment.
-func purpose(text string) string { return header(text, "purpose") }
-
-// header is the text of the "# <key>:" line in a play's leading comment. A play
-// with "# argument: <variable>" takes one positional, passed as -e <variable>.
+// header is the text of the "# <key>:" line in a play's leading comment: "# purpose:",
+// and "# argument: <variable>" for a play that takes one positional, passed as -e.
 func header(text, key string) string {
 	for _, line := range strings.Split(text, "\n") {
 		if !strings.HasPrefix(line, "#") {
@@ -278,7 +275,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 			}
 			for _, p := range all {
 				b, _ := fs.ReadFile(tree, p+".yml")
-				fmt.Fprintf(stdout, "%-16s %s\n", p, purpose(string(b)))
+				fmt.Fprintf(stdout, "%-16s %s\n", p, header(string(b), "purpose"))
 			}
 			return 0
 		}
@@ -314,7 +311,7 @@ func runPlay(play string, args []string, stdout, stderr io.Writer, refuse func(s
 			if argVar != "" {
 				usage, note = " <"+argVar+">", "\n  <"+argVar+">  passed to ansible-playbook as -e "+argVar+"=<value>\n"
 			}
-			fmt.Fprintf(stdout, playHelp, play, purpose(string(text)), usage, note)
+			fmt.Fprintf(stdout, playHelp, play, header(string(text), "purpose"), usage, note)
 			return 0
 		case a == "--":
 			pass = append(pass, args[i+1:]...)

@@ -19,8 +19,8 @@ From nothing to a fleet, in a fixed order (fleet/README.md, "up"):
    2 first     the first machine named: the tailnet, PostgreSQL, Redis, nova-config's tables
    3 join      every machine joins (the first too): its row, login, tailnet, seat
    4 grant     nova-secrets grant: the --grant values written to each machine's seat
-   5 store     the secrets store pushed, so the machines' clones see their seats and grants
-   6 refresh   secrets-refresh: each machine's clone pulled on a timer
+   5 store     the secrets store pushed to its git upstream, if it has one
+   6 refresh   the encrypted store copied over ssh (rsync) to each machine
    7 health    the self-healing guards and the disk report (Linux)
    8 tools     the nova-tools release (TAG) or local build (DIR) on every machine
    9 services  the service units
@@ -191,6 +191,9 @@ func (u *upRun) play(play string, hand bool, names []string, extra ...string) in
 	return code
 }
 
+// storePath is a machine's copy of the store (the plays' nova_secrets_store), from its home.
+const storePath = ".local/share/nova/secrets/"
+
 func (u *upRun) seal() []string {
 	return []string{"-e", "nova_seal_store=" + u.store, "-e", "nova_seal_seat=" + u.seat, "-e", "nova_seal_key=" + u.key}
 }
@@ -288,9 +291,10 @@ func (u *upRun) steps() int {
 		mark("grant", m)
 	}
 
-	// 5. the store pushed: the seats join added and the grants reach the machines' clones.
+	// 5. the store's upstream, if it has one, gets the new seats and grants (a copy kept
+	// off this node; the machines never read it).
 	if _, _, c := outCmd(u.bin["git"], []string{"-C", u.store, "rev-parse", "--abbrev-ref", "@{u}"}, os.Environ()); c != 0 {
-		u.say("UP STORE NOTE %s has no upstream: push it where the machines clone it from", u.store)
+		u.say("UP STORE NOTE %s has no upstream: nothing to push", u.store)
 	} else if u.check {
 		u.say("UP STORE WOULD-PUSH %s (check: nothing changed)", u.store)
 	} else if c, err := runCmd(u.bin["git"], []string{"-C", u.store, "push", "--quiet"}, os.Environ()); err != nil || c != 0 {
@@ -299,19 +303,29 @@ func (u *upRun) steps() int {
 		u.say("UP STORE OK pushed %s", u.store)
 	}
 
-	// 6-7. each clone pulled on a timer (cloned from the store's upstream where there is
-	// none), then the guards.
-	repo, _, _ := outCmd(u.bin["git"], []string{"-C", u.store, "ls-remote", "--get-url"}, os.Environ())
-	refresh := map[string][]string{}
-	if repo = strings.TrimSpace(repo); repo != "" && repo != "origin" {
-		refresh["secrets-refresh"] = []string{"-e", "nova_secrets_repo=" + repo}
+	// 6. refresh: the encrypted store (no .git, stale files deleted, 0700/0600) copied over
+	// ssh to each machine, so its seat opens what was granted; a rerun pushes again.
+	push := []string{"-rlt", "--delete", "--exclude=.git", "--chmod=Du=rwx,Dgo=,Fu=rw,Fgo=", "--rsync-path=mkdir -p " + storePath + " && rsync", u.store + "/"}
+	if u.check {
+		push = append([]string{"--dry-run"}, push...)
 	}
-	for _, p := range []string{"secrets-refresh", "health"} {
-		if c := u.play(p, false, pg, refresh[p]...); c != 0 {
-			return fail(strings.TrimPrefix(p, "secrets-"), c)
+	for _, m := range u.machines {
+		if _, why, c := outCmd(u.bin["rsync"], append(push, u.user+"@"+m.name+":"+storePath), os.Environ()); c != 0 && !u.check {
+			fmt.Fprintf(u.stderr, "nova-fleet up: push the store to %s@%s: %s\n", u.user, m.name, oneLine(why))
+			return fail("refresh "+m.name, c)
+		} else if u.check {
+			u.say("UP REFRESH %s WOULD-PUSH %s to %s@%s:%s%s", m.name, u.store, u.user, m.name, storePath, map[bool]string{true: " (not reachable yet: " + oneLine(why) + ")"}[c != 0])
+		} else {
+			u.say("UP REFRESH %s OK %s@%s:%s", m.name, u.user, m.name, storePath)
 		}
-		mark(strings.TrimPrefix(p, "secrets-"), u.machines...)
+		mark("refresh", m)
 	}
+
+	// 7. the guards.
+	if c := u.play("health", false, pg); c != 0 {
+		return fail("health", c)
+	}
+	mark("health", u.machines...)
 
 	// 8-10. tools, services, runners on every machine.
 	tools := []string{"-e", "nova_tools_version=" + u.tools}
