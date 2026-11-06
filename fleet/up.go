@@ -289,12 +289,17 @@ func (u *upRun) peer(m *machine) bool {
 			fmt.Fprintf(u.stderr, "nova-fleet up: %s has no Tailscale SSH host key in tailscale status; its ssh over the tailnet is not pinned (is Tailscale SSH on?)\n", m.name)
 			return true
 		}
-		path := filepath.Join(os.Getenv("HOME"), ".ssh", "known_hosts")
+		home, _ := os.UserHomeDir()
+		path := filepath.Join(home, ".ssh", "known_hosts")
 		have, _ := os.ReadFile(path)
 		var add []string
 		for _, k := range p.SSH_HostKeys {
 			line := strings.Join([]string{m.name, m.dns, p.TailscaleIPs[0]}, ",") + " " + k
-			if !strings.Contains(string(have), " "+k) {
+			pinned := slices.ContainsFunc(strings.Split(string(have), "\n"), func(l string) bool {
+				hosts, key, _ := strings.Cut(l, " ")
+				return key == k && slices.Contains(strings.Split(hosts, ","), m.dns)
+			})
+			if !pinned {
 				add = append(add, line)
 			}
 		}

@@ -224,6 +224,12 @@ func TestUpControlRefusals(t *testing.T) {
 func TestUpOrder(t *testing.T) {
 	f := &upFake{}
 	f.install(t)
+	if err := os.MkdirAll(filepath.Join(os.Getenv("HOME"), ".ssh"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(os.Getenv("HOME"), ".ssh", "known_hosts"), []byte("203.0.113.7 ssh-ed25519 KEY-first\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	code, out, errs := runArgs("up", "--tools", "v2.0.0", "--runners", "https://github.com/o/r", "--runner-count", "2", "first=203.0.113.7", "second=203.0.113.8")
 	if code != 0 {
 		t.Fatalf("exit %d\n%s\n%s", code, out, errs)
@@ -272,7 +278,11 @@ func TestUpOrder(t *testing.T) {
 	if strings.Contains(out, "UP ROLE") {
 		t.Errorf("a new row already has the runner role:\n%s", out)
 	}
+	// the key that was already there under the public address is pinned again under the tailnet names
 	kh, _ := os.ReadFile(filepath.Join(os.Getenv("HOME"), ".ssh", "known_hosts"))
+	if !strings.Contains(string(kh), "203.0.113.7 ssh-ed25519 KEY-first\n") {
+		t.Fatalf("the test's own pre-pinned line is missing:\n%s", kh)
+	}
 	if !strings.Contains(string(kh), "first,first.ts.example,100.64.0.10 ssh-ed25519 KEY-first\n") || strings.Count(string(kh), "KEY-second") != 1 {
 		t.Errorf("known_hosts:\n%s", kh)
 	}
