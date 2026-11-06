@@ -212,12 +212,21 @@ func TestUpControlRefusals(t *testing.T) {
 	if len(f.plays()) != 0 {
 		t.Errorf("plays ran after a refused read: %v", f.plays())
 	}
-	// A fleet exists (its store's password is in the seat) and NOVA_PG_DSN does not say where: refused.
+	// A fleet exists (its store's password is in the seat), NOVA_PG_DSN does not say where, and the
+	// first machine named is not on the tailnet: refused, with the export line.
 	f = &upFake{names: "NOVA_PG_PASSWORD NOVA_BUS_PASSWORD"}
 	f.install(t)
 	code, out, errs = runArgs("up", "--tools", "v1.0.0", "a=1.2.3.4")
-	if code != 2 || !strings.Contains(out, "CHECK MISSING NOVA_PG_DSN: seat control holds NOVA_PG_PASSWORD, so a fleet exists: export NOVA_PG_DSN=") || len(f.plays()) != 0 {
+	if code != 2 || !strings.Contains(out, "CHECK NOTE NOVA_PG_DSN unset, and seat control holds NOVA_PG_PASSWORD") ||
+		!strings.Contains(errs, "nova-fleet up: seat control holds NOVA_PG_PASSWORD, so a fleet exists, and a is not on the tailnet, so it is not its store; run: export NOVA_PG_DSN=") || len(f.plays()) != 0 {
 		t.Errorf("fleet without NOVA_PG_DSN: code %d stdout %q stderr %q", code, out, errs)
+	}
+	// The store is another machine than the first named: refused, naming it.
+	f = &upFake{names: "NOVA_PG_PASSWORD", peers: map[string]string{"a": "100.64.0.1", "store-1": "100.64.0.2"},
+		rows: `{"items":[{"kind":"machine","fields":{"name":"store-1","address":"store-1.ts.example","user":"nova","roles":"services,bench"}}]}`}
+	f.install(t)
+	if code, _, errs = runArgs("up", "--tools", "v1.0.0", "a=1.2.3.4"); code != 2 || !strings.Contains(errs, "the store machine is store-1 (its row has the role services), not a; run: export NOVA_PG_DSN=postgres://nova_config@store-1.ts.example:5432/nova") {
+		t.Errorf("another store: code %d stderr %q", code, errs)
 	}
 }
 
@@ -325,6 +334,29 @@ func TestUpAddsAMachine(t *testing.T) {
 		}
 	}
 	if strings.Contains(out, "UP FIRST") || strings.Contains(out, "UP DONE next: export") {
+		t.Errorf("stdout:\n%s", out)
+	}
+}
+
+// A first run that stopped after PostgreSQL: the same command resumes with no NOVA_PG_DSN, the first
+// machine named being the store it made (its rows read from there), and every step runs again.
+func TestUpResumes(t *testing.T) {
+	f := &upFake{names: "NOVA_PG_PASSWORD NOVA_BUS_PASSWORD", peers: map[string]string{"first": "100.64.0.1"}, rows: `{"items":[]}`}
+	f.install(t)
+	code, out, errs := runArgs("up", "--tools", "v2.0.0", "first=203.0.113.7", "second=203.0.113.8")
+	if code != 0 {
+		t.Fatalf("exit %d\n%s\n%s", code, out, errs)
+	}
+	if got := f.plays(); !slices.Equal(got, []string{"tailscale.yml@first.ini", "postgres.yml@first.ini", "redis.yml@first.ini", "join.yml@inventory", "join.yml@inventory", "health.yml@inventory", "install.yml@inventory", "services.yml@inventory"}) {
+		t.Errorf("plays = %v", got)
+	}
+	all := strings.Join(f.calls, "\n")
+	for _, w := range []string{"ssh -o BatchMode=yes -o ConnectTimeout=10 nova@first.ts.example true", "ansible-playbook -i first.ini tailscale.yml", "nova_join_host=first -e nova_join_user=nova -e nova_join_address=first.ts.example -e nova_join_root_user=nova"} {
+		if !strings.Contains(all, w) {
+			t.Errorf("no call contains %q; calls:\n%s", w, all)
+		}
+	}
+	if !strings.Contains(out, "UP REACH first OK nova@first.ts.example") || !strings.Contains(out, "UP DONE next: export NOVA_PG_DSN=postgres://nova_config@first.ts.example:5432/nova") {
 		t.Errorf("stdout:\n%s", out)
 	}
 }

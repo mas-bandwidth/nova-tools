@@ -34,7 +34,7 @@ python3 has no venv module):
 
 ```
 python3 -m venv ~/.local/ansible && ~/.local/ansible/bin/pip install ansible-core
-ansible-galaxy collection install -r <extracted>/requirements.yml   # nova-fleet prints the path when it is missing
+nova-fleet show requirements > requirements.yml && ansible-galaxy collection install -r requirements.yml
 ```
 
 ## Fleet with Tailscale, go!
@@ -134,9 +134,10 @@ A machine's seat holds no values until they are granted to it: join's bus check 
 step 5 has granted `NOVA_BUS_PASSWORD` and step 7 has pushed it.
 
 **Adding a machine.** A fleet that exists is read from nova-config, never guessed from the command line: export
-`NOVA_PG_DSN` (the line `up` printed, `postgres://nova_config@<store machine>:5432/nova`; `check` names it as missing
-once your seat holds `NOVA_PG_PASSWORD`), then name the new machines, and the ones you want converged again if you
-like:
+`NOVA_PG_DSN` (the line `up` printed, `postgres://nova_config@<store machine>:5432/nova`; `check` notes it once your
+seat holds `NOVA_PG_PASSWORD`), then name the new machines, and the ones you want converged again if you like. A
+first run that stopped after PostgreSQL resumes without it: the first machine named is the store `up` made, and its
+rows are read from there.
 
 ```
 export NOVA_PG_DSN=postgres://nova_config@store-1.<tailnet>.ts.net:5432/nova
@@ -712,12 +713,12 @@ Each is one line on stderr, exit 2, and nothing is run:
 | an unknown flag before `--`, or a word before `--` | `ansible-playbook flags go after --` |
 | `--inventory` naming nothing | the path, and to name an existing file or script |
 | no `--inventory` and no nova-config on PATH | `install nova-tools or run: nova-fleet <play> --inventory <file\|script>` |
-| no ansible-playbook on PATH | `install ansible-core 2.15+ and run: ansible-galaxy collection install -r <extracted>/requirements.yml` |
+| no ansible-playbook on PATH | `install ansible-core 2.15+ and run: nova-fleet show requirements > requirements.yml && ansible-galaxy collection install -r requirements.yml` |
 
 Otherwise the exit is 0 when ansible-playbook passed and 1 when it did not, with `nova-fleet <play>: FAILED
 ansible-playbook exit=<n>` naming its status on stderr (2 never means a failed host here). Before running, nova-fleet
-prints the ansible-playbook, inventory and play paths it uses on stderr. The extracted directory is removed when ansible-playbook exits (kept only for the missing
-ansible-playbook remedy).
+prints the ansible-playbook, inventory and play paths it uses on stderr. The extracted directory is removed on every
+exit, a refusal included.
 
 ## Build and test
 
