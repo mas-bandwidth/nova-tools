@@ -82,6 +82,8 @@ func tokenize(s string) []string {
 	return strings.FieldsFunc(normalize(s), func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '\'' })
 }
 
+var stopwords = map[string]bool{"the": true, "a": true, "an": true, "and": true, "or": true, "of": true, "to": true, "in": true, "on": true, "for": true, "with": true, "as": true, "at": true, "by": true, "from": true, "is": true, "are": true, "was": true, "were": true, "be": true, "been": true, "it": true, "its": true, "this": true, "that": true, "these": true, "those": true, "before": true, "after": true, "into": true, "over": true, "under": true, "per": true, "via": true}
+
 func terms(s string) []string {
 	var out []string
 	for _, t := range tokenize(s) {
@@ -354,10 +356,10 @@ type hit struct {
 
 // query ranks the chunks by BM25, best first (ties by chunk id).
 func (c *corpus) query(text string) []hit {
-	scores := map[int]float64{}
-	seen := map[string]bool{}
-	for _, t := range terms(text) {
-		if seen[t] {
+	scores, seen := map[int]float64{}, map[string]bool{}
+	q, weighted := terms(text), slices.ContainsFunc(terms(text), func(t string) bool { return !stopwords[t] })
+	for _, t := range q {
+		if seen[t] || (weighted && stopwords[t]) {
 			continue
 		}
 		seen[t] = true

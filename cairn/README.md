@@ -58,7 +58,10 @@ because only `open` creates one.
 store in the tree, and writes nothing. A **term** is a lowercased word of two
 or more letters or digits. A note paragraph needs three terms to be indexed.
 Ranking is **BM25**: paragraphs that share more of your terms, and rarer ones,
-score higher. A **frontmatter** block is the YAML-shaped block between `---`
+score higher. At weighting, 34 English function words (the, of, and, for, and
+their kin) carry no weight, so shared grammar alone cannot outscore a content
+match; a query with no other words falls back to weighing them. Other
+languages' function words still weigh. A **frontmatter** block is the YAML-shaped block between `---`
 lines at the top of a note.
 
 ```sh
