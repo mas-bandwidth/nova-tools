@@ -24,5 +24,5 @@ nova_firewall_allow_udp: [41641]
 
 # The CLI per platform.
 nova_tailscale_bin: >-
-  {{ '/Applications/Tailscale.app/Contents/MacOS/Tailscale' if (ansible_system | default('')) == 'Darwin' else 'tailscale' }}
+  {{ '/Applications/Tailscale.app/Contents/MacOS/Tailscale' if (nova_system | default(ansible_facts['system'] | default(''))) == 'Darwin' else 'tailscale' }}
 nova_tailscale_win_bin: 'C:\Program Files\Tailscale\tailscale.exe'

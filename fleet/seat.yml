@@ -15,6 +15,24 @@
   gather_facts: true
   gather_subset: [min]
   tasks:
+    - name: the control node has what the run needs
+      ansible.builtin.include_role: { name: preflight }
+      vars:
+        preflight_control: "{{ [{'cmd': nova_control_secrets, 'for': 'the seat rule: nova-secrets seat add'}, {'cmd': 'git', 'for': 'nova-secrets commits the store'}] }}"
+
+    - name: an age-keygen on the machine
+      ansible.builtin.command: "{{ nova_age_keygen }} --version"
+      register: seat_keygen
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: age-keygen is there (join.yml installs it on Linux, brew install age on macOS)
+      ansible.builtin.assert:
+        that: seat_keygen.rc == 0 or ansible_check_mode
+        fail_msg: "SEAT STOP {{ inventory_hostname }}: no {{ nova_age_keygen }} on the machine (nova_age_keygen); install age, then run again"
+        quiet: true
+
     - name: the key directory (private)
       ansible.builtin.file: { path: "{{ nova_secrets_key_dir }}", state: directory, mode: "0700" }
 

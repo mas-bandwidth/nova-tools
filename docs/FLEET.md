@@ -21,7 +21,7 @@ fleet/
   nova-tools-install.yml            install one release, by tag
   services.yml                      one launchd or systemd unit per service row
   github-runners.yml                GitHub Actions runners on the runner group
-  roles/                            the roles the plays run (one per play, github-runner, and seal: a password into a seat)
+  roles/                            the roles the plays run: one per play, github-runner, seal and preflight
   templates/nova-service.*.j2       the unit templates of services.yml
   group_vars/all.yml                the generic defaults the plays share
   retired-tools.txt                 binaries nova-tools shipped and ships no more
@@ -36,6 +36,71 @@ Every play prints one receipt line per machine (`JOIN ...`, `TAILNET ...`, `SEAT
 `(check: nothing changed)` and says `WOULD-...` for each change a run would make. A secret is never a variable: it
 reaches a run as an environment variable from `nova-secrets exec` on the control node, and a machine only on a
 command's stdin.
+
+## Words used here
+
+- **The control node** is the one machine you run the plays from. It holds the Ansible checkout, the nova-tools
+  binaries and a seat of its own, and it reaches every machine.
+- **The secrets store** is a git repository of sops-encrypted files, one per seat (`docs/SPEC-SECRETS.md`). `S` in
+  a command is the path of your clone of it on the control node.
+- **A seat** is a name in the store with an age key that opens it. `SEAT` is the seat's name and `K` its key file
+  (`~/.config/nova-secrets/<seat>.key`). Every machine has a seat; the control node's holds the values the plays
+  need (`TAILSCALE_AUTHKEY`, `NOVA_PG_PASSWORD`).
+- **Sealing** a password puts it into a seat: the play reads the password file it made on the machine and hands it to
+  `nova-secrets set` on the control node on stdin. The value is never on a command line, in a log or in a file in
+  the clear. `redis.yml` and `postgres.yml` seal when given `nova_seal_store` (S), `nova_seal_seat` (SEAT) and
+  `nova_seal_key` (K): all three, or none.
+- **The bus** is `nova-bus`, the tools' message channel: Redis streams and presence keys under `bus:` on the Redis
+  that `redis.yml` keeps. A client names the Redis with `NOVA_BUS_REDIS=<host>:<port>` and logs in with
+  `NOVA_BUS_USER` and `NOVA_BUS_PASSWORD`.
+- **The config store** is the PostgreSQL that `postgres.yml` keeps and nova-config reads. `<pg-host>` is its
+  machine's address (its MagicDNS name once it is on the tailnet). nova-config finds it by `NOVA_PG_DSN` and logs in
+  with `NOVA_PG_PASSWORD`.
+
+## Prerequisites
+
+The plays need nova-tools v2.0.0-rc1 or newer: they use `nova-secrets set`, `nova-secrets names` and the `seat add`
+of v2. A v1 release has neither.
+
+| Where | What | Which plays |
+|---|---|---|
+| control node | `ansible-core` 2.17 or newer, Python 3 | all |
+| control node | `nova-config`, `nova-secrets` (v2), `sops`, `age-keygen`, `git` | join, tailscale, seat, redis and postgres (sealing) |
+| control node | `gpg` | postgres.yml with `nova_pg_source` `pgdg` or `auto` (it checks the repository key) |
+| control node | `tailscale`, on the same tailnet as the machines, tagged `tag:control` | join.yml's check, every run over the tailnet |
+| control node | `psql` | reading the config store by hand; no play uses it |
+| machine | Debian 12 or newer, or Ubuntu 22.04 or newer, with `sudo` and `python3` | all |
+| machine | `git` | secrets-refresh.yml (it installs it on Debian and Ubuntu; on macOS it comes with the Command Line Tools) |
+| machine | `age-keygen`, `sops` | seat.yml (join.yml installs both on Linux; on macOS `brew install age sops`) |
+
+Each play checks the control node first. A missing program stops the run with `PREFLIGHT STOP` and its name, before
+anything changes. The variables `nova_control_config`, `nova_control_secrets` and `nova_control_sops` point at a
+program that is not on PATH.
+
+## The first machine
+
+join.yml and tailscale.yml write the machine's row into the config store, so the first machine, the one that will
+hold the config store, goes up in this order. Each step runs from the control node, with a one-machine inventory
+that names the machine (`-i 'db-1,'`) and its address and login (`-e ansible_host=203.0.113.7 -e ansible_user=root`).
+
+1. On the control node: the store and its seat. Run `nova-secrets init --store S --recovery <age public key>`, make
+   K with `age-keygen -o K`, run `nova-secrets seat add SEAT "$(age-keygen -y K)" --store S`, then put the Tailscale
+   auth key in it: `nova-secrets set TAILSCALE_AUTHKEY --store S --key K --as SEAT` (the key on stdin).
+2. The tailnet, without the row: `nova-secrets exec --only TAILSCALE_AUTHKEY --store S --key K --as SEAT --
+   ansible-playbook -i 'db-1,' -e ansible_host=<public address> -e ansible_user=root fleet/tailscale.yml
+   -e nova_tailscale_record_address=false -e nova_firewall=false`.
+3. The config store and the bus: `ansible-playbook -i 'db-1,' -e ansible_host=<public address> -e ansible_user=root
+   fleet/postgres.yml -e nova_store_hosts=db-1 -e nova_seal_store=S -e nova_seal_seat=SEAT -e nova_seal_key=K`, then
+   the same with `fleet/redis.yml`. Both listen on the machine's tailnet address. postgres.yml loads nova-config's
+   tables and seals `NOVA_PG_PASSWORD` into SEAT; redis.yml seals `NOVA_BUS_PASSWORD`. Then run `git -C S push`.
+4. The machine joins like every other one: `join.yml` (below), under `nova-secrets exec --only
+   TAILSCALE_AUTHKEY,NOVA_PG_PASSWORD`, with `NOVA_PG_DSN=postgres://nova_config@db-1.<tailnet>.ts.net:5432/nova`,
+   `-e nova_join_address=<public address>` and `-e nova_join_roles=services`. The tailnet step finds it Running and
+   records its MagicDNS name as its address, and the firewall closes the public address.
+
+Every other machine starts at step 4. Its `nova_join_address` is the address the control node first reaches it on as
+root; the tailnet step replaces it with the machine's MagicDNS name, and from then on the plays log in over Tailscale
+SSH as the row's user (the policy lets no one in as root over the tailnet).
 
 ## The machine and service model
 
@@ -95,6 +160,7 @@ inventory does not, because the playbook's own is read after it: use a group nam
 | `nova_sops` | `/opt/homebrew/bin/sops` on macOS, else `<nova_bin_dir>/sops` |
 | `nova_launchd_domain` | `auto` (`gui`, `system`) |
 | `nova_systemd_scope` | `user` (`system`) |
+| `nova_system` | the gathered fact (`ansible_facts['system']`); `-e nova_system=Darwin` or `Linux` forces the platform |
 
 ## Installing a release
 
@@ -105,8 +171,8 @@ nova-cairn, nova-config, nova-sandbox, nova-secrets, nova-reserve) for linux/amd
 `GITHUB_TOKEN`. Nothing else holds a credential.
 
 ```
-ansible-playbook -i ./inventory fleet/nova-tools-install.yml -e nova_tools_version=v1.0.0 -l <machine> --check --diff
-ansible-playbook -i ./inventory fleet/nova-tools-install.yml -e nova_tools_version=v1.0.0 -l <machine>
+ansible-playbook -i ./inventory fleet/nova-tools-install.yml -e nova_tools_version=v2.0.0-rc1 -l <machine> --check --diff
+ansible-playbook -i ./inventory fleet/nova-tools-install.yml -e nova_tools_version=v2.0.0-rc1 -l <machine>
 ```
 
 The role reads the release's `SHA256SUMS`, downloads each asset and checks it against its digest before it is put in
@@ -266,7 +332,7 @@ A Windows machine gets 1 and 3.
 
 ```
 nova-secrets exec --only TAILSCALE_AUTHKEY,NOVA_PG_PASSWORD --store S --key K --as SEAT -- \
-  env NOVA_PG_DSN=postgres://nova_config@<store>:5432/nova \
+  env NOVA_PG_DSN=postgres://nova_config@<pg-host>:5432/nova \
   ansible-playbook -i ./inventory fleet/join.yml --check --diff \
     -e nova_join_host=web-1 -e nova_join_user=fleet -e nova_join_address=203.0.113.7 \
     -e nova_join_os=linux -e nova_join_arch=amd64 -e nova_seal_store=$HOME/secrets
@@ -287,6 +353,7 @@ running the same command again.
 | `nova_join_authorized_keys` | root's on the machine | a file on the control node to install instead |
 | `nova_join_hostname` | `true` | set the hostname to the machine name |
 | `nova_bus_redis` | unset | `host:port` of the bus, for the check |
+| `nova_tailnet` | `true` | `false` (on the command line): the machines share a private network of yours; no Tailscale, no peer check, the row's address kept |
 | `nova_age_version`, `nova_sops_version` and their `*_sha256` | the pinned releases | |
 | `nova_control_config`, `nova_control_secrets`, `nova_control_sops` | `nova-config`, `nova-secrets`, `sops` | the control node's binaries |
 
@@ -304,26 +371,28 @@ the tailnet. `join.yml` runs it; run it alone for machines that already have a r
 
 1. The account and the tailnet. MagicDNS on (the default).
 2. The policy: paste `fleet/tailscale-acl.json` into Access controls and put your account where it says
-   `owner@example.com`. It declares `tag:nova` and `tag:runner`, lets those machines reach each other on 22 (Tailscale
-   SSH), 6379 (the bus's Redis) and 5432 (nova-config's PostgreSQL) and nothing else, and lets your own devices SSH to
-   them. The control node runs nova-config against 5432: make it a `tag:nova` machine, or add `tcp:5432` to your
-   devices' grant.
+   `owner@example.com`. It declares `tag:nova`, `tag:runner` and `tag:control`. The fleet's machines reach each other,
+   and the control node reaches them, on 22 (Tailscale SSH, as the non-root logins), 6379 (the bus's Redis) and 5432
+   (the config store), and nothing else. A member's own device reaches no fleet machine.
 3. An auth key: Settings, Keys, generate auth key, **reusable**, **pre-authorized**, **tagged** `tag:nova` (and
-   `tag:runner`, for the runners). Keep it in the control node's seat: `nova-secrets set TAILSCALE_AUTHKEY --as <seat>
+   `tag:runner`, for the runners). Keep it in the control node's seat: `nova-secrets set TAILSCALE_AUTHKEY --as SEAT
    --store S --key K` (the value on stdin).
-4. The control node itself on the tailnet, so it resolves MagicDNS names.
+4. The control node on the tailnet as `tag:control`: `sudo tailscale up --advertise-tags=tag:control` there, with a
+   key tagged `tag:control` (a separate one-off key). It resolves the MagicDNS names and reaches the three ports.
 5. On a Mac: open the Tailscale app once at the console and approve its VPN configuration.
 
 **What the play does, per machine:**
 
 1. Installs Tailscale: Tailscale's apt repository on Debian and Ubuntu (the same key and source line its own install
    script writes), Homebrew's cask on macOS, winget on Windows.
-2. `tailscale up --reset --auth-key=file:/dev/stdin --hostname=<machine> --advertise-tags=tag:nova[,tag:runner] --ssh`
+2. On a machine that is not Running: `tailscale up --reset --auth-key=file:/dev/stdin --hostname=<machine> --advertise-tags=tag:nova[,tag:runner] --ssh`
    (`--ssh` on Linux; the macOS and Windows clients do not serve Tailscale SSH). `tag:runner` is added for a machine in
    the `runner` group. The key comes from `TAILSCALE_AUTHKEY` in the control node's environment and reaches the
    machine on the command's stdin only (on Windows, which has no `/dev/stdin`, in a file only the login can read,
-   removed after the command). A machine already Running with the same tags is not joined again; a hostname or
-   Tailscale SSH setting that differs is set in place with `tailscale set`, with no key.
+   removed after the command). A Running machine is never brought up again: a hostname or Tailscale SSH setting that
+   differs is set in place with `tailscale set`, with no key, and tags that differ stop the run with `TAILNET STOP`
+   and the command to retag it at its own console (a retag resets the node, which would cut a run that comes in over
+   the tailnet).
 3. Records `Self.DNSName` (`<machine>.<tailnet>.ts.net`) as the machine's address: `nova-config machine set <name>
    --address <dns name>`, then reads the inventory again, so the firewall play, every run after it, the bus and the
    services reach the machine by that name.
@@ -336,7 +405,7 @@ the tailnet. `join.yml` runs it; run it alone for machines that already have a r
 
 ```
 nova-secrets exec --only TAILSCALE_AUTHKEY,NOVA_PG_PASSWORD --store S --key K --as SEAT -- \
-  env NOVA_PG_DSN=postgres://nova_config@<store>:5432/nova \
+  env NOVA_PG_DSN=postgres://nova_config@<pg-host>:5432/nova \
   ansible-playbook -i ./inventory fleet/tailscale.yml -l web-1 --check --diff
 ```
 
@@ -387,9 +456,10 @@ shows `rule=yes`. **Rollback.** Before the push, `git -C S reset --hard HEAD~1`;
 
 ## redis.yml
 
-The Redis `nova-bus` talks to, on each machine of the `services` group: the distribution's `redis-server` (7.0 or newer)
-run by its own unit `nova-redis` on port 6379, listening on the machine's tailnet address only, AOF on (a crash loses
-at most a second), `maxmemory` with no eviction.
+The Redis the bus runs on, on each machine of the `services` group (or the machines `-e nova_store_hosts` names):
+the distribution's `redis-server` (7.0 or newer) run by its own unit `nova-redis` on port 6379, listening on the machine's tailnet address only, AOF on (a crash loses
+at most a second), `maxmemory` with no eviction. The package's own `redis-server.service` (127.0.0.1:6379, no
+password) is stopped and masked, so `nova_redis_unit` is the one Redis on the machine.
 
 - ACL users, each with a password made once on the machine (`<nova_redis_dir>/<user>.pass`, 0600, never regenerated
   while the file exists): `bus` (what nova-bus sends: streams and presence keys under `bus:`, nothing in `@dangerous`),
@@ -414,24 +484,24 @@ ansible-playbook -i ./inventory fleet/redis.yml -e nova_seal_store=$HOME/secrets
 
 | Variable | Default | |
 |---|---|---|
-| `nova_redis_port` | `6379` | the distribution's own `redis-server` unit listens on 127.0.0.1 and is left as it is |
+| `nova_redis_port` | `6379` | |
 | `nova_redis_bind` | the tailnet address | a list replaces it |
 | `nova_redis_dir` | `/var/lib/nova-redis` | data, passwords, `users.acl` |
 | `nova_redis_unit` | `nova-redis` | |
 | `nova_redis_maxmemory` | `2gb` | |
 | `nova_redis_users` | bus, viewer, admin | `{name, rules}` each |
 | `nova_redis_seal_user`, `nova_redis_seal_name` | `bus`, `NOVA_BUS_PASSWORD` | |
-| `nova_seal_store`, `nova_seal_seat`, `nova_seal_key` | none | all three, or no seal |
+| `nova_seal_store`, `nova_seal_seat`, `nova_seal_key` | none | all three, or no seal; one or two stop the run (`SEAL ... STOP`) |
 
 **Check.** `REDIS <machine> port=6379 bind=<100.x> version=<v> acl=same saved=no restarted=no` and `SEAL
 NOVA_BUS_PASSWORD present in seat <seat>`; then `nova-bus who` from a member. **Rollback.** `systemctl disable --now
-nova-redis` and `rm /etc/systemd/system/nova-redis.service`; `/var/lib/nova-redis` (the data and the passwords) is
-left.
+nova-redis` and `rm /etc/systemd/system/nova-redis.service`, and `systemctl unmask redis-server` for the package's
+own; `/var/lib/nova-redis` (the data and the passwords) is left.
 
 ## postgres.yml
 
-The PostgreSQL nova-config keeps the fleet in, on each machine of the `services` group: `postgresql-<version>` from
-the release's main or the PostgreSQL project's repository (its key refused unless its fingerprint is the pinned one),
+The config store, on each machine of the `services` group (or the machines `-e nova_store_hosts` names):
+`postgresql-<version>` from the release's main or the PostgreSQL project's repository (its key refused unless its fingerprint is the pinned one),
 listening on the tailnet address only; `scram-sha-256` from `nova_pg_allow_cidr` for the one database and everything
 else rejected. The Debian cluster is adopted as it is: the play owns `conf.d/nova.conf`, `pg_hba.conf`, the database,
 nova-config's roles `nova_admin` (owns the database), `nova_config` (owns schema `config`) and `nova_read`, their
@@ -440,11 +510,15 @@ database. Each role's password is made once on the machine (`<nova_pg_dir>/<role
 login over the tailnet address; only a role whose proof fails has its password set. With the three `nova_seal_*`
 variables, the `nova_config` password is set into that seat as `NOVA_PG_PASSWORD`, the name nova-config reads.
 
+nova-config's tables are loaded by the play: the SQL of `nova-config schema` (the control node's), run on the machine
+as `postgres` over the unix socket with `SET ROLE nova_admin`, so no password is used and the tables belong to
+`nova_admin` with the grants above. It runs on the first run and again whenever the SQL changes: its sha256 is kept in
+`<nova_pg_dir>/schema.sha256`. An upgraded nova-config on the control node means one more run of the play.
+
 ```
 ansible-playbook -i ./inventory fleet/postgres.yml --check --diff
 ansible-playbook -i ./inventory fleet/postgres.yml -e nova_seal_store=$HOME/secrets -e nova_seal_seat=<seat> \
   -e nova_seal_key=$HOME/.config/nova-secrets/<seat>.key
-nova-config schema | psql "postgres://nova_admin@<store>:5432/nova"      # the tables, once and after an upgrade
 ```
 
 | Variable | Default | |
@@ -456,6 +530,7 @@ nova-config schema | psql "postgres://nova_admin@<store>:5432/nova"      # the t
 | `nova_pg_allow_cidr` | `100.64.0.0/10` | the range tailscale assigns |
 | `nova_pg_dir` | `/var/lib/nova-pg` | passwords and dumps |
 | `nova_pg_dump_on_calendar`, `nova_pg_dump_keep_days` | `*-*-* 03:15:00 UTC`, `14` | |
+| `nova_pg_schema` | `true` | load `nova-config schema` |
 | `nova_pg_seal_role`, `nova_pg_seal_name` | `nova_config`, `NOVA_PG_PASSWORD` | |
 
 **Check.** `PG OK <machine> version=18 db=nova listen=<100.x>:5432 roles=3 timer=enabled changed=nothing` and `PG
@@ -469,8 +544,10 @@ Each machine's clone of the secrets store (`nova_secrets_store`) pulled fast-for
 `nova_secrets_refresh_every` seconds, so a seat never opens a stale store. The pull reads no value, prints no
 credential and logs one line per run (time, commit, `ok` or `FAIL rc=<n>`) to `nova_secrets_refresh_log`. Linux: a
 systemd user timer (linger on), or a crontab line where the login has no user manager; macOS: a LaunchAgent in the
-login's GUI domain. With `nova_secrets_repo`, a machine with no clone gets one; without it, such a machine is skipped
-and named. The machine that writes the store sets `nova_secrets_refresh: false`, which removes its timer.
+login's GUI domain. git is installed on Debian and Ubuntu, and must be there elsewhere. With `nova_secrets_repo`, a
+machine with no clone gets one; a machine with no clone and no `nova_secrets_repo` stops the run with
+`SECRETS-REFRESH ... STOP` and both variables named. The machine that writes the store sets
+`nova_secrets_refresh: false`, which removes its timer.
 
 ```
 ansible-playbook -i ./inventory fleet/secrets-refresh.yml --check --diff
@@ -521,7 +598,8 @@ journalctl -t nova-disk-report --since -1d        # the disk lines
 | `nova_health_disk_report`, `nova_health_disk_warn_pct`, `nova_health_disk_on_calendar` | `true`, `80`, every 6 hours | |
 
 **Check.** `HEALTH <machine> journal=persistent panic=10 ssh_oom=0 slice_max=<bytes> | DISK <machine> root=<n>%
-swap=<n>%`. **Rollback.** Remove the file of the guard (named above), then `systemctl daemon-reload` and restart the
+swap=<n>%`. A machine in a bad state makes the run fail with `HEALTH FAIL <machine>:` and each thing wrong: a
+`DISK-WARN`, and after a run a guard that does not read back as set. Under `--check` only the disk counts. **Rollback.** Remove the file of the guard (named above), then `systemctl daemon-reload` and restart the
 daemon it configures (`systemd-journald`, `ssh`) or `sysctl --system`; `systemctl disable --now nova-disk-report.timer`.
 
 ## Reservations

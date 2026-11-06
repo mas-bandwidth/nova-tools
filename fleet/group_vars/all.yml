@@ -9,7 +9,7 @@
 nova_tools_names: [nova-bus, nova-cairn, nova-config, nova-sandbox, nova-secrets, nova-reserve]
 
 # Where a machine keeps the tools: its login's home.
-nova_home: "{{ ansible_env.HOME }}"
+nova_home: "{{ ansible_facts['env']['HOME'] }}"
 nova_bin_dir: "{{ nova_home }}/.local/bin"
 
 # The PATH a service unit runs with; a service row's env may set its own.
@@ -46,12 +46,12 @@ nova_service_retire_all: false
 # (nova-secrets exec requires --store and --key and takes --sops).
 nova_secrets_store: "{{ nova_home }}/.local/share/nova/secrets"
 nova_secrets_key_dir: "{{ nova_home }}/.config/nova-secrets"
-nova_sops: "{{ '/opt/homebrew/bin/sops' if (ansible_system | default('')) == 'Darwin' else nova_bin_dir ~ '/sops' }}"
+nova_sops: "{{ '/opt/homebrew/bin/sops' if (nova_system | default(ansible_facts['system'] | default(''))) == 'Darwin' else nova_bin_dir ~ '/sops' }}"
 
 # The seat a machine opens its secrets as (nova-secrets --as, services.yml's
 # <seat>.key): its inventory name, the short hostname nova-secrets defaults to.
 nova_seat: "{{ inventory_hostname }}"
-nova_age_keygen: "{{ '/opt/homebrew/bin/age-keygen' if (ansible_system | default('')) == 'Darwin' else nova_bin_dir ~ '/age-keygen' }}"
+nova_age_keygen: "{{ '/opt/homebrew/bin/age-keygen' if (nova_system | default(ansible_facts['system'] | default(''))) == 'Darwin' else nova_bin_dir ~ '/age-keygen' }}"
 
 # The age and sops a Linux machine gets from join.yml, pinned by the digest
 # GitHub publishes for each release asset. A darwin machine takes Homebrew's.
@@ -86,3 +86,8 @@ nova_control_sops: sops
 # (host:port) has no default; the user is the redis.yml ACL user nova-bus
 # sends, its password the seat's NOVA_BUS_PASSWORD.
 nova_bus_user: bus
+
+# The machines meet over Tailscale (tailscale.yml, join.yml). false: they are on a
+# private network of your own; give it on the command line (-e nova_tailnet=false),
+# since tailscale.yml reads it before any host's variables.
+nova_tailnet: true

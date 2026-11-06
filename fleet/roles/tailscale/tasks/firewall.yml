@@ -5,10 +5,10 @@
 # macOS: the application firewall on. Windows is left as it is.
 - name: the firewall is wanted
   ansible.builtin.meta: end_host
-  when: not (nova_firewall | bool) or ansible_os_family == 'Windows'
+  when: not (nova_firewall | bool) or ansible_facts['os_family'] == 'Windows'
 
 - name: ufw (Linux)
-  when: ansible_system == 'Linux'
+  when: (nova_system | default(ansible_facts['system'])) == 'Linux'
   block:
     - name: the ufw package
       ansible.builtin.apt: { name: ufw, state: present }
@@ -26,7 +26,7 @@
       ansible.builtin.set_fact:
         fw_conn: >-
           {{ 'local' if (ansible_connection | default('ssh')) == 'local'
-             else ((ansible_env.SSH_CONNECTION | default('')).split(' ') + ['', '', ''])[2] }}
+             else ((ansible_facts['env']['SSH_CONNECTION'] | default('')).split(' ') + ['', '', ''])[2] }}
 
     - name: what ufw has now, and what it would take
       ansible.builtin.shell: |
@@ -79,7 +79,7 @@
         msg: "FIREWALL {{ inventory_hostname }} ufw {{ 'set: ' ~ (fw_plan.stdout | trim) if (fw_plan.stdout | default('x') | trim | length > 0) else 'as declared' }}{{ ' (check: nothing changed)' if ansible_check_mode else '' }}"
 
 - name: the application firewall (macOS)
-  when: ansible_system == 'Darwin'
+  when: (nova_system | default(ansible_facts['system'])) == 'Darwin'
   block:
     - name: its state
       ansible.builtin.command: /usr/libexec/ApplicationFirewall/socketfilterfw --getglobalstate

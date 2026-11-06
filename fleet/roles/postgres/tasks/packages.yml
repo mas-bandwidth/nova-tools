@@ -56,7 +56,7 @@
       ansible.builtin.copy: { content: "{{ pgdg_key.content }}", dest: "{{ nova_pg_pgdg_keyring }}", owner: root, group: root, mode: "0644" }
       register: pgdg_keyring
 
-    - name: "the source, {{ ansible_distribution_release }}-pgdg"
+    - name: "the source, {{ ansible_facts['distribution_release'] }}-pgdg"
       ansible.builtin.copy:
         dest: /etc/apt/sources.list.d/pgdg.sources
         owner: root
@@ -66,7 +66,7 @@
           # managed by Ansible (fleet/postgres.yml): the PostgreSQL project's apt repository. A hand edit is overwritten.
           Types: deb
           URIs: {{ nova_pg_pgdg_repo }}
-          Suites: {{ ansible_distribution_release }}-pgdg
+          Suites: {{ ansible_facts['distribution_release'] }}-pgdg
           Components: main
           Signed-By: {{ nova_pg_pgdg_keyring }}
       register: pgdg_source

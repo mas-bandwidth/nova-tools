@@ -3,8 +3,8 @@
 # change applied live with ACL LOAD, a restart only for the config or the unit and only after a checkpoint.
 - name: a Debian-family machine
   ansible.builtin.assert:
-    that: ansible_os_family == 'Debian'
-    fail_msg: "{{ inventory_hostname }} is {{ ansible_os_family }}: redis.yml installs the distribution's redis-server with apt"
+    that: ansible_facts['os_family'] == 'Debian'
+    fail_msg: "{{ inventory_hostname }} is {{ ansible_facts['os_family'] }}: redis.yml installs the distribution's redis-server with apt"
     quiet: true
 
 - name: the tailnet address (when nova_redis_bind is empty)
@@ -30,6 +30,12 @@
 - name: the distribution's redis-server package
   ansible.builtin.apt: { name: redis-server, state: present, update_cache: true, cache_valid_time: 3600 }
   register: redis_pkg
+
+# the package starts its own redis-server.service on 127.0.0.1:6379 with no password; the one server on this machine
+# is nova_redis_unit, so the distribution's is stopped and masked (its data, if any, is left where it is)
+- name: the distribution's own instance, stopped and masked
+  ansible.builtin.systemd_service: { name: redis-server, state: stopped, enabled: false, masked: true }
+  when: nova_redis_unit != 'redis-server' and not (ansible_check_mode and redis_pkg is changed)
 
 - name: the server's version
   ansible.builtin.shell: "redis-server --version 2>/dev/null | sed -n 's/.*v=\\([0-9][0-9.]*\\).*/\\1/p'"
@@ -81,4 +87,5 @@
     msg: >-
       REDIS {{ inventory_hostname }} port={{ nova_redis_port }} bind={{ redis_bind | join(',') }} version={{ redis_ver.stdout | default('?') }}
       acl={{ redis_acl_note }} saved={{ redis_saved_at | default('no') }} restarted={{ 'yes' if (redis_restarted | default(false)) else 'no' }}
-      {{- (' (' ~ (redis_restart_why | join('; ')) ~ ')') if redis_restart_why else '' }}{{ ' (check: nothing changed)' if ansible_check_mode else '' }}
+      {%- if redis_would_restart | default(false) %} would-restart={{ redis_restart_why | join(',') | replace(' ', '-') }}
+      {%- elif redis_restart_why %} ({{ redis_restart_why | join('; ') }}){% endif %}{{ ' (check: nothing changed)' if ansible_check_mode else '' }}

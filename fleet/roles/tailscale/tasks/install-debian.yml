@@ -8,7 +8,7 @@
 - name: Tailscale's signing key (where it is missing)
   when: not ts_key_file.stat.exists
   ansible.builtin.get_url:
-    url: "{{ nova_tailscale_apt_url }}/{{ ansible_distribution | lower }}/{{ ansible_distribution_release }}.noarmor.gpg"
+    url: "{{ nova_tailscale_apt_url }}/{{ ansible_facts['distribution'] | lower }}/{{ ansible_facts['distribution_release'] }}.noarmor.gpg"
     dest: /usr/share/keyrings/tailscale-archive-keyring.gpg
     mode: "0644"
   become: true
@@ -20,8 +20,8 @@
     mode: "0644"
     # the line Tailscale's own install script writes, so a machine set up by it is left as it is
     content: |
-      # Tailscale packages for {{ ansible_distribution | lower }} {{ ansible_distribution_release }}
-      deb [arch={{ 'arm64' if ansible_architecture in ['aarch64', 'arm64'] else 'amd64' }} signed-by=/usr/share/keyrings/tailscale-archive-keyring.gpg] {{ nova_tailscale_apt_url }}/{{ ansible_distribution | lower }} {{ ansible_distribution_release }} main
+      # Tailscale packages for {{ ansible_facts['distribution'] | lower }} {{ ansible_facts['distribution_release'] }}
+      deb [arch={{ 'arm64' if ansible_facts['architecture'] in ['aarch64', 'arm64'] else 'amd64' }} signed-by=/usr/share/keyrings/tailscale-archive-keyring.gpg] {{ nova_tailscale_apt_url }}/{{ ansible_facts['distribution'] | lower }} {{ ansible_facts['distribution_release'] }} main
   become: true
   register: ts_source
 

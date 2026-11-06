@@ -9,7 +9,8 @@
 #      the control node), linger on, the hostname set to the inventory name.
 #   3. tailscale.yml: Tailscale installed and up with the adopter's tagged auth key, the MagicDNS name recorded as the
 #      machine's address, the firewall closed to everything but the tailnet. From here on the plays reach the machine
-#      over the tailnet.
+#      over the tailnet. With -e nova_tailnet=false (a private network of the adopter's own) this step and the peer
+#      check are skipped, and the machine keeps the address its row has.
 #   4. the tools a seat needs (as the login): the bin directory on the login PATH, and on Linux the pinned age and sops.
 #   5. seat.yml: the seat key made on the machine by age-keygen, its rule added to the secrets store.
 #   6. the check: the control node sees the machine as an online tailnet peer, and `nova-bus who` from the machine
@@ -37,6 +38,14 @@
         that: nova_join_host is defined and nova_join_host is match('^[a-z0-9][a-z0-9-]*$')
         fail_msg: "JOIN STOP: join.yml takes the machine as -e nova_join_host=<name> (a lowercase machine name), never -l"
         quiet: true
+
+    - name: the control node has what the run needs
+      ansible.builtin.include_role: { name: preflight }
+      vars:
+        preflight_control: >-
+          {{ [{'cmd': nova_control_config, 'for': 'the machine row'}, {'cmd': nova_control_secrets, 'for': 'the seat'},
+              {'cmd': 'git', 'for': 'the seat: nova-secrets commits the store'}]
+             + ([{'cmd': 'tailscale', 'for': 'the check: the control node sees the peer'}] if (nova_tailnet | bool) else []) }}
 
     - name: nova-config's store is in the environment
       ansible.builtin.assert:
@@ -126,8 +135,8 @@
 
     - name: a Linux machine
       ansible.builtin.assert:
-        that: ansible_system == 'Linux'
-        fail_msg: "{{ inventory_hostname }} reports {{ ansible_system }}; its row says os={{ nova_os | default('') }}"
+        that: (nova_system | default(ansible_facts['system'])) == 'Linux'
+        fail_msg: "{{ inventory_hostname }} reports {{ (nova_system | default(ansible_facts['system'])) }}; its row says os={{ nova_os | default('') }}"
         quiet: true
 
     - name: "the login {{ join_login }} (no password, bash, group {{ nova_join_sudo_group }})"
@@ -184,11 +193,11 @@
   gather_facts: true
   gather_subset: [min]
   vars:
-    join_platform: "{{ ansible_system | lower }}-{{ 'arm64' if ansible_architecture in ['arm64', 'aarch64'] else 'amd64' }}"
+    join_platform: "{{ (nova_system | default(ansible_facts['system'])) | lower }}-{{ 'arm64' if ansible_facts['architecture'] in ['arm64', 'aarch64'] else 'amd64' }}"
   tasks:
     - name: a Windows machine has no seat here
       ansible.builtin.meta: end_host
-      when: ansible_os_family == 'Windows'
+      when: ansible_facts['os_family'] == 'Windows'
 
     - name: the bin directory
       ansible.builtin.file: { path: "{{ nova_bin_dir }}", state: directory, mode: "0755" }
@@ -218,12 +227,12 @@
         checksum: "sha256:{{ nova_age_sha256[join_platform] }}"
         mode: "0644"
       register: join_age_archive
-      when: ansible_system == 'Linux' and not (ansible_check_mode and join_bin_dir is changed)   # --check: no directory to fetch into yet
+      when: (nova_system | default(ansible_facts['system'])) == 'Linux' and not (ansible_check_mode and join_bin_dir is changed)   # --check: no directory to fetch into yet
 
     - name: age-keygen in the bin directory
       ansible.builtin.stat: { path: "{{ nova_bin_dir }}/age-keygen" }
       register: join_keygen
-      when: ansible_system == 'Linux'
+      when: (nova_system | default(ansible_facts['system'])) == 'Linux'
 
     - name: age and age-keygen unpacked into the bin directory (a new archive, or none there)
       ansible.builtin.unarchive:
@@ -233,7 +242,7 @@
         include: [age/age, age/age-keygen]
         extra_opts: [--strip-components=1]
       when: >-
-        ansible_system == 'Linux' and (join_age_archive is changed or not join_keygen.stat.exists)
+        (nova_system | default(ansible_facts['system'])) == 'Linux' and (join_age_archive is changed or not join_keygen.stat.exists)
         and not (ansible_check_mode and (join_age_archive is changed or join_age_archive is skipped))
 
     - name: "sops {{ nova_sops_version }} (Linux, the release binary at its pinned digest)"
@@ -242,7 +251,7 @@
         dest: "{{ nova_sops }}"
         checksum: "sha256:{{ nova_sops_sha256[join_platform] }}"
         mode: "0755"
-      when: ansible_system == 'Linux' and not (ansible_check_mode and join_bin_dir is changed)
+      when: (nova_system | default(ansible_facts['system'])) == 'Linux' and not (ansible_check_mode and join_bin_dir is changed)
 
     - name: age-keygen and sops answer
       ansible.builtin.shell: |
@@ -255,7 +264,7 @@
 
     - name: the tools' receipt
       ansible.builtin.debug:
-        msg: "JOIN TOOLS {{ inventory_hostname }} {{ join_tools.stdout | trim }}{{ ' (darwin: brew install age sops where none)' if ansible_system == 'Darwin' else '' }}"
+        msg: "JOIN TOOLS {{ inventory_hostname }} {{ join_tools.stdout | trim }}{{ ' (darwin: brew install age sops where none)' if (nova_system | default(ansible_facts['system'])) == 'Darwin' else '' }}"
 
 - name: the seat
   ansible.builtin.import_playbook: seat.yml
@@ -273,6 +282,7 @@
       changed_when: false
       failed_when: false
       check_mode: false
+      when: nova_tailnet | bool
 
     - name: the machine among the control node's peers
       ansible.builtin.set_fact:
@@ -280,6 +290,7 @@
           {{ ((check_peers.stdout | from_json).Peer | default({})).values() | selectattr('DNSName', 'defined')
              | selectattr('DNSName', 'equalto', (ansible_host | default('')) ~ '.') | list | first | default({})
              if (check_peers.stdout | default('') | trim).startswith('{') else {} }}
+      when: nova_tailnet | bool
 
     - name: the peer is online
       ansible.builtin.assert:
@@ -288,7 +299,7 @@
           JOIN CHECK {{ inventory_hostname }}: the control node's `tailscale status` has no online peer {{ ansible_host | default('') }}
           (the control node must be on the same tailnet, and the policy must let it see tag:nova)
         quiet: true
-      when: not ansible_check_mode
+      when: nova_tailnet | bool and not ansible_check_mode
 
     - name: the bus password in the machine's seat (names only; no value read)
       ansible.builtin.command:
@@ -297,7 +308,7 @@
       changed_when: false
       failed_when: false
       check_mode: false
-      when: ansible_os_family != 'Windows' and nova_bus_redis is defined
+      when: ansible_facts['os_family'] != 'Windows' and nova_bus_redis is defined
 
     - name: nova-bus who, from the machine
       ansible.builtin.command:
@@ -328,7 +339,7 @@
     - name: the check's receipt
       ansible.builtin.debug:
         msg: >-
-          JOIN CHECK {{ inventory_hostname }} peer={{ 'online' if check_peer.Online | default(false) else ('WOULD-CHECK' if ansible_check_mode else 'missing') }}
+          JOIN CHECK {{ inventory_hostname }} peer={{ 'no-tailnet' if not (nova_tailnet | bool) else ('online' if (check_peer | default({})).Online | default(false) else ('WOULD-CHECK' if ansible_check_mode else 'missing')) }}
           {%- if check_who is not skipped %} bus={{ check_who.stdout_lines | first | default('?') }}
           {%- elif nova_bus_redis is not defined %} NOTE bus not checked: no nova_bus_redis (host:port) given
           {%- else %} NOTE bus not checked: seat {{ nova_seat }} holds no {{ nova_redis_seal_name | default('NOVA_BUS_PASSWORD') }} yet (nova-secrets set it, then run again){% endif %}

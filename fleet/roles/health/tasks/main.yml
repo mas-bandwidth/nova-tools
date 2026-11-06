@@ -4,7 +4,7 @@
 # the user's units.
 - name: Linux only
   ansible.builtin.meta: end_host
-  when: ansible_system != 'Linux'
+  when: (nova_system | default(ansible_facts['system'])) != 'Linux'
 
 # ---- the journal, on disk ----
 - name: the journal directory
@@ -113,19 +113,19 @@
 # ---- the login's user slice has a memory ceiling, and its manager comes back ----
 - name: the slice limit in whole MiB
   ansible.builtin.set_fact:
-    health_slice_max_mib: "{{ (ansible_memtotal_mb * (nova_health_user_memory_max_pct | int) / 100) | int }}"
+    health_slice_max_mib: "{{ (ansible_facts['memtotal_mb'] * (nova_health_user_memory_max_pct | int) / 100) | int }}"
   when: (nova_health_user_memory_max_pct | int) > 0
 
 - name: the drop-in directories of the slice and the user manager
   ansible.builtin.file: { path: "{{ item }}", state: directory, mode: "0755" }
-  loop: ["/etc/systemd/system/user-{{ ansible_user_uid }}.slice.d", /etc/systemd/system/user@.service.d]
+  loop: ["/etc/systemd/system/user-{{ ansible_facts['user_uid'] }}.slice.d", /etc/systemd/system/user@.service.d]
   become: true
   when: (nova_health_user_memory_max_pct | int) > 0
 
 # MemoryMax only: a MemoryHigh below it throttles the whole slice instead of killing the runaway job
 - name: the slice drop-in (MemoryMax)
   ansible.builtin.copy:
-    dest: "/etc/systemd/system/user-{{ ansible_user_uid }}.slice.d/90-nova-memory.conf"
+    dest: "/etc/systemd/system/user-{{ ansible_facts['user_uid'] }}.slice.d/90-nova-memory.conf"
     mode: "0644"
     content: |
       # managed by Ansible (fleet/health.yml): a runaway job is killed inside the user's slice
@@ -206,7 +206,7 @@
     j=$(test -d /var/log/journal && echo persistent || echo volatile)
     p=$(sysctl -n kernel.panic 2>/dev/null || echo ?)
     s=$(systemctl show -p OOMScoreAdjust --value {{ nova_health_ssh_unit }}.service 2>/dev/null || echo ?)
-    m=$(systemctl show -p MemoryMax --value user-{{ ansible_user_uid }}.slice 2>/dev/null || echo ?)
+    m=$(systemctl show -p MemoryMax --value user-{{ ansible_facts['user_uid'] }}.slice 2>/dev/null || echo ?)
     d=$(DISK_NO_LOG=1 DISK_WARN_PCT={{ nova_health_disk_warn_pct }} bash -s {{ nova_home }} < /usr/local/sbin/nova-disk-report 2>/dev/null || df -P / | awk 'NR==2{print "DISK root=" $5}')
     echo "journal=$j panic=$p ssh_oom=${s:-unset} slice_max=$m | $d"
   args: { executable: /bin/bash }
@@ -223,3 +223,23 @@
       HEALTH {{ inventory_hostname }} {{ health_show.stdout | trim }}
       {{- (' ' ~ health_trimmed | join(' ')) if health_trimmed else '' }}
       {{- ' (check: nothing changed)' if ansible_check_mode else '' }}
+
+# the receipt is read by people and by programs: a machine in a bad state makes the run red, naming each one. Under
+# --check only the disk counts (the guards are what a run would set).
+- name: what is wrong on the machine
+  vars:
+    hs: "{{ health_show.stdout | trim }}"
+  ansible.builtin.set_fact:
+    health_wrong: >-
+      {{ ([hs | regex_search('DISK-WARN.*$')] if 'DISK-WARN' in hs else [])
+       + ([] if ansible_check_mode else
+           ((['journal not persistent'] if (nova_health_journal | bool and 'journal=persistent' not in hs) else [])
+          + (['kernel.panic is not ' ~ nova_health_panic_reboot] if ((nova_health_panic_reboot | int) > 0 and ('panic=' ~ nova_health_panic_reboot ~ ' ') not in hs) else [])
+          + (['ssh sessions not killable (OOMScoreAdjust is not 0)'] if (nova_health_ssh_killable | bool and health_ssh_unit.rc | default(1) == 0 and 'ssh_oom=0 ' not in hs) else [])
+          + (['the user slice has no MemoryMax'] if ((nova_health_user_memory_max_pct | int) > 0 and 'slice_max=infinity' in hs) else []))) }}
+
+- name: the machine is healthy
+  ansible.builtin.assert:
+    that: health_wrong | length == 0
+    fail_msg: "HEALTH FAIL {{ inventory_hostname }}: {{ health_wrong | join('; ') }}"
+    quiet: true

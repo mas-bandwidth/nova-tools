@@ -43,7 +43,7 @@
   notify: restart nova-redis
   when: redis_restart_why | length > 0 and redis_probe.stdout != 'down' and not ansible_check_mode
 
-- name: the restart a run would make (--check)
-  ansible.builtin.debug: { msg: "WOULD-RESTART: {{ redis_restart_why | join('; ') }}" }
+- name: the restart a run would make (--check; the receipt says would-restart=)
+  ansible.builtin.set_fact: { redis_would_restart: true }
   changed_when: true
   when: redis_restart_why | length > 0 and redis_probe.stdout != 'down' and ansible_check_mode

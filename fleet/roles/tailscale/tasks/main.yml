@@ -5,13 +5,13 @@
 # the wanted tags is not joined again.
 - name: the platform
   ansible.builtin.set_fact:
-    ts_os: "{{ 'windows' if ansible_os_family == 'Windows' else ('darwin' if ansible_system == 'Darwin' else ('debian' if ansible_os_family == 'Debian' else 'other')) }}"
+    ts_os: "{{ 'windows' if ansible_facts['os_family'] == 'Windows' else ('darwin' if (nova_system | default(ansible_facts['system'])) == 'Darwin' else ('debian' if ansible_facts['os_family'] == 'Debian' else 'other')) }}"
     ts_tags: "{{ nova_tailscale_tags | sort }}"
 
 - name: a platform this play installs on
   ansible.builtin.assert:
     that: ts_os != 'other'
-    fail_msg: "{{ inventory_hostname }} is {{ ansible_os_family }}: tailscale.yml installs on Debian/Ubuntu (apt), macOS (brew) and Windows (winget)"
+    fail_msg: "{{ inventory_hostname }} is {{ ansible_facts['os_family'] }}: tailscale.yml installs on Debian/Ubuntu (apt), macOS (brew) and Windows (winget)"
     quiet: true
 
 - name: install and join (Windows)
@@ -43,8 +43,22 @@
 
     - name: what the join must do
       ansible.builtin.set_fact:
-        ts_join: "{{ ts_state != 'Running' or (ts_self.Tags | default([]) | sort) != ts_tags }}"
+        ts_join: "{{ ts_state != 'Running' }}"
+        ts_retag: "{{ ts_state == 'Running' and (ts_self.Tags | default([]) | sort) != ts_tags }}"
         ts_ssh_flag: "{{ ['--ssh'] if (ts_os == 'debian' and nova_tailscale_ssh | bool) else [] }}"
+
+    # Changing a running node's tags needs `tailscale up --reset` with a new key: that drops the node's other
+    # preferences and can cut the connection this run comes in on. The play never does it; it names the command.
+    - name: a running node keeps its tags (retagging is done at its console)
+      ansible.builtin.fail:
+        msg: >-
+          TAILNET STOP {{ inventory_hostname }}: it is Running with tags {{ ts_self.Tags | default([]) | join(',') or 'none' }},
+          and {{ ts_tags | join(',') }} is wanted. Retag it at the machine's own console (not over the tailnet: the command
+          drops the connection), with a key allowed those tags:
+          printf %s "$TAILSCALE_AUTHKEY" | sudo tailscale up --reset --force-reauth --auth-key=file:/dev/stdin
+          --hostname={{ inventory_hostname }} --advertise-tags={{ ts_tags | join(',') }} {{ ts_ssh_flag | join(' ') }}
+          -- or set nova_tailscale_tags for this machine to the tags it has.
+      when: ts_retag
 
     - name: the join has its key (refused before anything runs when it has not)
       ansible.builtin.assert:
@@ -58,7 +72,7 @@
     - name: "tailscale up as {{ inventory_hostname }} with {{ ts_tags | join(',') }} (the key on stdin)"
       ansible.builtin.command:
         argv: "{{ [nova_tailscale_bin, 'up', '--reset', '--auth-key=file:/dev/stdin', '--hostname=' ~ inventory_hostname,
-                   '--advertise-tags=' ~ (ts_tags | join(','))] + ts_ssh_flag + (['--force-reauth'] if ts_state == 'Running' else []) }}"
+                   '--advertise-tags=' ~ (ts_tags | join(','))] + ts_ssh_flag }}"
         stdin: "{{ lookup('ansible.builtin.env', 'TAILSCALE_AUTHKEY') }}"
         stdin_add_newline: false
       vars:
@@ -71,7 +85,7 @@
 
     - name: the join a run would make (--check)
       ansible.builtin.debug:
-        msg: "WOULD-UP {{ inventory_hostname }}: state {{ ts_state }}, tags {{ ts_self.Tags | default([]) | join(',') or 'none' }}, want {{ ts_tags | join(',') }}"
+        msg: "WOULD-UP {{ inventory_hostname }}: state {{ ts_state }}, want {{ ts_tags | join(',') }}"
       changed_when: true
       when: ts_join and ansible_check_mode
 

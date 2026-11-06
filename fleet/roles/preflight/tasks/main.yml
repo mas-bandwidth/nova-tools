@@ -1,0 +1,26 @@
+---
+# The preflight role: the programs a play needs on the control node, found before the play changes anything
+# (docs/FLEET.md, "Prerequisites"). preflight_control is a list of {cmd, for}: cmd is a name on PATH or a path, for
+# says what needs it. A missing one stops the run naming it. Included once per run (run_once, on the control node).
+- name: the control node's programs
+  ansible.builtin.shell: |
+    {% for p in preflight_control %}
+    command -v {{ p.cmd | quote }} >/dev/null 2>&1 || echo {{ (p.cmd ~ ' (' ~ p.for ~ ')') | quote }}
+    {% endfor %}
+    true
+  delegate_to: localhost
+  become: false
+  run_once: true
+  register: preflight_missing
+  changed_when: false
+  check_mode: false
+  when: preflight_control | default([]) | length > 0
+
+- name: nothing is missing
+  ansible.builtin.assert:
+    that: preflight_missing is skipped or preflight_missing.stdout_lines | length == 0
+    fail_msg: >-
+      PREFLIGHT STOP: the control node is missing {{ preflight_missing.stdout_lines | default([]) | join(', ') }};
+      install it, or point its variable at it (docs/FLEET.md, "Prerequisites")
+    quiet: true
+  run_once: true

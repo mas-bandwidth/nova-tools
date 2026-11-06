@@ -2,11 +2,20 @@
 # The seal role: a password file on this machine set into a seat of the secrets store, on the control node, by
 # `nova-secrets set` (the value on its stdin: never argv, a log or a file in the clear there). Included by redis.yml
 # and postgres.yml with seal_file (the file on this machine) and seal_name (the name in the seat). It runs only when
-# nova_seal_store, nova_seal_seat and nova_seal_key are all given; a name the seat holds already is left as it is, so a
-# second run seals nothing. Pushing the store is the operator's.
+# nova_seal_store, nova_seal_seat and nova_seal_key are all given, and refuses one or two of them; a name the seat
+# holds already is left as it is, so a second run seals nothing. Pushing the store is the operator's.
 - name: sealing is asked for
   ansible.builtin.set_fact:
     seal_asked: "{{ nova_seal_store is defined and nova_seal_seat is defined and nova_seal_key is defined }}"
+    seal_missing: >-
+      {{ (['nova_seal_store'] if nova_seal_store is not defined else []) + (['nova_seal_seat'] if nova_seal_seat is not defined else [])
+         + (['nova_seal_key'] if nova_seal_key is not defined else []) }}
+
+- name: all three, or none
+  ansible.builtin.assert:
+    that: seal_missing | length in [0, 3]
+    fail_msg: "SEAL {{ seal_name }} STOP: sealing needs nova_seal_store, nova_seal_seat and nova_seal_key; missing {{ seal_missing | join(', ') }}"
+    quiet: true
 
 - name: the names the seat holds (control node; no key, no value read)
   ansible.builtin.command:

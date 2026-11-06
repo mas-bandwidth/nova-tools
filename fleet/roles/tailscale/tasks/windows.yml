@@ -21,7 +21,17 @@
 
 - name: what the join must do (Windows)
   ansible.builtin.set_fact:
-    ts_join: "{{ ts_state != 'Running' or (ts_self.Tags | default([]) | sort) != ts_tags }}"
+    ts_join: "{{ ts_state != 'Running' }}"
+
+- name: a running node keeps its tags (Windows; retagging is done at its console)
+  ansible.builtin.fail:
+    msg: >-
+      TAILNET STOP {{ inventory_hostname }}: it is Running with tags {{ ts_self.Tags | default([]) | join(',') or 'none' }},
+      and {{ ts_tags | join(',') }} is wanted. Retag it at the machine's own console (not over the tailnet), with a key
+      allowed those tags in a file: tailscale up --reset --force-reauth --auth-key=file:<key file>
+      --hostname={{ inventory_hostname }} --advertise-tags={{ ts_tags | join(',') }} -- or set nova_tailscale_tags
+      for this machine to the tags it has.
+  when: ts_state == 'Running' and (ts_self.Tags | default([]) | sort) != ts_tags
 
 - name: the join has its key (Windows)
   ansible.builtin.assert:
@@ -36,18 +46,18 @@
     - name: the key file
       ansible.windows.win_copy:
         content: "{{ lookup('ansible.builtin.env', 'TAILSCALE_AUTHKEY') }}"
-        dest: "{{ ansible_env.TEMP }}\\nova-tailscale-authkey"
+        dest: "{{ ansible_facts['env']['TEMP'] }}\\nova-tailscale-authkey"
       no_log: true
 
     - name: tailscale up
       ansible.windows.win_command: >-
-        "{{ nova_tailscale_win_bin }}" up --reset --auth-key=file:{{ ansible_env.TEMP }}\nova-tailscale-authkey
-        --hostname={{ inventory_hostname }} --advertise-tags={{ ts_tags | join(',') }}{{ ' --force-reauth' if ts_state == 'Running' else '' }}
+        "{{ nova_tailscale_win_bin }}" up --reset --auth-key=file:{{ ansible_facts['env']['TEMP'] }}\nova-tailscale-authkey
+        --hostname={{ inventory_hostname }} --advertise-tags={{ ts_tags | join(',') }}
       register: ts_up
       no_log: true
   always:
     - name: the key file removed
-      ansible.windows.win_file: { path: "{{ ansible_env.TEMP }}\\nova-tailscale-authkey", state: absent }
+      ansible.windows.win_file: { path: "{{ ansible_facts['env']['TEMP'] }}\\nova-tailscale-authkey", state: absent }
 
 - name: the state after the join (Windows)
   ansible.windows.win_command: '"{{ nova_tailscale_win_bin }}" status --json'

@@ -6,13 +6,21 @@
 # nova_seal_store, nova_seal_seat and nova_seal_key given, the bus password is set into that seat as NOVA_BUS_PASSWORD
 # (the seal role); a client then runs with NOVA_BUS_REDIS=<host>:<port>, NOVA_BUS_USER=bus and NOVA_BUS_PASSWORD.
 #
+# The machines are the `services` group, or the hosts -e nova_store_hosts names (the first store, from a one-machine
+# inventory: docs/FLEET.md, "The first machine").
+#
 #   ansible-playbook -i ./inventory fleet/redis.yml --check --diff
 #   ansible-playbook -i ./inventory fleet/redis.yml -e nova_seal_store=S -e nova_seal_seat=SEAT -e nova_seal_key=K
 - name: the fleet's Redis
-  hosts: services
+  hosts: "{{ nova_store_hosts | default('services') }}"
   become: true
   gather_facts: true
   gather_subset: [min]
+  pre_tasks:
+    - name: the control node has what the run needs
+      ansible.builtin.include_role: { name: preflight }
+      vars:
+        preflight_control: "{{ ([{'cmd': nova_control_secrets, 'for': 'the seal'}, {'cmd': nova_control_sops, 'for': 'the seal'}] if nova_seal_store is defined else []) }}"
   roles:
     - redis
   tasks:

@@ -38,6 +38,10 @@ nova_pg_roles:
   - { name: nova_config, flags: "LOGIN NOCREATEDB NOCREATEROLE", want: "t|f|f" }
   - { name: nova_read,   flags: "LOGIN NOCREATEDB NOCREATEROLE", want: "t|f|f" }
 
+# Load `nova-config schema` (from the control node's nova-config) into the
+# database: on the first run, and again whenever its SQL changes.
+nova_pg_schema: true
+
 # The role whose password is sealed into nova_seal_seat, and the name it is
 # sealed as (nova-config reads NOVA_PG_PASSWORD unless NOVA_PG_PASSWORD_ENV
 # names another).

@@ -4,21 +4,29 @@
 #
 #   1. Tailscale installed: Tailscale's apt repository on Debian and Ubuntu, Homebrew's cask on macOS, winget on Windows.
 #   2. `tailscale up --auth-key=file:/dev/stdin --hostname <machine> --advertise-tags=tag:nova[,tag:runner] [--ssh]`,
-#      the key TAILSCALE_AUTHKEY from the control node's environment, on stdin; skipped when the machine is Running
-#      with the same tags (a hostname or Tailscale SSH that differs is set in place, with no key).
+#      the key TAILSCALE_AUTHKEY from the control node's environment, on stdin, on a machine that is not Running. A Running
+#      machine is never brought up again: a hostname or Tailscale SSH that differs is set in place with no key, and
+#      tags that differ stop the run with the command to retag it at its console.
 #   3. The machine's MagicDNS name (<machine>.<tailnet>.ts.net) recorded as its address in nova-config
 #      (`nova-config machine set <name> --address ...`), then the inventory read again, so the next play, every later
 #      run, the bus and the services reach it there.
 #   4. The firewall: ufw denies incoming on Linux but on tailscale0 (only over a run that already comes in on the
 #      tailnet, so it cannot lock itself out); the application firewall on macOS.
 #
+# With -e nova_tailnet=false (the machines are on a private network of the adopter's own) it does nothing.
+#
 #   nova-secrets exec --only TAILSCALE_AUTHKEY,NOVA_PG_PASSWORD --store S --key K --as SEAT -- \
 #     env NOVA_PG_DSN=postgres://nova_config@HOST:5432/nova ansible-playbook -i ./inventory fleet/tailscale.yml -l <machine>
 - name: the tailnet
-  hosts: "{{ nova_join_host | default('all') }}"
+  hosts: "{{ (nova_join_host | default('all')) if (nova_tailnet | default(true) | bool) else '!all' }}"
   gather_facts: true
   gather_subset: [min]
   tasks:
+    - name: the control node has what the run needs
+      ansible.builtin.include_role: { name: preflight }
+      vars:
+        preflight_control: "{{ [{'cmd': nova_control_config, 'for': 'the address: nova-config machine set'}] if (nova_tailscale_record_address | default(true) | bool) else [] }}"
+
     - name: install, join, record the address
       ansible.builtin.include_role: { name: tailscale }
 
@@ -26,7 +34,7 @@
       ansible.builtin.meta: refresh_inventory
 
 - name: the firewall (over the tailnet)
-  hosts: "{{ nova_join_host | default('all') }}"
+  hosts: "{{ (nova_join_host | default('all')) if (nova_tailnet | default(true) | bool) else '!all' }}"
   gather_facts: true
   gather_subset: [min]
   tasks:

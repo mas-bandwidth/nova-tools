@@ -6,8 +6,8 @@
   ansible.builtin.set_fact:
     sr_script: "{{ nova_bin_dir }}/nova-secrets-refresh"
     sr_label: com.nova.secrets-refresh
-    sr_darwin: "{{ ansible_system == 'Darwin' }}"
-    sr_xdg: "/run/user/{{ ansible_user_uid }}"
+    sr_darwin: "{{ (nova_system | default(ansible_facts['system'])) == 'Darwin' }}"
+    sr_xdg: "/run/user/{{ ansible_facts['user_uid'] }}"
     sr_user_dir: "{{ nova_home }}/.config/systemd/user"
 
 # ---- a machine that must not pull: its timer goes, nothing else changes ----
@@ -40,7 +40,7 @@
         p={{ nova_home }}/Library/LaunchAgents/{{ sr_label }}.plist
         [ -f "$p" ] || { echo none; exit 0; }
         {% if not ansible_check_mode %}
-        launchctl bootout gui/{{ ansible_user_uid }}/{{ sr_label }} 2>/dev/null || true
+        launchctl bootout gui/{{ ansible_facts['user_uid'] }}/{{ sr_label }} 2>/dev/null || true
         rm -f "$p"
         {% endif %}
         echo removed
@@ -55,6 +55,25 @@
     - name: nothing more here
       ansible.builtin.meta: end_host
 
+# ---- git, which the pull needs ----
+- name: git (Debian, Ubuntu)
+  ansible.builtin.apt: { name: git, state: present, update_cache: true, cache_valid_time: 3600 }
+  become: true
+  when: ansible_facts['os_family'] == 'Debian'
+
+- name: git is on the machine
+  ansible.builtin.command: git --version
+  register: sr_git
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: git is there (the Command Line Tools on macOS, the system's package elsewhere)
+  ansible.builtin.assert:
+    that: sr_git.rc == 0 or (ansible_check_mode and ansible_facts['os_family'] == 'Debian')
+    fail_msg: "SECRETS-REFRESH {{ inventory_hostname }} STOP: no git on the machine; install it, then run again"
+    quiet: true
+
 # ---- the store clone ----
 - name: is there a store clone here
   ansible.builtin.stat: { path: "{{ nova_secrets_store }}/.git" }
@@ -68,14 +87,14 @@
   environment: { GIT_TERMINAL_PROMPT: "0", GIT_SSH_COMMAND: "ssh -o BatchMode=yes -o ConnectTimeout=20" }
   when: not sr_store.stat.exists and nova_secrets_repo | length > 0
 
-- name: no clone and no repo to clone, so nothing to refresh
-  ansible.builtin.debug:
-    msg: "SECRETS-REFRESH {{ inventory_hostname }} skipped: no clone at {{ nova_secrets_store }} and no nova_secrets_repo"
-  when: not sr_store.stat.exists and nova_secrets_repo | length == 0
-
-- name: nothing more here
-  ansible.builtin.meta: end_host
-  when: not sr_store.stat.exists and nova_secrets_repo | length == 0
+- name: a clone, or a repo to clone
+  ansible.builtin.assert:
+    that: sr_store.stat.exists or nova_secrets_repo | length > 0
+    fail_msg: >-
+      SECRETS-REFRESH {{ inventory_hostname }} STOP: no clone at {{ nova_secrets_store }} (nova_secrets_store) and no
+      nova_secrets_repo to clone; give -e nova_secrets_repo=<the store's git URL>, or -e nova_secrets_refresh=false for
+      a machine that does not pull
+    quiet: true
 
 # ---- the script ----
 - name: the directories
@@ -87,8 +106,8 @@
 
 # ---- Linux: a systemd user timer, or cron ----
 - name: linger for the login (its timer runs with no session open)
-  ansible.builtin.command: "loginctl enable-linger {{ ansible_user_id }}"
-  args: { creates: "/var/lib/systemd/linger/{{ ansible_user_id }}" }
+  ansible.builtin.command: "loginctl enable-linger {{ ansible_facts['user_id'] }}"
+  args: { creates: "/var/lib/systemd/linger/{{ ansible_facts['user_id'] }}" }
   become: true
   when: not sr_darwin
 
@@ -147,7 +166,7 @@
 
 # ---- darwin: a LaunchAgent ----
 - name: the login's GUI domain (darwin)
-  ansible.builtin.command: "launchctl print gui/{{ ansible_user_uid }}"
+  ansible.builtin.command: "launchctl print gui/{{ ansible_facts['user_uid'] }}"
   register: sr_gui
   changed_when: false
   failed_when: false
@@ -156,7 +175,7 @@
 
 - name: a darwin login with no GUI domain is refused (a LaunchDaemon is not written here)
   ansible.builtin.fail:
-    msg: "SECRETS-REFRESH {{ inventory_hostname }}: the login has no GUI domain (gui/{{ ansible_user_uid }}); log it in at the console once, or run the refresh from services.yml as a system unit"
+    msg: "SECRETS-REFRESH {{ inventory_hostname }}: the login has no GUI domain (gui/{{ ansible_facts['user_uid'] }}); log it in at the console once, or run the refresh from services.yml as a system unit"
   when: sr_darwin and sr_gui.rc != 0
 
 - name: the LaunchAgents directory
@@ -169,7 +188,7 @@
   when: sr_darwin
 
 - name: is the agent loaded
-  ansible.builtin.command: "launchctl print gui/{{ ansible_user_uid }}/{{ sr_label }}"
+  ansible.builtin.command: "launchctl print gui/{{ ansible_facts['user_uid'] }}/{{ sr_label }}"
   register: sr_loaded
   changed_when: false
   failed_when: false
@@ -178,7 +197,7 @@
 
 - name: the agent loaded (again when the plist changed)
   ansible.builtin.shell: |
-    d=gui/{{ ansible_user_uid }}; l={{ sr_label }}
+    d=gui/{{ ansible_facts['user_uid'] }}; l={{ sr_label }}
     launchctl bootout "$d/$l" 2>/dev/null || true
     launchctl bootstrap "$d" {{ nova_home }}/Library/LaunchAgents/$l.plist
   when: sr_darwin and (sr_plist is changed or sr_loaded.rc != 0) and not ansible_check_mode
