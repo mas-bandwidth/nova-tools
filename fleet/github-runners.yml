@@ -1,15 +1,16 @@
-# github-runners.yml: GitHub Actions runners on every machine of the `runner` group, runner_count of them
-# (the machine row's `runners`), registered to one repository or organization, run as a service that
-# starts at boot, labelled with the machine's roles, os and arch. docs/FLEET.md, "github-runners.yml".
+# purpose: GitHub Actions runners on every machine of the runner group, registered to one repository or organization
 #
-#   ansible-playbook -i ./inventory fleet/github-runners.yml -e github_runner_url=https://github.com/<owner>/<repo> -e github_runner_scope=repo --check --diff | cat
-#   ansible-playbook -i ./inventory fleet/github-runners.yml -e github_runner_url=https://github.com/<owner>/<repo> -e github_runner_scope=repo -K | cat
+# runner_count of them per machine (the machine row's `runners`), run as a service that starts at boot,
+# labelled with the machine's roles, os and arch. fleet/README.md, "github-runners".
+#
+#   nova-fleet github-runners --check --diff -- -e github_runner_url=https://github.com/<owner>/<repo> -e github_runner_scope=repo
+#   nova-fleet github-runners -- -e github_runner_url=https://github.com/<owner>/<repo> -e github_runner_scope=repo -K
 #
 # The registration token is read on the control node with
 # `nova-secrets exec --only GITHUB_RUNNER_TOKEN`; it is not an argument, a variable of the inventory or a file.
 # A host's count is its machine row's `runners`; a host with none is refused, not read as 0.
-# -e runner_count=<n> sets it for a run (0 retires every runner). Variables: fleet/roles/github-runner/defaults/main.yml. Linux and macOS use sudo for the service files (-K);
-# a Windows host needs the ansible.windows collection (fleet/requirements.yml) and an administrator login.
+# -e runner_count=<n> sets it for a run (0 retires every runner). Variables: roles/github-runner/defaults/main.yml. Linux and macOS use sudo for the service files (-K);
+# a Windows host needs the ansible.windows collection (requirements.yml) and an administrator login.
 - name: GitHub Actions runners
   hosts: runner
   gather_facts: true

@@ -1,6 +1,6 @@
 //go:build functional
 
-package fleet
+package main
 
 import (
 	"context"

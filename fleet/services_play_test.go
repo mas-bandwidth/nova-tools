@@ -1,4 +1,4 @@
-package fleet
+package main
 
 import (
 	"os"
@@ -11,7 +11,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// services_play_test.go pins fleet/services.yml's Linux unit state (docs/FLEET.md, "services.yml").
+// services_play_test.go pins fleet/services.yml's Linux unit state (fleet/README.md, "services").
 // The state of ansible.builtin.systemd_service is built before the module call,
 // because the ansible-core templar stops at a parenthesised ternary chained to a
 // second `if ... else` ("expected token ')', got 'else'"): service_unit_changed,
@@ -131,7 +131,7 @@ func TestServicesPlayStateExpressionIsBuiltOutsideTheModuleArgs(t *testing.T) {
 func TestFleetFilesNameNoRetiredTool(t *testing.T) {
 	t.Parallel()
 	for _, f := range []string{"services.yml", "templates/nova-service.plist.j2", "templates/nova-service.service.j2",
-		"templates/nova-service.timer.j2", "group_vars/all.yml", "nova-tools-install.yml"} {
+		"templates/nova-service.timer.j2", "group_vars/all.yml", "install.yml"} {
 		b, err := os.ReadFile(f)
 		require.NoError(t, err)
 		for _, word := range []string{"nova-swarm", "nova-sprint", "nova-update", "disk-guard", "nova-card"} {
@@ -140,7 +140,7 @@ func TestFleetFilesNameNoRetiredTool(t *testing.T) {
 	}
 }
 
-// The install defaults: the six tools, and retiring off until asked.
+// The install defaults: the seven tools, and retiring off until asked.
 func TestInstallRoleDefaults(t *testing.T) {
 	t.Parallel()
 	b, err := os.ReadFile("roles/nova-tools-install/defaults/main.yml")
@@ -151,7 +151,7 @@ func TestInstallRoleDefaults(t *testing.T) {
 	require.NoError(t, err)
 	var gv map[string]any
 	require.NoError(t, yaml.Unmarshal(g, &gv))
-	assert.Equal(t, []any{"nova-bus", "nova-cairn", "nova-config", "nova-sandbox", "nova-secrets", "nova-reserve"}, gv["nova_tools_names"])
+	assert.Equal(t, []any{"nova-bus", "nova-cairn", "nova-config", "nova-sandbox", "nova-secrets", "nova-reserve", "nova-fleet"}, gv["nova_tools_names"])
 	assert.Equal(t, false, d["nova_tools_remove_enabled"])
 	names, _ := gv["nova_tools_names"].([]any)
 	for _, r := range d["nova_tools_remove"].([]any) {

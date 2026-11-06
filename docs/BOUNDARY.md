@@ -9,9 +9,9 @@ They need no outside service.
 
 ## Layout
 
-The six binaries live in `bus`, `config`, `sandbox`, `secrets`, `reserve` and
-`cairn`. Each uses `package main`. The seventh piece, `fleet`, holds Ansible
-plays, Go tests and a package comment; it has no command-line program.
+The seven binaries live in `bus`, `cairn`, `config`, `fleet`, `reserve`,
+`sandbox` and `secrets`. Each uses `package main`. `fleet` is nova-fleet, which
+embeds the Ansible plays beside it and runs them.
 
 Beside them are `docs` and `tests`, and `.github` holds CI. `tests` holds the
 checks that span tools: `tests/boundary` (the layout test), `tests/contract` (the
@@ -39,6 +39,10 @@ that ties the tools together.
 Tools may run a user-selected command or a system helper. They should not call
 a sibling nova tool by name to implement their own job. Review this rule in
 code; the import check alone cannot detect dependencies through subprocesses.
+The one exception is nova-fleet, whose job is to run the fleet's plays the way
+an operator would: it execs `nova-config` (the inventory), `nova-secrets` (the
+values a play needs) and `nova-bus` (the end-to-end check) from PATH, imports
+none of them, and would be a shell script otherwise.
 
 Workflow policy belongs in nova-sprint or another consumer. Personal tools
 belong in their owner's repository.
@@ -77,6 +81,12 @@ A new tool's budget is its size when its design was settled, plus 50 lines.
 If a change exceeds its budget, first look for work the tool no longer needs
 to do. A budget increase needs a reason in the same PR. Lower the budget when
 code is removed, and remove temporary headroom after the work it covers lands.
+
+`fleet` went from 50 to 1400 (2026-11-05) when it became nova-fleet: a program
+that embeds the plays, checks the control node (`check`) and takes a fleet from
+nothing to running (`up`): the fleet read from nova-config, each machine
+reached as its login over the tailnet with pinned host keys, every step with
+its receipt and its `--check` form.
 
 ## Adding a tool
 
