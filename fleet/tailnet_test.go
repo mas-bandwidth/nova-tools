@@ -246,8 +246,8 @@ func TestUpTailnet(t *testing.T) {
 		t.Errorf("keys minted = %d, want 2 (first, third)", f.api.keys)
 	}
 	all := strings.Join(f.calls, "\n")
-	if strings.Count(all, "TAILSCALE_AUTHKEY=") != 2 || !strings.Contains(all, "tailscale.yml -e nova_tailscale_record_address=false -e nova_firewall=false [env TAILSCALE_AUTHKEY=tskey-auth-SECRET1]") ||
-		!strings.Contains(all, "nova_join_host=third") || !strings.Contains(all, "[env TAILSCALE_AUTHKEY=tskey-auth-SECRET2]") {
+	if strings.Count(all, "TAILSCALE_AUTHKEY=") != 2 || !strings.Contains(all, "tailscale.yml -e nova_tailscale_record_address=false -e nova_firewall=false [env TAILSCALE_AUTHKEY="+fakeKey("auth", "SECRET1")+"]") ||
+		!strings.Contains(all, "nova_join_host=third") || !strings.Contains(all, "[env TAILSCALE_AUTHKEY="+fakeKey("auth", "SECRET2")+"]") {
 		t.Errorf("the keys' plays:\n%s", all)
 	}
 	for _, c := range f.calls {
@@ -294,22 +294,22 @@ func TestUpTailnetCheckAndRefusals(t *testing.T) {
 	code, out, errs = runArgs("up", "--tools", "v2.0.0", "first=1.1.1.1")
 	all := strings.Join(f.calls, "\n")
 	if code != 0 || !strings.Contains(out, "CHECK NOTE tailnet") || !strings.Contains(out, "UP TAILNET OK policy=merged control=joined keys=1") ||
-		!strings.Contains(all, `sh -c printf %s "$TAILSCALE_AUTHKEY" | sudo "$0" up --reset --auth-key=file:/dev/stdin --advertise-tags=tag:control /bin/tailscale [env TAILSCALE_AUTHKEY=tskey-auth-SECRET1]`) ||
+		!strings.Contains(all, `sh -c printf %s "$TAILSCALE_AUTHKEY" | sudo "$0" up --reset --auth-key=file:/dev/stdin --advertise-tags=tag:control /bin/tailscale [env TAILSCALE_AUTHKEY=`+fakeKey("auth", "SECRET1")+`]`) ||
 		!strings.Contains(strings.Join(f.api.calls, "\n"), `"tags":["tag:control"]`) {
 		t.Errorf("offnet: code %d\n%s\n%s\n%s", code, out, errs, all)
 	}
-	// a value that is not one line tskey-api-...: refused, the value never printed
+	// a value that is not one line, not an API key: refused, the value never printed
 	f = &upFake{}
 	f.install(t)
 	old := outCmd
 	outCmd = func(bin string, args, env []string) (string, string, int) {
 		if strings.HasSuffix(strings.Join(args, " "), `printf %s "$TAILSCALE_API_KEY"`) {
-			return "tskey-auth-SECRET\n", "", 0
+			return fakeKey("auth", "SECRET") + "\n", "", 0
 		}
 		return old(bin, args, env)
 	}
 	code, out, errs = runArgs("up", "--tools", "v2.0.0", "first=1.1.1.1")
-	if code != 1 || !strings.Contains(errs, "TAILSCALE_API_KEY cannot be read as one line tskey-api-...") || !strings.Contains(errs, "Generate API access token") || !strings.Contains(errs, "UP tailnet FAILED") ||
+	if code != 1 || !strings.Contains(errs, "TAILSCALE_API_KEY cannot be read as one line "+fakeKey("api", "")+"...") || !strings.Contains(errs, "Generate API access token") || !strings.Contains(errs, "UP tailnet FAILED") ||
 		strings.Contains(out+errs, "SECRET") || len(f.plays()) != 0 {
 		t.Errorf("bad value: code %d\n%s\n%s", code, out, errs)
 	}

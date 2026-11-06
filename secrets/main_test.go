@@ -978,7 +978,7 @@ func fresh(t *testing.T) (*harness, string) {
 	dir := filepath.Join(home, ".config", "nova-secrets")
 	h.store, h.key, h.pins = filepath.Join(dir, "store"), filepath.Join(dir, "ada.key"), filepath.Join(dir, "pins")
 	h.environ = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + home, "NOVA_SECRETS_SEAT=ada"}
-	h.stdin = "tskey-api-FRESH\n"
+	h.stdin = fakeKey("api", "FRESH") + "\n"
 	return h, dir
 }
 
@@ -1003,9 +1003,9 @@ func TestSetBootstrapsAFreshNode(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, pubRec+"\n", string(b))
 	assert.Equal(t, []string{pubA, pubRec}, h.ruleKeys(h.store, "ada.yaml"), "the seat's rule: its key, then the recovery key")
-	assert.Equal(t, map[string]string{"TAILSCALE_API_KEY": "tskey-api-FRESH"}, h.open("ada"))
+	assert.Equal(t, map[string]string{"TAILSCALE_API_KEY": fakeKey("api", "FRESH")}, h.open("ada"))
 	assert.Contains(t, h.gitCalls(), []string{"init", "-q"})
-	h.noLeak("tskey-api-FRESH")
+	h.noLeak(fakeKey("api", "FRESH"))
 	// the next set finds it all there and makes nothing
 	h.stdin = "second\n"
 	require.Equal(t, 0, h.main("set", "OTHER", "--sops", "sops"), h.stderr.String())
