@@ -62,6 +62,8 @@ var toolSpecs = []toolSpec{
 
 var goFlagNoise = []string{"flag provided but not defined", "Usage of", "invalid value", "parse error", "flag needs an argument"}
 
+var nextFieldThenText = regexp.MustCompile(`(^|\s)next=\S+\s+\S`)
+
 type result struct {
 	code           int
 	stdout, stderr string
@@ -109,6 +111,14 @@ func (h *harness) run(args ...string) result {
 		}
 	}
 	r := result{code, so.String(), se.String()}
+	// CLI-STYLE: a next= field ends its line; no free text such as "next:" follows it.
+	for _, out := range []string{r.stdout, r.stderr} {
+		for _, line := range strings.Split(out, "\n") {
+			if nextFieldThenText.MatchString(line) {
+				h.t.Errorf("B1 %s %s: expected nothing after a next= field; actual %q", h.tool, strings.Join(args, " "), trim(line))
+			}
+		}
+	}
 	ok := code >= 0 && code <= 2
 	for _, e := range h.extra {
 		ok = ok || code == e
