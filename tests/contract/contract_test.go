@@ -158,7 +158,7 @@ func (h *harness) noNoise(id, what string, r result) {
 }
 
 func TestCLIContract(t *testing.T) {
-	root, err := filepath.Abs("..")
+	root, err := filepath.Abs("../..")
 	if err != nil {
 		t.Fatal(err)
 	}
