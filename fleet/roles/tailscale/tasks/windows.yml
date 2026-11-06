@@ -26,12 +26,12 @@
 - name: a running node keeps its tags (Windows; retagging is done at its console)
   ansible.builtin.fail:
     msg: >-
-      TAILNET STOP {{ inventory_hostname }}: it is Running with tags {{ ts_self.Tags | default([]) | join(',') or 'none' }},
+      TAILNET STOP {{ inventory_hostname }}: it is Running with tags {{ ts_self.Tags | default([], true) | join(',') or 'none' }},
       and {{ ts_tags | join(',') }} is wanted. Retag it at the machine's own console (not over the tailnet), with a key
       allowed those tags in a file: tailscale up --reset --force-reauth --auth-key=file:<key file>
       --hostname={{ inventory_hostname }} --advertise-tags={{ ts_tags | join(',') }} -- or set nova_tailscale_tags
       for this machine to the tags it has.
-  when: ts_state == 'Running' and (ts_self.Tags | default([]) | sort) != ts_tags
+  when: ts_state == 'Running' and (ts_self.Tags | default([], true) | sort) != ts_tags
 
 - name: the join has its key (Windows)
   ansible.builtin.assert:
