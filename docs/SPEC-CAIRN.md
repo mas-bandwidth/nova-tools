@@ -236,5 +236,5 @@ literal starting with `-` goes after `--`). A flag the verb does not take is
 refused by name, never ignored. A conflict is a
 FAILED line (`APPEND FAILED session=... entry=...: ...`), exit 1.
 
-`go test ./cairn` runs the unit tests. `tla/check.sh <tla2tools.jar> cairn/tla`
+`go test ./cairn` runs the unit tests. `tests/tla/check.sh <tla2tools.jar> cairn/tla`
 runs the model.

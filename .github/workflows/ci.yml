@@ -106,7 +106,7 @@ jobs:
       - *clean
       - *checkout
       - name: TLC over every model case
-        run: tla/check.sh "${{ vars.TLC_JAR }}"
+        run: tests/tla/check.sh "${{ vars.TLC_JAR }}"
 
   fleet:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository

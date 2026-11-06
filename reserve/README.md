@@ -56,4 +56,4 @@ that skips the gate, a crashed holder whose locks are never freed, a crashed hol
 the BSDs on SIGKILL), a count that is not checked, a taker that counts its own `--slots` (the per-caller bug), two
 first takers that both write the capacity, a set that writes while slots are held, a claimer that never sees the
 stored capacity, and a status that probes slots by locking them. `CASES.tsv` lists them;
-`tla/check.sh <jar> reserve/tla` runs them.
+`tests/tla/check.sh <jar> reserve/tla` runs them.

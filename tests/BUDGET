@@ -5,5 +5,5 @@ reserve  1100
 sandbox  1900
 secrets  1000
 fleet  50
-boundary  400
-contract  50
+tests/boundary  400
+tests/contract  50

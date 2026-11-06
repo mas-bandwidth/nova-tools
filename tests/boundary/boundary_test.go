@@ -21,12 +21,12 @@ const modulePath = "github.com/mas-bandwidth/nova-tools"
 var allowedTop = map[string]bool{
 	// tools and support directories
 	"bus": true, "config": true, "sandbox": true, "secrets": true, "reserve": true, "cairn": true,
-	"fleet": true, "tla": true, "docs": true, "boundary": true, "contract": true, ".github": true,
+	"fleet": true, "docs": true, "tests": true, ".github": true,
 	// version control
 	".git": true,
-	// root files: exactly these, nothing else
+	// root files: exactly these, nothing else (nothing in root unless a user cares about it)
 	"README.md": true, "LICENSE": true, "go.mod": true, "go.sum": true,
-	".gitignore": true, ".gitattributes": true, "BUDGET": true,
+	".gitignore": true, ".gitattributes": true,
 }
 
 // libraryDirs are named in the failure message when present.
@@ -55,7 +55,7 @@ var allowedRequires = []string{
 
 func root(t *testing.T) string {
 	t.Helper()
-	abs, err := filepath.Abs("..")
+	abs, err := filepath.Abs("../..")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -293,11 +293,11 @@ func TestDirectDependencies(t *testing.T) {
 	}
 }
 
-var budgetLine = regexp.MustCompile(`^([A-Za-z0-9_-]+) +([0-9]+)$`)
+var budgetLine = regexp.MustCompile(`^([A-Za-z0-9_/-]+) +([0-9]+)$`)
 
 func TestBudgets(t *testing.T) {
 	base := root(t)
-	data, err := os.ReadFile(filepath.Join(base, "BUDGET"))
+	data, err := os.ReadFile(filepath.Join(base, "tests", "BUDGET"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -313,13 +313,29 @@ func TestBudgets(t *testing.T) {
 		}
 		budgets[m[1]], _ = strconv.Atoi(m[2])
 	}
-	entries, err := os.ReadDir(base)
-	if err != nil {
-		t.Fatal(err)
+	if files, _ := filepath.Glob(filepath.Join(base, "tests", "*.go")); len(files) > 0 {
+		for _, f := range files {
+			t.Errorf("%s: tests/ holds packages, not files: put it in tests/<name>/ with a BUDGET line", filepath.Base(f))
+		}
 	}
-	for _, e := range entries {
-		name := e.Name()
-		if !e.IsDir() || name == ".git" || name == "docs" || len(goFiles(filepath.Join(base, name))) == 0 {
+	// Every directory holding Go code needs a line: each top-level directory
+	// except docs/ and tests/, and each package directly under tests/.
+	var dirs []string
+	for _, parent := range []string{"", "tests"} {
+		entries, err := os.ReadDir(filepath.Join(base, parent))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, e := range entries {
+			name := filepath.ToSlash(filepath.Join(parent, e.Name()))
+			if !e.IsDir() || name == ".git" || name == "docs" || name == "tests" {
+				continue
+			}
+			dirs = append(dirs, name)
+		}
+	}
+	for _, name := range dirs {
+		if len(goFiles(filepath.Join(base, name))) == 0 {
 			continue
 		}
 		if _, ok := budgets[name]; !ok {

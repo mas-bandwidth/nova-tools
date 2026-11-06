@@ -3,20 +3,25 @@
 nova-tools is a small set of independent command-line tools, each one a single
 top-level `package main`, that know nothing about any workflow built on them.
 
-The shape and the size are checked by `boundary/boundary_test.go`, which runs
+The shape and the size are checked by `tests/boundary/boundary_test.go`, which runs
 under plain `go test ./...` and needs no network, sockets or real time.
 
 ## The allowed shape
 
-The top level holds seven tools: `bus`, `config`, `sandbox`, `secrets`,
-`reserve`, `cairn` (each a `package main`) and the fleet plays (`fleet`, Ansible
-plus a `doc.go`, no program). Beside them are `tla` (models), `docs`,
-`boundary` and `contract` (test-only packages) and `.github`.
+The top level holds six tools (`bus`, `cairn`, `config`, `reserve`, `sandbox`,
+`secrets`, each a `package main`), the fleet plays (`fleet`, Ansible plus a
+`doc.go`, no program), `docs` and `tests`. `.github` holds CI.
 
-The root files are exactly README.md, LICENSE, go.mod, go.sum, .gitignore,
-.gitattributes and BUDGET. The root holds README.md only; every other document
-(changelog, roadmap, testing notes, specs) goes in `docs/`. Any other top-level
-entry fails the test, and so does any symlink.
+`tests/` holds everything that tests or verifies the repository: `tests/boundary`
+(this test), `tests/contract` (the CLI contract), `tests/tla` (the TLC runner and
+the pinned jar checksum) and `tests/BUDGET`. Each tool's own models stay in
+`<tool>/tla/`, beside the code they model. docs/TESTING.md explains `tests/`.
+
+The root files are exactly README.md, LICENSE, go.mod, go.sum, .gitignore and
+.gitattributes. Nothing lives in the root unless a user cares about it. The
+root holds README.md only; every other document (changelog, roadmap, specs)
+goes in `docs/`. Any other top-level entry fails the test, and so does any
+symlink.
 
 The test never looks inside `docs/`: it may hold assets (images) and anything
 else.
@@ -41,13 +46,13 @@ the same PR, with the reason written here under "Dependencies".
 
 ## The budget rule
 
-`BUDGET` has one line per tool, `name  max-non-test-go-lines`, counting the
+`tests/BUDGET` has one line per tool, `name  max-non-test-go-lines`, counting the
 `*.go` files that are not `_test.go`. The test fails when a tool is over. Each
 budget is the size the tool reached when its spec was settled, plus 50. A tool
 over budget means the spec is not minimal; raising one is a PR that says why.
 
 `BUDGET` lines are exactly `name  number`, with no comments or duplicates, and
-include `boundary` itself (400).
+include `boundary` itself (`tests/boundary`, 400).
 
 ### Raised budgets
 
@@ -61,7 +66,7 @@ include `boundary` itself (400).
 
 1. Make a new top-level directory with `package main` files.
 2. Add its name to the allowed list in `boundary_test.go` (and to `mainTools`).
-3. Add a line to `BUDGET`.
+3. Add a line to `tests/BUDGET`.
 4. Keep it to a few hundred lines, with a spec in `docs/`.
 
 ## What goes elsewhere
