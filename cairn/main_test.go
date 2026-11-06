@@ -87,6 +87,25 @@ func TestStoreRoundTrip(t *testing.T) {
 	assert.Contains(t, out, "INDEX MORE kind=entry shown=1 total=2")
 }
 
+// TestAppendOpensMissingSession: append to a session nobody opened opens it
+// with publish=manual (or the --publish the line names), instead of refusing.
+func TestAppendOpensMissingSession(t *testing.T) {
+	t.Parallel()
+	store := filepath.Join(t.TempDir(), "s")
+	code, out, _ := do(t, "", "append", "--store", store, "--session", "s1", "--entry", "e1", "--text", "the words")
+	require.Equal(t, 0, code)
+	assert.Contains(t, out, "APPEND OK session=s1 entry=e1")
+	assert.Contains(t, out, "publish=manual")
+
+	code, out, _ = do(t, "", "receipt", "--store", store, "--session", "s1", "--entry", "e1", "--text")
+	assert.Equal(t, 0, code)
+	assert.Contains(t, out, `text="the words"`)
+
+	code, out, _ = do(t, "", "append", "--store", store, "--session", "s2", "--entry", "e1", "--text", "x", "--publish", "never")
+	require.Equal(t, 0, code)
+	assert.Contains(t, out, "publish=never")
+}
+
 // TestFilesOnDisk pins the formats on disk, so cairns already written keep reading.
 func TestFilesOnDisk(t *testing.T) {
 	t.Parallel()
@@ -119,7 +138,6 @@ func TestReopenAndRefusals(t *testing.T) {
 		{"open", "--store", store, "--session", "a b", "--publish", "never"}, // not an id
 		{"open", "--store", store, "--session", "s2", "--publish", "bogus"},  // not a policy
 		{"open", "--store", store}, // missing flags
-		{"append", "--store", store, "--session", "nope", "--entry", "e", "--text", "x"},
 		{"append", "--store", store, "--session", "s1", "--entry", "e", "--text", "x", "--file", "-"},
 		{"append", "--store", store, "--session", "s1", "--entry", "e"},
 		{"append", "--store", store, "--session", "s1", "--entry", "e", "--text", ""},

@@ -406,13 +406,15 @@ func appendEntry(store, session, id, text, source string, now time.Time, publish
 	}
 	_, flat, ok := locate(store, session)
 	if !ok {
+		// A first append opens the session it names, with publish=manual
+		// unless the line names a policy, so keeping words takes one command.
 		if !slices.Contains(policies, publish) {
 			publish = "manual"
 		}
-		return r, false, refuse(command("open", "--store", store, "--session", session, "--publish", publish),
-			"no such session %q under store %q; open it first", session, store)
-	}
-	if flat {
+		if _, _, err := open(store, session, source, now, publish); err != nil {
+			return r, false, err
+		}
+	} else if flat {
 		return r, false, refuse("", "session %q is a flat record, which this tool reads but does not append to; append to it by hand, or open another session id", session)
 	}
 	opened, err := readOpen(store, session)

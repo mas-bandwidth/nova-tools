@@ -33,7 +33,8 @@ var groups = []struct {
 	verbs        [][2]string // verb path, synopsis after "nova-cairn "
 }{
 	{"Keep a session's words (a store is a directory you name):", `
-      Every write is synced to disk before OK. An entry is never overwritten: the same id
+      Append to a session that does not exist yet opens it, with publish=manual unless
+      the line names a policy. Every write is synced to disk before OK. An entry is never overwritten: the same id
       with the same words is duplicate=true (exit 0), with other words a conflict (exit 1).
       The words, new ids and source must be valid UTF-8, so what is accepted is kept
       byte for byte. receipt takes --store, --session and --entry (no stamp) and reads that entry
