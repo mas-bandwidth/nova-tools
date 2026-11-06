@@ -1,4 +1,4 @@
-// tailscale-acl.json: a starter tailnet policy for a nova fleet (docs/FLEET.md, "tailscale.yml").
+// tailscale-acl.json: a starter tailnet policy for a nova fleet (fleet/README.md, "tailscale").
 // Paste it into the admin console (Access controls), then edit the owner: replace owner@example.com with the
 // account that owns the tailnet. It is the whole policy: anything not allowed here is denied, and a tailnet
 // member's own devices reach no fleet machine.

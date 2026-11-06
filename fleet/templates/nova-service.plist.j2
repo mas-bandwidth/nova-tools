@@ -15,7 +15,7 @@
 <string>com.nova.service.{{ l.name | e }}</string>
 {% if service_system %}
 <key>UserName</key>
-<string>{{ ansible_user_id | e }}</string>
+<string>{{ ansible_facts['user_id'] | e }}</string>
 {% endif %}
 <key>ProgramArguments</key>
 <array>

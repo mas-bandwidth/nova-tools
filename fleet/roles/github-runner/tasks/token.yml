@@ -2,7 +2,30 @@
 # The registration (or removal) token, read on the control node from the nova-secrets store
 # and held as a no_log fact for this host only. It is never an argument of any command: the
 # store hands it to a child process on stdin, the runner reads it from
-# ACTIONS_RUNNER_INPUT_TOKEN, and it is written nowhere. Not read under --check.
+# ACTIONS_RUNNER_INPUT_TOKEN, and it is written nowhere. It is read under --check too, so a
+# green check is not followed by a real run that fails on a missing token.
+#
+# First a read that holds no value (the command is `true`), shown in full: a refusal says why
+# (no store, no key, no such name) on nova-secrets' stderr, which never carries a value.
+- name: the token is readable from the store on the control node
+  ansible.builtin.command:
+    argv: "{{ [github_runner_secrets_bin, 'exec', '--only', 'GITHUB_RUNNER_TOKEN'] + github_runner_secrets_args + ['--', 'true'] }}"
+  delegate_to: localhost
+  become: false
+  register: github_runner_token_probe
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: the token's read succeeded
+  ansible.builtin.assert:
+    quiet: true
+    that: github_runner_token_probe.rc == 0
+    fail_msg: >-
+      github-runner: GITHUB_RUNNER_TOKEN cannot be read on the control node (exit {{ github_runner_token_probe.rc }}):
+      {{ (github_runner_token_probe.stderr | default(github_runner_token_probe.msg | default(''))) | trim }};
+      store a {{ 'registration' if github_runner_need | default([]) | length > 0 else 'removal' }} token: gh api -X POST {{ 'orgs' if github_runner_scope == 'org' else 'repos' }}/{{ github_runner_path }}/actions/runners/{{ 'registration-token' if github_runner_need | default([]) | length > 0 else 'remove-token' }} -q .token | nova-secrets set GITHUB_RUNNER_TOKEN
+
 - name: the token, from the store on the control node
   ansible.builtin.command:
     argv: >-

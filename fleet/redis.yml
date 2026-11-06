@@ -1,4 +1,6 @@
-# redis.yml: the Redis nova-bus talks to, on each machine of the `services` group (docs/FLEET.md, "redis.yml"): the
+# purpose: the Redis nova-bus talks to, on each machine of the services group
+#
+# redis.yml: the Redis nova-bus talks to, on each machine of the `services` group (fleet/README.md, "redis"): the
 # distribution's redis-server (7.0 or newer) run by its own unit on nova_redis_port, listening on the
 # tailnet address only, AOF on. ACL users bus, viewer and admin each get a password made once on the machine
 # (<nova_redis_dir>/<user>.pass, 0600); `default` is off, so every client names its user. An ACL change is applied live
@@ -7,7 +9,7 @@
 # (the seal role); a client then runs with NOVA_BUS_REDIS=<host>:<port>, NOVA_BUS_USER=bus and NOVA_BUS_PASSWORD.
 #
 # The machines are the `services` group, or the hosts -e nova_store_hosts names (the first store, from a one-machine
-# inventory: docs/FLEET.md, "The first machine").
+# inventory: fleet/README.md, "The first machine").
 #
 #   ansible-playbook -i ./inventory fleet/redis.yml --check --diff
 #   ansible-playbook -i ./inventory fleet/redis.yml -e nova_seal_store=S -e nova_seal_seat=SEAT -e nova_seal_key=K

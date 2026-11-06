@@ -1,5 +1,6 @@
-# services.yml: one supervised unit per service record, on the machine the record
-# names. The records are nova-config's service rows as `nova-config inventory`
+# purpose: one supervised unit per service record, on the machine the record names
+#
+# The records are nova-config's service rows as `nova-config inventory`
 # prints them (nova_services on each host); the units are the templates under
 # templates/: nova-service.plist.j2 on darwin (launchd), nova-service.service.j2 on
 # linux (systemd) with nova-service.timer.j2 beside it for a service that runs every
@@ -12,8 +13,8 @@
 # ~/.local/state/nova/services/<name>.log) is where stdout and stderr append.
 # Every other value is the host layout's (group_vars/all.yml).
 #
-#   ansible-playbook -i ./nova-inventory fleet/services.yml --check --diff </dev/null 2>&1 | cat
-#   ansible-playbook -i ./nova-inventory fleet/services.yml </dev/null 2>&1 | cat
+#   nova-fleet services --check --diff
+#   nova-fleet services
 #
 # nova_service_only names the records a run renders and restarts (a list, or one
 # comma-separated word: -e nova_service_only=service-a,service-b); every other
@@ -42,19 +43,18 @@
 # by itself: with units to retire the play refuses, naming them, unless
 # -e nova_service_retire_all=true.
 #
-# A unit whose file (or timer) changed is restarted, said as RESTART (WOULD-RESTART
-# under --check) with why.
+# A unit whose file (or timer) changed is restarted, named in the receipt as
+# restarted=<names> (would-restart=<names> under --check).
 - name: service units from the service records
   hosts: all
   gather_facts: true
   gather_subset: [min]
   vars:
-    # The platform is the gathered fact, unless the run names one with -e
-    # ansible_system=<Linux|Darwin> (extra vars win), as every play of this
-    # directory takes it: the functional tests render both platforms' units on one
-    # machine that way. When ansible-core stops injecting top-level facts the
-    # name is undefined unless given, and the fact decides.
-    service_darwin: "{{ (ansible_system | default(ansible_facts['system'])) == 'Darwin' }}"
+    # The platform is the gathered fact (ansible_facts, never the injected
+    # top-level ansible_system, which ansible-core 2.24 removes), unless the run
+    # names one with -e nova_system=<Linux|Darwin>, to render the other platform's
+    # units on one machine.
+    service_darwin: "{{ (nova_system | default(ansible_facts['system'])) == 'Darwin' }}"
     service_user_dir: "{{ nova_home ~ ('/Library/LaunchAgents' if service_darwin else '/.config/systemd/user') }}"
     service_system_dir: "{{ '/Library/LaunchDaemons' if service_darwin else '/etc/systemd/system' }}"
     service_dir: "{{ service_system_dir if service_system else service_user_dir }}"
@@ -324,17 +324,17 @@
       become: "{{ service_system }}"
       when: service_darwin
 
-    - name: the units a run restarts, and why
-      ansible.builtin.debug:
-        msg: >-
-          {{ 'WOULD-RESTART' if ansible_check_mode else 'RESTART' }} {{ item.name }} on {{ inventory_hostname }}:
-          {{ 'named by nova_service_restart' if item.name in service_restart else 'its unit file changed' }}
-      loop: "{{ service_records | selectattr('enabled') | list }}"
-      loop_control: { label: "{{ item.name }}" }
-      when: >-
-        (((service_units.results + (service_timers.results | default([]))) | selectattr('item.name', 'equalto', item.name) | selectattr('changed') | list | length > 0)
-         or item.name in service_restart)
-        and (not service_darwin or (service_loaded.results | selectattr('item', 'equalto', item.name) | first).rc == 0)
+    # Named in the receipt (restarted= or would-restart=): an enabled record whose unit file
+    # changed or that nova_service_restart names, and on darwin one launchd holds.
+    - name: the units a run restarts
+      ansible.builtin.set_fact:
+        service_restarting: >-
+          {{ service_records | selectattr('enabled') | map(attribute='name')
+             | select('in', ((service_units.results + (service_timers.results | default([]))) | selectattr('changed')
+                             | map(attribute='item.name') | list) + service_restart)
+             | select('in', (service_loaded.results | default([]) | selectattr('rc', 'defined') | selectattr('rc', 'equalto', 0)
+                             | map(attribute='item') | list) if service_darwin else (service_records | map(attribute='name') | list))
+             | list }}
 
     - name: unload the disabled and the changed (darwin)
       ansible.builtin.command: "launchctl bootout {{ service_domain }}/com.nova.service.{{ item.item }}"
@@ -420,4 +420,4 @@
           SERVICES host={{ inventory_hostname }} place={{ service_dir }} records={{ service_records | length }}
           enabled={{ service_records | selectattr('enabled') | list | length }}
           written={{ service_units.results | default([]) | selectattr('changed') | list | length }}
-          retired={{ service_retire | length }}{{ (' only=' ~ (service_only | join(','))) if service_only else '' }}{{ ' (check: nothing changed)' if ansible_check_mode else '' }}
+          retired={{ service_retire | length }}{{ (' ' ~ ('would-restart=' if ansible_check_mode else 'restarted=') ~ (service_restarting | join(','))) if service_restarting else '' }}{{ (' only=' ~ (service_only | join(','))) if service_only else '' }}{{ ' (check: nothing changed)' if ansible_check_mode else '' }}

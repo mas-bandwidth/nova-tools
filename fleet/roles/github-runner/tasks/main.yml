@@ -1,7 +1,7 @@
 ---
 # Installs, registers and supervises GitHub Actions runners on this host: runner_count
 # of them (the machine row's `runners`), registered to github_runner_url, labelled with
-# the machine's roles, os and arch. See docs/FLEET.md, "github-runners.yml".
+# the machine's roles, os and arch. See fleet/README.md, "github-runners".
 #
 # Linux (WSL2 too, with systemd on) and macOS: unix.yml. A native Windows host: windows.yml,
 # included only for a Windows host, so ansible.windows is needed only there.
@@ -51,14 +51,15 @@
       {{ ansible_facts['service_mgr'] | default('?') }} is not supported: Linux amd64/arm64 with systemd (WSL2 needs
       systemd=true), macOS, native Windows; log in as the user the runners run as, never root
 
-# The labels: the machine's roles (its inventory groups, but `all`), os and arch (the machine row's, else the host's own), then
-# the extras. Sorted and unique, so the label list is the same on every run.
+# The labels: the machine's roles (its inventory groups, but `all`), the host's own os and arch (from its facts: a
+# machine row's os/arch fields are how it is reached, never a label), then the extras. Sorted and unique, so the
+# label list is the same on every run.
 - name: the labels
   ansible.builtin.set_fact:
     github_runner_label_list: >-
       {{ (group_names | difference(['ungrouped', 'all']))
-         + [nova_os | default({'win': 'windows', 'osx': 'darwin', 'linux': 'linux'}[github_runner_os])]
-         + [nova_arch | default({'x64': 'amd64', 'arm64': 'arm64'}[github_runner_arch])]
+         + [{'win': 'windows', 'osx': 'darwin', 'linux': 'linux'}[github_runner_os]]
+         + [{'x64': 'amd64', 'arm64': 'arm64'}[github_runner_arch]]
          + github_runner_labels | list | unique | sort }}
 - name: the label string
   ansible.builtin.set_fact:
@@ -86,9 +87,59 @@
     that: github_runner_collection.rc == 0 and 'ansible.windows' in github_runner_collection.stdout
     fail_msg: >-
       github-runner: {{ inventory_hostname }} is a Windows host and the control node has no ansible.windows collection;
-      run: ansible-galaxy collection install -r fleet/requirements.yml
+      run: ansible-galaxy collection install -r {{ playbook_dir }}/requirements.yml
   when: github_runner_win
 
 - name: Windows
   ansible.builtin.include_tasks: windows.yml
   when: github_runner_win
+
+# The check after registration: GitHub's own list of the runners of this url, read on the
+# control node with gh (its login needs admin on the repository or organization). Each wanted
+# runner must be there and online; a runner that has just started is given a minute. Under
+# --check it is read and reported, never failed. Without gh, or a gh that cannot read the list,
+# the receipt says why and the run fails: an unverified runner is not reported as done.
+- name: the runners as GitHub lists them
+  ansible.builtin.command:
+    argv:
+      - "{{ github_runner_gh }}"
+      - api
+      - "{{ 'orgs' if github_runner_scope == 'org' else 'repos' }}/{{ github_runner_path }}/actions/runners"
+      - --paginate
+      - -q
+      - '.runners[] | "\(.name) \(.status)"'
+  delegate_to: localhost
+  become: false
+  register: github_runner_listed
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  vars:
+    github_runner_online_want: "{{ github_runner_want | map('regex_replace', '^', inventory_hostname ~ '-') | map('regex_replace', '$', ' online') | list }}"
+  until: >-
+    ansible_check_mode or github_runner_listed.rc != 0
+    or (github_runner_online_want | difference(github_runner_listed.stdout_lines) | length == 0)
+  retries: 12
+  delay: 5
+  when: github_runner_verify | bool and github_runner_want | length > 0
+
+- name: the runners' receipt
+  ansible.builtin.debug:
+    msg: >-
+      RUNNERS {{ inventory_hostname }} want={{ github_runner_want | length }}
+      {% if github_runner_listed.rc | default(1) != 0 %}verified=no reason={{ (github_runner_listed.stderr | default(github_runner_listed.msg | default('gh not run'))) | trim | replace('\n', ' ') }}
+      {% else %}online={{ github_runner_want | map('regex_replace', '^', inventory_hostname ~ '-') | map('regex_replace', '$', ' online') | intersect(github_runner_listed.stdout_lines) | length }}
+      listed={{ github_runner_listed.stdout_lines | select('match', '^' ~ inventory_hostname ~ '-[0-9]+ ') | map('split') | map('first') | join(',') }}{% endif %}
+      {{ '(check: nothing changed)' if ansible_check_mode else '' }}
+  when: github_runner_verify | bool and github_runner_want | length > 0
+
+- name: every wanted runner is online in GitHub
+  ansible.builtin.assert:
+    quiet: true
+    that:
+      - github_runner_listed.rc == 0
+      - github_runner_want | map('regex_replace', '^', inventory_hostname ~ '-') | map('regex_replace', '$', ' online') | difference(github_runner_listed.stdout_lines) | length == 0
+    fail_msg: >-
+      github-runner: {{ inventory_hostname }}'s runners are not all online in GitHub (see the RUNNERS line);
+      check: {{ github_runner_gh }} api {{ 'orgs' if github_runner_scope == 'org' else 'repos' }}/{{ github_runner_path }}/actions/runners
+  when: github_runner_verify | bool and github_runner_want | length > 0 and not ansible_check_mode

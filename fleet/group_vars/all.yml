@@ -1,12 +1,12 @@
 # The defaults the fleet plays share (every fleet/*.yml; a role keeps its own in roles/<role>/defaults). Override
 # any of them from the inventory: a host variable from `nova-config inventory`,
-# or a group_vars/<group>.yml or host_vars/<machine>.yml beside it (docs/FLEET.md,
+# or a group_vars/<group>.yml or host_vars/<machine>.yml beside it (fleet/README.md,
 # "Overriding the defaults"). A group_vars/all.yml beside the inventory does not
 # override these: this file is read after it.
 
-# The tools nova-tools ships, by name: nova-tools-install.yml installs them and
+# The tools nova-tools ships, by name: install.yml installs them and
 # services.yml prefixes argv[0] with nova_bin_dir when it is one of them.
-nova_tools_names: [nova-bus, nova-cairn, nova-config, nova-sandbox, nova-secrets, nova-reserve]
+nova_tools_names: [nova-bus, nova-cairn, nova-config, nova-sandbox, nova-secrets, nova-reserve, nova-fleet]
 
 # Where a machine keeps the tools: its login's home.
 nova_home: "{{ ansible_facts['env']['HOME'] }}"
@@ -64,7 +64,7 @@ nova_sops_sha256:
   linux-amd64: e5bec3346a873ae91d871550f3e698c1aad962aff462a080e40f25fde17fef6b
   linux-arm64: 53b0abacd38ef1b12a66d6c100956691b9cefce018d91f81e73ddf7438b94d77
 
-# join.yml (docs/FLEET.md, "join.yml"). The machine and its row's fields
+# join.yml (fleet/README.md, "join"). The machine and its row's fields
 # (nova_join_host, nova_join_user, nova_join_address, nova_join_os,
 # nova_join_arch, nova_join_cores) have no default: they are the run's.
 nova_join_roles: bench

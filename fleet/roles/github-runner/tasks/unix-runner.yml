@@ -100,7 +100,9 @@
   become: true
   when: ansible_facts['system'] == 'Linux' and not (ansible_check_mode and github_runner_unit_file is changed)
 
-# ---- macOS: a system LaunchDaemon dropped to the login, started at boot with nobody logged in ----
+# ---- macOS: a system LaunchDaemon dropped to the login, started at boot with nobody logged in (a LaunchAgent would
+# run only inside a logged-in GUI session, and a CI machine comes back from a reboot with none). Only a run needs
+# sudo: /Library/LaunchDaemons is world-readable, so --check reads and diffs the file as the login. ----
 - name: the daemon file (macOS)
   ansible.builtin.template:
     src: runner.plist.j2

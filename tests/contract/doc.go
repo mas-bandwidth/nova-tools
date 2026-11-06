@@ -1,7 +1,7 @@
 // Package contract pins docs/CLI-STYLE.md to the real binaries.
 //
 // It holds no code, only a test: contract_test.go builds each nova tool
-// (bus, cairn, config, reserve, sandbox, secrets; a directory absent from the
+// (bus, cairn, config, fleet, reserve, sandbox, secrets; a directory absent from the
 // checkout is skipped by name) with go build into a temporary directory, runs
 // it as a subprocess with a scrubbed environment and every path under the
 // temporary directory, and asserts the help, flag, verb, missing-input and

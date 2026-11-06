@@ -10,6 +10,12 @@ nova_tools_version: ""
 # Where the release assets live: <base>/<tag>/<asset> and <base>/<tag>/SHA256SUMS.
 nova_tools_release_url: https://github.com/mas-bandwidth/nova-tools/releases/download
 
+# The local mode: a directory on the control node laid out as a release is
+# (<tool>_<version>_<os>_<arch> and SHA256SUMS; fleet/README.md, "install"). When set,
+# the binaries are copied from it instead of downloaded, and nova_tools_version is the
+# version its file names carry (any word, e.g. local). Linux and macOS hosts only.
+nova_tools_local_dir: ""
+
 # The bin directory. Unix: nova_bin_dir, default the login's ~/.local/bin.
 # Windows: <profile>\.local\bin.
 nova_tools_bin_dir: "{{ nova_bin_dir | default(ansible_facts['env']['HOME'] ~ '/.local/bin') }}"

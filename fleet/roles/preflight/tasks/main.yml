@@ -1,6 +1,6 @@
 ---
 # The preflight role: the programs a play needs on the control node, found before the play changes anything
-# (docs/FLEET.md, "Prerequisites"). preflight_control is a list of {cmd, for, v2}: cmd is a name on PATH or a path,
+# (fleet/README.md, "Prerequisites"). preflight_control is a list of {cmd, for, v2}: cmd is a name on PATH or a path,
 # for says what needs it, and v2: true asks that a nova-tools program be v2.0.0-rc1 or newer, judged by the program
 # named (whatever it is called): its `help` has a usage line of a v2 verb (`set NAME`, `schema`, `who`). A missing or
 # older one stops the
@@ -34,6 +34,6 @@
     that: preflight_missing is skipped or preflight_missing.stdout_lines | length == 0
     fail_msg: >-
       PREFLIGHT STOP: on the control node, {{ preflight_missing.stdout_lines | default([]) | join('; ') }}
-      (docs/FLEET.md, "Prerequisites"; a variable such as nova_control_secrets points at a program off PATH)
+      (fleet/README.md, "Prerequisites"; a variable such as nova_control_secrets points at a program off PATH)
     quiet: true
   run_once: true
