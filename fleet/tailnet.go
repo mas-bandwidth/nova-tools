@@ -229,6 +229,15 @@ func (st tsStatus) peer(name string) (tsNode, bool, error) {
 	return found[0], true, nil
 }
 
+// node is peer, except that this node itself (Self, by the same label) is taken first and reported as self.
+func (st tsStatus) node(name string) (tsNode, bool, bool, error) {
+	if label, _, _ := strings.Cut(st.Self.DNSName, "."); label == name && len(st.Self.TailscaleIPs) > 0 {
+		return st.Self, true, true, nil
+	}
+	p, ok, err := st.peer(name)
+	return p, false, ok, err
+}
+
 // status is this node's tailscale status, and whether it is on the tailnet.
 func (u *upRun) status() (st tsStatus, on bool) {
 	out, _, c := outCmd(u.bin["tailscale"], []string{"status", "--json"}, os.Environ())
@@ -282,11 +291,13 @@ func (u *upRun) tailnet() error {
 	u.keys = map[string]string{}
 	keys, retagged := 0, 0
 	for _, m := range u.machines {
-		p, ok, err := st.peer(m.name)
-		if err != nil {
+		p, self, ok, err := st.node(m.name)
+		switch {
+		case err != nil:
 			return err
-		}
-		if ok {
+		case self: // this control node, in the inventory: already on the tailnet, tagged above
+			continue
+		case ok:
 			changed, err := retag(api, p.ID, p.Tags, tags, u.check)
 			if err != nil {
 				return err

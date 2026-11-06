@@ -42,6 +42,19 @@
 		},
 		{
 			"src": [
+				"tag:nova",
+				"tag:runner"
+			],
+			"dst": [
+				"tag:control"
+			],
+			"ip": [
+				"tcp:6379",
+				"tcp:5432"
+			]
+		},
+		{
+			"src": [
 				"autogroup:admin"
 			],
 			"dst": [
