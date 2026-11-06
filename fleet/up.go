@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -60,6 +61,7 @@ type machine struct {
 	unreachable             string // the reason, under --check
 	later                   bool   // under --check, a machine with no row yet: the steps after join wait for it
 	roleLater               bool   // under --check, a row that lacks the runner role: the runners wait for it
+	self                    bool   // this control node (tailscale status Self): already joined, so join skips it
 }
 
 // upRun is one up: its inputs and what it has learnt so far.
@@ -77,10 +79,12 @@ type upRun struct {
 	tskey                string            // the key the next play gets in its environment
 	stdout, stderr       io.Writer
 	bin                  map[string]string
+	binDir               string // nova_bin_dir as the machines' shell reads it (-- -e nova_bin_dir=..., else ~/.local/bin)
+	refused              bool   // the store's push was refused and went to a branch: the run continues, and exits 1
 }
 
 func parseUp(args []string, stderr io.Writer) (*upRun, int) {
-	u := &upRun{user: "nova", grant: "NOVA_BUS_PASSWORD", runnerCount: 1, stderr: stderr}
+	u := &upRun{user: "nova", grant: "NOVA_BUS_PASSWORD", runnerCount: 1, stderr: stderr, binDir: "$HOME/.local/bin"}
 	refuse := func(format string, a ...any) (*upRun, int) {
 		fmt.Fprintf(stderr, "nova-fleet up: %s; run: nova-fleet up -h\n", fmt.Sprintf(format, a...))
 		return nil, 2
@@ -109,6 +113,12 @@ func parseUp(args []string, stderr io.Writer) (*upRun, int) {
 				}
 				if slices.Contains(own, name) {
 					return refuse("-e %s is up's own (or skips a pillar: Tailscale, PostgreSQL, Redis and Ansible are not optional)", name)
+				}
+				if v, ok := strings.CutPrefix(rest[j+1], "nova_bin_dir="); ok {
+					u.binDir = strings.NewReplacer("{{ nova_home }}", "$HOME", "~", "$HOME").Replace(v)
+					if !binDirRE.MatchString(u.binDir) {
+						return refuse("-e nova_bin_dir wants a plain path (or one under {{ nova_home }} or ~), got %s", v)
+					}
 				}
 				u.pass, j = append(u.pass, "-e", rest[j+1]), j+1
 			}
@@ -167,7 +177,7 @@ func parseUp(args []string, stderr io.Writer) (*upRun, int) {
 	return u, 0
 }
 
-var nameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
+var nameRE, binDirRE = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`), regexp.MustCompile(`^(\$HOME)?[A-Za-z0-9_./-]+$`)
 
 // runnerScope is repo or org for a GitHub URL, "" for anything else.
 func runnerScope(url string) string {
@@ -266,10 +276,11 @@ func (u *upRun) config(args ...string) ([]map[string]any, string, int) {
 // its Tailscale SSH host keys, which are pinned in this node's known_hosts (never trusted on first use).
 func (u *upRun) peer(m *machine) bool {
 	st, _ := u.status()
-	p, ok, err := st.peer(m.name)
+	p, self, ok, err := st.node(m.name)
 	if err != nil {
 		fmt.Fprintf(u.stderr, "nova-fleet up: %s on the tailnet: %v\n", m.name, err)
 	}
+	m.self = self
 	if ok {
 		m.dns = strings.TrimSuffix(p.DNSName, ".")
 		if len(p.SSH_HostKeys) == 0 {
@@ -480,17 +491,25 @@ func (u *upRun) steps() int {
 		if u.runners != "" {
 			roles += ",runner"
 		}
-		u.tskey = u.keys[m.name]
-		c := u.play("join", false, pg, "-e", "nova_join_host="+m.name, "-e", "nova_join_user="+m.user,
-			"-e", "nova_join_address="+m.host, "-e", "nova_join_root_user="+m.sshUser,
-			"-e", "nova_join_os="+m.os, "-e", "nova_join_arch="+m.arch, "-e", "nova_join_roles="+roles,
-			"-e", "nova_seal_store="+u.store, "-e", "nova_bus_redis="+u.bus)
-		if c != 0 {
-			return fail("join "+m.name, c)
+		if m.self { // this control node: on the tailnet already, and join's peer check cannot see itself
+			if m.row == nil && !u.check {
+				fmt.Fprintf(u.stderr, "nova-fleet up: %s is this control node (tailscale status Self), so join skips it, and it has no row; run: nova-config machine add %s --user %s --actor %s, then the same nova-fleet up\n", m.name, m.name, m.user, u.seat)
+				return fail("join "+m.name, 2)
+			}
+			u.say("UP JOIN %s SKIPPED this control node (tailscale status Self): already joined", m.name)
+		} else {
+			u.tskey = u.keys[m.name]
+			c := u.play("join", false, pg, "-e", "nova_join_host="+m.name, "-e", "nova_join_user="+m.user,
+				"-e", "nova_join_address="+m.host, "-e", "nova_join_root_user="+m.sshUser,
+				"-e", "nova_join_os="+m.os, "-e", "nova_join_arch="+m.arch, "-e", "nova_join_roles="+roles,
+				"-e", "nova_seal_store="+u.store, "-e", "nova_bus_redis="+u.bus)
+			if c != 0 {
+				return fail("join "+m.name, c)
+			}
+			u.peer(m)
+			mark("join", m)
+			u.say("UP JOIN %s %s", m.name, u.would("JOIN"))
 		}
-		u.peer(m)
-		mark("join", m)
-		u.say("UP JOIN %s %s", m.name, u.would("JOIN"))
 		if u.check && m.row == nil {
 			m.later = true
 			u.say("UP %s PENDING (check: its row does not exist yet; the steps after join run once join has made it)", m.name)
@@ -523,7 +542,7 @@ func (u *upRun) steps() int {
 			continue
 		}
 		pub, why, c := outCmd(u.bin["ssh"], []string{"-o", "BatchMode=yes", m.user + "@" + m.dns, "sh", "-c",
-			`'PATH=$HOME/.local/bin:/opt/homebrew/bin:$PATH age-keygen -y $HOME/.config/nova-secrets/` + m.name + `.key'`}, os.Environ())
+			"'PATH=" + strings.Join(slices.Compact([]string{u.binDir, "$HOME/.local/bin"}), ":") + `:/opt/homebrew/bin:$PATH age-keygen -y $HOME/.config/nova-secrets/` + m.name + `.key'`}, os.Environ())
 		pub = strings.TrimSpace(pub)
 		switch {
 		case u.check:
@@ -542,12 +561,28 @@ func (u *upRun) steps() int {
 
 	// 7. the store's upstream, if it has one, gets the new seats and grants (a copy kept off this
 	// node; the machines never read it).
-	if _, _, c := outCmd(u.bin["git"], []string{"-C", u.store, "rev-parse", "--abbrev-ref", "@{u}"}, os.Environ()); c != 0 {
+	// A push the remote refuses (a protected branch: changes through a pull request) goes to a branch of
+	// its own instead, named by the commit; the run goes on, and ends 1 with the branch to open a PR from.
+	git := func(args ...string) (string, string, int) {
+		return outCmd(u.bin["git"], append([]string{"-C", u.store}, args...), os.Environ())
+	}
+	if up, _, c := git("rev-parse", "--abbrev-ref", "@{u}"); c != 0 {
 		u.say("UP STORE NOTE %s has no upstream: nothing to push", u.store)
 	} else if u.check {
 		u.say("UP STORE WOULD-PUSH %s (check: nothing changed)", u.store)
-	} else if c, err := runCmd(u.bin["git"], []string{"-C", u.store, "push", "--quiet"}, os.Environ()); err != nil || c != 0 {
-		return fail("store", max(c, 1))
+	} else if _, why, c := git("push", "--quiet"); c != 0 && !strings.Contains(why, "[remote rejected]") {
+		fmt.Fprintf(u.stderr, "nova-fleet up: git push of %s: %s\n", u.store, oneLine(why))
+		return fail("store", c)
+	} else if c != 0 {
+		sha, _, _ := git("rev-parse", "--short", "HEAD") // ignored: a failure leaves the name nova-fleet-up/, and the push below says so
+		branch := "nova-fleet-up/" + strings.TrimSpace(sha)
+		remote, _, _ := strings.Cut(strings.TrimSpace(up), "/")
+		if _, why2, c := git("push", "--quiet", cmp.Or(remote, "origin"), "HEAD:refs/heads/"+branch); c != 0 {
+			fmt.Fprintf(u.stderr, "nova-fleet up: git push of %s was refused (%s), and so was the branch %s: %s\n", u.store, oneLine(why), branch, oneLine(why2))
+			return fail("store", c)
+		}
+		fmt.Fprintf(u.stderr, "UP STORE PUSH REFUSED: %s is protected (%s); pushed branch %s; open a PR from it\n", strings.TrimSpace(up), oneLine(why), branch)
+		u.refused = true
 	} else {
 		u.say("UP STORE OK pushed %s", u.store)
 	}
@@ -658,6 +693,10 @@ func (u *upRun) end(pass map[string][]string, note string) int {
 	}
 	if !u.check && u.dsn != "" && os.Getenv("NOVA_PG_DSN") == "" {
 		u.say("UP DONE next: export NOVA_PG_DSN=%s (nova-config and the next nova-fleet up read the fleet from it)", u.dsn)
+	}
+	if u.refused {
+		fmt.Fprintf(u.stderr, "UP STORE FAILED: the store's commits are on a branch, not its upstream; merge the PR (the UP STORE PUSH REFUSED line above)\n")
+		return 1
 	}
 	return 0
 }

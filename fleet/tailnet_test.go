@@ -58,7 +58,7 @@ func TestFleetPolicyIsTheEmbeddedFile(t *testing.T) {
 	want := fleetPolicy()
 	owners := want["tagOwners"].(map[string]any)
 	if canon(owners["tag:nova"]) != `["autogroup:admin"]` || canon(owners["tag:control"]) != `["autogroup:admin"]` ||
-		len(want["grants"].([]any)) != 3 || len(want["ssh"].([]any)) != 2 {
+		len(want["grants"].([]any)) != 4 || len(want["ssh"].([]any)) != 2 {
 		t.Errorf("fleetPolicy() = %s", canon(want))
 	}
 }
@@ -109,7 +109,7 @@ func TestMergePolicy(t *testing.T) {
 		canon(owners["tag:control"]) != `["autogroup:admin"]` {
 		t.Errorf("tagOwners = %s", canon(owners))
 	}
-	if g := m["grants"].([]any); len(g) != 4 || canon(g[1]) != `{"dst":["*"],"ip":["*"],"src":["*"]}` || canon(g[2:]) != canon(want["grants"].([]any)[1:]) {
+	if g := m["grants"].([]any); len(g) != 5 || canon(g[1]) != `{"dst":["*"],"ip":["*"],"src":["*"]}` || canon(g[2:]) != canon(want["grants"].([]any)[1:]) {
 		t.Errorf("grants = %s", canon(g))
 	}
 	if _, changed := merge(t, string(got)); changed {

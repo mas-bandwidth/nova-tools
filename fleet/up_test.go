@@ -29,6 +29,9 @@ type upFake struct {
 	untagged    bool // the control node lacks tag:control
 	noPosix     bool // ansible.posix is not installed
 	api         *fakeAPI
+	self        string // this control node's own MagicDNS label (tailscale status Self), when it has one
+	pushErr     string // the store's plain git push exits 1 with this stderr
+	branchErr   string // and a push to a branch exits 1 with this one
 }
 
 // fakeAPI is the Tailscale API: the policy and its ETag, the calls made, the keys minted.
@@ -169,17 +172,29 @@ func (f *upFake) install(t *testing.T) {
 			if f.untagged {
 				tags = `[]`
 			}
-			return `{"BackendState":"Running","Self":{"ID":"n-control","HostName":"control","Tags":` + tags + `},"Peer":{` + strings.Join(peers, ",") + `}}`, "", 0
+			self := ""
+			if f.self != "" {
+				self = `,"DNSName":"` + f.self + `.ts.example.","TailscaleIPs":["100.64.0.99"]`
+			}
+			return `{"BackendState":"Running","Self":{"ID":"n-control","HostName":"control","Tags":` + tags + self + `},"Peer":{` + strings.Join(peers, ",") + `}}`, "", 0
 		case strings.HasPrefix(line, "ssh -o BatchMode=yes -o ConnectTimeout=10 "):
 			target := strings.Fields(line)[5]
 			user, host, _ := strings.Cut(target, "@")
 			name := strings.TrimSuffix(host, ".ts.example")
-			if f.unreachable[host] || (user != "root" && f.peers[name] == "") {
+			if f.unreachable[host] || (user != "root" && f.peers[name] == "" && name != f.self) {
 				return "", "ssh: connect to host " + host + " port 22: Operation timed out", 255
 			}
 			return "", "", 0
 		case strings.Contains(line, "age-keygen -y"):
 			return "age1fake" + strings.Fields(line)[3] + "\n", "", 0
+		case strings.HasSuffix(line, "rev-parse --abbrev-ref @{u}"):
+			return "origin/main\n", "", 0
+		case strings.HasSuffix(line, "rev-parse --short HEAD"):
+			return "abc1234\n", "", 0
+		case strings.HasSuffix(line, " push --quiet") && f.pushErr != "":
+			return "", f.pushErr, 1
+		case strings.Contains(line, " push --quiet origin HEAD:refs/heads/") && f.branchErr != "":
+			return "", f.branchErr, 1
 		case strings.Contains(line, "nova-bus who"):
 			return "WHO OK present=2\nclaude\t1m0s\ncodex\t2m0s\n", "", 0
 		}
@@ -742,5 +757,80 @@ func TestCheckSecretsDefaults(t *testing.T) {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout lacks %q:\n%s", w, out)
 		}
+	}
+}
+
+// existing is a fleet that exists: store-1 is its store, and the rows of the machines named.
+func existing(t *testing.T, f *upFake, rows string) {
+	t.Helper()
+	f.names, f.rows = "NOVA_PG_PASSWORD NOVA_BUS_PASSWORD", `{"items":[{"kind":"machine","fields":{"name":"store-1","address":"store-1.ts.example","user":"nova","os":"linux","arch":"amd64","roles":"services,bench"}}`+rows+`],"facts":{}}`
+	if f.peers == nil {
+		f.peers = map[string]string{"store-1": "100.64.0.1"}
+	}
+	f.install(t)
+	t.Setenv("NOVA_PG_DSN", "postgres://nova_config@store-1.ts.example:5432/nova")
+}
+
+// A store whose upstream refuses a direct push (its main takes changes through a pull request only):
+// the commits go to a branch of their own, the run goes on to the end, and exits 1 for that one step.
+func TestUpStorePushRefused(t *testing.T) {
+	f := &upFake{pushErr: "remote: error: GH013: Repository rule violations found for refs/heads/main.\n ! [remote rejected] main -> main (push declined due to repository rule violations)"}
+	existing(t, f, "")
+	code, out, errs := runArgs("up", "--tools", "v2.0.0", "second=203.0.113.8")
+	all := strings.Join(f.calls, "\n")
+	if code != 1 || !strings.Contains(all, "git -C "+f.store+" push --quiet origin HEAD:refs/heads/nova-fleet-up/abc1234") ||
+		!strings.Contains(errs, "UP STORE PUSH REFUSED: origin/main is protected (") || !strings.Contains(errs, "pushed branch nova-fleet-up/abc1234; open a PR from it") ||
+		!strings.Contains(errs, "UP STORE FAILED") || strings.Contains(out, "UP STORE OK") ||
+		!strings.Contains(out, "UP SERVICES OK") || !strings.Contains(out, "UP BUS OK") || !strings.Contains(out, "UP MACHINE second OK") {
+		t.Errorf("code %d\n%s\n%s", code, out, errs)
+	}
+	// a refused branch too, or a push that fails some other way (the network), stops the run at the store
+	for _, g := range []*upFake{{pushErr: f.pushErr, branchErr: "fatal: could not read from remote"}, {pushErr: "fatal: unable to access: Could not resolve host"}} {
+		existing(t, g, "")
+		code, out, errs := runArgs("up", "--tools", "v2.0.0", "second=203.0.113.8")
+		if code != 1 || !strings.Contains(errs, "UP store FAILED exit=1;") || strings.Contains(out, "UP REFRESH") ||
+			strings.Contains(strings.Join(g.calls, "\n"), "HEAD:refs/heads/") != (g.branchErr != "") {
+			t.Errorf("code %d\n%s\n%s\n%s", code, out, errs, strings.Join(g.calls, "\n"))
+		}
+	}
+}
+
+// The seat key is read with the configured bin directory first on PATH, ~/.local/bin after it.
+func TestUpSeatKeyUsesTheBinDir(t *testing.T) {
+	f := &upFake{}
+	existing(t, f, "")
+	code, out, errs := runArgs("up", "--tools", "v2.0.0", "second=203.0.113.8", "--", "-e", "nova_bin_dir={{ nova_home }}/.local/nova/bin")
+	if all := strings.Join(f.calls, "\n"); code != 0 || !strings.Contains(all, "sh -c 'PATH=$HOME/.local/nova/bin:$HOME/.local/bin:/opt/homebrew/bin:$PATH age-keygen -y $HOME/.config/nova-secrets/second.key'") ||
+		!strings.Contains(all, "install.yml -e nova_tools_version=v2.0.0 -l second -e nova_bin_dir={{ nova_home }}/.local/nova/bin") {
+		t.Errorf("code %d\n%s\n%s\n%s", code, out, errs, all)
+	}
+	for _, dir := range []string{"/opt/nova bin", "$(true)", "{{ other }}/bin"} {
+		if code, _, errs := runArgs("up", "--tools", "v2.0.0", "second=203.0.113.8", "--", "-e", "nova_bin_dir="+dir); code != 2 || !strings.Contains(errs, "-e nova_bin_dir wants a plain path") {
+			t.Errorf("%q: code %d %s", dir, code, errs)
+		}
+	}
+}
+
+// The control node named in the inventory is tailscale status Self, never a Peer: it gets no join key and
+// no join (join's peer check cannot see the node it runs on); every step after join runs on it as on any.
+func TestUpControlNodeInTheInventory(t *testing.T) {
+	f := &upFake{self: "control"}
+	existing(t, f, `,{"kind":"machine","fields":{"name":"control","address":"control.ts.example","user":"ops","os":"linux","arch":"amd64","roles":"bench"}}`)
+	code, out, errs := runArgs("up", "--tools", "v2.0.0", "control=203.0.113.5", "second=203.0.113.8")
+	all := strings.Join(f.calls, "\n")
+	if code != 0 || f.api.keys != 1 || strings.Contains(all, "nova_join_host=control") || !strings.Contains(all, "nova_join_host=second") ||
+		strings.Contains(strings.Join(f.api.calls, "\n"), "/device/n-control/tags  {\"tags\":[\"tag:control\",\"tag:nova\"]}") ||
+		!strings.Contains(all, "ssh -o BatchMode=yes ops@control.ts.example sh -c") || !strings.Contains(all, "nova-secrets grant NOVA_BUS_PASSWORD --to control") ||
+		!strings.Contains(out, "UP REACH control OK ops@control.ts.example") || !strings.Contains(out, "UP JOIN control SKIPPED this control node (tailscale status Self): already joined") ||
+		!strings.Contains(out, "UP MACHINE control OK address=203.0.113.5 steps=grant,refresh,health,tools,services,bus") {
+		t.Errorf("code %d keys %d\n%s\n%s\n%s", code, f.api.keys, out, errs, all)
+	}
+	// with no row, join cannot be skipped into one: the run stops with the line that adds it
+	f = &upFake{self: "control"}
+	existing(t, f, "")
+	code, out, errs = runArgs("up", "--tools", "v2.0.0", "control=203.0.113.5")
+	if code != 1 || !strings.Contains(errs, "nova-fleet up: control is this control node (tailscale status Self), so join skips it, and it has no row; run: nova-config machine add control --user nova --actor control") ||
+		!strings.Contains(errs, "UP join control FAILED exit=2;") || strings.Contains(strings.Join(f.calls, "\n"), "join.yml") {
+		t.Errorf("no row: code %d\n%s\n%s", code, out, errs)
 	}
 }
