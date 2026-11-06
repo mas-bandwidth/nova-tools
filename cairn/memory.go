@@ -186,7 +186,7 @@ func (r *roots) load(root string) (files []string, texts map[string]string, size
 }
 
 // walk lists what memory reads under root, as sorted slash paths: the markdown notes, and the
-// entry files of any store in the tree. It skips .git, excluded paths and symlinks.
+// entry files of any store in the tree (a store's sessions/<session>.md is not a note). It skips .git, excluded paths and symlinks.
 func (r *roots) walk(root string) (notes, entries []string, err error) {
 	err = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		rel, _ := filepath.Rel(root, p)
