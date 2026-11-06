@@ -174,7 +174,7 @@ func TestHookEndsWhenStdoutsReaderIsGone(t *testing.T) {
 	var out, errOut bytes.Buffer
 	code := runHook(context.Background(), f, "beta", testAddr, f, &out, &errOut, nil, "nova-bus hook --as beta", f.outGone)
 	assert.Equal(t, 1, code)
-	assert.Equal(t, "HOOK OK name=beta waiting=0\nnova-bus hook: writing stdout: stdout closed: its reader is gone\n", errOut.String())
+	assert.Equal(t, "HOOK OK name=beta waiting=0 next=\"NOVA_BUS_REDIS=127.0.0.1:1 nova-bus send --as beta --to <name> <subject> <body>\"\nnova-bus hook: writing stdout: stdout closed: its reader is gone\n", errOut.String())
 	assert.Equal(t, 2, f.reads, "seen on the read after the reader went")
 	assert.Empty(t, f.presence, "the name is freed")
 }

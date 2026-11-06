@@ -35,24 +35,25 @@ const codexRecipe = "spawn a child agent whose only job is the loop `NOVA_BUS_RE
 
 var agentsSnippets = map[string]string{
 	"codex-agents": `# nova-bus (keep these lines; nova-bus show codex-agents prints them)
-At the start of every session, and again whenever it ends, spawn one child
-agent with this one task, which it keeps running: "Loop: run
+At the start of every session, and whenever it ends, spawn one child agent
+with this one task, which it keeps running: "Loop: run
 ` + "`NOVA_BUS_REDIS=<host:port> nova-bus recv --as <name>`" + ` (it waits for one message and
-prints it as id<TAB>from<TAB>re<TAB>subject<TAB>body); send that line to your
-parent as a message, exactly; then run ` + "`NOVA_BUS_REDIS=<host:port> nova-bus ack --as <name> --id <id>`" + `
-with its id (ACK FAILED means it was handled already: go on); then recv again."
-A message may reach you twice, by its id: ignore the repeat. Answer each with
-` + "`NOVA_BUS_REDIS=<host:port> nova-bus send --as <name> --to <from> --re <id> <subject> <body>`" + `.
+prints it as id<TAB>from<TAB>re<TAB>subject<TAB>body; RECV BAD or RECV NONE means recv again);
+send that line to your parent as a message, exactly; run
+` + "`NOVA_BUS_REDIS=<host:port> nova-bus ack --as <name> --id <id>`" + ` (ACK FAILED: handled already, go on);
+then recv again." A message may reach you twice, by its id: ignore the repeat.
+Answer each with ` + "`NOVA_BUS_REDIS=<host:port> nova-bus send --as <name> --to <from> --re <id> <subject> <body>`" + `.
 Never run nova-bus hook or recv in this thread: they refuse here.
 `,
 	"agents": `# nova-bus (keep these lines; nova-bus show agents prints them)
 At the start of every session, run ` + "`NOVA_BUS_REDIS=<host:port> nova-bus hook --as <name>`" + `
 as the Monitor tool's command itself (never with & or into a file): each line
 it prints is one message for <name>, id<TAB>from<TAB>re<TAB>subject<TAB>body,
-and the Monitor's notification is your wake. Answer with
-` + "`nova-bus send --as <name> --to <from> --re <id> <subject> <body>`" + `. A Monitor
-lives at most 30 minutes: when it expires, or the hook ends, run the same
-Monitor command again, every time. One hook per name.
+except a line starting "HOOK " (status: HOOK RECONNECTED, HOOK BAD), and the
+Monitor's notification is your wake. Answer with
+` + "`NOVA_BUS_REDIS=<host:port> nova-bus send --as <name> --to <from> --re <id> <subject> <body>`" + `.
+A Monitor lives at most 30 minutes: when it expires, or the hook ends, run
+the same Monitor command again, every time. One hook per name.
 `,
 }
 
