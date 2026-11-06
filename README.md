@@ -2,8 +2,6 @@
 
 ![Nova Tools — Tools by AIs for AIs. Robot friends building and sharing tools in a cheerful workshop.](docs/assets/nova-tools-workshop.png)
 
-This is a small collection of tools you can grab and use in your own AI work. 
-
 With **nova-tools**, your AIs can:
 
 * Talk to each other across models and harnesses
@@ -14,27 +12,14 @@ With **nova-tools**, your AIs can:
 * Run untrusted work inside a sandbox
 * Retain memory across sessions
 
-| Tool | What it does | What you get |
-|---|---|---|
-| [nova-bus](bus/README.md) | Sends messages to named inboxes and prints incoming messages for a harness to read. | Your AIs can exchange questions and results across models and harnesses. |
-| [nova-config](config/README.md) | Stores machine and service settings with a history of changes and produces an Ansible inventory. | You can see how your machines are configured and who changed each setting. |
-| [fleet/ plays](fleet/README.md) | Uses Ansible to install tools and manage services on your machines. | You can apply the same setup across your fleet. |
-| [nova-secrets](secrets/README.md) | Keeps secrets encrypted in git and gives selected values to a command through its environment. | You can choose which stored secrets each command receives. |
-| [nova-reserve](reserve/README.md) | Reserves slots on a machine for a command or a timed hold. | Jobs that share a reservation directory wait for capacity instead of crowding the machine. |
-| [nova-sandbox](sandbox/README.md) | Runs a command with enforced file and network access rules on Linux and macOS. | You can limit what unfamiliar code can read, write and connect to. |
-| [nova-cairn](cairn/README.md) | Saves session notes, reads them back and searches their words alongside Markdown notes. | Your next session can find and reuse what you chose to keep. |
-
 ## Docs
 
-| Doc | Read it to learn |
-|---|---|
-| [SPEC-BUS](docs/SPEC-BUS.md) | how a message reaches an AI by name, what hooking in does, and what happens when a hook dies mid-message |
-| [SPEC-SECRETS](docs/SPEC-SECRETS.md) | how to create a store, give a machine a seat, and hand a command its secrets without ever showing them |
-| [SPEC-CONFIG](docs/SPEC-CONFIG.md) | how to describe your machines and what each one runs, and what the inventory hands to Ansible |
-| [SPEC-SANDBOX](docs/SPEC-SANDBOX.md) | what the wall guarantees on Linux and on macOS, and how to prove it on your own machine |
-| [SPEC-RESERVE](docs/SPEC-RESERVE.md) | how a machine's slots are reserved and released, and why a dead holder never keeps one |
-| [SPEC-CAIRN](docs/SPEC-CAIRN.md) | how an AI saves its memories, finds them again, and checks none went missing |
-| [FLEET](docs/FLEET.md) | how one play puts the same software on every machine you own |
-| [SECURITY](docs/SECURITY.md) | what counts as a vulnerability here and where to report one in private |
-
-[docs/TESTING.md](docs/TESTING.md) says how to test. Licence: [LICENSE](LICENSE).
+| Tool | What your AIs can do |
+|---|---|---|
+| [nova-bus](bus/README.md) | Communicate across models and harnesses. |
+| [nova-config](config/README.md) | Setup and configure your fleet. |
+| [fleet/ plays](fleet/README.md) | Apply the same setup across your fleet. |
+| [nova-secrets](secrets/README.md) | Choose which stored secrets each command receives. |
+| [nova-reserve](reserve/README.md) | Reserve slots on a machine for a command or a timed hold. |
+| [nova-sandbox](sandbox/README.md) | Runs a command with enforced file and network access rules on Linux and macOS. |
+| [nova-cairn](cairn/README.md) | Their next session can find and reuse what they chose to remember. |
