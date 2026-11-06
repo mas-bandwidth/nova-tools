@@ -6,6 +6,7 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -244,14 +245,14 @@ func TestMemory(t *testing.T) {
 	c := "testdata/corpus"
 	code, out, _ := do(t, "", "memory", "stats", "--root", c)
 	assert.Equal(t, 0, code)
-	assert.Regexp(t, `^STATS OK schema=nova-memory/2 files=6 entries=0 skipped=0 chunks=20 bytes=4866 vocab=380 avg-terms=39.3 build=\S+\nSTATS OK class=\.`, out)
+	assert.Regexp(t, `^STATS OK schema=nova-memory/2 files=6 entries=0 skipped=0 chunks=19 bytes=4866 vocab=355 avg-terms=28.3 build=\S+\nSTATS OK class=\.`, out)
 
 	code, out, _ = do(t, "", "memory", "search", "--root", c, "--channels", "bm25", "--k", "2", "lantern", "brass")
 	assert.Equal(t, 0, code)
-	assert.Contains(t, out, `SEARCH OK hits=2 k=2 channels=bm25 files=6 entries=0 skipped=0 chunks=20: query="lantern brass"`)
-	assert.Contains(t, out, "SEARCH CAL score=4.05 score-channel=bm25 probe=unrelated-control")
-	assert.Contains(t, out, "SEARCH HIT rank=1 score=3.88 score-channel=bm25 fused=0.01667 class=notes name=- type=- root=testdata/corpus: notes/index-notes.md:8 ")
-	assert.Contains(t, out, "SEARCH HIT rank=2 score=3.29 score-channel=bm25 fused=0.01639 class=notes name=lantern-care type=measured")
+	assert.Contains(t, out, `SEARCH OK hits=2 k=2 channels=bm25 files=6 entries=0 skipped=0 chunks=19: query="lantern brass"`)
+	assert.Contains(t, out, "SEARCH CAL score=2.56 score-channel=bm25 probe=unrelated-control")
+	assert.Contains(t, out, "SEARCH HIT rank=1 score=3.77 score-channel=bm25 fused=0.01667 class=notes name=- type=- root=testdata/corpus: notes/index-notes.md:8 ")
+	assert.Contains(t, out, "SEARCH HIT rank=2 score=3.45 score-channel=bm25 fused=0.01639 class=notes name=lantern-care type=measured")
 
 	_, out, _ = do(t, "", "memory", "search", "--root", c, "--channels", "bm25", "--k", "2", "zzzzqq")
 	assert.Contains(t, out, "SEARCH MISS every query term is out of vocabulary for this corpus")
@@ -259,9 +260,28 @@ func TestMemory(t *testing.T) {
 	draft := "The lantern glazing needs clean cloths for brass and glass every week.\n\nToo short.\n"
 	code, out, _ = do(t, draft, "memory", "check", "--root", c, "--channels", "bm25", "--k", "1", "-")
 	assert.Equal(t, 0, code, "check never judges")
-	assert.Contains(t, out, "MEMORY OK candidates=1 source=- k=1 channels=bm25 files=6 entries=0 skipped=0 chunks=20")
+	assert.Contains(t, out, "MEMORY OK candidates=1 source=- k=1 channels=bm25 files=6 entries=0 skipped=0 chunks=19")
 	assert.Contains(t, out, "MEMORY HIT cand=1 rank=1 ")
 	assert.Contains(t, out, "notes/lantern.md:")
+}
+
+// TestSearchCalBelowExactHit: the unrelated control must score below an exact
+// hit; shared function words alone once let it win (0.97 over 0.86).
+func TestSearchCalBelowExactHit(t *testing.T) {
+	t.Parallel()
+	store := filepath.Join(t.TempDir(), "s")
+	do(t, "", "open", "--store", store, "--session", "today", "--publish", "never")
+	do(t, "", "append", "--store", store, "--session", "today", "--entry", "lesson-1", "--text", "The bench needs NOVA_TEST_NO_HOST=1 for the unit tests.")
+	code, out, _ := do(t, "", "memory", "search", "--root", store, "--channels", "bm25", "--k", "3", "bench", "unit", "tests")
+	require.Equal(t, 0, code)
+	score := func(kind string) float64 {
+		m := regexp.MustCompile(kind + ` score=([0-9.]+)`).FindStringSubmatch(out)
+		require.Len(t, m, 2, out)
+		f, err := strconv.ParseFloat(m[1], 64)
+		require.NoError(t, err)
+		return f
+	}
+	assert.Less(t, score("SEARCH CAL"), score("SEARCH HIT rank=1"), out)
 }
 
 func TestMemoryRefusals(t *testing.T) {
@@ -362,7 +382,7 @@ func TestMemoryFindsStoreEntries(t *testing.T) {
 	draft := "The lantern glazing and the brass need cloths every week.\n"
 	code, out, _ = do(t, draft, "memory", "check", "--root", "testdata/corpus", "--root", store, "--channels", "bm25", "--k", "9", "-")
 	assert.Equal(t, 0, code)
-	assert.Contains(t, out, "files=6 entries=2 skipped=0 chunks=22")
+	assert.Contains(t, out, "files=6 entries=2 skipped=0 chunks=21")
 	assert.Contains(t, out, "entry=e1 ")
 	assert.Contains(t, out, "notes/lantern.md:")
 
