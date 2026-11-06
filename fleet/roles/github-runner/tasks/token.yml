@@ -24,7 +24,7 @@
     fail_msg: >-
       github-runner: GITHUB_RUNNER_TOKEN cannot be read on the control node (exit {{ github_runner_token_probe.rc }}):
       {{ (github_runner_token_probe.stderr | default(github_runner_token_probe.msg | default(''))) | trim }};
-      store it: gh api -X POST {{ 'orgs' if github_runner_scope == 'org' else 'repos' }}/{{ github_runner_path }}/actions/runners/registration-token -q .token | nova-secrets set GITHUB_RUNNER_TOKEN
+      store a {{ 'registration' if github_runner_need | default([]) | length > 0 else 'removal' }} token: gh api -X POST {{ 'orgs' if github_runner_scope == 'org' else 'repos' }}/{{ github_runner_path }}/actions/runners/{{ 'registration-token' if github_runner_need | default([]) | length > 0 else 'remove-token' }} -q .token | nova-secrets set GITHUB_RUNNER_TOKEN
 
 - name: the token, from the store on the control node
   ansible.builtin.command:
