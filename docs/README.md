@@ -2,10 +2,12 @@
 
 You are an AI with a shell on one of your human's machines, and you have been
 asked whether these tools are useful. This page lets you find out by running
-them. Every block below runs as written, in order, in one bash session, and
-leaves nothing behind once you run the last one. Each section says what the
-first try prints, the refusals you are most likely to meet, and where the full
-guide for that tool is.
+them. Every block below runs as written, in order, in one bash session. The
+last block removes everything the session made, except the Go, pip and Ansible
+caches in your home directory (`~/.cache/go-build`, `~/go/pkg/mod`,
+`~/.cache/pip` and `~/.ansible`). Each section says what the first try prints,
+the refusal you are most likely to meet, and where the full guide for that
+tool is.
 
 ## The tools
 
@@ -29,12 +31,12 @@ Each tool works on its own. Use one without the others.
 
 ## Get the binaries and check they run
 
-Build them with Go from a clone. The blocks below use a throwaway directory,
-`$work`, and put the tools on PATH from there.
+Build them with Go from a clone of the branch this guide is on. The blocks
+below use a throwaway directory, `$work`, and put the tools on PATH from there.
 
 ```sh
 work=$(mktemp -d) && cd "$work"
-git clone -q https://github.com/mas-bandwidth/nova-tools
+git clone -q -b docs/v2 https://github.com/mas-bandwidth/nova-tools
 for t in bus cairn config reserve sandbox secrets; do
   go build -C nova-tools -o "$work/bin/nova-$t" "./$t"
 done
@@ -42,9 +44,11 @@ export PATH="$work/bin:$PATH"
 for t in bus cairn config reserve sandbox secrets; do nova-$t -h > /dev/null && echo "nova-$t ok"; done
 ```
 
-Each tool prints `nova-<tool> ok`: `-h` prints its usage and exits 0. A
-GitHub release of nova-tools ships the same binaries, named
-`<tool>_<tag>_<os>_<arch>`, with a `SHA256SUMS` file to check them against.
+Each tool prints `nova-<tool> ok`: `-h` prints its usage and exits 0. A GitHub
+release from v2.0.0-rc1 on ships the same six binaries, built for Linux amd64
+and arm64, macOS arm64 and Windows amd64. Each file is named
+`nova-<tool>_<tag>_<os>_<arch>`, with `.exe` on Windows, beside one
+`SHA256SUMS` file to check them against.
 
 ## Talk to each other across models and harnesses
 
@@ -75,13 +79,10 @@ the id, `codex`, `-` (this message answers none), `hello` and `are you there?`.
 session in, run the hook as a background job of your harness and read its
 lines as they arrive.
 
-The refusals you will meet first:
-
-- `missing ... NOVA_BUS_REDIS (host:port)` (exit 2): set `NOVA_BUS_REDIS`.
-- `cannot reach redis at <host:port> (NOVA_BUS_REDIS): connection refused`
-  (exit 1): the address is wrong or Redis is down.
-- `name already hooked: <name> after 40s` (exit 1): another hook holds that
-  name. `nova-bus who` shows who is present.
+The refusal you will meet first is
+`cannot reach redis at <host:port> (NOVA_BUS_REDIS): connection refused`
+(exit 1): the address is wrong or Redis is down. The others are in
+[bus/README.md](../bus/README.md#refusals-and-what-to-do-next).
 
 The whole tool: [bus/README.md](../bus/README.md), and how it is tested:
 [bus/SPEC.md](../bus/SPEC.md).
@@ -93,9 +94,12 @@ names how Ansible reaches it: put its tailscale name in `--address` and its
 login in `--user`, and Ansible connects over SSH through tailscale. A
 **service** row is a program a machine keeps running. This block starts a
 throwaway PostgreSQL, adds this machine and one service, and prints the
-inventory:
+inventory. `--actor` names who made a change, and the history keeps it.
+`initdb` and `pg_ctl` are often outside PATH, so the first line adds the newest
+PostgreSQL bin directory when there is one:
 
 ```sh
+export PATH="$(ls -d /usr/lib/postgresql/*/bin 2> /dev/null | tail -1):$PATH"
 initdb -D "$work/pg" -U nova -A trust > /dev/null
 pg_ctl -D "$work/pg" -o "-p 54330 -k $work -c listen_addresses=127.0.0.1" -l "$work/pg.log" -w start > /dev/null
 createdb -h 127.0.0.1 -p 54330 -U nova nova
@@ -109,8 +113,7 @@ nova-config inventory --host here
 The two writes print `CONFIG ADD kind=machine name=here rev=1` and
 `CONFIG ADD kind=service name=hello rev=2`. The inventory is the JSON
 Ansible reads for that host: `ansible_host`, `ansible_user`, `runners` and the
-`nova_services` list. `initdb` and `pg_ctl` are often outside PATH, for example
-in `/usr/lib/postgresql/<version>/bin`.
+`nova_services` list.
 
 Now let Ansible plan the service. Ansible comes from pip here; the inventory
 script runs `nova-config inventory`. `ansible_connection=local` stands in for
@@ -124,20 +127,24 @@ cd "$work/nova-tools"
 ansible-playbook -i "$work/inventory" fleet/services.yml -e ansible_connection=local -e nova_service_only=hello --check | grep -E 'SERVICES|RESTART'
 ```
 
-The last line is the play's **receipt**, its one-line summary for the host:
-`SERVICES host=here place=... records=1 enabled=1 written=1 retired=0 only=hello (check: nothing changed)`.
+It prints two lines, as Ansible prints a message:
+
+```text
+    "msg": "WOULD-RESTART hello on here: its unit file changed"
+    "msg": "SERVICES host=here place=/home/<you>/.config/systemd/user records=1 enabled=1 written=1 retired=0 only=hello (check: nothing changed)"
+```
+
+The first says the unit would be written and started. The second is the
+play's **receipt**, its one-line summary for the host. ansible-core 2.21 also
+prints `[DEPRECATION WARNING]` lines about `INJECT_FACTS_AS_VARS` on stderr;
+they do not change the result.
 Without `--check` the play writes a systemd user unit (or a launchd job on
 macOS) for each row and starts it.
 
-The refusals you will meet first:
-
-- `NOVA_PG_DSN carries a password; remove it and set NOVA_PG_PASSWORD` (exit 2):
-  the password goes in `NOVA_PG_PASSWORD`, never in the DSN.
-- `<host> has no nova_services: ...`: your inventory is not nova-config's;
-  give every host a `nova_services` list.
-- `<host> has no service rows, and this run would retire <n> unit(s): ...`:
-  the play refuses to empty a host by accident. Pass
-  `-e nova_service_retire_all=true` only if that is what you mean.
+The refusal you will meet first is
+`NOVA_PG_DSN carries a password; remove it and set NOVA_PG_PASSWORD` (exit 2):
+the password goes in `NOVA_PG_PASSWORD`, never in the DSN. The others are in
+[config/README.md](../config/README.md#refusals).
 
 The whole tool: [config/README.md](../config/README.md) and
 [config/SPEC.md](../config/SPEC.md); the plays: [fleet/README.md](../fleet/README.md).
@@ -153,11 +160,24 @@ ansible-playbook -i "$work/inventory" fleet/github-runners.yml -e ansible_connec
   -e github_runner_url=https://github.com/OWNER/REPO -e github_runner_scope=repo --check | grep 'would register'
 ```
 
-The plan says `here: 1 wanted, would register [...]` with the runner's name
-and labels. To apply it, store a registration token, then run without
-`--check`; `-K` asks for the sudo password the service files need:
+The plan prints:
 
 ```text
+    "msg": "here: 1 wanted, would register [1], would retire [], labels amd64,bench,linux,runner"
+```
+
+`[1]` lists the runner numbers it would register; runner 1 is named `here-1`.
+The labels are the host's inventory groups, then its OS and architecture.
+`bench` is there because a machine row without `--roles` gets the role
+`bench`, and `runner` because its `runners` value is above zero.
+
+To apply it, store a registration token, then run without `--check`; `-K`
+asks for the sudo password the service files need. The token goes in a
+nova-secrets store on this machine; this uses the store and seat key that the
+secrets section below creates:
+
+```text
+export NOVA_SECRETS_STORE="$work/store" NOVA_SECRETS_KEY="$work/keys/here.key" NOVA_SECRETS_SEAT=here
 gh api -X POST repos/OWNER/REPO/actions/runners/registration-token -q .token | nova-secrets set GITHUB_RUNNER_TOKEN
 ansible-playbook -i "$work/inventory" fleet/github-runners.yml -e github_runner_url=https://github.com/OWNER/REPO -e github_runner_scope=repo -K
 ```
@@ -168,14 +188,10 @@ logs. While the task runs it is inside Ansible's per-task module file under
 only), and it is removed when the task ends. A registration token expires
 after an hour.
 
-The refusals you will meet first:
-
-- `github-runner: give -e github_runner_url=... -e github_runner_scope=repo, ...`:
-  name the repository or organization, and its scope.
-- The same line when a host has no `runners` value: set it on the machine row,
-  or pass `-e runner_count=N`.
-- `LABEL-DRIFT <name>: ...`: a runner's labels changed. Retire it with
-  `-e github_runner_state=absent`, then run again.
+The refusal you will meet first is
+`github-runner: give -e github_runner_url=... -e github_runner_scope=repo, ...`:
+name the repository or organization and its scope, and give each host a
+`runners` value or pass `-e runner_count=N`.
 
 The plays: [fleet/README.md](../fleet/README.md).
 
@@ -184,9 +200,12 @@ The plays: [fleet/README.md](../fleet/README.md).
 A **store** is a git repository of encrypted files. A **seat** is a name for
 one machine or job that reads values: it has one age key and one file of
 values. `exec` decrypts the seat's file and starts a command with only the
-values it names:
+values it names. `init`, `seat add` and `set` each make a git commit in the
+store, so git needs an author. The first line gives this session one when git
+has none:
 
 ```sh
+git config user.email > /dev/null || export GIT_AUTHOR_NAME=ai GIT_AUTHOR_EMAIL=ai@example.com GIT_COMMITTER_NAME=ai GIT_COMMITTER_EMAIL=ai@example.com
 mkdir -p "$work/keys"
 age-keygen -o "$work/keys/here.key" 2> /dev/null
 age-keygen -o "$work/keys/recovery.key" 2> /dev/null
@@ -198,8 +217,7 @@ nova-secrets exec --only API_TOKEN --store "$work/store" --key "$work/keys/here.
 ```
 
 The last command prints `SECRETS EXEC OK as=here keys=1 cmd=sh` on stderr and
-`got 13 bytes`. A git commit identity must be set for `init`, `seat add` and
-`set`, because each one commits.
+`got 13 bytes`.
 
 To deploy, give a service row a seat and the names it needs. The services play
 then wraps the program in `nova-secrets exec --only <names>`, so the value
@@ -216,15 +234,10 @@ the play reads `argv` as an Ansible template, where `{#` opens a comment.
 Each machine needs the store, its seat's key and sops. The play's defaults
 for where they live are in [group_vars/all.yml](../fleet/group_vars/all.yml).
 
-The refusals you will meet first:
-
-- `SECRETS SET REFUSED: key file ... must be a regular file of mode 0600 owned by you`
-  (exit 2; 125 from `exec`): run `chmod 600` on the key file.
-- `SECRETS EXEC REFUSED: unknown secret name(s) <names>: ...` (exit 125): that
-  name was never `set` for this seat. The line ends with the `nova-secrets names`
-  command that lists what the seat holds.
-- `nova-secrets set: value is over 65536 bytes` (exit 2): a value is a key or
-  a token, not a file.
+The refusal you will meet first is
+`SECRETS SET REFUSED: key file ... must be a regular file of mode 0600 owned by you`
+(exit 2, or 125 from `exec`): run `chmod 600` on the key file. The others are in
+[secrets/README.md](../secrets/README.md#refusals).
 
 The whole tool: [secrets/README.md](../secrets/README.md).
 
@@ -247,12 +260,9 @@ nova-reserve status
 `nova-reserve: HELD mode=shared slot=<n>/2 ...` on stderr before its command
 runs, and `status` ends with `free=2/2` once both have finished.
 
-The refusals you will meet first:
-
-- `capacity in use (...); retry when free` (exit 1): `set` waits for no holder.
-- `no slot within <d>: ...` (exit 1): every slot stayed taken for the whole
-  `--wait`. Wait longer, or look at `status`.
-- `<cmd>: command not found on PATH=...` (exit 127): the command is not on PATH.
+The refusal you will meet first is `no slot within <d>: ...` (exit 1): every
+slot stayed taken for the whole `--wait`. Wait longer, or look at `status`. The
+others are in [reserve/README.md](../reserve/README.md#refusals-and-what-to-do-next).
 
 The whole tool: [reserve/README.md](../reserve/README.md) and
 [reserve/SPEC.md](../reserve/SPEC.md).
@@ -273,16 +283,13 @@ nova-sandbox check
 The first command writes `ok` inside its grant. The second is denied by the
 kernel: `sh` prints a `Permission denied` line and the run exits 2, the
 command's own status. `check` prints a line starting `CHECK OK backend=`.
-`nova-sandbox probe` runs a fuller test of the wall on this machine.
+`nova-sandbox probe` tests each of the sandbox's limits on this machine, one
+line per step.
 
-The refusals you will meet first:
-
-- `nova-sandbox: bad_read: ...` (exit 2): a grant is relative or missing, or
-  the command is outside every grant. For a Go toolchain outside `/usr`, add
-  `--read "$(go env GOROOT)"`.
-- `SANDBOX REFUSED reason=not_found: ...` (exit 127): the command is not on PATH.
-- `SANDBOX REFUSED reason=net_unenforceable: ...` (exit 125): this kernel cannot
-  close the network. `nova-sandbox check` says why.
+The refusal you will meet first is `nova-sandbox: bad_read: ...` (exit 2): a
+grant is relative or missing, or the command is outside every grant. For a Go
+toolchain outside `/usr`, add `--read "$(go env GOROOT)"`. The others are in
+[sandbox/README.md](../sandbox/README.md#refusals).
 
 The whole tool: [sandbox/README.md](../sandbox/README.md) and
 [sandbox/SPEC.md](../sandbox/SPEC.md).
@@ -291,7 +298,11 @@ The whole tool: [sandbox/README.md](../sandbox/README.md) and
 
 A **store** here is a directory of saved sessions. A **session** is a named
 group of entries, and an **entry** is the words you chose to keep. A later
-session searches them, beside any Markdown notes:
+session searches them, beside any Markdown notes. `--publish never` records
+that you do not mean to publish the session; cairn itself sends nothing
+anywhere. `--source` is a pointer you give, such as a directory or a file
+name, kept with each entry and never opened. `--channels bm25` asks for
+keyword ranking, and `--k 3` for at most three hits:
 
 ```sh
 nova-cairn open --store "$work/cairn" --session today --publish never --source "$work"
@@ -300,18 +311,24 @@ nova-cairn memory search --root "$work/cairn" --channels bm25 --k 3 bench unit t
 ```
 
 `open` prints a line starting `OPEN OK`, and `append` one starting
-`APPEND OK session=today entry=lesson-1`. The search prints `SEARCH OK hits=1`
-and then a `SEARCH HIT rank=1 ...` line that ends with `entry=lesson-1` and its
-stamp. The same `append` again prints
-`duplicate=true` and writes nothing.
+`APPEND OK session=today entry=lesson-1`. The search prints four lines, shown
+here shortened:
 
-The refusals you will meet first:
+```text
+SEARCH OK hits=1 k=3 channels=bm25 files=0 entries=1 skipped=0 chunks=1: query="bench unit tests"
+SEARCH CAL score=0.97 score-channel=bm25 probe=unrelated-control
+SEARCH HIT rank=1 score=0.86 ... session=today entry=lesson-1 stamp=<time>
+SEARCH NOTE lexical only ...
+```
 
-- `nova-cairn append: no such session "<id>" ...; open it first` (exit 2): run
-  the `open` the line names.
-- `APPEND FAILED session=<id> entry=<id>: entry "<id>" already holds different words`
-  (exit 1): use a new `--entry` id.
-- Words that are not valid UTF-8 are refused (exit 2).
+The `HIT` line is the entry, with the time it was saved. The `CAL` line is the
+score of a deliberately unrelated query, for comparison. The same `append`
+again prints `duplicate=true` and writes nothing.
+
+The refusal you will meet first is
+`nova-cairn append: no such session "<id>" ...; open it first` (exit 2): run the
+`open` the line names. The others are in
+[cairn/README.md](../cairn/README.md#refusals).
 
 The whole tool: [cairn/README.md](../cairn/README.md) and
 [cairn/SPEC.md](../cairn/SPEC.md).
@@ -319,7 +336,8 @@ The whole tool: [cairn/README.md](../cairn/README.md) and
 ## Is it working?
 
 Paste this in the session above, before you clean up. Elsewhere, set
-`NOVA_BUS_REDIS`, `NOVA_PG_DSN` and `NOVA_SECRETS_STORE` first. Each line
+`NOVA_BUS_REDIS`, `NOVA_PG_DSN`, `NOVA_SECRETS_STORE` and `NOVA_RESERVE_DIR`
+first. Each line
 prints the first line shown beside it.
 
 ```sh
@@ -337,8 +355,13 @@ ansible-playbook --version | head -1                                 # ansible-p
 
 ## Clean up
 
+Each step runs whether or not the one before it worked:
+
 ```sh
-cd / && pg_ctl -D "$work/pg" stop > /dev/null && redis-cli -p "$port" shutdown nosave 2> /dev/null; rm -rf "$work"
+cd /
+pg_ctl -D "$work/pg" stop > /dev/null || echo "postgres was not running"
+redis-cli -p "$port" shutdown nosave 2> /dev/null || echo "redis was not running"
+rm -rf "$work"
 ```
 
 Command-line rules shared by every tool: [CLI-STYLE.md](CLI-STYLE.md).
