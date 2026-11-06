@@ -3,6 +3,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"errors"
@@ -15,7 +16,6 @@ import (
 	"os/signal"
 	"runtime"
 	"slices"
-	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -284,10 +284,13 @@ func run(ctx context.Context, args []string, env func(string) string, stdin io.R
 	} else if err != nil {
 		return misuse(stderr, verb, "%s", flagError(err))
 	}
-	var bad []string
+	var bad, given []string // flags this verb does not take; the harness flags set
 	fs.Visit(func(f *flag.Flag) {
 		if !slices.Contains(takes, f.Name) {
 			bad = append(bad, "--"+f.Name)
+		}
+		if _, ok := flagWants[f.Name]; ok {
+			given = append(given, f.Name)
 		}
 	})
 	if len(bad) > 0 {
@@ -304,12 +307,7 @@ func run(ctx context.Context, args []string, env func(string) string, stdin io.R
 		missing = append(missing, []string{"<subject> <body>", "<body>"}[fs.NArg()])
 	}
 	stop := verb == "hook" && *service && fs.NArg() == 1 && fs.Arg(0) == "stop"
-	var given, ignored []string // the harness flags set, and those this harness does not take
-	fs.Visit(func(f *flag.Flag) {
-		if _, ok := flagWants[f.Name]; ok {
-			given = append(given, f.Name)
-		}
-	})
+	var ignored []string // the harness flags this harness does not take
 	_, knownHarness := harnessFlags[*harness]
 	if knownHarness && !stop {
 		var need []string
@@ -553,13 +551,12 @@ func runHook(ctx context.Context, store Store, name, addr string, clk Clock, std
 		err := hook(ctx, store, name, value, clk, stdout, stderr, onClaim, w, gone)
 		var we writeError
 		var wf wakeFailed
-		if errors.Is(err, errHookedByRecv) {
+		switch {
+		case errors.Is(err, errHookedByRecv):
 			return fail(stderr, "hook", "name already hooked by a recv: %s after %s; a recv claims the name while it waits: stop it first; run: nova-bus who", name, presenceTTL+presenceRefresh)
-		}
-		if errors.Is(err, errHooked) {
+		case errors.Is(err, errHooked):
 			return fail(stderr, "hook", "name already hooked: %s after %s; run: nova-bus who", name, presenceTTL+presenceRefresh)
-		}
-		if errors.Is(err, errTaken) {
+		case errors.Is(err, errTaken):
 			return fail(stderr, "hook", "name taken by another hook while this one lapsed: %s; run: nova-bus who", name)
 		}
 		if ctx.Err() == nil && !errors.As(err, &we) && !errors.As(err, &wf) {
@@ -658,9 +655,7 @@ func hook(ctx context.Context, store Store, name, value string, clk Clock, out, 
 		if gone != nil && gone() {
 			return writeError{errors.New("stdout closed: its reader is gone")}
 		}
-		if pending && len(msgs) == 0 {
-			pending = false
-		}
+		pending = pending && len(msgs) > 0
 		// The first pending entry is the oldest unacked: older is acked history
 		// from an older build. Never a new entry: a paused hook may hold an
 		// older one, handed and not yet printed.
@@ -859,12 +854,7 @@ func who(ctx context.Context, store Store, addr string, now time.Time, stdout, s
 		return fail(stderr, "who", "%s", describe(err, addr))
 	}
 	fmt.Fprintf(stdout, "WHO OK present=%d\n", len(present))
-	names := make([]string, 0, len(present))
-	for n := range present {
-		names = append(names, n)
-	}
-	sort.Strings(names)
-	for _, n := range names {
+	for _, n := range slices.Sorted(maps.Keys(present)) {
 		up := "?"
 		start, rest, _ := strings.Cut(present[n], "\t")
 		if t, err := time.Parse(time.RFC3339, start); err == nil {
@@ -901,11 +891,7 @@ var escaper = strings.NewReplacer("\\", `\\`, "\n", `\n`, "\r", `\r`, "\t", `\t`
 
 func line(m Msg) string {
 	f := m.Fields
-	re := f["re"]
-	if re == "" {
-		re = "-"
-	}
-	parts := []string{m.ID, f["from"], re, f["subject"], f["body"]}
+	parts := []string{m.ID, f["from"], cmp.Or(f["re"], "-"), f["subject"], f["body"]}
 	for i := range parts {
 		parts[i] = escaper.Replace(parts[i])
 	}

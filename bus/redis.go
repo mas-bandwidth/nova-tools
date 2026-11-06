@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -31,11 +32,7 @@ func redisOptions(addr, user, password string) *redis.Options {
 }
 
 func (r redisStore) Add(ctx context.Context, stream string, fields map[string]string) (string, error) {
-	values := make(map[string]any, len(fields))
-	for k, v := range fields {
-		values[k] = v
-	}
-	return r.c.XAdd(ctx, &redis.XAddArgs{Stream: stream, Values: values}).Result()
+	return r.c.XAdd(ctx, &redis.XAddArgs{Stream: stream, Values: fields}).Result()
 }
 
 // presenceKey is the key a hook holds while it runs.
@@ -58,15 +55,7 @@ func (r redisStore) Hooked(ctx context.Context, stream string) (bool, error) {
 	if err != nil && strings.Contains(strings.ToLower(err.Error()), "no such key") {
 		return false, nil
 	}
-	if err != nil {
-		return false, err
-	}
-	for _, g := range groups {
-		if g.Name == group {
-			return true, nil
-		}
-	}
-	return false, nil
+	return slices.ContainsFunc(groups, func(g redis.XInfoGroup) bool { return g.Name == group }), err
 }
 
 func (r redisStore) Read(ctx context.Context, stream string, pending bool, block time.Duration) ([]Msg, error) {
@@ -76,16 +65,13 @@ func (r redisStore) Read(ctx context.Context, stream string, pending bool, block
 	}
 	res, err := r.c.XReadGroup(ctx, args).Result()
 	if errors.Is(err, redis.Nil) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
+		err = nil
 	}
 	var msgs []Msg
 	for _, s := range res {
 		msgs = append(msgs, toMsgs(s.Messages)...)
 	}
-	return msgs, nil
+	return msgs, err
 }
 
 func toMsgs(xs []redis.XMessage) []Msg {
@@ -112,7 +98,6 @@ func (r redisStore) Count(ctx context.Context, stream string) (int64, error) {
 	return r.c.XLen(ctx, stream).Result()
 }
 
-// Waiting reads the whole stream, 1000 entries at a time.
 func (r redisStore) Waiting(ctx context.Context, stream string) ([]Msg, error) {
 	var msgs []Msg
 	for start := "-"; ; {
@@ -128,7 +113,6 @@ func (r redisStore) Waiting(ctx context.Context, stream string) ([]Msg, error) {
 	}
 }
 
-// Trim deletes every entry older than id (XTRIM MINID).
 func (r redisStore) Trim(ctx context.Context, stream, id string) error {
 	return r.c.XTrimMinID(ctx, stream, id).Err()
 }

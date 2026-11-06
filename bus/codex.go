@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"cmp"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -76,12 +77,7 @@ func codexRecv(env func(string) string, home string) string {
 	if thread == "" {
 		return ""
 	}
-	if h := env("CODEX_HOME"); h != "" {
-		home = h
-	} else {
-		home = filepath.Join(home, ".codex")
-	}
-	source, err := threadSource(home, thread)
+	source, err := threadSource(cmp.Or(env("CODEX_HOME"), filepath.Join(home, ".codex")), thread)
 	switch {
 	case err == nil && source == "subagent":
 		return ""

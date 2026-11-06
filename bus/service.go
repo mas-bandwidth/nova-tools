@@ -134,10 +134,7 @@ func needManager(s sys, u unit, stderr io.Writer) int {
 // installService writes the unit for cmd (unless it already says exactly
 // that), starts it, and waits for its HOOK OK in the log.
 func installService(ctx context.Context, s sys, clk Clock, name string, cmd []string, env func(string) string, stdout, stderr io.Writer) int {
-	u := unitFor(s, name)
-	if code := needManager(s, u, stderr); code != 0 {
-		return code
-	}
+	u := unitFor(s, name) // run has checked its manager (needManager)
 	var vars [][2]string
 	for _, k := range []string{"NOVA_BUS_REDIS", "NOVA_BUS_USER", "NOVA_BUS_PASSWORD"} {
 		if v := env(k); v != "" {

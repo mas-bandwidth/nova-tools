@@ -87,13 +87,10 @@ func (e execWake) wake(ctx context.Context, m Msg) error {
 		env = append(env, "NOVA_BUS_"+strings.ToUpper(k)+"="+m.Fields[k])
 	}
 	code, err := e.s.shell(ctx, env, line(m), e.command)
-	if err != nil {
-		return err
+	if err == nil && code != 0 {
+		err = exitError{code}
 	}
-	if code != 0 {
-		return exitError{code}
-	}
-	return nil
+	return err
 }
 
 // stdoutIsNull is true when stdout is the /dev/null device: a hook whose
