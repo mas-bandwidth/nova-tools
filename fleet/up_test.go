@@ -491,6 +491,10 @@ func TestUpPlaysAreEmbedded(t *testing.T) {
 }
 
 func TestCheck(t *testing.T) {
+	// the same lines on every platform: a Linux of no known family, amd64
+	oldOS, oldArch, oldRel := goos, goarch, osRelease
+	t.Cleanup(func() { goos, goarch, osRelease = oldOS, oldArch, oldRel })
+	goos, goarch, osRelease = "linux", "amd64", filepath.Join(t.TempDir(), "no-os-release")
 	f := &upFake{}
 	f.install(t)
 	code, out, errs := runArgs("check")
@@ -516,7 +520,7 @@ func TestCheck(t *testing.T) {
 	}
 	code, out, errs = runArgs("check", "--runners", "https://github.com/o/r")
 	for _, w := range []string{"CHECK MISSING age-keygen: ", "CHECK OK git 1.2.3\nCHECK OK go go1.99.0\n", "CHECK MISSING nova-bus: mkdir -p ~/.local/bin && ([ -d nova-tools ] || git clone --depth 1 https://github.com/mas-bandwidth/nova-tools) && go build -C nova-tools -o ~/.local/bin/nova-bus ./bus\n",
-		"CHECK MISSING gh: ", "CHECK MISSING tailnet: sudo tailscale up --advertise-tags=tag:control  # this node is not on the tailnet, which it reaches the machines over: Logged out.\n", "CHECK OK GITHUB_RUNNER_TOKEN readable"} {
+		"CHECK MISSING gh: install gh with this system's package manager\n", "CHECK MISSING tailnet: sudo tailscale up --advertise-tags=tag:control  # this node is not on the tailnet, which it reaches the machines over: Logged out.\n", "CHECK OK GITHUB_RUNNER_TOKEN readable"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout lacks %q:\n%s", w, out)
 		}
@@ -534,15 +538,13 @@ func TestCheck(t *testing.T) {
 		return outCmd2(bin, args, env)
 	}
 	code, out, _ = runArgs("check")
-	if code != 1 || !strings.Contains(out, "CHECK MISSING go: brew install go  # go version go1.19.8 linux/amd64 is older than go1.") || !strings.Contains(out, "CHECK MISSING tag:control: sudo tailscale up --advertise-tags=tag:control --auth-key=<a key allowed that tag>  # or tag this node in the admin console") ||
+	if code != 1 || !strings.Contains(out, "CHECK MISSING go: curl -fsSL https://go.dev/dl/go") || !strings.Contains(out, ".linux-amd64.tar.gz | sudo tar -C /usr/local -xz && export PATH=/usr/local/go/bin:$PATH && echo 'export PATH=/usr/local/go/bin:$PATH' >> ~/.profile  # go version go1.19.8 linux/amd64 is older than go1.") || !strings.Contains(out, "CHECK MISSING tag:control: sudo tailscale up --advertise-tags=tag:control --auth-key=<a key allowed that tag>  # or tag this node in the admin console") ||
 		!strings.Contains(out, "CHECK MISSING ansible.posix: nova-fleet show requirements > requirements.yml && /bin/ansible-galaxy collection install -r requirements.yml") {
 		t.Errorf("old go, untagged: code %d\n%s", code, out)
 	}
 	outCmd, f.untagged, f.noPosix = outCmd2, false, false
 	// No ansible-playbook and a python3 without venv: both are said.
-	old := goos
-	t.Cleanup(func() { goos = old })
-	goos, f.offnet, f.noVenv = "linux", false, true
+	f.offnet, f.noVenv = false, true
 	lookPath = func(name string) (string, error) {
 		if name == "ansible-playbook" {
 			return "", os.ErrNotExist
