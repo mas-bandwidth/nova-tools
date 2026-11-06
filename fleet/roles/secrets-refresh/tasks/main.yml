@@ -73,12 +73,60 @@
 - name: push mode
   when: sr_mode == 'push'
   block:
+    # ---- the refusals, before anything changes ----
+    - name: rsync on the machine
+      ansible.builtin.command: rsync --version
+      register: sr_rsync
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      when: nova_seal_store is defined
+
+    - name: rsync is there (join.yml installs it; here it is only checked)
+      ansible.builtin.assert:
+        that: sr_rsync.rc == 0
+        fail_msg: >-
+          SECRETS-REFRESH {{ inventory_hostname }} STOP: no rsync on the machine, which the push needs; install it
+          (Debian, Ubuntu: sudo apt-get install -y rsync), then run again
+        quiet: true
+      when: nova_seal_store is defined
+
+    - name: the store path on the machine, as it is
+      ansible.builtin.stat: { path: "{{ nova_secrets_store }}" }
+      register: sr_dest
+
+    # a symlink here would make the push write through it, somewhere else on the machine
+    - name: the store path is a directory, never a symlink
+      ansible.builtin.assert:
+        that: not (sr_dest.stat.exists and sr_dest.stat.islnk)
+        fail_msg: "SECRETS-REFRESH {{ inventory_hostname }} STOP: {{ nova_secrets_store }} is a symlink (to {{ sr_dest.stat.lnk_target | default('?') }}); the store must be a directory of its own: remove the link, then run again"
+        quiet: true
+
+    # a symlink in the store would land on every machine pointing wherever it says: the store holds files only
+    - name: symlinks in the control node's clone (outside .git)
+      ansible.builtin.command:
+        argv: [find, "{{ nova_seal_store }}", -path, "{{ nova_seal_store | regex_replace('/*$', '') }}/.git", -prune, -o, -type, l, -print]
+      delegate_to: localhost
+      become: false
+      register: sr_links
+      changed_when: false
+      check_mode: false
+      when: nova_seal_store is defined
+
+    - name: the clone holds no symlink
+      ansible.builtin.assert:
+        that: sr_links is skipped or sr_links.stdout_lines | length == 0
+        fail_msg: "SECRETS-REFRESH STOP: the store clone {{ nova_seal_store | default('') }} holds symlinks, which are never pushed: {{ sr_links.stdout_lines | default([]) | join(', ') }}; remove them, then run again"
+        quiet: true
+
     - name: the store directory (0700)
       ansible.builtin.file: { path: "{{ nova_secrets_store }}", state: directory, mode: "0700" }
       when: nova_seal_store is defined
       register: sr_push_dir
 
-    # the same settings nova-fleet up uses: no .git, deletes what the control node's copy lacks, 0700/0600
+    # the same settings nova-fleet up uses: no .git (one left from pull mode is removed), deletes what the control
+    # node's copy lacks, 0700/0600; symlinks are never copied. Changed only for a file sent, removed or re-moded, read
+    # from rsync's itemized lines (stdout_lines): a directory whose only difference is its time is not a change.
     - name: the store pushed from the control node's clone (nova_seal_store)
       ansible.posix.synchronize:
         src: "{{ nova_seal_store | regex_replace('/*$', '') }}/"
@@ -86,12 +134,15 @@
         mode: push
         archive: false
         recursive: true
-        links: true
+        links: false
+        copy_links: false
         times: true
         perms: true
         delete: true
-        rsync_opts: ["--exclude=.git", "--chmod=Du=rwx,Dgo=,Fu=rw,Fgo="]
+        rsync_opts: ["--exclude=.git", "--delete-excluded", "--chmod=Du=rwx,Dgo=,Fu=rw,Fgo="]
       register: sr_push
+      changed_when: >-
+        sr_push.stdout_lines | default([]) | select('match', '^(\\*deleting|[<>ch.][fdLDS])') | reject('match', '^\\.d\\.\\.t\\.{6} ') | list | length > 0
       when: nova_seal_store is defined and not (ansible_check_mode and sr_push_dir is changed)
 
     - name: the files the store holds here
