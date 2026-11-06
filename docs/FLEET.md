@@ -325,7 +325,7 @@ the tailnet. `join.yml` runs it; run it alone for machines that already have a r
    removed after the command). A machine already Running with the same tags is not joined again; a hostname or
    Tailscale SSH setting that differs is set in place with `tailscale set`, with no key.
 3. Records `Self.DNSName` (`<machine>.<tailnet>.ts.net`) as the machine's address: `nova-config machine set <name>
-   --address <dns name>`, then reads the inventory again, so the firewall play, every later run, the bus and the
+   --address <dns name>`, then reads the inventory again, so the firewall play, every run after it, the bus and the
    services reach the machine by that name.
 4. The firewall. Linux: ufw denies incoming on every interface but `tailscale0`, allows outgoing and UDP 41641
    (Tailscale's direct connections). It is turned on only when the run itself comes in on the tailnet (or is local),
@@ -540,16 +540,4 @@ nova-reserve set --slots 3           # refused while a slot is held
 ```
 
 Every caller on a machine uses the same directory. `reserve/README.md` has the flags, exit codes and the TLA+ models;
-`docs/SPEC-RESERVE.md` (lands with the reserve PR) specifies the reservations.
-
-## Not yet here
-
-What the owner wants in `fleet/` that does not exist yet. None of it is written, and none of it is promised by the
-files above:
-
-- **sshd hardening.** `sshd` settings and per-machine access, applied and checked from the inventory (`join.yml` makes
-  the login and its keys; `tailscale.yml` turns on Tailscale SSH).
-- **Health checks beyond the guards.** `health.yml` sets the guards and the disk report; checking load, services alive
-  and tools at the right version, and repairing what can be repaired without a person, is not here yet.
-
-Until they exist, those are done by hand, and the hand work is the thing to automate next.
+`docs/SPEC-RESERVE.md` specifies the reservations.
