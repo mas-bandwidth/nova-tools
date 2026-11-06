@@ -95,7 +95,7 @@ func init() {
 		Fault{Tool: "secrets", Name: "set: git not on PATH", Setup: func(e *Env) { secretsStore(e); e.Path(e.Tools("sops", "age-keygen", "sh")) },
 			Stdin: "v\n", Argv: set, Want: Want{Reason: []string{"git", "not found"}}, Known: "8"},
 		Fault{Tool: "secrets", Name: "set: store read-only", Setup: func(e *Env) { secretsStore(e); e.Chmod(e.Dir+"/store", 0o500) },
-			Stdin: "w\n", Argv: set, Want: Want{Reason: []string{"permission denied"}}, Known: "§7 read-only store"},
+			Stdin: "w\n", Argv: set, Want: Want{Reason: []string{"permission denied"}}},
 		Fault{Tool: "secrets", Name: "exec: seat file corrupt",
 			Setup: func(e *Env) { secretsStore(e); os.WriteFile(e.Dir+"/store/web.yaml", []byte("corrupt\n"), 0o644) },
 			Argv:  ex("true"), Want: Want{Reason: []string{"sops"}}, Known: "8"},

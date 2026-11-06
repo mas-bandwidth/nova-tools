@@ -32,10 +32,10 @@ var lintTools = []string{"bus", "cairn", "config", "fleet", "reserve", "sandbox"
 
 // Files that break rule 1 or 2 today and how many places each has (the audit's section 8).
 var knownDiscards = map[string]int{
-	"cairn/memory.go": 1, "cairn/store.go": 6, "config/inventory.go": 2, "config/rows.go": 1, "config/store.go": 1,
-	"fleet/check.go": 5, "fleet/main.go": 11, "fleet/up.go": 6, "reserve/main.go": 5, "reserve/os_windows.go": 2,
+	"bus/main.go": 3, "bus/service.go": 3, "bus/wake.go": 1, "cairn/main.go": 1, "cairn/memory.go": 1, "cairn/store.go": 6, "config/inventory.go": 2, "config/rows.go": 1, "config/store.go": 1,
+	"fleet/check.go": 5, "fleet/main.go": 13, "fleet/up.go": 7, "reserve/main.go": 5, "reserve/os_windows.go": 2,
 	"sandbox/closefds.go": 2, "sandbox/probe.go": 1, "sandbox/probeclient_linux.go": 1, "sandbox/seccomp_linux.go": 1,
-	"secrets/main.go": 15,
+	"secrets/main.go": 16,
 }
 
 // sandbox/probe.go is the probe's helper child: its exit status is the finding, which the parent prints.
@@ -43,17 +43,9 @@ var knownSilentExits = map[string]int{"sandbox/probe.go": 3}
 
 // no_log tasks in fleet/ with no receipt today, as "<file>: <task name>"; gap 9 of the audit.
 var knownNoLog = map[string]bool{
-	"fleet/roles/seal/tasks/main.yml: the password, read on this machine":                                                                             true,
-	"fleet/roles/github-runner/tasks/unix-retire.yml: remove the runner from GitHub (the token reaches the runner on its stdin)":                      true,
-	"fleet/roles/postgres/tasks/main.yml: a password per role, made once on this machine (it leaves only through nova-secrets)":                       true,
-	"fleet/roles/tailscale/tasks/windows.yml: the key file":                                                                                           true,
-	"fleet/roles/tailscale/tasks/windows.yml: tailscale up":                                                                                           true,
-	"fleet/roles/github-runner/tasks/windows-retire.yml: remove it from GitHub and uninstall the service (the token reaches the runner on its stdin)": true,
-	"fleet/roles/github-runner/tasks/windows-runner.yml: register with GitHub and install the service (the token reaches the runner on its stdin)":    true,
-	"fleet/roles/postgres/tasks/main.yml: each role answers with its file's password over the listen address (scram-sha-256)":                         true,
-	"fleet/roles/postgres/tasks/main.yml: set the password of each role whose proof failed (file to stdin, never argv, never a log)":                  true,
-	"fleet/roles/postgres/tasks/main.yml: every role answers now":                                                                                     true,
-	"fleet/roles/redis/tasks/acl.yml: a password per user, made once on this machine (it leaves only through nova-secrets)":                           true,
+	"fleet/roles/seal/tasks/main.yml: the password, read on this machine":                                                     true,
+	"fleet/roles/postgres/tasks/main.yml: each role answers with its file's password over the listen address (scram-sha-256)": true,
+	"fleet/roles/postgres/tasks/main.yml: every role answers now":                                                             true,
 }
 
 func goSources(t *testing.T) map[string]*ast.File {

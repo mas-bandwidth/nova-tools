@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"time"
+	"sync/atomic"
 )
 
 // One PostgreSQL for the whole run, one database per row.
@@ -58,6 +58,8 @@ func stopPG() {
 
 // PG makes a database for this row, points NOVA_PG_DSN at it and returns the
 // DSN; load puts the schema in it.
+var pgSeq atomic.Int64
+
 func (e *Env) PG(load bool) string {
 	pg.once.Do(startPG)
 	if pg.err != "" {
@@ -67,7 +69,7 @@ func (e *Env) PG(load bool) string {
 	if err != nil {
 		e.skip("psql is not on PATH")
 	}
-	db := fmt.Sprintf("r%d_%d", os.Getpid(), time.Now().UnixNano()%1e9)
+	db := fmt.Sprintf("r%d_%d", os.Getpid(), pgSeq.Add(1))
 	base := "postgres://nova@127.0.0.1:" + pg.port + "/"
 	dsn := base + db + "?sslmode=disable"
 	if out, err := exec.Command(psql, base+"postgres?sslmode=disable", "-qc", "CREATE DATABASE "+db).CombinedOutput(); err != nil {
@@ -99,9 +101,9 @@ func init() {
 	register(
 		Fault{Tool: "config", Name: "store unset", Argv: list, Want: Want{Reason: []string{"NOVA_PG_DSN"}}},
 		Fault{Tool: "config", Name: "store unset and a flag missing", Argv: []string{"machine", "add", "m1", "--actor", "a"},
-			Want: Want{Reason: []string{"--user", "NOVA_PG_DSN"}}, Known: "7"},
+			Want: Want{Reason: []string{"--user", "NOVA_PG_DSN"}}},
 		Fault{Tool: "config", Name: "dsn in key=value form", Setup: dsn("host=x dbname=y"), Argv: list,
-			Want: Want{Reason: []string{"postgres://"}}, Known: "7"},
+			Want: Want{Reason: []string{"postgres://"}}},
 		Fault{Tool: "config", Name: "dsn carries a password", Setup: dsn("postgres://u:pw@127.0.0.1:1/db"), Argv: list,
 			Want: Want{Reason: []string{"NOVA_PG_PASSWORD"}}},
 		Fault{Tool: "config", Name: "postgres stopped", Setup: stopped, Argv: list,
@@ -117,6 +119,6 @@ func init() {
 		Fault{Tool: "config", Name: "inventory: a service row with corrupt argv", Setup: func(e *Env) {
 			d := e.PG(true)
 			e.SQL(d, `INSERT INTO config.machines(name,"user") VALUES ('m1','u'); INSERT INTO config.services(name,machine,argv,every) VALUES ('s1','m1','[not json]',5)`)
-		}, Argv: []string{"inventory"}, Want: Want{Reason: []string{"s1", "argv"}}, Known: "6"},
+		}, Argv: []string{"inventory"}, Want: Want{Reason: []string{"s1", "argv"}}},
 	)
 }

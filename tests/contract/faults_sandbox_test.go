@@ -2,7 +2,13 @@
 
 package contract
 
-import "os"
+import (
+	"os"
+	"regexp"
+	"runtime"
+)
+
+var wall = regexp.MustCompile(`^WALL `)
 
 // walled skips a row on a machine where the wall cannot be raised.
 func walled(e *Env) {
@@ -18,9 +24,7 @@ func init() {
 			Want: Want{Exit: []int{2}, Reason: []string{"absolute"}}},
 		Fault{Tool: "sandbox", Name: "grant is not an existing directory", Argv: []string{"--read", "{dir}/nodir", "--", "true"},
 			Want: Want{Exit: []int{2}, Reason: []string{"not an existing directory"}}},
-		Fault{Tool: "sandbox", Name: "--gpu on Linux", Argv: []string{"--gpu", "--read", "{dir}", "--", "true"},
-			Want: Want{Exit: []int{2}, Reason: []string{"--gpu"}}},
-		Fault{Tool: "sandbox", Name: "--net-allow without --net-deny", Argv: []string{"--net-allow", "127.0.0.1:1", "--read", "{dir}", "--", "true"},
+				Fault{Tool: "sandbox", Name: "--net-allow without --net-deny", Argv: []string{"--net-allow", "127.0.0.1:1", "--read", "{dir}", "--", "true"},
 			Want: Want{Exit: []int{2}, Reason: []string{"--net-allow"}}},
 		Fault{Tool: "sandbox", Name: "no command after the flags", Argv: []string{"--read", "{dir}"},
 			Want: Want{Exit: []int{2}, Reason: []string{"command|--"}}},
@@ -29,6 +33,14 @@ func init() {
 		Fault{Tool: "sandbox", Name: "working directory outside the grants", Setup: walled, Argv: []string{"--read", "{dir}/ok", "--", "ls", "."},
 			Want: Want{Reason: []string{"cwd|working directory"}}, Known: "4"},
 		Fault{Tool: "sandbox", Name: "command killed by SIGKILL", Setup: walled, Argv: []string{"--read", "{dir}", "--", "sh", "-c", "kill -9 $$"},
-			Want: Want{Signal: 9}},
+			Want: Want{Exit: []int{137}, Reason: []string{"killed by signal 9"}, Remedy: None, Info: wall}},
 	)
+}
+
+func init() {
+	// --gpu is refused on Linux only; on macOS it is a real grant
+	if runtime.GOOS == "linux" {
+		register(Fault{Tool: "sandbox", Name: "--gpu on Linux", Argv: []string{"--gpu", "--read", "{dir}", "--", "true"},
+			Want: Want{Exit: []int{2}, Reason: []string{"--gpu"}}})
+	}
 }

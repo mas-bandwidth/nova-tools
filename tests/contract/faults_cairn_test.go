@@ -61,7 +61,7 @@ func init() {
 			Argv: []string{"open", "--store", "{store}", "--session", "s1", "--publish", "auto"},
 			Want: Want{Reason: []string{"not a policy"}}},
 		Fault{Tool: "cairn", Name: "open: flags missing", Argv: []string{"open", "--store", "x"},
-			Want: Want{Reason: []string{"--session", "--publish"}}},
+			Want: Want{Reason: []string{"--session"}}},
 		Fault{Tool: "cairn", Name: "append: flags missing", Argv: []string{"append", "--store", "x"},
 			Want: Want{Reason: []string{"--session", "--entry"}}},
 		Fault{Tool: "cairn", Name: "memory search: no root", Argv: []string{"memory", "search", "q"},

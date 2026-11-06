@@ -31,7 +31,7 @@ func init() {
 		Fault{Tool: "fleet", Name: "play: ansible-playbook not on PATH", Setup: fleetBin("", true), Argv: play,
 			Want: Want{Exit: []int{2}, Reason: []string{"ansible-playbook"}}, Known: "3"},
 		Fault{Tool: "fleet", Name: "play: nova-config not on PATH", Setup: fleetBin("exit 0", false), Argv: []string{"health"},
-			Want: Want{Exit: []int{2}, Reason: []string{"nova-config"}}},
+			Want: Want{Exit: []int{2}, Reason: []string{"nova-config"}, Remedy: Runs, Stdout: "CHECK MISSING nova-config"}},
 		Fault{Tool: "fleet", Name: "play: inventory file absent", Setup: fleetBin("exit 0", true), Argv: []string{"health", "--inventory", "{dir}/none"},
 			Want: Want{Exit: []int{2}, Reason: []string{"no such file"}}},
 		Fault{Tool: "fleet", Name: "play: host unreachable (ansible exit 4)",
