@@ -45,6 +45,11 @@ nova-secrets seat add <seat> <age-public-key> --store <dir>
 nova-secrets seat list --store <dir>
   List the seats the rules in .sops.yaml name and the seat files present, one "<seat> file=yes|no rule=yes|no" per line.
 
+nova-secrets seat remove <seat> --store <dir> --pins <dir>
+  Remove the seat's rule from .sops.yaml and its files <seat>.yaml and <seat>.grants.yaml, in one commit. Refused
+  while <pins>/<seat>.ledger says this node granted it values (delete that ledger and <pins>/<seat>.pub first), and
+  for this node's own seat while any ledger remains. A value is removed from a seat with sops: sops unset <seat>.yaml '["NAME"]'.
+
 nova-secrets set NAME --store <dir> --key <file> --pins <dir> [--as <seat>] [--recovery <age1>] [--sops <path>]
   Read one value from stdin (one non-empty line of at most 65536 bytes, never a terminal), set NAME in <seat>.yaml and commit that
   file. Pushing is yours. The file is sealed to --key's public half and the recovery pin <dir>/recovery.pub only;
@@ -165,7 +170,7 @@ func (t tool) main(args []string) int {
 		}
 		return t.unknownVerb(verb)
 	}
-	if verb == "seat" && len(rest) > 0 && (rest[0] == "add" || rest[0] == "list") {
+	if verb == "seat" && len(rest) > 0 && (rest[0] == "add" || rest[0] == "list" || rest[0] == "remove") {
 		verb, rest = "seat "+rest[0], rest[1:]
 	}
 	if h, ok := helpFor(verb); ok {
@@ -188,10 +193,12 @@ func (t tool) main(args []string) int {
 		err = t.seatAdd(rest)
 	case "seat list":
 		err = t.seatList(rest)
+	case "seat remove":
+		err = t.seatRemove(rest)
 	case "grant":
 		err = t.grant(rest)
 	case "seat":
-		verb, err = "seat add", bad("the seat verbs are: seat add <seat> <age-public-key> --store <dir>, and seat list --store <dir>")
+		verb, err = "seat add", bad("the seat verbs are: seat add <seat> <age-public-key> --store <dir>, seat list --store <dir>, and seat remove <seat> --store <dir>")
 	default:
 		return t.unknownVerb(verb)
 	}
@@ -215,7 +222,7 @@ func (t tool) main(args []string) int {
 }
 
 func (t tool) unknownVerb(verb string) int {
-	fmt.Fprintf(t.stderr, "nova-secrets: unknown verb %q (init, seat add, seat list, set, grant, names, exec); run: nova-secrets help\n", verb)
+	fmt.Fprintf(t.stderr, "nova-secrets: unknown verb %q (init, seat add, seat list, seat remove, set, grant, names, exec); run: nova-secrets help\n", verb)
 	return 2
 }
 
@@ -267,13 +274,13 @@ func (t tool) parse(verb string, args []string, npos int, needKey bool, also ...
 	if verb == "grant" && o.to == "" {
 		missing = append(missing, "--to <seat>")
 	}
-	if (verb == "grant" || verb == "set") && o.pins == "" {
+	if o.pins == "" && slices.Contains([]string{"grant", "set", "seat remove"}, verb) {
 		if o.pins = envValue(t.environ, "NOVA_SECRETS_PINS"); o.pins == "" {
 			missing = append(missing, "--pins <dir> (or NOVA_SECRETS_PINS)")
 		}
 	}
 	for flag, v := range map[string]string{"to": o.to, "pub": o.pub, "recovery": o.recovery, "pins": o.pins} {
-		if v != "" && verb != "grant" && !((verb == "init" || verb == "set") && (flag == "recovery" || flag == "pins")) {
+		if v != "" && verb != "grant" && !((verb == "init" || verb == "set") && (flag == "recovery" || flag == "pins")) && !(verb == "seat remove" && flag == "pins") {
 			return o, nil, bad("unknown flag --%s", flag)
 		}
 	}
@@ -482,6 +489,104 @@ func (t tool) seatAdd(args []string) error {
 
 var ruleSeat = regexp.MustCompile(`^\^([A-Za-z0-9_-]+)\\\.yaml\$$`)
 
+// seatRemove takes a seat's rule and files out of the store in one commit.
+func (t tool) seatRemove(args []string) error {
+	o, pos, err := t.parse("seat remove", args, 1, false)
+	if err != nil {
+		return err
+	}
+	seat := pos[0]
+	if !seatName.MatchString(seat) {
+		return bad("usage: seat remove <seat>; the seat is letters, digits, - and _")
+	}
+	if _, err := t.toplevel(o.store); err != nil {
+		return refuse("%s is not a git repository; run: git -C %s status", o.store, o.store)
+	}
+	if _, err := os.Lstat(filepath.Join(o.pins, seat+".ledger")); err == nil {
+		return refuse("this node granted %s values (%s/%s.ledger); delete that ledger and the pin %s/%s.pub first, then run again", seat, o.pins, seat, o.pins, seat)
+	}
+	own := envValue(t.environ, "NOVA_SECRETS_SEAT")
+	if own == "" {
+		h, _ := os.Hostname()
+		own, _, _ = strings.Cut(h, ".")
+	}
+	if ledgers, _ := filepath.Glob(filepath.Join(o.pins, "*.ledger")); strings.EqualFold(seat, own) && len(ledgers) > 0 {
+		return refuse("%s is this node's own seat, the one that granted %d seat(s) their values (%s/*.ledger); remove those seats first, then run again", seat, len(ledgers), o.pins)
+	}
+	cfgPath := filepath.Join(o.store, ".sops.yaml")
+	cfg, err := os.ReadFile(cfgPath)
+	if err != nil {
+		return refuse("%s is missing; create it with the line: creation_rules: []", cfgPath)
+	}
+	out, hadRule, err := removeRule(cfg, seat)
+	if err != nil {
+		return err
+	}
+	var files []string
+	for _, f := range []string{seat + ".yaml", seat + ".grants.yaml"} {
+		if _, ok, err := seatFile(o, f); err != nil {
+			return err
+		} else if ok {
+			files = append(files, f)
+		}
+	}
+	if !hadRule && len(files) == 0 {
+		return deny("no-seat", "no rule and no file for %s in %s; run: nova-secrets seat list --store %s", seat, o.store, o.store)
+	}
+	if hadRule {
+		if err := writeFile(cfgPath, out, 0o644); err != nil {
+			return err
+		}
+		files = append(files, ".sops.yaml")
+	}
+	for _, f := range files {
+		if f != ".sops.yaml" {
+			if err := os.Remove(filepath.Join(o.store, f)); err != nil {
+				return refuse("removing %s: %v", f, err)
+			}
+		}
+	}
+	for _, g := range [][]string{append([]string{"add", "-A", "--"}, files...), append([]string{"commit", "-q", "-m", "seat remove " + seat, "--"}, files...)} {
+		if err := t.git(o.store, g...); err != nil {
+			return fmt.Errorf("%w; the files are removed: run: git -C %s status", err, o.store)
+		}
+	}
+	fmt.Fprintf(t.stdout, "SECRETS SEAT REMOVE OK seat=%s rule=%s files=%d committed; run: git -C %s push\n", seat, map[bool]string{true: "removed", false: "none"}[hadRule], len(files)-map[bool]int{true: 1, false: 0}[hadRule], o.store)
+	return nil
+}
+
+// removeRule is .sops.yaml without the seat's rule, and whether there was one.
+func removeRule(cfg []byte, seat string) ([]byte, bool, error) {
+	doc, top, err := parseTop(cfg)
+	if err != nil {
+		return nil, false, refuse(".sops.yaml does not parse as a YAML map; it is left as it was")
+	}
+	rules := field(top, "creation_rules")
+	if rules == nil || rules.Kind != yaml.SequenceNode {
+		return nil, false, refuse(".sops.yaml has no creation_rules list; it is left as it was")
+	}
+	pathRegex := `^` + regexp.QuoteMeta(seat) + `\.yaml$`
+	kept := rules.Content[:0:0]
+	for _, r := range rules.Content {
+		if pr := field(r, "path_regex"); r.Kind == yaml.MappingNode && pr != nil && pr.Value == pathRegex {
+			continue
+		}
+		kept = append(kept, r)
+	}
+	had := len(kept) != len(rules.Content)
+	rules.Content = kept
+	if len(kept) == 0 {
+		rules.Style = yaml.FlowStyle // back to creation_rules: []
+	}
+	var buf bytes.Buffer
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2)
+	if err := enc.Encode(doc); err != nil || enc.Close() != nil {
+		return nil, false, refuse("writing .sops.yaml: %v", err)
+	}
+	return buf.Bytes(), had, nil
+}
+
 // seatList prints every seat a rule names or a file exists for, and whether its file exists.
 func (t tool) seatList(args []string) error {
 	o, _, err := t.parse("seat list", args, 0, false)
@@ -640,7 +745,7 @@ func (t tool) decrypt(o opts, seat string) (map[string]string, error) {
 		}
 		for k, v := range vs {
 			if _, dup := values[k]; dup {
-				return nil, deny("duplicate-name", "%s is in both %s.yaml and %s.grants.yaml; a name lives in one file: remove it from %s.yaml with sops, or stop granting it", k, seat, seat, seat)
+				return nil, deny("duplicate-name", "%s is in both %s.yaml and %s.grants.yaml; a name lives in one file: remove it with: sops unset %s '[\"%s\"]', or stop granting it", k, seat, seat, filepath.Join(o.store, seat+".yaml"), k)
 			}
 			values[k] = v
 		}
@@ -1073,7 +1178,7 @@ func (t tool) names(args []string) error {
 			case k.Kind != yaml.ScalarNode || k.Tag != "!!str" || !envName.MatchString(k.Value) || v.Kind != yaml.ScalarNode:
 				refused++
 			case slices.Contains(seen, k.Value):
-				return deny("duplicate-name", "%s is in both %s.yaml and %s.grants.yaml; a name lives in one file", k.Value, o.as, o.as)
+				return deny("duplicate-name", "%s is in both %s.yaml and %s.grants.yaml; a name lives in one file: remove it with: sops unset %s '[\"%s\"]', or stop granting it", k.Value, o.as, o.as, filepath.Join(o.store, o.as+".yaml"), k.Value)
 			default:
 				seen = append(seen, k.Value)
 				out.WriteString(k.Value + "\n")
@@ -1217,6 +1322,17 @@ func (t tool) grant(args []string) error {
 	if o.pub == self || rec == self { // before the pin is written, so a refused one is never on disk
 		return deny("no-pin", "the pin for %s is this node's own key %s; a grant never reaches the granting key: pin the machine's key", map[bool]string{true: o.to, false: "recovery"}[o.pub == self], self)
 	}
+	cfg, err := plainConfig(o)
+	if err != nil {
+		return err
+	}
+	ruleKey := ""
+	if r := ruleFor(cfg, o.to+".yaml"); r != nil && len(ageOf(r)) > 0 {
+		ruleKey = ageOf(r)[0]
+	}
+	if o.pub != "" && ruleKey != o.pub { // before the pin is written, so a refused --pub is never on disk
+		return deny("key-changed", "the rule for %s.yaml in .sops.yaml does not name --pub's key %s first (it names %q): the wrong seat, the store was edited, or the machine has a new key (a person settles it)", o.to, o.pub, ruleKey)
+	}
 	pub, err := pinned(o.pins, o.to, o.pub)
 	if err != nil {
 		return err
@@ -1224,11 +1340,7 @@ func (t tool) grant(args []string) error {
 	if pub == self {
 		return deny("no-pin", "the pin for %s is this node's own key %s; a grant never reaches the granting key: remove the pin, then grant with --pub <the machine's key>", o.to, self)
 	}
-	cfg, err := plainConfig(o)
-	if err != nil {
-		return err
-	}
-	if r := ruleFor(cfg, o.to+".yaml"); r == nil || len(ageOf(r)) == 0 || ageOf(r)[0] != pub {
+	if ruleKey != pub {
 		return deny("key-changed", "the rule for %s.yaml in .sops.yaml does not name the pinned key %s first: the store was edited, or the machine has a new key (a person re-pins it)", o.to, pub)
 	}
 	from, err := t.decrypt(o, o.as)
@@ -1240,7 +1352,11 @@ func (t tool) grant(args []string) error {
 	if err != nil {
 		return err
 	}
-	prior, _ := os.ReadFile(filepath.Join(o.pins, o.to+".ledger"))
+	ledgerPath := filepath.Join(o.pins, o.to+".ledger")
+	if fi, err := os.Lstat(ledgerPath); err == nil && (!fi.Mode().IsRegular() || checkPrivate(ledgerPath, fi) != nil) {
+		return deny("not-regular", "%s is not a regular file of yours (a symlink?); the ledger is read only as itself: remove it, then run again", ledgerPath)
+	}
+	prior, _ := os.ReadFile(ledgerPath)
 	held := ledgerNames(prior) // what this node granted, never what the store's file says it holds
 	_, present, _ := seatFile(o, file)
 	if present && !slices.Equal(slices.Sorted(slices.Values(inFile)), held) { // an absent file is written again from the ledger

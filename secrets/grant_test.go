@@ -135,11 +135,17 @@ func TestGrantRefusals(t *testing.T) {
 		"no recovery pin": {nil, func(f fleet) []string { return f.grant("NOVA_BUS_PASSWORD", "--pub", pubB) },
 			2, "SECRETS GRANT REFUSED reason=no-pin: no pin for recovery in @pins; pin it once with --recovery"},
 		"a --pub that is not the pin": {func(f fleet) { f.pin("bo.pub", pubB) }, func(f fleet) []string { return f.grant("NOVA_BUS_PASSWORD", "--pub", pubC, "--recovery", pubRec) },
-			2, "SECRETS GRANT REFUSED reason=key-changed: bo is pinned to " + pubB + ", not " + pubC},
+			2, "SECRETS GRANT REFUSED reason=key-changed: the rule for bo.yaml in .sops.yaml does not name --pub's key " + pubC + " first (it names \"" + pubB + "\")"},
 		"the rule's key replaced": {func(f fleet) {
 			cfg, _ := os.ReadFile(filepath.Join(f.store, ".sops.yaml"))
 			f.sopsYAML(strings.Replace(string(cfg), "age: "+pubB, "age: "+pubC, 1))
 		}, func(f fleet) []string { return f.first() },
+			2, "SECRETS GRANT REFUSED reason=key-changed: the rule for bo.yaml in .sops.yaml does not name --pub's key " + pubB + " first (it names \"" + pubC + "\")"},
+		"the rule's key replaced after the pin": {func(f fleet) {
+			f.pin("bo.pub", pubB)
+			cfg, _ := os.ReadFile(filepath.Join(f.store, ".sops.yaml"))
+			f.sopsYAML(strings.Replace(string(cfg), "age: "+pubB, "age: "+pubC, 1))
+		}, func(f fleet) []string { return f.grant("NOVA_BUS_PASSWORD", "--recovery", pubRec) },
 			2, "SECRETS GRANT REFUSED reason=key-changed: the rule for bo.yaml in .sops.yaml does not name the pinned key " + pubB + " first"},
 		"the store's recovery.pub replaced": {func(f fleet) {
 			require.NoError(f.t, os.WriteFile(filepath.Join(f.store, "recovery.pub"), []byte(pubC+"\n"), 0o644))
@@ -189,6 +195,14 @@ func TestGrantRefusals(t *testing.T) {
 			2, "SECRETS GRANT REFUSED reason=key-changed: @store/recovery.pub is not the recovery key given, " + pubC},
 		"the granting key is the recovery key": {func(f fleet) { f.keyPub = pubRec }, func(f fleet) []string { return f.first() },
 			2, "SECRETS GRANT REFUSED reason=recovery-key: the recovery key is for recovery only; use the seat's own key"},
+		"--pub for a seat with no rule writes no pin": {nil, func(f fleet) []string {
+			return []string{"grant", "NOVA_BUS_PASSWORD", "--to", "dd", "--pins", f.pins, "--store", f.store, "--as", "ada", "--key", f.key, "--pub", pubC, "--recovery", pubRec}
+		}, 2, "SECRETS GRANT REFUSED reason=key-changed: the rule for dd.yaml in .sops.yaml does not name --pub's key " + pubC + " first (it names \"\")"},
+		"a symlinked ledger": {func(f fleet) {
+			f.pin("bo.pub", pubB)
+			require.NoError(f.t, os.Symlink(filepath.Join(f.store, ".sops.yaml"), filepath.Join(f.pins, "bo.ledger")))
+		}, func(f fleet) []string { return f.grant("NOVA_BUS_PASSWORD", "--recovery", pubRec) },
+			2, "SECRETS GRANT REFUSED reason=not-regular: @pins/bo.ledger is not a regular file of yours (a symlink?)"},
 		"a name added to the grants file in the store": {func(f fleet) {
 			require.Equal(f.t, 0, f.main(f.first()...), f.stderr.String())
 			f.seed("bo.grants", map[string]string{"NOVA_BUS_PASSWORD": "bus-sealed-one", "ADA_ONLY": "x"})
@@ -209,6 +223,7 @@ func TestGrantRefusals(t *testing.T) {
 			if strings.Contains(name, "recovery key") || strings.Contains(name, "recovery pin given") {
 				assert.NoFileExists(t, filepath.Join(f.pins, "recovery.pub"), "a refused recovery pin is never written")
 			}
+			assert.NoFileExists(t, filepath.Join(f.pins, "dd.pub"), "a refused --pub is never written")
 			want := strings.NewReplacer("@store", f.store, "@pins", f.pins).Replace(c.want)
 			if name == "no --pins" {
 				want = "missing --pins <dir> (or NOVA_SECRETS_PINS)"
