@@ -50,8 +50,8 @@ Wait for a slot, run the command, free the slot; exit with the command's status.
   --exclusive  take every slot: wait for every holder and keep new ones out
   --wait D     give up after D (above 0: 90s, 15m), exit 1; default no bound
   --why TEXT   a label for status and refusals
-The command is found before a slot is taken (127, 126). It dies with nova-reserve on
-Linux and Windows; on macOS and the BSDs a SIGKILL of nova-reserve leaves it running.
+The command is found before a slot is taken (127, 126). It dies with nova-reserve, even on SIGKILL (on macOS and the BSDs a
+watchdog process kills its group within about a second).
 `,
 	"hold": `nova-reserve hold [--for D] [--slots N | --exclusive] [--wait D] [--why TEXT] [--dir DIR]
 

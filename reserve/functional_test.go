@@ -255,9 +255,8 @@ func TestSetRefusedWhileHeldOnRealLocks(t *testing.T) {
 }
 
 // TestKilledHolderTakesItsCommandWith SIGKILLs nova-reserve itself: its command
-// must not run on without the slot (Linux: Pdeathsig; Windows: the job), and
-// the slot frees. On macOS and the BSDs the command outlives a SIGKILL, so
-// only the slot is checked there.
+// must not run on without the slot (Linux: Pdeathsig; macOS and the BSDs: the
+// watchdog, which polls each second; Windows: the job), and the slot frees.
 func TestKilledHolderTakesItsCommandWith(t *testing.T) {
 	t.Parallel()
 	bin, dir := build(t), t.TempDir()
@@ -275,10 +274,8 @@ func TestKilledHolderTakesItsCommandWith(t *testing.T) {
 	require.True(t, alive(child), "the command runs while nova-reserve holds its slot")
 	require.NoError(t, holder.Process.Kill())
 	_ = holder.Wait()
-	if runtime.GOOS == "linux" || runtime.GOOS == "windows" {
-		assert.Eventually(t, func() bool { return !alive(child) }, patience, 50*time.Millisecond,
-			"the command outlived nova-reserve")
-	}
+	assert.Eventually(t, func() bool { return !alive(child) }, 3*time.Second, 50*time.Millisecond,
+		"the command outlived nova-reserve")
 	assert.Eventually(t, func() bool {
 		out, _ := exec.Command(bin, "status", "--dir", dir).Output()
 		return strings.Contains(string(out), "slot1 free")
