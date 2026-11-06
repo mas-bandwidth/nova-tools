@@ -39,17 +39,13 @@ github_runner_env: {}
 # release on the host.
 github_runner_install_dependencies: true
 
-# Retiring a runner also removes it from GitHub, which needs a removal token in
-# GITHUB_RUNNER_TOKEN; false skips that and leaves the entry for you to delete.
+# Retiring a runner also removes it from GitHub, with a removal token asked of GitHub by gh on the
+# control node; false skips that and leaves the entry for you to delete.
 github_runner_deregister: true
 
-# The control node's way to the token: nova-secrets reads NOVA_SECRETS_STORE,
-# NOVA_SECRETS_KEY and NOVA_SECRETS_SEAT from the environment, or set them here.
-github_runner_secrets_bin: nova-secrets
-github_runner_secrets_args: []
-
-# After a run, GitHub's list of runners is read with gh on the control node and every wanted
-# runner must be online (the RUNNERS receipt). gh needs a login with admin on the repository or
-# organization; false skips the check (the receipt is then not printed).
+# gh on the control node, logged in (gh auth login) with admin on the repository or organization:
+# it asks GitHub for the registration and removal tokens (tasks/token.yml), and after a run reads
+# GitHub's list of runners, every wanted runner online (the RUNNERS receipt); false skips that
+# check (the receipt is then not printed).
 github_runner_verify: true
 github_runner_gh: gh

@@ -145,27 +145,24 @@ func TestInstallFromALocalBuild(t *testing.T) {
 	}
 }
 
-// github-runners reads its token under --check too, and a read that fails says why.
-func TestRunnerTokenReadFailsWithItsReason(t *testing.T) {
+// github-runners asks GitHub for its token with the control node's gh under --check too, and a refusal says why.
+func TestRunnerTokenRequestFailsWithItsReason(t *testing.T) {
 	if _, err := exec.LookPath("ansible-playbook"); err != nil {
 		t.Skip("ansible-core is not installed on this machine")
 	}
 	bin := buildFleet(t)
-	secrets := filepath.Join(t.TempDir(), "nova-secrets")
-	if out, err := exec.Command("go", "build", "-o", secrets, "../secrets").CombinedOutput(); err != nil {
-		t.Fatalf("go build ../secrets: %v: %s", err, out)
+	gh := filepath.Join(t.TempDir(), "gh")
+	if err := os.WriteFile(gh, []byte("#!/bin/sh\necho 'To get started with GitHub CLI, please run:  gh auth login' >&2\nexit 4\n"), 0o755); err != nil {
+		t.Fatal(err)
 	}
 	inv := filepath.Join(t.TempDir(), "hosts.ini")
 	if err := os.WriteFile(inv, []byte("[runner]\nlocalhost ansible_connection=local ansible_python_interpreter=auto_silent runners=1\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	code, out, errs := runFleet(t, bin, "github-runners", "--check", "--inventory", inv, "--", "-e", "github_runner_url=https://github.com/o/r",
-		"-e", "github_runner_scope=repo", "-e", "github_runner_secrets_bin="+secrets, "-e", "github_runner_base_dir="+t.TempDir())
-	if code == 0 || !strings.Contains(out, "GITHUB_RUNNER_TOKEN cannot be read on the control node") || strings.Contains(out, "censored") {
-		t.Fatalf("--check with no store: exit %d, want the token refusal with its reason:\n%s\n%s", code, out, errs)
-	}
-	if !strings.Contains(out, "store") {
-		t.Errorf("the refusal does not carry nova-secrets' reason:\n%s", out)
+		"-e", "github_runner_scope=repo", "-e", "github_runner_gh="+gh, "-e", "github_runner_base_dir="+t.TempDir())
+	if code == 0 || !strings.Contains(out, "GITHUB RUNNER TOKEN localhost: gh api on the control node failed, rc=4") || !strings.Contains(out, "please run:  gh auth login") || strings.Contains(out, "censored") {
+		t.Fatalf("--check with no gh login: exit %d, want the token refusal with its reason:\n%s\n%s", code, out, errs)
 	}
 }
 
@@ -191,7 +188,7 @@ func TestCheckOnThisMachine(t *testing.T) {
 		t.Fatalf("check with no store: %v, stderr %q", err, e.String())
 	}
 	for _, line := range strings.Split(strings.TrimSpace(o.String()), "\n") {
-		if !strings.HasPrefix(line, "CHECK OK ") && !(strings.HasPrefix(line, "CHECK MISSING ") && strings.Contains(line, ": ")) {
+		if !strings.HasPrefix(line, "CHECK OK ") && !strings.HasPrefix(line, "CHECK NOTE ") && !(strings.HasPrefix(line, "CHECK MISSING ") && strings.Contains(line, ": ")) {
 			t.Errorf("not a CHECK line: %q", line)
 		}
 	}

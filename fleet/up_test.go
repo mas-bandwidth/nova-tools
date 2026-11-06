@@ -28,6 +28,43 @@ type upFake struct {
 	noVenv      bool // python3 -c 'import ensurepip, venv' fails
 	untagged    bool // the control node lacks tag:control
 	noPosix     bool // ansible.posix is not installed
+	api         *fakeAPI
+}
+
+// fakeAPI is the Tailscale API: the policy and its ETag, the calls made, the keys minted.
+type fakeAPI struct {
+	policy   string
+	etag     int
+	conflict int // POSTs to the policy answered 412 before one lands
+	calls    []string
+	keys     int
+	expired  bool // every call answers 401
+}
+
+func (a *fakeAPI) call(method, path, ifMatch string, body []byte) (int, string, []byte, error) {
+	a.calls = append(a.calls, strings.TrimSpace(method+" "+path+" "+ifMatch+" "+string(body)))
+	switch {
+	case a.expired:
+		return 401, "", []byte(`{"message":"API token invalid"}`), nil
+	case method == "GET" && path == "/tailnet/-/acl":
+		return 200, `"e` + strconv.Itoa(a.etag) + `"`, []byte(a.policy), nil
+	case method == "POST" && path == "/tailnet/-/acl" && a.conflict > 0:
+		a.conflict--
+		a.etag++
+		return 412, "", []byte(`{"message":"precondition failed"}`), nil
+	case method == "POST" && path == "/tailnet/-/acl":
+		if ifMatch != `"e`+strconv.Itoa(a.etag)+`"` {
+			return 412, "", nil, nil
+		}
+		a.policy, a.etag = string(body), a.etag+1
+		return 200, "", nil, nil
+	case method == "POST" && path == "/tailnet/-/keys":
+		a.keys++
+		return 200, "", []byte(`{"key":"tskey-auth-SECRET` + strconv.Itoa(a.keys) + `"}`), nil
+	case method == "POST" && strings.HasPrefix(path, "/device/"):
+		return 200, "", nil, nil
+	}
+	return 404, "", []byte(`{"message":"not found"}`), nil
 }
 
 func (f *upFake) install(t *testing.T) {
@@ -52,8 +89,17 @@ func (f *upFake) install(t *testing.T) {
 	t.Setenv("NOVA_SECRETS_KEY", f.key)
 	t.Setenv("NOVA_SECRETS_SEAT", "control")
 	t.Setenv("NOVA_SECRETS_PINS", pins)
-	oldLook, oldRun, oldOut := lookPath, runCmd, outCmd
-	t.Cleanup(func() { lookPath, runCmd, outCmd = oldLook, oldRun, oldOut })
+	oldLook, oldRun, oldOut, oldAPI := lookPath, runCmd, outCmd, newTailnet
+	t.Cleanup(func() { lookPath, runCmd, outCmd, newTailnet = oldLook, oldRun, oldOut, oldAPI })
+	if f.api == nil {
+		f.api = &fakeAPI{policy: "{}"}
+	}
+	newTailnet = func(key string) tsAPI {
+		if key != "tskey-api-kSECRET" {
+			t.Errorf("the API client got %q", key)
+		}
+		return f.api
+	}
 	lookPath = func(name string) (string, error) { return "/bin/" + name, nil }
 	record := func(bin string, args []string) string {
 		for i, a := range args {
@@ -67,8 +113,14 @@ func (f *upFake) install(t *testing.T) {
 	}
 	runCmd = func(bin string, args, env []string) (int, error) {
 		line := record(bin, slices.Clone(args))
+		if k := slices.IndexFunc(env, func(e string) bool { return strings.HasPrefix(e, "TAILSCALE_AUTHKEY=") }); k >= 0 {
+			f.calls[len(f.calls)-1] += " [env " + env[k] + "]"
+		}
 		if f.fail != "" && strings.Contains(line, f.fail) {
 			return 4, nil
+		}
+		if strings.Contains(line, "up --reset --auth-key=file:/dev/stdin --advertise-tags=tag:control") {
+			f.offnet = false // this node joined the tailnet
 		}
 		if !strings.Contains(line, "--check") {
 			if _, after, ok := strings.Cut(line, "nova_join_host="); ok {
@@ -92,6 +144,8 @@ func (f *upFake) install(t *testing.T) {
 			return "", "ModuleNotFoundError: No module named 'ensurepip'", 1
 		case strings.Contains(line, "-- true") && f.readErr != "":
 			return "", f.readErr, 125
+		case strings.HasSuffix(line, `printf %s "$TAILSCALE_API_KEY"`):
+			return "tskey-api-kSECRET\n", "", 0
 		case strings.Contains(line, "nova-secrets names"):
 			return f.names, "", 0
 		case strings.Contains(line, "machine list --json"):
@@ -107,13 +161,13 @@ func (f *upFake) install(t *testing.T) {
 		case strings.HasPrefix(line, "tailscale status --json"):
 			var peers []string
 			for name, ip := range f.peers {
-				peers = append(peers, `"k-`+name+`":{"HostName":"`+name+`","DNSName":"`+name+`.ts.example.","TailscaleIPs":["`+ip+`"],"SSH_HostKeys":["ssh-ed25519 KEY-`+name+`"]}`)
+				peers = append(peers, `"k-`+name+`":{"ID":"n-`+name+`","HostName":"`+name+`","Tags":["tag:nova"],"DNSName":"`+name+`.ts.example.","TailscaleIPs":["`+ip+`"],"SSH_HostKeys":["ssh-ed25519 KEY-`+name+`"]}`)
 			}
 			tags := `["tag:control"]`
 			if f.untagged {
 				tags = `[]`
 			}
-			return `{"BackendState":"Running","Self":{"HostName":"control","Tags":` + tags + `},"Peer":{` + strings.Join(peers, ",") + `}}`, "", 0
+			return `{"BackendState":"Running","Self":{"ID":"n-control","HostName":"control","Tags":` + tags + `},"Peer":{` + strings.Join(peers, ",") + `}}`, "", 0
 		case strings.HasPrefix(line, "ssh -o BatchMode=yes -o ConnectTimeout=10 "):
 			target := strings.Fields(line)[5]
 			user, host, _ := strings.Cut(target, "@")
@@ -194,18 +248,18 @@ func TestUpControlRefusals(t *testing.T) {
 	}
 	code, out, errs := runArgs("up", "--tools", "v1.0.0", "--runners", "https://github.com/o/r", "a=1.2.3.4")
 	for _, w := range []string{"CHECK MISSING psql: ", "CHECK MISSING gh: ", "CHECK MISSING key: export NOVA_SECRETS_KEY=",
-		"CHECK MISSING TAILSCALE_AUTHKEY: nova-secrets set TAILSCALE_AUTHKEY --as <seat>  # the value on stdin, once the store, key and seat above are set", "CHECK OK sops 1.2.3"} {
+		"CHECK MISSING TAILSCALE_API_KEY: nova-secrets set TAILSCALE_API_KEY --as <seat>  # the value on stdin, one line tskey-api-..., from the Tailscale admin console > Settings > Keys > Generate API access token, once the store, key and seat above are set\n", "CHECK OK sops 1.2.3"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout lacks %q:\n%s", w, out)
 		}
 	}
-	if code != 2 || !strings.HasPrefix(errs, "UP CONTROL FAILED missing=5;") || len(f.plays()) != 0 {
+	if code != 2 || !strings.HasPrefix(errs, "UP CONTROL FAILED missing=4;") || len(f.plays()) != 0 {
 		t.Errorf("code %d stderr %q plays %v", code, errs, f.plays())
 	}
-	f = &upFake{readErr: "SECRETS EXEC REFUSED name=TAILSCALE_AUTHKEY reason=not-in-seat\n"}
+	f = &upFake{readErr: "SECRETS EXEC REFUSED name=TAILSCALE_API_KEY reason=not-in-seat\n"}
 	f.install(t)
 	code, out, errs = runArgs("up", "--check", "--tools", "v1.0.0", "a=1.2.3.4")
-	if code != 2 || !strings.Contains(out, "CHECK MISSING TAILSCALE_AUTHKEY: nova-secrets set TAILSCALE_AUTHKEY --as control  # the value on stdin; the read said: SECRETS EXEC REFUSED name=TAILSCALE_AUTHKEY reason=not-in-seat") {
+	if code != 2 || !strings.Contains(out, "CHECK MISSING TAILSCALE_API_KEY: nova-secrets set TAILSCALE_API_KEY --as control  # the value on stdin, one line tskey-api-..., from the Tailscale admin console > Settings > Keys > Generate API access token; the read said: SECRETS EXEC REFUSED name=TAILSCALE_API_KEY reason=not-in-seat\n") {
 		t.Errorf("a refused secret read under --check: code %d stdout %q stderr %q", code, out, errs)
 	}
 	if len(f.plays()) != 0 {
@@ -249,15 +303,16 @@ func TestUpOrder(t *testing.T) {
 	}
 	all := strings.Join(f.calls, "\n")
 	for _, w := range []string{
-		"nova-secrets exec --only TAILSCALE_AUTHKEY -- true",
-		"nova-secrets exec --only GITHUB_RUNNER_TOKEN -- true",
+		"nova-secrets exec --only TAILSCALE_API_KEY -- true",
+		"nova-secrets exec --only TAILSCALE_API_KEY -- sh -c printf %s \"$TAILSCALE_API_KEY\"",
+		"gh auth status",
 		"ssh -o BatchMode=yes -o ConnectTimeout=10 root@203.0.113.7 true",
 		"ssh -o BatchMode=yes -o ConnectTimeout=10 root@203.0.113.8 true",
-		"nova-secrets exec --only TAILSCALE_AUTHKEY -- /bin/ansible-playbook -i first.ini tailscale.yml -e nova_tailscale_record_address=false -e nova_firewall=false",
+		"ansible-playbook -i first.ini tailscale.yml -e nova_tailscale_record_address=false -e nova_firewall=false [env TAILSCALE_AUTHKEY=tskey-auth-SECRET1]",
 		"ansible-playbook -i first.ini postgres.yml -e nova_seal_store=" + f.store + " -e nova_seal_seat=control -e nova_seal_key=" + f.key + " -e nova_store_hosts=first\n",
 		"ansible-playbook -i first.ini redis.yml -e nova_seal_store=",
-		"nova-secrets exec --only TAILSCALE_AUTHKEY,NOVA_PG_PASSWORD -- /bin/ansible-playbook -i inventory join.yml -e nova_join_host=first -e nova_join_user=nova -e nova_join_address=203.0.113.7 -e nova_join_root_user=root -e nova_join_os=linux -e nova_join_arch=amd64 -e nova_join_roles=services,bench,runner -e nova_seal_store=" + f.store + " -e nova_bus_redis=first.ts.example:6379",
-		"-e nova_join_host=second -e nova_join_user=nova -e nova_join_address=203.0.113.8 -e nova_join_root_user=root -e nova_join_os=linux -e nova_join_arch=amd64 -e nova_join_roles=bench,runner",
+		"nova-secrets exec --only NOVA_PG_PASSWORD -- /bin/ansible-playbook -i inventory join.yml -e nova_join_host=first -e nova_join_user=nova -e nova_join_address=203.0.113.7 -e nova_join_root_user=root -e nova_join_os=linux -e nova_join_arch=amd64 -e nova_join_roles=services,bench,runner -e nova_seal_store=" + f.store + " -e nova_bus_redis=first.ts.example:6379",
+		"-e nova_join_host=second -e nova_join_user=nova -e nova_join_address=203.0.113.8 -e nova_join_root_user=root -e nova_join_os=linux -e nova_join_arch=amd64 -e nova_join_roles=bench,runner -e nova_seal_store=" + f.store + " -e nova_bus_redis=first.ts.example:6379 [env TAILSCALE_AUTHKEY=tskey-auth-SECRET2]",
 		"nova-secrets exec --only NOVA_BUS_PASSWORD -- true",
 		"ssh -o BatchMode=yes nova@first.ts.example sh -c 'PATH=$HOME/.local/bin:/opt/homebrew/bin:$PATH age-keygen -y $HOME/.config/nova-secrets/first.key'",
 		"nova-secrets grant NOVA_BUS_PASSWORD --to first --pub age1fakenova@first.ts.example\n",
@@ -266,7 +321,7 @@ func TestUpOrder(t *testing.T) {
 		"secrets-refresh.yml -e nova_seal_store=" + f.store + " -l first,second\n",
 		"health.yml -l first,second\n",
 		"install.yml -e nova_tools_version=v2.0.0 -l first,second\n",
-		"github-runners.yml -e github_runner_url=https://github.com/o/r -e github_runner_scope=repo -e runner_count=2 -e {\"github_runner_secrets_args\":[\"--store\",\"" + f.store + "\",\"--key\",\"" + f.key + "\",\"--as\",\"control\"]} -l first,second\n",
+		"github-runners.yml -e github_runner_url=https://github.com/o/r -e github_runner_scope=repo -e runner_count=2 -l first,second\n",
 		"nova-secrets exec --only NOVA_BUS_PASSWORD -- /bin/nova-bus who",
 	} {
 		if !strings.Contains(all, w) {
@@ -318,7 +373,7 @@ func TestUpAddsAMachine(t *testing.T) {
 		"join.yml -e nova_join_host=third -e nova_join_user=nova -e nova_join_address=203.0.113.9 -e nova_join_root_user=root -e nova_join_os=linux -e nova_join_arch=amd64 -e nova_join_roles=bench,runner",
 		"nova-config machine set second --roles bench,runner --actor control --reason nova-fleet up --runners\n",
 		"health.yml -l second,third\n",
-		"github-runners.yml -e github_runner_url=https://github.com/o/r -e github_runner_scope=repo -e runner_count=1 -e {\"github_runner_secrets_args\":[\"--store\",\"" + f.store + "\",\"--key\",\"" + f.key + "\",\"--as\",\"control\"]} -l second,third\n",
+		"github-runners.yml -e github_runner_url=https://github.com/o/r -e github_runner_scope=repo -e runner_count=1 -l second,third\n",
 	} {
 		if !strings.Contains(all, w) {
 			t.Errorf("no call contains %q; calls:\n%s", w, all)
@@ -499,13 +554,13 @@ func TestCheck(t *testing.T) {
 		t.Fatalf("all present: code %d stdout %q stderr %q", code, out, errs)
 	}
 	for _, w := range []string{"CHECK OK ansible-playbook 1.2.3\n", "CHECK OK ansible.posix\n", "CHECK OK tailscale 1.2.3\n", "CHECK OK nova-config /bin/nova-config\n", "CHECK OK ssh /bin/ssh\n",
-		"CHECK OK tailnet\n", "CHECK OK tag:control\n", "CHECK OK store " + f.store + "\n", "CHECK OK seat control\n", "CHECK OK pins " + os.Getenv("NOVA_SECRETS_PINS") + "\n",
-		"CHECK OK TAILSCALE_AUTHKEY readable in seat control\n", "CHECK OK NOVA_PG_DSN none yet (a new fleet: up prints it)\n"} {
+		"CHECK OK tailnet\n", "CHECK OK store " + f.store + "\n", "CHECK OK seat control\n", "CHECK OK pins " + os.Getenv("NOVA_SECRETS_PINS") + "\n",
+		"CHECK OK TAILSCALE_API_KEY readable in seat control\n", "CHECK OK NOVA_PG_DSN none yet (a new fleet: up prints it)\n"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout lacks %q:\n%s", w, out)
 		}
 	}
-	if strings.Contains(out, "GITHUB_RUNNER_TOKEN") || strings.Contains(out, " gh ") {
+	if strings.Contains(out, "gh-login") || strings.Contains(out, " gh ") || strings.Count(out, "CHECK MISSING") != 0 {
 		t.Errorf("runner prerequisites checked without --runners:\n%s", out)
 	}
 	f.offnet = true
@@ -517,15 +572,15 @@ func TestCheck(t *testing.T) {
 	}
 	code, out, errs = runArgs("check", "--runners", "https://github.com/o/r")
 	for _, w := range []string{"CHECK MISSING age-keygen: ", "CHECK OK git 1.2.3\nCHECK OK go go1.99.0\n", "CHECK MISSING nova-bus: mkdir -p ~/.local/bin && ([ -d nova-tools ] || git clone --depth 1 https://github.com/mas-bandwidth/nova-tools) && go build -C nova-tools -o ~/.local/bin/nova-bus ./bus\n",
-		"CHECK MISSING gh: install gh with this system's package manager\n", "CHECK MISSING tailnet: sudo tailscale up --advertise-tags=tag:control  # this node is not on the tailnet, which it reaches the machines over: Logged out.\n", "CHECK OK GITHUB_RUNNER_TOKEN readable"} {
+		"CHECK MISSING gh: install gh with this system's package manager\n", "CHECK NOTE tailnet this node is not on it; up joins it, tagged tag:control, with a key minted by TAILSCALE_API_KEY: Logged out.\n", "CHECK OK TAILSCALE_API_KEY readable"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout lacks %q:\n%s", w, out)
 		}
 	}
-	if code != 1 || errs != "CHECK FAILED missing=4\n" {
+	if code != 1 || errs != "CHECK FAILED missing=3\n" {
 		t.Errorf("code %d stderr %q", code, errs)
 	}
-	// A go too old for the nova-* lines, and a control node that is on the tailnet but not tagged.
+	// A go too old for the nova-* lines; a control node on the tailnet but not tagged is no missing line (up tags it).
 	f.untagged, f.offnet, f.noPosix = true, false, true
 	outCmd2 := outCmd
 	outCmd = func(bin string, args, env []string) (string, string, int) {
@@ -535,7 +590,7 @@ func TestCheck(t *testing.T) {
 		return outCmd2(bin, args, env)
 	}
 	code, out, _ = runArgs("check")
-	if code != 1 || !strings.Contains(out, "CHECK MISSING go: curl -fsSL https://go.dev/dl/go") || !strings.Contains(out, ".linux-amd64.tar.gz | sudo tar -C /usr/local -xz && export PATH=/usr/local/go/bin:$PATH && echo 'export PATH=/usr/local/go/bin:$PATH' >> ~/.profile  # go version go1.19.8 linux/amd64 is older than go1.") || !strings.Contains(out, "CHECK MISSING tag:control: sudo tailscale up --advertise-tags=tag:control --auth-key=<a key allowed that tag>  # or tag this node in the admin console") ||
+	if code != 1 || !strings.Contains(out, "CHECK MISSING go: curl -fsSL https://go.dev/dl/go") || !strings.Contains(out, ".linux-amd64.tar.gz | sudo tar -C /usr/local -xz && export PATH=/usr/local/go/bin:$PATH && echo 'export PATH=/usr/local/go/bin:$PATH' >> ~/.profile  # go version go1.19.8 linux/amd64 is older than go1.") || strings.Contains(out, "tag:control:") ||
 		!strings.Contains(out, "CHECK MISSING ansible.posix: nova-fleet show requirements > requirements.yml && /bin/ansible-galaxy collection install -r requirements.yml") {
 		t.Errorf("old go, untagged: code %d\n%s", code, out)
 	}

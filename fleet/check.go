@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"io/fs"
@@ -18,10 +17,11 @@ const checkHelp = `nova-fleet check [--runners URL]
 
 The control node's preflight, the first step of nova-fleet up: one line per prerequisite,
 CHECK OK <name> <version|path> or CHECK MISSING <name>: <the command that fixes it, for this
-OS, pasteable as it stands, a reason after # when there is one, in paste order>; this node on the tailnet and tagged tag:control; the store, key, seat and
-pins of NOVA_SECRETS_STORE, NOVA_SECRETS_KEY, NOVA_SECRETS_SEAT and NOVA_SECRETS_PINS;
-TAILSCALE_AUTHKEY (and GITHUB_RUNNER_TOKEN with --runners) read from the seat, the reason
-printed when a read fails; and NOVA_PG_DSN once a fleet exists. Tailscale and Ansible are
+OS, pasteable as it stands, a reason after # when there is one, in paste order>; this node on
+the tailnet (a NOTE when not: up joins it); with --runners gh and its login; the store, key,
+seat and pins of NOVA_SECRETS_STORE, NOVA_SECRETS_KEY, NOVA_SECRETS_SEAT and NOVA_SECRETS_PINS;
+TAILSCALE_API_KEY, the one credential a human gives, read from the seat, the reason printed when
+the read fails; and NOVA_PG_DSN once a fleet exists. Tailscale and Ansible are
 required here, never optional. Nothing is changed. Exit: 0 all present; 1 something missing
 (CHECK FAILED missing=<n>); 2 could not run.
 `
@@ -206,15 +206,16 @@ func (u *upRun) control(out io.Writer) int {
 	}
 	if p := u.bin["tailscale"]; p != "" {
 		if o, why, c := outCmd(p, []string{"status", "--peers=false"}, os.Environ()); c != 0 {
-			miss("tailnet", "sudo tailscale up --advertise-tags=tag:control", "this node is not on the tailnet, which it reaches the machines over:", why, o)
+			fmt.Fprintf(out, "CHECK NOTE tailnet this node is not on it; up joins it, tagged tag:control, with a key minted by TAILSCALE_API_KEY: %s\n", oneLine(why+" "+o))
 		} else {
 			fmt.Fprintln(out, "CHECK OK tailnet")
-			var self struct{ Self struct{ Tags []string } }
-			if o, _, _ := outCmd(p, []string{"status", "--json"}, os.Environ()); json.Unmarshal([]byte(o), &self) != nil || !slices.Contains(self.Self.Tags, "tag:control") {
-				miss("tag:control", "sudo tailscale up --advertise-tags=tag:control --auth-key=<a key allowed that tag>", "or tag this node in the admin console: the policy (nova-fleet show tailscale-acl) lets tag:control reach the machines")
-			} else {
-				fmt.Fprintln(out, "CHECK OK tag:control")
-			}
+		}
+	}
+	if p := u.bin["gh"]; p != "" {
+		if _, why, c := outCmd(p, []string{"auth", "status"}, os.Environ()); c != 0 {
+			miss("gh-login", "gh auth login", "a browser login, not a paste: the runners register with a token gh asks GitHub for;", why)
+		} else {
+			fmt.Fprintln(out, "CHECK OK gh-login")
 		}
 	}
 	u.store, u.key, u.seat, u.pins = os.Getenv("NOVA_SECRETS_STORE"), os.Getenv("NOVA_SECRETS_KEY"), os.Getenv("NOVA_SECRETS_SEAT"), os.Getenv("NOVA_SECRETS_PINS")
@@ -238,20 +239,14 @@ func (u *upRun) control(out io.Writer) int {
 			fmt.Fprintf(out, "CHECK OK %s %s\n", in.name, in.val)
 		}
 	}
-	read := []string{"TAILSCALE_AUTHKEY"}
-	if u.runners != "" {
-		read = append(read, "GITHUB_RUNNER_TOKEN")
-	}
-	for _, name := range read {
-		if !ready || u.bin["nova-secrets"] == "" {
-			miss(name, "nova-secrets set "+name+" --as <seat>", "the value on stdin, once the store, key and seat above are set")
-			continue
-		}
-		if _, why, c := outCmd(u.bin["nova-secrets"], u.secrets([]string{name}, "true")[1:], os.Environ()); c != 0 {
-			miss(name, fmt.Sprintf("nova-secrets set %s --as %s", name, u.seat), "the value on stdin; the read said:", why)
-		} else {
-			fmt.Fprintf(out, "CHECK OK %s readable in seat %s\n", name, u.seat)
-		}
+	// The one credential a human gives: everything else up does with it through the Tailscale API.
+	how := "the value on stdin, one line tskey-api-..., from the Tailscale admin console > Settings > Keys > Generate API access token"
+	if !ready || u.bin["nova-secrets"] == "" {
+		miss("TAILSCALE_API_KEY", "nova-secrets set TAILSCALE_API_KEY --as <seat>", how+", once the store, key and seat above are set")
+	} else if _, why, c := outCmd(u.bin["nova-secrets"], u.secrets([]string{"TAILSCALE_API_KEY"}, "true")[1:], os.Environ()); c != 0 {
+		miss("TAILSCALE_API_KEY", "nova-secrets set TAILSCALE_API_KEY --as "+u.seat, how+"; the read said:", why)
+	} else {
+		fmt.Fprintf(out, "CHECK OK TAILSCALE_API_KEY readable in seat %s\n", u.seat)
 	}
 	// A fleet that exists (its store's password is in this seat) is read from NOVA_PG_DSN.
 	if ready && u.bin["nova-secrets"] != "" {
