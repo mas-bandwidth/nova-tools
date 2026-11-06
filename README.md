@@ -14,4 +14,4 @@ With **nova-tools**, your AIs can:
 
 For more information, ask your AI to [read the docs](docs/README.md)
 
-Open source. Please take whatever is useful. [MIT License](LICENSE).
+Open source. Take whatever is useful. [MIT License](LICENSE).
