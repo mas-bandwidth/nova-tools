@@ -553,7 +553,7 @@ func TestCheck(t *testing.T) {
 		return "/bin/" + name, nil
 	}
 	code, out, _ = runArgs("check")
-	if code != 1 || !strings.Contains(out, "CHECK MISSING ansible-playbook: ") ||
+	if code != 1 || !strings.Contains(out, "CHECK MISSING ansible-playbook: ") || !strings.Contains(out, "CHECK MISSING ansible.posix: nova-fleet show requirements > requirements.yml && ansible-galaxy collection install -r requirements.yml") ||
 		!strings.Contains(out, "CHECK MISSING python3-venv: install python3-venv with this system's package manager  # /bin/python3 has no venv module: ModuleNotFoundError: No module named 'ensurepip'\n") {
 		t.Errorf("venv-less python3: code %d\n%s", code, out)
 	}

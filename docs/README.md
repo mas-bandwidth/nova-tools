@@ -117,7 +117,7 @@ and then `pip --python "$work/venv/bin/python" install ansible-core` with any
 pip you already have.
 
 ```sh
-python3 -m venv "$work/venv" || { rm -rf "$work/venv"; sudo apt install -y python3-venv && python3 -m venv "$work/venv"; }
+python3 -m venv "$work/venv" || { rm -rf "$work/venv"; sudo apt-get update -qq && sudo apt-get install -y python3-venv && python3 -m venv "$work/venv"; }
 "$work/venv/bin/pip" install -q ansible-core
 export PATH="$work/venv/bin:$PATH"
 ```
@@ -148,8 +148,8 @@ the helpers and is on a tailnet, two lines are left, and the run ends
 `CHECK FAILED missing=2`, exit 1:
 
 ```text
-CHECK MISSING tag:control: this node is not tagged tag:control (the policy, nova-fleet show tailscale-acl, lets tag:control reach the machines): sudo tailscale up --advertise-tags=tag:control ...
-CHECK MISSING TAILSCALE_AUTHKEY: nova-secrets set TAILSCALE_AUTHKEY --as here (the value on stdin); the read said: SECRETS EXEC REFUSED reason=no-seat: ...
+CHECK MISSING tag:control: sudo tailscale up --advertise-tags=tag:control --auth-key=<a key allowed that tag>  # or tag this node in the admin console: ...
+CHECK MISSING TAILSCALE_AUTHKEY: nova-secrets set TAILSCALE_AUTHKEY --as here  # the value on stdin; the read said: SECRETS EXEC REFUSED reason=no-seat: ...
 ```
 
 Each `CHECK MISSING` line ends with the command that fixes it. These two are
@@ -237,6 +237,15 @@ The whole tool: [fleet/README.md](../fleet/README.md), with
 [config/README.md](../config/README.md) and [config/SPEC.md](../config/SPEC.md)
 for the rows.
 
+## No fleet yet? Mock one with VMs
+
+If you have no machines to point `nova-fleet` at, stand up fresh Linux VMs
+(for example Debian 12 guests) on a host you control, with root ssh from this
+machine's key and their host keys in `known_hosts`. Join them to a throwaway
+tailnet, run `nova-fleet check`, `up --check` and `up` against them exactly as
+for a real fleet, then destroy the VMs and remove the throwaway keys, store and
+tailnet auth key when you are done.
+
 ## Run GitHub continuous integration runners across your fleet
 
 The `github-runners` play installs GitHub Actions runners on every machine
@@ -252,11 +261,11 @@ nova-fleet check --runners https://github.com/OWNER/REPO | grep -E 'gh|GITHUB_RU
 ```text
 CHECK FAILED missing=3
 CHECK OK gh <version>
-CHECK MISSING GITHUB_RUNNER_TOKEN: nova-secrets set GITHUB_RUNNER_TOKEN --as here (the value on stdin); the read said: SECRETS EXEC REFUSED reason=no-seat: ...
+CHECK MISSING GITHUB_RUNNER_TOKEN: nova-secrets set GITHUB_RUNNER_TOKEN --as here  # the value on stdin; the read said: SECRETS EXEC REFUSED reason=no-seat: ...
 ```
 
-The `CHECK FAILED` line is on stderr, so the grep leaves it through; the two
-Tailscale lines from before are still counted.
+The `CHECK FAILED` line is on stderr, so the grep leaves it through; the
+`tag:control` line from before is still counted.
 
 Under --check, github-runners reads GITHUB_RUNNER_TOKEN on the control node
 before it plans, so a green check is never followed by a run that fails on a
@@ -482,8 +491,10 @@ score of a deliberately unrelated query, for comparison. The same `append`
 again prints `duplicate=true` and writes nothing.
 
 The refusal you will meet first is
-`nova-cairn append: no such session "<id>" ...; open it first` (exit 2): run the
-`open` the line names. The others are in
+`nova-cairn append: store "<dir>" does not exist; open it first, or fix --store`
+(exit 2): run the `open` the line names, or correct `--store`. An `append` to a
+store that exists but has no such session opens the session itself
+(`opened=true`). The others are in
 [cairn/README.md](../cairn/README.md#refusals).
 
 The whole tool: [cairn/README.md](../cairn/README.md) and

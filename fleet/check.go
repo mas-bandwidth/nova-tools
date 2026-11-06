@@ -185,13 +185,16 @@ func (u *upRun) control(out io.Writer) int {
 		}
 		fmt.Fprintf(out, "CHECK OK %s %s\n", b, what)
 	}
+	galaxy, posix := "ansible-galaxy", true      // without ansible, the line is printed for after its fix line has run
 	if p := u.bin["ansible-playbook"]; p != "" { // the collections the plays use (requirements.yml)
-		galaxy := filepath.Join(filepath.Dir(p), "ansible-galaxy")
-		if o, _, c := outCmd(galaxy, []string{"collection", "list"}, os.Environ()); c != 127 && !strings.Contains(o, "ansible.posix") {
-			miss("ansible.posix", "nova-fleet show requirements > requirements.yml && "+galaxy+" collection install -r requirements.yml")
-		} else {
-			fmt.Fprintln(out, "CHECK OK ansible.posix")
-		}
+		galaxy = filepath.Join(filepath.Dir(p), "ansible-galaxy")
+		o, _, c := outCmd(galaxy, []string{"collection", "list"}, os.Environ())
+		posix = c == 127 || strings.Contains(o, "ansible.posix")
+	}
+	if !posix || u.bin["ansible-playbook"] == "" {
+		miss("ansible.posix", "nova-fleet show requirements > requirements.yml && "+galaxy+" collection install -r requirements.yml")
+	} else {
+		fmt.Fprintln(out, "CHECK OK ansible.posix")
 	}
 	// The ansible-playbook line above makes a venv; say so when this python3 cannot.
 	if u.bin["ansible-playbook"] == "" && fam != "brew" {
