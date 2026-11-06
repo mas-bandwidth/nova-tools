@@ -11,10 +11,10 @@ import (
 	"testing"
 )
 
-// The real client against a local stand-in of the Tailscale API: every request with the API access token as Bearer auth, the policy read as JSON and written with If-Match, a key minted.
+// The real client against a local stand-in of the Tailscale API: every request with the API access token as Bearer auth, the policy read and written as HuJSON (its comments kept) with If-Match, a key minted.
 func TestTailnetHTTP(t *testing.T) {
 	var log []string
-	doc, etag := `{"acls":[{"action":"accept","src":["*"],"dst":["*:*"]}]}`, `"v1"`
+	doc, etag := "// the human's own note\n{\"acls\": [{\"action\": \"accept\", \"src\": [\"*\"], \"dst\": [\"*:*\"]}], // allow all\n}\n", `"v1"`
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		log = append(log, r.Method+" "+r.URL.Path)
@@ -24,14 +24,14 @@ func TestTailnetHTTP(t *testing.T) {
 		}
 		switch r.Method + " " + r.URL.Path {
 		case "GET /api/v2/tailnet/-/acl":
-			if r.Header.Get("Accept") != "application/json" {
+			if r.Header.Get("Accept") != "application/hujson" {
 				w.WriteHeader(406)
 				return
 			}
 			w.Header().Set("ETag", etag)
 			_, _ = io.WriteString(w, doc)
 		case "POST /api/v2/tailnet/-/acl":
-			if r.Header.Get("If-Match") != etag {
+			if r.Header.Get("If-Match") != etag || r.Header.Get("Content-Type") != "application/hujson" {
 				w.WriteHeader(412)
 				return
 			}
@@ -60,7 +60,7 @@ func TestTailnetHTTP(t *testing.T) {
 	if got, err := policy(api, false); err != nil || got != "unchanged" {
 		t.Fatalf("second policy = %q %v", got, err)
 	}
-	if !strings.Contains(doc, `"acls":[{"action":"accept","dst":["*:*"],"src":["*"]}]`) || !strings.Contains(doc, `"tag:control":["autogroup:admin"]`) {
+	if !strings.HasPrefix(doc, "// the human's own note\n{\"acls\": [{\"action\": \"accept\", \"src\": [\"*\"], \"dst\": [\"*:*\"]}], // allow all\n") || !strings.Contains(doc, `"tag:control":["autogroup:admin"]`) {
 		t.Errorf("policy written: %s", doc)
 	}
 	if k, err := mintKey(api, []string{"tag:nova"}); err != nil || k != "tskey-auth-k1-tag:nova" {

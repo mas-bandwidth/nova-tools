@@ -5,68 +5,152 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/tailscale/hujson"
 )
 
-func decode(t *testing.T, s string) map[string]any {
+// std is a HuJSON policy as decoded JSON.
+func std(t *testing.T, b []byte) map[string]any {
 	t.Helper()
+	j, err := hujson.Standardize(slices.Clone(b))
+	if err != nil {
+		t.Fatalf("not HuJSON: %v\n%s", err, b)
+	}
 	m := map[string]any{}
-	if err := json.Unmarshal([]byte(s), &m); err != nil {
+	if err := json.Unmarshal(j, &m); err != nil {
 		t.Fatal(err)
 	}
 	return m
 }
 
-// The default policy of a new tailnet: allow all, an ssh check rule for members, no tags.
-const allowAll = `{"acls":[{"action":"accept","src":["*"],"dst":["*:*"]}],
-	"ssh":[{"action":"check","src":["autogroup:member"],"dst":["autogroup:self"],"users":["autogroup:nonroot","root"]}],
-	"nodeAttrs":[{"target":["autogroup:member"],"attr":["funnel"]}]}`
+// The default policy of a new tailnet, as the admin console holds it: comments, trailing commas, allow all.
+const allowAll = `// Example/default ACLs for unrestricted connections.
+{
+	// Declare static groups of users. Use autogroup:admin for the admins.
+	// "groups": {"group:example": ["alice@example.com"]},
+
+	// Allow all connections.
+	"acls": [
+		{"action": "accept", "src": ["*"], "dst": ["*:*"]},
+	],
+
+	// Test access rules every time they're saved.
+	"ssh": [
+		{
+			"action": "check",
+			"src":    ["autogroup:member"],
+			"dst":    ["autogroup:self"],
+			"users":  ["autogroup:nonroot", "root"],
+		},
+	],
+	"nodeAttrs": [{"target": ["autogroup:member"], "attr": ["funnel"]}],
+}
+`
+
+// A policy built on autogroup:self: each member reaches only their own devices, so a tagged device is
+// reached by nobody unless the merge says so.
+const selfOnly = `{
+	"grants": [{"src": ["autogroup:member"], "dst": ["autogroup:self"], "ip": ["*"]}], // my own devices only
+	"ssh": [{"action": "check", "src": ["autogroup:member"], "dst": ["autogroup:self"], "users": ["autogroup:nonroot", "root"]}],
+}`
 
 func TestFleetPolicyIsTheEmbeddedFile(t *testing.T) {
 	want := fleetPolicy()
 	owners := want["tagOwners"].(map[string]any)
 	if canon(owners["tag:nova"]) != `["autogroup:admin"]` || canon(owners["tag:control"]) != `["autogroup:admin"]` ||
-		len(want["grants"].([]any)) != 2 || len(want["ssh"].([]any)) != 1 {
+		len(want["grants"].([]any)) != 3 || len(want["ssh"].([]any)) != 2 {
 		t.Errorf("fleetPolicy() = %s", canon(want))
 	}
+}
+
+func merge(t *testing.T, src string) ([]byte, bool) {
+	t.Helper()
+	out, changed, err := mergePolicy([]byte(src), fleetPolicy())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out, changed
 }
 
 func TestMergePolicy(t *testing.T) {
 	want := fleetPolicy()
 	// empty: everything the fleet needs is added
-	got, changed := mergePolicy(map[string]any{}, want)
-	if !changed || canon(got) != canon(want) {
-		t.Errorf("empty: changed %v\n got %s\nwant %s", changed, canon(got), canon(want))
+	for _, src := range []string{"", "{}", "// nothing yet\n{}\n"} {
+		if got, changed := merge(t, src); !changed || canon(std(t, got)) != canon(want) {
+			t.Errorf("%q: changed %v\n got %s\nwant %s", src, changed, got, canon(want))
+		}
 	}
-	// the default allow-all: its acls, ssh rule and the rest are kept as they were, the fleet's appended
-	have := decode(t, allowAll)
-	got, changed = mergePolicy(have, want)
-	if !changed || canon(got["acls"]) != canon(have["acls"]) || canon(got["nodeAttrs"]) != canon(have["nodeAttrs"]) {
-		t.Errorf("allow-all: acls or nodeAttrs changed: %s", canon(got))
+	// the default allow-all: every comment and line of it survives, its acls, ssh rule and the rest are
+	// as they were, the fleet's appended
+	got, changed := merge(t, allowAll)
+	have, m := std(t, []byte(allowAll)), std(t, got)
+	if !changed || canon(m["acls"]) != canon(have["acls"]) || canon(m["nodeAttrs"]) != canon(have["nodeAttrs"]) {
+		t.Errorf("allow-all: acls or nodeAttrs changed:\n%s", got)
 	}
-	if ssh := got["ssh"].([]any); len(ssh) != 2 || canon(ssh[0]) != canon(have["ssh"].([]any)[0]) || canon(ssh[1]) != canon(want["ssh"].([]any)[0]) {
+	for _, line := range strings.Split(allowAll, "\n")[:9] {
+		if !strings.Contains(string(got), line) {
+			t.Errorf("allow-all: the line %q is gone:\n%s", line, got)
+		}
+	}
+	if ssh := m["ssh"].([]any); len(ssh) != 3 || canon(ssh[0]) != canon(have["ssh"].([]any)[0]) || canon(ssh[1:]) != canon(want["ssh"]) {
 		t.Errorf("allow-all: ssh = %s", canon(ssh))
 	}
-	if canon(have) != canon(decode(t, allowAll)) {
-		t.Error("the policy given was changed in place")
-	}
-	// idempotent: the merged policy merges to itself
-	if again, changed := mergePolicy(got, want); changed || canon(again) != canon(got) {
-		t.Errorf("a second merge changed %v: %s", changed, canon(again))
+	// idempotent: the merged policy merges to itself, byte for byte
+	if again, changed := merge(t, string(got)); changed || string(again) != string(got) {
+		t.Errorf("a second merge changed %v:\n%s", changed, again)
 	}
 	// existing tags and an equal rule (keys in another order): owners added, nothing duplicated or removed
-	have = decode(t, `{"tagOwners":{"tag:nova":["alice@example.com"],"tag:other":["bob@example.com"]},
-		"grants":[{"ip":["tcp:22","tcp:6379","tcp:5432"],"dst":["tag:nova","tag:runner"],"src":["tag:nova","tag:runner"]},{"src":["*"],"dst":["*"],"ip":["*"]}]}`)
-	got, changed = mergePolicy(have, want)
-	owners := got["tagOwners"].(map[string]any)
+	src := `{"tagOwners":{"tag:nova":["alice@example.com"],"tag:other":["bob@example.com"]},
+		"grants":[{"ip":["tcp:22","tcp:6379","tcp:5432"],"dst":["tag:nova","tag:runner"],"src":["tag:nova","tag:runner"]},{"src":["*"],"dst":["*"],"ip":["*"]}]}`
+	got, changed = merge(t, src)
+	m = std(t, got)
+	owners := m["tagOwners"].(map[string]any)
 	if !changed || canon(owners["tag:nova"]) != `["alice@example.com","autogroup:admin"]` || canon(owners["tag:other"]) != `["bob@example.com"]` ||
 		canon(owners["tag:control"]) != `["autogroup:admin"]` {
 		t.Errorf("tagOwners = %s", canon(owners))
 	}
-	if g := got["grants"].([]any); len(g) != 3 || canon(g[1]) != `{"dst":["*"],"ip":["*"],"src":["*"]}` || canon(g[2]) != canon(want["grants"].([]any)[1]) {
+	if g := m["grants"].([]any); len(g) != 4 || canon(g[1]) != `{"dst":["*"],"ip":["*"],"src":["*"]}` || canon(g[2:]) != canon(want["grants"].([]any)[1:]) {
 		t.Errorf("grants = %s", canon(g))
 	}
-	if _, changed := mergePolicy(got, want); changed {
+	if _, changed := merge(t, string(got)); changed {
 		t.Error("a second merge over existing tags changed something")
+	}
+	if _, _, err := mergePolicy([]byte("{"), want); err == nil {
+		t.Error("a policy that does not parse: want an error")
+	}
+}
+
+// After the merge the tailnet's admins still reach every tagged machine, on every port and over Tailscale
+// SSH as root too, whether the policy allowed all or only each member's own devices.
+func TestMergeKeepsAdminAccess(t *testing.T) {
+	has := func(list any, v string) bool { l, _ := list.([]any); return slices.Contains(l, any(v)) }
+	for name, src := range map[string]string{"allow-all": allowAll, "autogroup:self": selfOnly} {
+		got, _ := merge(t, src)
+		m := std(t, got)
+		for _, tag := range []string{"tag:nova", "tag:runner", "tag:control"} {
+			reach := slices.ContainsFunc(m["grants"].([]any), func(r any) bool {
+				g := r.(map[string]any)
+				return has(g["src"], "autogroup:admin") && has(g["dst"], tag) && has(g["ip"], "*")
+			})
+			if !reach {
+				t.Errorf("%s: no grant lets autogroup:admin reach %s on every port:\n%s", name, tag, got)
+			}
+			if tag == "tag:control" {
+				continue
+			}
+			ssh := slices.ContainsFunc(m["ssh"].([]any), func(r any) bool {
+				g := r.(map[string]any)
+				return g["action"] == "accept" && has(g["src"], "autogroup:admin") && has(g["dst"], tag) && has(g["users"], "root") && has(g["users"], "autogroup:nonroot")
+			})
+			if !ssh {
+				t.Errorf("%s: no ssh rule lets autogroup:admin in to %s as root and nonroot:\n%s", name, tag, got)
+			}
+		}
+	}
+	// allow-all keeps its own rule too: everyone still reaches everything
+	got, _ := merge(t, allowAll)
+	if canon(std(t, got)["acls"]) != `[{"action":"accept","dst":["*:*"],"src":["*"]}]` {
+		t.Errorf("allow-all rule changed:\n%s", got)
 	}
 }
 
@@ -83,7 +167,10 @@ func TestPolicyRetriesOnce(t *testing.T) {
 	if !slices.Equal(methods, []string{`GET /tailnet/-/acl`, `POST /tailnet/-/acl "e0"`, `GET /tailnet/-/acl`, `POST /tailnet/-/acl "e1"`}) {
 		t.Errorf("calls = %q", methods)
 	}
-	if _, changed := mergePolicy(decode(t, a.policy), fleetPolicy()); changed {
+	if !strings.Contains(a.policy, "// Allow all connections.") {
+		t.Errorf("the policy written lost its comments:\n%s", a.policy)
+	}
+	if _, changed := merge(t, a.policy); changed {
 		t.Error("the policy written is not the merge")
 	}
 	// a second run: one GET, nothing written
@@ -100,6 +187,39 @@ func TestPolicyRetriesOnce(t *testing.T) {
 	a = &fakeAPI{policy: "{}"}
 	if got, err := policy(a, true); err != nil || got != "would-merge" || len(a.calls) != 1 {
 		t.Errorf("check: %q %v calls %q", got, err, a.calls)
+	}
+}
+
+// A peer is the machine by its MagicDNS label, never by HostName; two with the label are refused.
+func TestPeerByMagicDNSLabel(t *testing.T) {
+	ip := []string{"100.64.0.1"}
+	st := tsStatus{Peer: map[string]tsNode{
+		"a": {ID: "n1", HostName: "web-1", DNSName: "laptop.tail.ts.net.", TailscaleIPs: ip},
+		"b": {ID: "n2", HostName: "laptop", DNSName: "web-1.tail.ts.net.", TailscaleIPs: ip},
+	}}
+	if p, ok, err := st.peer("web-1"); err != nil || !ok || p.ID != "n2" {
+		t.Errorf("web-1 = %v %v %v, want n2 (its DNS label), not the HostName match n1", p.ID, ok, err)
+	}
+	if _, ok, err := st.peer("web"); ok || err != nil {
+		t.Errorf("a label prefix matched: %v %v", ok, err)
+	}
+	st.Peer["c"] = tsNode{ID: "n3", DNSName: "web-1.other.ts.net.", TailscaleIPs: ip}
+	if _, ok, err := st.peer("web-1"); ok || err == nil || err.Error() != "2 peers have the MagicDNS label web-1 (n2=web-1.tail.ts.net, n3=web-1.other.ts.net); remove or rename all but the machine's own in the admin console" {
+		t.Errorf("two peers: %v %v", ok, err)
+	}
+	// up refuses at the tailnet step, tagging nothing
+	f := &upFake{peers: map[string]string{"first": "100.64.0.2"}}
+	f.install(t)
+	old := outCmd
+	outCmd = func(bin string, args, env []string) (string, string, int) {
+		if strings.Join(args, " ") == "status --json" {
+			return `{"BackendState":"Running","Self":{"ID":"n-control","Tags":["tag:control"]},"Peer":{"a":{"ID":"n1","DNSName":"first.ts.example.","TailscaleIPs":["100.64.0.2"]},"b":{"ID":"n2","DNSName":"first.ts.other.","TailscaleIPs":["100.64.0.3"]}}}`, "", 0
+		}
+		return old(bin, args, env)
+	}
+	code, _, errs := runArgs("up", "--tools", "v2.0.0", "first=1.1.1.1")
+	if code != 1 || !strings.Contains(errs, "2 peers have the MagicDNS label first (n1=first.ts.example, n2=first.ts.other)") || strings.Contains(strings.Join(f.api.calls, "\n"), "/device/") {
+		t.Errorf("ambiguous peer: code %d %s\n%v", code, errs, f.api.calls)
 	}
 }
 

@@ -41,9 +41,11 @@ type fakeAPI struct {
 	expired  bool // every call answers 401
 }
 
-func (a *fakeAPI) call(method, path, ifMatch string, body []byte) (int, string, []byte, error) {
+func (a *fakeAPI) call(method, path, ctype, ifMatch string, body []byte) (int, string, []byte, error) {
 	a.calls = append(a.calls, strings.TrimSpace(method+" "+path+" "+ifMatch+" "+string(body)))
 	switch {
+	case ctype != map[bool]string{true: "application/hujson", false: "application/json"}[path == "/tailnet/-/acl"]:
+		return 415, "", []byte(`{"message":"content type ` + ctype + `"}`), nil
 	case a.expired:
 		return 401, "", []byte(`{"message":"API token invalid"}`), nil
 	case method == "GET" && path == "/tailnet/-/acl":

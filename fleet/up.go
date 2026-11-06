@@ -266,7 +266,10 @@ func (u *upRun) config(args ...string) ([]map[string]any, string, int) {
 // its Tailscale SSH host keys, which are pinned in this node's known_hosts (never trusted on first use).
 func (u *upRun) peer(m *machine) bool {
 	st, _ := u.status()
-	p, ok := st.peer(m.name)
+	p, ok, err := st.peer(m.name)
+	if err != nil {
+		fmt.Fprintf(u.stderr, "nova-fleet up: %s on the tailnet: %v\n", m.name, err)
+	}
 	if ok {
 		m.dns = strings.TrimSuffix(p.DNSName, ".")
 		if len(p.SSH_HostKeys) == 0 {

@@ -39,6 +39,19 @@
 				"tcp:6379",
 				"tcp:5432"
 			]
+		},
+		{
+			"src": [
+				"autogroup:admin"
+			],
+			"dst": [
+				"tag:nova",
+				"tag:runner",
+				"tag:control"
+			],
+			"ip": [
+				"*"
+			]
 		}
 	],
 	"ssh": [
@@ -55,6 +68,20 @@
 			],
 			"users": [
 				"autogroup:nonroot"
+			]
+		},
+		{
+			"action": "accept",
+			"src": [
+				"autogroup:admin"
+			],
+			"dst": [
+				"tag:nova",
+				"tag:runner"
+			],
+			"users": [
+				"autogroup:nonroot",
+				"root"
 			]
 		}
 	]

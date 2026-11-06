@@ -59,6 +59,7 @@ listed in the test:
 | yaml.v3 | Reading and writing the YAML files of a secrets store. |
 | x/sys | Platform system calls. |
 | testify | Test assertions. |
+| hujson | fleet's merge into the tailnet policy: a JSON Patch applied to the HuJSON text, so the human's comments and formatting survive. |
 
 A module imported by a Go file counts as direct even if go.mod labels it
 indirect. Add a new direct dependency to the test's allowlist in the same PR,

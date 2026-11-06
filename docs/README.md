@@ -162,7 +162,9 @@ nova-fleet check
 
 Then go. `up` does the rest in Tailscale with that token: it merges what the
 fleet needs into the tailnet policy (the tags `tag:nova`, `tag:runner` and
-`tag:control`, the fleet's grants and ssh rule; nothing of theirs removed),
+`tag:control`, the fleet's grants and ssh rules, and a grant and ssh rule that
+keep your human's admin devices reaching every tagged machine; nothing of
+theirs removed, their comments kept),
 tags this machine `tag:control` (joining it to the tailnet first if it is not
 on it), and mints a single-use key for each machine that is not on the tailnet
 yet. The token expires (90 days by default); a run with an expired one stops

@@ -107,7 +107,7 @@ machine is the one nova-config's rows say ("Adding a machine" below). Nothing he
 | # | Step | What runs | Why here |
 |---|---|---|---|
 | 1 | control | `nova-fleet check`: every helper (with `--runners`, `gh` and its login), the store, key, seat and pins, `TAILSCALE_API_KEY` read from the seat, `NOVA_PG_DSN` when a fleet exists; anything missing stops the run with its fix line | a run never starts that a missing secret would stop later |
-| 2 | tailnet | through the Tailscale API v2 with `TAILSCALE_API_KEY` as Bearer auth (`fleet/tailnet.go`): `GET /tailnet/-/acl` (JSON, its ETag), the fleet's needs (`nova-fleet show tailscale-acl`) merged in, `POST` with `If-Match` only when that added something (a 412 reads again and retries once); this node joined with a minted `tag:control` key when it is not on the tailnet, else `POST /device/<id>/tags` adding `tag:control`; each machine on the tailnet given `tag:nova` (and `tag:runner`) the same way; for each machine not on it, `POST /tailnet/-/keys` mints a single-use, pre-authorized key good for an hour, held in memory and given only to that machine's play as `TAILSCALE_AUTHKEY` in its environment. Receipt `UP TAILNET OK policy=<merged\|unchanged> control=<tagged\|already\|joined> keys=<n minted> retagged=<n>`; under `--check`, `UP TAILNET WOULD ...` after GETs only | the tags exist before a device carries one, and the keys before any join |
+| 2 | tailnet | through the Tailscale API v2 with `TAILSCALE_API_KEY` as Bearer auth (`fleet/tailnet.go`): `GET /tailnet/-/acl` (HuJSON, its ETag), the fleet's needs (`nova-fleet show tailscale-acl`) merged in as a JSON Patch applied by `github.com/tailscale/hujson` (comments and formatting kept), `POST` with `If-Match` only when that added something (a 412 reads again and retries once); this node joined with a minted `tag:control` key when it is not on the tailnet, else `POST /device/<id>/tags` adding `tag:control`; each machine on the tailnet (the one peer whose MagicDNS label is its name; two such peers are refused) given `tag:nova` (and `tag:runner`) the same way; for each machine not on it, `POST /tailnet/-/keys` mints a single-use, pre-authorized key good for an hour, held in memory and given only to that machine's play as `TAILSCALE_AUTHKEY` in its environment. Receipt `UP TAILNET OK policy=<merged\|unchanged> control=<tagged\|already\|joined> keys=<n minted> retagged=<n>`; under `--check`, `UP TAILNET WOULD ...` after GETs only | the tags exist before a device carries one, and the keys before any join |
 | 3 | reach | one `ssh -o BatchMode=yes ... true` per machine: as its login at its tailnet name once it has a row (join closed the address given then), else as root at the address given; `UP REACH <machine> OK <who>@<where>` | a run never starts a play on a machine it cannot reach |
 | 4 | first | on a new fleet's first machine, from a hand inventory: `tailscale` (no address recorded, firewall later), then `postgres` (nova-config's roles, grants and tables, loaded on the machine as `nova_admin`) and `redis`, their passwords sealed into your seat as `NOVA_PG_PASSWORD` and `NOVA_BUS_PASSWORD` | nova-config's rows live in this PostgreSQL, so it comes before any row |
 | 5 | join | `join` for each machine (`services,bench` for the first; the others `bench`; `runner` with `--runners`): its row, its login with passwordless sudo, its tailnet name and host key, its firewall, its seat; with `--runners`, a row that lacks the `runner` role gets it (`UP ROLE <machine> OK runner`) | the store exists now |
@@ -474,17 +474,21 @@ one. On a Mac machine, open the Tailscale app once at its console and approve it
 
 **What `up` does with it** (its `tailnet` step, before anything reaches a machine):
 
-1. The policy: `GET /api/v2/tailnet/-/acl` as JSON with its ETag, then the fleet's needs merged in. Each of
+1. The policy: `GET /api/v2/tailnet/-/acl` as HuJSON with its ETag, then the fleet's needs added as a JSON Patch
+   (RFC 6902) applied with `github.com/tailscale/hujson`, so its comments and formatting survive. Each of
    `tag:nova`, `tag:runner` and `tag:control` gets `autogroup:admin` as an owner if it lacks it (so the token can
-   apply them; other owners stay); the fleet's two grants and its one ssh rule are appended where an equal rule (the
-   same JSON) is not already there. Nothing the policy has is removed or replaced, so the default policy's allow-all
-   `acls` rule still allows all and your devices reach what they reached; the grants only add the fleet's ports. It
-   is written (`POST` with `If-Match`) only when the merge added something; a 412 reads it again and retries once.
-   The write is JSON: the policy's comments do not survive the first merge (a second run writes nothing).
+   apply them; other owners stay); the fleet's grants and ssh rules are appended where an equal rule (the same JSON)
+   is not already there. Among them, so your own devices keep reaching every tagged machine whatever the policy was
+   built on (allow-all, or `autogroup:self`, which no tagged device is): a grant from `autogroup:admin` to `tag:nova`,
+   `tag:runner` and `tag:control` on every port (`ip: ["*"]`), and an ssh rule accepting `autogroup:admin` into
+   `tag:nova` and `tag:runner` as `autogroup:nonroot` and `root`. Nothing the policy has is removed or replaced, so
+   the default policy's allow-all `acls` rule still allows all. It is written (`POST` with `If-Match`, HuJSON) only
+   when the merge added something; a 412 reads it again and retries once; a second run writes nothing.
 2. This node tagged `tag:control` (`POST /api/v2/device/<Self.ID>/tags`, its tags kept); a node not on the tailnet is
    first joined with a minted `tag:control` key (`tailscale up --reset --auth-key=file:/dev/stdin`, the key on stdin;
    `sudo` on Linux). A device of yours tagged this way is owned by the tag from then on, not by your account.
-3. Each machine named that is on the tailnet given `tag:nova` (and `tag:runner` with `--runners`) the same way; for
+3. Each machine named that is on the tailnet (the one peer whose MagicDNS label, the DNS name before its first dot,
+   is the machine's name; two such peers stop the run, naming both, and nothing is tagged) given `tag:nova` (and `tag:runner` with `--runners`) the same way; for
    each that is not, a key from `POST /api/v2/tailnet/-/keys`: single use, pre-authorized, those tags, an hour. It is
    held in memory and reaches only that machine's play, as `TAILSCALE_AUTHKEY` in its environment.
 
