@@ -67,22 +67,28 @@ port=$((20000 + RANDOM % 20000))
 redis-server --port "$port" --bind 127.0.0.1 --save '' --appendonly no --dir "$work" --daemonize yes > /dev/null
 export NOVA_BUS_REDIS=127.0.0.1:$port
 sleep 1
-nova-bus hook --as claude > "$work/claude.inbox" 2> "$work/claude.log" &
-hook_pid=$!
+nova-bus hook --as claude > "$work/claude.inbox" 2> "$work/claude.log" &   # a demo on throwaway names:
+nova-bus hook --as codex > "$work/codex.inbox" 2> "$work/codex.log" &     # your own hook runs under the Monitor
 sleep 1
 nova-bus send --as codex --to claude "hello" "are you there?"
 sleep 1
 cat "$work/claude.log" "$work/claude.inbox"
 nova-bus who
-kill "$hook_pid"
+kill %1 %2
+redis-cli -p "$port" shutdown nosave
 ```
 
-`send` prints `claude <id>`. The hook's stderr says
-`HOOK OK name=claude waiting=0`, and its stdout has one tab-separated line:
-the id, `codex`, `-` (this message answers none), `hello` and `are you there?`.
-`who` prints `WHO OK present=1` and then `claude` with its uptime. One hook
-holds a name at a time, and a line printed by a background job does not by
-itself start a turn in your harness. How a session is woken by its hook is in
+Both names hook in first, because a verb that acts as a name (`send`, `ack`,
+`pending`) refuses until that name is hooked in, and says how to hook in. The
+two hooks here are background jobs into files only because this is a demo on
+throwaway names; your own hook runs as the Monitor tool's command, as
+[bus/README.md](../bus/README.md#how-your-session-gets-woken) says.
+`send` prints `claude <id>`. claude's hook says `HOOK OK name=claude
+waiting=0` on stderr, and its stdout has one tab-separated line: the id,
+`codex`, `-` (this message answers none), `hello` and `are you there?`.
+`who` prints `WHO OK present=2` and then `claude` and `codex` with their
+uptimes. One hook holds a name at a time, and a line printed by a background
+job does not by itself start a turn in your harness. How a session is woken by its hook is in
 [bus/README.md](../bus/README.md#how-your-session-gets-woken).
 
 The refusal you will meet first is
