@@ -186,8 +186,8 @@ func TestUpOrder(t *testing.T) {
 		"nova-secrets grant NOVA_BUS_PASSWORD --to second\n",
 		"nova-secrets grant NOVA_BUS_PASSWORD --to second\ngit -C " + f.store + " rev-parse",
 		"git -C " + f.store + " push --quiet",
-		"rsync -rlt --delete --exclude=.git --chmod=Du=rwx,Dgo=,Fu=rw,Fgo= --rsync-path=mkdir -p .local/share/nova/secrets/ && rsync " + f.store + "/ nova@first:.local/share/nova/secrets/",
-		"rsync -rlt --delete --exclude=.git --chmod=Du=rwx,Dgo=,Fu=rw,Fgo= --rsync-path=mkdir -p .local/share/nova/secrets/ && rsync " + f.store + "/ nova@second:.local/share/nova/secrets/",
+		"rsync -rltp --delete --exclude=.git --chmod=Du=rwx,Dgo=,Fu=rw,Fgo= --rsync-path=umask 077 && mkdir -p .local/share/nova/secrets/ && rsync " + f.store + "/ nova@first:.local/share/nova/secrets/",
+		"rsync -rltp --delete --exclude=.git --chmod=Du=rwx,Dgo=,Fu=rw,Fgo= --rsync-path=umask 077 && mkdir -p .local/share/nova/secrets/ && rsync " + f.store + "/ nova@second:.local/share/nova/secrets/",
 		"install.yml -e nova_tools_version=v2.0.0",
 		"github-runners.yml -e github_runner_url=https://github.com/o/r -e github_runner_scope=repo -e runner_count=2",
 		"nova-secrets exec --only NOVA_BUS_PASSWORD -- /bin/nova-bus send --as nova-fleet-up --to nova-fleet-up up check up-",
@@ -236,7 +236,7 @@ func TestUpCheck(t *testing.T) {
 	f.install(t)
 	code, out, _ = runArgs("up", "--check", "--grant", "NOVA_BUS_PASSWORD,EXTRA", "--tools", "v2.0.0", "first=1.1.1.1")
 	all := strings.Join(f.calls, "\n")
-	if code != 0 || len(f.plays()) != 7 || !strings.Contains(all, "rsync --dry-run -rlt --delete") || strings.Contains(all, "push") || strings.Contains(all, "sh -c") || strings.Contains(all, "nova-bus send") ||
+	if code != 0 || len(f.plays()) != 7 || !strings.Contains(all, "rsync --dry-run -rltp --delete") || strings.Contains(all, "push") || strings.Contains(all, "sh -c") || strings.Contains(all, "nova-bus send") ||
 		strings.Contains(all, "nova-secrets grant") || !strings.Contains(all, "nova-secrets exec --only NOVA_BUS_PASSWORD,EXTRA -- true") {
 		t.Errorf("code %d plays %v calls:\n%s", code, f.plays(), all)
 	}
