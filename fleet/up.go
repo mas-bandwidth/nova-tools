@@ -341,6 +341,9 @@ func runUp(args []string, stdout, stderr io.Writer) int {
 		return code
 	}
 	u.stdout = stdout
+	if noController("up", stderr) {
+		return 2
+	}
 
 	// 1. the control node: every helper and input at once, then the secrets read.
 	want := []string{"ansible-playbook", "nova-config", "nova-secrets", "nova-bus", "tailscale", "psql", "git", "sops", "age"}

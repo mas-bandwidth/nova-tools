@@ -16,14 +16,17 @@ nova-fleet install -- -e nova_tools_version=v1.0.0 -l <machine>
 
 ## Install
 
-Take `nova-fleet` from a release like the other tools, or build it:
+Take `nova-fleet` from a release like the other tools (`nova-fleet_<tag>_<os>_<arch>[.exe]` for linux/amd64,
+linux/arm64, darwin/arm64 and windows/amd64, in the release's `SHA256SUMS`; `install` puts it on every machine), or
+build it. On Windows `plays`, `show` and `help` work, and running a play is refused with the reason: ansible-core has
+no native Windows controller, so a Windows machine is a host the plays reach, never the one running them (use a
+Linux, macOS or WSL control node).
 
 ```
 git clone --depth 1 https://github.com/mas-bandwidth/nova-tools && cd nova-tools && go build -o ~/.local/bin/nova-fleet ./fleet
 ```
 
-The control machine
-needs ansible-core 2.15 or later on PATH; a Windows host in the inventory also needs the `ansible.windows`
+The control machine needs ansible-core 2.15 or later on PATH; a Windows host in the inventory also needs the `ansible.windows`
 collection:
 
 ```
