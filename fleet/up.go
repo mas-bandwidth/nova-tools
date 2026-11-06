@@ -305,7 +305,7 @@ func (u *upRun) steps() int {
 
 	// 6. refresh: the encrypted store (no .git, stale files deleted, 0700/0600) copied over
 	// ssh to each machine, so its seat opens what was granted; a rerun pushes again.
-	push := []string{"-rlt", "--delete", "--exclude=.git", "--chmod=Du=rwx,Dgo=,Fu=rw,Fgo=", "--rsync-path=mkdir -p " + storePath + " && rsync", u.store + "/"}
+	push := []string{"-rltp", "--delete", "--exclude=.git", "--chmod=Du=rwx,Dgo=,Fu=rw,Fgo=", "--rsync-path=umask 077 && mkdir -p " + storePath + " && rsync", u.store + "/"}
 	if u.check {
 		push = append([]string{"--dry-run"}, push...)
 	}
