@@ -116,14 +116,23 @@ func TestAppendOpensMissingSession(t *testing.T) {
 	code, out, _ = do(t, "", "append", "--store", store, "--session", "s2", "--entry", "e1", "--text", "x", "--publish", "never")
 	require.Equal(t, 0, code)
 	assert.Contains(t, out, "publish=never")
+
+	code, out, _ = do(t, "", "open", "--store", store, "--session", "s1")
+	require.Equal(t, 0, code, "re-opening without --publish keeps the recorded policy")
+	assert.Contains(t, out, "publish=manual")
+	assert.Contains(t, out, "reopened=true")
 }
 
-// TestOpenRemedies: a missing --publish names its values, and an open under an
-// unwritable parent is remedied by looking at the parent, not the store.
+// TestOpenRemedies: help states the defaults, and an open under an unwritable
+// parent is remedied by looking at the parent, not the store.
 func TestOpenRemedies(t *testing.T) {
 	t.Parallel()
-	_, _, errs := do(t, "", "open", "--store", "s", "--session", "s1")
-	assert.Contains(t, errs, "--publish is required: one of never, manual, deferred, immediate; manual is the usual choice")
+	_, out, _ := do(t, "", "open", "-h")
+	assert.Contains(t, out, "default never on open")
+	for _, v := range []string{"search", "check"} {
+		_, out, _ = do(t, "", "memory", v, "-h")
+		assert.Contains(t, out, "default --channels bm25 --k 5")
+	}
 	if os.Geteuid() == 0 {
 		t.Skip("root writes anywhere")
 	}
@@ -157,7 +166,7 @@ func TestAppendNextOnlyOnFirstEntry(t *testing.T) {
 func TestFilesOnDisk(t *testing.T) {
 	t.Parallel()
 	store := t.TempDir()
-	do(t, "", "open", "--store", store, "--session", "s1", "--source", "src", "--publish", "never")
+	do(t, "", "open", "--store", store, "--session", "s1", "--source", "src")
 	do(t, "", "append", "--store", store, "--session", "s1", "--entry", "e1", "--text", "hello")
 	entry, err := os.ReadFile(filepath.Join(store, "entries", "s1", "e1.json"))
 	require.NoError(t, err)
@@ -607,18 +616,17 @@ func TestARetryNamingAnotherSourceIsAConflict(t *testing.T) {
 
 func TestALateFlagIsRefused(t *testing.T) {
 	t.Parallel()
-	for _, args := range [][]string{
-		{"memory", "search", "--root", "testdata/corpus", "--channels", "bm25", "lantern", "--k", "2"},
-		{"self-talk", "-", "--max", "1"},
-	} {
-		code, out, errs := do(t, "", args...)
-		assert.Equal(t, 2, code, "%v", args)
-		assert.Empty(t, out, "%v", args)
-		assert.Contains(t, errs, "late flag --", "%v", args)
-		assertRefusal(t, errs, args)
-	}
-	code, out, _ := do(t, "", "memory", "search", "--root", "testdata/corpus", "--channels", "bm25", "--k", "1", "--", "-lantern")
+	code, out, _ := do(t, "", "memory", "search", "--root", "testdata/corpus", "lantern", "--k", "2")
+	assert.Equal(t, 0, code)
+	assert.Contains(t, out, `SEARCH OK hits=2 k=2 channels=bm25`)
+
+	code, out, _ = do(t, "The tests passed on the first run.\n", "self-talk", "-", "--max", "1")
+	assert.Equal(t, 0, code)
+	assert.Contains(t, out, "SELFTALK OK files=1")
+
+	code, out, _ = do(t, "", "memory", "search", "--root", "testdata/corpus", "--", "-lantern")
 	assert.Equal(t, 0, code, "after -- a word may start with -")
+	assert.Contains(t, out, `k=5 channels=bm25`)
 	assert.Contains(t, out, `query="-lantern"`)
 }
 

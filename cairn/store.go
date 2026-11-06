@@ -308,9 +308,9 @@ func open(store, session, source string, now time.Time, publish string) (openRec
 	case flat:
 		return rec, before, nil
 	case !ok || !rec.found:
-		logSource, logPublish := source, publish
+		logSource, logPublish := source, cmp.Or(publish, "never")
 		if !ok {
-			header := fmt.Sprintf("# cairn %s\n\nOpened: %s\nSource: %s\nPublish: %s\n", session, stamp(now), source, publish)
+			header := fmt.Sprintf("# cairn %s\n\nOpened: %s\nSource: %s\nPublish: %s\n", session, stamp(now), source, logPublish)
 			if err := writeNew(sessionFile(store, session), []byte(header)); err != nil && !errors.Is(err, os.ErrExist) {
 				return rec, false, err
 			}
@@ -325,7 +325,7 @@ func open(store, session, source string, now time.Time, publish string) (openRec
 			return rec, false, err
 		}
 	}
-	if rec.publish != publish || (source != "" && source != rec.source) {
+	if (publish != "" && rec.publish != publish) || (source != "" && source != rec.source) {
 		again := []string{"--store", store, "--session", session}
 		if rec.source != "" {
 			again = append(again, "--source", rec.source)
@@ -647,10 +647,8 @@ func runStore(verb string, args []string, stdin io.Reader, stdout, stderr io.Wri
 	for _, want := range []struct {
 		name, v string
 		ok      bool
-	}{{"store", *store, true}, {"session", *session, verb != "index"}, {"entry", *entry, verb == "append" || verb == "receipt"}, {"publish", *publish, verb == "open"}} {
-		if want.ok && want.v == "" && want.name == "publish" {
-			problems = append(problems, "--publish is required: one of "+strings.Join(policies, ", ")+"; manual is the usual choice")
-		} else if want.ok && want.v == "" {
+	}{{"store", *store, true}, {"session", *session, verb != "index"}, {"entry", *entry, verb == "append" || verb == "receipt"}} {
+		if want.ok && want.v == "" {
 			problems = append(problems, "--"+want.name+" is required")
 		}
 	}
@@ -664,7 +662,7 @@ func runStore(verb string, args []string, stdin io.Reader, stdout, stderr io.Wri
 	if at := badUTF8(*source); at >= 0 {
 		problems = append(problems, fmt.Sprintf("--source is not valid UTF-8 at byte %d", at))
 	}
-	if *publish != "" && !slices.Contains(policies, *publish) {
+	if (*publish != "" || given["publish"]) && !slices.Contains(policies, *publish) {
 		problems = append(problems, fmt.Sprintf("--publish %s is not a policy; it is one of %s", strconv.Quote(*publish), strings.Join(policies, ", ")))
 	}
 	if verb == "append" && given["text"] == given["file"] {
@@ -707,7 +705,7 @@ func runStore(verb string, args []string, stdin io.Reader, stdout, stderr io.Wri
 		if err != nil {
 			return fail(err)
 		}
-		kv := []any{"session", *session, "store", *store, "source", rec.source, "publish", *publish}
+		kv := []any{"session", *session, "store", *store, "source", rec.source, "publish", rec.publish}
 		if reopened {
 			kv = append(kv, "reopened", true)
 			if !rec.opened.IsZero() {

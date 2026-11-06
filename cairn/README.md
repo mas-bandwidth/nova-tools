@@ -26,7 +26,7 @@ A **store** is a directory you name with `--store`. A **session** is a named
 group of entries. Each entry has a **stamp** (the UTC time it was stored), a
 **source** (a pointer you give, such as a file name; never opened) and a
 **policy** (`never`, `manual`, `deferred` or `immediate`: whether you mean to
-publish it later). nova-cairn publishes nothing, whatever the policy.
+publish it later; default `never` on `open`). nova-cairn publishes nothing, whatever the policy.
 
 ```sh
 nova-cairn open --store store --session 2026-11-05 --publish manual --source notes/today.md
@@ -81,8 +81,8 @@ MEMORY HIT cand=1 rank=1 score=3.02 score-channel=bm25 class=. name=lantern type
 MEMORY HIT cand=1 rank=2 score=0.18 score-channel=bm25 class=entries name=- type=- root=store store=store session=2026-11-05 entry=lesson-1 stamp=2026-11-05T23:45:59.433149355Z: entries/2026-11-05/lesson-1.json:1 "Read the file before claiming what it says."
 ```
 
-`OK`, `CAND`, `NOTE` and `CAL` lines are partly left out. `search` and `check` need
-`--channels bm25` and a positive `--k`, and print at most `k` passages, one per
+`OK`, `CAND`, `NOTE` and `CAL` lines are partly left out. `search` and `check` take
+`--channels bm25` (default `bm25`) and a positive `--k` (default `5`), and print at most `k` passages, one per
 file (its best paragraph). `check` compares each paragraph of a draft (`-`
 reads stdin) and never exits 1. `--exclude <glob>` skips paths and repeats.
 `memory stats` prints the counts.
@@ -159,11 +159,11 @@ stops the run; skip it with `--skip`.
 
 A refusal is one line on stderr, exit 2:
 `nova-cairn <verb>: <what is wrong>; run: <what to run next>`. A conflict
-prints a FAILED line and exits 1. Put flags before arguments.
+prints a FAILED line and exits 1.
 
 | You see | Do next |
 |---|---|
-| Unknown or late flag, bad id or policy, no session, no `--links`, a glob that matches nothing | Follow the `-h` or the `open` command the line names. |
+| Unknown flag, bad id or policy, no session, no `--links`, a glob that matches nothing | Follow the `-h` or the `open` command the line names. |
 | `OPEN FAILED` (another policy or source) | Reuse the recorded settings, or use a new session id. |
 | `APPEND FAILED` (same id, other words) | Run the printed `receipt`; use a new entry id. |
 | Memory file unreadable or over 8 MiB | Run the printed command with `--exclude <file>`. |

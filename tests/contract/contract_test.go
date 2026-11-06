@@ -43,7 +43,7 @@ var toolSpecs = []toolSpec{
 	{dir: "cairn", verbs: [][]string{{"open"}, {"append"}, {"index"}, {"receipt"}, {"self-talk"},
 		{"memory", "stats"}, {"memory", "search"}, {"memory", "check"}, {"memory", "verify"}, {"help"}, {"version"}},
 		missing: []missingCase{
-			{[]string{"open"}, []string{"--store", "--session", "--publish"}},
+			{[]string{"open"}, []string{"--store", "--session"}},
 			{[]string{"memory", "search"}, []string{"--root"}}}},
 	{dir: "config", verbs: [][]string{
 		{"machine", "list"}, {"machine", "show"}, {"machine", "add"}, {"machine", "set"}, {"machine", "remove"},

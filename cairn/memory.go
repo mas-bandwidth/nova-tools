@@ -435,8 +435,8 @@ func runMemory(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	fs.Var(&r.exclude, "exclude", "a path or glob to skip, repeatable")
 	switch verb {
 	case "search", "check":
-		fs.StringVar(channels, "channels", "", "bm25")
-		fs.IntVar(k, "k", 0, "a positive number of receipts per query")
+		fs.StringVar(channels, "channels", "bm25", "bm25")
+		fs.IntVar(k, "k", 5, "a positive number of receipts per query")
 	case "verify":
 		fs.StringVar(links, "links", "", "gate or info")
 		fs.Var(&coverage, "coverage", "an A:B glob pair")
