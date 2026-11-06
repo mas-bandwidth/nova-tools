@@ -499,7 +499,13 @@ func (t tool) seatAdd(args []string) error {
 	}
 	home, _ := os.UserHomeDir()
 	pins := cmp.Or(envValue(t.environ, "NOVA_SECRETS_PINS"), filepath.Join(cmp.Or(envValue(t.environ, "HOME"), home), ".config", "nova-secrets", "pins"))
-	fmt.Fprintf(t.stdout, "SECRETS SEAT ADD OK seat=%s committed %s\n", seat, next("nova-secrets", "set", "DB_PASSWORD", "--as", seat, "--store", o.store, "--key", t.keyFile(seat), "--pins", pins))
+	// next runs from this machine: set needs this node's own seat and key (a new seat's key is on its own machine)
+	own := t.ownSeat()
+	then := next("age-keygen", "-o", t.keyFile(own))
+	if _, err := os.Stat(t.keyFile(own)); err == nil {
+		then = next("nova-secrets", "set", "DB_PASSWORD", "--as", own, "--store", o.store, "--key", t.keyFile(own), "--pins", pins)
+	}
+	fmt.Fprintf(t.stdout, "SECRETS SEAT ADD OK seat=%s committed %s\n", seat, then)
 	return nil
 }
 
