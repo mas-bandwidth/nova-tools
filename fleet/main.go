@@ -16,6 +16,7 @@ import (
 	"os/signal"
 	"path"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"syscall"
@@ -76,8 +77,18 @@ Everything after -- is passed to ansible-playbook as written (-e, -l, -v, ...).
 nova-fleet show %[1]s prints the play.
 `
 
+// noController refuses a run on Windows, which ansible-core cannot control from.
+func noController(verb string, stderr io.Writer) bool {
+	if goos != "windows" {
+		return false
+	}
+	fmt.Fprintf(stderr, "nova-fleet %s: ansible-core has no Windows controller, so plays run from a Linux, macOS or WSL control node; run: nova-fleet %s there\n", verb, verb)
+	return true
+}
+
 // The exec seam: unit tests replace these.
 var (
+	goos     = runtime.GOOS
 	lookPath = exec.LookPath
 	runCmd   = func(bin string, args, env []string) (int, error) {
 		cmd := exec.Command(bin, args...)
@@ -316,6 +327,9 @@ func runPlay(play string, args []string, stdout, stderr io.Writer, refuse func(s
 		default:
 			return refuse(play, "unexpected argument %s (ansible-playbook arguments go after --)", a)
 		}
+	}
+	if noController(play, stderr) {
+		return 2
 	}
 	if inventory != "" {
 		abs, err := filepath.Abs(inventory)

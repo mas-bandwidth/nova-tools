@@ -275,3 +275,27 @@ func TestPlayArgument(t *testing.T) {
 		t.Errorf("join -h: code %d stdout %q", code, out)
 	}
 }
+
+// On Windows a play or up is refused with the reason; help still works.
+func TestNoWindowsController(t *testing.T) {
+	f := &fake{found: map[string]string{"ansible-playbook": "/a/ansible-playbook", "nova-config": "/b/nova-config"}}
+	f.install(t)
+	old := goos
+	t.Cleanup(func() { goos = old })
+	goos = "windows"
+	for _, args := range [][]string{{"install"}, {"up", "--tools", "v1.0.0", "a=1.2.3.4"}} {
+		code, _, errs := runArgs(args...)
+		if code != 2 || !strings.HasPrefix(errs, "nova-fleet "+args[0]+": ansible-core has no Windows controller") {
+			t.Errorf("%q: code %d stderr %q", args, code, errs)
+		}
+	}
+	if f.argv != nil {
+		t.Errorf("ran ansible-playbook on windows: %q", f.argv)
+	}
+	if code, _, _ := runArgs("install", "-h"); code != 0 {
+		t.Errorf("install -h on windows: code %d", code)
+	}
+	if code, _, errs := runArgs("install", "--bogus"); code != 2 || !strings.Contains(errs, "unknown flag --bogus") {
+		t.Errorf("a malformed run on windows is refused as malformed first: %q", errs)
+	}
+}
