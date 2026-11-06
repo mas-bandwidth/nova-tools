@@ -7,6 +7,7 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/json"
@@ -22,6 +23,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"unicode"
 
 	"gopkg.in/yaml.v3"
 )
@@ -36,7 +38,7 @@ nova-secrets init --store <dir> --recovery <age-public-key> [--pins <dir>]
   work tree: git init, .sops.yaml with no rules, recovery.pub, one commit. Refuses a store that exists.
   The recovery key is a public key (age-keygen -y <file>); keep its private half offline. --pins also writes
   it to <dir>/recovery.pub, the control node's pin, outside the store (grant reads it).
-  Prints: SECRETS INIT OK store=<dir> next: nova-secrets seat add <seat> <age-pubkey> --store <dir>
+  Prints: SECRETS INIT OK store=<dir> next=<this node's seat add, or the age-keygen -o that makes its key first>
 
 nova-secrets seat add <seat> <age-public-key> --store <dir>
   Add the seat's rule to .sops.yaml: its key and the recovery key may open <seat>.yaml. Commits .sops.yaml.
@@ -288,10 +290,7 @@ func (t tool) parse(verb string, args []string, npos int, needKey bool, also ...
 		return o, nil, bad("unknown flag --as")
 	}
 	if o.as == "" && !noSeat {
-		if o.as = envValue(t.environ, "NOVA_SECRETS_SEAT"); o.as == "" {
-			h, _ := os.Hostname() // an empty name fails the seat check below
-			o.as, _, _ = strings.Cut(h, ".")
-		}
+		o.as = t.ownSeat() // an empty name fails the seat check below
 	}
 	if !noSeat && !seatName.MatchString(o.as) {
 		return o, nil, bad("seat name %q: letters, digits, - and _ only", o.as)
@@ -302,6 +301,44 @@ func (t tool) parse(verb string, args []string, npos int, needKey bool, also ...
 		}
 	}
 	return o, pos, nil
+}
+
+// ownSeat is this node's seat: $NOVA_SECRETS_SEAT, else the short hostname.
+func (t tool) ownSeat() string {
+	if s := envValue(t.environ, "NOVA_SECRETS_SEAT"); s != "" {
+		return s
+	}
+	h, _ := os.Hostname()
+	s, _, _ := strings.Cut(h, ".")
+	return s
+}
+
+// keyFile is where a seat's key is kept: $NOVA_SECRETS_KEY for this node's own seat, else
+// $HOME/.config/nova-secrets/<seat>.key.
+func (t tool) keyFile(seat string) string {
+	if k := envValue(t.environ, "NOVA_SECRETS_KEY"); k != "" && seat == t.ownSeat() {
+		return k
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(cmp.Or(envValue(t.environ, "HOME"), home), ".config", "nova-secrets", seat+".key")
+}
+
+// next is an OK line's last field (docs/CLI-STYLE.md): the command to run next, each word shell-quoted (q), then
+// field-escaped, a blank, =, backslash or control character written \xNN (\uNNNN past ASCII).
+func next(argv ...string) string {
+	words := make([]string, len(argv))
+	for i, a := range argv {
+		words[i] = q(a)
+	}
+	var b strings.Builder
+	for _, r := range strings.Join(words, " ") {
+		if r == '=' || r == '\\' || unicode.IsSpace(r) || unicode.IsControl(r) {
+			fmt.Fprintf(&b, map[bool]string{true: `\x%02x`, false: `\u%04x`}[r < 0x80], r)
+		} else {
+			b.WriteRune(r)
+		}
+	}
+	return "next=" + b.String()
 }
 
 func envValue(env []string, name string) string {
@@ -460,7 +497,9 @@ func (t tool) seatAdd(args []string) error {
 	if err := t.commit(o, "", "seat "+seat, ".sops.yaml is written: run:", ".sops.yaml"); err != nil {
 		return err
 	}
-	fmt.Fprintf(t.stdout, "SECRETS SEAT ADD OK seat=%s committed; next: the seat's own key runs: nova-secrets set NAME --as %s --store %s --key <file> --pins <dir>\n", seat, seat, o.store)
+	home, _ := os.UserHomeDir()
+	pins := cmp.Or(envValue(t.environ, "NOVA_SECRETS_PINS"), filepath.Join(cmp.Or(envValue(t.environ, "HOME"), home), ".config", "nova-secrets", "pins"))
+	fmt.Fprintf(t.stdout, "SECRETS SEAT ADD OK seat=%s committed %s\n", seat, next("nova-secrets", "set", "DB_PASSWORD", "--as", seat, "--store", o.store, "--key", t.keyFile(seat), "--pins", pins))
 	return nil
 }
 
@@ -491,12 +530,7 @@ func (t tool) seatRemove(args []string) error {
 	if _, err := os.Lstat(filepath.Join(o.pins, seat+".ledger")); err == nil {
 		return refuse("this node granted %s values (%s/%s.ledger); delete that ledger and the pin %s/%s.pub first, then run again", seat, o.pins, seat, o.pins, seat)
 	}
-	own := envValue(t.environ, "NOVA_SECRETS_SEAT")
-	if own == "" {
-		h, _ := os.Hostname()
-		own, _, _ = strings.Cut(h, ".")
-	}
-	if ledgers, _ := filepath.Glob(filepath.Join(o.pins, "*.ledger")); strings.EqualFold(seat, own) && len(ledgers) > 0 {
+	if ledgers, _ := filepath.Glob(filepath.Join(o.pins, "*.ledger")); strings.EqualFold(seat, t.ownSeat()) && len(ledgers) > 0 {
 		return refuse("%s is this node's own seat, the one that granted %d seat(s) their values (%s/*.ledger); remove those seats first, then run again", seat, len(ledgers), o.pins)
 	}
 	cfgPath := filepath.Join(o.store, ".sops.yaml")
@@ -1267,7 +1301,13 @@ func (t tool) initStore(args []string) error {
 			return err
 		}
 	}
-	fmt.Fprintf(t.stdout, "SECRETS INIT OK store=%s next: nova-secrets seat add <seat> <age-pubkey> --store %s\n", o.store, o.store)
+	seat := t.ownSeat() // next: its seat add, with its key's public half; the age-keygen -o that makes the key first
+	key := t.keyFile(seat)
+	then := next("age-keygen", "-o", key)
+	if pub, err := t.publicOf(opts{store: o.store, key: key}); err == nil {
+		then = next("nova-secrets", "seat", "add", seat, pub, "--store", o.store)
+	}
+	fmt.Fprintf(t.stdout, "SECRETS INIT OK store=%s %s\n", o.store, then)
 	return nil
 }
 

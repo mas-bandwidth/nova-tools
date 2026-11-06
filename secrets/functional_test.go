@@ -70,7 +70,7 @@ func TestARealStore(t *testing.T) {
 	ada := filepath.Join(keys, "ada.key")
 	adaPub := keygen("ada")
 	pins := filepath.Join(dir, "pins")
-	assert.Contains(t, run("", 0, "init", "--store", store, "--recovery", recPub, "--pins", pins), "SECRETS INIT OK store="+store+" next: nova-secrets seat add")
+	assert.Contains(t, run("", 0, "init", "--store", store, "--recovery", recPub, "--pins", pins), "SECRETS INIT OK store="+store+" next=age-keygen\\x20-o\\x20"+dir+"/.config/nova-secrets/")
 	assert.Contains(t, run("", 2, "init", "--store", store, "--recovery", recPub), "store "+store+" exists; use: nova-secrets seat add")
 	git("log", "--oneline")
 	assert.Contains(t, run("", 2, "init", "--store", filepath.Join(store, "sub"), "--recovery", recPub), "is inside the git work tree")
