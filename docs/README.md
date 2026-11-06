@@ -202,9 +202,9 @@ and on macOS arm64:
 The labels are the host's inventory groups, then the `os` and `arch` of its
 machine row. `bench` is there because a machine row without `--roles` gets the
 role `bench`, and `runner` because its `runners` value is above zero. On macOS
-the play then stops with `sudo: a password is required` (exit 2), because its
-check of `/Library/LaunchDaemons` runs as root even under `--check`; add `-K`
-on a Mac to finish the check.
+the play then fails after that line with `sudo: a password is required` (exit
+2, which the `grep` above hides), because its look at `/Library/LaunchDaemons`
+runs as root even under `--check`; add `-K` on a Mac to let the check finish.
 
 To apply it, store a registration token, then run without `--check`; `-K`
 asks for the sudo password the service files need. The token goes in a
@@ -261,7 +261,7 @@ reaches the program when the unit starts and is in no file Ansible writes:
 ```sh
 nova-config service add api --machine here --argv '["sh","-c","test -n \"$API_TOKEN\" && echo token present; sleep 60"]' --seat here --keys API_TOKEN --keepalive true --actor you
 ansible-playbook -i "$work/inventory" fleet/services.yml -e ansible_connection=local -e nova_service_only=api \
-  -e nova_secrets_store="$work/store" -e nova_secrets_key_dir="$work/keys" --check --diff | grep -E 'ExecStart|<string>' | grep -E 'nova-secrets|--only|API_TOKEN'
+  -e nova_secrets_store="$work/store" -e nova_secrets_key_dir="$work/keys" --check --diff | grep -E 'ExecStart|<string>(.*/nova-secrets|--only|API_TOKEN)</string>'
 ```
 
 The diff shows the unit starting `nova-secrets exec` with `--only API_TOKEN`
