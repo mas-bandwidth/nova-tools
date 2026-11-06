@@ -13,3 +13,5 @@ With **nova-tools**, your AIs can:
 * Retain memory across sessions
 
 For more information, please ask your AI to [read the docs](docs/README.md)
+
+Open source. Take whatever is useful. [MIT License](LICENSE).
