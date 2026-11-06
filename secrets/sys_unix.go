@@ -3,7 +3,9 @@
 package main
 
 import (
+	"cmp"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"syscall"
@@ -53,4 +55,36 @@ func checkPrivate(_ string, fi os.FileInfo) error {
 		return refuse("not private")
 	}
 	return nil
+}
+
+// readHidden reads one line from the terminal f with echo off, so a pasted value is never shown.
+func readHidden(f *os.File) ([]byte, error) {
+	fd := int(f.Fd())
+	old, err := unix.IoctlGetTermios(fd, getTermios)
+	if err != nil {
+		return nil, err
+	}
+	quiet := *old
+	quiet.Lflag &^= unix.ECHO
+	quiet.Lflag |= unix.ICANON | unix.ISIG
+	if err := unix.IoctlSetTermios(fd, setTermios, &quiet); err != nil {
+		return nil, err
+	}
+	defer func() { _ = unix.IoctlSetTermios(fd, setTermios, old) }()
+	var line []byte
+	b := make([]byte, 1)
+	for len(line) <= maxValue+2 {
+		n, err := f.Read(b)
+		if n == 0 || err != nil {
+			if len(line) > 0 {
+				return line, nil
+			}
+			return nil, cmp.Or(err, io.EOF)
+		}
+		if b[0] == '\n' || b[0] == '\r' {
+			return line, nil
+		}
+		line = append(line, b[0])
+	}
+	return line, nil
 }
