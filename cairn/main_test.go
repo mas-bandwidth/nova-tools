@@ -136,6 +136,23 @@ func TestOpenRemedies(t *testing.T) {
 	assert.True(t, strings.HasSuffix(errs, "; run: ls -ld "+parent+"\n"), errs)
 }
 
+// TestAppendNextOnlyOnFirstEntry: the first entry of a session ends APPEND OK
+// with the index command; later entries and duplicates do not repeat it.
+func TestAppendNextOnlyOnFirstEntry(t *testing.T) {
+	t.Parallel()
+	store := filepath.Join(t.TempDir(), "s")
+	do(t, "", "open", "--store", store, "--session", "s1", "--publish", "manual")
+	code, out, _ := do(t, "", "append", "--store", store, "--session", "s1", "--entry", "e1", "--text", "words")
+	require.Equal(t, 0, code)
+	assert.Contains(t, out, ` next=nova-cairn\x20index\x20--store\x20`+store)
+	code, out, _ = do(t, "", "append", "--store", store, "--session", "s1", "--entry", "e2", "--text", "more")
+	require.Equal(t, 0, code)
+	assert.NotContains(t, out, "next=")
+	code, out, _ = do(t, "", "append", "--store", store, "--session", "s1", "--entry", "e1", "--text", "words")
+	require.Equal(t, 0, code)
+	assert.NotContains(t, out, "next=")
+}
+
 // TestFilesOnDisk pins the formats on disk, so cairns already written keep reading.
 func TestFilesOnDisk(t *testing.T) {
 	t.Parallel()
@@ -422,9 +439,9 @@ func TestMemoryFindsStoreEntries(t *testing.T) {
 	at := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
 	_, _, err := open(store, "s1", "", at, "manual")
 	require.NoError(t, err)
-	_, _, _, err = appendEntry(store, "s1", "e1", "The brass lantern illuminates the harbor.", "", at, "manual")
+	_, _, _, _, err = appendEntry(store, "s1", "e1", "The brass lantern illuminates the harbor.", "", at, "manual")
 	require.NoError(t, err)
-	_, _, _, err = appendEntry(store, "s1", "e2", "tide tables", "", at.Add(time.Second), "manual")
+	_, _, _, _, err = appendEntry(store, "s1", "e2", "tide tables", "", at.Add(time.Second), "manual")
 	require.NoError(t, err)
 
 	code, out, _ := do(t, "", "memory", "search", "--root", store, "--channels", "bm25", "--k", "2", "brass", "lantern")

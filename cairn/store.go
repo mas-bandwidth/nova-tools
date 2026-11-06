@@ -400,31 +400,31 @@ func flatRows(path, session string) ([]row, []string, error) {
 
 // appendEntry stores the exact words under a stable id: a retry of the same words
 // is a duplicate, other words under the same id a conflict, never an overwrite.
-func appendEntry(store, session, id, text, source string, now time.Time, publish string) (r row, dup, created bool, err error) {
+func appendEntry(store, session, id, text, source string, now time.Time, publish string) (r row, dup, created, first bool, err error) {
 	if text == "" {
-		return r, false, false, refuse("", "empty words store nothing; give the words to keep with --text or --file")
+		return r, false, false, false, refuse("", "empty words store nothing; give the words to keep with --text or --file")
 	}
 	_, flat, ok := locate(store, session)
 	if !ok {
 		if info, serr := os.Stat(store); serr != nil || !info.IsDir() {
-			return r, false, false, refuse(command("open", "--store", store, "--session", session, "--publish", cmp.Or(publish, "manual")), "store %q does not exist; open it first, or fix --store", store)
+			return r, false, false, false, refuse(command("open", "--store", store, "--session", session, "--publish", cmp.Or(publish, "manual")), "store %q does not exist; open it first, or fix --store", store)
 		}
 		if info, serr := os.Stat(filepath.Join(store, "sessions")); !regular(logFile(store)) && (serr != nil || !info.IsDir()) {
-			return r, false, false, refuse(command("open", "--store", store, "--session", session, "--publish", cmp.Or(publish, "manual")), "directory %q holds no store; open it first, or fix --store", store)
+			return r, false, false, false, refuse(command("open", "--store", store, "--session", session, "--publish", cmp.Or(publish, "manual")), "directory %q holds no store; open it first, or fix --store", store)
 		}
 		if !slices.Contains(policies, publish) {
 			publish = "manual"
 		}
 		if _, _, err := open(store, session, source, now, publish); err != nil {
-			return r, false, false, err
+			return r, false, false, false, err
 		}
 		created = true
 	} else if flat {
-		return r, false, false, refuse("", "session %q is a flat record, which this tool reads but does not append to; append to it by hand, or open another session id", session)
+		return r, false, false, false, refuse("", "session %q is a flat record, which this tool reads but does not append to; append to it by hand, or open another session id", session)
 	}
 	opened, err := readOpen(store, session)
 	if err != nil {
-		return r, false, created, err
+		return r, false, created, false, err
 	}
 	named := source
 	source = cmp.Or(source, opened.source)
@@ -432,52 +432,57 @@ func appendEntry(store, session, id, text, source string, now time.Time, publish
 		if !opened.found {
 			publish = healPolicy(store, session)
 			if rec, _, err := open(store, session, source, now, publish); err != nil {
-				return r, false, created, err
+				return r, false, created, false, err
 			} else {
 				opened = rec
 			}
 			source = cmp.Or(named, opened.source)
 		}
 		if !slices.Contains(policies, opened.publish) {
-			return r, false, created, refuse(command("open", "--store", store, "--session", session, "--publish", healPolicy(store, session)),
+			return r, false, created, false, refuse(command("open", "--store", store, "--session", session, "--publish", healPolicy(store, session)),
 				"--publish is required: session %q has no open record naming a policy in %s; open it to log one", session, logFile(store))
 		}
 		publish = opened.publish
 	} else if opened.found && slices.Contains(policies, opened.publish) && publish != opened.publish {
-		return r, false, created, conflict(command("append", "--store", store, "--session", session, "--entry", id, "--publish", opened.publish),
+		return r, false, created, false, conflict(command("append", "--store", store, "--session", session, "--entry", id, "--publish", opened.publish),
 			"session %q holds publish=%s; --publish %s names another", session, opened.publish, publish)
 	}
+	entries, rerr := os.ReadDir(filepath.Join(store, "entries", session))
+	if rerr != nil && !os.IsNotExist(rerr) {
+		return r, false, created, false, rerr
+	}
+	first = len(entries) == 0
 	final := entryPath(store, session, id)
 	for try := 0; ; try++ {
 		if _, err := os.Stat(final); err == nil {
 			prev, t, err := readEntry(store, session, id)
 			if err != nil {
-				return r, false, created, err
+				return r, false, created, false, err
 			}
 			if prev.Text != text {
-				return r, false, created, conflict(command("receipt", "--store", store, "--session", session, "--entry", id, "--text"),
+				return r, false, created, false, conflict(command("receipt", "--store", store, "--session", session, "--entry", id, "--text"),
 					"entry %q already holds different words; append these under a new --entry id, or read what it holds", id)
 			}
 			if named != "" && named != prev.Source { // a retry's --source is never ignored
-				return r, false, created, conflict(command("receipt", "--store", store, "--session", session, "--entry", id),
+				return r, false, created, false, conflict(command("receipt", "--store", store, "--session", session, "--entry", id),
 					"entry %q already holds these words with source=%s; --source %s names another", id, cmp.Or(prev.Source, "-"), named)
 			}
-			return prev.row(t), true, created, ensurePointer(store, session, id, t)
+			return prev.row(t), true, created, false, ensurePointer(store, session, id, t)
 		} else if !os.IsNotExist(err) {
-			return r, false, created, err
+			return r, false, created, false, err
 		}
 		rec, _ := json.Marshal(entryFile{session, id, stamp(now), source, publish, text})
 		if err := writeNew(final, rec); errors.Is(err, os.ErrExist) && try == 0 {
 			continue // lost a race to another writer: read the winner
 		} else if err != nil {
-			return r, false, created, err
+			return r, false, created, false, err
 		}
 		break
 	}
 	if err := ensurePointer(store, session, id, now); err != nil {
-		return r, false, created, err
+		return r, false, created, false, err
 	}
-	return row{session, id, source, publish, now, len(text)}, false, created, appendLog(store, "append", session, id, stamp(now), publish, source)
+	return row{session, id, source, publish, now, len(text)}, false, created, first, appendLog(store, "append", session, id, stamp(now), publish, source)
 }
 
 // ensurePointer lands the ENTRY line in the readable record, once (it heals an interrupted append).
@@ -732,11 +737,15 @@ func runStore(verb string, args []string, stdin io.Reader, stdout, stderr io.Wri
 			}
 			return fail(refuse(next, "text is not valid UTF-8 at byte %d; convert it first (iconv -f <its encoding> -t UTF-8)", at))
 		}
-		r, dup, created, err := appendEntry(*store, *session, *entry, string(words), *source, now, *publish)
+		r, dup, created, first, err := appendEntry(*store, *session, *entry, string(words), *source, now, *publish)
 		if err != nil {
 			return fail(err)
 		}
-		line(stdout, "APPEND OK", "session", *session, "entry", *entry, "source", r.source, "persisted", true, "published", false, "publish", r.policy, "duplicate", dup, "stamp", stamp(r.stamp), "opened", created)
+		kv := []any{"session", *session, "entry", *entry, "source", r.source, "persisted", true, "published", false, "publish", r.policy, "duplicate", dup, "stamp", stamp(r.stamp), "opened", created}
+		if first {
+			kv = append(kv, "next", command("index", "--store", *store))
+		}
+		line(stdout, "APPEND OK", kv...)
 	case "receipt":
 		r, words, err := receipt(*store, *session, *entry)
 		if err != nil {

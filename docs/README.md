@@ -463,7 +463,8 @@ nova-cairn memory search --root "$work/cairn" --channels bm25 --k 3 bench unit t
 ```
 
 `open` prints a line starting `OPEN OK`, and `append` one starting
-`APPEND OK session=today entry=lesson-1`. The search prints three lines, shown
+`APPEND OK session=today entry=lesson-1` and ending `opened=false`; a
+session's first entry ends with `next=<the index command>`. The search prints three lines, shown
 here shortened:
 
 ```text
