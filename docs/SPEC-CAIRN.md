@@ -50,7 +50,11 @@ nova-cairn append --store ~/cairn --session 2026-11-05 --entry lesson-1 --text "
 ```
 
 The words come from exactly one of `--text` or `--file <path>` (`--file -`
-reads stdin), kept byte for byte. The entry takes the session's source and
+reads stdin), kept byte for byte. They must be valid UTF-8, because the entry
+file is JSON: anything else is refused (exit 2) naming the first bad byte,
+so everything accepted is kept exactly. A new id (on `open` and `append`)
+and `--source` must be valid UTF-8 too; the read verbs still take ids an older
+build wrote with other bytes, and memory leaves such entries out with a WARN. The entry takes the session's source and
 policy unless the line names them. The same line again prints
 `duplicate=true` with the first stamp and writes nothing. The same id with
 other words, or a retry whose `--source` names another source than the
@@ -64,9 +68,11 @@ nova-cairn index --store ~/cairn
 
 The first line, `INDEX OK sessions=<n> entries=<n>`, has the full counts.
 `--session <id>` lists one session. `--max <n>` caps each list (default 20,
-`0` for all), and a capped list ends with a `MORE` line on stdout.
+`0` for all); each capped kind (sessions, entries) ends with its own `MORE`
+line on stdout.
 
-**receipt** reads one entry back.
+**receipt** reads one entry back. It takes `--store`, `--session` and
+`--entry`; there is no stamp flag.
 
 ```
 nova-cairn receipt --store ~/cairn --session 2026-11-05 --entry lesson-1 --text
@@ -130,7 +136,8 @@ memory builds its index in memory on every run, so nothing goes stale and
 nothing is written. It skips `.git`, never follows a symlink, and refuses a
 file over 8 MiB by name. `--exclude <glob>` skips paths on every memory verb.
 
-**search** prints the k best passages for some words.
+**search** prints the k best files (notes or entries) for some words, one
+hit per file: its best-scoring paragraph.
 
 ```
 nova-cairn memory search --root ~/notes --channels bm25 --k 3 lantern brass
@@ -173,6 +180,9 @@ Globs match paths relative to `--root`: here `~/memory/notes/*.md` is
   frontmatter. `--exempt <prefix>` excuses files by basename.
 - `--links gate`: every `[[wikilink]]` resolves to a file or a frontmatter
   name. `--links info` lists the ones that do not, without failing.
+
+`--links` is always required. `--links info` with no `--coverage` and no
+`--frontmatter` is refused, because that run could not fail.
 
 A pass proves every note is named or linked in an index, no link is dead,
 and every note has its frontmatter name. It does not prove the words are true or unedited.
