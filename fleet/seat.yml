@@ -1,4 +1,6 @@
-# seat.yml: each machine's seat in the secrets store (docs/FLEET.md, "seat.yml"). The seat is nova_seat (the machine's
+# purpose: each machine's seat in the secrets store (fleet/README.md, "seat.yml"). The seat is nova_seat (the machine's
+#
+# seat.yml: each machine's seat in the secrets store (fleet/README.md, "seat.yml"). The seat is nova_seat (the machine's
 # inventory name unless a host variable says otherwise), the name nova-secrets --as and services.yml open it by.
 #
 #   1. on the machine: the seat key <nova_secrets_key_dir>/<seat>.key made by age-keygen where it is missing, never over
@@ -19,7 +21,7 @@
     - name: the store clone is given
       ansible.builtin.assert:
         that: nova_seal_store is defined and nova_seal_store | length > 0
-        fail_msg: "SEAT STOP: -e nova_seal_store=<the control node's clone of the secrets store> (docs/FLEET.md, \"seat.yml\")"
+        fail_msg: "SEAT STOP: -e nova_seal_store=<the control node's clone of the secrets store> (fleet/README.md, \"seat.yml\")"
         quiet: true
 
     - name: the control node has what the run needs

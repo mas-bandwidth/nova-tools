@@ -1,5 +1,7 @@
-# postgres.yml: the PostgreSQL nova-config keeps the fleet in, on each machine of the `services` group (docs/FLEET.md,
-# "postgres.yml"): postgresql-<nova_pg_version> from the release's main or the PostgreSQL project's repository (its key
+# purpose: the PostgreSQL nova-config keeps the fleet in, on each machine of the services group
+#
+# postgres.yml: the PostgreSQL nova-config keeps the fleet in, on each machine of the `services` group (fleet/README.md,
+# "postgres"): postgresql-<nova_pg_version> from the release's main or the PostgreSQL project's repository (its key
 # pinned by fingerprint), listening on the tailnet address only, scram-sha-256 from nova_pg_allow_cidr and nothing
 # else; the database, nova-config's roles nova_admin, nova_config and nova_read with a password each made once on the
 # machine (<nova_pg_dir>/<role>.pass, root 0600) and proven over the network, the grants on schema config, and a

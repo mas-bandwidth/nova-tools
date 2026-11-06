@@ -1,5 +1,5 @@
 ---
-# secrets-refresh.yml's defaults (docs/FLEET.md, "secrets-refresh.yml").
+# secrets-refresh.yml's defaults (fleet/README.md, "secrets-refresh").
 
 # false on a machine whose copy is kept by hand (the one that writes the
 # store, say): the play removes any timer there and changes nothing else.
