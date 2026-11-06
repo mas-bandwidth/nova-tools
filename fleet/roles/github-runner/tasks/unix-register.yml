@@ -1,0 +1,16 @@
+---
+# Register runner github_runner_dir. The token is read from the task's stdin into the runner's environment by the
+# shell: it is in no argument and no environment of any process Ansible starts, so `ps` on the host never shows it.
+- name: register with GitHub (the token reaches the runner on its stdin)
+  ansible.builtin.shell: |
+    IFS= read -r ACTIONS_RUNNER_INPUT_TOKEN
+    export ACTIONS_RUNNER_INPUT_TOKEN
+    exec ./config.sh --unattended --url {{ github_runner_url | quote }} --name {{ github_runner_name | quote }} \
+      --labels {{ github_runner_label_string | quote }} --work _work --replace
+  args:
+    executable: /bin/sh
+    chdir: "{{ github_runner_dir }}"
+    creates: "{{ github_runner_dir }}/.runner"
+    stdin: "{{ github_runner_token }}"
+  no_log: true
+  register: github_runner_registration

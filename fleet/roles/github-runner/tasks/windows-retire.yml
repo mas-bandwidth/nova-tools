@@ -5,12 +5,15 @@
   ansible.builtin.set_fact:
     github_runner_dir: "{{ github_runner_base_dir }}\\{{ github_runner_slug }}-{{ runner_index }}"
 
-- name: remove it from GitHub and uninstall the service (the token reaches the runner in its environment)
-  ansible.windows.win_shell: .\config.cmd remove
+- name: remove it from GitHub and uninstall the service (the token reaches the runner on its stdin)
+  ansible.windows.win_shell: |
+    $env:ACTIONS_RUNNER_INPUT_TOKEN = [Console]::In.ReadLine()
+    .\config.cmd remove
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
   args:
     chdir: "{{ github_runner_dir }}"
     removes: "{{ github_runner_dir }}\\.runner"
-  environment: { ACTIONS_RUNNER_INPUT_TOKEN: "{{ github_runner_token | default('') }}" }
+    stdin: "{{ github_runner_token | default('') }}"
   no_log: true
   when: github_runner_deregister | bool and not ansible_check_mode
 

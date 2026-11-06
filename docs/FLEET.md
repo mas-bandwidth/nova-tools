@@ -178,7 +178,8 @@ GitHub Actions runners on every machine of the `runner` group: as many as the ma
 registered to one repository or organization, run as a service that starts at boot, labelled with the machine's roles,
 `os` and `arch`. Linux (amd64, arm64; WSL2 with systemd on counts as Linux), macOS (a LaunchDaemon dropped to the
 login) and native Windows (the runner's own Windows service; `ansible.windows` and an administrator login). Linux and
-macOS use sudo for the service files: add `-K`.
+macOS use sudo for the service files: add `-K`. A Windows host without the collection is refused with the install command
+(`ansible-galaxy collection install -r fleet/requirements.yml`).
 
 | Variable | |
 |---|---|
@@ -191,8 +192,8 @@ ansible-playbook -i ./inventory fleet/github-runners.yml -e github_runner_url=ht
 ```
 
 **The token.** The play reads `GITHUB_RUNNER_TOKEN` on the control node with `nova-secrets exec --only
-GITHUB_RUNNER_TOKEN` and hands it to the runner through its environment: never an argument, never the inventory, never
-a file. Put it in the store the hour you run (a registration token expires in an hour; set `NOVA_SECRETS_STORE` and
+GITHUB_RUNNER_TOKEN` and hands it to the runner on its standard input: never an argument or an environment variable on the host (`ps` shows
+neither), never the inventory, never a file. Put it in the store the hour you run (a registration token expires in an hour; set `NOVA_SECRETS_STORE` and
 `NOVA_SECRETS_KEY` as `docs/SPEC-SECRETS.md` says, or pass `-e '{"github_runner_secrets_args":["--store","S","--key","K"]}'`):
 
 ```
@@ -206,8 +207,9 @@ needs registering, and never under `--check`.
 `<home>/actions-runner/<owner>-<repo>-<i>` (Windows `C:\actions-runner`); registered as `<machine>-<i>` unless
 `.runner` is already there; one service per runner, enabled at boot (systemd unit on Linux). The labels are fixed at
 registration: change them and the play says `LABEL-DRIFT` and leaves the runner alone. A changed unit restarts its
-runner, which ends a job running on it. A machine whose count drops has its highest-numbered runners retired.
-`-e runner_count=N` overrides the row for one run; `github_runner_version` and `github_runner_sha256` move the pin.
+runner, which ends a job running on it. A machine whose count drops has its highest-numbered runners retired, and that removes them from GitHub, which needs a removal token
+(`.../actions/runners/remove-token`, stored the same way; `github_runner_deregister` defaults to true).
+A host in the `runner` group with no `runners` value and no `-e runner_count=N` is refused (never read as 0, which would retire its runners); 0 is an explicit choice. `-e runner_count=N` overrides the row for one run; `github_runner_version` and `github_runner_sha256` move the pin.
 
 **The check.** A second run changes nothing, and `--check --diff` prints no change:
 

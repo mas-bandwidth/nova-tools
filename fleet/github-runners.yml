@@ -7,14 +7,12 @@
 #
 # The registration token is read on the control node with
 # `nova-secrets exec --only GITHUB_RUNNER_TOKEN`; it is not an argument, a variable of the inventory or a file.
-# Variables: fleet/roles/github-runner/defaults/main.yml. Linux and macOS use sudo for the service files (-K);
+# A host's count is its machine row's `runners`; a host with none is refused, not read as 0.
+# -e runner_count=<n> sets it for a run (0 retires every runner). Variables: fleet/roles/github-runner/defaults/main.yml. Linux and macOS use sudo for the service files (-K);
 # a Windows host needs the ansible.windows collection (fleet/requirements.yml) and an administrator login.
 - name: GitHub Actions runners
   hosts: runner
   gather_facts: true
   gather_subset: [min]
-  vars:
-    # no host carries more than its row says; -e runner_count=<n> overrides for a run
-    runner_count: "{{ runners | default(0) | int }}"
   roles:
     - github-runner

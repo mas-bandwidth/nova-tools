@@ -27,12 +27,17 @@
   register: github_runner_stopped
   changed_when: "'REMOVED' in github_runner_stopped.stdout"
 
-- name: remove the runner from GitHub (the token reaches it in its environment)
-  ansible.builtin.command:
-    argv: [./config.sh, remove]
+# the token on stdin, as in unix-register.yml: never in an argument or an environment `ps` can show
+- name: remove the runner from GitHub (the token reaches the runner on its stdin)
+  ansible.builtin.shell: |
+    IFS= read -r ACTIONS_RUNNER_INPUT_TOKEN
+    export ACTIONS_RUNNER_INPUT_TOKEN
+    exec ./config.sh remove
+  args:
+    executable: /bin/sh
     chdir: "{{ github_runner_dir }}"
     removes: "{{ github_runner_dir }}/.runner"
-  environment: { ACTIONS_RUNNER_INPUT_TOKEN: "{{ github_runner_token | default('') }}" }
+    stdin: "{{ github_runner_token | default('') }}"
   no_log: true
   when: github_runner_deregister | bool and not ansible_check_mode
 

@@ -5,25 +5,36 @@
     github_runner_dir: "{{ github_runner_base_dir }}\\{{ github_runner_slug }}-{{ runner_index }}"
     github_runner_name: "{{ inventory_hostname }}-{{ runner_index }}"
 
+- name: nothing registered yet for this runner
+  ansible.builtin.set_fact:
+    github_runner_registration: { changed: false }
+
 - name: the directory
   ansible.windows.win_file: { path: "{{ github_runner_dir }}", state: directory }
   register: github_runner_made
+
+- name: is the release in the cache
+  ansible.windows.win_stat:
+    path: "{{ github_runner_base_dir }}\\.cache\\actions-runner-{{ github_runner_os }}-{{ github_runner_arch }}-{{ github_runner_version }}.zip"
+  register: github_runner_cached
 
 - name: unpack the runner where config.cmd is missing
   ansible.windows.win_shell: |
     $ErrorActionPreference = 'Stop'
     Expand-Archive -Path '{{ github_runner_base_dir }}\.cache\actions-runner-{{ github_runner_os }}-{{ github_runner_arch }}-{{ github_runner_version }}.zip' -DestinationPath '{{ github_runner_dir }}' -Force
   args: { creates: "{{ github_runner_dir }}\\config.cmd" }
-  when: not (ansible_check_mode and github_runner_made is changed)
+  when: not (ansible_check_mode and (github_runner_made is changed or not github_runner_cached.stat.exists))
 
-- name: register with GitHub and install the service (the token reaches the runner in its environment)
-  ansible.windows.win_shell: >-
-    .\config.cmd --unattended --url '{{ github_runner_url }}' --name '{{ github_runner_name }}'
-    --labels '{{ github_runner_label_string }}' --work _work --replace --runasservice
+- name: register with GitHub and install the service (the token reaches the runner on its stdin)
+  ansible.windows.win_shell: |
+    $env:ACTIONS_RUNNER_INPUT_TOKEN = [Console]::In.ReadLine()
+    .\config.cmd --unattended --url '{{ github_runner_url }}' --name '{{ github_runner_name }}' `
+      --labels '{{ github_runner_label_string }}' --work _work --replace --runasservice
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
   args:
     chdir: "{{ github_runner_dir }}"
     creates: "{{ github_runner_dir }}\\.runner"
-  environment: { ACTIONS_RUNNER_INPUT_TOKEN: "{{ github_runner_token | default('') }}" }
+    stdin: "{{ github_runner_token | default('') }}"
   no_log: true
   register: github_runner_registration
   when: runner_index in github_runner_need and not ansible_check_mode

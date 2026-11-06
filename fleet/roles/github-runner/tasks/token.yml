@@ -1,7 +1,7 @@
 ---
 # The registration (or removal) token, read on the control node from the nova-secrets store
 # and held as a no_log fact for this host only. It is never an argument of any command: the
-# store hands it to a child process through the environment, the runner reads it from
+# store hands it to a child process on stdin, the runner reads it from
 # ACTIONS_RUNNER_INPUT_TOKEN, and it is written nowhere. Not read under --check.
 - name: the token, from the store on the control node
   ansible.builtin.command:
