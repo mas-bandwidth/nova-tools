@@ -30,16 +30,25 @@ type inventory struct {
 	Services group `json:"services"`
 }
 
+// unsafeText is free text a row carries (argv, env values, log), printed as
+// Ansible's {"__ansible_unsafe": text} so it is data and never a template:
+// ansible-core would otherwise render a ${#X}, {{ or {# in it and fail the play.
+type unsafeText string
+
+func (u unsafeText) MarshalJSON() ([]byte, error) {
+	return json.Marshal(map[string]string{"__ansible_unsafe": string(u)})
+}
+
 type invService struct {
-	Name      string            `json:"name"`
-	Argv      []string          `json:"argv"`
-	Seat      string            `json:"seat"`
-	Keys      []string          `json:"keys"`
-	Every     int               `json:"every"`
-	Keepalive bool              `json:"keepalive"`
-	Enabled   bool              `json:"enabled"`
-	Env       map[string]string `json:"env"`
-	Log       string            `json:"log"`
+	Name      string                `json:"name"`
+	Argv      []unsafeText          `json:"argv"`
+	Seat      string                `json:"seat"`
+	Keys      []string              `json:"keys"`
+	Every     int                   `json:"every"`
+	Keepalive bool                  `json:"keepalive"`
+	Enabled   bool                  `json:"enabled"`
+	Env       map[string]unsafeText `json:"env"`
+	Log       unsafeText            `json:"log"`
 }
 
 // inventoryHint is what a usage error of inventory names.
@@ -100,7 +109,7 @@ func build(machines []Row, services []Row, local string) *inventory {
 	inv.Meta.Hostvars = map[string]map[string]any{}
 	byMachine := map[string][]invService{}
 	for _, l := range services {
-		il := invService{Name: l.Name, Seat: l.F["seat"], Keys: []string{}, Env: map[string]string{}, Log: cmp.Or(l.F["log"], serviceLogDir+"/"+l.Name+".log")}
+		il := invService{Name: l.Name, Seat: l.F["seat"], Keys: []string{}, Env: map[string]unsafeText{}, Log: unsafeText(cmp.Or(l.F["log"], serviceLogDir+"/"+l.Name+".log"))}
 		_ = json.Unmarshal([]byte(l.F["argv"]), &il.Argv) // ignored: the row's argv was canonical when written
 		_ = json.Unmarshal([]byte(l.F["env"]), &il.Env)   // ignored: likewise
 		if l.F["keys"] != "" {

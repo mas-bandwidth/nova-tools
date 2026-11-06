@@ -30,9 +30,9 @@ func TestInventory(t *testing.T) {
 	_, out, _ = h.run(t, "inventory", "--host", "bench-b")
 	assert.JSONEq(t, `{
 		"ansible_host": "bench-b.tail", "ansible_user": "nova", "cores": 12, "runners": 2, "nova_os": "linux", "nova_arch": "amd64",
-		"nova_services": [{"name": "member-b", "argv": ["/usr/bin/env", "A=b", "prog"],
+		"nova_services": [{"name": "member-b", "argv": [{"__ansible_unsafe": "/usr/bin/env"}, {"__ansible_unsafe": "A=b"}, {"__ansible_unsafe": "prog"}],
 			"seat": "s-b", "keys": ["A_KEY", "B_KEY"], "every": 0, "keepalive": true, "enabled": true,
-			"env": {}, "log": "~/.local/state/nova/services/member-b.log"}]}`, out)
+			"env": {}, "log": {"__ansible_unsafe": "~/.local/state/nova/services/member-b.log"}}]}`, out)
 
 	_, out, _ = h.run(t, "inventory", "--host", "bench-a")
 	assert.Contains(t, out, `"nova_services": []`, "a machine with no services has an empty list, never none")
