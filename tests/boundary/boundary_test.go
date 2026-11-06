@@ -51,6 +51,7 @@ var allowedRequires = []string{
 	"github.com/jackc/pgx/v5",
 	"github.com/redis/go-redis/v9",
 	"github.com/stretchr/testify",
+	"github.com/tailscale/hujson",
 	"golang.org/x/sys",
 	"gopkg.in/yaml.v3",
 }

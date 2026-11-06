@@ -1,7 +1,7 @@
 package main
 
 import (
-	"encoding/json"
+	"cmp"
 	"fmt"
 	"io"
 	"io/fs"
@@ -18,10 +18,11 @@ const checkHelp = `nova-fleet check [--runners URL]
 
 The control node's preflight, the first step of nova-fleet up: one line per prerequisite,
 CHECK OK <name> <version|path> or CHECK MISSING <name>: <the command that fixes it, for this
-OS, pasteable as it stands, a reason after # when there is one, in paste order>; this node on the tailnet and tagged tag:control; the store, key, seat and
-pins of NOVA_SECRETS_STORE, NOVA_SECRETS_KEY, NOVA_SECRETS_SEAT and NOVA_SECRETS_PINS;
-TAILSCALE_AUTHKEY (and GITHUB_RUNNER_TOKEN with --runners) read from the seat, the reason
-printed when a read fails; and NOVA_PG_DSN once a fleet exists. Tailscale and Ansible are
+OS, pasteable as it stands, a reason after # when there is one, in paste order>; this node on
+the tailnet (a NOTE when not: up joins it); with --runners gh and its login; the store, key,
+seat and pins of NOVA_SECRETS_STORE, NOVA_SECRETS_KEY, NOVA_SECRETS_SEAT and NOVA_SECRETS_PINS;
+TAILSCALE_API_KEY, the one credential a human gives, read from the seat, the reason printed when
+the read fails; and NOVA_PG_DSN once a fleet exists. Tailscale and Ansible are
 required here, never optional. Nothing is changed. Exit: 0 all present; 1 something missing
 (CHECK FAILED missing=<n>); 2 could not run.
 `
@@ -206,52 +207,72 @@ func (u *upRun) control(out io.Writer) int {
 	}
 	if p := u.bin["tailscale"]; p != "" {
 		if o, why, c := outCmd(p, []string{"status", "--peers=false"}, os.Environ()); c != 0 {
-			miss("tailnet", "sudo tailscale up --advertise-tags=tag:control", "this node is not on the tailnet, which it reaches the machines over:", why, o)
+			fmt.Fprintf(out, "CHECK NOTE tailnet this node is not on it; up joins it, tagged tag:control, with a key minted by TAILSCALE_API_KEY: %s\n", oneLine(why+" "+o))
 		} else {
 			fmt.Fprintln(out, "CHECK OK tailnet")
-			var self struct{ Self struct{ Tags []string } }
-			if o, _, _ := outCmd(p, []string{"status", "--json"}, os.Environ()); json.Unmarshal([]byte(o), &self) != nil || !slices.Contains(self.Self.Tags, "tag:control") {
-				miss("tag:control", "sudo tailscale up --advertise-tags=tag:control --auth-key=<a key allowed that tag>", "or tag this node in the admin console: the policy (nova-fleet show tailscale-acl) lets tag:control reach the machines")
-			} else {
-				fmt.Fprintln(out, "CHECK OK tag:control")
-			}
 		}
 	}
-	u.store, u.key, u.seat, u.pins = os.Getenv("NOVA_SECRETS_STORE"), os.Getenv("NOVA_SECRETS_KEY"), os.Getenv("NOVA_SECRETS_SEAT"), os.Getenv("NOVA_SECRETS_PINS")
-	inputs := []struct{ env, name, val, how, new string }{
-		{"NOVA_SECRETS_STORE", "store", u.store, "export NOVA_SECRETS_STORE=<your clone of the secrets store>", "new: nova-secrets init --store <dir> --recovery <age public key> --pins <pins dir>"},
-		{"NOVA_SECRETS_KEY", "key", u.key, "export NOVA_SECRETS_KEY=<this seat's age key file>", "new: age-keygen -o ~/.config/nova-secrets/<seat>.key"},
-		{"NOVA_SECRETS_SEAT", "seat", u.seat, "export NOVA_SECRETS_SEAT=<this node's seat>", "new: nova-secrets seat add <seat> <age public key> --store <store>"},
-		{"NOVA_SECRETS_PINS", "pins", u.pins, "export NOVA_SECRETS_PINS=<the directory of pinned machine keys, outside the store>", "new: mkdir -p ~/.config/nova-secrets/pins; nova-secrets init --pins writes recovery.pub there"},
+	if p := u.bin["gh"]; p != "" {
+		if _, why, c := outCmd(p, []string{"auth", "status"}, os.Environ()); c != 0 {
+			miss("gh-login", "gh auth login", "a browser login, not a paste: the runners register with a token gh asks GitHub for;", why)
+		} else {
+			fmt.Fprintln(out, "CHECK OK gh-login")
+		}
 	}
-	ready := true
+	// The secrets store, key, seat and pins: NOVA_SECRETS_*, else nova-secrets' own defaults (the short hostname,
+	// ~/.config/nova-secrets/{store,<seat>.key,pins}), set in this process's environment so every nova-secrets and
+	// play it runs reads the same ones. A default that is there prints nothing; one that is not prints the command
+	// that makes it there.
+	host, _ := os.Hostname() // ignored: no hostname leaves the seat unset, and its line says so
+	home, _ := os.UserHomeDir()
+	dir := filepath.Join(cmp.Or(os.Getenv("HOME"), home), ".config", "nova-secrets")
+	seat, _, _ := strings.Cut(host, ".")
+	seat = cmp.Or(os.Getenv("NOVA_SECRETS_SEAT"), seat)
+	inputs := []struct {
+		env, name, def, how, new string
+		to                       *string
+	}{
+		{"NOVA_SECRETS_SEAT", "seat", seat, "export NOVA_SECRETS_SEAT=<this node's seat>", "this node has no hostname", &u.seat},
+		{"NOVA_SECRETS_STORE", "store", filepath.Join(dir, "store"), "nova-secrets init --recovery <age public key> --pins " + filepath.Join(dir, "pins"), "a new store; the recovery key's private half is kept offline", &u.store},
+		{"NOVA_SECRETS_KEY", "key", filepath.Join(dir, seat+".key"), "age-keygen -o " + filepath.Join(dir, seat+".key") + " && nova-secrets seat add " + seat + ` "$(age-keygen -y ` + filepath.Join(dir, seat+".key") + `)"`, "this seat's key", &u.key},
+		{"NOVA_SECRETS_PINS", "pins", filepath.Join(dir, "pins"), "mkdir -p " + filepath.Join(dir, "pins"), "nova-secrets init --pins writes recovery.pub there", &u.pins},
+	}
+	// A fresh node (none of them set, none there) prints none of them: nova-secrets set makes them all.
+	fresh := true
+	for _, in := range inputs[1:] {
+		_, err := os.Lstat(in.def)
+		fresh = fresh && os.Getenv(in.env) == "" && err != nil
+	}
+	ready := !fresh
 	for _, in := range inputs {
-		_, err := os.Stat(in.val)
+		val, set := os.LookupEnv(in.env)
+		if val == "" {
+			val, set = in.def, false
+			_ = os.Setenv(in.env, val) // ignored: a valid name; the children read the default from here
+		}
+		_, err := os.Stat(val)
 		switch {
-		case in.val == "":
+		case val == "" || (in.name != "seat" && err != nil && set):
+			miss(in.name, "unset "+in.env, in.env+"="+val+" is not there; unset, the default is used, or make it:", in.how)
+			ready = false
+		case in.name != "seat" && err != nil && !fresh:
 			miss(in.name, in.how, in.new)
 			ready = false
-		case in.name != "seat" && err != nil:
-			miss(in.name, in.how, in.env+"="+in.val+" is not there;", in.new)
-			ready = false
-		default:
-			fmt.Fprintf(out, "CHECK OK %s %s\n", in.name, in.val)
+		case set:
+			fmt.Fprintf(out, "CHECK OK %s %s\n", in.name, val)
 		}
+		*in.to = val
 	}
-	read := []string{"TAILSCALE_AUTHKEY"}
-	if u.runners != "" {
-		read = append(read, "GITHUB_RUNNER_TOKEN")
-	}
-	for _, name := range read {
-		if !ready || u.bin["nova-secrets"] == "" {
-			miss(name, "nova-secrets set "+name+" --as <seat>", "the value on stdin, once the store, key and seat above are set")
-			continue
-		}
-		if _, why, c := outCmd(u.bin["nova-secrets"], u.secrets([]string{name}, "true")[1:], os.Environ()); c != 0 {
-			miss(name, fmt.Sprintf("nova-secrets set %s --as %s", name, u.seat), "the value on stdin; the read said:", why)
-		} else {
-			fmt.Fprintf(out, "CHECK OK %s readable in seat %s\n", name, u.seat)
-		}
+	// The one credential a human gives: everything else up does with it through the Tailscale API.
+	how := "paste the token when it asks: one line tskey-api-..., from the Tailscale admin console > Settings > Keys > Generate API access token"
+	if fresh && u.bin["nova-secrets"] != "" {
+		miss("TAILSCALE_API_KEY", "nova-secrets set TAILSCALE_API_KEY", how+"; on this fresh node it makes the secrets store, the keys and the seat first")
+	} else if !ready || u.bin["nova-secrets"] == "" {
+		miss("TAILSCALE_API_KEY", "nova-secrets set TAILSCALE_API_KEY", how+", once the lines above are done")
+	} else if _, why, c := outCmd(u.bin["nova-secrets"], u.secrets([]string{"TAILSCALE_API_KEY"}, "true")[1:], os.Environ()); c != 0 {
+		miss("TAILSCALE_API_KEY", "nova-secrets set TAILSCALE_API_KEY", how+"; the read said:", why)
+	} else {
+		fmt.Fprintf(out, "CHECK OK TAILSCALE_API_KEY readable in seat %s\n", u.seat)
 	}
 	// A fleet that exists (its store's password is in this seat) is read from NOVA_PG_DSN.
 	if ready && u.bin["nova-secrets"] != "" {

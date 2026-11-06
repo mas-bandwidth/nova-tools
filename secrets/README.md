@@ -26,7 +26,25 @@ export PATH="$PWD/bin:$PATH"
 
 ## Use
 
-The blocks share one shell session. This one makes a temporary store and key
+### A fresh node: one set makes it all
+
+On a node with nothing at the defaults (no `~/.config/nova-secrets/store`, no
+`<short hostname>.key`, no `recovery.key`, no `pins/recovery.pub`, and no
+`NOVA_SECRETS_STORE`), the first `set` makes them before it sets: a recovery
+key at `~/.config/nova-secrets/recovery.key` (0600) with its public half pinned
+in `pins/recovery.pub`, the store (as `init`), this node's key (0600) and its
+seat (as `seat add`). It prints one line first:
+
+```text
+SECRETS SET NEW store=/home/you/.config/nova-secrets/store seat=studio key=/home/you/.config/nova-secrets/studio.key: back up /home/you/.config/nova-secrets/recovery.key, the recovery key, off this machine now: it opens every seat if a key is lost
+```
+
+On a terminal `set` asks for the value and does not show it:
+`nova-secrets set TAILSCALE_API_KEY`, paste, enter. With no store but any of
+the others there it refuses, `reason=partial`, and writes nothing: a store made
+then would not match them, and nothing that exists is overwritten.
+
+The blocks below share one shell session. This one makes a temporary store and key
 directory; for real use choose permanent places, keys outside the store. Seat
 names are letters, digits, `-` and `_`; `web` is one example.
 
@@ -235,7 +253,8 @@ command not found). A bad invocation prints
 `nova-secrets <verb>: <why>; run: nova-secrets <verb> -h` and exits 2.
 
 The reason is one word, and neither it nor the rest of the line holds a value.
-`no-store` means the store directory is absent, `no-seat` that the seat has no
+`no-store` means the store directory is absent, `partial` that `set` found no
+store at the default but a key, the recovery key or the recovery pin there, `no-seat` that the seat has no
 file or no rule, `no-key` that the key file is missing or not private, and
 `not-recipient` that the key is not among the seat's recipients, in the rule or
 in the file. `no-name` means a selected name is absent from the seat,

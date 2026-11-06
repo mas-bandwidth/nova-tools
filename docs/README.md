@@ -101,12 +101,19 @@ The whole tool: [bus/README.md](../bus/README.md); how it is tested:
 
 ## Set up and run a fleet of machines connected by tailscale
 
+**The rule.** Your human does exactly one thing: paste the Tailscale API
+token once, at the prompt of `nova-secrets set TAILSCALE_API_KEY`, which you
+run for them. You do everything else yourself: every other command, every key,
+the policy, the tags, the fleet, the runners. You are the admin. Never ask your
+human for another manual step. If you think you need one, the tools have a gap:
+fix it or report it, and do not hand it to your human.
+
 A **fleet** is a set of machines joined by Tailscale, described as rows in
 nova-config's PostgreSQL, talking over a Redis, and converged by Ansible plays.
 `nova-fleet` is those plays in one binary. Tailscale, Redis, PostgreSQL and
 Ansible are all required: `check` wants Tailscale and Ansible on this machine,
 `up` puts PostgreSQL and Redis on the first machine, and nothing skips one. The
-path is `nova-fleet check`, then your human's steps in the Tailscale console,
+path is `nova-fleet check`, then your human's one paste (an API access token),
 then `nova-fleet up --check`, then `nova-fleet up`.
 
 `check` needs Ansible on PATH. On Debian and Ubuntu `python3 -m venv` fails
@@ -125,10 +132,54 @@ export PATH="$work/venv/bin:$PATH"
 `check` also needs this machine's **control seat**: a nova-secrets store, the
 seat's age key, and a **pins** directory, the public keys the control node keeps
 outside the store so no edit to the store can change who a secret reaches. A
-**seat** is one identity that reads values, with one file and one key. The
-control seat holds the values the fleet needs, starting with the Tailscale auth
-key. `init`, `seat add` and `set` each make a git commit, so git needs an
-author; the first line gives this session one when git has none:
+**seat** is one identity that reads values, with one file and one key. All of
+them have defaults under `~/.config/nova-secrets` (the store, `<short
+hostname>.key`, `pins`, and the short hostname as the seat), and on a fresh
+machine none of them exists yet: you make none of them by hand. Run check:
+
+```sh
+nova-fleet check || echo "exit $?"
+```
+
+`check` prints one line per prerequisite, `CHECK OK <name> <version>` or
+`CHECK MISSING <name>: <the command that fixes it>`; run each fix line that is
+a command for you (installs, builds) and check again. Then the tailnet (a
+`CHECK NOTE` if this machine is not on it: `up` joins it). On a fresh machine
+that has the helpers, exactly one line is left, and the run ends
+`CHECK FAILED missing=1`, exit 1:
+
+```text
+CHECK MISSING TAILSCALE_API_KEY: nova-secrets set TAILSCALE_API_KEY  # paste the token when it asks: one line tskey-api-..., from the Tailscale admin console > Settings > Keys > Generate API access token; on this fresh node it makes the secrets store, the keys and the seat first
+```
+
+That line is your human's whole job, and it is one paste:
+
+1. Ask them to make an API access token in the Tailscale admin console:
+   Settings > Keys > Generate API access token. One click; no scopes, no tags.
+2. You run `nova-secrets set TAILSCALE_API_KEY` yourself, in a terminal they
+   can see and type into. It asks for the value and does not show what is
+   typed. They paste the token at that prompt and press enter. They never
+   type the command, and you never ask for the token in chat: it goes from the
+   console straight into the prompt, never through you.
+
+On a fresh machine that one `set` also makes the store, a recovery key, this
+machine's key, the pins and the seat, then prints
+`SECRETS SET NEW ... back up <recovery.key> ...`: tell your human to keep a copy
+of that recovery key file off this machine (it opens every seat if a key is
+lost). Then:
+
+```text
+nova-fleet check
+```
+
+ends `CHECK OK missing=0`. The token expires (90 days by default); a run with
+an expired one stops with `HTTP 401: TAILSCALE_API_KEY was refused; ...`, and
+the same two steps make a new one.
+
+To try the plays below without touching `~/.config/nova-secrets`, give this
+session a throwaway control seat in `$work` instead (`init`, `seat add` and
+`set` each make a git commit, so git needs an author; the first line gives
+this session one when git has none). The examples below use it:
 
 ```sh
 git config user.email > /dev/null || export GIT_AUTHOR_NAME=ai GIT_AUTHOR_EMAIL=ai@example.com GIT_COMMITTER_NAME=ai GIT_COMMITTER_EMAIL=ai@example.com
@@ -139,30 +190,16 @@ chmod 600 "$work/keys/here.key"
 nova-secrets init --store "$work/store" --pins "$work/pins" --recovery "$(age-keygen -y "$work/keys/recovery.key")"
 nova-secrets seat add here "$(age-keygen -y "$work/keys/here.key")" --store "$work/store"
 export NOVA_SECRETS_STORE="$work/store" NOVA_SECRETS_KEY="$work/keys/here.key" NOVA_SECRETS_SEAT=here NOVA_SECRETS_PINS="$work/pins"
-nova-fleet check || echo "exit $?"
 ```
 
-`check` prints one line per prerequisite, `CHECK OK <name> <version>`, then
-the tailnet, the store, the key, the seat and the pins. On a machine that has
-the helpers and is on a tailnet, two lines are left, and the run ends
-`CHECK FAILED missing=2`, exit 1:
-
-```text
-CHECK MISSING tag:control: sudo tailscale up --advertise-tags=tag:control --auth-key=<a key allowed that tag>  # or tag this node in the admin console: ...
-CHECK MISSING TAILSCALE_AUTHKEY: nova-secrets set TAILSCALE_AUTHKEY --as here  # the value on stdin; the read said: SECRETS EXEC REFUSED reason=no-name: ...
-```
-
-Each `CHECK MISSING` line ends with the command that fixes it. These two are
-your human's, once, in the Tailscale admin console: the account with MagicDNS
-on; the policy, pasted from `nova-fleet show tailscale-acl`, with their account
-where it says `owner@example.com`; a reusable, pre-authorized auth key tagged
-`tag:nova` (and `tag:runner` for runners); and this machine on the tailnet
-tagged `tag:control`. They hand you the auth key, and you store it:
-
-```text
-printf '%s\n' '<the auth key>' | nova-secrets set TAILSCALE_AUTHKEY --as here
-nova-fleet check
-```
+Then go. `up` does the rest in Tailscale with that token: it merges what the
+fleet needs into the tailnet policy (the tags `tag:nova`, `tag:runner` and
+`tag:control`, the fleet's grants and ssh rules, and a grant and ssh rule that
+keep your human's admin devices reaching every tagged machine; nothing of
+theirs removed, their comments kept),
+tags this machine `tag:control` (joining it to the tailnet first if it is not
+on it), and mints a single-use key for each machine that is not on the tailnet
+yet.
 
 Once `check` ends `CHECK OK missing=0`, name the machines, each reachable as
 root over ssh at its address with this machine's key and its host key already
@@ -175,7 +212,7 @@ nova-fleet up --tools v2.0.0 store-1=203.0.113.7 web-1=203.0.113.8
 ```
 
 The addresses are placeholders; put your machines' in their place. `up` runs
-in a fixed order (check, reach, the first machine's Tailscale, PostgreSQL and
+in a fixed order (check, tailnet, reach, the first machine's Tailscale, PostgreSQL and
 Redis, join, grant, push the store, health, tools, services, runners, a bus
 message read back), prints `UP <step> OK` per step and `UP MACHINE <name> OK
 ...` per machine, and stops at the first `UP <step> FAILED exit=<n>`; the same
@@ -242,9 +279,10 @@ for the rows.
 If you have no machines to point `nova-fleet` at, stand up fresh Linux VMs
 (for example Debian 12 guests) on a host you control, with root ssh from this
 machine's key and their host keys in `known_hosts`. Join them to a throwaway
-tailnet, run `nova-fleet check`, `up --check` and `up` against them exactly as
-for a real fleet, then destroy the VMs and remove the throwaway keys, store and
-tailnet auth key when you are done.
+tailnet (its own API access token as `TAILSCALE_API_KEY`), run `nova-fleet
+check`, `up --check` and `up` against them exactly as for a real fleet, then
+destroy the VMs and remove the throwaway keys, store and token when you are
+done.
 
 ## Run GitHub continuous integration runners across your fleet
 
@@ -255,46 +293,40 @@ organization, and runs each as a service that starts at boot; `nova-fleet up
 needs to the list:
 
 ```sh
-nova-fleet check --runners https://github.com/OWNER/REPO | grep -E 'gh|GITHUB_RUNNER_TOKEN'
+nova-fleet check --runners https://github.com/OWNER/REPO | grep -E 'gh'
 ```
 
 ```text
-CHECK FAILED missing=3
 CHECK OK gh <version>
-CHECK MISSING GITHUB_RUNNER_TOKEN: nova-secrets set GITHUB_RUNNER_TOKEN --as here  # the value on stdin; the read said: SECRETS EXEC REFUSED reason=no-name: ...
+CHECK MISSING gh-login: gh auth login  # a browser login, not a paste: the runners register with a token gh asks GitHub for; ...
 ```
 
-The `CHECK FAILED` line is on stderr, so the grep leaves it through; the
-`tag:control` line from before is still counted.
-
-Under --check, github-runners reads GITHUB_RUNNER_TOKEN on the control node
-before it plans, so a green check is never followed by a run that fails on a
-missing token: store a token first (gh api ... -q .token | nova-secrets set
-GITHUB_RUNNER_TOKEN), then check. The token is passed on stdin, so it never
-appears on a command line or in logs; a registration token expires after an
-hour. With your human's repository:
+`gh auth login` is a browser login on this machine, with an account that has
+admin on the repository or organization; no token is pasted. The play asks
+GitHub for a registration token with that login on the control node (`gh api
+-X POST repos/OWNER/REPO/actions/runners/registration-token`), under --check
+too, and hands it to each runner on stdin, so it never appears on a command
+line or in logs. With your human's repository:
 
 ```text
-gh api -X POST repos/OWNER/REPO/actions/runners/registration-token -q .token | nova-secrets set GITHUB_RUNNER_TOKEN
 nova-fleet github-runners --check --diff -- -e github_runner_url=https://github.com/OWNER/REPO -e github_runner_scope=repo
 nova-fleet github-runners -- -e github_runner_url=https://github.com/OWNER/REPO -e github_runner_scope=repo
 ```
 
-To see the plan on this machine with the throwaway rows above, store a
-placeholder token first. The plan prints one `RUNNER-PLAN` line per machine;
-the `RUNNERS` line after it reads GitHub's own list of runners, which a
-placeholder repository does not have:
+To see the plan on this machine with the throwaway rows above, stand a stub in
+for gh that prints a placeholder token (a placeholder repository has no real
+one), and skip the check of GitHub's own list of runners. The plan prints one
+`RUNNER-PLAN` line per machine:
 
 ```sh
-printf 'example-token\n' | nova-secrets set GITHUB_RUNNER_TOKEN
-nova-fleet github-runners --check --inventory "$work/inventory" -- -e ansible_connection=local -e github_runner_url=https://github.com/OWNER/REPO -e github_runner_scope=repo | grep -E 'RUNNER'
+printf '#!/bin/sh\necho example-token\n' > "$work/gh-stub" && chmod +x "$work/gh-stub"
+nova-fleet github-runners --check --inventory "$work/inventory" -- -e ansible_connection=local -e github_runner_url=https://github.com/OWNER/REPO -e github_runner_scope=repo -e github_runner_gh="$work/gh-stub" -e github_runner_verify=false | grep -E 'RUNNER'
 ```
 
 On Linux amd64:
 
 ```text
     "msg": "RUNNER-PLAN here want=1 register=here-1 retire=- labels=amd64,bench,linux,runner (check: nothing changed)"
-    "msg": "RUNNERS here want=1 verified=no reason=gh: Not Found (HTTP 404)  (check: nothing changed)"
 ```
 
 On macOS arm64 the labels are `arm64,bench,darwin,runner`. The labels are the
@@ -305,11 +337,10 @@ because a machine row without `--roles` gets that role, `runner` because its
 Linux and macOS (`join` sets it up on Linux; on a Mac your human sets it at
 the console); no command asks for a password.
 
-Retiring a runner removes it from GitHub, which needs a **removal token**, a
-different one from the registration token, stored the same way:
+Retiring a runner removes it from GitHub with a **removal token**, which the
+play asks gh for the same way:
 
 ```text
-gh api -X POST repos/OWNER/REPO/actions/runners/remove-token -q .token | nova-secrets set GITHUB_RUNNER_TOKEN
 nova-fleet github-runners -- -e github_runner_url=https://github.com/OWNER/REPO -e github_runner_scope=repo -e github_runner_state=absent
 ```
 

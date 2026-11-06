@@ -173,6 +173,8 @@ func (h *harness) run(stdin io.Reader, env []string, dir, name string, args ...s
 		return sealed(v, keys...), nil
 	case name == "age-keygen" && args[0] == "-o":
 		return nil, os.WriteFile(args[1], []byte("AGE-SECRET-KEY-FAKE\n"), 0o644)
+	case name == "age-keygen" && args[0] == "-y" && filepath.Base(args[1]) == "recovery.key":
+		return []byte(pubRec + "\n"), nil
 	case name == "age-keygen" && args[0] == "-y":
 		return []byte(h.keyPub + "\n"), nil
 	case name == "git" && args[0] == "rev-parse": // the store is a repository, so is a directory with a .git; nothing else is
@@ -967,4 +969,77 @@ func TestExecRefusalReasons(t *testing.T) {
 			h.noLeak("a-sealed-one")
 		})
 	}
+}
+
+// fresh is a harness for a node with nothing at the defaults: HOME is empty, no NOVA_SECRETS_* but the seat.
+func fresh(t *testing.T) (*harness, string) {
+	h := newHarness(t)
+	home := t.TempDir()
+	dir := filepath.Join(home, ".config", "nova-secrets")
+	h.store, h.key, h.pins = filepath.Join(dir, "store"), filepath.Join(dir, "ada.key"), filepath.Join(dir, "pins")
+	h.environ = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + home, "NOVA_SECRETS_SEAT=ada"}
+	h.stdin = "tskey-api-FRESH\n"
+	return h, dir
+}
+
+// On a fresh node, set makes the recovery key, this node's key, the pin, the store and the seat, then sets.
+func TestSetBootstrapsAFreshNode(t *testing.T) {
+	t.Parallel()
+	h, dir := fresh(t)
+	require.Equal(t, 0, h.main("set", "TAILSCALE_API_KEY", "--sops", "sops"), h.stderr.String())
+	rk := filepath.Join(dir, "recovery.key")
+	assert.Equal(t, "SECRETS SET NEW store="+h.store+" seat=ada key="+h.key+": back up "+rk+", the recovery key, off this machine now: it opens every seat if a key is lost\n",
+		strings.SplitAfter(h.stdout.String(), "\n")[0])
+	assert.Contains(t, h.stdout.String(), "SECRETS SET OK as=ada name=TAILSCALE_API_KEY file=ada.yaml committed")
+	for _, k := range []string{rk, h.key} {
+		fi, err := os.Stat(k)
+		require.NoError(t, err)
+		assert.Equal(t, os.FileMode(0o600), fi.Mode().Perm(), k)
+	}
+	b, err := os.ReadFile(filepath.Join(h.pins, "recovery.pub"))
+	require.NoError(t, err)
+	assert.Equal(t, pubRec+"\n", string(b))
+	b, err = os.ReadFile(filepath.Join(h.store, "recovery.pub"))
+	require.NoError(t, err)
+	assert.Equal(t, pubRec+"\n", string(b))
+	assert.Equal(t, []string{pubA, pubRec}, h.ruleKeys(h.store, "ada.yaml"), "the seat's rule: its key, then the recovery key")
+	assert.Equal(t, map[string]string{"TAILSCALE_API_KEY": "tskey-api-FRESH"}, h.open("ada"))
+	assert.Contains(t, h.gitCalls(), []string{"init", "-q"})
+	h.noLeak("tskey-api-FRESH")
+	// the next set finds it all there and makes nothing
+	h.stdin = "second\n"
+	require.Equal(t, 0, h.main("set", "OTHER", "--sops", "sops"), h.stderr.String())
+	assert.NotContains(t, h.stdout.String(), "SECRETS SET NEW")
+	// a bad value makes nothing
+	h2, dir2 := fresh(t)
+	h2.stdin = "\n"
+	assert.Equal(t, 2, h2.main("set", "X", "--sops", "sops"))
+	assert.NoDirExists(t, dir2)
+}
+
+// No store at the default but a key, the recovery key or the pin there: refused, nothing written or overwritten.
+func TestSetRefusesAPartialNode(t *testing.T) {
+	t.Parallel()
+	for _, have := range []string{"ada.key", "recovery.key", "pins/recovery.pub"} {
+		h, dir := fresh(t)
+		p := filepath.Join(dir, have)
+		require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o700))
+		require.NoError(t, os.WriteFile(p, []byte("mine\n"), 0o600))
+		assert.Equal(t, 2, h.main("set", "TAILSCALE_API_KEY", "--sops", "sops"), have)
+		assert.Contains(t, h.stderr.String(), "SECRETS SET REFUSED reason=partial: there is no store at "+h.store+", but "+p+" exist", have)
+		b, _ := os.ReadFile(p) // ignored: it was written above
+		assert.Equal(t, "mine\n", string(b), have)
+		assert.NoDirExists(t, h.store, have)
+		for _, other := range []string{"ada.key", "recovery.key", "pins/recovery.pub"} {
+			if other != have {
+				assert.NoFileExists(t, filepath.Join(dir, other), have)
+			}
+		}
+		assert.Empty(t, h.calls, have)
+	}
+	// a store named elsewhere that is not there is no-store, as before: no bootstrap
+	h, _ := fresh(t)
+	assert.Equal(t, 2, h.main("set", "X", "--store", filepath.Join(t.TempDir(), "elsewhere"), "--sops", "sops"))
+	assert.Contains(t, h.stderr.String(), "reason=no-store")
+	assert.Empty(t, h.calls)
 }

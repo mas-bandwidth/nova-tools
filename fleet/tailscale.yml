@@ -1,12 +1,12 @@
 # purpose: each machine on the tailnet, its address the MagicDNS name, its firewall closed to all but the tailnet
 #
 # tailscale.yml: each machine on the tailnet, its address the MagicDNS name, its firewall closed to everything but
-# the tailnet (fleet/README.md, "tailscale"; join.yml imports it). The adopter owns the account, the auth key and
-# the policy (fleet/tailscale-acl.json); this play does the rest:
+# the tailnet (fleet/README.md, "tailscale"; join.yml imports it). nova-fleet up merges the policy
+# (fleet/tailscale-acl.json) and mints a single-use auth key per machine with TAILSCALE_API_KEY; this play does the rest:
 #
 #   1. Tailscale installed: Tailscale's apt repository on Debian and Ubuntu, Homebrew's cask on macOS, winget on Windows.
 #   2. `tailscale up --auth-key=file:/dev/stdin --hostname <machine> --advertise-tags=tag:nova[,tag:runner] [--ssh]`,
-#      the key TAILSCALE_AUTHKEY from the control node's environment, on stdin, on a machine that is not Running. A Running
+#      the key TAILSCALE_AUTHKEY from the control node's environment (up puts it there), on stdin, on a machine that is not Running. A Running
 #      machine is never brought up again: a hostname or Tailscale SSH that differs is set in place with no key, and
 #      tags that differ stop the run with the command to retag it at its console.
 #   3. The machine's MagicDNS name (<machine>.<tailnet>.ts.net) recorded as its address in nova-config

@@ -1,36 +1,20 @@
 ---
-# The registration (or removal) token, read on the control node from the nova-secrets store
-# and held as a no_log fact for this host only. It is never an argument of any command: the
-# store hands it to a child process on stdin, the runner reads it from
-# ACTIONS_RUNNER_INPUT_TOKEN, and it is written nowhere. It is read under --check too, so a
-# green check is not followed by a real run that fails on a missing token.
-#
-# First a read that holds no value (the command is `true`), shown in full: a refusal says why
-# (no store, no key, no such name) on nova-secrets' stderr, which never carries a value.
-- name: the token is readable from the store on the control node
+# The registration (or removal) token, asked of GitHub on the control node with its own gh login
+# (gh api -X POST <repos|orgs>/<path>/actions/runners/<registration-token|remove-token>), never a
+# pasted token, and held as a no_log fact for this host only. It is never an argument of any
+# command: gh prints it on its stdout, the runner reads it from ACTIONS_RUNNER_INPUT_TOKEN on its
+# stdin, and it is written nowhere. It is asked for under --check too (a token is not a change),
+# so a green check is not followed by a real run that fails on the login.
+- name: the token, from GitHub with the control node's gh login
   ansible.builtin.command:
-    argv: "{{ [github_runner_secrets_bin, 'exec', '--only', 'GITHUB_RUNNER_TOKEN'] + github_runner_secrets_args + ['--', 'true'] }}"
-  delegate_to: localhost
-  become: false
-  register: github_runner_token_probe
-  changed_when: false
-  failed_when: false
-  check_mode: false
-
-- name: the token's read succeeded
-  ansible.builtin.assert:
-    quiet: true
-    that: github_runner_token_probe.rc == 0
-    fail_msg: >-
-      github-runner: GITHUB_RUNNER_TOKEN cannot be read on the control node (exit {{ github_runner_token_probe.rc }}):
-      {{ (github_runner_token_probe.stderr | default(github_runner_token_probe.msg | default(''))) | trim }};
-      store a {{ 'registration' if github_runner_need | default([]) | length > 0 else 'removal' }} token: gh api -X POST {{ 'orgs' if github_runner_scope == 'org' else 'repos' }}/{{ github_runner_path }}/actions/runners/{{ 'registration-token' if github_runner_need | default([]) | length > 0 else 'remove-token' }} -q .token | nova-secrets set GITHUB_RUNNER_TOKEN
-
-- name: the token, from the store on the control node
-  ansible.builtin.command:
-    argv: >-
-      {{ [github_runner_secrets_bin, 'exec', '--only', 'GITHUB_RUNNER_TOKEN'] + github_runner_secrets_args
-         + ['--', 'sh', '-c', 'printf %s "$GITHUB_RUNNER_TOKEN"'] }}
+    argv:
+      - "{{ github_runner_gh }}"
+      - api
+      - -X
+      - POST
+      - "{{ 'orgs' if github_runner_scope == 'org' else 'repos' }}/{{ github_runner_path }}/actions/runners/{{ 'registration-token' if github_runner_need | default([]) | length > 0 else 'remove-token' }}"
+      - -q
+      - .token
   delegate_to: localhost
   become: false
   register: github_runner_token_read
@@ -39,22 +23,17 @@
   failed_when: false
   check_mode: false
 
-# no_log hides the whole result, the reason with it. What is shown is a line nova-secrets itself printed (SECRETS EXEC
-# REFUSED, nova-secrets exec:), which names no value; the match on that line is the guard, not the exit code (exec
-# passes the command's own status through, so 2 or 125 can be the command's). With no such line, a 2 or 125 means
-# nova-secrets could not run (not found: 2 or 127; not executable: 13 or 126); any other failure is the printing command's, and shows its
-# status only, since its output can hold the token.
-- name: a refused token read says why
+# no_log hides the whole result, the reason with it. gh prints the token only on stdout and only on
+# success, so a failure shows its stderr (the HTTP status, or the login it lacks).
+- name: a refused token request says why
   ansible.builtin.fail:
     msg: >-
-      GITHUB RUNNER TOKEN {{ inventory_hostname }}:
-      {{ (github_runner_token_read.stderr_lines | select('match', '^(SECRETS EXEC REFUSED |nova-secrets exec: )') | first)
-         | default(('the nova-secrets command could not run, rc=' ~ github_runner_token_read.rc ~ ' (is ' ~ github_runner_secrets_bin ~ ' installed and executable?)')
-                   if github_runner_token_read.rc in [2, 13, 125, 126, 127] else
-                   ('the command that prints the token failed, rc=' ~ github_runner_token_read.rc ~ ' (its output is hidden: it can hold the token)'), true) }}
-  when: github_runner_token_read.rc != 0
+      GITHUB RUNNER TOKEN {{ inventory_hostname }}: gh api on the control node failed, rc={{ github_runner_token_read.rc | default(-1) }}:
+      {{ (github_runner_token_read.stderr | default(github_runner_token_read.msg | default(''))) | trim | truncate(400) }};
+      gh needs a login with admin on {{ github_runner_path }}: gh auth login
+  when: (github_runner_token_read.rc | default(1)) != 0 or (github_runner_token_read.stdout | default('') | trim | length) == 0
 
 - name: the token is held for this host
   ansible.builtin.set_fact:
-    github_runner_token: "{{ github_runner_token_read.stdout }}"
+    github_runner_token: "{{ github_runner_token_read.stdout | trim }}"
   no_log: true

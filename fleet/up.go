@@ -16,18 +16,21 @@ const upHelp = `nova-fleet up [--check] [--user LOGIN] [--grant NAME[,NAME]] --t
 
 From nothing to a fleet, in a fixed order (fleet/README.md, "up"). Tailscale, PostgreSQL, Redis and
 Ansible are not optional: nothing here skips one.
-   1 control   nova-fleet check: the helpers, the tailnet, the store, key, seat and pins, the secrets
-   2 reach     each machine answers ssh: as its login over the tailnet once it is there, else as root
-   3 first     a new fleet's first machine: the tailnet, PostgreSQL (nova-config's tables), Redis
-   4 join      every machine joins: its row, login, tailnet name and host key, firewall, seat
-   5 grant     nova-secrets grant: the --grant values written to each machine's seat
-   6 store     the secrets store pushed to its git upstream, if it has one
-   7 refresh   secrets-refresh: the encrypted store pushed (rsync) to each machine
-   8 health    the self-healing guards and the disk report (Linux)
-   9 tools     the nova-tools release (TAG) or local build (DIR) on every machine
-  10 services  the service units
-  11 runners   GitHub Actions runners (only with --runners)
-  12 bus       a message sent and read back over the bus
+   1 control   nova-fleet check: the helpers, the store, key, seat and pins, TAILSCALE_API_KEY readable
+   2 tailnet   through the Tailscale API with the API access token: the policy merged, this node tagged
+               tag:control (joined first if it is not on the tailnet), a single-use key for each machine
+               not on it, the tags set on each that is
+   3 reach     each machine answers ssh: as its login over the tailnet once it is there, else as root
+   4 first     a new fleet's first machine: the tailnet, PostgreSQL (nova-config's tables), Redis
+   5 join      every machine joins: its row, login, tailnet name and host key, firewall, seat
+   6 grant     nova-secrets grant: the --grant values written to each machine's seat
+   7 store     the secrets store pushed to its git upstream, if it has one
+   8 refresh   secrets-refresh: the encrypted store pushed (rsync) to each machine
+   9 health    the self-healing guards and the disk report (Linux)
+  10 tools     the nova-tools release (TAG) or local build (DIR) on every machine
+  11 services  the service units
+  12 runners   GitHub Actions runners (only with --runners)
+  13 bus       a message sent and read back over the bus
   <name>=<address>  a machine, reached at first as root over ssh at <address>; os/arch default linux/amd64
   --user LOGIN      the login join makes on each machine (default nova)
   --grant NAMES     the values each machine's seat is granted (default NOVA_BUS_PASSWORD)
@@ -46,7 +49,7 @@ machine unreachable; 2 could not run.
 // own are the variables up sets itself, and the switches that would skip a pillar: a -- -e naming one is refused.
 var own = []string{"nova_join_host", "nova_join_user", "nova_join_address", "nova_join_os", "nova_join_arch", "nova_join_roles", "nova_join_root_user",
 	"nova_seal_store", "nova_seal_seat", "nova_seal_key", "nova_store_hosts", "nova_bus_redis", "nova_tools_version", "nova_tools_local_dir",
-	"nova_tailscale_record_address", "nova_firewall", "github_runner_url", "github_runner_scope", "runner_count", "github_runner_secrets_args",
+	"nova_tailscale_record_address", "nova_firewall", "github_runner_url", "github_runner_scope", "runner_count",
 	"nova_tailnet", "nova_pg_schema", "ansible_user", "ansible_host", "ansible_become"}
 
 type machine struct {
@@ -69,7 +72,9 @@ type upRun struct {
 	pass                 []string
 	dir, store, seat     string
 	key, pins, dsn       string
-	bus                  string // the Redis the bus is at, host:port
+	bus                  string            // the Redis the bus is at, host:port
+	keys                 map[string]string // the join keys minted for the machines not on the tailnet, by name
+	tskey                string            // the key the next play gets in its environment
 	stdout, stderr       io.Writer
 	bin                  map[string]string
 }
@@ -208,6 +213,9 @@ func (u *upRun) env() []string {
 	if u.dsn != "" {
 		env = append(env, "NOVA_PG_DSN="+u.dsn)
 	}
+	if u.tskey != "" { // the join key a play needs, in its environment only; never an argument
+		env, u.tskey = append(env, "TAILSCALE_AUTHKEY="+u.tskey), ""
+	}
 	return env
 }
 
@@ -257,21 +265,12 @@ func (u *upRun) config(args ...string) ([]map[string]any, string, int) {
 // peer is the machine as the control node's tailscale sees it: its MagicDNS name, its address, and
 // its Tailscale SSH host keys, which are pinned in this node's known_hosts (never trusted on first use).
 func (u *upRun) peer(m *machine) bool {
-	out, _, c := outCmd(u.bin["tailscale"], []string{"status", "--json"}, os.Environ())
-	var st struct {
-		Peer map[string]struct {
-			HostName, DNSName string
-			TailscaleIPs      []string
-			SSH_HostKeys      []string
-		}
+	st, _ := u.status()
+	p, ok, err := st.peer(m.name)
+	if err != nil {
+		fmt.Fprintf(u.stderr, "nova-fleet up: %s on the tailnet: %v\n", m.name, err)
 	}
-	if c != 0 || json.Unmarshal([]byte(out), &st) != nil {
-		return false
-	}
-	for _, p := range st.Peer {
-		if p.HostName != m.name || len(p.TailscaleIPs) == 0 {
-			continue
-		}
+	if ok {
 		m.dns = strings.TrimSuffix(p.DNSName, ".")
 		if len(p.SSH_HostKeys) == 0 {
 			fmt.Fprintf(u.stderr, "nova-fleet up: %s has no Tailscale SSH host key in tailscale status; its ssh over the tailnet is not pinned (is Tailscale SSH on?)\n", m.name)
@@ -299,9 +298,8 @@ func (u *upRun) peer(m *machine) bool {
 				u.say("UP HOSTKEY %s OK pinned=%d %s", m.name, len(add), path)
 			}
 		}
-		return true
 	}
-	return false
+	return ok
 }
 
 // reach finds how a machine answers: its login over the tailnet once it has a row (join closed
@@ -358,7 +356,7 @@ func (u *upRun) steps() int {
 		fmt.Fprintf(u.stderr, "UP %s FAILED exit=%d; fix what the lines above name, then run the same nova-fleet up again (every step is idempotent)\n", step, code)
 		return 1
 	}
-	authKey, pg := []string{"TAILSCALE_AUTHKEY"}, []string{"NOVA_PG_PASSWORD"}
+	pg := []string{"NOVA_PG_PASSWORD"}
 	names, _, _ := outCmd(u.bin["nova-secrets"], []string{"names", "--as", u.seat}, os.Environ())
 	haveStore := slices.Contains(strings.Fields(names), "NOVA_PG_PASSWORD")
 
@@ -403,7 +401,13 @@ func (u *upRun) steps() int {
 		first = u.machines[0]
 	}
 
-	// 2. each machine answers ssh.
+	// 2. the tailnet, through the Tailscale API with the one API access token (tailnet.go).
+	if err := u.tailnet(); err != nil {
+		fmt.Fprintf(u.stderr, "nova-fleet up: the tailnet: %v\n", err)
+		return fail("tailnet", 1)
+	}
+
+	// 3. each machine answers ssh.
 	for _, m := range u.machines {
 		u.reach(m)
 		switch {
@@ -418,7 +422,7 @@ func (u *upRun) steps() int {
 	}
 	wouldRun := func(step, why string) { u.say("UP %s WOULD-RUN (check: %s)", step, why) }
 
-	// 3. a new fleet's first machine: the tailnet (no row yet, so no address recorded and the
+	// 4. a new fleet's first machine: the tailnet (no row yet, so no address recorded and the
 	// firewall waits for the join), then PostgreSQL and Redis sealing their passwords into this seat.
 	if first != nil {
 		hand := fmt.Sprintf("[services]\n%s ansible_host=%s ansible_user=%s nova_os=%s nova_arch=%s\n", first.name, first.host, first.sshUser, first.os, first.arch)
@@ -429,13 +433,15 @@ func (u *upRun) steps() int {
 		case first.unreachable != "":
 			wouldRun("FIRST tailscale, postgres, redis", "not reachable")
 		default:
-			if c := u.play("tailscale", true, authKey, "-e", "nova_tailscale_record_address=false", "-e", "nova_firewall=false"); c != 0 {
+			u.tskey = u.keys[first.name]
+			delete(u.keys, first.name) // single-use: its join below finds it Running
+			if c := u.play("tailscale", true, nil, "-e", "nova_tailscale_record_address=false", "-e", "nova_firewall=false"); c != 0 {
 				return fail("first tailscale", c)
 			}
 			mark("tailnet", first)
 			if !u.peer(first) {
 				if !u.check {
-					fmt.Fprintf(u.stderr, "nova-fleet up: tailscale status on this control node has no peer %s; is this node on the same tailnet, tagged tag:control?\n", first.name)
+					fmt.Fprintf(u.stderr, "nova-fleet up: tailscale status on this control node has no peer %s; is this node on the same tailnet?\n", first.name)
 					return fail("first", 1)
 				}
 				wouldRun("FIRST postgres, redis", "the machine is not on the tailnet yet")
@@ -462,7 +468,7 @@ func (u *upRun) steps() int {
 	}
 	u.bus = store.dns + ":6379"
 
-	// 4. every machine joins (its row, login, address, host key, firewall, seat).
+	// 5. every machine joins (its row, login, address, host key, firewall, seat).
 	for _, m := range u.machines {
 		if m.unreachable != "" {
 			continue
@@ -474,7 +480,8 @@ func (u *upRun) steps() int {
 		if u.runners != "" {
 			roles += ",runner"
 		}
-		c := u.play("join", false, append(authKey, pg...), "-e", "nova_join_host="+m.name, "-e", "nova_join_user="+m.user,
+		u.tskey = u.keys[m.name]
+		c := u.play("join", false, pg, "-e", "nova_join_host="+m.name, "-e", "nova_join_user="+m.user,
 			"-e", "nova_join_address="+m.host, "-e", "nova_join_root_user="+m.sshUser,
 			"-e", "nova_join_os="+m.os, "-e", "nova_join_arch="+m.arch, "-e", "nova_join_roles="+roles,
 			"-e", "nova_seal_store="+u.store, "-e", "nova_bus_redis="+u.bus)
@@ -504,7 +511,7 @@ func (u *upRun) steps() int {
 		}
 	}
 
-	// 5. each machine's seat granted the values its services open, written encrypted to that seat's
+	// 6. each machine's seat granted the values its services open, written encrypted to that seat's
 	// pinned key (read from the machine once, over the tailnet); the operator is never a recipient.
 	// A check reads the values here, so a value this seat lacks stops it with the read's reason.
 	if _, why, c := outCmd(u.bin["nova-secrets"], u.secrets(strings.Split(u.grant, ","), "true")[1:], os.Environ()); u.check && c != 0 {
@@ -533,7 +540,7 @@ func (u *upRun) steps() int {
 		mark("grant", m)
 	}
 
-	// 6. the store's upstream, if it has one, gets the new seats and grants (a copy kept off this
+	// 7. the store's upstream, if it has one, gets the new seats and grants (a copy kept off this
 	// node; the machines never read it).
 	if _, _, c := outCmd(u.bin["git"], []string{"-C", u.store, "rev-parse", "--abbrev-ref", "@{u}"}, os.Environ()); c != 0 {
 		u.say("UP STORE NOTE %s has no upstream: nothing to push", u.store)
@@ -545,7 +552,7 @@ func (u *upRun) steps() int {
 		u.say("UP STORE OK pushed %s", u.store)
 	}
 
-	// 7. refresh: secrets-refresh pushes the encrypted store from this node's clone to each machine
+	// 8. refresh: secrets-refresh pushes the encrypted store from this node's clone to each machine
 	// (rsync over the tailnet: no .git, stale files deleted, 0700/0600); a rerun pushes again.
 	in := u.ready(false)
 	if len(in) == 0 { // every machine named waits for its row: nothing to check the plays against
@@ -561,7 +568,7 @@ func (u *upRun) steps() int {
 	mark("refresh", u.machines...)
 	u.say("UP REFRESH %s %s", u.would("PUSH"), u.store)
 
-	// 8-11. the guards, tools, services, runners on every machine that is reached.
+	// 9-12. the guards, tools, services, runners on every machine that is reached.
 	if c := u.play("health", false, pg, limit...); c != 0 {
 		return fail("health", c)
 	}
@@ -589,11 +596,10 @@ func (u *upRun) steps() int {
 	u.say("UP SERVICES %s", u.would("RUN"))
 	if u.runners != "" {
 		on := u.ready(true) // the machines whose row has the runner role, so the play finds them in its group
-		seat, _ := json.Marshal(map[string][]string{"github_runner_secrets_args": {"--store", u.store, "--key", u.key, "--as", u.seat}})
 		if len(on) == 0 {
 			wouldRun("RUNNERS", "once the runner role is on the rows")
 		} else if c := u.play("github-runners", false, pg, "-e", "github_runner_url="+u.runners, "-e", "github_runner_scope="+runnerScope(u.runners),
-			"-e", "runner_count="+strconv.Itoa(u.runnerCount), "-e", string(seat), "-l", strings.Join(on, ",")); c != 0 {
+			"-e", "runner_count="+strconv.Itoa(u.runnerCount), "-l", strings.Join(on, ",")); c != 0 {
 			return fail("runners", c)
 		} else {
 			for _, m := range u.machines {
@@ -603,7 +609,7 @@ func (u *upRun) steps() int {
 		}
 	}
 
-	// 12. the bus: `nova-bus who` with the fleet's credentials; it reads presence and sends nothing as a name.
+	// 13. the bus: `nova-bus who` with the fleet's credentials; it reads presence and sends nothing as a name.
 	busEnv := append(os.Environ(), "NOVA_BUS_REDIS="+u.bus, "NOVA_BUS_USER=bus")
 	if u.check {
 		u.say("UP BUS WOULD-ASK who is present via %s (check: nothing changed)", u.bus)
