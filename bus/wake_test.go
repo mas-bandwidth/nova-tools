@@ -273,7 +273,8 @@ func TestGrokWakeAppendsTheLine(t *testing.T) {
 // ag is a fake ps, lsof and agentapi.
 type ag struct {
 	ps, lsof string
-	answer   map[string]string // port -> what get-conversation-metadata prints
+	answer   map[string]string // token:port -> what get-conversation-metadata prints
+	lsofs    map[string]string // pid -> lsof's output, else lsof
 	send     string            // what send-message prints
 	calls    [][]string
 	envs     [][]string
@@ -286,10 +287,13 @@ func (a *ag) exec(_ context.Context, env []string, name string, args ...string) 
 	case name == "ps":
 		return []byte(a.ps), nil
 	case name == "lsof":
+		if out, ok := a.lsofs[args[3]]; ok {
+			return []byte(out), nil
+		}
 		return []byte(a.lsof), nil
 	case len(args) > 1 && args[1] == "get-conversation-metadata":
-		port := strings.TrimPrefix(env[1], "ANTIGRAVITY_AGENT_PORT=")
-		if out, ok := a.answer[port]; ok {
+		key := strings.TrimPrefix(env[3], "ANTIGRAVITY_CSRF_TOKEN=") + ":" + strings.TrimPrefix(env[1], "ANTIGRAVITY_AGENT_PORT=")
+		if out, ok := a.answer[key]; ok {
 			return []byte(out), nil
 		}
 		return []byte("connection refused"), errors.New("exit status 1")
@@ -306,18 +310,19 @@ func TestAntigravityFindsTheServerProbesAndSends(t *testing.T) {
 	ws, dir := t.TempDir(), filepath.Join(t.TempDir(), "events")
 	id := workspaceIDs(ws)[0]
 	fake := &ag{
-		ps: "  12 /usr/bin/other --workspace_id " + id + "\n" +
-			"  40 /Apps/Anti Gravity/language_server --workspace_id file_elsewhere --csrf_token other\n" +
-			"  41 /Apps/Anti Gravity/language_server --workspace_id=" + id + " --csrf_token s3cret --x\n",
+		ps: fmt.Sprintf("  12 %[1]d /usr/bin/other --workspace_id %[2]s\n"+
+			"  40 %[1]d /Apps/Anti Gravity/language_server --workspace_id file_elsewhere --csrf_token other\n"+
+			"  41 %[1]d /Apps/Anti Gravity/language_server --workspace_id=%[2]s --csrf_token s3cret --x\n", os.Getuid(), id),
 		lsof:   "p41\nf9\nn127.0.0.1:5000\nf10\nn127.0.0.1:5001\n",
-		answer: map[string]string{"5001": `{"response":{}}`},
+		answer: map[string]string{"s3cret:5001": `{"response":{}}`},
 		send:   `{"response":{}}`,
 	}
 	var errOut bytes.Buffer
 	w, err := newWaker(context.Background(), "antigravity", "beta", agFlags(ws, dir), sys{uid: os.Getuid(), exec: fake.exec}, &errOut)
 	require.NoError(t, err)
 	assert.Equal(t, "HOOK HARNESS OK harness=antigravity session=conv-1 port=5001 events="+dir+"\n", errOut.String())
-	assert.Equal(t, []string{"lsof", "-nP", "-a", "-p", "41", "-iTCP", "-sTCP:LISTEN", "-Fn"}, fake.calls[1])
+	assert.Equal(t, []string{"ps", "-axo", "pid=,uid=,command="}, fake.calls[0])
+	assert.Equal(t, []string{"lsof", "-nP", "-a", "-p", "41", "-iTCP", "-sTCP:LISTEN", "-Fn"}, fake.calls[1], "the workspace's own server is tried first")
 	assert.Equal(t, []string{"/Apps/Anti Gravity/language_server", "agentapi", "get-conversation-metadata", "conv-1"}, fake.calls[2])
 
 	require.NoError(t, w.wake(context.Background(), testMsg))
@@ -339,13 +344,15 @@ func TestAntigravityStartRefusals(t *testing.T) {
 	ws, dir := t.TempDir(), filepath.Join(t.TempDir(), "events")
 	id := workspaceIDs(ws)[0]
 	s := func(a *ag) sys { return sys{uid: os.Getuid(), exec: a.exec} }
-	_, err := newWaker(context.Background(), "antigravity", "beta", agFlags(ws, dir), s(&ag{ps: "1 /bin/language_server --workspace_id file_x --csrf_token t\n"}), io.Discard)
-	assert.EqualError(t, err, "antigravity: no language_server with a --csrf_token runs for "+ws+": open the workspace in Antigravity")
+	other := fmt.Sprintf("1 %d /bin/language_server --csrf_token t\n2 %d /bin/language_server --workspace_id x\n", os.Getuid()+1, os.Getuid())
+	_, err := newWaker(context.Background(), "antigravity", "beta", agFlags(ws, dir), s(&ag{ps: other}), io.Discard)
+	assert.EqualError(t, err, "antigravity: no language_server with a --csrf_token runs for this user: open "+ws+" in Antigravity",
+		"another user's server, and one with no token, are not candidates")
 	f := agFlags(ws, dir)
 	f["antigravity-server"] = "localhost:6000"
-	fake := &ag{ps: "9 /bin/language_server --workspace_id " + id + " --csrf_token tok\n", answer: map[string]string{}}
+	fake := &ag{ps: fmt.Sprintf("9 %d /bin/language_server --workspace_id %s --csrf_token tok\n", os.Getuid(), id), answer: map[string]string{}}
 	_, err = newWaker(context.Background(), "antigravity", "beta", f, s(fake), io.Discard)
-	assert.EqualError(t, err, "antigravity: conversation conv-1 did not answer: agentapi get-conversation-metadata: exit status 1: connection refused")
+	assert.EqualError(t, err, "antigravity: conversation conv-1 did not answer on any of 1 language_servers of this user: agentapi get-conversation-metadata: exit status 1: connection refused")
 	assert.Len(t, fake.calls, 2, "a named port is the only one tried, and lsof is not run")
 	f["antigravity-server"] = "nope"
 	_, err = newWaker(context.Background(), "antigravity", "beta", f, s(fake), io.Discard)
@@ -353,6 +360,43 @@ func TestAntigravityStartRefusals(t *testing.T) {
 	f = agFlags(filepath.Join(ws, "none"), dir)
 	_, err = newWaker(context.Background(), "antigravity", "beta", f, s(fake), io.Discard)
 	assert.ErrorContains(t, err, "is not an absolute workspace directory")
+}
+
+// hub2_29 is the line Antigravity 2.29.0 runs its server with (live, on the
+// studio, 2026-11-05): hub mode, no --workspace_id.
+const hub2_29 = "language_server --standalone --override_ide_name antigravity --subclient_type hub --override_ide_version 2.29.0 --override_user_agent_name antigravity --https_server_port 0 --csrf_token %s --app_data_dir antigravity"
+
+// With no server naming the workspace, every server of this user with a
+// token is a candidate, and the one whose agentapi has the conversation is
+// taken (v1.6.29's fallback).
+func TestAntigravityHubServerIsFoundByItsConversation(t *testing.T) {
+	t.Parallel()
+	ws, dir := t.TempDir(), filepath.Join(t.TempDir(), "events")
+	uid := os.Getuid()
+	fake := &ag{
+		ps:     fmt.Sprintf("  70 %d "+hub2_29+"\n  71 %d "+hub2_29+"\n  72 %d /usr/bin/zsh\n", uid, "first", uid, "second", uid),
+		lsofs:  map[string]string{"70": "p70\nn127.0.0.1:7000\n", "71": "p71\nn127.0.0.1:7100\n"},
+		answer: map[string]string{"second:7100": `{"response":{}}`},
+	}
+	var errOut bytes.Buffer
+	w, err := newWaker(context.Background(), "antigravity", "beta", agFlags(ws, dir), sys{uid: uid, exec: fake.exec}, &errOut)
+	require.NoError(t, err)
+	assert.Equal(t, "HOOK HARNESS OK harness=antigravity session=conv-1 port=7100 events="+dir+"\n", errOut.String())
+	a := w.(*agWake)
+	assert.Equal(t, "language_server", a.bin)
+	assert.Equal(t, "second", a.token)
+
+	fake.answer = map[string]string{}
+	_, err = newWaker(context.Background(), "antigravity", "beta", agFlags(ws, dir), sys{uid: uid, exec: fake.exec}, io.Discard)
+	assert.ErrorContains(t, err, "antigravity: conversation conv-1 did not answer on any of 2 language_servers of this user: ")
+}
+
+func TestFindServersPutsTheWorkspacesFirst(t *testing.T) {
+	t.Parallel()
+	ps := "1 501 /a/language_server --csrf_token=x\n" +
+		"2 501 /b/language_server --workspace_id file_w --csrf_token y\n" +
+		"1501 502 /c/language_server --workspace_id file_w --csrf_token z\n"
+	assert.Equal(t, []server{{"2", "/b/language_server", "y"}, {"1", "/a/language_server", "x"}}, findServers(ps, "501", []string{"file_w"}))
 }
 
 func TestWorkspaceIDs(t *testing.T) {

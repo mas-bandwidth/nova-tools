@@ -75,10 +75,18 @@ and the hook runs where it keeps running: `nova-bus hook --as <name> --harness g
 
 **Antigravity** (`--harness antigravity`). Each message is saved to `<events-dir>/<id>.json` and sent into the
 conversation as a new turn with the workspace's own `language_server agentapi send-message`, with the fixed text
-`nova-bus saved event <id> in <path>. Read that JSON file and follow local_receiver.` The hook finds the
-`language_server` whose `--workspace_id` is the workspace (in `ps`), its CSRF token (passed to agentapi only in the
-environment, and cut out of every error), and its port (`lsof`, or `--antigravity-server <port>`), and checks the
-conversation answers `get-conversation-metadata`:
+`nova-bus saved event <id> in <path>. Read that JSON file and follow local_receiver.`
+
+Antigravity wakes an idle conversation only on a background task's exit, a subagent's message, or a SYSTEM_MESSAGE
+file under `~/.gemini/antigravity/brain/<conversation-id>/.system_generated/messages/`. The stdout lines of a running
+task never wake it, so running the hook as a task of the conversation and reading its output is not a wake; the
+wake is `agentapi send-message`, whose message v1 confirmed by the file it leaves in that `messages/` directory.
+
+The hook takes as candidates every `language_server` of this user in `ps` that carries a `--csrf_token`, those whose
+`--workspace_id` is the workspace (the path or its symlink target) first. Antigravity 2.29 runs one hub server with
+no `--workspace_id` at all, so the one taken is the first whose agentapi answers `get-conversation-metadata
+<session>`, on its port from `lsof` (or `--antigravity-server <port>`). The token passes to agentapi only in the
+environment and is cut out of every error. None answering is exit 1, naming how many candidates were tried:
 
 ```sh
 nova-bus hook --as <name> --harness antigravity --antigravity-dir "$PWD" \

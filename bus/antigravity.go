@@ -44,43 +44,51 @@ func newAntigravity(ctx context.Context, f map[string]string, dir, name string, 
 		return nil, missingInput("--antigravity-session %q is not a conversation id", f["antigravity-session"])
 	}
 	a := &agWake{session: f["antigravity-session"], dir: dir, name: name, exec: s.exec}
-	ps, err := a.run(ctx, nil, "ps", "-axo", "pid=,command=")
+	port := f["antigravity-server"]
+	if port != "" {
+		if _, p, err := net.SplitHostPort(port); err == nil {
+			port = p
+		}
+		if n, err := strconv.Atoi(port); err != nil || n <= 0 || n > 65535 {
+			return nil, missingInput("--antigravity-server %q is not a port or host:port", f["antigravity-server"])
+		}
+	}
+	ps, err := a.run(ctx, nil, "ps", "-axo", "pid=,uid=,command=")
 	if err != nil {
 		return nil, noAnswer("antigravity: ps: %v", err)
 	}
-	var pid string
-	pid, a.bin, a.token = findServer(string(ps), workspaceIDs(ws))
-	if pid == "" || a.token == "" || a.bin == "" {
-		return nil, noAnswer("antigravity: no language_server with a --csrf_token runs for %s: open the workspace in Antigravity", ws)
+	servers := findServers(string(ps), strconv.Itoa(s.uid), workspaceIDs(ws))
+	if len(servers) == 0 {
+		return nil, noAnswer("antigravity: no language_server with a --csrf_token runs for this user: open %s in Antigravity", ws)
 	}
-	ports := []string{}
-	if p := f["antigravity-server"]; p != "" {
-		if _, port, err := net.SplitHostPort(p); err == nil {
-			p = port
+	var last error
+	for _, sv := range servers {
+		a.bin, a.token = sv.bin, sv.token
+		ports := []string{port}
+		if port == "" {
+			out, err := a.run(ctx, nil, "lsof", "-nP", "-a", "-p", sv.pid, "-iTCP", "-sTCP:LISTEN", "-Fn")
+			if err != nil {
+				last = fmt.Errorf("lsof for language_server %s: %v", sv.pid, err)
+				continue
+			}
+			ports = ports[:0]
+			for _, l := range strings.Split(string(out), "\n") {
+				if n, ok := strings.CutPrefix(l, "n"); ok && strings.Contains(n, ":") {
+					ports = append(ports, n[strings.LastIndex(n, ":")+1:])
+				}
+			}
 		}
-		if n, err := strconv.Atoi(p); err != nil || n <= 0 || n > 65535 {
-			return nil, missingInput("--antigravity-server %q is not a port or host:port", f["antigravity-server"])
+		if len(ports) == 0 {
+			last = fmt.Errorf("language_server %s listens on no TCP port", sv.pid)
 		}
-		ports = append(ports, p)
-	} else {
-		out, err := a.run(ctx, nil, "lsof", "-nP", "-a", "-p", pid, "-iTCP", "-sTCP:LISTEN", "-Fn")
-		if err != nil {
-			return nil, noAnswer("antigravity: lsof for language_server %s: %v", pid, err)
-		}
-		for _, l := range strings.Split(string(out), "\n") {
-			if n, ok := strings.CutPrefix(l, "n"); ok && strings.Contains(n, ":") {
-				ports = append(ports, n[strings.LastIndex(n, ":")+1:])
+		for _, p := range ports {
+			a.port = p
+			if last = a.agentapi(ctx, "get-conversation-metadata", a.session); last == nil {
+				return a, nil
 			}
 		}
 	}
-	var last error = fmt.Errorf("language_server %s listens on no TCP port", pid)
-	for _, p := range ports {
-		a.port = p
-		if last = a.agentapi(ctx, "get-conversation-metadata", a.session); last == nil {
-			return a, nil
-		}
-	}
-	return nil, noAnswer("antigravity: conversation %s did not answer: %v", a.session, last)
+	return nil, noAnswer("antigravity: conversation %s did not answer on any of %d language_servers of this user: %v", a.session, len(servers), last)
 }
 
 func (a *agWake) wake(ctx context.Context, m Msg) error {
@@ -117,12 +125,19 @@ func (a *agWake) run(ctx context.Context, env []string, name string, args ...str
 	return a.exec(ctx, env, name, args...)
 }
 
-// findServer is the language_server in ps output whose --workspace_id is one
-// of ids: its pid, its binary (the command up to its first flag) and token.
-func findServer(ps string, ids []string) (pid, bin, token string) {
+type server struct{ pid, bin, token string }
+
+// findServers is every language_server of this user (uid) in ps output that
+// carries a --csrf_token: its pid, its binary (the command up to its first
+// flag) and token. Those whose --workspace_id is one of ids come first; the
+// rest follow, because a server may name the workspace another way (its
+// symlink's other side) or not at all, and get-conversation-metadata picks
+// the one that has the conversation (v1.6.29 fell back the same way).
+func findServers(ps, uid string, ids []string) []server {
+	var match, rest []server
 	for _, l := range strings.Split(ps, "\n") {
 		f := strings.Fields(l)
-		if len(f) < 2 || !strings.Contains(l, "language_server") {
+		if len(f) < 3 || f[1] != uid || !strings.Contains(l, "language_server") {
 			continue
 		}
 		vals := map[string]string{}
@@ -135,15 +150,23 @@ func findServer(ps string, ids []string) (pid, bin, token string) {
 				}
 			}
 		}
-		if slices.Contains(ids, vals["--workspace_id"]) {
-			cmd := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(l), f[0]))
-			if i := strings.Index(cmd, " --"); i > 0 {
-				cmd = cmd[:i]
-			}
-			return f[0], cmd, vals["--csrf_token"]
+		cmd := strings.TrimSpace(l)
+		for _, lead := range f[:2] { // the command is what follows the pid and uid fields
+			cmd = strings.TrimSpace(strings.TrimPrefix(cmd, lead))
+		}
+		if i := strings.Index(cmd, " --"); i > 0 {
+			cmd = cmd[:i]
+		}
+		if vals["--csrf_token"] == "" || cmd == "" {
+			continue
+		}
+		if sv := (server{f[0], cmd, vals["--csrf_token"]}); slices.Contains(ids, vals["--workspace_id"]) {
+			match = append(match, sv)
+		} else {
+			rest = append(rest, sv)
 		}
 	}
-	return "", "", ""
+	return append(match, rest...)
 }
 
 // workspaceIDs is how Antigravity names a workspace directory, for the path

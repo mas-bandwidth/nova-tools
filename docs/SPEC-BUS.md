@@ -72,9 +72,15 @@ running turn and wakes an idle session alike (from v1.6.29 `nova-hook`):
   --antigravity-events-dir <dir> [--antigravity-server <port>]`): the message
   is saved as for codex, then `<language_server> agentapi send-message
   --title=nova-bus <session> <fixed text>` runs with the port and the CSRF
-  token in its environment. The server is the `language_server` in `ps` whose
-  `--workspace_id` is the workspace's; its port comes from `lsof` unless
-  named; the start-up check is `agentapi get-conversation-metadata`.
+  token in its environment. The candidates are every `language_server` of
+  this user in `ps` with a `--csrf_token`, those whose `--workspace_id` is the
+  workspace's (path or symlink target) first; Antigravity 2.29 runs one hub
+  server with no `--workspace_id`. The one taken is the first whose agentapi
+  answers `get-conversation-metadata <session>` on a port from `lsof` (or
+  the one named); none answering is exit 1 naming the candidate count. The
+  hook's stdout never wakes Antigravity: an idle conversation wakes only on a
+  task's exit, a subagent's message, or a SYSTEM_MESSAGE file under
+  `~/.gemini/antigravity/brain/<id>/.system_generated/messages/`.
 
 The wake text is fixed: only the validated name, id and path enter it, never a
 field of the message. The harness is checked at start, before the name is
