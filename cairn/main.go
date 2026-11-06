@@ -37,17 +37,17 @@ var groups = []struct {
       with the same words is duplicate=true (exit 0), with other words a conflict (exit 1).
       The words, new ids and source must be valid UTF-8, so what is accepted is kept
       byte for byte. receipt takes --store, --session and --entry (no stamp) and reads that entry
-      back as stored. --publish records a policy for later: nothing is sent, and append and
+      back as stored. --publish records a policy for later (default never on open): nothing is sent, and append and
       receipt say published=false. --max <n> caps each kind index lists (default 20, 0
       lists all); a capped kind ends with one MORE line for that kind.`, [][2]string{
-		{"open", "open    --store <dir> --session <id> --publish <never|manual|deferred|immediate> [--source <ptr>]"},
+		{"open", "open    --store <dir> --session <id> [--publish <never|manual|deferred|immediate>] [--source <ptr>]"},
 		{"append", "append  --store <dir> --session <id> --entry <id> (--text <words> | --file <path|->) [--source <ptr>] [--publish <policy>]"},
 		{"index", "index   --store <dir> [--session <id>] [--max <n>]"},
 		{"receipt", "receipt --store <dir> --session <id> --entry <id> [--text]"},
 	}},
 	{"Search and check the memory (each --root: .md notes, and the entries of any store in it):", `
       Every memory verb takes --exclude <glob>, repeatable, and writes nothing; the index is
-      built in memory each run. search prints the k best files for the words, one hit each:
+      built in memory each run. search prints the k best files for the words (default --channels bm25 --k 5), one hit each:
       its best paragraph. A hit from a store entry names its store, session, entry and
       stamp, for receipt. check does the same for each paragraph of a draft, and never
       judges. verify (notes only) always needs --links gate or info; --links info with no
@@ -56,8 +56,8 @@ var groups = []struct {
       frontmatter name: (--frontmatter), or with --links gate a [[wikilink]] to nothing.
       A capped kind of finding ends with one MORE line for that kind (--fail-max).
       Its globs match paths relative to --root (notes/*.md, not ~/memory/notes/*.md).`, [][2]string{
-		{"memory search", "memory search --root <dir>... --channels bm25 --k <n> <words>..."},
-		{"memory check", "memory check  --root <dir>... --channels bm25 --k <n> <file|->"},
+		{"memory search", "memory search --root <dir>... [--channels bm25] [--k <n>] <words>..."},
+		{"memory check", "memory check  --root <dir>... [--channels bm25] [--k <n>] <file|->"},
 		{"memory stats", "memory stats  --root <dir>..."},
 		{"memory verify", "memory verify --root <dir> --links <gate|info> [--coverage <A:B>]... [--frontmatter <glob>]...\n                           [--exempt <prefix>]... [--fail-max <n>]"},
 	}},
@@ -251,23 +251,25 @@ var (
 // -1 to go on, or the exit code to return: 0 after printing the verb's help for
 // -h or --help, 2 after a refusal.
 func parse(fs *flag.FlagSet, verb string, args []string, stdout, stderr io.Writer) int {
-	err := fs.Parse(args)
+	pos, err := []string(nil), error(nil)
+	for len(args) > 0 && err == nil {
+		if args[0] == "-" || !strings.HasPrefix(args[0], "-") {
+			pos, args = append(pos, args[0]), args[1:]
+			continue
+		}
+		err = fs.Parse(args)
+		if rest := fs.Args(); err == nil && len(rest) < len(args) && args[len(args)-len(rest)-1] == "--" {
+			pos = append(pos, rest...)
+			break
+		}
+		args = fs.Args()
+	}
 	if errors.Is(err, flag.ErrHelp) {
 		help(stdout, verb)
 		return 0
 	}
 	if err == nil {
-		// Flags come before positionals: a flag after one is refused, except after --.
-		rest := fs.Args()
-		literal := len(rest) < len(args) && args[len(args)-len(rest)-1] == "--"
-		for _, a := range rest {
-			if literal || a == "--" {
-				break
-			}
-			if len(a) > 1 && a[0] == '-' {
-				return refused(stderr, verb, "late flag "+a+": flags come before the arguments (a literal starting with - goes after --)", "")
-			}
-		}
+		_ = fs.Parse(append([]string{"--"}, pos...))
 		return -1
 	}
 	why := err.Error()
