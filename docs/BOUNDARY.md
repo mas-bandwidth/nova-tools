@@ -8,9 +8,9 @@ under plain `go test ./...` and needs no network, sockets or real time.
 
 ## The allowed shape
 
-The top level holds six tools (`bus`, `cairn`, `config`, `reserve`, `sandbox`,
-`secrets`, each a `package main`), the fleet plays (`fleet`, Ansible plus a
-`doc.go`, no program), `docs` and `tests`. `.github` holds CI.
+The top level holds seven tools (`bus`, `cairn`, `config`, `fleet`, `reserve`,
+`sandbox`, `secrets`, each a `package main`; `fleet` is nova-fleet, which embeds
+the Ansible plays beside it), `docs` and `tests`. `.github` holds CI.
 
 `tests/` holds everything that tests or verifies the repository: `tests/boundary`
 (this test), `tests/contract` (the CLI contract), `tests/tla` (the TLC runner and
@@ -61,6 +61,10 @@ include `boundary` itself (`tests/boundary`, 400).
   shapes, deduped recipients, empty-subject refusal, VERB STATUS lines
   (`HOOK OK`, `WHO OK`, `PENDING OK`), the holder and budget in `HOOK WAIT`,
   and an unreachable server said plainly with the reconnect log rate-limited.
+
+- `fleet` 50 -> 400 (2026-11-05): fleet became nova-fleet, a `package main`
+  that embeds the plays and runs them (`fleet/README.md`); 50 was the budget of
+  a `doc.go` with no program.
 
 ## Adding a tool
 

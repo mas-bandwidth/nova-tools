@@ -1,12 +1,12 @@
 # The defaults the fleet plays share (every fleet/*.yml; a role keeps its own in roles/<role>/defaults). Override
 # any of them from the inventory: a host variable from `nova-config inventory`,
-# or a group_vars/<group>.yml or host_vars/<machine>.yml beside it (docs/FLEET.md,
+# or a group_vars/<group>.yml or host_vars/<machine>.yml beside it (fleet/README.md,
 # "Overriding the defaults"). A group_vars/all.yml beside the inventory does not
 # override these: this file is read after it.
 
-# The tools nova-tools ships, by name: nova-tools-install.yml installs them and
+# The tools nova-tools ships, by name: install.yml installs them and
 # services.yml prefixes argv[0] with nova_bin_dir when it is one of them.
-nova_tools_names: [nova-bus, nova-cairn, nova-config, nova-sandbox, nova-secrets, nova-reserve]
+nova_tools_names: [nova-bus, nova-cairn, nova-config, nova-sandbox, nova-secrets, nova-reserve, nova-fleet]
 
 # Where a machine keeps the tools: its login's home.
 nova_home: "{{ ansible_facts['env']['HOME'] }}"

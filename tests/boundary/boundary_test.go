@@ -34,7 +34,7 @@ var libraryDirs = map[string]bool{"pkg": true, "internal": true, "cmd": true}
 
 // mainTools are the tools that are one package main and import nothing from
 // this module.
-var mainTools = []string{"bus", "config", "sandbox", "secrets", "reserve", "cairn"}
+var mainTools = []string{"bus", "config", "sandbox", "secrets", "reserve", "cairn", "fleet"}
 
 // allowedTools is the exact set of tool directives permitted in go.mod.
 var allowedTools = []string{
@@ -161,27 +161,6 @@ func TestToolsAreIndependentMains(t *testing.T) {
 				if isOwn(p) {
 					t.Errorf("%s imports %s: tools do not import each other or any shared package; see docs/BOUNDARY.md", rel, p)
 				}
-			}
-		}
-	}
-}
-
-// fleet holds Ansible plays; its Go files are doc.go and tests only.
-func TestFleetHasNoCode(t *testing.T) {
-	base := root(t)
-	files := goFiles(filepath.Join(base, "fleet"))
-	if len(files) == 0 {
-		t.Error("fleet: no Go files (is it a symlink or missing?)")
-	}
-	for _, f := range files {
-		rel, _ := filepath.Rel(base, f)
-		pkg, imps := imports(t, f)
-		if pkg == "main" {
-			t.Errorf("%s: fleet holds plays, not a program: no package main", rel)
-		}
-		for _, p := range imps {
-			if isOwn(p) {
-				t.Errorf("%s imports %s: fleet imports nothing from this module", rel, p)
 			}
 		}
 	}
