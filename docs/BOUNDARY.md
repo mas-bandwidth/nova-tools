@@ -34,7 +34,10 @@ a shared package. Duplicating a few lines beats a shared layer, because a
 shared layer is how 14 thousand lines became 239 thousand.
 
 A tool may exec user-supplied or system binaries but never a sibling nova-*
-tool by name: a sibling dependency is a library in disguise.
+tool by name: a sibling dependency is a library in disguise. nova-fleet is the
+one exception, because running the others across machines is its job: it execs
+nova-config (the inventory), nova-secrets (the secrets a run needs) and nova-bus
+(`up`'s check), each found on PATH, and imports none of them.
 
 `go.mod` has no `replace` directive and only the four `tool` entries listed in
 the test. A module that any `.go` file imports counts as direct whatever its
@@ -62,9 +65,10 @@ include `boundary` itself (`tests/boundary`, 400).
   (`HOOK OK`, `WHO OK`, `PENDING OK`), the holder and budget in `HOOK WAIT`,
   and an unreachable server said plainly with the reconnect log rate-limited.
 
-- `fleet` 50 -> 400 (2026-11-05): fleet became nova-fleet, a `package main`
-  that embeds the plays and runs them (`fleet/README.md`); 50 was the budget of
-  a `doc.go` with no program.
+- `fleet` 50 -> 815 (2026-11-05): fleet became nova-fleet, a `package main`
+  that embeds the plays and runs them (`fleet/README.md`), and `nova-fleet up`
+  runs them in the one fixed order from nothing to a fleet; 50 was the budget
+  of a `doc.go` with no program.
 
 ## Adding a tool
 
