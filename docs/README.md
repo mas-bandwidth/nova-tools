@@ -2,8 +2,9 @@
 
 You are an AI with a shell on one of your human's machines, and you have been
 asked whether these tools are useful. This page lets you find out by running
-them. Every block below runs as written, in order, in one bash session. The
-last block removes everything the session made, except the Go, pip and Ansible
+them. Every block below runs as written, in order, in one bash session, on
+Linux or macOS; where the two print different lines, both are shown and
+labelled. The last block removes everything the session made, except the Go, pip and Ansible
 caches in your home directory (`~/.cache/go-build`, `~/go/pkg/mod`,
 `~/.cache/pip` and `~/.ansible`). Each section says what the first try prints,
 the refusal you are most likely to meet, and where the full guide for that
@@ -27,7 +28,10 @@ tool is.
 - `fleet/` holds Ansible plays that install the tools, keep programs running,
   and run GitHub Actions runners on many machines. It needs Ansible.
 
-Each tool works on its own. Use one without the others.
+Each tool runs on its own, and this walkthrough starts and stops a throwaway
+Redis and PostgreSQL on this one machine. A fleet of machines is different: it
+needs Tailscale, Redis, PostgreSQL and Ansible, and none of the four is
+optional.
 
 ## Get the binaries and check they run
 
@@ -75,9 +79,10 @@ kill "$hook_pid"
 `send` prints `claude <id>`. The hook's stderr says
 `HOOK OK name=claude waiting=0`, and its stdout has one tab-separated line:
 the id, `codex`, `-` (this message answers none), `hello` and `are you there?`.
-`who` prints `WHO OK present=1` and then `claude` with its uptime. To hook a
-session in, run the hook as a background job of your harness and read its
-lines as they arrive.
+`who` prints `WHO OK present=1` and then `claude` with its uptime. One hook
+holds a name at a time, and a line printed by a background job does not by
+itself start a turn in your harness. How a session is woken by its hook is in
+[bus/README.md](../bus/README.md#how-your-session-gets-woken).
 
 The refusal you will meet first is
 `cannot reach redis at <host:port> (NOVA_BUS_REDIS): connection refused`
@@ -89,23 +94,30 @@ The whole tool: [bus/README.md](../bus/README.md), and how it is tested:
 
 ## Set up and run a fleet of machines connected by tailscale
 
-A **fleet** here is the machines you list in nova-config. Each machine row
-names how Ansible reaches it: put its tailscale name in `--address` and its
-login in `--user`, and Ansible connects over SSH through tailscale. A
-**service** row is a program a machine keeps running. This block starts a
-throwaway PostgreSQL, adds this machine and one service, and prints the
-inventory. `--actor` names who made a change, and the history keeps it.
-`initdb` and `pg_ctl` are often outside PATH, so the first line adds the newest
-PostgreSQL bin directory when there is one:
+A **fleet** here is the machines you list in nova-config. They are joined by
+Tailscale, and Ansible reaches each one over SSH through it: a machine row
+holds its tailscale name in `--address` and its login in `--user`. A
+**service** row is a program a machine keeps running. A real fleet needs
+Tailscale, Redis, PostgreSQL and Ansible, and none of the four is optional;
+this walkthrough stays on one machine, with a throwaway PostgreSQL and
+`ansible_connection=local` in place of SSH.
+
+This block starts the PostgreSQL, adds this machine and one service, and prints
+the inventory. `--actor` names who made a change, and the history keeps it. The
+row's `os` and `arch` come from `uname`, because the runner labels later come
+from the row. On Debian and Ubuntu, apt puts `initdb` and `pg_ctl` in
+`/usr/lib/postgresql/<version>/bin`, outside PATH, so the first line adds the
+newest one; on macOS Homebrew's are already on PATH, and the line changes
+nothing:
 
 ```sh
-export PATH="$(ls -d /usr/lib/postgresql/*/bin 2> /dev/null | tail -1):$PATH"
+pg_bin=$(ls -d /usr/lib/postgresql/*/bin 2> /dev/null | tail -1); [ -n "$pg_bin" ] && export PATH="$pg_bin:$PATH"
 initdb -D "$work/pg" -U nova -A trust > /dev/null
 pg_ctl -D "$work/pg" -o "-p 54330 -k $work -c listen_addresses=127.0.0.1" -l "$work/pg.log" -w start > /dev/null
 createdb -h 127.0.0.1 -p 54330 -U nova nova
 export NOVA_PG_DSN=postgres://nova@127.0.0.1:54330/nova
 nova-config schema | PGOPTIONS="-c client_min_messages=warning" psql -q "$NOVA_PG_DSN"
-nova-config machine add here --address localhost --user "$(id -un)" --os linux --arch amd64 --runners 1 --actor you
+nova-config machine add here --address localhost --user "$(id -un)" --os "$(uname -s | tr '[:upper:]' '[:lower:]')" --arch "$(uname -m | sed 's/x86_64/amd64/; s/aarch64/arm64/')" --runners 1 --actor you
 nova-config service add hello --machine here --argv '["sh","-c","echo hello; sleep 60"]' --keepalive true --actor you
 nova-config inventory --host here
 ```
@@ -133,19 +145,27 @@ cd "$work/nova-tools"
 ansible-playbook -i "$work/inventory" fleet/services.yml -e ansible_connection=local -e nova_service_only=hello --check | grep -E 'SERVICES|RESTART'
 ```
 
-It prints two lines, as Ansible prints a message:
+On Linux it prints two lines, as Ansible prints a message:
 
 ```text
     "msg": "WOULD-RESTART hello on here: its unit file changed"
     "msg": "SERVICES host=here place=/home/<you>/.config/systemd/user records=1 enabled=1 written=1 retired=0 only=hello (check: nothing changed)"
 ```
 
-The first says the unit would be written and started. The second is the
-play's **receipt**, its one-line summary for the host. ansible-core 2.21 also
-prints `[DEPRECATION WARNING]` lines about `INJECT_FACTS_AS_VARS` on stderr;
-they do not change the result.
-Without `--check` the play writes a systemd user unit (or a launchd job on
-macOS) for each row and starts it.
+On macOS it prints one:
+
+```text
+    "msg": "SERVICES host=here place=/Users/<you>/Library/LaunchAgents records=1 enabled=1 written=1 retired=0 only=hello (check: nothing changed)"
+```
+
+The `WOULD-RESTART` line says the systemd unit would be written and started;
+on macOS that step runs only for a job launchd already holds, so a check run
+prints none. The `SERVICES` line is the play's **receipt**, its one-line
+summary for the host. ansible-core 2.21 and later also print
+`[DEPRECATION WARNING]` lines about `INJECT_FACTS_AS_VARS` on stderr; they do
+not change the result. Without `--check` the play writes a systemd user unit
+on Linux, or a launchd job under `~/Library/LaunchAgents` on macOS, for each
+row and starts it.
 
 The refusal you will meet first is
 `NOVA_PG_DSN carries a password; remove it and set NOVA_PG_PASSWORD` (exit 2):
@@ -166,16 +186,25 @@ ansible-playbook -i "$work/inventory" fleet/github-runners.yml -e ansible_connec
   -e github_runner_url=https://github.com/OWNER/REPO -e github_runner_scope=repo --check | grep 'would register'
 ```
 
-The plan prints:
+The plan prints, on Linux amd64:
 
 ```text
     "msg": "here: 1 wanted, would register [1], would retire [], labels amd64,bench,linux,runner"
 ```
 
+and on macOS arm64:
+
+```text
+    "msg": "here: 1 wanted, would register [1], would retire [], labels arm64,bench,darwin,runner"
+```
+
 `[1]` lists the runner numbers it would register; runner 1 is named `here-1`.
-The labels are the host's inventory groups, then its OS and architecture.
-`bench` is there because a machine row without `--roles` gets the role
-`bench`, and `runner` because its `runners` value is above zero.
+The labels are the host's inventory groups, then the `os` and `arch` of its
+machine row. `bench` is there because a machine row without `--roles` gets the
+role `bench`, and `runner` because its `runners` value is above zero. On macOS
+the play then stops with `sudo: a password is required` (exit 2), because its
+check of `/Library/LaunchDaemons` runs as root even under `--check`; add `-K`
+on a Mac to finish the check.
 
 To apply it, store a registration token, then run without `--check`; `-K`
 asks for the sudo password the service files need. The token goes in a
@@ -231,14 +260,18 @@ reaches the program when the unit starts and is in no file Ansible writes:
 
 ```sh
 nova-config service add api --machine here --argv '["sh","-c","test -n \"$API_TOKEN\" && echo token present; sleep 60"]' --seat here --keys API_TOKEN --keepalive true --actor you
-ansible-playbook -i "$work/inventory" fleet/services.yml -e ansible_connection=local -e nova_service_only=api --check --diff | grep 'ExecStart'
+ansible-playbook -i "$work/inventory" fleet/services.yml -e ansible_connection=local -e nova_service_only=api \
+  -e nova_secrets_store="$work/store" -e nova_secrets_key_dir="$work/keys" --check --diff | grep -E 'ExecStart|<string>' | grep -E 'nova-secrets|--only|API_TOKEN'
 ```
 
-The diff shows the unit's `ExecStart` running `nova-secrets exec` with
-`--only API_TOKEN` in front of the program. Keep `{#` out of a row's `argv`:
-the play reads `argv` as an Ansible template, where `{#` opens a comment.
-Each machine needs the store, its seat's key and sops. The play's defaults
-for where they live are in [group_vars/all.yml](../fleet/group_vars/all.yml).
+The diff shows the unit starting `nova-secrets exec` with `--only API_TOKEN`
+in front of the program: on Linux one `ExecStart=` line, on macOS three
+`<string>` lines of the plist's `ProgramArguments`. The two `-e` values point
+the unit at the store and key directory this session made; without them each
+machine's unit opens `~/.local/share/nova/secrets` with
+`~/.config/nova-secrets/<seat>.key`, as
+[group_vars/all.yml](../fleet/group_vars/all.yml) says. Each machine needs the
+store, its seat's key and sops at those places.
 
 The refusal you will meet first is
 `SECRETS SET REFUSED: key file ... must be a regular file of mode 0600 owned by you`
@@ -279,16 +312,32 @@ A **grant** is a directory you name with `--read` or `--write`. The command can
 read and run the system directories, and touch nothing else:
 
 ```sh
-mkdir -p "$work/job"
-nova-sandbox --write "$work/job" --net-deny -- sh -c "echo ok > '$work/job/out.txt'"
-cat "$work/job/out.txt"
+mkdir -p "$work/job" && cd "$work/job"
+nova-sandbox --write "$work/job" --net-deny -- sh -c "echo ok > out.txt"
+cat out.txt
 nova-sandbox --write "$work/job" -- sh -c "echo no > '$HOME/sandbox-escape.txt'" || echo "exit $?"
 nova-sandbox check
+cd "$work"
 ```
 
-The first command writes `ok` inside its grant. The second is denied by the
-kernel: `sh` prints a `Permission denied` line and the run exits 2, the
-command's own status. `check` prints a line starting `CHECK OK backend=`.
+The block starts inside the grant, because a shell started outside it cannot
+read its own working directory. The first command writes `ok` inside the
+grant. The second is denied by the kernel, and the run exits with the
+command's own status. On Linux:
+
+```text
+sh: 1: cannot create /home/<you>/sandbox-escape.txt: Permission denied
+exit 2
+CHECK OK backend=landlock abi=4 net=enforceable note=landlock abi 4; seccomp available; net-deny landlock_tcp+seccomp; signals scoped to the wall at abi 6+
+```
+
+On macOS:
+
+```text
+sh: /Users/<you>/sandbox-escape.txt: Operation not permitted
+exit 1
+CHECK OK backend=sandbox-exec abi=- net=enforceable note=sandbox-exec is deprecated by Apple; the wall is the profile it applies (/usr/bin/sandbox-exec)
+```
 `nova-sandbox probe` tests each of the sandbox's limits on this machine, one
 line per step.
 
@@ -351,7 +400,7 @@ nova-bus -h | head -1           # nova-bus: messages between named inboxes, kept
 nova-config -h | head -1        # nova-config: a fleet's machines and services, kept as rows in PostgreSQL.
 nova-secrets -h | head -1       # nova-secrets: sops-encrypted secrets in a git store, handed to one command at a time.
 nova-reserve status | head -1   # capacity=<n> set_by_pid=<pid> set_at=<time>
-nova-sandbox check | head -1    # CHECK OK backend=landlock abi=<n> net=enforceable ...
+nova-sandbox check | head -1    # CHECK OK backend=landlock ... (Linux) or backend=sandbox-exec ... (macOS)
 nova-cairn version | head -1    # nova-cairn <version> (dev when built from a clone)
 nova-bus who | head -1          # WHO OK present=<n>
 nova-config machine list | head -1                                   # MACHINE name=here address=localhost user=<you> ...
