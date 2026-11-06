@@ -137,7 +137,7 @@ func TestFunctionalStore(t *testing.T) {
 
 	code, out, errs = realRun(t, env, "inventory", "--host", "m1")
 	require.Equal(t, 0, code, errs)
-	for _, want := range []string{`"cores": 16`, `"nova_os": "linux"`, `"ansible_connection": "local"`, `"log": "~/.local/state/nova/services/r-m1.log"`, `"env": {}`} {
+	for _, want := range []string{`"cores": 16`, `"nova_os": "linux"`, `"ansible_connection": "local"`, `"__ansible_unsafe": "~/.local/state/nova/services/r-m1.log"`, `"env": {}`} {
 		assert.Contains(t, out, want)
 	}
 	code, out, errs = realRun(t, env, "inventory", "--list")
@@ -204,7 +204,7 @@ func TestFunctionalOldColumns(t *testing.T) {
 	assert.Equal(t, 2, n, "the service columns env and log exist exactly once")
 	code, out, errs = realRun(t, env, "inventory", "--host", "old-plain")
 	require.Equal(t, 0, code, errs)
-	assert.Contains(t, out, `"log": "~/.local/state/nova/services/old-service.log"`, "an old service row gets the default log")
+	assert.Contains(t, out, `"__ansible_unsafe": "~/.local/state/nova/services/old-service.log"`, "an old service row gets the default log")
 	code, out, errs = realRun(t, env, "history", "service")
 	require.Equal(t, 0, code, errs)
 	assert.Contains(t, out, "kind=service name=old-service op=add", "a history row written before the rename reads as a service")
