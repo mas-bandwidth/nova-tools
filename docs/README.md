@@ -335,7 +335,7 @@ nova-secrets exec --only NOVA_BUS_PASSWORD --as db -- true || echo "exit $?"
 
 ```text
 SECRETS SET OK as=here name=NOVA_BUS_PASSWORD file=here.yaml committed; run: git -C <store> push
-SECRETS SEAT ADD OK seat=db committed; next: the seat's own key runs: nova-secrets set NAME --as db --store <store> --key <file> --pins <dir>
+SECRETS SEAT ADD OK seat=db committed next=nova-secrets\x20set\x20DB_PASSWORD\x20--as\x20db\x20--store\x20/tmp/tmp.k3Jd9x/store\x20--key\x20/home/you/.config/nova-secrets/db.key\x20--pins\x20/tmp/tmp.k3Jd9x/pins
 SECRETS GRANT OK from=here to=db names=1 changed=1 committed; run: git -C <store> push
 SECRETS GRANT OK from=here to=db names=1 changed=0 unchanged
 SECRETS EXEC STARTING as=db keys=1 cmd=sh

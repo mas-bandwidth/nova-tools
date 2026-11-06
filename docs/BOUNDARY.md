@@ -82,6 +82,11 @@ If a change exceeds its budget, first look for work the tool no longer needs
 to do. A budget increase needs a reason in the same PR. Lower the budget when
 code is removed, and remove temporary headroom after the work it covers lands.
 
+`secrets` went from 1670 to 1666 (2026-11-05): a contraction pass with no change in behaviour took
+it from 1661 to 1616 lines (one add-and-commit, one sealing call, one creation_rules editor and one
+environment filter serve every verb that had its own), and the `next=` field that ends init's and
+seat add's OK lines, with this node's seat and key, took it to 1656.
+
 `fleet` went from 50 to 1450 (2026-11-05) when it became nova-fleet: a program
 that embeds the plays, checks the control node (`check`, which every play verb
 runs its part of first) and takes a fleet from nothing to running (`up`): the

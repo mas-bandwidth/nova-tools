@@ -603,8 +603,10 @@ func TestInitCreatesTheStore(t *testing.T) {
 	h := newHarness(t)
 	h.notRepo = true
 	store := filepath.Join(t.TempDir(), "new")
+	h.environ = append(h.environ, "NOVA_SECRETS_SEAT=ada")
 	require.Equal(t, 0, h.main("init", "--store", store, "--recovery", pubRec), h.stderr.String())
-	assert.Equal(t, "SECRETS INIT OK store="+store+" next: nova-secrets seat add <seat> <age-pubkey> --store "+store+"\n", h.stdout.String())
+	// the next field is this node's seat add with its key's public half, shell-quoted then field-escaped
+	assert.Equal(t, "SECRETS INIT OK store="+store+" next=nova-secrets\\x20seat\\x20add\\x20ada\\x20"+h.keyPub+"\\x20--store\\x20"+store+"\n", h.stdout.String())
 	b, err := os.ReadFile(filepath.Join(store, ".sops.yaml"))
 	require.NoError(t, err)
 	assert.Equal(t, "creation_rules: []\n", string(b))
@@ -836,7 +838,8 @@ func TestSeatAddWritesABlockListAndCommits(t *testing.T) {
 	b, err := os.ReadFile(filepath.Join(h.store, ".sops.yaml"))
 	require.NoError(t, err)
 	assert.Equal(t, "creation_rules:\n  - path_regex: ^bo\\.yaml$\n    age: "+pubB+","+pubRec+"\n", string(b))
-	assert.Contains(t, h.stdout.String(), "SECRETS SEAT ADD OK seat=bo committed; next:")
+	assert.Equal(t, "SECRETS SEAT ADD OK seat=bo committed next=nova-secrets\\x20set\\x20DB_PASSWORD\\x20--as\\x20bo\\x20--store\\x20"+h.store+
+		"\\x20--key\\x20/home/ada/.config/nova-secrets/bo.key\\x20--pins\\x20/home/ada/.config/nova-secrets/pins\n", h.stdout.String())
 	h.failGit = true
 	assert.Equal(t, 2, h.main("seat", "add", "cy", pub3, "--store", h.store))
 	assert.Contains(t, h.stderr.String(), ".sops.yaml is written: run: git -C "+h.store+" status")
