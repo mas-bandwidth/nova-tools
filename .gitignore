@@ -4,3 +4,7 @@
 # Scratch.
 /.tmp/
 scratch/
+
+# built binaries never belong in the tree
+/fleet/fleet
+/*/nova-*
