@@ -41,3 +41,12 @@ func isTerminal(f *os.File) bool {
 	_, err := unix.IoctlGetWinsize(int(f.Fd()), unix.TIOCGWINSZ)
 	return err == nil
 }
+
+// checkPrivate refuses a pin file or directory that is not this user's, or that its group or others can write.
+func checkPrivate(_ string, fi os.FileInfo) error {
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok || int(st.Uid) != os.Getuid() || fi.Mode().Perm()&0o022 != 0 {
+		return refuse("not private")
+	}
+	return nil
+}

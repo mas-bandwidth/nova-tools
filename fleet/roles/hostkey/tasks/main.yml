@@ -3,6 +3,8 @@
 # (ssh-keyscan, ed25519), so no play ever needs StrictHostKeyChecking=no. hostkey_name is the name the plays connect
 # to: the row's address at join, and the MagicDNS name once tailscale.yml records it (Tailscale SSH serves its own
 # host key under that name). A name already in known_hosts is left as it is; a name that answers no key stops the run.
+# hostkey_key, when given ("ssh-ed25519 AAAA...", from the provider's console), is pinned instead of what the name
+# answers: that proves which machine it is; the first connection's key proves only that it is the same machine after.
 - name: "{{ hostkey_name }} in known_hosts already"
   ansible.builtin.command: "ssh-keygen -F {{ hostkey_name | quote }}"
   delegate_to: localhost
@@ -12,6 +14,24 @@
   failed_when: false
   check_mode: false
 
+- name: a given host key is a public key (type and key, a comment dropped)
+  ansible.builtin.assert:
+    that: hostkey_given is match('^ssh-ed25519 AAAA[A-Za-z0-9+/=]+$')
+    fail_msg: "HOSTKEY STOP {{ hostkey_name }}: hostkey_key is not an ed25519 public key line (ssh-ed25519 AAAA..., as the provider's console shows it; a fingerprint is not a key)"
+    quiet: true
+  vars:
+    hostkey_given: "{{ (hostkey_key | default('') | trim).split() [:2] | join(' ') }}"
+  when: hostkey_key | default('') | trim | length > 0
+
+- name: a known name answers to the given key
+  ansible.builtin.assert:
+    that: hostkey_given in hostkey_known.stdout
+    fail_msg: "HOSTKEY STOP {{ hostkey_name }}: known_hosts holds another key for it than hostkey_key (a reused address? a stale line?); `ssh-keygen -R {{ hostkey_name }}` after checking which machine this is"
+    quiet: true
+  vars:
+    hostkey_given: "{{ (hostkey_key | default('') | trim).split() [:2] | join(' ') }}"
+  when: hostkey_known.rc == 0 and hostkey_key | default('') | trim | length > 0
+
 - name: "the host key of {{ hostkey_name }} (first connection: ssh-keyscan)"
   ansible.builtin.command: "ssh-keyscan -T 10 -t ed25519 {{ hostkey_name | quote }}"
   delegate_to: localhost
@@ -20,7 +40,7 @@
   changed_when: false
   failed_when: false
   check_mode: false
-  when: hostkey_known.rc != 0
+  when: hostkey_known.rc != 0 and hostkey_key | default('') | trim | length == 0
 
 - name: the machine answered with a key
   ansible.builtin.assert:
@@ -31,12 +51,15 @@
 - name: "{{ hostkey_name }} pinned into known_hosts"
   ansible.builtin.known_hosts:
     name: "{{ hostkey_name }}"
-    key: "{{ hostkey_scan.stdout_lines | select('search', ' ssh-ed25519 ') | first }}"
+    key: >-
+      {{ hostkey_name ~ ' ' ~ ((hostkey_key | trim).split() [:2] | join(' '))
+         if hostkey_key | default('') | trim | length > 0 else
+         hostkey_scan.stdout_lines | select('search', ' ssh-ed25519 ') | first }}
     state: present
   delegate_to: localhost
   become: false
-  when: hostkey_scan is not skipped
+  when: hostkey_known.rc != 0
 
 - name: the receipt
   ansible.builtin.debug:
-    msg: "HOSTKEY {{ hostkey_name }} {{ 'known' if hostkey_known.rc == 0 else ('WOULD-PIN (check: nothing written)' if ansible_check_mode else 'pinned') }}"
+    msg: "HOSTKEY {{ hostkey_name }} {{ 'known' if hostkey_known.rc == 0 else ('WOULD-PIN (check: nothing written)' if ansible_check_mode else 'pinned') }} {{ '' if hostkey_known.rc == 0 else (' from=hostkey_key (given)' if hostkey_key | default('') | trim | length > 0 else ' from=ssh-keyscan (first connection)') }}{{ ' (the given key matches)' if hostkey_known.rc == 0 and hostkey_key | default('') | trim | length > 0 else '' }}"
