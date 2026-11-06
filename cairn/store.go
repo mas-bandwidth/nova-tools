@@ -308,11 +308,7 @@ func open(store, session, source string, now time.Time, publish string) (openRec
 	case flat:
 		return rec, before, nil
 	case !ok || !rec.found:
-		logSource, logPublish := source, publish
-		// The call that creates the session file logs the open; a call that
-		// finds the file already there (a race, or a crashed open) heals only
-		// when the file predates it, so one session gets one open line.
-		logIt := ok
+		logSource, logPublish, logIt := source, publish, ok
 		if !ok {
 			header := fmt.Sprintf("# cairn %s\n\nOpened: %s\nSource: %s\nPublish: %s\n", session, stamp(now), source, publish)
 			if err := writeNew(sessionFile(store, session), []byte(header)); err != nil && !errors.Is(err, os.ErrExist) {
@@ -333,8 +329,6 @@ func open(store, session, source string, now time.Time, publish string) (openRec
 			return rec, false, err
 		}
 		if !logIt && !rec.found {
-			// Lost the file race and the winner has not logged yet: the
-			// header it wrote is the record to agree with.
 			hs, hp := headerPolicy(store, session)
 			rec = openRec{hs, hp, now, false}
 		}
@@ -420,13 +414,8 @@ func appendEntry(store, session, id, text, source string, now time.Time, publish
 	}
 	_, flat, ok := locate(store, session)
 	if !ok {
-		// A first append opens the session it names, with publish=manual
-		// unless the line names a policy, so keeping words takes one command.
-		// Only open creates a store: an append into a missing store is more
-		// likely a mistyped --store than a first word worth keeping.
 		if info, serr := os.Stat(store); serr != nil || !info.IsDir() {
-			return r, false, false, refuse(command("open", "--store", store, "--session", session, "--publish", cmp.Or(publish, "manual")),
-				"store %q does not exist; open it first, or fix --store", store)
+			return r, false, false, refuse(command("open", "--store", store, "--session", session, "--publish", cmp.Or(publish, "manual")), "store %q does not exist; open it first, or fix --store", store)
 		}
 		if !slices.Contains(policies, publish) {
 			publish = "manual"
@@ -446,16 +435,11 @@ func appendEntry(store, session, id, text, source string, now time.Time, publish
 	source = cmp.Or(source, opened.source)
 	if publish == "" {
 		if !opened.found {
-			// The session file is there but its open record is not: a first
-			// append (or an open) in another process is between the two, or
-			// crashed there. Take the open path, which logs the record from
-			// the header, instead of refusing.
 			publish = healPolicy(store, session)
-			if _, _, err := open(store, session, source, now, publish); err != nil {
+			if rec, _, err := open(store, session, source, now, publish); err != nil {
 				return r, false, created, err
-			}
-			if opened, err = readOpen(store, session); err != nil {
-				return r, false, created, err
+			} else {
+				opened = rec
 			}
 			source = cmp.Or(named, opened.source)
 		}
@@ -751,12 +735,7 @@ func runStore(verb string, args []string, stdin io.Reader, stdout, stderr io.Wri
 		if err != nil {
 			return fail(err)
 		}
-		kv := []any{"session", *session, "entry", *entry, "source", r.source, "persisted", true,
-			"published", false, "publish", r.policy, "duplicate", dup, "stamp", stamp(r.stamp)}
-		if created {
-			kv = append(kv, "opened", true)
-		}
-		line(stdout, "APPEND OK", kv...)
+		line(stdout, "APPEND OK", "session", *session, "entry", *entry, "source", r.source, "persisted", true, "published", false, "publish", r.policy, "duplicate", dup, "stamp", stamp(r.stamp), "opened", created)
 	case "receipt":
 		r, words, err := receipt(*store, *session, *entry)
 		if err != nil {
