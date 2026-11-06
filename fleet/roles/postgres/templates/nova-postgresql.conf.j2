@@ -1,0 +1,14 @@
+# conf.d/nova.conf of cluster {{ nova_pg_version }}/{{ nova_pg_cluster }}: managed by Ansible (fleet/postgres.yml). A hand edit
+# is overwritten. postgresql.conf's `include_dir = 'conf.d'` reads it last, so every line here wins over the distribution's
+# file and any edit in it. A change restarts the cluster (listen_addresses and shared_buffers take effect at a restart).
+listen_addresses = '{{ pg_listen | join(',') }}'
+port = {{ nova_pg_port }}
+wal_level = replica
+shared_buffers = {{ nova_pg_shared_buffers }}
+password_encryption = scram-sha-256
+# the journal, through syslog (`journalctl -t {{ nova_pg_syslog_ident }}`): pg_ctlcluster owns the postmaster's stderr
+log_destination = 'syslog'
+syslog_ident = '{{ nova_pg_syslog_ident }}'
+logging_collector = off
+log_timezone = 'UTC'
+timezone = 'UTC'

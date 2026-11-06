@@ -1,0 +1,64 @@
+---
+# A password per user and users.acl from their hashes. Nothing here touches the running server: apply.yml loads the
+# file with ACL LOAD. users.acl.applied is the copy the running server last loaded, so a refused or interrupted run
+# stays pending until a later run applies it.
+#
+# `default` is off, so nobody can AUTH as it and a connection that names no user is refused; it holds every key and
+# command because the AOF loader replays MULTI/EXEC as the default user and some servers re-check the ACL at EXEC,
+# which with a bare `user default off` drops every replayed transaction at a restart. Clients name their user
+# (nova-bus: NOVA_BUS_USER=bus with NOVA_BUS_PASSWORD).
+- name: the default user's rule
+  ansible.builtin.set_fact:
+    redis_acl_default: "off ~* &* +@all"
+
+- name: a password per user, made once on this machine (it leaves only through nova-secrets)
+  ansible.builtin.shell: >-
+    umask 077; openssl rand -hex 32 > {{ nova_redis_dir }}/{{ item.name }}.pass &&
+    chown {{ nova_redis_owner }}:{{ nova_redis_group }} {{ nova_redis_dir }}/{{ item.name }}.pass
+  args: { creates: "{{ nova_redis_dir }}/{{ item.name }}.pass" }
+  loop: "{{ nova_redis_users }}"
+  loop_control: { label: "{{ item.name }}" }
+  no_log: true
+
+- name: users.acl from the hashes of those passwords (written beside the live file, moved in only when it differs)
+  ansible.builtin.shell: |
+    set -eu
+    d={{ nova_redis_dir }}
+    gen() {
+      echo "user default {{ redis_acl_default }}"
+    {% for u in nova_redis_users %}
+      echo "user {{ u.name }} on #$(tr -d '\n' < "$d/{{ u.name }}.pass" | sha256sum | cut -d' ' -f1) {{ u.rules }}"
+    {% endfor %}
+    }
+    {% for u in nova_redis_users %}
+    [ -s "$d/{{ u.name }}.pass" ] || { echo changed; exit 0; }   # --check before the passwords exist
+    {% endfor %}
+    if cmp -s <(gen) "$d/users.acl"; then echo same; exit 0; fi
+    {% if not ansible_check_mode %}
+    umask 077; t=$(mktemp "$d/users.acl.XXXXXX")
+    gen > "$t"
+    chown {{ nova_redis_owner }}:{{ nova_redis_group }} "$t"; mv "$t" "$d/users.acl"
+    {% endif %}
+    echo changed
+  args: { executable: /bin/bash }
+  register: redis_acl
+  changed_when: "'changed' in redis_acl.stdout"
+  check_mode: false   # under --check it only compares (nothing is written) and says whether a run would change the file
+
+- name: users.acl is pending until the running server has loaded it
+  ansible.builtin.shell: "cmp -s {{ nova_redis_dir }}/users.acl {{ nova_redis_dir }}/users.acl.applied && echo applied || echo pending"
+  register: redis_acl_state
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+# The admin password reaches redis-cli through REDISCLI_AUTH, never argv (ps shows argv).
+- name: the commands the later steps share
+  ansible.builtin.set_fact:
+    redis_acl_pending: "{{ redis_acl_state.stdout == 'pending' }}"
+    redis_acl_applied: >-
+      cp {{ nova_redis_dir }}/users.acl {{ nova_redis_dir }}/users.acl.applied &&
+      chown {{ nova_redis_owner }}:{{ nova_redis_group }} {{ nova_redis_dir }}/users.acl.applied
+    redis_cli: >-
+      REDISCLI_AUTH="$(tr -d '\n' < {{ nova_redis_dir }}/admin.pass)" redis-cli --no-auth-warning --user admin
+      -h {{ redis_bind[0] }} -p {{ nova_redis_port }}

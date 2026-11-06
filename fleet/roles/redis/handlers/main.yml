@@ -1,0 +1,13 @@
+---
+# Handlers run in the order written: a failed checkpoint fails the host, so the unit is never restarted after one.
+- name: checkpoint before restart
+  ansible.builtin.include_tasks: checkpoint.yml
+  listen: restart nova-redis
+
+- name: restart the unit
+  ansible.builtin.systemd_service: { name: "{{ nova_redis_unit }}", state: restarted, daemon_reload: true }
+  listen: restart nova-redis
+
+- name: the server answers after the restart
+  ansible.builtin.include_tasks: restarted.yml
+  listen: restart nova-redis

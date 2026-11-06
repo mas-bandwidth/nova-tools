@@ -1,0 +1,12 @@
+---
+# The last handler on `restart nova-redis`: the server answers the admin user, and the users.acl it started with is
+# recorded as applied.
+- name: the server answers the admin user after the restart
+  ansible.builtin.shell: |
+    for _ in $(seq 1 300); do [ "$({{ redis_cli }} PING 2>&1)" = PONG ] && { {{ redis_acl_applied }}; exit 0; }; sleep 0.1; done
+    echo "REDIS restarted but the admin user gets no PONG in 30 s" >&2; exit 1
+  args: { executable: /bin/bash }
+  changed_when: false
+
+- name: restarted
+  ansible.builtin.set_fact: { redis_restarted: true }

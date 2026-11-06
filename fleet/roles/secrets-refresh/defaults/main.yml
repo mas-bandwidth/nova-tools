@@ -1,0 +1,16 @@
+---
+# secrets-refresh.yml's defaults (docs/FLEET.md, "secrets-refresh.yml").
+
+# false on a machine whose copy is kept by hand (the one that writes the
+# store, say): the play removes any timer there and changes nothing else.
+nova_secrets_refresh: true
+
+# How often the store is pulled, in seconds, and where each run's line goes.
+nova_secrets_refresh_every: 600
+nova_secrets_refresh_log: "{{ nova_home }}/.local/state/nova/secrets-refresh.log"
+
+# Empty (push mode, the default): the control node puts the store's files at
+# nova_secrets_store over SSH, and the machine runs no timer; given
+# nova_seal_store (the control node's clone), this play pushes them. Set (pull
+# mode): the store's git URL, cloned where there is none and pulled on a timer.
+nova_secrets_repo: ""
