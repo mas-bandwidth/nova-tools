@@ -28,10 +28,11 @@ type waker interface {
 // unknown (the send was cut off): it may have arrived.
 type unconfirmed struct{ error }
 
-// wakeLimit bounds one wake, retries included. The hook refreshes its
-// presence before each wake, so presence is set at most presenceRefresh +
-// wakeLimit + cleanupTimeout (20 s) apart, inside presenceTTL (30 s)
-// (tla/Presence.tla R).
+// wakeLimit bounds one wake; a waker with a limit() of its own (antigravity:
+// two sends and a find, agentWake) is bounded by that instead. The hook
+// refreshes its presence before each wake, so presence is set at most
+// presenceRefresh + the limit + cleanupTimeout apart (20 s, or 28 s for
+// antigravity), inside presenceTTL (30 s) (tla/Presence.tla R).
 const wakeLimit = 8 * time.Second
 
 // harnessFlags is each harness's own flags; every one is required but
@@ -313,9 +314,16 @@ func save(dir, name string, m Msg) (string, error) {
 		e.Message[k] = m.Fields[k]
 	}
 	b, err := json.MarshalIndent(e, "", "  ")
-	if over := len(b) - maxSaved; err == nil && over > 0 {
-		body := e.Message["body"]
-		e.BodyBytes, e.Message["body"] = len(body), strings.ToValidUTF8(body[:max(0, len(body)-over-64)], "")
+	for _, k := range []string{"body", "subject", "re", "to", "from"} { // the longest first, until the whole event fits
+		over := len(b) - maxSaved
+		if err != nil || over <= 0 {
+			break
+		}
+		v := e.Message[k]
+		if k == "body" {
+			e.BodyBytes = len(v)
+		}
+		e.Message[k] = strings.ToValidUTF8(v[:max(0, len(v)-over-64)], "")
 		b, err = json.MarshalIndent(e, "", "  ")
 	}
 	if err != nil {

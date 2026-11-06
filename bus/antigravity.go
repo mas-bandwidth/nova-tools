@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 )
 
@@ -26,9 +27,12 @@ import (
 // turn. A failed send finds the server once more (Antigravity restarted)
 // and sends again; a second failure ends the hook.
 const (
-	agentLimit = wakeLimit
-	maxError   = 160 // bytes of a harness's error text copied into a receipt
+	agentLimit = 5 * time.Second  // one ps, lsof or agentapi call
+	agentWake  = 16 * time.Second // one wake: a send, a find and a second send
+	maxError   = 160              // bytes of a harness's error text copied into a receipt
 )
+
+func (*agWake) limit() time.Duration { return agentWake }
 
 type agWake struct {
 	bin, session, port, dir, name, token, ws, fixed string
@@ -178,7 +182,11 @@ func (a *agWake) wake(ctx context.Context, m Msg) error {
 	if ferr := a.find(ctx); ferr != nil {
 		return fmt.Errorf("%v; found again: %v", err, ferr)
 	}
-	return a.agentapi(ctx, "send-message", "--title=nova-bus", a.session, text)
+	err = a.agentapi(ctx, "send-message", "--title=nova-bus", a.session, text)
+	if err != nil && ctx.Err() != nil { // cut off again: it may have arrived
+		return unconfirmed{err}
+	}
+	return err
 }
 
 // agentapi runs one agentapi command; agentapi prints {"error": ...} at

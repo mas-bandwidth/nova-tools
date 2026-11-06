@@ -80,7 +80,8 @@ func (u unit) text(cmd []string, env [][2]string) string {
 	for i, a := range cmd {
 		words[i] = sdQuote(a)
 	}
-	t := "[Unit]\nDescription=nova-bus hook " + strings.ReplaceAll(strings.Join(cmd[1:], " "), "%", "%%") +
+	desc := strings.NewReplacer("%", "%%", "\n", " ", "\r", " ").Replace(strings.Join(cmd[1:], " "))
+	t := "[Unit]\nDescription=nova-bus " + desc +
 		"\n\n[Service]\nExecStart=" + strings.Join(words, " ") + "\n"
 	for _, kv := range env {
 		t += "Environment=" + sdQuote(kv[0]+"="+kv[1]) + "\n"

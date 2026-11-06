@@ -7,7 +7,7 @@ every message as one line on stdout, so anything that can watch a process's outp
 
 ```
 nova-bus send --as <me> --to <name>[,<name>] [--re <id>] [--new] <subject> <body | ->
-nova-bus hook --as <name> [--harness claude|grok|antigravity] [its flags] [--exec <command>] [--child] [--service [stop]]
+nova-bus hook --as <name> [--harness claude|grok|antigravity] [its flags] [--exec <command>] [--service [stop]]
 nova-bus recv --as <name> [--timeout <d>]
 nova-bus ack --as <name> --id <id>
 nova-bus who
@@ -64,20 +64,23 @@ hook -h`, exit 2. `nova-bus show agents` prints these lines for CLAUDE.md.
 
 **Codex.** The main chat never runs the hook and nothing from outside is ever put into it (a turn started into the
 chat from outside, as v1 and an earlier draft of this did, left it hung on "Thinking" with every later message
-refused). A child agent of the session does the receiving, in a loop: `nova-bus recv --as <name>` waits for one
-message and prints its line; the child relays that line to its parent with the harness's own return; then
-`nova-bus ack --as <name> --id <id>` marks it handled, and the child runs `recv` again. The parent answers and
-spawns the child again when it ends. A child that dies between `recv` and `ack` leaves the message unhandled, so
-the next `recv` prints it again: the parent may see a message twice, by its id, and ignores the repeat. A hook run
-in a Codex main thread is refused, exit 2: `nova-bus hook: this is a Codex main thread (CODEX_THREAD_ID <id> is a
-chat someone started); run the hook in a child agent: ...; run: nova-bus hook -h` (Codex sets `CODEX_THREAD_ID` in
-every command it runs, and the thread's rollout under `${CODEX_HOME:-~/.codex}/sessions` says whether it is a chat
-someone started or a child agent; with no readable rollout a child passes `--child`). Put these lines in the
-workspace's AGENTS.md:
+refused). One child agent of the session does the receiving, and keeps running; its loop is: `nova-bus recv --as
+<name>` waits for one message and prints its line; the child sends that line to its parent as a message; then
+`nova-bus ack --as <name> --id <id>` marks it handled (`ACK FAILED` means it was handled already: go on); then
+`recv` again. The parent answers with `send` and spawns the child again when it ends. A child that dies between
+`recv` and `ack` leaves the message unhandled, so the next `recv` prints it again: the parent may see a message
+twice, by its id, and ignores the repeat. Every command in the child carries `NOVA_BUS_REDIS=<host:port>`, because
+a child's environment may not have it. Under Codex (`CODEX_THREAD_ID` is in every command's environment) `nova-bus
+hook` is refused in any thread, exit 2, and `recv` is refused in a main thread, exit 2, where it would block the
+chat: the thread's rollout under `${CODEX_HOME:-~/.codex}/sessions` says whether it is a chat someone started
+(`thread_source: user`) or a child agent (`subagent`); one that cannot be read is refused too. Put these lines in
+the workspace's AGENTS.md:
 
 ```
 nova-bus show codex-agents
 ```
+
+This loop has not yet been proven live from a Codex child; it is the shape Glenn's earlier child-agent hooks took.
 
 **Grok** (`--harness grok --grok-home <dir>`, normally `~/.grok`). Each message is saved to `<dir>/nova-bus/<id>.json`
 and a line naming that file is appended to `<dir>/nova-hook.wake` (made, mode 0600, if absent). The Grok session's
@@ -294,7 +297,9 @@ their reader, however long that takes.
 
 ## Presence
 
-Presence means one thing: a hook process is alive for this name.
+Presence means one thing: a hook process is alive for this name, or a recv is waiting on it (the value then ends
+in `recv`, from the first recv; a recv claims again every 10 s while it waits, and a hook is refused by a recv's key
+only until it lapses).
 
 - **One hook per name.** On start the hook claims the key: one Lua script sets
   it with a 30 s TTL unless it holds another process's value. If it does, the

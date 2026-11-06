@@ -29,7 +29,10 @@ Keep tests for these cases, which the guide does not show:
 - A send to a name no hook or recv has read: exit 1 and nothing sent;
   `--new` sends; a name with the group takes a send without it.
 - recv then ack: recv prints the oldest unhandled and acks nothing (a second
-  recv prints it again); ack marks it, and a second ack of the same id fails.
+  recv prints it again); ack marks it, and a second ack of the same id fails
+  without deleting anything (XDEL only after an XACK of 1, in one script).
+  A recv beside a live hook is refused, "name hooked"; a waiting recv claims
+  the key again every 10 s.
 - The wakes and the service are unit-tested on fake seams (exec, shell,
   devOf, the service manager): no socket, process or device is reached.
 

@@ -73,6 +73,12 @@ func TestSaveCutsABodyOverTheCap(t *testing.T) {
 	require.NoError(t, json.Unmarshal(b, &e))
 	assert.Equal(t, len(long), e.BodyBytes, "the event says how long the body was")
 	assert.Less(t, len(e.Message["body"]), len(long))
+
+	path, err = save(dir, "beta", Msg{ID: "9-1", Fields: map[string]string{"from": "a", "subject": long, "body": long}})
+	require.NoError(t, err)
+	b, err = os.ReadFile(path)
+	require.NoError(t, err)
+	assert.LessOrEqual(t, len(b), maxSaved, "the whole event is capped, not only the body")
 }
 
 func TestPrivateDir(t *testing.T) {
@@ -185,6 +191,7 @@ type ag struct {
 	lsofs     map[string]string // pid -> lsof's output, else lsof
 	send      string            // what send-message prints
 	sendFails int               // fail this many send-messages with exit 1
+	onSend    func()            // called before each send-message
 	calls     [][]string
 	envs      [][]string
 }
@@ -206,6 +213,9 @@ func (a *ag) exec(_ context.Context, env []string, name string, args ...string) 
 			return []byte(out), nil
 		}
 		return []byte("connection refused"), errors.New("exit status 1")
+	}
+	if a.onSend != nil {
+		a.onSend()
 	}
 	if a.sendFails > 0 {
 		a.sendFails--
@@ -294,6 +304,14 @@ func TestAntigravityFindsTheServerAgainAfterAFailedSend(t *testing.T) {
 	fake.sendFails, fake.answer = 2, map[string]string{}
 	err = w.wake(context.Background(), testMsg)
 	assert.EqualError(t, err, "agentapi send-message: exit status 1: server gone; found again: conversation conv-1 did not answer on any of 1 language_servers of this user: agentapi get-conversation-metadata: exit status 1: connection refused")
+
+	fake.sendFails, fake.answer = 2, map[string]string{"tok:7001": `{}`}
+	ctx, cancel := context.WithCancel(context.Background())
+	fake.onSend = cancel // the second send is cut off by the wake's limit
+	err = w.wake(ctx, testMsg)
+	var u unconfirmed
+	assert.ErrorAs(t, err, &u, "it may have arrived: acked, never sent twice")
+	assert.Equal(t, agentWake, w.(*agWake).limit(), "two sends and a find, inside the presence TTL")
 }
 
 func TestAntigravityStartRefusals(t *testing.T) {
@@ -583,38 +601,47 @@ func codexHome(t *testing.T, home, thread, source string) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "rollout-2026-11-06T01-50-29-"+thread+".jsonl"), []byte(meta+`{"type":"event_msg","payload":{"type":"task_started"}}`+"\n"), 0o600))
 }
 
-// Under Codex (CODEX_THREAD_ID in the command's environment) a main thread
-// is refused and a child agent runs; with no readable record, only --child.
-func TestCodexMainThreadIsRefused(t *testing.T) {
+// Under Codex (CODEX_THREAD_ID in the command's environment) the hook is
+// refused in any thread; recv is refused in a main thread, or one whose
+// record cannot be read, and runs in a child agent.
+func TestCodexRefusals(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
 	codexHome(t, filepath.Join(home, ".codex"), "main-01", "user")
 	codexHome(t, filepath.Join(home, ".codex"), "child-01", "subagent")
 	other := t.TempDir()
 	codexHome(t, other, "main-02", "user")
+	assert.Equal(t, "", codexHook(func(string) string { return "" }))
+	assert.Equal(t, "this runs under Codex (CODEX_THREAD_ID child-01), where the hook never runs: receive with recv in a child agent: "+codexRecipe,
+		codexHook(func(k string) string { return map[string]string{"CODEX_THREAD_ID": "child-01"}[k] }), "a child agent too")
 	for _, tc := range []struct {
-		env   map[string]string
-		child bool
-		want  string
+		env  map[string]string
+		want string
 	}{
-		{map[string]string{}, false, ""},
-		{map[string]string{"CODEX_THREAD_ID": "child-01"}, false, ""},
-		{map[string]string{"CODEX_THREAD_ID": "main-01"}, false, "this is a Codex main thread (CODEX_THREAD_ID main-01 is a chat someone started); run the hook in a child agent: " + codexRecipe},
-		{map[string]string{"CODEX_THREAD_ID": "main-01"}, true, "this is a Codex main thread (CODEX_THREAD_ID main-01 is a chat someone started); run the hook in a child agent: " + codexRecipe},
-		{map[string]string{"CODEX_THREAD_ID": "main-02", "CODEX_HOME": other}, false, "this is a Codex main thread (CODEX_THREAD_ID main-02 is a chat someone started); run the hook in a child agent: " + codexRecipe},
-		{map[string]string{"CODEX_THREAD_ID": "gone-01"}, false, "under Codex (CODEX_THREAD_ID gone-01) and cannot read the thread's record (no rollout for thread gone-01 under " + home + "/.codex/sessions): a child agent passes --child; a main thread never runs the hook: " + codexRecipe},
-		{map[string]string{"CODEX_THREAD_ID": "gone-01"}, true, ""},
-		{map[string]string{"CODEX_THREAD_ID": "../x"}, false, "under Codex (CODEX_THREAD_ID ../x) and cannot read the thread's record (the thread id is not a Codex id): a child agent passes --child; a main thread never runs the hook: " + codexRecipe},
+		{map[string]string{}, ""},
+		{map[string]string{"CODEX_THREAD_ID": "child-01"}, ""},
+		{map[string]string{"CODEX_THREAD_ID": "main-01"}, "this is a Codex main thread (CODEX_THREAD_ID main-01 is a chat someone started), where recv would block the chat: receive with recv in a child agent: " + codexRecipe},
+		{map[string]string{"CODEX_THREAD_ID": "main-02", "CODEX_HOME": other}, "this is a Codex main thread (CODEX_THREAD_ID main-02 is a chat someone started), where recv would block the chat: receive with recv in a child agent: " + codexRecipe},
+		{map[string]string{"CODEX_THREAD_ID": "gone-01"}, "under Codex (CODEX_THREAD_ID gone-01) and cannot read the thread's record (no rollout for thread gone-01 under " + home + "/.codex/sessions), so this may be the main chat, which recv would block: receive with recv in a child agent: " + codexRecipe},
+		{map[string]string{"CODEX_THREAD_ID": "../x"}, "under Codex (CODEX_THREAD_ID ../x) and cannot read the thread's record (the thread id is not a Codex id), so this may be the main chat, which recv would block: receive with recv in a child agent: " + codexRecipe},
 	} {
-		assert.Equal(t, tc.want, codexMain(func(k string) string { return tc.env[k] }, home, tc.child), "%v child=%t", tc.env, tc.child)
+		assert.Equal(t, tc.want, codexRecv(func(k string) string { return tc.env[k] }, home), "%v", tc.env)
 	}
-	env := map[string]string{"NOVA_BUS_REDIS": testAddr, "CODEX_THREAD_ID": "main-01"}
-	code, _, errOut := callSys(t, sys{home: home}, env, "hook", "--as", "beta", "--child")
+	env := map[string]string{"NOVA_BUS_REDIS": testAddr, "CODEX_THREAD_ID": "child-01"}
+	code, _, errOut := callSys(t, sys{home: home}, env, "hook", "--as", "beta")
 	assert.Equal(t, 2, code)
-	assert.Equal(t, "nova-bus hook: this is a Codex main thread (CODEX_THREAD_ID main-01 is a chat someone started); run the hook in a child agent: "+codexRecipe+"; run: nova-bus hook -h\n", errOut)
-	env["CODEX_THREAD_ID"] = "child-01"
+	assert.Equal(t, "nova-bus hook: this runs under Codex (CODEX_THREAD_ID child-01), where the hook never runs: receive with recv in a child agent: "+codexRecipe+"; run: nova-bus hook -h\n", errOut)
 	code, _, errOut = callSys(t, sys{home: home}, env, "hook", "--as", "beta", "--child")
-	assert.Equal(t, 0, code, errOut)
+	assert.Equal(t, 2, code)
+	assert.Equal(t, "nova-bus hook: unknown flag --child; run: nova-bus hook -h\n", errOut)
+	env["CODEX_THREAD_ID"] = "main-01"
+	code, _, errOut = callSys(t, sys{home: home}, env, "recv", "--as", "beta", "--timeout", "1s")
+	assert.Equal(t, 2, code)
+	assert.Equal(t, "nova-bus recv: this is a Codex main thread (CODEX_THREAD_ID main-01 is a chat someone started), where recv would block the chat: receive with recv in a child agent: "+codexRecipe+"; run: nova-bus recv -h\n", errOut)
+	env["CODEX_THREAD_ID"] = "child-01"
+	code, _, errOut = callSys(t, sys{home: home}, env, "recv", "--as", "beta", "--timeout", "1s")
+	assert.Equal(t, 1, code, "a child's recv runs (and ends with nothing): %s", errOut)
+	assert.True(t, strings.HasPrefix(errOut, "RECV NONE name=beta waited="), errOut)
 }
 
 func TestShowPrintsTheStandingInstructions(t *testing.T) {
@@ -627,9 +654,10 @@ func TestShowPrintsTheStandingInstructions(t *testing.T) {
 		assert.LessOrEqual(t, strings.Count(out, "\n"), 10, which)
 		assert.Contains(t, out, "nova-bus send --as <name> --to <from> --re <id>")
 	}
-	assert.Contains(t, agentsSnippets["codex-agents"], "nova-bus recv --as <name>")
-	assert.Contains(t, agentsSnippets["codex-agents"], "nova-bus ack --as <name> --id <id>")
-	assert.Contains(t, agentsSnippets["codex-agents"], "it refuses, and run any other way it would block")
+	assert.Equal(t, 3, strings.Count(agentsSnippets["codex-agents"], "NOVA_BUS_REDIS=<host:port> nova-bus "), "recv, ack and send each carry the address")
+	assert.Contains(t, agentsSnippets["codex-agents"], "ACK FAILED means it was handled already: go on")
+	assert.Contains(t, agentsSnippets["codex-agents"], "Never run nova-bus hook or recv in this thread")
+	assert.Contains(t, agentsSnippets["codex-agents"], "send that line to your\nparent as a message")
 	assert.Contains(t, agentsSnippets["agents"], "as the Monitor tool's command itself")
 	for _, args := range [][]string{{"show"}, {"show", "x"}, {"show", "agents", "x"}} {
 		code, _, errOut := call(t, newFake(), nil, "", args...)
@@ -757,6 +785,7 @@ func TestServiceInstallsASystemdUserUnit(t *testing.T) {
 	b, err := os.ReadFile(unit)
 	require.NoError(t, err)
 	for _, want := range []string{
+		"Description=nova-bus hook --as beta --harness claude --exec relay 'it' $X\n",
 		`ExecStart="/opt/nova/bin/nova-bus" "hook" "--as" "beta" "--harness" "claude" "--exec" "relay 'it' $$X"` + "\n",
 		`Environment="NOVA_BUS_REDIS=` + testAddr + `"` + "\n", `Environment="NOVA_BUS_PASSWORD=s3cret"` + "\n",
 		"Restart=always\nRestartSec=10\n", "StandardOutput=append:" + m.log + "\n", "[Install]\nWantedBy=default.target\n",

@@ -95,10 +95,26 @@ func TestRecvKeepsItsFirstPresenceAndLeavesAHooksAlone(t *testing.T) {
 	assert.Equal(t, "2026-11-05T11:00:00Z\trecv", f.presence["beta"], "uptime since the first recv")
 	assert.Equal(t, f.clock.Add(presenceTTL), f.deadline["beta"], "set again")
 
-	f.presence["beta"] = testValue
-	code, _, _ = call(t, f, testEnv, "", "recv", "--as", "beta")
-	require.Equal(t, 0, code)
+	f.presence["beta"], f.deadline["beta"] = testValue, f.clock.Add(presenceTTL)
+	code, out, errOut := call(t, f, testEnv, "", "recv", "--as", "beta")
+	assert.Equal(t, 1, code)
+	assert.Empty(t, out)
+	assert.Equal(t, "nova-bus recv: name hooked: a hook holds beta and would take the same messages; run: nova-bus who\n", errOut)
 	assert.Equal(t, testValue, f.presence["beta"], "a hook's key is not taken")
+	assert.Equal(t, []string{"1-0"}, f.pending["bus:beta"], "and its message was not read")
+}
+
+// A recv that waits keeps the name present: it claims again every 10 s.
+func TestRecvRefreshesPresenceWhileItWaits(t *testing.T) {
+	t.Parallel()
+	f := newFake()
+	f.quiet = 100
+	var out, errOut bytes.Buffer
+	code := recv(context.Background(), f, "beta", testAddr, 35*time.Second, f, &out, &errOut)
+	assert.Equal(t, 1, code)
+	assert.Equal(t, "RECV NONE name=beta waited=35s\n", errOut.String())
+	assert.Len(t, f.claims, 4, "at the start and every 10 s")
+	assert.True(t, f.live("beta"), "present to the end")
 }
 
 func TestRecvAndAckRefusals(t *testing.T) {

@@ -29,21 +29,21 @@ import (
 // thread_source is "user" for a chat a person started and "subagent" for a
 // child agent (source {"subagent":{"thread_spawn":{"parent_thread_id":..}}};
 // 151 child and 8 user rollouts on the studio, 2026-11-06). With no
-// CODEX_THREAD_ID the hook is not under Codex. With one and no readable
-// rollout the hook cannot tell, and runs only with --child.
-const codexRecipe = "spawn a child agent whose only job is the loop `nova-bus recv --as <name>`, relay the line to you, `nova-bus ack --as <name> --id <id>`; spawn it again when it ends (nova-bus show codex-agents)"
+// CODEX_THREAD_ID the command is not under Codex. With one and no readable
+// rollout, recv cannot tell and refuses too.
+const codexRecipe = "spawn a child agent whose only job is the loop `NOVA_BUS_REDIS=<host:port> nova-bus recv --as <name>`, send the line to you, `NOVA_BUS_REDIS=<host:port> nova-bus ack --as <name> --id <id>`, again; spawn it again when it ends (nova-bus show codex-agents)"
 
 var agentsSnippets = map[string]string{
 	"codex-agents": `# nova-bus (keep these lines; nova-bus show codex-agents prints them)
-At the start of every session, and again whenever it ends, spawn a child agent
-with this one task: "Loop forever: run ` + "`NOVA_BUS_REDIS=<host:port> nova-bus recv --as <name>`" + `
-(it waits for one message and prints it as id<TAB>from<TAB>re<TAB>subject<TAB>body);
-send that line to your parent, exactly; then run ` + "`nova-bus ack --as <name> --id <id>`" + `
-with its id, and recv again." A message you have already seen may come again
-by its id (the child died between recv and ack): ignore the repeat. Answer each
-with ` + "`nova-bus send --as <name> --to <from> --re <id> <subject> <body>`" + `. Never run
-nova-bus hook in this thread: it refuses, and run any other way it would block
-this chat.
+At the start of every session, and again whenever it ends, spawn one child
+agent with this one task, which it keeps running: "Loop: run
+` + "`NOVA_BUS_REDIS=<host:port> nova-bus recv --as <name>`" + ` (it waits for one message and
+prints it as id<TAB>from<TAB>re<TAB>subject<TAB>body); send that line to your
+parent as a message, exactly; then run ` + "`NOVA_BUS_REDIS=<host:port> nova-bus ack --as <name> --id <id>`" + `
+with its id (ACK FAILED means it was handled already: go on); then recv again."
+A message may reach you twice, by its id: ignore the repeat. Answer each with
+` + "`NOVA_BUS_REDIS=<host:port> nova-bus send --as <name> --to <from> --re <id> <subject> <body>`" + `.
+Never run nova-bus hook or recv in this thread: they refuse here.
 `,
 	"agents": `# nova-bus (keep these lines; nova-bus show agents prints them)
 At the start of every session, run ` + "`NOVA_BUS_REDIS=<host:port> nova-bus hook --as <name>`" + `
@@ -56,10 +56,22 @@ Monitor command again, every time. One hook per name.
 `,
 }
 
-// codexMain says whether env is a Codex main thread's: "" when not under
-// Codex or a child agent's; otherwise why the hook refuses. child is the
-// --child flag: it stands only where the thread's record cannot be read.
-func codexMain(env func(string) string, home string, child bool) string {
+// codexHook says why the hook refuses under Codex ("" when not under it):
+// any Codex thread, main or child, because a child whose record cannot be
+// read is not told from a main thread, and a hook in a main thread blocks
+// the chat.
+func codexHook(env func(string) string) string {
+	thread := env("CODEX_THREAD_ID")
+	if thread == "" {
+		return ""
+	}
+	return "this runs under Codex (CODEX_THREAD_ID " + thread + "), where the hook never runs: receive with recv in a child agent: " + codexRecipe
+}
+
+// codexRecv says why recv refuses under Codex ("" when not under it, or in
+// a child agent): a recv in a main thread blocks the chat, and so does one
+// whose thread cannot be told from a main thread's.
+func codexRecv(env func(string) string, home string) string {
 	thread := env("CODEX_THREAD_ID")
 	if thread == "" {
 		return ""
@@ -71,14 +83,12 @@ func codexMain(env func(string) string, home string, child bool) string {
 	}
 	source, err := threadSource(home, thread)
 	switch {
-	case err == nil && source == "user":
-		return "this is a Codex main thread (CODEX_THREAD_ID " + thread + " is a chat someone started); run the hook in a child agent: " + codexRecipe
+	case err == nil && source == "subagent":
+		return ""
 	case err == nil:
-		return ""
-	case child:
-		return ""
+		return "this is a Codex main thread (CODEX_THREAD_ID " + thread + " is a chat someone started), where recv would block the chat: receive with recv in a child agent: " + codexRecipe
 	}
-	return fmt.Sprintf("under Codex (CODEX_THREAD_ID %s) and cannot read the thread's record (%v): a child agent passes --child; a main thread never runs the hook: %s", thread, err, codexRecipe)
+	return fmt.Sprintf("under Codex (CODEX_THREAD_ID %s) and cannot read the thread's record (%v), so this may be the main chat, which recv would block: receive with recv in a child agent: %s", thread, err, codexRecipe)
 }
 
 // threadSource is the thread_source of thread's rollout under home: "user"

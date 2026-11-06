@@ -33,7 +33,7 @@ var verbUsage = map[string]string{
       SEND FAILED and exits 1; it is never retried.
 `,
 	"hook": `  nova-bus hook --as <name> [--harness <harness> <its flags> | --exec <command>]
-                [--child] [--service [stop]]
+                [--service [stop]]
       Deliver every waiting message for <name>, then each new one as it arrives,
       into the session that runs the hook, waking it when it is idle.
       --exec <command>: run the command (sh -c) for each message, its line on
@@ -42,16 +42,17 @@ var verbUsage = map[string]string{
       delivery (HOOK EXEC OK id=<id> on stdout), and only then is the message
       marked handled. Any other exit is HOOK EXEC FAILED id=<id> exit=<n> on
       stderr and the hook ends, exit 1, the message unhandled for the next hook.
-      Under Codex, a hook in the main chat is refused (exit 2); a child agent
-      runs it with --child (nova-bus show codex-agents prints the recipe).
+      Under Codex (CODEX_THREAD_ID set) the hook is refused, exit 2: Codex
+      receives with recv in a child agent (nova-bus show codex-agents).
       How your session gets woken, per --harness:
         claude (the default): each message is one line on stdout,
           id<TAB>from<TAB>re<TAB>subject<TAB>body (re is - when none; \n, \r,
           \t and \\ escaped). Claude Code and Muse Code run the hook under
           the session's Monitor tool, never with & or into a file: the
           Monitor turns each line into a notification, and that is the wake.
-          Codex runs it in a child agent, which relays each line to the main
-          chat (the README says how). Refused (exit 2) when stdout is /dev/null.
+          Codex never runs it: a child agent loops recv, a message to its
+          parent, ack (the README says how). Refused (exit 2) when stdout is
+          /dev/null.
         grok --grok-home <dir>: each message is saved to <dir>/nova-bus/<id>.json
           and a line naming that file is appended to <dir>/nova-hook.wake;
           the session's Monitor runs tail -n 0 -F <dir>/nova-hook.wake first.
@@ -138,7 +139,7 @@ func usage() string {
 }
 
 // verbs maps each verb to the flags it takes.
-var verbs = map[string][]string{"send": {"as", "to", "re", "new"}, "hook": append([]string{"as", "harness", "service", "child", "exec"}, slices.Sorted(maps.Keys(flagWants))...),
+var verbs = map[string][]string{"send": {"as", "to", "re", "new"}, "hook": append([]string{"as", "harness", "service", "exec"}, slices.Sorted(maps.Keys(flagWants))...),
 	"recv": {"as", "timeout"}, "ack": {"as", "id"}, "who": {}, "pending": {"as", "list"}, "show": {}}
 
 // Group is the consumer group, and consumer, every hook reads its inbox with.
@@ -257,7 +258,6 @@ func run(ctx context.Context, args []string, env func(string) string, stdin io.R
 	fresh := fs.Bool("new", false, "")
 	harness := fs.String("harness", "claude", "")
 	service := fs.Bool("service", false, "")
-	child := fs.Bool("child", false, "")
 	command := fs.String("exec", "", "")
 	timeout := fs.Duration("timeout", 0, "")
 	id := fs.String("id", "", "")
@@ -363,7 +363,10 @@ func run(ctx context.Context, args []string, env func(string) string, stdin io.R
 		fmt.Fprint(stdout, agentsSnippets[fs.Arg(0)])
 		return 0
 	}
-	if why := codexMain(env, s.home, *child); verb == "hook" && !*service && why != "" {
+	if why := codexHook(env); verb == "hook" && !*service && why != "" {
+		return misuse(stderr, verb, "%s", why)
+	}
+	if why := codexRecv(env, s.home); verb == "recv" && why != "" {
 		return misuse(stderr, verb, "%s", why)
 	}
 	if stop {
@@ -641,7 +644,11 @@ func deliver(ctx context.Context, w waker, m Msg, out, stderr io.Writer) error {
 		}
 		return nil
 	}
-	wctx, cancel := context.WithTimeout(ctx, wakeLimit)
+	limit := wakeLimit
+	if l, ok := w.(interface{ limit() time.Duration }); ok {
+		limit = l.limit()
+	}
+	wctx, cancel := context.WithTimeout(ctx, limit)
 	err := w.wake(wctx, m)
 	cancel()
 	receipt := "HOOK WAKE OK harness=" + harnessName(w) + " id=" + m.ID
@@ -670,12 +677,13 @@ func deliver(ctx context.Context, w waker, m Msg, out, stderr io.Writer) error {
 
 // recv prints one message for name, the oldest unhandled first, without
 // acking it: the bridge for a harness whose receiver cannot run the hook
-// (Codex, where a child agent receives and relays natively to its parent,
-// then acks). Presence is set on each recv with the token "recv", so a name
-// read this way shows in who while it keeps reading; a hook's own key is
-// left alone. A read hands up to 100 entries to the pending list, which the
-// next recv reads first, so the order is kept (tla/Bus.tla: recv is a Print
-// with the ack left to a later process).
+// (Codex, where a child agent receives, sends the line to its parent, then
+// acks). It is refused while a hook holds the name (both read the same
+// group, and a recv would take the hook's messages). Presence is set with
+// the token "recv" and refreshed while it waits, so a name read this way
+// shows in who. A read hands up to 100 entries to the pending list, which
+// the next recv reads first, so the order is kept (tla/Bus.tla: recv is a
+// Print with the ack left to a later process).
 func recv(ctx context.Context, store Store, name, addr string, timeout time.Duration, clk Clock, stdout, stderr io.Writer) int {
 	stream := "bus:" + name
 	start := clk.Now()
@@ -683,12 +691,26 @@ func recv(ctx context.Context, store Store, name, addr string, timeout time.Dura
 		return fail(stderr, "recv", "%s", describe(err, addr))
 	}
 	value := start.UTC().Format(time.RFC3339) + "\trecv"
-	if present, err := store.Presence(ctx); err == nil && strings.HasSuffix(present[name], "\trecv") {
-		value = present[name] // the uptime is since the first recv
-	}
-	if _, err := store.Claim(ctx, name, value, presenceTTL); err != nil { // held by a hook: left alone
+	present, err := store.Presence(ctx)
+	if err != nil {
 		return fail(stderr, "recv", "%s", describe(err, addr))
 	}
+	if v, ok := present[name]; ok && !strings.HasSuffix(v, "\trecv") {
+		return fail(stderr, "recv", "name hooked: a hook holds %s and would take the same messages; run: nova-bus who", name)
+	} else if ok {
+		value = v // the uptime is since the first recv
+	}
+	claim := func() error {
+		held, err := store.Claim(ctx, name, value, presenceTTL)
+		if err == nil && held != "" {
+			err = fmt.Errorf("name hooked: a hook took %s; run: nova-bus who", name)
+		}
+		return err
+	}
+	if err := claim(); err != nil {
+		return fail(stderr, "recv", "%s", describe(err, addr))
+	}
+	due := clk.Now().Add(presenceRefresh)
 	msgs, err := store.Read(ctx, stream, true, 0)
 	for err == nil && len(msgs) == 0 {
 		left := readBlock
@@ -700,6 +722,12 @@ func recv(ctx context.Context, store Store, name, addr string, timeout time.Dura
 		}
 		if ctx.Err() != nil {
 			break
+		}
+		if t := clk.Now(); !t.Before(due) { // present while it waits
+			if err = claim(); err != nil {
+				break
+			}
+			due = t.Add(presenceRefresh)
 		}
 		msgs, err = store.Read(ctx, stream, false, left)
 	}

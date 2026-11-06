@@ -100,19 +100,10 @@ func toMsgs(xs []redis.XMessage) []Msg {
 	return msgs
 }
 
-// Ack acks the entry and deletes it from the stream in one MULTI, so an inbox
-// holds only what is waiting.
+// Ack acks the entry and, only if that acked something, deletes it, in one
+// script: an id that was never handed is neither acked nor deleted.
 func (r redisStore) Ack(ctx context.Context, stream, id string) (int64, error) {
-	var acked *redis.IntCmd
-	_, err := r.c.TxPipelined(ctx, func(p redis.Pipeliner) error {
-		acked = p.XAck(ctx, stream, group, id)
-		p.XDel(ctx, stream, id)
-		return nil
-	})
-	if err != nil {
-		return 0, err
-	}
-	return acked.Val(), nil
+	return ackScript.Run(ctx, r.c, []string{stream}, group, id).Int64()
 }
 
 // Count is one XLEN: an ack deletes its entry, so a stream holds exactly
@@ -152,6 +143,9 @@ redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[2])
 return ''`)
 	release = redis.NewScript(`if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) end
 return 0`)
+	ackScript = redis.NewScript(`local n = redis.call('XACK', KEYS[1], ARGV[1], ARGV[2])
+if n == 1 then redis.call('XDEL', KEYS[1], ARGV[2]) end
+return n`)
 )
 
 func (r redisStore) Claim(ctx context.Context, name, value string, ttl time.Duration) (string, error) {
