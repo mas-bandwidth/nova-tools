@@ -51,10 +51,10 @@ func (r redisStore) Group(ctx context.Context, stream string) error {
 	return err
 }
 
-func (r redisStore) Read(ctx context.Context, stream string, pending bool, block time.Duration) ([]Msg, error) {
-	args := &redis.XReadGroupArgs{Group: group, Consumer: group, Streams: []string{stream, ">"}, Count: 100, Block: block}
-	if pending {
-		args.Streams[1], args.Block = "0", -1
+func (r redisStore) Read(ctx context.Context, stream, after string, block time.Duration) ([]Msg, error) {
+	args := &redis.XReadGroupArgs{Group: group, Consumer: group, Streams: []string{stream, after}, Count: 100, Block: block}
+	if after != ">" {
+		args.Block = -1
 	}
 	res, err := r.c.XReadGroup(ctx, args).Result()
 	if errors.Is(err, redis.Nil) {

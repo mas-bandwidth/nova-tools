@@ -1,0 +1,42 @@
+---
+# The hostkey role: a machine's SSH host key pinned into the control node's ~/.ssh/known_hosts at the first connection
+# (ssh-keyscan, ed25519), so no play ever needs StrictHostKeyChecking=no. hostkey_name is the name the plays connect
+# to: the row's address at join, and the MagicDNS name once tailscale.yml records it (Tailscale SSH serves its own
+# host key under that name). A name already in known_hosts is left as it is; a name that answers no key stops the run.
+- name: "{{ hostkey_name }} in known_hosts already"
+  ansible.builtin.command: "ssh-keygen -F {{ hostkey_name | quote }}"
+  delegate_to: localhost
+  become: false
+  register: hostkey_known
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: "the host key of {{ hostkey_name }} (first connection: ssh-keyscan)"
+  ansible.builtin.command: "ssh-keyscan -T 10 -t ed25519 {{ hostkey_name | quote }}"
+  delegate_to: localhost
+  become: false
+  register: hostkey_scan
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: hostkey_known.rc != 0
+
+- name: the machine answered with a key
+  ansible.builtin.assert:
+    that: hostkey_scan is skipped or (hostkey_scan.stdout_lines | select('search', ' ssh-ed25519 ') | list | length > 0)
+    fail_msg: "HOSTKEY STOP {{ hostkey_name }}: no ed25519 host key answered ssh-keyscan from the control node (is it reachable on 22?)"
+    quiet: true
+
+- name: "{{ hostkey_name }} pinned into known_hosts"
+  ansible.builtin.known_hosts:
+    name: "{{ hostkey_name }}"
+    key: "{{ hostkey_scan.stdout_lines | select('search', ' ssh-ed25519 ') | first }}"
+    state: present
+  delegate_to: localhost
+  become: false
+  when: hostkey_scan is not skipped
+
+- name: the receipt
+  ansible.builtin.debug:
+    msg: "HOSTKEY {{ hostkey_name }} {{ 'known' if hostkey_known.rc == 0 else ('WOULD-PIN (check: nothing written)' if ansible_check_mode else 'pinned') }}"

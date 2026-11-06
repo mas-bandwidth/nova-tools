@@ -1,0 +1,83 @@
+---
+# postgresql-<version> and its client from the source nova_pg_source names. pgdg: the signing key is fetched over
+# https on the control node, its fingerprint read there with gpg and refused unless it is nova_pg_pgdg_key_fingerprint;
+# only then does it land in /etc/apt/keyrings and the source in /etc/apt/sources.list.d/pgdg.sources (deb822, signed
+# by that key only; never apt-key). Under --check, before the source exists, apt cannot be asked for the packages:
+# they are reported as pending. Registers pg_pkg for the recap.
+- name: does apt offer postgresql-{{ nova_pg_version }} already
+  ansible.builtin.command: "apt-cache show postgresql-{{ nova_pg_version }}"
+  register: pg_offered
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: nova_pg_source == 'auto'
+
+- name: the source
+  ansible.builtin.set_fact:
+    pg_src: "{{ nova_pg_source if nova_pg_source != 'auto' else ('distro' if pg_offered.rc == 0 else 'pgdg') }}"
+
+- name: the source is one this play knows
+  ansible.builtin.assert:
+    that: pg_src in ['distro', 'pgdg']
+    fail_msg: "nova_pg_source is {{ nova_pg_source }}: auto, distro or pgdg"
+    quiet: true
+
+- name: the PostgreSQL project's key and source
+  when: pg_src == 'pgdg'
+  block:
+    - name: the signing key, read over https on the control node (nothing written)
+      ansible.builtin.uri: { url: "{{ nova_pg_pgdg_key_url }}", return_content: true }
+      register: pgdg_key
+      delegate_to: localhost
+      become: false
+      check_mode: false
+      changed_when: false
+
+    - name: its fingerprint, as gpg reads it on the control node (no keyring touched)
+      ansible.builtin.shell: "gpg --batch --with-colons --show-keys | sed -n 's/^fpr:*\\([0-9A-F]*\\):$/\\1/p' | head -1"
+      args: { stdin: "{{ pgdg_key.content }}" }
+      environment: { PATH: "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin" }
+      register: pgdg_fpr
+      delegate_to: localhost
+      become: false
+      check_mode: false
+      changed_when: false
+
+    - name: the fingerprint is the pinned one
+      ansible.builtin.assert:
+        that: pgdg_fpr.stdout == nova_pg_pgdg_key_fingerprint
+        fail_msg: "the key at {{ nova_pg_pgdg_key_url }} has fingerprint '{{ pgdg_fpr.stdout }}', not {{ nova_pg_pgdg_key_fingerprint }}: nothing installed"
+        quiet: true
+
+    - name: /etc/apt/keyrings
+      ansible.builtin.file: { path: /etc/apt/keyrings, state: directory, owner: root, group: root, mode: "0755" }
+
+    - name: the key (armored; Signed-By reads it)
+      ansible.builtin.copy: { content: "{{ pgdg_key.content }}", dest: "{{ nova_pg_pgdg_keyring }}", owner: root, group: root, mode: "0644" }
+      register: pgdg_keyring
+
+    - name: "the source, {{ ansible_facts['distribution_release'] }}-pgdg"
+      ansible.builtin.copy:
+        dest: /etc/apt/sources.list.d/pgdg.sources
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          # managed by Ansible (fleet/postgres.yml): the PostgreSQL project's apt repository. A hand edit is overwritten.
+          Types: deb
+          URIs: {{ nova_pg_pgdg_repo }}
+          Suites: {{ ansible_facts['distribution_release'] }}-pgdg
+          Components: main
+          Signed-By: {{ nova_pg_pgdg_keyring }}
+      register: pgdg_source
+
+    - name: apt update after the key or the source changed
+      ansible.builtin.apt: { update_cache: true }
+      when: (pgdg_source is changed or pgdg_keyring is changed) and not ansible_check_mode
+
+- name: "postgresql-{{ nova_pg_version }} and postgresql-client-{{ nova_pg_version }} ({{ pg_src }})"
+  ansible.builtin.apt:
+    name: ["postgresql-{{ nova_pg_version }}", "postgresql-client-{{ nova_pg_version }}"]
+    state: present
+  register: pg_pkg
+  when: not (ansible_check_mode and pg_src == 'pgdg' and (pgdg_source is changed or pgdg_keyring is changed))

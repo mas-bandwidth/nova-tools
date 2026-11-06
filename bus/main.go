@@ -9,6 +9,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/signal"
 	"slices"
@@ -26,17 +27,41 @@ var verbUsage = map[string]string{
       trailing newline. --re takes an id as hook prints it. A failed send prints
       SEND FAILED and exits 1; it is never retried.
 `,
-	"hook": `  nova-bus hook --as <name>
-      Print every waiting message for <name>, then each new one as it arrives,
-      one line each: id<TAB>from<TAB>re<TAB>subject<TAB>body (re is - when none;
-      \n, \r, \t and \\ escaped). A message is marked handled only after its line
-      is written, so a restarted hook resumes where it stopped; a message whose
-      line was written just before a crash may be printed again. While it runs,
-      <name> is present (see who). Runs until killed; exits 0 on SIGINT/SIGTERM.
+	"hook": `  nova-bus hook --as <name> [--harness <harness> <its flags>]
+      Deliver every waiting message for <name>, then each new one as it arrives,
+      into the session that runs the hook, waking it when it is idle.
+      How your session gets woken, per --harness:
+        claude (the default): each message is one line on stdout,
+          id<TAB>from<TAB>re<TAB>subject<TAB>body (re is - when none; \n, \r,
+          \t and \\ escaped). Run the hook under the session's Monitor tool,
+          never with & or into a file: the Monitor turns each line into a
+          notification, and that is the wake. Refused (exit 2) when stdout is
+          /dev/null.
+        codex --codex-socket <path> --codex-thread <id> --codex-events-dir
+          <dir>: each message is saved to <dir>/<id>.json and a turn naming
+          that file is started in the thread through the Codex app's socket
+          (~/.codex/ipc/ipc.sock; the README says how to find the thread).
+        grok --grok-home <dir>: each message line is appended to
+          <dir>/nova-hook.wake; the session's Monitor runs
+          tail -n 0 -F <dir>/nova-hook.wake.
+        antigravity --antigravity-dir <workspace> --antigravity-session <id>
+          --antigravity-events-dir <dir> [--antigravity-server <port>]: each
+          message is saved to <dir>/<id>.json and sent into the conversation
+          with the workspace's language_server agentapi send-message.
+      Every harness but claude prints one receipt per message on stdout:
+      HOOK WAKE harness=<h> id=<id> ok, or HOOK WAKE ... FAILED: <reason>. A
+      failed wake is not retried and the message is not marked handled: the
+      next hook (or reconnect) delivers it. The harness is checked at start,
+      before the name is claimed: not there, exit 2; not answering, exit 1.
+      A message is marked handled only after it is delivered, so a restarted
+      hook resumes where it stopped; one delivered just before a crash may be
+      delivered again. While it runs, <name> is present (see who). Runs until
+      killed; exits 0 on SIGINT/SIGTERM.
       One hook per name: a hook that finds the name held waits up to 40 s for
       it to lapse (a restart after a crash), then claims it or, if it is still
-      held, exits 1 "name already hooked". On stderr: HOOK WAIT while waiting,
-      HOOK OK name=<name> waiting=<n> once claimed.
+      held, exits 1 "name already hooked". On stderr: HOOK HARNESS OK once the
+      harness answered, HOOK WAIT while waiting, HOOK OK name=<name>
+      waiting=<n> once claimed.
 `,
 	"who": `  nova-bus who
       Print WHO OK present=<n>, then each name whose hook is running and how
@@ -70,7 +95,8 @@ func usage() string {
 }
 
 // verbs maps each verb to the flags it takes.
-var verbs = map[string][]string{"send": {"as", "to", "re"}, "hook": {"as"}, "who": {}, "pending": {"as", "list"}}
+var verbs = map[string][]string{"send": {"as", "to", "re"}, "hook": append([]string{"as", "harness"}, slices.Sorted(maps.Keys(flagWants))...),
+	"who": {}, "pending": {"as", "list"}}
 
 // Group is the consumer group, and consumer, every hook reads its inbox with.
 const group = "hook"
@@ -101,9 +127,10 @@ type Msg struct {
 type Store interface {
 	Add(ctx context.Context, stream string, fields map[string]string) (string, error)
 	Group(ctx context.Context, stream string) error
-	// Read returns this consumer's delivered-but-unacked entries when
-	// pending, else waits up to block for new ones (none on a quiet timeout).
-	Read(ctx context.Context, stream string, pending bool, block time.Duration) ([]Msg, error)
+	// Read returns this consumer's delivered-but-unacked entries with an id
+	// past after ("0" for all), or, when after is ">", waits up to block for
+	// new ones (none on a quiet timeout).
+	Read(ctx context.Context, stream, after string, block time.Duration) ([]Msg, error)
 	Ack(ctx context.Context, stream, id string) error
 	// Count is the number of entries no hook has acked; Waiting returns
 	// them, oldest first. Neither consumes anything. Trim deletes every entry
@@ -146,12 +173,13 @@ var (
 func main() {
 	signal.Ignore(syscall.SIGPIPE)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	code := run(ctx, os.Args[1:], os.Getenv, os.Stdin, os.Stdout, os.Stderr, dialRedis, realClock{})
+	s := sys{uid: os.Getuid(), devOf: realDevOf, connect: connectCodex, exec: realExec}
+	code := run(ctx, os.Args[1:], os.Getenv, os.Stdin, os.Stdout, os.Stderr, dialRedis, realClock{}, s)
 	stop()
 	os.Exit(code)
 }
 
-func run(ctx context.Context, args []string, env func(string) string, stdin io.Reader, stdout, stderr io.Writer, dial func(addr, user, password string) Store, clk Clock) int {
+func run(ctx context.Context, args []string, env func(string) string, stdin io.Reader, stdout, stderr io.Writer, dial func(addr, user, password string) Store, clk Clock, s sys) int {
 	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" || (args[0] == "help" && len(args) == 1) {
 		fmt.Fprint(stdout, usage())
 		return 0
@@ -176,6 +204,11 @@ func run(ctx context.Context, args []string, env func(string) string, stdin io.R
 	to := fs.String("to", "", "")
 	re := fs.String("re", "", "")
 	list := fs.Bool("list", false, "")
+	harness := fs.String("harness", "claude", "")
+	hflags := map[string]*string{}
+	for f := range flagWants {
+		hflags[f] = fs.String(f, "", "")
+	}
 	if err := fs.Parse(args[1:]); errors.Is(err, flag.ErrHelp) {
 		fmt.Fprint(stdout, verbUsage[verb]+usageFooter)
 		return 0
@@ -201,6 +234,18 @@ func run(ctx context.Context, args []string, env func(string) string, stdin io.R
 	if verb == "send" && fs.NArg() < 2 {
 		missing = append(missing, []string{"<subject> <body>", "<body>"}[fs.NArg()])
 	}
+	var given, ignored []string // the harness flags set, and those this harness does not take
+	fs.Visit(func(f *flag.Flag) {
+		if _, ok := flagWants[f.Name]; ok {
+			given = append(given, f.Name)
+		}
+	})
+	_, knownHarness := harnessFlags[*harness]
+	if knownHarness {
+		var need []string
+		ignored, need = harnessCheck(*harness, given)
+		missing = append(missing, need...)
+	}
 	if env("NOVA_BUS_REDIS") == "" {
 		missing = append(missing, "NOVA_BUS_REDIS (host:port)")
 	}
@@ -218,6 +263,10 @@ func run(ctx context.Context, args []string, env func(string) string, stdin io.R
 		bad = append([]string{*as}, bad...)
 	}
 	switch {
+	case !knownHarness:
+		return misuse(stderr, verb, "unknown --harness %q; harnesses: %s", *harness, strings.Join(harnessOrder, ", "))
+	case len(ignored) > 0:
+		return misuse(stderr, verb, "%s not taken by --harness %s", strings.Join(ignored, ", "), *harness)
 	case len(missing) > 0:
 		return misuse(stderr, verb, "missing %s", strings.Join(missing, ", "))
 	case env("NOVA_BUS_USER") != "" && env("NOVA_BUS_PASSWORD") == "":
@@ -234,12 +283,29 @@ func run(ctx context.Context, args []string, env func(string) string, stdin io.R
 		return misuse(stderr, verb, "send takes one subject and one body, not %d arguments", fs.NArg())
 	case verb == "send" && strings.TrimSpace(fs.Arg(0)) == "":
 		return misuse(stderr, verb, "empty subject")
+	case verb == "hook" && *harness == "claude" && stdoutIsNull(s):
+		return misuse(stderr, verb, "stdout is /dev/null, nothing would read the messages")
+	}
+	var w waker
+	if verb == "hook" {
+		f := map[string]string{}
+		for k, v := range hflags {
+			f[k] = *v
+		}
+		var err error
+		if w, err = newWaker(ctx, *harness, *as, f, s, stderr); err != nil {
+			var se startError
+			if errors.As(err, &se) && se.missing {
+				return misuse(stderr, verb, "%v", err)
+			}
+			return fail(stderr, verb, "%v; start the harness, then run the same hook again", err)
+		}
 	}
 	addr := env("NOVA_BUS_REDIS")
 	store := dial(addr, env("NOVA_BUS_USER"), env("NOVA_BUS_PASSWORD"))
 	switch verb {
 	case "hook":
-		return runHook(ctx, store, *as, addr, clk, stdout, stderr)
+		return runHook(ctx, store, *as, addr, clk, stdout, stderr, w)
 	case "who":
 		return who(ctx, store, addr, clk.Now(), stdout, stderr)
 	case "pending":
@@ -292,7 +358,7 @@ func describe(err error, addr string) string {
 // found hooked by another process (exit 1, its presence left alone)
 // (tla/Presence.tla Exit, Claim: OnlyOwnerDeletes, GoneAfterExit).
 // A reconnect is logged once, then at most once a minute.
-func runHook(ctx context.Context, store Store, name, addr string, clk Clock, stdout, stderr io.Writer) int {
+func runHook(ctx context.Context, store Store, name, addr string, clk Clock, stdout, stderr io.Writer, w waker) int {
 	value := clk.Now().UTC().Format(time.RFC3339) + "\t" + rand.Text()
 	var logged time.Time
 	announced := false
@@ -303,7 +369,7 @@ func runHook(ctx context.Context, store Store, name, addr string, clk Clock, std
 		}
 	}
 	for {
-		err := hook(ctx, store, name, value, clk, stdout, stderr, onClaim)
+		err := hook(ctx, store, name, value, clk, stdout, stderr, onClaim, w)
 		var we writeError
 		if errors.Is(err, errHooked) {
 			return fail(stderr, "hook", "name already hooked: %s after %s; run: nova-bus who", name, presenceTTL+presenceRefresh)
@@ -335,13 +401,17 @@ func runHook(ctx context.Context, store Store, name, addr string, clk Clock, std
 }
 
 // hook claims name's presence, waiting for another hook's key to lapse
-// (tla/Presence.tla Start, Poll, GiveUp: WaitClaims, WaitEnds), then prints and acks the pending entries, then
-// the new ones, until an error. Each call starts from the pending list, so a
-// batch handed by a read whose reply was lost is printed after the reconnect.
+// (tla/Presence.tla Start, Poll, GiveUp: WaitClaims, WaitEnds), then delivers
+// and acks the pending entries, then the new ones, until an error. Each call
+// starts from the pending list, so a batch handed by a read whose reply was
+// lost is delivered after the reconnect. With no waker an entry is delivered
+// by printing its line; with one, by its wake and a receipt line. A failed
+// wake is a receipt and no ack: the pending list is read past it (after), so
+// the entry waits for the next call (tla/Bus.tla WakeFails, NoLoss).
 // It claims again whenever presenceRefresh has passed, and a read waits no
 // longer than that is due (tla/Presence.tla Start, Refresh: StartOnlyWhenFree,
 // LiveIsPresent). An ack is not cut short by a signal: a printed line is acked.
-func hook(ctx context.Context, store Store, name, value string, clk Clock, out, stderr io.Writer, onClaim func(waiting int64)) error {
+func hook(ctx context.Context, store Store, name, value string, clk Clock, out, stderr io.Writer, onClaim func(waiting int64), w waker) error {
 	stream := "bus:" + name
 	held, err := store.Claim(ctx, name, value, presenceTTL)
 	if err == nil && held != "" {
@@ -383,17 +453,18 @@ func hook(ctx context.Context, store Store, name, value string, clk Clock, out, 
 	if err := store.Group(ctx, stream); err != nil {
 		return err
 	}
-	pending, trimmed := true, false
+	after, trimmed := "0", false // after: the pending entries past this id, or > for new ones
 	for {
 		if err := refresh(); err != nil {
 			return err
 		}
-		msgs, err := store.Read(ctx, stream, pending, min(max(due.Sub(clk.Now()), time.Millisecond), readBlock))
+		msgs, err := store.Read(ctx, stream, after, min(max(due.Sub(clk.Now()), time.Millisecond), readBlock))
 		if err != nil {
 			return err
 		}
+		pending := after != ">"
 		if pending && len(msgs) == 0 {
-			pending = false
+			after = ">"
 		}
 		// The first pending entry is the oldest unacked: older is acked history
 		// from an older build. Never a new entry: a paused hook may hold an
@@ -408,8 +479,21 @@ func hook(ctx context.Context, store Store, name, value string, clk Clock, out, 
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			if _, err := io.WriteString(out, line(m)); err != nil {
+			if pending {
+				after = m.ID
+			}
+			receipt, werr := line(m), error(nil)
+			if w != nil {
+				receipt = "HOOK WAKE harness=" + harnessName(w) + " id=" + m.ID + " ok\n"
+				if werr = w.wake(ctx, m); werr != nil {
+					receipt = strings.Replace(receipt, " ok\n", " FAILED: "+escaper.Replace(werr.Error())+"\n", 1)
+				}
+			}
+			if _, err := io.WriteString(out, receipt); err != nil {
 				return writeError{err}
+			}
+			if werr != nil {
+				continue
 			}
 			ack, cancel := context.WithTimeout(context.WithoutCancel(ctx), cleanupTimeout)
 			err := store.Ack(ack, stream, m.ID)

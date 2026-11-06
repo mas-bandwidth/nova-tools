@@ -1,0 +1,97 @@
+---
+# The firewall (fleet/tailscale.yml's second play, included with tasks_from: firewall). Linux: ufw denies incoming on
+# every interface but tailscale0, allows Tailscale's UDP port for direct connections, allows outgoing. It is turned on
+# only over a connection that already comes in on the tailnet (or the local one), so the run cannot lock itself out.
+# macOS: the application firewall on. Windows is left as it is.
+- name: the firewall is wanted
+  ansible.builtin.meta: end_host
+  when: not (nova_firewall | bool) or ansible_facts['os_family'] == 'Windows'
+
+- name: ufw (Linux)
+  when: (nova_system | default(ansible_facts['system'])) == 'Linux'
+  block:
+    - name: the ufw package
+      ansible.builtin.apt: { name: ufw, state: present }
+      become: true
+      register: fw_pkg
+
+    - name: the machine's tailnet addresses
+      ansible.builtin.command: "{{ nova_tailscale_bin }} ip"
+      register: fw_ts_ips
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: the address this run came in on
+      ansible.builtin.set_fact:
+        fw_conn: >-
+          {{ 'local' if (ansible_connection | default('ssh')) == 'local'
+             else ((ansible_facts['env']['SSH_CONNECTION'] | default('')).split(' ') + ['', '', ''])[2] }}
+
+    - name: what ufw has now, and what it would take
+      ansible.builtin.shell: |
+        s=$(ufw status verbose 2>/dev/null)
+        want=()
+        grep -q '^Status: active' <<< "$s" || want+=(enable)
+        grep -q 'Default: deny (incoming), allow (outgoing)' <<< "$s" || want+=(defaults)
+        grep -Eq '^Anywhere on tailscale0 +ALLOW IN' <<< "$s" || want+=(tailscale0)
+        {% for p in nova_firewall_allow_udp %}
+        grep -Eq '^{{ p }}/udp +ALLOW IN' <<< "$s" || want+=(udp{{ p }})
+        {% endfor %}
+        echo "${want[*]}"
+      args: { executable: /bin/bash }
+      become: true
+      register: fw_plan
+      changed_when: false
+      check_mode: false
+      when: not (ansible_check_mode and fw_pkg is changed)
+
+    - name: the run comes in on the tailnet (the firewall cannot cut it off)
+      ansible.builtin.assert:
+        that: fw_conn == 'local' or fw_conn in (fw_ts_ips.stdout_lines | default([]))
+        fail_msg: >-
+          FIREWALL HELD {{ inventory_hostname }}: this run reaches the machine on {{ fw_conn or 'an unknown address' }},
+          not on its tailnet address, and ufw would close that path. Run again once the inventory's address is the tailnet name
+          (tailscale.yml records it), or with -e nova_firewall=false
+        quiet: true
+      when: fw_plan.stdout | default('enable') | trim | length > 0 and not ansible_check_mode
+
+    - name: ufw, set (deny incoming but on tailscale0, allow outgoing, on)
+      ansible.builtin.shell: |
+        set -e
+        ufw default deny incoming
+        ufw default allow outgoing
+        ufw allow in on tailscale0
+        {% for p in nova_firewall_allow_udp %}
+        ufw allow {{ p }}/udp
+        {% endfor %}
+        ufw --force enable
+      become: true
+      when: fw_plan.stdout | default('') | trim | length > 0 and not ansible_check_mode
+
+    - name: the change a run would make (--check)
+      ansible.builtin.debug: { msg: "WOULD-SET ufw: {{ fw_plan.stdout | default('install, then all of it') | trim }}" }
+      changed_when: true
+      when: ansible_check_mode and (fw_plan.stdout | default('pending') | trim | length > 0)
+
+    - name: the firewall's receipt (Linux)
+      ansible.builtin.debug:
+        msg: "FIREWALL {{ inventory_hostname }} ufw {{ 'set: ' ~ (fw_plan.stdout | trim) if (fw_plan.stdout | default('x') | trim | length > 0) else 'as declared' }}{{ ' (check: nothing changed)' if ansible_check_mode else '' }}"
+
+- name: the application firewall (macOS)
+  when: (nova_system | default(ansible_facts['system'])) == 'Darwin'
+  block:
+    - name: its state
+      ansible.builtin.command: /usr/libexec/ApplicationFirewall/socketfilterfw --getglobalstate
+      register: fw_mac
+      changed_when: false
+      check_mode: false
+
+    - name: turned on
+      ansible.builtin.command: /usr/libexec/ApplicationFirewall/socketfilterfw --setglobalstate on
+      become: true
+      when: "'enabled' not in fw_mac.stdout"
+
+    - name: the firewall's receipt (macOS)
+      ansible.builtin.debug:
+        msg: "FIREWALL {{ inventory_hostname }} application firewall {{ 'on' if 'enabled' in fw_mac.stdout else ('WOULD-ENABLE' if ansible_check_mode else 'turned on') }}"

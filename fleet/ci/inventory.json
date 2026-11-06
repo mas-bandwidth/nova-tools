@@ -6,7 +6,7 @@
     "hostvars": {
       "localhost": {
         "ansible_connection": "local",
-        "ansible_system": "Linux",
+        "nova_system": "Linux",
         "nova_services": [
           {
             "name": "bus-hook",

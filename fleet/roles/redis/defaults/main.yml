@@ -1,0 +1,39 @@
+---
+# redis.yml's defaults (docs/FLEET.md, "redis.yml"). Override them beside the
+# inventory (group_vars/services.yml, host_vars/<machine>.yml) or with -e.
+
+# The port of this play's server (fleet/tailscale-acl.json opens it between
+# tag:nova machines). The distribution's own redis-server unit listens on
+# 127.0.0.1 only and is left as it is found: the two do not share an address.
+nova_redis_port: 6379
+
+# The addresses it listens on. Empty is the machine's tailnet address alone
+# (`tailscale ip -4`); a list replaces it.
+nova_redis_bind: []
+
+# Data, passwords (<user>.pass, 0600) and users.acl live here.
+nova_redis_dir: /var/lib/nova-redis
+nova_redis_owner: redis
+nova_redis_group: redis
+nova_redis_unit: nova-redis
+nova_redis_maxmemory: 2gb
+
+# The ACL users. `default` is always off, so a client must name its user.
+# bus: what nova-bus sends (streams and presence keys under bus:, two scripts
+# run through EVALSHA/EVAL); nothing in @dangerous. viewer: read only, INFO
+# after -@dangerous (INFO is in @dangerous, so the order matters). admin: the
+# user this play applies the ACL and checkpoints with; its password never
+# leaves the machine.
+nova_redis_users:
+  - { name: bus,    rules: "~bus:* +@stream +@string +@keyspace +@transaction +eval +evalsha +@connection -@dangerous" }
+  - { name: viewer, rules: "~* +@read +@pubsub +@connection -@dangerous +info" }
+  - { name: admin,  rules: "~* +@all" }
+
+# The user whose password is sealed into nova_seal_seat, and the name it is
+# sealed as (nova-bus reads NOVA_BUS_PASSWORD, with NOVA_BUS_USER=bus).
+nova_redis_seal_user: bus
+nova_redis_seal_name: NOVA_BUS_PASSWORD
+
+# A server running from before the admin user existed cannot be checkpointed
+# before a restart; -e nova_redis_bootstrap=true allows that one restart.
+nova_redis_bootstrap: false
