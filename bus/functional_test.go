@@ -333,7 +333,7 @@ func fakeDesktop(t *testing.T) (string, chan string) {
 	l, err := net.Listen("unix", sock)
 	require.NoError(t, err)
 	require.NoError(t, os.Chmod(sock, 0o700)) // a umask of 002 leaves it group writable, which the hook refuses
-	t.Cleanup(func() { _ = l.Close() }) // ignored: stops the fake
+	t.Cleanup(func() { _ = l.Close() })       // ignored: stops the fake
 	texts := make(chan string, 16)
 	go func() {
 		for {
