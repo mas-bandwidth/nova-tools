@@ -517,7 +517,6 @@ func TestStoreAndKeyAreRequired(t *testing.T) {
 	h.stdin = "v\n"
 	for _, args := range [][]string{
 		{"set", "NEW", "--as", "ada", "--key", h.key},
-		{"set", "NEW", "--as", "ada", "--store", h.store},
 		{"exec", "--as", "ada", "--key", h.key, "--only", "API_KEY", "--", "true"},
 		{"exec", "--as", "ada", "--store", h.store, "--only", "API_KEY", "--", "true"},
 		{"seat", "add", "bo", pubB},

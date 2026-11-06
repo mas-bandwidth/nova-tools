@@ -53,7 +53,7 @@ nova-secrets seat remove <seat> --store <dir> --pins <dir>
   for this node's own seat while any ledger remains. A value is removed from a seat with sops: sops unset <seat>.yaml '["NAME"]'.
 
 nova-secrets set NAME --store <dir> --key <file> --pins <dir> [--as <seat>] [--recovery <age1>] [--sops <path>]
-  Read one value from stdin (one non-empty line of at most 65536 bytes, never a terminal), set NAME in <seat>.yaml and commit that
+  Read one value from stdin (one non-empty line of at most 65536 bytes; on a terminal it asks, and the paste is not shown), set NAME in <seat>.yaml and commit that
   file. Pushing is yours. The file is sealed to --key's public half and the recovery pin <dir>/recovery.pub only;
   --recovery writes that pin when it is absent. Example: pass show db | nova-secrets set DB_PASSWORD --store S --key K --pins P --as web
 
@@ -262,7 +262,10 @@ func (t tool) parse(verb string, args []string, npos int, needKey bool, also ...
 		missing = append(missing, "--to <seat>")
 	}
 	if o.pins == "" && slices.Contains([]string{"grant", "set", "seat remove"}, verb) {
-		if o.pins = envValue(t.environ, "NOVA_SECRETS_PINS"); o.pins == "" {
+		if o.pins = envValue(t.environ, "NOVA_SECRETS_PINS"); o.pins == "" && verb == "set" {
+			o.pins = filepath.Join(filepath.Dir(t.keyFile("x")), "pins")
+		}
+		if o.pins == "" {
 			missing = append(missing, "--pins <dir> (or NOVA_SECRETS_PINS)")
 		}
 	}
@@ -272,7 +275,10 @@ func (t tool) parse(verb string, args []string, npos int, needKey bool, also ...
 		}
 	}
 	if needKey && o.key == "" {
-		if o.key = envValue(t.environ, "NOVA_SECRETS_KEY"); o.key == "" {
+		if o.key = envValue(t.environ, "NOVA_SECRETS_KEY"); o.key == "" && verb == "set" {
+			o.key = t.keyFile(cmp.Or(o.as, t.ownSeat()))
+		}
+		if o.key == "" {
 			missing = append(missing, "--key <file> (or NOVA_SECRETS_KEY)")
 		}
 	}
@@ -414,10 +420,14 @@ func (t tool) set(args []string) error {
 	if !envName.MatchString(name) {
 		return bad("NAME %q is not an environment variable name", name)
 	}
+	var raw []byte
 	if f, ok := t.stdin.(*os.File); ok && isTerminal(f) {
-		return refuse("set: stdin is a terminal; pipe the value in, as: <source> | nova-secrets set NAME ...; run: nova-secrets set -h")
+		fmt.Fprintf(t.stderr, "%s (paste it, then enter; it is not shown): ", name)
+		raw, err = readHidden(f)
+		fmt.Fprintln(t.stderr)
+	} else {
+		raw, err = io.ReadAll(io.LimitReader(t.stdin, maxValue+3)) // the value, one more byte to see it is over, and a CRLF
 	}
-	raw, err := io.ReadAll(io.LimitReader(t.stdin, maxValue+3)) // the value, one more byte to see it is over, and a CRLF
 	if err != nil {
 		return refuse("reading the value from stdin: %v", err)
 	}
@@ -938,6 +948,11 @@ func (t tool) encrypt(o opts, seat string, values map[string]string, rec string)
 		return err
 	}
 	age := ageOf(rule)
+	if len(rule.Content) == 6 && field(rule, "unencrypted_regex") != nil && field(rule, "unencrypted_regex").Value == "^NOVA_SECRETS_WRITTEN_BY$" {
+		rule = &yaml.Node{Kind: rule.Kind, Content: slices.DeleteFunc(slices.Clone(rule.Content), func(n *yaml.Node) bool {
+			return n == field(rule, "unencrypted_regex") || n.Value == "unencrypted_regex"
+		})}
+	}
 	if len(rule.Content) != 4 || field(rule, "path_regex") == nil || len(age) != 2 || age[1] != rec {
 		return deny("untrusted-rule", "the rule for %s.yaml is not the one seat add writes (path_regex, and age: the seat's key then the recovery key), so a value could reach another key: fix it, then run again", seat)
 	}

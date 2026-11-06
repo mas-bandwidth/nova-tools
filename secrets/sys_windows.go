@@ -88,3 +88,8 @@ func checkPrivate(path string, _ os.FileInfo) error {
 	}
 	return nil
 }
+
+// readHidden is not offered on Windows: pipe the value in.
+func readHidden(*os.File) ([]byte, error) {
+	return nil, refuse("set: on Windows pipe the value in, as: <source> | nova-secrets set NAME")
+}
