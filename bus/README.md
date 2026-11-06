@@ -55,8 +55,9 @@ Monitor: NOVA_BUS_REDIS=<host:port> nova-bus hook --as <name>
 ```
 
 Its first lines are the start, on stderr: `HOOK HARNESS OK ...` (another harness only), `HOOK WAIT name=<name>
-held_since=... ttl=30s budget=40s` while a dead hook's key lapses, then `HOOK OK name=<name> waiting=<n>` once it
-holds the name. From then each message is one line on stdout, `<id><TAB><from><TAB><re or ->
+held_since=... ttl=30s budget=40s` while a dead hook's key lapses, then `HOOK OK name=<name> waiting=<n>
+next="nova-bus send --as <name> --to <name> <subject> <body>"` once it holds the name: the next line names how to
+answer. From then each message is one line on stdout, `<id><TAB><from><TAB><re or ->
 <TAB><subject><TAB><body>`, for example `1762400000000-0	alpha	-	hi	are you there?`, and each line becomes a
 notification in the session, into a running turn or waking an idle one; that is the wake. One hook per name: a
 second one for the same name waits 40 s and exits 1 `name already hooked`. A Monitor lives at most 30 minutes:
@@ -231,7 +232,13 @@ An unreachable server is said plainly: `cannot reach redis at <host:port>
 `connection lost` for a dropped connection: EOF, reset, broken pipe); for
 send it follows `SEND FAILED to <name>:`. A hook that loses Redis logs
 `nova-bus hook: <what>; reconnecting` once, then at most once a minute, while
-it retries every second.
+it retries every second, and prints `HOOK RECONNECTED name=<name> waiting=<n>`
+on stdout, where a Monitor sees it, once it holds the name again. Redis's own
+words are never shown raw: a missing login is `redis at <addr> wants a login:
+set NOVA_BUS_USER and NOVA_BUS_PASSWORD`, a wrong one `refused the login:
+check ...`, and an address that is not Redis `is not talking Redis protocol`;
+an unreachable one adds `check that NOVA_BUS_REDIS=<addr> is the fleet's Redis
+and that it is up`.
 
 ## Wire format
 
@@ -278,6 +285,10 @@ key. So:
 - delivery is at least once: a hook killed after writing a line and before
   acking it leaves the entry pending, and the next hook prints it again;
 - an acked message is never printed again;
+- an entry send did not write (no `from` or `subject`: something else wrote
+  the stream) is not mail: the hook prints `HOOK BAD id=<id> missing=<fields>`
+  on stdout and acks it, so it never blocks the inbox; recv says `RECV BAD`
+  on stderr, acks it, and exits 1, so the next recv reads on;
 - a read whose reply is lost (the connection dropped after the server handed
   the batch) is not retried: the hook reconnects after a second and starts
   again from the pending list, so the batch is printed then.

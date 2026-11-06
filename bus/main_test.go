@@ -438,7 +438,7 @@ func TestSendFailedIsNotRetried(t *testing.T) {
 		func(k string) string { return testEnv[k] }, nil, &out, &errOut, dial, f, sys{})
 	assert.Equal(t, 1, code)
 	assert.Equal(t, "beta 1-0\n", out.String(), "the names before the failure were sent")
-	assert.Equal(t, "nova-bus send: SEND FAILED to gamma: cannot reach redis at 127.0.0.1:1 (NOVA_BUS_REDIS): connection lost\n", errOut.String())
+	assert.Equal(t, "nova-bus send: SEND FAILED to gamma: cannot reach redis at 127.0.0.1:1 (NOVA_BUS_REDIS): connection lost; check that NOVA_BUS_REDIS=127.0.0.1:1 is the fleet's Redis and that it is up\n", errOut.String())
 	assert.Empty(t, f.entries["bus:delta"], "nothing after the failure")
 }
 
@@ -559,7 +559,7 @@ func TestRestartWaitsForACrashedHooksKey(t *testing.T) {
 	var out, errOut bytes.Buffer
 	code := runHook(ctx, f, "beta", testAddr, f, &out, &errOut, nil, "again", nil)
 	assert.Equal(t, 0, code, errOut.String())
-	assert.Equal(t, "HOOK WAIT name=beta held_since=2026-11-05T12:00:00Z ttl=30s budget=40s\nHOOK OK name=beta waiting=1\n", errOut.String())
+	assert.Equal(t, "HOOK WAIT name=beta held_since=2026-11-05T12:00:00Z ttl=30s budget=40s\nHOOK OK name=beta waiting=1 next=\"nova-bus send --as beta --to <name> <subject> <body>\"\n", errOut.String())
 	assert.Len(t, f.afters, 25, "polled each second from 5 s to 30 s")
 	assert.Equal(t, t0.Add(30*time.Second), f.claims[len(f.claims)-1], "claimed as the key lapsed")
 	assert.Equal(t, "1-0\talpha\t-\tone\t1\n", out.String())
@@ -642,9 +642,9 @@ func TestLostReadReplyIsPrintedAfterReconnect(t *testing.T) {
 	var out, errOut bytes.Buffer
 	code := runHook(ctx, f, "beta", testAddr, f, &out, &errOut, nil, "again", nil)
 	assert.Equal(t, 0, code)
-	assert.Equal(t, "HOOK OK name=beta waiting=1\nnova-bus hook: cannot reach redis at 127.0.0.1:1 (NOVA_BUS_REDIS): connection lost; reconnecting\n", errOut.String())
+	assert.Equal(t, "HOOK OK name=beta waiting=1 next=\"nova-bus send --as beta --to <name> <subject> <body>\"\nnova-bus hook: cannot reach redis at 127.0.0.1:1 (NOVA_BUS_REDIS): connection lost; check that NOVA_BUS_REDIS=127.0.0.1:1 is the fleet's Redis and that it is up; reconnecting\n", errOut.String())
 	assert.Equal(t, []time.Duration{time.Second}, f.afters, "the wait is on the injected clock")
-	assert.Equal(t, "1-0\talpha\t-\tone\t1\n", out.String())
+	assert.Equal(t, "HOOK RECONNECTED name=beta waiting=1\n1-0\talpha\t-\tone\t1\n", out.String(), "the batch whose reply was lost is printed after the reconnect, which the Monitor sees")
 	assert.Empty(t, f.pending["bus:beta"])
 }
 
@@ -734,9 +734,9 @@ func TestUnreachableRedisIsSaidPlainly(t *testing.T) {
 		args []string
 		want string
 	}{
-		{[]string{"send", "--as", "a", "--to", "beta", "s", "b"}, "nova-bus send: SEND FAILED to beta: cannot reach redis at 127.0.0.1:1 (NOVA_BUS_REDIS): connection refused\n"},
-		{[]string{"who"}, "nova-bus who: cannot reach redis at 127.0.0.1:1 (NOVA_BUS_REDIS): connection refused\n"},
-		{[]string{"pending", "--as", "beta"}, "nova-bus pending: cannot reach redis at 127.0.0.1:1 (NOVA_BUS_REDIS): connection refused\n"},
+		{[]string{"send", "--as", "a", "--to", "beta", "s", "b"}, "nova-bus send: SEND FAILED to beta: cannot reach redis at 127.0.0.1:1 (NOVA_BUS_REDIS): connection refused; check that NOVA_BUS_REDIS=127.0.0.1:1 is the fleet's Redis and that it is up\n"},
+		{[]string{"who"}, "nova-bus who: cannot reach redis at 127.0.0.1:1 (NOVA_BUS_REDIS): connection refused; check that NOVA_BUS_REDIS=127.0.0.1:1 is the fleet's Redis and that it is up\n"},
+		{[]string{"pending", "--as", "beta"}, "nova-bus pending: cannot reach redis at 127.0.0.1:1 (NOVA_BUS_REDIS): connection refused; check that NOVA_BUS_REDIS=127.0.0.1:1 is the fleet's Redis and that it is up\n"},
 	} {
 		f := newFake()
 		f.down = 1
@@ -745,10 +745,16 @@ func TestUnreachableRedisIsSaidPlainly(t *testing.T) {
 		assert.Empty(t, out, tc.args)
 		assert.Equal(t, tc.want, errOut, tc.args)
 	}
-	assert.Equal(t, "cannot reach redis at h:1 (NOVA_BUS_REDIS): no such host", describe(errors.New("dial tcp: lookup h: no such host"), "h:1"))
-	assert.Equal(t, "cannot reach redis at h:1 (NOVA_BUS_REDIS): timed out", describe(errors.New("dial tcp 10.0.0.1:1: i/o timeout"), "h:1"))
-	assert.Equal(t, "cannot reach redis at h:1 (NOVA_BUS_REDIS): connection lost", describe(errors.New("read tcp 1.2.3.4:5->h:1: read: connection reset by peer"), "h:1"))
-	assert.Equal(t, "WRONGPASS invalid", describe(errors.New("WRONGPASS invalid"), "h:1"))
+	check := "; check that NOVA_BUS_REDIS=h:1 is the fleet's Redis and that it is up"
+	assert.Equal(t, "cannot reach redis at h:1 (NOVA_BUS_REDIS): no such host"+check, describe(errors.New("dial tcp: lookup h: no such host"), "h:1"))
+	assert.Equal(t, "cannot reach redis at h:1 (NOVA_BUS_REDIS): timed out"+check, describe(errors.New("dial tcp 10.0.0.1:1: i/o timeout"), "h:1"))
+	assert.Equal(t, "cannot reach redis at h:1 (NOVA_BUS_REDIS): connection lost"+check, describe(errors.New("read tcp 1.2.3.4:5->h:1: read: connection reset by peer"), "h:1"))
+	// Redis's own words are mapped to the variable to set, never shown raw.
+	assert.Equal(t, "redis at h:1 refused the login: check NOVA_BUS_USER and NOVA_BUS_PASSWORD", describe(errors.New("WRONGPASS invalid username-password pair or user is disabled."), "h:1"))
+	assert.Equal(t, "redis at h:1 wants a login: set NOVA_BUS_USER and NOVA_BUS_PASSWORD", describe(errors.New("NOAUTH Authentication required."), "h:1"))
+	assert.Equal(t, "redis at h:1 wants a login: set NOVA_BUS_USER and NOVA_BUS_PASSWORD", describe(errors.New("ERR Protocol error: unauthenticated multibulk length"), "h:1"))
+	assert.Equal(t, "h:1 is not talking Redis protocol (ERR Protocol error: expected '$', got 'H'): check that NOVA_BUS_REDIS=h:1 is the fleet's Redis", describe(errors.New("ERR Protocol error: expected '$', got 'H'"), "h:1"))
+	assert.Equal(t, "something else", describe(errors.New("something else"), "h:1"))
 }
 
 // Redis down for 70 s: the hook says so once, again after a minute, and
@@ -762,7 +768,44 @@ func TestReconnectIsLoggedOnceAMinute(t *testing.T) {
 	var out, errOut bytes.Buffer
 	code := runHook(ctx, f, "beta", testAddr, f, &out, &errOut, nil, "again", nil)
 	assert.Equal(t, 0, code)
-	line := "nova-bus hook: cannot reach redis at 127.0.0.1:1 (NOVA_BUS_REDIS): connection refused; reconnecting\n"
-	assert.Equal(t, line+line+"HOOK OK name=beta waiting=0\n", errOut.String())
+	line := "nova-bus hook: cannot reach redis at 127.0.0.1:1 (NOVA_BUS_REDIS): connection refused; check that NOVA_BUS_REDIS=127.0.0.1:1 is the fleet's Redis and that it is up; reconnecting\n"
+	assert.Equal(t, line+line+"HOOK OK name=beta waiting=0 next=\"nova-bus send --as beta --to <name> <subject> <body>\"\n", errOut.String())
 	assert.Len(t, f.afters, 70)
+	assert.Empty(t, out.String(), "the first claim is HOOK OK, not a reconnect")
+
+	f = newFake()
+	send(t, f, "s", "b")
+	f.failAck = 1 // the connection drops after the first line is printed
+	ctx, cancel = context.WithCancel(context.Background())
+	f.idle = cancel
+	out.Reset()
+	errOut.Reset()
+	code = runHook(ctx, f, "beta", testAddr, f, &out, &errOut, nil, "again", nil)
+	assert.Equal(t, 0, code)
+	assert.Equal(t, "1-0\talpha\t-\ts\tb\nHOOK RECONNECTED name=beta waiting=1\n1-0\talpha\t-\ts\tb\n", out.String(), "the Monitor sees the hook is back, and the unacked line again")
+	assert.Equal(t, 1, strings.Count(errOut.String(), "HOOK OK"), "HOOK OK once")
+}
+
+// An entry send did not write (no from or subject) is not mail: the hook
+// says so on stdout and acks it; recv says so on stderr, acks it, exits 1.
+func TestMalformedEntryIsSaidAndAckedNotDelivered(t *testing.T) {
+	t.Parallel()
+	f := newFake()
+	f.entries["bus:beta"] = append(f.entries["bus:beta"], Msg{ID: "1-0", Fields: map[string]string{"body": "x"}}, Msg{ID: "2-0", Fields: map[string]string{"from": "a", "body": "y"}})
+	send(t, f, "real", "z")
+	out, _ := runHookOnce(t, f, "beta")
+	assert.Equal(t, "HOOK BAD id=1-0 missing=from,subject\nHOOK BAD id=2-0 missing=subject\n3-0\talpha\t-\treal\tz\n", out)
+	assert.Empty(t, f.pending["bus:beta"], "acked away")
+	assert.Equal(t, []string{"print HOOK BAD id=1-0 missing=from,subject\n", "ack 1-0", "print HOOK BAD id=2-0 missing=subject\n", "ack 2-0", "print 3-0", "ack 3-0"}, f.log)
+
+	f = newFake()
+	f.entries["bus:beta"] = append(f.entries["bus:beta"], Msg{ID: "1-0", Fields: map[string]string{"body": "x"}})
+	send(t, f, "real", "z")
+	code, out, errOut := call(t, f, testEnv, "", "recv", "--as", "beta")
+	assert.Equal(t, 1, code)
+	assert.Empty(t, out)
+	assert.Equal(t, "RECV BAD id=1-0 missing=from,subject\n", errOut)
+	code, out, _ = call(t, f, testEnv, "", "recv", "--as", "beta")
+	assert.Equal(t, 0, code)
+	assert.Equal(t, "2-0\talpha\t-\treal\tz\n", out, "the next recv reads on")
 }

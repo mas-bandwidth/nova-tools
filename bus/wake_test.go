@@ -475,7 +475,7 @@ func TestFailedWakeExitsOneAndReleasesPresence(t *testing.T) {
 	var out, errOut bytes.Buffer
 	code := runHook(context.Background(), f, "beta", testAddr, f, &out, &errOut, &wakeFake{fail: map[string]bool{"1-0": true}}, "nova-bus hook --as beta --harness grok --grok-home /h", nil)
 	assert.Equal(t, 1, code)
-	assert.Equal(t, "HOOK OK name=beta waiting=1\nHOOK WAKE FAILED harness=antigravity id=1-0 reason=socket gone\\nsecond line\n"+
+	assert.Equal(t, "HOOK OK name=beta waiting=1 next=\"nova-bus send --as beta --to <name> <subject> <body>\"\nHOOK WAKE FAILED harness=antigravity id=1-0 reason=socket gone\\nsecond line\n"+
 		"nova-bus hook: the wake of 1-0 failed and it waits unhandled; once the harness answers, run: nova-bus hook --as beta --harness grok --grok-home /h\n", errOut.String())
 	assert.NotContains(t, f.presence, "beta", "released")
 }
