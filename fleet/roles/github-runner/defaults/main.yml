@@ -1,0 +1,49 @@
+---
+# Defaults of the github-runner role (fleet/github-runners.yml). Three values have
+# no default and must be given: github_runner_url, github_runner_scope and, for the
+# labels, whatever extra ones the jobs select on (github_runner_labels, may be empty).
+
+# Where to register: https://github.com/<owner>/<repo> (scope repo) or
+# https://github.com/<org> (scope org). No default; the play refuses to run without it.
+# github_runner_url:
+# github_runner_scope: repo | org
+github_runner_labels: []
+
+# present converges the runners; absent retires every runner of this url on the host.
+github_runner_state: present
+
+# Runners a host carries: runner_count if given (-e), else the machine row's `runners`.
+# No default: a host with neither is refused, so a missing value never reads as 0 and retires
+# the runners. 0 is an explicit choice. A host above n has its extra runners (highest numbers
+# first) retired.
+
+# The actions/runner release and the digests GitHub publishes for its assets.
+github_runner_version: "2.338.2"
+github_runner_sha256:
+  linux-x64: "baebf204307bac6193480852732f0aba2ae97b6c5597c244f4d5558390147c40"
+  linux-arm64: "670adb2f268fe21dcbb58b3db0e0aa9d5b3bddfe2c651481336e561ff86de945"
+  osx-x64: "109fff505a34014a7e8d1acb850c33d404811102f572b8fb9788e2fff013cc49"
+  osx-arm64: "25a065af409ffa317ab4d5a3b614dd15fc9c40f2172bc1b35a1b1258e919a388"
+  win-x64: "a1f17aa987fc8158bc7521d284912267a0d01b7c2c4684b33c86783b5e8221cc"
+  win-arm64: "0790e3f586c2c5388ed8e293e7cef01bd0e8a2c5c68dd0a628f848b61da4b3a7"
+github_runner_release_url: "https://github.com/actions/runner/releases/download"
+
+# Where a host keeps them: <base>/<owner>-<repo>-<i> (or <org>-<i>). Unix: the
+# login's home; Windows: set by the role to C:\actions-runner unless given.
+github_runner_base_dir: "{{ ansible_facts['user_dir'] ~ '/actions-runner' if ansible_facts['os_family'] != 'Windows' else 'C:\\actions-runner' }}"
+
+# Extra environment for the service (Linux and macOS), name: value.
+github_runner_env: {}
+
+# Linux only: run the runner's bin/installdependencies.sh (system packages) once per
+# release on the host.
+github_runner_install_dependencies: true
+
+# Retiring a runner also removes it from GitHub, which needs a removal token in
+# GITHUB_RUNNER_TOKEN; false skips that and leaves the entry for you to delete.
+github_runner_deregister: true
+
+# The control node's way to the token: nova-secrets reads NOVA_SECRETS_STORE,
+# NOVA_SECRETS_KEY and NOVA_SECRETS_SEAT from the environment, or set them here.
+github_runner_secrets_bin: nova-secrets
+github_runner_secrets_args: []

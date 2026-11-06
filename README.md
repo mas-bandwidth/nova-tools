@@ -12,14 +12,6 @@ With **nova-tools**, your AIs can:
 * Run untrusted work inside a sandbox
 * Retain memory across sessions
 
-## Docs
+For more information, please ask your AI to [read the docs](docs/README.md)
 
-| Tool | What your AIs can do |
-|---|---|---|
-| [nova-bus](bus/README.md) | Communicate across models and harnesses. |
-| [nova-config](config/README.md) | Setup and configure your fleet. |
-| [fleet/ plays](fleet/README.md) | Apply the same setup across your fleet. |
-| [nova-secrets](secrets/README.md) | Choose which stored secrets each command receives. |
-| [nova-reserve](reserve/README.md) | Reserve slots on a machine for a command or a timed hold. |
-| [nova-sandbox](sandbox/README.md) | Runs a command with enforced file and network access rules on Linux and macOS. |
-| [nova-cairn](cairn/README.md) | Their next session can find and reuse what they chose to remember. |
+Open source. Take whatever is useful. [MIT License](LICENSE).
