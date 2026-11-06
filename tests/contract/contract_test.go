@@ -62,7 +62,7 @@ var toolSpecs = []toolSpec{
 
 var goFlagNoise = []string{"flag provided but not defined", "Usage of", "invalid value", "parse error", "flag needs an argument"}
 
-var nextFieldThenText = regexp.MustCompile(`(^|\s)next=\S+\s+\S`)
+var nextFieldThenText = regexp.MustCompile(`(^|\s)next=[^\s<"]\S*\s+\S`)
 
 type result struct {
 	code           int

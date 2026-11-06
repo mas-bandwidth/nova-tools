@@ -90,7 +90,7 @@ nova-sandbox check
 ```
 
 ```text
-CHECK OK backend=landlock abi=4 net=enforceable next=nova-sandbox\x20probe note=landlock abi 4; seccomp available; net-deny landlock_tcp+seccomp; signals scoped to the wall at abi 6+
+CHECK OK backend=landlock abi=4 net=enforceable note=landlock abi 4; seccomp available; net-deny landlock_tcp+seccomp; signals scoped to the wall at abi 6+ next=nova-sandbox\x20probe
 ```
 
 Exit 1 prints `CHECK FAILED ... reason=...`. `net=unavailable` means

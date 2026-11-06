@@ -47,7 +47,7 @@ there is no `Pdeathsig`. The four signals above are forwarded only while the
 waiter is still alive to do it. SIGKILL of the waiter is not caught, and the
 command can keep running.
 
-`check` OK carries the field `next=nova-sandbox\x20probe` before `note=`.
+`check` OK carries the field `next=nova-sandbox\x20probe` after `note=`, last on the line.
 The `\x20` is a space, escaped the way cairn escapes a field.
 
 ## System roots
