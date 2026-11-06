@@ -22,6 +22,22 @@ Keep tests for these cases, which the guide does not show:
 - A stdin failure: `send ... -` with fd 0 opened write-only gives
   `reading body from stdin`.
 - Redis down under a hook: one `reconnecting` line, then at most one a minute.
+- A reader that goes: a hook on a pipe whose read end closes after `HOOK OK`
+  exits 1 within seconds, `stdout closed: its reader is gone`, with its key
+  gone; `hook | true` ends the same way, or with `broken pipe`, the message
+  left waiting.
+- A send to a name no hook or recv has read: exit 1 and nothing sent;
+  `--new` sends; a name with the group takes a send without it.
+- recv then ack: recv prints the oldest unhandled and acks nothing (a second
+  recv prints it again); ack marks it, and a second ack of the same id fails
+  without deleting anything (XDEL only after an XACK of 1, in one script).
+  A recv beside a live hook is refused, "name hooked"; a waiting recv claims
+  the key again every 10 s, and one that has printed a message holds the
+  name naming it for 15 minutes: an ack at 31 s and at 14 minutes passes
+  the gate, at 16 minutes the claim has lapsed and the next recv hands the
+  message out again.
+- The wakes and the service are unit-tested on fake seams (exec, shell,
+  devOf, the service manager): no socket, process or device is reached.
 
 ## Models
 
@@ -40,10 +56,14 @@ and the wait, one each. `Presence.cfg` checks two hooks; `PresenceThree.cfg` che
 every case with the outcome TLC must reach; `tests/tla/check.sh JAR bus/tla` runs
 them.
 
-`tla/BusWake.cfg` adds wakes that fail: no message is lost (it is delivered or
-stays pending), and a failed one never holds the hook in its pending pass; its
-broken cases (a failed wake that acks; a pending read that does not move past
-a failed wake) must fail.
+`tla/BusWake.cfg` adds wakes that fail: a failed wake ends the hook with the
+entry unacked, the hook restarts (weakly fair) from the pending list, and so
+every message is still printed; its broken cases (a failed wake that acks; a
+failed wake that does not end the hook, which reads past the entry and never
+delivers it) must fail. `tla/PresenceBrokenSlowBatch.cfg` is the witness for
+a delivery that is not bounded under the refresh: time passes the refresh and
+the key lapses under a running hook (the wake is bounded by 8 s, with a
+refresh before every delivery, so the design passes `Presence.cfg`).
 
 Run the models with TLC, with Java on PATH and the jar pinned in
 [tests/tla/tla2tools.sha256](../tests/tla/tla2tools.sha256), at an absolute path:

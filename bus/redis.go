@@ -51,10 +51,28 @@ func (r redisStore) Group(ctx context.Context, stream string) error {
 	return err
 }
 
-func (r redisStore) Read(ctx context.Context, stream, after string, block time.Duration) ([]Msg, error) {
-	args := &redis.XReadGroupArgs{Group: group, Consumer: group, Streams: []string{stream, after}, Count: 100, Block: block}
-	if after != ">" {
-		args.Block = -1
+// Hooked is whether the stream has its hook group: XINFO GROUPS on a stream
+// that does not exist is an error naming no such key.
+func (r redisStore) Hooked(ctx context.Context, stream string) (bool, error) {
+	groups, err := r.c.XInfoGroups(ctx, stream).Result()
+	if err != nil && strings.Contains(strings.ToLower(err.Error()), "no such key") {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	for _, g := range groups {
+		if g.Name == group {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (r redisStore) Read(ctx context.Context, stream string, pending bool, block time.Duration) ([]Msg, error) {
+	args := &redis.XReadGroupArgs{Group: group, Consumer: group, Streams: []string{stream, ">"}, Count: 100, Block: block}
+	if pending {
+		args.Streams[1], args.Block = "0", -1
 	}
 	res, err := r.c.XReadGroup(ctx, args).Result()
 	if errors.Is(err, redis.Nil) {
@@ -82,15 +100,10 @@ func toMsgs(xs []redis.XMessage) []Msg {
 	return msgs
 }
 
-// Ack acks the entry and deletes it from the stream in one MULTI, so an inbox
-// holds only what is waiting.
-func (r redisStore) Ack(ctx context.Context, stream, id string) error {
-	_, err := r.c.TxPipelined(ctx, func(p redis.Pipeliner) error {
-		p.XAck(ctx, stream, group, id)
-		p.XDel(ctx, stream, id)
-		return nil
-	})
-	return err
+// Ack acks the entry and, only if that acked something, deletes it, in one
+// script: an id that was never handed is neither acked nor deleted.
+func (r redisStore) Ack(ctx context.Context, stream, id string) (int64, error) {
+	return ackScript.Run(ctx, r.c, []string{stream}, group, id).Int64()
 }
 
 // Count is one XLEN: an ack deletes its entry, so a stream holds exactly
@@ -130,10 +143,29 @@ redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[2])
 return ''`)
 	release = redis.NewScript(`if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) end
 return 0`)
+	hold = redis.NewScript(`local v = redis.call('GET', KEYS[1])
+if v and not string.find(v, '\trecv', 1, true) then return v end
+redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[2])
+return ''`)
+	ackScript = redis.NewScript(`local n = redis.call('XACK', KEYS[1], ARGV[1], ARGV[2])
+if n == 1 then redis.call('XDEL', KEYS[1], ARGV[2]) end
+return n`)
 )
 
 func (r redisStore) Claim(ctx context.Context, name, value string, ttl time.Duration) (string, error) {
 	return claim.Run(ctx, r.c, []string{presenceKey(name)}, value, ttl.Milliseconds()).Text()
+}
+
+func (r redisStore) Left(ctx context.Context, name string) (time.Duration, error) {
+	d, err := r.c.PTTL(ctx, presenceKey(name)).Result()
+	if err != nil || d < 0 {
+		return 0, err
+	}
+	return d, nil
+}
+
+func (r redisStore) Hold(ctx context.Context, name, value string, ttl time.Duration) (string, error) {
+	return hold.Run(ctx, r.c, []string{presenceKey(name)}, value, ttl.Milliseconds()).Text()
 }
 
 func (r redisStore) Release(ctx context.Context, name, value string) error {

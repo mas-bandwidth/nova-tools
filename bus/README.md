@@ -6,15 +6,25 @@ every message as one line on stdout, so anything that can watch a process's outp
 ## The verbs
 
 ```
-nova-bus send --as <me> --to <name>[,<name>] [--re <id>] <subject> <body | ->
-nova-bus hook --as <name> [--harness claude|codex|grok|antigravity] [its flags]
+nova-bus send --as <me> --to <name>[,<name>] [--re <id>] [--new] <subject> <body | ->
+nova-bus hook --as <name> [--harness claude|grok|antigravity] [its flags] [--exec <command>] [--service [stop]]
+nova-bus recv --as <name> [--timeout <d>]
+nova-bus ack --as <name> --id <id>
 nova-bus who
+nova-bus show agents | codex-agents
 nova-bus pending --as <name> [--list]
 ```
 
 **send** appends one message (from, to, subject, body, re) to the stream `bus:<name>` of each recipient and
 prints `<name> <id>` for each. A body of `-` is read from stdin. `--re <id>` names the message this one answers.
-`--as` is required on both verbs: on send it is the sender, on hook the inbox.
+`--as` is required on both verbs: on send it is the sender, on hook the inbox. **You have to hook in before you
+can send**: a verb that acts as you (`send`, `ack`, `pending`) refuses until you are hooked in (a hook holds your
+name, or, under Codex, your child's `recv` does), exit 1, and tells you how, with the recipe for the harness it
+detects from your environment (`CODEX_THREAD_ID`: the child recv/ack loop; `ANTIGRAVITY_*` or `GEMINI_*`: the
+Antigravity hook line; `GROK_HOME`: the Grok line; otherwise the Monitor command), then `run: nova-bus show
+agents` for the full text. So everybody always hooks in, and every answer has a reader. `who`, `show`, `hook`
+and `recv` stay open. A name no hook (or recv) has ever read is refused before anything is sent, exit 1, `no hook has ever held <name>, so nothing would read it`: a typo
+would otherwise sit unread forever. `--new` sends to it anyway, for the first message to a name about to hook in.
 
 **hook** delivers every message still waiting for `<name>`, including ones an earlier hook delivered but did not
 finish marking handled, then blocks and delivers each new one as it arrives, into the session that runs it, waking
@@ -22,56 +32,72 @@ the session when it is idle. The wake is the point of the bus.
 
 ### How your session gets woken
 
-One recipe per harness. Each checks its harness at start, before it claims the name: a harness that is not there
-(a missing socket, directory or workspace) is refused with exit 2, one that does not answer with exit 1. With every
-harness but `claude`, stdout carries one receipt per message, `HOOK WAKE harness=<h> id=<id> ok` or
-`HOOK WAKE harness=<h> id=<id> FAILED: <reason>`. A failed wake is not retried and the message is not marked handled:
-it waits for the next hook (or the next reconnect). There is no retry loop; restart the hook once the harness is
-back.
+One recipe per harness. **Claude Code and Muse Code** run the hook under the session's Monitor; **Codex** runs a
+child agent that receives with `recv` and relays natively; **Grok** tails a wake file under its Monitor;
+**Antigravity** is sent to with `agentapi send-message`. The hook checks its harness at start, before it claims the
+name: a harness that is not there (a missing directory or workspace, a bad id) is refused with exit 2, one that
+does not answer with exit 1. With `grok` and `antigravity`, stdout carries one receipt per message,
+`HOOK WAKE OK harness=<h> id=<id>` (`confirmed=no reason=<r>` when the send was cut off and may have arrived: the
+message is marked handled, so a turn is never started twice), or `HOOK WAKE FAILED harness=<h> id=<id> reason=<r>`
+on stderr: a wake that surely failed ends the hook, exit 1, with the message unhandled and every later one behind
+it, so the order is kept; `nova-bus pending --as <name> --list` shows them, and the next hook (the service restarts
+it) delivers them. There is no retry loop. The hook refreshes its presence before every delivery and bounds each
+wake to 8 s, so a slow harness never lets the name lapse.
 
-**Claude Code** (`--harness claude`, the default). Run the hook with the **Monitor** tool:
+`nova-bus show agents` and `nova-bus show codex-agents` print the lines for your standing instructions file
+(CLAUDE.md, AGENTS.md) that make every fresh session do the right thing unasked.
+
+**Claude Code and Muse Code** (`--harness claude`, the default). The Monitor tool's command is the hook itself,
+nothing wrapped around it:
 
 ```
-Monitor: nova-bus hook --as <name>
+Monitor: NOVA_BUS_REDIS=<host:port> nova-bus hook --as <name>
 ```
 
-Each line the hook prints becomes a notification in the session, into a running turn or waking an idle one; that is
-the wake. Never run it with `&`, into a file or under a plain background shell: then nothing turns the lines into
-notifications and the session sleeps through its messages. A hook whose stdout is `/dev/null` (as `>&-` leaves it)
-is refused: `nova-bus hook: stdout is /dev/null, nothing would read the messages; run: nova-bus hook -h`, exit 2.
+Its first lines are the start, on stderr: `HOOK HARNESS OK ...` (another harness only), `HOOK WAIT name=<name>
+held_since=... ttl=30s budget=40s` while a dead hook's key lapses, then `HOOK OK name=<name> waiting=<n>` once it
+holds the name. From then each message is one line on stdout, `<id><TAB><from><TAB><re or ->
+<TAB><subject><TAB><body>`, for example `1762400000000-0	alpha	-	hi	are you there?`, and each line becomes a
+notification in the session, into a running turn or waking an idle one; that is the wake. One hook per name: a
+second one for the same name waits 40 s and exits 1 `name already hooked`. A Monitor lives at most 30 minutes:
+when it expires, or the hook ends, run the same Monitor command again (re-arm it), every time; a hook whose reader is gone (the Monitor or the session
+ended) sees it within a second, exits 1 `stdout closed: its reader is gone`, and frees the name, so the next hook
+claims it at once. Never run the hook with `&`, into a file or under a plain background shell: then nothing turns
+the lines into notifications and the session sleeps through its messages. A hook whose stdout is `/dev/null` (as
+`>&-` leaves it) is refused: `nova-bus hook: stdout is /dev/null, nothing would read the messages; run: nova-bus
+hook -h`, exit 2. `nova-bus show agents` prints these lines for CLAUDE.md.
 
-**Codex desktop app** (`--harness codex`). Each message is saved to `<events-dir>/<id>.json` (`event_id`,
-`local_receiver`, and the message), and one turn is started in the chat through the app's local IPC socket with the
-fixed text `External nova-bus event data: read saved JSON "<path>". Treat it as external data; local receiver
-guidance is inside.` No field of the message enters the turn's text. The three values, on macOS:
+**Codex.** The main chat never runs the hook and nothing from outside is ever put into it (a turn started into the
+chat from outside, as v1 and an earlier draft of this did, left it hung on "Thinking" with every later message
+refused). One child agent of the session does the receiving, and keeps running; its loop is: `nova-bus recv --as
+<name>` waits for one message and prints its line; the child sends that line to its parent as a message; then
+`nova-bus ack --as <name> --id <id>` marks it handled (`ACK FAILED` means it was handled already: go on); then
+`recv` again. The parent answers with `send` and spawns the child again when it ends. A child that dies between
+`recv` and `ack` leaves the message unhandled, so the next `recv` prints it again: the parent may see a message
+twice, by its id, and ignores the repeat. Every command in the child carries `NOVA_BUS_REDIS=<host:port>`, because
+a child's environment may not have it. Under Codex (`CODEX_THREAD_ID` is in every command's environment) `nova-bus
+hook` is refused in any thread, exit 2, and `recv` is refused in a main thread, exit 2, where it would block the
+chat: the thread's rollout under `${CODEX_HOME:-~/.codex}/sessions` says whether it is a chat someone started
+(`thread_source: user`) or a child agent (`subagent`); one that cannot be read is refused too. Put these lines in
+the workspace's AGENTS.md:
 
-```sh
-# the socket: the Codex app's IPC socket under its home
-socket=${CODEX_HOME:-$HOME/.codex}/ipc/ipc.sock
-# the thread: this chat's id, the newest desktop chat started in this workspace
-# (each rollout's first line is its session_meta); run it from the chat's workspace
-thread=$(ls -t $(find "${CODEX_HOME:-$HOME/.codex}/sessions" -name '*.jsonl') | while read -r f; do
-  head -1 "$f" | jq -r --arg cwd "$PWD" 'select(.payload.originator == "Codex Desktop" and .payload.thread_source == "user" and .payload.cwd == $cwd) | .payload.id'
-done | head -1)
-# the events directory: private to you; the hook makes the last component, mode 0700
-mkdir -p "$HOME/.local/state/nova-bus"
-nova-bus hook --as <name> --harness codex --codex-socket "$socket" --codex-thread "$thread" \
-  --codex-events-dir "$HOME/.local/state/nova-bus/<name>-codex"
+```
+nova-bus show codex-agents
 ```
 
-Run it where it keeps running (a persistent exec session, a terminal or a launchd job); its stdout is receipts only.
-The start-up check connects to the socket and asks which window has the thread open: `no Codex window has thread
-<id> open` (exit 1) means the chat is not open in the app.
+This loop has not yet been proven live from a Codex child; it is the shape Glenn's earlier child-agent hooks took.
 
-**Grok** (`--harness grok --grok-home <dir>`, normally `~/.grok`). Each message's line is appended to
-`<dir>/nova-hook.wake` (made, mode 0600, if absent). The Grok session's Monitor tails that file, and each appended
-line is its notification:
+**Grok** (`--harness grok --grok-home <dir>`, normally `~/.grok`). Each message is saved to `<dir>/nova-bus/<id>.json`
+and a line naming that file is appended to `<dir>/nova-hook.wake` (made, mode 0600, if absent). The Grok session's
+Monitor tails that file first, and each appended line is its notification:
 
 ```
 Monitor: tail -n 0 -F ~/.grok/nova-hook.wake
 ```
 
-and the hook runs where it keeps running: `nova-bus hook --as <name> --harness grok --grok-home ~/.grok`.
+then the hook runs beside the session as a service: `nova-bus hook --as <name> --harness grok --grok-home ~/.grok
+--service`. A wake with nothing holding the file open (no Monitor yet) fails and ends the hook: start the Monitor
+first.
 
 **Antigravity** (`--harness antigravity`). Each message is saved to `<events-dir>/<id>.json` and sent into the
 conversation as a new turn with the workspace's own `language_server agentapi send-message`, with the fixed text
@@ -85,15 +111,38 @@ wake is `agentapi send-message`, whose message v1 confirmed by the file it leave
 The hook takes as candidates every `language_server` of this user in `ps` that carries a `--csrf_token`, those whose
 `--workspace_id` is the workspace (the path or its symlink target) first. Antigravity 2.29 runs one hub server with
 no `--workspace_id` at all, so the one taken is the first whose agentapi answers `get-conversation-metadata
-<session>`, on its port from `lsof` (or `--antigravity-server <port>`). The token passes to agentapi only in the
-environment and is cut out of every error. None answering is exit 1, naming how many candidates were tried:
+<session>`, on its port from `lsof` (or `--antigravity-server <port>`). The program run is the process's own
+executable, never its command line, and must be this user's or root's and closed to others. The token passes to
+agentapi only in the environment and is cut out of every error. None answering is exit 1, naming how many candidates
+were tried. A send that fails finds the server once more (Antigravity restarted) and sends again:
 
 ```sh
 nova-bus hook --as <name> --harness antigravity --antigravity-dir "$PWD" \
-  --antigravity-session <conversation id> --antigravity-events-dir "$HOME/.gemini/antigravity/nova-bus-<name>"
+  --antigravity-session <conversation id> --antigravity-events-dir "$HOME/.gemini/antigravity/nova-bus-<name>" --service
 ```
 
 The conversation id is the directory name under `~/.gemini/antigravity/brain/` of the conversation.
+
+**`--exec <command>`** (with the default harness) runs a command of yours per message instead of printing it: the
+line on its stdin, the fields in `NOVA_BUS_ID`, `NOVA_BUS_FROM`, `NOVA_BUS_RE`, `NOVA_BUS_SUBJECT` and
+`NOVA_BUS_BODY`, under the 8 s limit. Exit 0 is the delivery (`HOOK EXEC OK id=<id>`), and only then is the message
+marked handled; any other exit is `HOOK EXEC FAILED id=<id> exit=<n>` on stderr and ends the hook with the message
+unhandled.
+
+### The service
+
+A hook started inside your session blocks that session; the service runs it beside you. `--service` installs, or
+updates, a per-user unit the system keeps running: `~/Library/LaunchAgents/nova-bus.hook.<name>.plist` on macOS
+(KeepAlive, ThrottleInterval 10), a systemd `--user` unit `nova-bus-hook-<name>.service` elsewhere (Restart=always).
+The unit runs exactly the hook command, with `NOVA_BUS_REDIS`, `NOVA_BUS_USER` and `NOVA_BUS_PASSWORD` in its
+environment and never on its command line, written mode 0600, logging to `~/.local/state/nova-bus/<name>.log`. The
+harness is checked in the installing process before any unit is written; then the unit starts, and the command
+waits up to 45 s for its `HOOK OK name=<name>` in the log and prints `HOOK SERVICE OK name=<name> unit=<unit>
+log=<log> changed=true`. Run again with the same flags it changes nothing (`changed=false`); with new flags (a new
+session id) it rewrites and restarts the unit. `--service stop` stops and removes it (`state=stopped`, or
+`state=absent`). Without `launchctl` or `systemctl` it refuses, exit 2. Not for `claude` without `--exec`: that
+wake is the Monitor of the session itself. The foreground form, the same command without `--service`, is for
+diagnosis.
 
 ### The line
 
@@ -114,7 +163,16 @@ token of its own) and deletes it, only if it still holds its token, on SIGINT, S
 per name: a hook that finds another hook's token present waits up to 40 s for it to lapse (a restart after a
 crash), then claims the name, or exits 1 if the other hook is still refreshing it. **who** prints `WHO OK present=<n>`, then `<name><TAB><uptime>` for each present name, sorted; a crashed hook
 drops out within 30 s. **pending** prints `PENDING OK waiting=<n>` for `<name>`'s unacked messages, and with `--list` their
-`<id><TAB><from><TAB><subject>`, consuming nothing. There is no ack verb: hook acks after printing, and that is the one way.
+`<id><TAB><from><TAB><subject>` (the subject only, never the body), consuming nothing. To read one waiting
+message whole without a hook, use **recv**, which acks nothing. Once recv has printed a message it holds the name
+naming it (`who` shows `<name><TAB><uptime><TAB>recv holding <id>`) for 15 minutes, or until `ack` or the next
+`recv`: a slow relay, its ack and the parent's reply all pass the hook-in gate; a reader that died leaves the
+claim to lapse, and the next recv hands the message out again. **recv** prints one message (the oldest unhandled first, as hook
+orders them) and exits 0 without marking it handled, or `RECV NONE name=<name> waited=<d>` on stderr and exit 1 when
+`--timeout` passes with none; it records `<name>`'s presence like a hook but takes no lock, and does not coexist
+with a hook for the same name (they would take the same messages). **ack** marks a received message handled:
+`ACK OK id=<id>`, or `ACK FAILED ...` exit 1 when it was not received or is handled already. hook acks after
+printing by itself; recv and ack are the same two steps as two commands, for a receiver that relays in between.
 
 `nova-bus help` prints the usage.
 
@@ -145,7 +203,7 @@ Answer a message with `nova-bus send --as <name> --to <from> --re <id> <subject>
 | Code | When |
 |---|---|
 | 0 | done; help; a hook stopped by SIGINT or SIGTERM |
-| 1 | refused or failed: Redis unreachable or erring, `SEND FAILED`, `name already hooked`, stdout failing |
+| 1 | refused or failed: Redis unreachable or erring, `SEND FAILED`, a send to a name no hook has held, `name already hooked`, stdout failing or its reader gone, a harness that does not answer at start, a wake or exec that failed, `RECV NONE`, `ACK FAILED`, `HOOK SERVICE FAILED` |
 | 2 | a malformed invocation |
 
 A malformed invocation is refused in one stderr line,
@@ -157,9 +215,14 @@ the verb does not take (`unknown flag --x`); a flag without a value; a bad
 `--list` value; a name that is not letters, digits, `.`, `_` and `-` (for
 `--as` and every `--to` name); a `--re` that is not `<ms>-<seq>`; an empty
 name in `--to` (`a,,b`); an empty subject; more than a subject and a body; an
-argument to hook, who or pending ("takes no arguments"). An unknown verb (`ack` is one) gets
-`nova-bus: unknown verb "<verb>"; verbs: send, hook, who, pending, help; run:
-nova-bus help`. go-redis's own logging is silenced: every message on stderr is
+argument to hook, recv, ack, who or pending ("takes no arguments"); a harness
+flag the harness does not take, a missing one, a harness or events directory
+that is not there or not private, a Codex main thread, `--exec` with a
+harness, `--service` without a service manager or with claude and no
+`--exec`, a bad `--id`, a negative `--timeout`, a `show` argument that is not
+`agents` or `codex-agents`. An unknown verb gets
+`nova-bus: unknown verb "<verb>"; verbs: send, hook, recv, ack, who, pending,
+show, help; run: nova-bus help`. go-redis's own logging is silenced: every message on stderr is
 nova-bus's.
 
 A runtime failure keeps the one-line shape, `nova-bus <verb>: <what>`, exit 1.
@@ -176,9 +239,10 @@ it retries every second.
   with the fields `from`, `to` (the recipients, trimmed, each once, joined by
   commas), `subject`, `body`
   and `re` (empty when none), all strings.
-- Every hook reads with the consumer group `hook` and the consumer `hook`. The
-  group is created at id `0` on the first hook, so messages sent before any
-  hook are delivered too.
+- Every hook, and recv, reads with the consumer group `hook` and the consumer
+  `hook`. The group is created at id `0` on the first hook or recv, so
+  messages sent before it are delivered too; its existence is what send
+  checks (`XINFO GROUPS`) before sending to a name without `--new`.
 - A hook's line is tab-separated:
 
   ```
@@ -190,17 +254,25 @@ it retries every second.
   subject the same way.
 - Presence of `<name>` is the string key `bus:presence:<name>`, whose value is
   the hook's start time (RFC 3339 UTC, to the second), a tab, and a random
-  token that process made at start.
+  token that process made at start; recv sets it with the token `recv` and
+  the time of the first recv.
 
 ## Delivery
 
-A hook reads its pending entries first (`XREADGROUP ... 0`, then past the
-last one taken: handed to a hook and never acked), then new ones
-(`XREADGROUP ... >`, up to 100 at a time). For each entry it delivers it
-(writes the line, or wakes the session), then acks it and deletes it (`XACK` and `XDEL`
-in one `MULTI`), so an inbox holds only what is waiting. The ack runs to the end
-even if a signal arrives after the write, and no further line is written once
-one has. So:
+A hook reads its pending entries first (`XREADGROUP ... 0`: handed to a hook
+or a recv and never acked), then new ones (`XREADGROUP ... >`, up to 100 at a
+time). For each entry it delivers it (writes the line, runs the `--exec`
+command, or wakes the session), then acks it and deletes it (`XACK` and
+`XDEL` in one `MULTI`), so an inbox holds only what is waiting. The ack runs
+to the end even if a signal arrives after the write, and no further line is
+written once one has. recv is the first half (read and print) and ack the
+second, as two commands. A delivery that surely failed (a wake that did not
+answer, an exec that exited non-zero) ends the hook with the entry unacked
+and nothing behind it delivered, so the order is kept and the next hook
+starts from the pending list; a wake whose outcome is unknown is acked, so a
+turn is never started twice. Presence is refreshed when due before every
+delivery, and a delivery is bounded by 8 s, so a batch never outlives the
+key. So:
 
 - a restarted hook resumes where the last one stopped;
 - delivery is at least once: a hook killed after writing a line and before
@@ -233,7 +305,9 @@ their reader, however long that takes.
 
 ## Presence
 
-Presence means one thing: a hook process is alive for this name.
+Presence means one thing: a hook process is alive for this name, or a recv is waiting on it (the value then ends
+in `recv`, from the first recv; a recv claims again every 10 s while it waits, and a hook is refused by a recv's key
+only until it lapses).
 
 - **One hook per name.** On start the hook claims the key: one Lua script sets
   it with a 30 s TTL unless it holds another process's value. If it does, the
@@ -253,9 +327,12 @@ Presence means one thing: a hook process is alive for this name.
 - On a clean exit (SIGINT, SIGTERM, stdout failing) it releases the key: a
   second script deletes it only if it still holds this process's value. A
   release that fails leaves the key to its TTL.
-- SIGPIPE is ignored, so a reader that goes away (`nova-bus hook ... | head -1`)
-  makes the next write fail with EPIPE: the hook releases its presence, leaves
-  the unprinted message pending and exits 1.
+- After every read (at most 1 s) the hook polls stdout (poll(2) on Darwin,
+  ppoll(2) on Linux): a pipe whose reader has gone (the Monitor or the
+  session ended) ends it, `stdout closed: its reader is gone`, exit 1, its
+  presence released, within a second. SIGPIPE is ignored too, so a write to
+  a gone reader fails with EPIPE and ends it the same way, the unprinted
+  message left pending.
 - who scans `bus:presence:*` and reads each key; one that expires in between
   is left out. Uptime is the reader's clock minus the start time; clocks that
   disagree skew it, and a negative uptime shows as `0s`.
@@ -268,7 +345,14 @@ Presence means one thing: a hook process is alive for this name.
   until then who lists it, and a new hook on that name waits for it.
 - **stdout blocks** (the reader stopped reading). The hook cannot refresh, so
   its presence lapses within 30 s while the process lives.
-- **Redis is unreachable.** send, pending and who exit 1. A hook logs
+- **A wake or exec fails.** `HOOK WAKE FAILED` or `HOOK EXEC FAILED` on
+  stderr; the hook exits 1 with that message and every later one unhandled,
+  in order (`pending --list` shows them); the next hook, or the service
+  restarting it, delivers them. A wake cut off with its outcome unknown is
+  acked.
+- **A recv's reader dies before its ack.** The message stays pending and the
+  next recv prints it again; the reader sees it twice, by its id.
+- **Redis is unreachable.** send, recv, ack, pending and who exit 1. A hook logs
   `nova-bus: <error>; reconnecting` to stderr and retries every second; its
   presence may lapse meanwhile, and it claims again when Redis is back.
 
@@ -308,7 +392,8 @@ go test -tags functional .          # against a real redis-server on a free loca
 
 [SPEC.md](SPEC.md) has the tests and models. `tla/Presence.tla` models the presence key and hooks that compete for it;
 `tla/CASES.tsv` names every case and what TLC must find (`tests/tla/check.sh JAR bus/tla` runs them). `tla/Bus.tla` models the inbox, the sender and a hook that crashes between print and ack: no message is acked before
-it is printed, no acked message is printed again, every sent message is printed. `tla/BusWake.cfg` adds wakes that
-fail: no message is lost (it is delivered or stays pending), and a failed one never holds the hook in its pending
-pass. `tla/BusBroken*.cfg` are reversed witnesses (ack before print; a restarted hook that skips its pending
-messages; a failed wake that acks; a pending read that does not move past a failed wake) that TLC must fail.
+it is printed, no acked message is printed again, every sent message is printed. `tla/BusBroken*.cfg` are reversed witnesses (ack before print; a restarted hook that skips its pending
+messages; a failed wake that acks; a failed wake that does not end the hook, so the message is never delivered)
+that TLC must fail. `tla/BusWake.cfg` adds wakes that fail: every message is still delivered, because the failure
+ends the hook and the next one starts from the pending list. `tla/PresenceBrokenSlowBatch.cfg` shows the key lapsing
+under a hook whose delivery is not bounded.
