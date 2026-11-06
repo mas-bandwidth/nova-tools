@@ -237,4 +237,7 @@ func TestUpPlaysAreEmbedded(t *testing.T) {
 	if header(string(b), "argument") != "nova_join_host" {
 		t.Error("join.yml does not take its machine as the argument (# argument: nova_join_host)")
 	}
+	if f, ok := showable(tree, "tailscale-acl"); !ok || f != "tailscale-acl.json" {
+		t.Errorf("nova-fleet show tailscale-acl resolves to %q %v", f, ok)
+	}
 }
