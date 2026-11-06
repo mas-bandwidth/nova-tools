@@ -68,7 +68,8 @@ include `boundary` itself (`tests/boundary`, 400).
 - `fleet` 50 -> 1000 (2026-11-05): fleet became nova-fleet, a program that
   embeds the plays and adds `check` and `up`, where it was a `doc.go`.
 - `fleet` 1000 -> 1050 (2026-11-05): `up` grants each machine's seat its values,
-  then runs secrets-refresh and health, and `check` names a python3 without venv.
+  pushes the encrypted store to each machine and runs health, and `check` names a
+  python3 without venv.
 
 ## Adding a tool
 

@@ -75,6 +75,7 @@ func fix(name, fam string) string {
 		"git":        {"git", "git", "git"},
 		"gpg":        {"gnupg", "gnupg2", "gnupg"},
 		"gh":         {"gh", "gh", "gh"},
+		"rsync":      {"rsync", "rsync", "rsync"},
 	}
 	switch {
 	case strings.HasPrefix(name, "nova-"):
@@ -88,10 +89,8 @@ func fix(name, fam string) string {
 			return "sudo apt install -y python3-venv && " + venv
 		}
 		return venv
-	case name == "python3-venv" && fam == "apt":
-		return "sudo apt install -y python3-venv"
 	case name == "python3-venv":
-		return "sudo dnf install -y python3 (its venv module is part of it)"
+		return map[bool]string{true: "sudo apt install -y python3-venv", false: "sudo dnf install -y python3"}[fam == "apt"]
 	case name == "tailscale" && fam == "brew":
 		return "brew install --cask tailscale"
 	case name == "tailscale":
@@ -121,7 +120,7 @@ func fix(name, fam string) string {
 // control checks this node and fills u.bin, u.store, u.key and u.seat; it returns how
 // many prerequisites are missing.
 func (u *upRun) control(out io.Writer) int {
-	want := []string{"ansible-playbook", "nova-config", "nova-secrets", "nova-bus", "tailscale", "psql", "git", "gpg", "sops", "age", "age-keygen"}
+	want := []string{"ansible-playbook", "nova-config", "nova-secrets", "nova-bus", "tailscale", "psql", "git", "gpg", "sops", "age", "age-keygen", "rsync"}
 	if u.runners != "" {
 		want = append(want, "gh")
 	}

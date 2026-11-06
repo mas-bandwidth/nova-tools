@@ -73,7 +73,7 @@ nova-fleet up --tools v2.0.0 --runners https://github.com/OWNER/REPO store-1=203
 1. The Tailscale account and its policy, and a reusable, pre-authorized auth key tagged `tag:nova` (and `tag:runner`
    for runners) ("tailscale" below: what is yours, once).
 2. The control node: ansible-core, `nova-config`, `nova-secrets`, `nova-bus`, `tailscale` (on the tailnet), `psql`,
-   `git`, `gpg`, `sops`, `age` and `age-keygen` on PATH (`gh` too for runners; `nova-fleet check` lists what is
+   `git`, `gpg`, `sops`, `age`, `age-keygen` and `rsync` on PATH (`gh` too for runners; `nova-fleet check` lists what is
    missing with the line that installs it); a secrets store with this node's seat
    ([secrets/SPEC.md](../secrets/SPEC.md)); `NOVA_SECRETS_STORE`, `NOVA_SECRETS_KEY` and `NOVA_SECRETS_SEAT` set.
 3. The key in the seat: `nova-secrets set TAILSCALE_AUTHKEY --as <seat>` (the value on stdin), and for runners
@@ -89,8 +89,8 @@ nova-fleet up --tools v2.0.0 --runners https://github.com/OWNER/REPO store-1=203
 | 2 | first | on the first machine, from a hand inventory as root: `tailscale` (no address recorded, firewall later), `postgres` and `redis` (their passwords sealed into your seat as `NOVA_PG_PASSWORD` and `NOVA_BUS_PASSWORD`), then `nova-config schema` applied | nova-config's rows live in this PostgreSQL, so it comes before any row |
 | 3 | join | `join` for each machine, the first too (`services,bench`; the others `bench`; `runner` with `--runners`): its row, its login with passwordless sudo, its tailnet name, its firewall, its seat | the store exists now |
 | 4 | grant | `nova-secrets grant <--grant names> --to <machine>` for each machine: the values written to that seat's file, encrypted to the seat (and recovery) only; your seat is never a recipient of it ([secrets/SPEC.md](../secrets/SPEC.md)) | the seats exist now, and join pinned each one's public key in the store |
-| 5 | store | `git push` of your secrets store, if it has an upstream (else a NOTE) | the new seats and grants reach the machines' clones |
-| 6 | refresh | `secrets-refresh` on every machine, with `nova_secrets_repo` set to your store's upstream URL so a machine with no clone gets one (it must be able to read that repository) | each clone keeps pulling, so later grants arrive by themselves |
+| 5 | store | `git push` of your secrets store to its upstream, if it has one (else a NOTE): a copy off this node; the machines never read it | |
+| 6 | refresh | the encrypted store copied over ssh with rsync to `<login>@<machine>:~/.local/share/nova/secrets/` (no `.git`, stale files deleted, 0700/0600); under `--check` a dry run, and a machine not reachable yet is named, not failed | each seat opens what step 4 granted; a rerun of `up` pushes again |
 | 7 | health | `health` on every machine (Linux; a Mac is skipped) | the guards are in place before anything long-running starts |
 | 8 | tools | `install` on every machine, from the release `--tools vX.Y.Z` or a local build `--tools DIR` | the services run these binaries |
 | 9 | services | `services` | each seat holds its granted values now |
@@ -108,7 +108,7 @@ seat and prints `UP GRANT <machine> WOULD-GRANT <names>`; a value it cannot read
 Nothing is pushed, applied, granted or sent under `--check`.
 
 A machine's seat holds no values until they are granted to it: join's bus check on a new machine is a `NOTE` until
-step 4 has granted `NOVA_BUS_PASSWORD` and the machine's clone has pulled it.
+step 4 has granted `NOVA_BUS_PASSWORD` and step 6 has pushed it.
 
 ## The plays
 
@@ -555,7 +555,13 @@ roles and the dumps are left.
 
 ## secrets-refresh
 
-Each machine's clone of the secrets store (`nova_secrets_store`) pulled fast-forward only every
+The usual way a machine's copy of the store stays fresh is a push from the control node: `nova-fleet up` step 6
+copies the encrypted store over the ssh it already has (rsync: no `.git`, stale files deleted, 0700/0600) to each
+machine's `nova_secrets_store`, and running `up` again pushes again. No machine needs read access to the store's
+repository. The pull timer below is the optional form, for an adopter who gives `nova_secrets_repo` and lets each
+machine read that repository.
+
+The optional pull form: each machine's clone of the secrets store (`nova_secrets_store`) pulled fast-forward only every
 `nova_secrets_refresh_every` seconds, so a seat never opens a stale store. The pull reads no value, prints no
 credential and logs one line per run (time, commit, `ok` or `FAIL rc=<n>`) to `nova_secrets_refresh_log`. Linux: a
 systemd user timer (linger on), or a crontab line where the login has no user manager; macOS: a LaunchAgent in the

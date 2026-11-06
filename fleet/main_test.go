@@ -79,7 +79,7 @@ func TestEmbeddedTree(t *testing.T) {
 func TestEveryPlayHasAPurpose(t *testing.T) {
 	for _, p := range plays(tree) {
 		b, err := fs.ReadFile(tree, p+".yml")
-		if err != nil || purpose(string(b)) == "" {
+		if err != nil || header(string(b), "purpose") == "" {
 			t.Errorf("%s.yml has no '# purpose:' line in its leading comment", p)
 		}
 	}
@@ -93,8 +93,8 @@ func TestPurposeParsing(t *testing.T) {
 		{"# no purpose here\n", ""},
 		{"", ""},
 	} {
-		if got := purpose(tc.text); got != tc.want {
-			t.Errorf("purpose(%q) = %q, want %q", tc.text, got, tc.want)
+		if got := header(tc.text, "purpose"); got != tc.want {
+			t.Errorf("header(%q, purpose) = %q, want %q", tc.text, got, tc.want)
 		}
 	}
 }
