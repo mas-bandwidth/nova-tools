@@ -569,10 +569,14 @@ Each machine's copy of the secrets store at `nova_secrets_store`, kept current, 
 Two modes, chosen by `nova_secrets_repo`:
 
 - **Push** (the default, `nova_secrets_repo` empty). The control node puts the store's files on the machine over the
-  SSH the plays already use: `rsync -rltp --delete --exclude=.git --chmod=Du=rwx,Dgo=,Fu=rw,Fgo=`, so the directories
-  are 0700 and the files 0600, and there is no git history on the machine. Given `-e nova_seal_store=S` (the control
-  node's clone), this play does the push with `ansible.posix.synchronize`, with those settings. No timer runs on the machine, and one left from pull mode is removed. A machine with no store
-  fails the run with `SECRETS-REFRESH <machine> mode=push missing`. join.yml installs rsync on each Linux machine.
+  SSH the plays already use: `rsync -rtp --delete --exclude=.git --delete-excluded --chmod=Du=rwx,Dgo=,Fu=rw,Fgo=`,
+  so the directories are 0700 and the files 0600, and there is no git history on the machine: a clone left by pull
+  mode loses its `.git` on the first push. Symlinks are never copied, and a store clone that holds one stops the run
+  naming it; a machine whose store path is a symlink stops the run too. Given `-e nova_seal_store=S` (the control
+  node's clone), this play does the push with `ansible.posix.synchronize`, with those settings. No timer runs on the
+  machine, and one left from pull mode is removed. A machine with no store fails the run with `SECRETS-REFRESH
+  <machine> mode=push missing`; one without rsync stops before anything changes, with the install line (join.yml
+  installs rsync on each Linux machine).
 - **Pull** (`nova_secrets_repo` set to the store's git URL). A machine with no clone gets one (over the machine's own
   git credentials), and a timer pulls it fast-forward only every `nova_secrets_refresh_every` seconds. The pull reads
   no value, prints no credential and logs one line per run (time, commit, `ok` or `FAIL rc=<n>`) to
