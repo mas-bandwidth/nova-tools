@@ -12,4 +12,4 @@ With **nova-tools**, your AIs can:
 * Run untrusted work inside a sandbox
 * Retain memory across sessions
 
-For more information, please have your AIs [read the docs](docs/README.md)
+For more information, please ask your AI to [read the docs](docs/README.md)
