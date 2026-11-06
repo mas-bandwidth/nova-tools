@@ -165,6 +165,10 @@ func parse(args []string, env func(string) string) (options, error) {
 	if env("NOVA_RESERVE_DIR") != "" {
 		o.dirFrom = "NOVA_RESERVE_DIR"
 	}
+	if len(args) == 1 && (args[0] == "-h" || args[0] == "--help") {
+		o.help, o.verb = true, ""
+		return o, nil
+	}
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		switch args[0] {
 		case "run", "hold", "status", "set", "help":
