@@ -2,7 +2,8 @@
 
 nova-fleet puts the same software on every machine you own. It is the fleet's Ansible plays in one binary: the
 plays, roles, templates and defaults are embedded, a run extracts them to a private temporary directory, points
-`ansible-playbook` at your inventory (`nova-config inventory` unless you name another) and exits with its status.
+`ansible-playbook` at your inventory (`nova-config inventory` unless you name another) and exits 0 when it passed,
+1 when it failed (ansible-playbook's own status named on stderr), 2 when it could not run.
 
 ```
 nova-fleet plays                                  # what is in the binary
@@ -40,10 +41,14 @@ ansible-galaxy collection install -r <extracted>/requirements.yml   # nova-fleet
 
 The whole path, in order. Each step's output says what to do next.
 
-1. `nova-fleet check` on the control node: one line per prerequisite, `CHECK OK sops 3.9.1` or `CHECK MISSING
-   age-keygen: sudo apt install -y age` (the fix for this OS, pasteable), then the tailnet, the secrets store, key
-   and seat, and the secrets `up` will read (`--runners URL` adds `gh` and `GITHUB_RUNNER_TOKEN`). Run each fix line,
-   then `nova-fleet check` again until it ends `CHECK OK missing=0` (exit 0; 1 while anything is missing).
+1. `nova-fleet check` on the control node: one line per prerequisite, `CHECK OK sops 3.13.3` or `CHECK MISSING
+   age-keygen: sudo apt install -y age` (the fix for this OS, pasteable, in paste order: `git` and `go` before the
+   `nova-*` build lines), then the tailnet and this node's `tag:control`, the secrets store, key, seat and pins, the
+   secrets `up` will read (`--runners URL` adds `gh` and `GITHUB_RUNNER_TOKEN`), and `NOVA_PG_DSN` once a fleet
+   exists. Run each fix line, then `nova-fleet check` again until it ends `CHECK OK missing=0` (exit 0; 1 while
+   anything is missing). Tailscale, PostgreSQL, Redis and Ansible are not optional: `check` requires Tailscale and
+   Ansible on this node, `up` puts PostgreSQL and Redis on the first machine and requires them after, and no variable
+   of nova-fleet skips one.
    The sops it installs is the one the plays pin: one line, `nova_sops_version` in `group_vars/all.yml` (with its
    digests in `nova_sops_sha256`), sets the version for `check`'s install line and for `join` alike.
 2. Your part in the Tailscale admin console, once ("tailscale" below: the account, `nova-fleet show tailscale-acl`
@@ -56,59 +61,93 @@ nova-fleet up --check --tools v2.0.0 store-1=203.0.113.7 web-1=203.0.113.8
 nova-fleet up --tools v2.0.0 store-1=203.0.113.7 web-1=203.0.113.8
 ```
 
+The addresses here are placeholders (RFC 5737 documentation addresses, which answer nothing): put your own machines'
+in their place.
+
 ## up
 
 `nova-fleet up` takes a fleet from nothing to running in one fixed order. Its inputs are only what you have: the
 machines' ssh addresses, the Tailscale auth key in your seat, and, for runners, the repository or organization.
 `--grant NAME[,NAME]` names the values each machine's seat is granted (default `NOVA_BUS_PASSWORD`, the one its
-services and nova-bus open).
+services and nova-bus open). After `--`, `-e name=value` pairs reach every play (a variable `up` sets itself, or one
+that would skip Tailscale, PostgreSQL, Redis or Ansible, is refused).
 
 ```
 nova-fleet up --check --tools v2.0.0 store-1=203.0.113.7 web-1=203.0.113.8 mac-1=mac-1.local/darwin/arm64
 nova-fleet up --tools v2.0.0 --runners https://github.com/OWNER/REPO store-1=203.0.113.7 web-1=203.0.113.8
+nova-fleet up --tools v2.0.0 store-1=203.0.113.7 -- -e nova_pg_version=17
 ```
+
+(203.0.113.x are placeholder addresses; use your own.)
 
 **What is yours, once, before the first run:**
 
 1. The Tailscale account and its policy, and a reusable, pre-authorized auth key tagged `tag:nova` (and `tag:runner`
    for runners) ("tailscale" below: what is yours, once).
-2. The control node: ansible-core, `nova-config`, `nova-secrets`, `nova-bus`, `tailscale` (on the tailnet), `psql`,
-   `git`, `gpg`, `sops`, `age`, `age-keygen` and `rsync` on PATH (`gh` too for runners; `nova-fleet check` lists what is
-   missing with the line that installs it); a secrets store with this node's seat
-   ([secrets/SPEC.md](../secrets/SPEC.md)); `NOVA_SECRETS_STORE`, `NOVA_SECRETS_KEY` and `NOVA_SECRETS_SEAT` set.
+2. The control node: ansible-core, `nova-config`, `nova-secrets`, `nova-bus`, `tailscale` (on the tailnet, tagged
+   `tag:control`), `psql`, `git`, `gpg`, `sops`, `age`, `age-keygen`, `rsync` and `ssh` on PATH (`gh` too for runners;
+   `nova-fleet check` lists what is missing with the line that installs it); a secrets store with this node's seat
+   and a pins directory ([secrets/SPEC.md](../secrets/SPEC.md)); `NOVA_SECRETS_STORE`, `NOVA_SECRETS_KEY`,
+   `NOVA_SECRETS_SEAT` and `NOVA_SECRETS_PINS` set.
 3. The key in the seat: `nova-secrets set TAILSCALE_AUTHKEY --as <seat>` (the value on stdin), and for runners
    `GITHUB_RUNNER_TOKEN` as in "github-runners".
-4. Each Linux machine reachable as root over ssh at its address, with the control node's key. A Mac: its login and
-   passwordless sudo set up at its console, and the Tailscale app's VPN approved once.
+4. Each Linux machine reachable as root over ssh at its address, with the control node's key, and its host key
+   already in this node's `known_hosts` (ssh to it once by hand; `up` prompts for nothing). A Mac: its login and
+   passwordless sudo set up at its console, and the Tailscale app's VPN approved once. Once a machine is on the
+   tailnet, `up` reaches it as its login at its tailnet name, with the Tailscale SSH host key `tailscale status`
+   reports pinned in `known_hosts` (`UP HOSTKEY <machine> OK pinned=<n>`); it never turns host key checking off.
 
-**The order.** The first machine named holds the fleet's stores. Nothing here is a choice to make again:
+**The order.** On a new fleet the first machine named holds the fleet's stores; on a fleet that exists, the store
+machine is the one nova-config's rows say ("Adding a machine" below). Nothing here is a choice to make again:
 
 | # | Step | What runs | Why here |
 |---|---|---|---|
-| 1 | control | `nova-fleet check`: every helper, the tailnet, the store, key and seat, and `TAILSCALE_AUTHKEY` (and `GITHUB_RUNNER_TOKEN`) read from the seat; anything missing stops the run with its fix line | a run never starts that a missing secret would stop later |
-| 2 | first | on the first machine, from a hand inventory as root: `tailscale` (no address recorded, firewall later), `postgres` and `redis` (their passwords sealed into your seat as `NOVA_PG_PASSWORD` and `NOVA_BUS_PASSWORD`), then `nova-config schema` applied | nova-config's rows live in this PostgreSQL, so it comes before any row |
-| 3 | join | `join` for each machine, the first too (`services,bench`; the others `bench`; `runner` with `--runners`): its row, its login with passwordless sudo, its tailnet name, its firewall, its seat | the store exists now |
-| 4 | grant | `nova-secrets grant <--grant names> --to <machine>` for each machine: the values written to that seat's file, encrypted to the seat (and recovery) only; your seat is never a recipient of it ([secrets/SPEC.md](../secrets/SPEC.md)) | the seats exist now, and join pinned each one's public key in the store |
-| 5 | store | `git push` of your secrets store to its upstream, if it has one (else a NOTE): a copy off this node; the machines never read it | |
-| 6 | refresh | the encrypted store copied over ssh with rsync to `<login>@<machine>:~/.local/share/nova/secrets/` (no `.git`, stale files deleted, 0700/0600); under `--check` a dry run, and a machine not reachable yet is named, not failed | each seat opens what step 4 granted; a rerun of `up` pushes again |
-| 7 | health | `health` on every machine (Linux; a Mac is skipped) | the guards are in place before anything long-running starts |
-| 8 | tools | `install` on every machine, from the release `--tools vX.Y.Z` or a local build `--tools DIR` | the services run these binaries |
-| 9 | services | `services` | each seat holds its granted values now |
-| 10 | runners | `github-runners`, `--runner-count` per machine (only with `--runners`) | |
-| 11 | bus | a message sent to the inbox `nova-fleet-up` over the first machine's Redis and read back | the fleet is reached end to end |
+| 1 | control | `nova-fleet check`: every helper, the tailnet and `tag:control`, the store, key, seat and pins, `TAILSCALE_AUTHKEY` (and `GITHUB_RUNNER_TOKEN`) read from the seat, `NOVA_PG_DSN` when a fleet exists; anything missing stops the run with its fix line | a run never starts that a missing secret would stop later |
+| 2 | reach | one `ssh -o BatchMode=yes ... true` per machine: as its login at its tailnet name once it is a peer (or at its row's address), else as root at the address given; `UP REACH <machine> OK <who>@<where>` | a run never starts a play on a machine it cannot reach |
+| 3 | first | on a new fleet's first machine, from a hand inventory: `tailscale` (no address recorded, firewall later), then `postgres` (nova-config's roles, grants and tables, loaded on the machine as `nova_admin`) and `redis`, their passwords sealed into your seat as `NOVA_PG_PASSWORD` and `NOVA_BUS_PASSWORD` | nova-config's rows live in this PostgreSQL, so it comes before any row |
+| 4 | join | `join` for each machine (`services,bench` for the first; the others `bench`; `runner` with `--runners`): its row, its login with passwordless sudo, its tailnet name and host key, its firewall, its seat; with `--runners`, a row that lacks the `runner` role gets it (`UP ROLE <machine> OK runner`) | the store exists now |
+| 5 | grant | `nova-secrets grant <--grant names> --to <machine> --pub <its seat key>` for each machine: the values written to that seat's grants file, encrypted to the seat's key (read from the machine over the tailnet, public half only, and pinned in `NOVA_SECRETS_PINS`) and the recovery key; your seat is never a recipient ([secrets/SPEC.md](../secrets/SPEC.md)) | the seats exist now |
+| 6 | store | `git push` of your secrets store to its upstream, if it has one (else a NOTE): a copy off this node; the machines never read it | |
+| 7 | refresh | the encrypted store copied over the tailnet with rsync to `<login>@<machine>:~/.local/share/nova/secrets/` (no `.git`, stale files deleted, 0700/0600); under `--check` a dry run | each seat opens what step 5 granted; a rerun of `up` pushes again |
+| 8 | health | `health` on every machine (Linux; a Mac is skipped) | the guards are in place before anything long-running starts |
+| 9 | tools | `install` on every machine, from the release `--tools vX.Y.Z` or a local build `--tools DIR` | the services run these binaries |
+| 10 | services | `services` | each seat holds its granted values now |
+| 11 | runners | `github-runners`, `--runner-count` per machine, the store, key and seat passed to it as `github_runner_secrets_args` (only with `--runners`) | |
+| 12 | bus | a message sent to the inbox `nova-fleet-up` over the store machine's Redis, its subject a nonce, and found pending there | the fleet is reached end to end |
 
 Each play prints its own receipts; each step adds `UP <step> OK` (or `WOULD-...` under `--check`), and the run ends
-with one line per machine: `UP MACHINE <name> OK address=<address> steps=<the steps it passed>`. A failed step prints
-`UP <step> FAILED exit=<n>` and stops; every step is idempotent, so the same command resumes.
+with one line per machine, `UP MACHINE <name> OK address=<address> steps=<the steps it passed>`, and on a new fleet
+`UP DONE next: export NOVA_PG_DSN=...`, the line the next `up` and nova-config read the fleet from. A failed step
+prints `UP <step> FAILED exit=<n>` (n is ansible-playbook's status, or the failed command's) and `up` exits 1; every
+step is idempotent, so the same command resumes. Exit 2 means it could not run (a refusal, a missing prerequisite).
 
-**--check** runs every step under `ansible-playbook --check --diff` and reads the secrets all the same. On a fleet
-whose PostgreSQL does not exist yet, the steps after the first machine's plays cannot be checked against anything;
-they are named (`UP FIRST WOULD-RUN ...`), never reported green. The grant step reads the `--grant` values from your
-seat and prints `UP GRANT <machine> WOULD-GRANT <names>`; a value it cannot read stops it with the read's reason.
-Nothing is pushed, applied, granted or sent under `--check`.
+**--check** runs every step under `ansible-playbook --check --diff` and reads the secrets all the same. On a new
+fleet a check cannot put the first machine on the tailnet, so PostgreSQL, Redis and every step after them cannot be
+checked against anything: they are named (`UP FIRST postgres, redis WOULD-RUN (check: the machine is not on the
+tailnet yet)`, `UP JOIN WOULD-RUN ...`), never reported green. A machine that answers no ssh is `UP <machine>
+UNREACHABLE <what was tried>`; the later steps are still named for the others, and the check ends `UP CHECK FAILED
+unreachable=<n>`, exit 1. The grant step reads the `--grant` values from your seat and prints `UP GRANT <machine>
+WOULD-GRANT <names>`; a value it cannot read stops it with the read's reason. Nothing is pushed, applied, granted or
+sent under `--check`; the one thing it writes on this node is a host key pin.
 
 A machine's seat holds no values until they are granted to it: join's bus check on a new machine is a `NOTE` until
-step 4 has granted `NOVA_BUS_PASSWORD` and step 6 has pushed it.
+step 5 has granted `NOVA_BUS_PASSWORD` and step 7 has pushed it.
+
+**Adding a machine.** A fleet that exists is read from nova-config, never guessed from the command line: export
+`NOVA_PG_DSN` (the line `up` printed, `postgres://nova_config@<store machine>:5432/nova`; `check` names it as missing
+once your seat holds `NOVA_PG_PASSWORD`), then name the new machines, and the ones you want converged again if you
+like:
+
+```
+export NOVA_PG_DSN=postgres://nova_config@store-1.<tailnet>.ts.net:5432/nova
+nova-fleet up --check --tools v2.0.0 web-2=203.0.113.9
+nova-fleet up --tools v2.0.0 web-2=203.0.113.9
+```
+
+The store machine is the row with the role `services`; no machine named becomes "first", and PostgreSQL and Redis are
+not installed again. A machine with a row is reached as its row's user at its row's address, and `join` runs its
+login play as that user with sudo (the policy lets no one in as root over the tailnet); a machine without one is
+reached as root at the address given, as on the first run.
 
 ## The plays
 
@@ -263,12 +302,16 @@ nova-fleet services -- -e nova_service_restart=reader
 GitHub Actions runners on every machine of the `runner` group: as many as the machine row's `runners` says, each
 registered to one repository or organization, run as a service that starts at boot. **Labels:** a runner's labels are
 its machine's inventory groups (the row's roles: `bench`, `runner`, `services`; `ungrouped` and `all` are left out),
-its `os` (`linux`, `darwin`, `windows`) and its `arch` (`amd64`, `arm64`), plus `github_runner_labels`; so a bench
-machine's runner is labelled `amd64,bench,linux,runner`, and a job selects it with `runs-on: [self-hosted, linux]`. Linux (amd64, arm64; WSL2 with systemd counts as Linux), macOS (a LaunchDaemon dropped to the
-login) and native Windows (the runner's own service; `ansible.windows` and an administrator login). Linux and macOS
-write the service files with sudo, so the login needs passwordless sudo: `join.yml` sets it up on Linux
-(`/etc/sudoers.d/90-nova-<login>`); on macOS set it at the console. No command here asks for a sudo password: an
-interactive prompt is a stall for an AI running the play.
+the host's own os (`linux`, `darwin`, `windows`) and arch (`amd64`, `arm64`) as its facts report them (a machine row's
+`os` and `arch` fields say how it is reached, never what it is labelled), plus `github_runner_labels`; so a bench
+machine's runner is labelled `amd64,bench,linux,runner`, and a job selects it with `runs-on: [self-hosted, linux]`.
+Linux (amd64, arm64; WSL2 with systemd counts as Linux), macOS and native Windows (the runner's own service;
+`ansible.windows` and an administrator login). On macOS the runner is a LaunchDaemon dropped to the login, not a
+LaunchAgent: a LaunchAgent runs only inside a logged-in GUI session, and a CI machine comes back from a reboot with
+none. Only a run needs sudo for that file (`/Library/LaunchDaemons` is world-readable, so `--check` reads and diffs it
+as the login and finishes without a password). Linux and macOS write the service files with sudo, so the login needs
+passwordless sudo: `join.yml` sets it up on Linux (`/etc/sudoers.d/90-nova-<login>`); on macOS set it at the console.
+No command here asks for a sudo password: an interactive prompt is a stall for an AI running the play.
 
 **Public repositories.** A self-hosted runner runs the code of any workflow that reaches it, and on a public repository
 that includes pull requests from forks. Use these runners on private repositories, or restrict which workflows and
@@ -285,8 +328,11 @@ events may use them.
 | `github_runner_version`, `github_runner_sha256` | the pinned actions/runner release and its digests |
 
 **The token.** The play reads `GITHUB_RUNNER_TOKEN` on the control node with `nova-secrets exec --only
-GITHUB_RUNNER_TOKEN` and hands it to the runner on its standard input: never an argument, an environment variable on
-the host, the inventory or a file. A registration token expires in an hour, so store it just before the run (set
+GITHUB_RUNNER_TOKEN` and hands it to the runner on its standard input: never an argument, the inventory or a file.
+On the machine it exists in one place, the environment of `config.sh` until that exits (the runner reads
+`ACTIONS_RUNNER_INPUT_TOKEN`); the task that carries it is pipelined (`ansible_pipelining: true`), so the module runs
+from the ssh pipe and is never written to the machine's disk. A registration that fails prints `RUNNER REGISTER
+<name> rc=<n> <the cause, token redacted>`, never `censored` alone. A registration token expires in an hour, so store it just before the run (set
 `NOVA_SECRETS_STORE` and `NOVA_SECRETS_KEY` as [secrets/SPEC.md](../secrets/SPEC.md) says, or pass
 `-e '{"github_runner_secrets_args":["--store","S","--key","K"]}'`):
 
@@ -340,7 +386,9 @@ the row and reads the inventory again.
 
 1. **The row** (control node). `nova-config machine add` where the row is missing. A row that exists is never edited;
    one whose user is not `nova_join_user` stops the join by name.
-2. **The login** (Linux, connecting as root). The row's user: no password, in `nova_join_sudo_group` with
+2. **The login** (Linux, connecting as root at first; on a joined machine as the login itself with sudo, since the
+   policy lets no one in as root over the tailnet: `-e nova_join_root_user=<login>`, which `up` passes by itself).
+   The row's user: no password, in `nova_join_sudo_group` with
    passwordless sudo (`/etc/sudoers.d/90-nova-<login>`, checked by `visudo` before it lands), root's
    `authorized_keys` copied to it (or the control node's file `nova_join_authorized_keys` names), linger on, the
    hostname set to the machine name. A darwin machine has no root login: set its login and sudo up at its console.
@@ -372,7 +420,7 @@ running the same command again.
 | `nova_join_cores` | unset | the row's cores |
 | `nova_join_roles` | `bench` | the row's roles (`bench`, `runner`, `services`) |
 | `nova_join_actor` | `$USER` | nova-config's `--actor` |
-| `nova_join_root_user` | `root` | the login a fresh Linux machine is reached with |
+| `nova_join_root_user` | `root` | the login the login play connects as: root on a fresh Linux machine, the row's user (with sudo) on a joined one |
 | `nova_join_sudo_group` | `sudo` | the group the login joins (`wheel` on Red Hat) |
 | `nova_join_authorized_keys` | root's on the machine | a file on the control node to install instead |
 | `nova_join_hostname` | `true` | set the hostname to the machine name |
@@ -632,8 +680,9 @@ Each is one line on stderr, exit 2, and nothing is run:
 | no `--inventory` and no nova-config on PATH | `install nova-tools or run: nova-fleet <play> --inventory <file\|script>` |
 | no ansible-playbook on PATH | `install ansible-core 2.15+ and run: ansible-galaxy collection install -r <extracted>/requirements.yml` |
 
-Otherwise the exit is ansible-playbook's. Before running, nova-fleet prints the ansible-playbook, inventory and play
-paths it uses on stderr. The extracted directory is removed when ansible-playbook exits (kept only for the missing
+Otherwise the exit is 0 when ansible-playbook passed and 1 when it did not, with `nova-fleet <play>: FAILED
+ansible-playbook exit=<n>` naming its status on stderr (2 never means a failed host here). Before running, nova-fleet
+prints the ansible-playbook, inventory and play paths it uses on stderr. The extracted directory is removed when ansible-playbook exits (kept only for the missing
 ansible-playbook remedy).
 
 ## Build and test
