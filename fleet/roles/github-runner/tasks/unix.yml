@@ -2,7 +2,12 @@
 # Linux (WSL2 too) and macOS. Everything under the login's home runs as the login; the
 # service files and the dependency install are the only things done with become.
 
+- name: is there a runner base directory yet
+  ansible.builtin.stat: { path: "{{ github_runner_base_dir }}" }
+  register: github_runner_base
+
 - name: the runner directories that exist for this url
+  when: github_runner_base.stat.isdir | default(false)
   ansible.builtin.find:
     paths: "{{ github_runner_base_dir }}"
     patterns: "^{{ github_runner_slug | regex_escape }}-[0-9]+$"
@@ -14,7 +19,7 @@
 - name: the runners to retire (above the count, or all of them when absent)
   ansible.builtin.set_fact:
     github_runner_retire: >-
-      {{ github_runner_found.files | map(attribute='path') | map('basename') | map('regex_replace', '^.*-([0-9]+)$', '\1')
+      {{ (github_runner_found.files | default([])) | map(attribute='path') | map('basename') | map('regex_replace', '^.*-([0-9]+)$', '\1')
          | map('int') | difference(github_runner_want) | sort | reverse | list }}
 
 - name: which of the wanted runners are registered

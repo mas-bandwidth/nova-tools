@@ -141,8 +141,8 @@ func TestPassThrough(t *testing.T) {
 		t.Fatal(err)
 	}
 	code, _, errs := runArgs("install", "--check", "--inventory", inv, "--diff", "--", "-e", "nova_tools_version=v0", "-l", "localhost", "--check")
-	if code != 4 {
-		t.Fatalf("exit %d, want ansible-playbook's 4 (stderr %q)", code, errs)
+	if code != 1 || !strings.HasSuffix(errs, "nova-fleet install: FAILED ansible-playbook exit=4; the play's own lines above say what, and the same command resumes\n") {
+		t.Fatalf("exit %d, want 1 with ansible-playbook's 4 named (stderr %q)", code, errs)
 	}
 	if f.bin != "/opt/ansible/bin/ansible-playbook" {
 		t.Errorf("ran %s", f.bin)

@@ -10,7 +10,7 @@
 # are loaded on the machine (again when the SQL changes). Then the control node proves the port.
 #
 # The machines are the `services` group, or the hosts -e nova_store_hosts names: the first store, before nova-config
-# has a row, is run from a one-machine inventory (docs/FLEET.md, "The first machine").
+# has a row, is run from a one-machine inventory (fleet/README.md, "The first machine").
 #
 #   ansible-playbook -i ./inventory fleet/postgres.yml --check --diff
 #   ansible-playbook -i ./inventory fleet/postgres.yml -e nova_seal_store=S -e nova_seal_seat=SEAT -e nova_seal_key=K

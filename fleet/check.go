@@ -1,11 +1,15 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"io/fs"
 	"os"
 	"regexp"
+	"runtime"
+	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -13,16 +17,18 @@ const checkHelp = `nova-fleet check [--runners URL]
 
 The control node's preflight, the first step of nova-fleet up: one line per prerequisite,
 CHECK OK <name> <version|path> or CHECK MISSING <name>: <the command that fixes it, for this
-OS>, then the secrets up needs (the store, key and seat of NOVA_SECRETS_STORE, NOVA_SECRETS_KEY
-and NOVA_SECRETS_SEAT; TAILSCALE_AUTHKEY, and GITHUB_RUNNER_TOKEN with --runners, read from the
-seat, the reason printed when a read fails), and whether this node is on the tailnet. Nothing
-is changed. Exit: 0 all present; 1 something missing (CHECK FAILED missing=<n>); 2 could not run.
+OS, in paste order>; this node on the tailnet and tagged tag:control; the store, key, seat and
+pins of NOVA_SECRETS_STORE, NOVA_SECRETS_KEY, NOVA_SECRETS_SEAT and NOVA_SECRETS_PINS;
+TAILSCALE_AUTHKEY (and GITHUB_RUNNER_TOKEN with --runners) read from the seat, the reason
+printed when a read fails; and NOVA_PG_DSN once a fleet exists. Tailscale and Ansible are
+required here, never optional. Nothing is changed. Exit: 0 all present; 1 something missing
+(CHECK FAILED missing=<n>); 2 could not run.
 `
 
 // osRelease is read for the Linux family; tests point it elsewhere.
 var osRelease = "/etc/os-release"
 
-var versionRE = regexp.MustCompile(`[0-9]+\.[0-9]+(\.[0-9]+)?`)
+var versionRE = regexp.MustCompile(`(go)?[0-9]+\.[0-9]+(\.[0-9]+)?`)
 
 // family is how this machine installs packages: brew, apt, dnf or "".
 func family() string {
@@ -76,15 +82,21 @@ func fix(name, fam string) string {
 		"gpg":        {"gnupg", "gnupg2", "gnupg"},
 		"gh":         {"gh", "gh", "gh"},
 		"rsync":      {"rsync", "rsync", "rsync"},
+		"ssh":        {"openssh-client", "openssh-clients", "openssh"},
 	}
 	switch {
 	case strings.HasPrefix(name, "nova-"):
 		t := strings.TrimPrefix(name, "nova-")
-		return "git clone --depth 1 https://github.com/mas-bandwidth/nova-tools && (cd nova-tools && go build -o ~/.local/bin/" + name + " ./" + t + ")"
+		return "mkdir -p ~/.local/bin && ([ -d nova-tools ] || git clone --depth 1 https://github.com/mas-bandwidth/nova-tools) && go build -C nova-tools -o ~/.local/bin/" + name + " ./" + t
+	case name == "go" && fam == "brew":
+		return "brew install go"
+	case name == "go":
+		v := strings.TrimPrefix(runtime.Version(), "go")
+		return "curl -fsSL https://go.dev/dl/go" + v + ".linux-" + goarch + ".tar.gz | sudo tar -C /usr/local -xz && export PATH=/usr/local/go/bin:$PATH && echo 'export PATH=/usr/local/go/bin:$PATH' >> ~/.profile"
 	case name == "ansible-playbook" && fam == "brew":
 		return "brew install ansible"
 	case name == "ansible-playbook":
-		venv := "python3 -m venv ~/.local/ansible && ~/.local/ansible/bin/pip install ansible-core && export PATH=~/.local/ansible/bin:$PATH"
+		venv := "python3 -m venv ~/.local/ansible && ~/.local/ansible/bin/pip install ansible-core && export PATH=~/.local/ansible/bin:$PATH && echo 'export PATH=~/.local/ansible/bin:$PATH' >> ~/.profile"
 		if fam == "apt" { // Debian and Ubuntu ship python3 without venv
 			return "sudo apt install -y python3-venv && " + venv
 		}
@@ -100,8 +112,8 @@ func fix(name, fam string) string {
 	case name == "sops":
 		// The pin is the plays' own (group_vars/all.yml), so this line and join.yml cannot drift.
 		v, sum := pin("nova_sops_version"), pin("nova_sops_sha256", "linux-"+goarch)
-		return "curl -fsSLo ~/.local/bin/sops https://github.com/getsops/sops/releases/download/v" + v + "/sops-v" + v + ".linux." + goarch +
-			" && echo '" + sum + "  '\"$HOME\"/.local/bin/sops | sha256sum -c && chmod +x ~/.local/bin/sops"
+		return "mkdir -p ~/.local/bin && curl -fsSLo ~/.local/bin/sops https://github.com/getsops/sops/releases/download/v" + v + "/sops-v" + v + ".linux." + goarch +
+			" && (echo '" + sum + "  '\"$HOME\"/.local/bin/sops | sha256sum -c || { rm -f ~/.local/bin/sops; false; }) && chmod +x ~/.local/bin/sops"
 	}
 	p, ok := pkg[name]
 	switch {
@@ -117,21 +129,44 @@ func fix(name, fam string) string {
 	return "install " + p[0] + " with this system's package manager"
 }
 
-// control checks this node and fills u.bin, u.store, u.key and u.seat; it returns how
-// many prerequisites are missing.
+// goVersion is major.minor of a "goX.Y[.Z]" string, or 0 0.
+func goVersion(s string) (int, int) {
+	var a, b int
+	if f := strings.FieldsFunc(strings.TrimPrefix(versionRE.FindString(s), "go"), func(r rune) bool { return r == '.' }); len(f) >= 2 {
+		a, _ = strconv.Atoi(f[0])
+		b, _ = strconv.Atoi(f[1])
+	}
+	return a, b
+}
+
+// control checks this node and fills u.bin, u.store, u.key, u.seat and u.pins; it returns how
+// many prerequisites are missing. Tailscale and Ansible are required here; PostgreSQL and
+// Redis are what up puts on the first machine and requires after.
 func (u *upRun) control(out io.Writer) int {
-	want := []string{"ansible-playbook", "nova-config", "nova-secrets", "nova-bus", "tailscale", "psql", "git", "gpg", "sops", "age", "age-keygen", "rsync"}
+	want := []string{"ansible-playbook", "git", "nova-config", "nova-secrets", "nova-bus", "tailscale", "psql", "gpg", "sops", "age", "age-keygen", "rsync", "ssh"}
 	if u.runners != "" {
 		want = append(want, "gh")
 	}
-	versionArgs := map[string][]string{"tailscale": {"version"}, "nova-config": nil, "nova-secrets": nil, "nova-bus": nil}
+	versionArgs := map[string][]string{"tailscale": {"version"}, "nova-config": nil, "nova-secrets": nil, "nova-bus": nil, "ssh": nil, "go": {"version"}}
 	fam, missing := family(), 0
 	miss := func(name, how string) {
 		missing++
 		fmt.Fprintf(out, "CHECK MISSING %s: %s\n", name, how)
 	}
+	needGo := slices.ContainsFunc(want, func(b string) bool { _, err := lookPath(b); return err != nil && strings.HasPrefix(b, "nova-") })
 	u.bin = map[string]string{}
 	for _, b := range want {
+		if needGo && b == "nova-config" { // the nova-* lines build from source: Go at least this binary's
+			needGo = false
+			wantMajor, wantMinor := goVersion(runtime.Version())
+			if p, err := lookPath("go"); err != nil {
+				miss("go", fix("go", fam))
+			} else if o, _, _ := outCmd(p, []string{"version"}, os.Environ()); func() bool { a, c := goVersion(o); return a < wantMajor || a == wantMajor && c < wantMinor }() {
+				miss("go", oneLine(o)+" is older than "+runtime.Version()+", which built this nova-fleet; "+fix("go", fam))
+			} else {
+				fmt.Fprintf(out, "CHECK OK go %s\n", versionRE.FindString(o))
+			}
+		}
 		p, err := lookPath(b)
 		if err != nil {
 			miss(b, fix(b, fam))
@@ -158,17 +193,24 @@ func (u *upRun) control(out io.Writer) int {
 		}
 	}
 	if p := u.bin["tailscale"]; p != "" {
-		if _, why, c := outCmd(p, []string{"status", "--peers=false"}, os.Environ()); c != 0 {
-			miss("tailnet", "sudo tailscale up (this node on the tailnet, so it reaches the machines by name; "+oneLine(why)+")")
+		if o, why, c := outCmd(p, []string{"status", "--peers=false"}, os.Environ()); c != 0 {
+			miss("tailnet", "sudo tailscale up --advertise-tags=tag:control (this node on the tailnet, so it reaches the machines by name; "+oneLine(why+" "+o)+")")
 		} else {
 			fmt.Fprintln(out, "CHECK OK tailnet")
+			var self struct{ Self struct{ Tags []string } }
+			if o, _, _ := outCmd(p, []string{"status", "--json"}, os.Environ()); json.Unmarshal([]byte(o), &self) != nil || !slices.Contains(self.Self.Tags, "tag:control") {
+				miss("tag:control", "this node is not tagged tag:control (the policy, nova-fleet show tailscale-acl, lets tag:control reach the machines): sudo tailscale up --advertise-tags=tag:control --auth-key=<a key allowed that tag>, or tag it in the admin console")
+			} else {
+				fmt.Fprintln(out, "CHECK OK tag:control")
+			}
 		}
 	}
-	u.store, u.key, u.seat = os.Getenv("NOVA_SECRETS_STORE"), os.Getenv("NOVA_SECRETS_KEY"), os.Getenv("NOVA_SECRETS_SEAT")
+	u.store, u.key, u.seat, u.pins = os.Getenv("NOVA_SECRETS_STORE"), os.Getenv("NOVA_SECRETS_KEY"), os.Getenv("NOVA_SECRETS_SEAT"), os.Getenv("NOVA_SECRETS_PINS")
 	inputs := []struct{ env, name, val, how string }{
-		{"NOVA_SECRETS_STORE", "store", u.store, "export NOVA_SECRETS_STORE=<your clone of the secrets store> (new: nova-secrets init --store <dir> --recovery <age public key>)"},
+		{"NOVA_SECRETS_STORE", "store", u.store, "export NOVA_SECRETS_STORE=<your clone of the secrets store> (new: nova-secrets init --store <dir> --recovery <age public key> --pins <pins dir>)"},
 		{"NOVA_SECRETS_KEY", "key", u.key, "export NOVA_SECRETS_KEY=<this seat's age key file> (new: age-keygen -o ~/.config/nova-secrets/<seat>.key)"},
 		{"NOVA_SECRETS_SEAT", "seat", u.seat, "export NOVA_SECRETS_SEAT=<this node's seat> (new: nova-secrets seat add <seat> <age public key> --store <store>)"},
+		{"NOVA_SECRETS_PINS", "pins", u.pins, "export NOVA_SECRETS_PINS=<the directory of pinned machine keys, outside the store> (new: mkdir -p ~/.config/nova-secrets/pins; nova-secrets init --pins writes recovery.pub there)"},
 	}
 	ready := true
 	for _, in := range inputs {
@@ -197,6 +239,18 @@ func (u *upRun) control(out io.Writer) int {
 			miss(name, fmt.Sprintf("nova-secrets set %s --as %s (the value on stdin); the read said: %s", name, u.seat, oneLine(why)))
 		} else {
 			fmt.Fprintf(out, "CHECK OK %s readable in seat %s\n", name, u.seat)
+		}
+	}
+	// A fleet that exists (its store's password is in this seat) is read from NOVA_PG_DSN.
+	if ready && u.bin["nova-secrets"] != "" {
+		names, _, _ := outCmd(u.bin["nova-secrets"], []string{"names", "--as", u.seat}, os.Environ())
+		switch dsn := os.Getenv("NOVA_PG_DSN"); {
+		case dsn != "":
+			fmt.Fprintf(out, "CHECK OK NOVA_PG_DSN %s\n", dsn)
+		case slices.Contains(strings.Fields(names), "NOVA_PG_PASSWORD"):
+			miss("NOVA_PG_DSN", "seat "+u.seat+" holds NOVA_PG_PASSWORD, so a fleet exists: export NOVA_PG_DSN=postgres://nova_config@<the store machine's tailnet name>:5432/nova")
+		default:
+			fmt.Fprintln(out, "CHECK OK NOVA_PG_DSN none yet (a new fleet: up prints it)")
 		}
 	}
 	return missing

@@ -1,4 +1,4 @@
-# purpose: each machine's seat in the secrets store (fleet/README.md, "seat.yml"). The seat is nova_seat (the machine's
+# purpose: each machine's seat in the secrets store
 #
 # seat.yml: each machine's seat in the secrets store (fleet/README.md, "seat.yml"). The seat is nova_seat (the machine's
 # inventory name unless a host variable says otherwise), the name nova-secrets --as and services.yml open it by.

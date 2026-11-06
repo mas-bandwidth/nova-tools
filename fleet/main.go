@@ -44,8 +44,8 @@ A run extracts the plays to a private temporary directory, writes an inventory
 script there that execs nova-config inventory (found on PATH; --inventory names
 your own file or script instead) and runs ansible-playbook -i <inventory> <play>.yml
 with the arguments after --. A play that takes an argument (join <machine>) names
-the variable it sets in its help. Exit: 0 done; 2 could not run; else ansible-playbook's
-status. fleet/README.md has each play's variables.
+the variable it sets in its help. Exit: 0 done; 1 the play failed (its ansible-playbook
+exit printed); 2 could not run. fleet/README.md has each play's variables.
 `
 
 var verbHelp = map[string]string{
@@ -384,5 +384,9 @@ func runPlay(play string, args []string, stdout, stderr io.Writer, refuse func(s
 		fmt.Fprintf(stderr, "nova-fleet %s: run %s: %v; run: %s --version\n", play, ansible, err, ansible)
 		return 2
 	}
-	return code
+	if code != 0 {
+		fmt.Fprintf(stderr, "nova-fleet %s: FAILED ansible-playbook exit=%d; the play's own lines above say what, and the same command resumes\n", play, code)
+		return 1
+	}
+	return 0
 }

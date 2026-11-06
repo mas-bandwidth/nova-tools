@@ -38,6 +38,7 @@
     chdir: "{{ github_runner_dir }}"
     removes: "{{ github_runner_dir }}/.runner"
     stdin: "{{ github_runner_token | default('') }}"
+  vars: { ansible_pipelining: true }
   no_log: true
   when: github_runner_deregister | bool and not ansible_check_mode
 
