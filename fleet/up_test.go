@@ -437,6 +437,16 @@ func TestUpCheck(t *testing.T) {
 			t.Errorf("stdout lacks %q:\n%s", w, out)
 		}
 	}
+	// A new machine under --check has no row after join, so the plays that need one are named, not run.
+	f = &upFake{names: "NOVA_PG_PASSWORD NOVA_BUS_PASSWORD", peers: map[string]string{"store-1": "100.64.0.1"},
+		rows: `{"items":[{"kind":"machine","fields":{"name":"store-1","address":"store-1.ts.example","user":"nova","roles":"services,bench"}}]}`}
+	f.install(t)
+	t.Setenv("NOVA_PG_DSN", "postgres://nova_config@store-1.ts.example:5432/nova")
+	code, out, errs = runArgs("up", "--check", "--tools", "v2.0.0", "new-1=203.0.113.9")
+	if code != 0 || len(f.plays()) != 1 || !strings.Contains(out, "UP new-1 PENDING (check: its row does not exist yet") || !strings.Contains(out, "UP TOOLS WOULD-RUN (check: once join has made the rows)") ||
+		!strings.Contains(out, "UP MACHINE new-1 CHECKED address=203.0.113.9 steps=join (the rest once join has made its row)") || strings.Contains(out, "WOULD-GRANT") {
+		t.Errorf("new machine under --check: code %d plays %v\n%s\n%s", code, f.plays(), out, errs)
+	}
 	// --check reads what it would grant, and stops with the reason when it cannot.
 	oldOut := outCmd
 	outCmd = func(bin string, args, env []string) (string, string, int) {
