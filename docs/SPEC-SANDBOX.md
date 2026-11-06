@@ -215,8 +215,6 @@ macOS only:
 - **Inherited descriptors under `--keep-fds`.** Then an already-open fd outside the grants stays usable.
 - **Resources.** No limit on CPU, memory, processes or disk; no PID, user or mount isolation. Running as root is not
   refused and the wall still applies, but root has many other ways out.
-- **macOS future.** Apple marks `sandbox-exec` deprecated. The wall is the profile it applies; `check` says whether it
-  applies here.
 
 ## check
 
@@ -224,7 +222,7 @@ macOS only:
 
 ```
 CHECK OK backend=landlock abi=6 net=enforceable note=landlock abi 6; seccomp available; net-deny landlock_tcp+seccomp; signals scoped to the wall at abi 6+
-CHECK OK backend=sandbox-exec abi=- net=enforceable note=sandbox-exec is deprecated by Apple; the wall is the profile it applies (/usr/bin/sandbox-exec)
+CHECK OK backend=sandbox-exec abi=- net=enforceable note=the wall is the profile it applies (/usr/bin/sandbox-exec)
 CHECK FAILED backend=landlock abi=- reason=no landlock in this kernel: below 5.13, not compiled in, or not in the boot-time lsm= list
 ```
 

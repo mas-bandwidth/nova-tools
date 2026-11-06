@@ -33,7 +33,7 @@ func wallCheck() (abi string, netOK bool, note string, err error) {
 	if out, err := exec.Command(bin, "-p", "(version 1)(allow default)", "/usr/bin/true").CombinedOutput(); err != nil {
 		return "-", false, "", fmt.Errorf("sandbox-exec cannot apply a profile here: %v: %s", err, out)
 	}
-	return "-", true, "sandbox-exec is deprecated by Apple; the wall is the profile it applies (" + bin + ")", nil
+	return "-", true, "the wall is the profile it applies (" + bin + ")", nil
 }
 
 // execWall applies the wall and execs the command. It returns only on failure.
