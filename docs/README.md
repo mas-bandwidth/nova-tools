@@ -460,12 +460,13 @@ here shortened:
 
 ```text
 SEARCH OK hits=1 k=3 channels=bm25 files=0 entries=1 skipped=0 chunks=1: query="bench unit tests"
-SEARCH CAL score=0.97 score-channel=bm25 probe=unrelated-control
+SEARCH CAL score=0.29 score-channel=bm25 probe=unrelated-control
 SEARCH HIT rank=1 score=0.86 ... session=today entry=lesson-1 stamp=<time>
 ```
 
-A search that finds nothing prints a `SEARCH NOTE` instead of a hit, saying
-the search is by keywords only.
+A search that finds nothing prints `SEARCH MISS every query term is out of
+vocabulary for this corpus` and a `SEARCH NOTE` saying the search is by
+keywords only.
 
 The `HIT` line is the entry, with the time it was saved. The `CAL` line is the
 score of a deliberately unrelated query, for comparison. The same `append`
