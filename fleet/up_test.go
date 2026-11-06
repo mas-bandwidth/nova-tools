@@ -322,6 +322,7 @@ func TestUpAddsAMachine(t *testing.T) {
 		"join.yml -e nova_join_host=third -e nova_join_user=nova -e nova_join_address=203.0.113.9 -e nova_join_root_user=root -e nova_join_os=linux -e nova_join_arch=amd64 -e nova_join_roles=bench,runner",
 		"nova-config machine set second --roles bench,runner --actor control --reason nova-fleet up --runners\n",
 		"health.yml -l second,third\n",
+		"github-runners.yml -e github_runner_url=https://github.com/o/r -e github_runner_scope=repo -e runner_count=1 -e {\"github_runner_secrets_args\":[\"--store\",\"" + f.store + "\",\"--key\",\"" + f.key + "\",\"--as\",\"control\"]} -l second,third\n",
 	} {
 		if !strings.Contains(all, w) {
 			t.Errorf("no call contains %q; calls:\n%s", w, all)
@@ -424,15 +425,15 @@ func TestUpCheck(t *testing.T) {
 	t.Setenv("NOVA_PG_DSN", "postgres://nova_config@store-1.ts.example:5432/nova")
 	code, out, _ = runArgs("up", "--check", "--grant", "NOVA_BUS_PASSWORD,EXTRA", "--runners", "https://github.com/o/r", "--tools", "v2.0.0", "first=1.1.1.1")
 	all := strings.Join(f.calls, "\n")
-	if code != 0 || len(f.plays()) != 6 || strings.Contains(all, "push") || strings.Contains(all, "nova-bus send") || strings.Contains(all, "nova-secrets grant") ||
+	if code != 0 || len(f.plays()) != 5 || strings.Contains(all, "push") || strings.Contains(all, "nova-bus send") || strings.Contains(all, "nova-secrets grant") ||
 		!strings.Contains(all, "secrets-refresh.yml --check --diff -e nova_seal_store=") || !strings.Contains(all, "nova-secrets exec --only NOVA_BUS_PASSWORD,EXTRA -- true") ||
 		!strings.Contains(all, "machine set first --roles bench,runner --actor control --reason nova-fleet up --runners --dry-run") {
 		t.Errorf("code %d plays %v calls:\n%s", code, f.plays(), all)
 	}
 	for _, w := range []string{"UP REACH first OK nova@first.ts.example", "UP JOIN first WOULD-JOIN (check: nothing changed)", "UP ROLE first WOULD-SET (check: nothing changed) runner",
 		"UP GRANT first WOULD-GRANT NOVA_BUS_PASSWORD,EXTRA to age1fakenova@first.ts.example (check: nothing changed)", "UP STORE WOULD-PUSH",
-		"UP REFRESH WOULD-PUSH (check: nothing changed) " + f.store, "UP RUNNERS WOULD-RUN (check: nothing changed) https://github.com/o/r",
-		"UP BUS WOULD-SEND", "UP MACHINE first CHECKED address=1.1.1.1 steps=join,grant,refresh,health,tools,services,runners (check: nothing changed)"} {
+		"UP REFRESH WOULD-PUSH (check: nothing changed) " + f.store, "UP RUNNERS WOULD-RUN (check: once the runner role is on the rows)",
+		"UP BUS WOULD-SEND", "UP MACHINE first CHECKED address=1.1.1.1 steps=join,grant,refresh,health,tools,services (check: nothing changed)"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout lacks %q:\n%s", w, out)
 		}
