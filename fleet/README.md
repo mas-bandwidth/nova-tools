@@ -42,8 +42,8 @@ nova-fleet show requirements > requirements.yml && ansible-galaxy collection ins
 The whole path, in order. Each step's output says what to do next.
 
 1. `nova-fleet check` on the control node: one line per prerequisite, `CHECK OK sops 3.13.3` or `CHECK MISSING
-   age-keygen: sudo apt install -y age` (the fix for this OS, pasteable, in paste order: `git` and `go` before the
-   `nova-*` build lines), then the tailnet and this node's `tag:control`, the secrets store, key, seat and pins, the
+   age-keygen: sudo apt-get update -qq && sudo apt-get install -y age` (the fix for this OS, a command pasteable as it
+   stands with any reason after `#`, in paste order: `git` and `go` before the `nova-*` build lines), then the tailnet and this node's `tag:control`, the secrets store, key, seat and pins, the
    secrets `up` will read (`--runners URL` adds `gh` and `GITHUB_RUNNER_TOKEN`), and `NOVA_PG_DSN` once a fleet
    exists. Run each fix line, then `nova-fleet check` again until it ends `CHECK OK missing=0` (exit 0; 1 while
    anything is missing; the collections of `requirements.yml` count, `ansible.posix` for the push of the store).
