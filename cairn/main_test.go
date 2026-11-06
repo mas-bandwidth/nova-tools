@@ -55,7 +55,7 @@ func TestStoreRoundTrip(t *testing.T) {
 	store := filepath.Join(t.TempDir(), "s")
 	code, out, _ := do(t, "", "open", "--store", store, "--session", "s1", "--source", "src", "--publish", "manual")
 	require.Equal(t, 0, code)
-	assert.Regexp(t, `^OPEN OK session=s1 store=\S+ source=src publish=manual stamp=\S+ next: nova-cairn append --store \S+ --session s1 --entry <id> --text \.\.\.\n$`, out)
+	assert.Contains(t, out, ` next=nova-cairn\x20append\x20--store\x20`+store+`\x20--session\x20s1\x20--entry\x20first`)
 
 	code, out, _ = do(t, "", "append", "--store", store, "--session", "s1", "--entry", "e1", "--text", "the words")
 	require.Equal(t, 0, code)
@@ -502,7 +502,7 @@ func TestARuntimeFailureNamesTheNextCommand(t *testing.T) {
 
 	missing := filepath.Join(root, "absent")
 	_, _, errs = do(t, "", "index", "--store", missing)
-	assert.True(t, strings.HasSuffix(errs, "; run: nova-cairn open --store "+missing+" --session '<id>' --publish manual\n"), errs)
+	assert.True(t, strings.HasSuffix(errs, "; run: nova-cairn open --store "+missing+" --session first --publish manual\n"), errs)
 	_, _, errs = do(t, "", "self-talk", missing)
 	assert.True(t, strings.HasSuffix(errs, "; run: ls -l "+missing+"\n"), errs)
 	bad := filepath.Join(root, "bad.md")
