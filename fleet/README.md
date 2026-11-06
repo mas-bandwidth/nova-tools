@@ -217,21 +217,25 @@ nova-fleet services -- -e nova_service_restart=reader
   `nova_retire_units` names any to retire. Units of the play's earlier name (`loops.yml`) are retired on the first run.
 - A host with no rows retires nothing by itself: a run that would retire every marked unit on it refuses, naming
   them, unless `-e nova_service_retire_all=true`.
-- A unit whose file changed is restarted (`RESTART`, `WOULD-RESTART` under `--check`). `-e nova_service_only=a,b`
+- A unit whose file changed is restarted, and named in the receipt (`restarted=<names>`, `would-restart=<names>` under
+  `--check`). `-e nova_service_only=a,b`
   renders and restarts only those rows and retires nothing; `-e nova_service_restart=a,b` restarts those rows even if
   unchanged. A name no row carries is refused before anything is written.
 - Each host ends with one receipt line: `SERVICES host=<machine> place=<unit dir> records=<n> enabled=<n>
-  written=<n> retired=<n>`, then ` only=<names>` and ` (check: nothing changed)` where they apply.
+  written=<n> retired=<n>`, then ` restarted=<names>` (` would-restart=`), ` only=<names>` and ` (check: nothing
+  changed)` where they apply.
 
 ## github-runners
 
 GitHub Actions runners on every machine of the `runner` group: as many as the machine row's `runners` says, each
-registered to one repository or organization, run as a service that starts at boot, labelled with the machine's
-roles, `os` and `arch`. Linux (amd64, arm64; WSL2 with systemd counts as Linux), macOS (a LaunchDaemon dropped to the
+registered to one repository or organization, run as a service that starts at boot. **Labels:** a runner's labels are
+its machine's inventory groups (the row's roles: `bench`, `runner`, `services`; `ungrouped` and `all` are left out),
+its `os` (`linux`, `darwin`, `windows`) and its `arch` (`amd64`, `arm64`), plus `github_runner_labels`; so a bench
+machine's runner is labelled `amd64,bench,linux,runner`, and a job selects it with `runs-on: [self-hosted, linux]`. Linux (amd64, arm64; WSL2 with systemd counts as Linux), macOS (a LaunchDaemon dropped to the
 login) and native Windows (the runner's own service; `ansible.windows` and an administrator login). Linux and macOS
 write the service files with sudo, so the login needs passwordless sudo: `join.yml` sets it up on Linux
-(`/etc/sudoers.d/90-nova-<login>`); on macOS set it at the console. Never `-K`: an interactive prompt is a stall for an
-AI running the play.
+(`/etc/sudoers.d/90-nova-<login>`); on macOS set it at the console. No command here asks for a sudo password: an
+interactive prompt is a stall for an AI running the play.
 
 **Public repositories.** A self-hosted runner runs the code of any workflow that reaches it, and on a public repository
 that includes pull requests from forks. Use these runners on private repositories, or restrict which workflows and
@@ -241,7 +245,7 @@ events may use them.
 |---|---|
 | `github_runner_url` | no default. `https://github.com/<owner>/<repo>`, or `https://github.com/<org>` |
 | `github_runner_scope` | no default. `repo` or `org`; refused if the url is the other shape |
-| `github_runner_labels` | extra labels, a list (default none), added to the roles, `os` and `arch` |
+| `github_runner_labels` | extra labels, a list (default none), added to the machine's labels |
 | `runner_count` | overrides the row's `runners` for one run; 0 retires every runner. A host with neither is refused |
 | `github_runner_state` | `present` (default) or `absent`, which retires every runner of that url |
 | `github_runner_deregister` | true: retiring removes the runner from GitHub (needs a removal token) |
@@ -277,9 +281,22 @@ reported as `LABEL-DRIFT` and the runner is left alone. A changed unit restarts 
 machine whose count drops has its highest-numbered runners retired and removed from GitHub, which needs a removal
 token (`.../actions/runners/remove-token`, stored the same way). A second run changes nothing.
 
-**Rollback.** `-e github_runner_state=absent` stops and removes the services, removes the runners from GitHub and
-deletes their directories; with `-e github_runner_deregister=false` no token is read and the GitHub entries stay for
-you to delete.
+**Plan.** Under `--check` each machine prints `RUNNER-PLAN <machine> want=<n> register=<names> retire=<names>
+labels=<labels>`, the runners named `<machine>-<i>` as GitHub will list them.
+
+**Rollback.** Retiring needs a **removal** token, a different one from the registration token: store it as
+`GITHUB_RUNNER_TOKEN` the same way, and it is read the same way (under `--check` too, and a failed read says why),
+then run with `-e github_runner_state=absent`:
+
+```
+gh api -X POST repos/OWNER/REPO/actions/runners/remove-token -q .token | nova-secrets set GITHUB_RUNNER_TOKEN
+nova-fleet github-runners --check -- -e github_runner_url=https://github.com/OWNER/REPO -e github_runner_scope=repo -e github_runner_state=absent
+nova-fleet github-runners -- -e github_runner_url=https://github.com/OWNER/REPO -e github_runner_scope=repo -e github_runner_state=absent
+```
+
+That stops and removes the services, removes the runners from GitHub and deletes their directories. With `-e
+github_runner_deregister=false` no token is read and the GitHub entries stay for you to delete. A removal token also
+expires in an hour.
 
 ## join
 
@@ -370,7 +387,7 @@ the tailnet. `join` runs it; run it alone for machines that already have a row.
 4. The firewall. Linux: ufw denies incoming on every interface but `tailscale0`, allows outgoing and UDP 41641
    (Tailscale's direct connections). It is turned on only when the run itself comes in on the tailnet (or is local),
    so it cannot cut its own connection; otherwise it stops with `FIREWALL HELD` and says why. macOS: the application
-   firewall on (sudo: the login needs passwordless sudo, set at the console; never `-K`). Windows is left as it is.
+   firewall on (sudo: the login needs passwordless sudo, set at the console). Windows is left as it is.
 
 `redis` and `postgres` listen on the machine's tailnet address only, read from `tailscale ip -4`.
 
