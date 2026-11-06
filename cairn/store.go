@@ -410,7 +410,7 @@ func appendEntry(store, session, id, text, source string, now time.Time, publish
 			return r, false, false, false, refuse(command("open", "--store", store, "--session", session, "--publish", cmp.Or(publish, "manual")), "store %q does not exist; open it first, or fix --store", store)
 		}
 		if info, serr := os.Stat(filepath.Join(store, "sessions")); !regular(logFile(store)) && (serr != nil || !info.IsDir()) {
-			return r, false, false, refuse(command("open", "--store", store, "--session", session, "--publish", cmp.Or(publish, "manual")), "directory %q holds no store; open it first, or fix --store", store)
+			return r, false, false, false, refuse(command("open", "--store", store, "--session", session, "--publish", cmp.Or(publish, "manual")), "directory %q holds no store; open it first, or fix --store", store)
 		}
 		if !slices.Contains(policies, publish) {
 			publish = "manual"
