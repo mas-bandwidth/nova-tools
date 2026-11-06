@@ -84,7 +84,8 @@ func storeError(err error, user, op string) error {
 	case slices.Contains([]string{"42P01", "42703", "3F000"}, pe.Code): // undefined table, undefined column, no such schema
 		return errors.New(schemaMissing)
 	case strings.HasPrefix(pe.Code, "28"):
-		return fmt.Errorf("postgres refused the login for %s: check NOVA_PG_PASSWORD", user)
+		pw := cmp.Or(os.Getenv("NOVA_PG_PASSWORD_ENV"), "NOVA_PG_PASSWORD")
+		return fmt.Errorf("postgres refused the login for %s: check %s; run: PGPASSWORD=\"$%s\" psql \"$NOVA_PG_DSN\" -c 'select 1'", user, pw, pw)
 	case pe.Code == "42501":
 		words := append([]string{"the table"}, strings.Fields(strings.Split(pe.Message, "\n")[0])...) // never empty
 		return fmt.Errorf("%s may not %s %s", user, op, cmp.Or(pe.TableName, words[len(words)-1]))
@@ -97,7 +98,7 @@ func storeError(err error, user, op string) error {
 func dsnProblem(dsn string) string {
 	u, err := url.Parse(dsn)
 	if err != nil || (u.Scheme != "postgres" && u.Scheme != "postgresql") {
-		return "not a postgres:// URL"
+		return "not a postgres:// URL (want postgres://USER@HOST:PORT/DB?sslmode=disable)"
 	}
 	if n, err := strconv.Atoi(u.Port()); u.Port() != "" && (err != nil || n < 1 || n > 65535) {
 		return "port " + u.Port() + " out of range"
@@ -110,11 +111,11 @@ func connectError(cfg *pgx.ConnConfig, err error) error {
 	var pe *pgconn.PgError
 	switch {
 	case errors.As(err, &pe) && pe.Code == "3D000":
-		return fmt.Errorf("database %s does not exist on %s", cfg.Database, cfg.Host)
+		return fmt.Errorf("database %s does not exist on %s; run: createdb -h %s -p %d -U %s %s", cfg.Database, cfg.Host, cfg.Host, cfg.Port, cfg.User, cfg.Database)
 	case errors.As(err, &pe):
 		return storeError(err, cfg.User, "connect")
 	}
-	return fmt.Errorf("cannot reach postgres at %s (NOVA_PG_DSN): %s", net.JoinHostPort(cfg.Host, strconv.Itoa(int(cfg.Port))), cause(err))
+	return fmt.Errorf("cannot reach postgres at %s (NOVA_PG_DSN): %s; check NOVA_PG_DSN or run: psql \"$NOVA_PG_DSN\" -c 'select 1'", net.JoinHostPort(cfg.Host, strconv.Itoa(int(cfg.Port))), cause(err))
 }
 
 // diagnose is the refusal of a write the store's constraints turned down (an
@@ -123,11 +124,11 @@ func connectError(cfg *pgx.ConnConfig, err error) error {
 func diagnose(pe *pgconn.PgError, k *kind, op, name string, after Row, machines, services []string) error {
 	switch {
 	case pe.Code == "23503" && k.name == "service" && op != "remove":
-		return refused("no machine %s; the machines are %s", after.F["machine"], cmp.Or(strings.Join(machines, ","), "(none)"))
+		return refused("no machine %s; the machines are %s; run: nova-config machine add %s --user <user>", after.F["machine"], cmp.Or(strings.Join(machines, ","), "(none)"), after.F["machine"])
 	case pe.Code == "23503" && k.name == "machine" && op == "remove" && len(services) > 0:
 		return refused("machine %s still runs services %s; remove them first: nova-config service remove %s --actor <you>", name, strings.Join(services, ","), services[0])
 	case pe.Code == "23505":
-		return refused("%s %s exists; use: nova-config %s set", k.name, name, k.name)
+		return refused("%s %s exists; use: nova-config %s set %s", k.name, name, k.name, name)
 	}
 	return refused("%s %s: %s", k.name, name, oneLine(pe.Message))
 }
@@ -145,10 +146,10 @@ func openPG(ctx context.Context, dsn, password string) (Store, error) {
 	if err != nil {
 		return nil, errors.New("the postgres dsn could not be parsed") // its text may quote a password
 	}
-	if password != "" {
-		cfg.Password = password
-	}
-	c, err := pgx.ConnectConfig(ctx, cfg)
+	cfg.Password = cmp.Or(password, cfg.Password)
+	dctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	c, err := pgx.ConnectConfig(dctx, cfg)
 	if err != nil {
 		return nil, connectError(cfg, err)
 	}

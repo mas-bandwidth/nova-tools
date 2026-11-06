@@ -173,7 +173,7 @@ func TestWritesRecordHistory(t *testing.T) {
 	t.Parallel()
 	h := fleet(t)
 	n := len(h.st.history)
-	assert.Equal(t, "CONFIG SET kind=service name=member-b rev=4 changed=enabled\n", h.ok(t, "service", "set", "member-b", "--enabled", "false", "--actor", "a1", "--reason", "rest it"))
+	assert.Equal(t, "CONFIG SET kind=service name=member-b rev=4 changed=enabled next=\"nova-fleet services --check\"\n", h.ok(t, "service", "set", "member-b", "--enabled", "false", "--actor", "a1", "--reason", "rest it"))
 	c := h.st.history[n]
 	assert.Equal(t, change{"service", "member-b", "set", "a1", c.before, c.after}, c)
 	assert.Equal(t, "true", c.before["enabled"])
@@ -184,7 +184,7 @@ func TestWritesRecordHistory(t *testing.T) {
 	c = h.st.history[n+1]
 	assert.Nil(t, c.after)
 	assert.Equal(t, "gone", c.before["reason"])
-	assert.Equal(t, "CONFIG ADD kind=machine name=m3 rev=6\n", h.ok(t, "machine", "add", "m3", "--user", "u", "--actor", "a1"))
+	assert.Equal(t, "CONFIG ADD kind=machine name=m3 rev=6 next=\"nova-fleet join m3\"\n", h.ok(t, "machine", "add", "m3", "--user", "u", "--actor", "a1"))
 	assert.Nil(t, h.st.history[n+2].before)
 	assert.Equal(t, "bench", h.st.history[n+2].after["roles"], "an add writes every field, the defaults too")
 }
@@ -243,7 +243,23 @@ func TestRefusals(t *testing.T) {
 	h.env = map[string]string{}
 	code, _, errs := h.run(t, "machine", "list")
 	assert.Equal(t, 2, code)
-	assert.Contains(t, errs, "no store: set NOVA_PG_DSN or --pg; run: nova-config machine list -h")
+	assert.Contains(t, errs, "no store: set NOVA_PG_DSN or --pg (postgres://USER@HOST:PORT/DB?sslmode=disable); run: nova-config machine list -h")
+	for _, extra := range [][]string{{}, {"--every", "5", "--keepalive", "true"}, {"--every", "5", "--keys", "K1"}} {
+		code, _, errs = h.run(t, append([]string{"service", "add", "s1", "--machine", "m1", "--argv", `["p"]`, "--actor", "a"}, extra...)...)
+		assert.Equal(t, 2, code, "%v: %s", extra, errs)
+	}
+	code, _, errs = h.run(t, "service", "add", "Bad_Name", "--argv", "bad", "--keys", "K1")
+	assert.Equal(t, 2, code)
+	for _, want := range []string{"missing required flag --machine, --actor", `name "Bad_Name"`, "--argv", "neither --every nor --keepalive", "--keys K1", "no store"} {
+		assert.Contains(t, errs, want, "every fault named in one refusal")
+	}
+	h.env = map[string]string{"NOVA_PG_DSN": "postgres://u@db/x", "USER": "login-u"}
+	h.ok(t, "machine", "add", "m-env", "--user", "u")
+	assert.Equal(t, "login-u", h.st.history[len(h.st.history)-1].actor)
+	h.env["NOVA_ACTOR"] = "nova-a"
+	h.ok(t, "machine", "set", "m-env", "--note", "x")
+	assert.Equal(t, "nova-a", h.st.history[len(h.st.history)-1].actor)
+	assert.Contains(t, h.ok(t, "history", "--max", "1", "--json"), `"actor":"nova-a","kind":"machine","name":"m-env","op":"set"`)
 	h = newHarness()
 	h.st.failure = errors.New("postgres: down")
 	code, _, errs = h.run(t, "service", "list")

@@ -90,10 +90,10 @@ func TestFunctionalStore(t *testing.T) {
 		require.Equal(t, 0, code, "%v: %s", args, errs)
 		return out
 	}
-	assert.Equal(t, "CONFIG ADD kind=machine name=m1 rev=1\n", ok("machine", "add", "m1", "--user", "nova", "--actor", "a1"))
+	assert.Equal(t, "CONFIG ADD kind=machine name=m1 rev=1 next=\"nova-fleet join m1\"\n", ok("machine", "add", "m1", "--user", "nova", "--actor", "a1"))
 	ok("service", "add", "r-m1", "--machine", "m1", "--argv", `["prog","a b"]`, "--keepalive", "true", "--actor", "a1")
 	assert.Equal(t, "CONFIG SET kind=machine name=m1 changed=none rev=unchanged\n", ok("machine", "set", "m1", "--user", "nova", "--actor", "a1"), "a no-op set")
-	assert.Equal(t, "CONFIG SET kind=service name=r-m1 rev=3 changed=enabled\n", ok("service", "set", "r-m1", "--enabled", "false", "--actor", "a1", "--reason", "why"))
+	assert.Equal(t, "CONFIG SET kind=service name=r-m1 rev=3 changed=enabled next=\"nova-fleet services --check\"\n", ok("service", "set", "r-m1", "--enabled", "false", "--actor", "a1", "--reason", "why"))
 	assert.Equal(t, `SERVICE name=r-m1 machine=m1 argv=["prog","a b"] seat=- keys=- every=0 keepalive=true enabled=false env={} log=-`+"\nCONFIG LIST kind=service rows=1\n", ok("service", "list"))
 	assert.Equal(t, "MACHINE name=m1 address=- user=nova os=- arch=- cores=- roles=bench runners=0 note=-\nCONFIG LIST kind=machine rows=1\n", ok("machine", "list"))
 	show := ok("machine", "show", "m1")
@@ -119,9 +119,9 @@ func TestFunctionalStore(t *testing.T) {
 		args []string
 		want string
 	}{
-		{[]string{"service", "add", "r-x", "--machine", "nope", "--argv", `["p"]`, "--every", "5", "--actor", "a1"}, "nova-config service add: no machine nope; the machines are m1\n"},
+		{[]string{"service", "add", "r-x", "--machine", "nope", "--argv", `["p"]`, "--every", "5", "--actor", "a1"}, "nova-config service add: no machine nope; the machines are m1; run: nova-config machine add nope --user <user>\n"},
 		{[]string{"machine", "remove", "m1", "--actor", "a1"}, "nova-config machine remove: machine m1 still runs services r-m1; remove them first: nova-config service remove r-m1 --actor <you>\n"},
-		{[]string{"machine", "add", "m1", "--user", "u", "--actor", "a1"}, "nova-config machine add: machine m1 exists; use: nova-config machine set\n"},
+		{[]string{"machine", "add", "m1", "--user", "u", "--actor", "a1"}, "nova-config machine add: machine m1 exists; use: nova-config machine set m1\n"},
 	} {
 		code, _, errs := realRun(t, env, refusal.args...)
 		assert.Equal(t, 1, code, "%v: %s", refusal.args, errs)
@@ -244,6 +244,6 @@ func TestFunctionalUnreachable(t *testing.T) {
 	code, out, errs := realRun(t, map[string]string{"NOVA_PG_DSN": "postgres://nova@127.0.0.1:" + port + "/postgres?sslmode=disable"}, "machine", "list")
 	assert.Equal(t, 2, code)
 	assert.Empty(t, out)
-	assert.Equal(t, "nova-config machine list: cannot reach postgres at 127.0.0.1:"+port+" (NOVA_PG_DSN): connection refused\n", errs)
+	assert.Equal(t, `nova-config machine list: cannot reach postgres at 127.0.0.1:`+port+` (NOVA_PG_DSN): connection refused; check NOVA_PG_DSN or run: psql "$NOVA_PG_DSN" -c 'select 1'`+"\n", errs)
 	assert.Equal(t, 1, strings.Count(errs, "\n"), errs)
 }

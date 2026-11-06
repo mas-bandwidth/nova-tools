@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const historyHint = "history takes [<kind> [<name>]] --since <duration|RFC3339> --max <n> --pg <dsn>; kinds: machine, service"
+const historyHint = "history takes [<kind> [<name>]] --since <duration|RFC3339> --max <n> --json --pg <dsn>; kinds: machine, service"
 
 // historyKinds are the kinds the history table holds; fleet is retired and still reads.
 var historyKinds = []string{"machine", "service", "fleet"}
@@ -36,6 +36,7 @@ func runHistory(ctx context.Context, args []string, d deps, stdout io.Writer) er
 	fs, words, err := flags("history", historyHint, args, func(fs *flag.FlagSet) {
 		fs.String("since", "", "only writes since this duration back or RFC 3339 time")
 		fs.Int("max", 20, "the most writes shown; 0 for all")
+		fs.Bool("json", false, "print one JSON object instead of the lines")
 	})
 	if err != nil {
 		return err
@@ -77,14 +78,23 @@ func runHistory(ctx context.Context, args []string, d deps, stdout io.Writer) er
 	if more {
 		entries = entries[:max]
 	}
+	var items []string
 	for _, e := range entries {
 		if e.Kind == "loop" { // rows written before the rename
 			e.Kind = "service"
 		}
-		fmt.Fprintf(stdout, "HISTORY at=%s actor=%s kind=%s name=%s op=%s rev=%d\n", value(e.At), value(e.Actor), value(e.Kind), value(e.Name), value(e.Op), e.ID)
-		for _, l := range changeLines(kindNamed(e.Kind), e.Op, e.Before, e.After) {
-			fmt.Fprintln(stdout, l)
+		if str(fs, "json") == "true" {
+			items = append(items, fmt.Sprintf(`{"rev":%d,"at":%s,"actor":%s,"kind":%s,"name":%s,"op":%s,"before":%s,"after":%s}`, e.ID, jsonString(e.At), jsonString(e.Actor), jsonString(e.Kind), jsonString(e.Name), jsonString(e.Op), marshal(e.Before), marshal(e.After)))
+		} else {
+			fmt.Fprintf(stdout, "HISTORY at=%s actor=%s kind=%s name=%s op=%s rev=%d\n", value(e.At), value(e.Actor), value(e.Kind), value(e.Name), value(e.Op), e.ID)
+			for _, l := range changeLines(kindNamed(e.Kind), e.Op, e.Before, e.After) {
+				fmt.Fprintln(stdout, l)
+			}
 		}
+	}
+	if str(fs, "json") == "true" {
+		_, err = fmt.Fprintf(stdout, `{"result":{"verb":"history","status":"ok","exit":0},"facts":{"rows":%d,"more":%t},"items":[%s]}`+"\n", len(entries), more, strings.Join(items, ","))
+		return err
 	}
 	_, err = fmt.Fprintf(stdout, "CONFIG HISTORY rows=%d%s\n", len(entries), map[bool]string{true: " more=true"}[more])
 	return err

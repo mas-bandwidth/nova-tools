@@ -3,6 +3,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	_ "embed"
 	"errors"
@@ -75,12 +76,11 @@ func run(ctx context.Context, args []string, d deps, stdout, stderr io.Writer) i
 		err = usagef(name, "the verbs are "+strings.Join(kindOps, ", "), "wants a verb")
 	case isKind && slices.Contains(kindOps, path[1]):
 		err = runKind(ctx, k, name, rest, d, stdout)
+	case path[0] == "schema" && len(rest) > 0:
+		err = usagef(name, "", "%s", map[bool]string{true: "unknown flag " + rest[0], false: "takes no arguments"}[strings.HasPrefix(rest[0], "-")])
 	case path[0] == "schema":
-		if len(rest) > 0 {
-			err = usagef(name, "", "%s", map[bool]string{true: "unknown flag " + rest[0], false: "takes no arguments"}[strings.HasPrefix(rest[0], "-")])
-		} else {
-			fmt.Fprint(stdout, schemaSQL)
-		}
+		fmt.Fprint(stdout, schemaSQL)
+		fmt.Fprintln(stderr, "CONFIG SCHEMA OK next="+value(`nova-config schema | PGPASSWORD="$NOVA_PG_PASSWORD" psql "$NOVA_PG_DSN"`))
 	case path[0] == "inventory":
 		err = runInventory(ctx, rest, d, stdout)
 	case path[0] == "history":
@@ -145,25 +145,28 @@ func str(fs *flag.FlagSet, name string) string {
 	return ""
 }
 
+func storeDSN(fs *flag.FlagSet, d deps) (string, string) {
+	dsn := cmp.Or(str(fs, "pg"), d.getenv("NOVA_PG_DSN"))
+	switch {
+	case dsn == "":
+		return "", "no store: set NOVA_PG_DSN or --pg (postgres://USER@HOST:PORT/DB?sslmode=disable)"
+	case str(fs, "pg") != "" && dsnPassword(dsn):
+		return "", "--pg carries a password; leave it out and name its variable in NOVA_PG_PASSWORD_ENV"
+	case dsnPassword(dsn):
+		return "", "NOVA_PG_DSN carries a password; remove it and set NOVA_PG_PASSWORD"
+	case dsnProblem(dsn) != "":
+		return "", "the postgres dsn is wrong: " + dsnProblem(dsn)
+	}
+	return dsn, ""
+}
+
 // open opens the store the flag or the environment names.
 func open(ctx context.Context, fs *flag.FlagSet, d deps) (Store, error) {
-	verb := strings.TrimPrefix(fs.Name(), "nova-config ")
-	dsn := str(fs, "pg")
-	switch {
-	case dsn == "" && d.getenv("NOVA_PG_DSN") == "":
-		return nil, usagef(verb, "", "no store: set NOVA_PG_DSN or --pg")
-	case dsn != "" && dsnPassword(dsn):
-		return nil, usagef(verb, "", "--pg carries a password; leave it out and name its variable in NOVA_PG_PASSWORD_ENV")
-	case dsn == "" && dsnPassword(d.getenv("NOVA_PG_DSN")):
-		return nil, usagef(verb, "", "NOVA_PG_DSN carries a password; remove it and set NOVA_PG_PASSWORD")
-	case dsn == "":
-		dsn = d.getenv("NOVA_PG_DSN")
+	dsn, prob := storeDSN(fs, d)
+	if prob != "" {
+		return nil, usagef(strings.TrimPrefix(fs.Name(), "nova-config "), "", "%s", prob)
 	}
-	pe := d.getenv("NOVA_PG_PASSWORD_ENV")
-	if pe == "" {
-		pe = "NOVA_PG_PASSWORD"
-	}
-	return d.openPG(ctx, dsn, d.getenv(pe))
+	return d.openPG(ctx, dsn, d.getenv(cmp.Or(d.getenv("NOVA_PG_PASSWORD_ENV"), "NOVA_PG_PASSWORD")))
 }
 
 func runKind(ctx context.Context, k *kind, verb string, args []string, d deps, stdout io.Writer) error {
@@ -175,7 +178,7 @@ func runKind(ctx context.Context, k *kind, verb string, args []string, d deps, s
 		if !write {
 			return
 		}
-		fs.String("actor", "", "the name the write is recorded under (required)")
+		fs.String("actor", cmp.Or(d.getenv("NOVA_ACTOR"), d.getenv("USER"), d.getenv("LOGNAME")), "the name the write is recorded under")
 		fs.String("reason", "", "why: one line, recorded in the history row")
 		fs.Bool("dry-run", false, "print the change and write nothing")
 		for _, f := range k.fields {
@@ -193,18 +196,17 @@ func runKind(ctx context.Context, k *kind, verb string, args []string, d deps, s
 			given[f.Name] = f.Value.String()
 		}
 	})
-	name := ""
 	if len(words) > 1 {
 		return usagef(verb, hint, "unexpected words %q", words[1:])
-	} else if len(words) == 1 {
-		name = words[0]
 	}
+	name := strings.Join(words, "")
 	if (op == "list") != (name == "") {
 		return usagef(verb, hint, "wants %s", map[bool]string{true: "no name", false: "a name"}[op == "list"])
 	}
 	actor, reason := str(fs, "actor"), str(fs, "reason")
+	var after Row
+	var missing, problems []string
 	if write {
-		var missing []string
 		for _, f := range k.fields {
 			if _, ok := given[f.name]; op == "add" && f.required && !ok {
 				missing = append(missing, "--"+f.name)
@@ -213,13 +215,27 @@ func runKind(ctx context.Context, k *kind, verb string, args []string, d deps, s
 		if strings.TrimSpace(actor) == "" {
 			missing = append(missing, "--actor")
 		}
-		switch {
-		case len(missing) > 0:
-			return usagef(verb, hint, "missing required flag %s", strings.Join(missing, ", "))
-		case strings.ContainsAny(reason, "\r\n"):
-			return usagef(verb, hint, "--reason wants one line")
-		case op == "set" && len(given) == 0:
-			return usagef(verb, hint, "no field given to set")
+		if len(missing) > 0 {
+			problems = append(problems, "missing required flag "+strings.Join(missing, ", "))
+		}
+		if strings.ContainsAny(reason, "\r\n") {
+			problems = append(problems, "--reason wants one line")
+		}
+		if op == "set" && len(given) == 0 {
+			problems = append(problems, "no field given to set")
+		} else if op == "add" {
+			after, err = k.newRow(name, given)
+		} else if op == "set" {
+			_, err = k.merge(Row{Name: name, F: map[string]string{"every": "1"}}, given)
+		}
+		if err != nil && (op == "add" || errors.As(err, new(valueError))) {
+			problems = append(problems, err.Error())
+		}
+		if _, sp := storeDSN(fs, d); sp != "" {
+			problems = append(problems, sp)
+		}
+		if len(problems) > 0 {
+			return usagef(verb, hint, "%s", strings.Join(problems, "; "))
 		}
 	}
 	st, err := open(ctx, fs, d)
@@ -243,7 +259,7 @@ func runKind(ctx context.Context, k *kind, verb string, args []string, d deps, s
 		printRows(stdout, k, verb, rows, nil, str(fs, "json") == "true")
 		return nil
 	case op == "add" && found:
-		return refused("%s %s exists; use: nova-config %s set", k.name, name, k.name)
+		return refused("%s %s exists; use: nova-config %s set %s", k.name, name, k.name, name)
 	case op != "add" && !found:
 		return refused("%s %s not found; run: nova-config %s list", k.name, name, k.name)
 	case op == "show":
@@ -262,19 +278,13 @@ func runKind(ctx context.Context, k *kind, verb string, args []string, d deps, s
 		printRows(stdout, k, verb, []Row{cur}, services, str(fs, "json") == "true")
 		return nil
 	}
-	before, after := cur, Row{}
-	switch op {
-	case "add":
+	before := cur
+	if op == "add" {
 		before = Row{}
-		after, err = k.newRow(name, given)
-	case "set":
-		after, err = k.merge(cur, given)
-	}
-	var ve valueError
-	if errors.As(err, &ve) {
-		return usagef(verb, hint, "%s", ve.msg)
-	} else if err != nil {
-		return refusal{err.Error()}
+	} else if op == "set" {
+		if after, err = k.merge(cur, given); err != nil {
+			return refusal{err.Error()}
+		}
 	}
 	if str(fs, "dry-run") == "true" {
 		fmt.Fprintln(stdout, planLines(k, op, name, actor, reason, before.F, after.F))
@@ -297,6 +307,11 @@ func runKind(ctx context.Context, k *kind, verb string, args []string, d deps, s
 	line := fmt.Sprintf("CONFIG %s kind=%s name=%s rev=%d", strings.ToUpper(op), k.name, value(name), rev)
 	if op == "set" {
 		line += " changed=" + value(strings.Join(changed, ","))
+	}
+	if k.name == "machine" && op == "add" {
+		line += " next=" + value("nova-fleet join "+name)
+	} else if k.name == "service" && op != "remove" {
+		line += " next=" + value("nova-fleet services --check")
 	}
 	fmt.Fprintln(stdout, line)
 	return nil

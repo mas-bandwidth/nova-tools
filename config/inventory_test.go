@@ -65,6 +65,12 @@ func TestInventoryRefusals(t *testing.T) {
 	assert.Equal(t, 2, code)
 	assert.Contains(t, errs, "--list or --host")
 	assert.Equal(t, 2, func() int { c, _, _ := h.run(t, "inventory", "--redis", "x:1"); return c }(), "the Redis path is gone")
+	r := h.st.rows["service"]["member-b"]
+	r.F["argv"] = "not-json"
+	h.st.rows["service"]["member-b"] = r
+	code, _, errs = h.run(t, "inventory")
+	assert.Equal(t, 1, code)
+	assert.Contains(t, errs, "service member-b has corrupt argv")
 }
 
 // An empty store prints an empty inventory, not a refusal.

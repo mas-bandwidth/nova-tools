@@ -16,7 +16,8 @@ export PATH="$PWD/bin:$PATH"
 
 Pass the connection string (DSN) with `--pg <dsn>` or `NOVA_PG_DSN`. Put the
 password in `NOVA_PG_PASSWORD`, or in the variable `NOVA_PG_PASSWORD_ENV` names,
-never in the DSN. `nova-config schema` prints the SQL to apply with psql.
+never in the DSN. `nova-config schema` prints the SQL to apply with psql
+(`nova-config schema | PGPASSWORD="$NOVA_PG_PASSWORD" psql "$NOVA_PG_DSN"`).
 
 This block starts a throwaway server on port 54329 (it needs `initdb`,
 `pg_ctl` and `createdb` on PATH). Run all the blocks in one shell.
@@ -33,7 +34,7 @@ nova-config schema | PGOPTIONS="-c client_min_messages=warning" psql -q "$NOVA_P
 ## Machines
 
 Verbs: `list`, `show`, `add`, `set`,
-`remove`. A write needs `--actor <name>`; `--reason <line>` and `--dry-run` are
+`remove`. A write takes `--actor <name>` (default `NOVA_ACTOR`, else login name); `--reason <line>` and `--dry-run` are
 optional (`--dry-run` prints `CONFIG DRY-RUN ... wrote=nothing` and the changes). Names use lower-case letters, digits and dashes.
 
 | Field | Meaning |
@@ -52,7 +53,7 @@ nova-config machine show bench-a
 ```
 
 ```text
-CONFIG ADD kind=machine name=bench-a rev=1
+CONFIG ADD kind=machine name=bench-a rev=1 next="nova-fleet join bench-a"
 CONFIG SET kind=machine name=bench-a rev=2 changed=note
 CONFIG SET kind=machine name=bench-a changed=none rev=unchanged
 MACHINE name=bench-a address=- user=nova os=linux arch=amd64 cores=16 roles=bench,services runners=0 note="Example host" created=2026-11-05T23:51:58Z updated=2026-11-05T23:51:58Z services=-
@@ -82,12 +83,12 @@ nova-config service show hello
 ```
 
 ```text
-CONFIG ADD kind=service name=hello rev=3
+CONFIG ADD kind=service name=hello rev=3 next="nova-fleet services --check"
 SERVICE name=hello machine=bench-a argv=["/usr/bin/printf","hello\n"] seat=- keys=- every=60 keepalive=false enabled=true env={"LANG":"C"} log=- created=2026-11-05T23:51:58Z updated=2026-11-05T23:51:58Z
 ```
 
 Config starts nothing; the rows are data for your own tooling. `--json` on
-`list` or `show` prints one JSON object (`result`, `facts`, `items`).
+`list`, `show` or `history` prints one JSON object (`result`, `facts`, `items`).
 
 ## History
 
@@ -124,18 +125,19 @@ a file containing `exec nova-config inventory "$@"`.
 ## Refusals
 
 Exit 0 is done (and `-h`), 1 a refused row operation, 2 a bad invocation or
-connection failure.
+connection failure. Missing or invalid flags and the store DSN are checked together before connecting.
 
 | You see | Do this |
 |---|---|
-| `machine add: machine bench-a exists; use: nova-config machine set` (1) | Use `set`. |
+| `machine add: machine bench-a exists; use: nova-config machine set bench-a` (1) | Use `set`. |
 | `machine remove: machine bench-a still runs services hello; ...` (1) | Remove or move its services first. |
-| `service add: service x has neither --every nor --keepalive; ...` (1) | Give exactly one of them. |
-| `service add: service x names secrets (--keys A) and no --seat ...` (1) | Add `--seat` or drop `--keys`. |
+| `service add: service x has neither --every nor --keepalive; ...` (2) | Give exactly one of them. |
+| `service add: service x names secrets (--keys A) and no --seat ...` (2) | Add `--seat` or drop `--keys`. |
 | `machine list: NOVA_PG_DSN carries a password; ...` (2) | Move the password to `NOVA_PG_PASSWORD`. |
 | `inventory: takes --list or --host <name>, not both; ...` (2) | Give one. |
 | `inventory: no machine row named nope; ...` or `NOVA_MACHINE nope names no machine row` (1) | Check the name. |
-| Connection, login or missing-table error (2) | Check the DSN; apply `nova-config schema` through psql. |
+| `inventory: service x has corrupt argv (...); run: nova-config service set x --argv <value>` (1) | Fix the corrupt field. |
+| Connection, login or missing-table error (2) | Follow the `psql`, `createdb` or `nova-config schema` command printed on the line. |
 
 ## Guarantees and limits
 
