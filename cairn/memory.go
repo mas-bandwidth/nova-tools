@@ -56,7 +56,8 @@ type corpus struct {
 	byClass map[string]int
 }
 
-// normalize drops blockquote and emphasis marks BEFORE collapsing whitespace (order matters), then casefolds.
+// normalize drops blockquote and emphasis marks BEFORE collapsing whitespace
+// (the order is the fix: a marker left inside a wrapped phrase breaks it), then casefolds.
 func normalize(s string) string {
 	var b strings.Builder
 	space := false
@@ -76,19 +77,17 @@ func normalize(s string) string {
 	return strings.TrimSpace(b.String())
 }
 
-// tokenize: alphanumeric-or-apostrophe runs of two or more bytes. No stemming.
+// tokenize: alphanumeric-or-apostrophe runs of two or more bytes. No stemming, no stopwords.
 func tokenize(s string) []string {
 	return strings.FieldsFunc(normalize(s), func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '\'' })
 }
 
-// stopwords are the closed-class words BM25 must not weigh: without this, a long
-// unrelated query outscores a short exact one on shared "the" and "for" alone.
 var stopwords = map[string]bool{"the": true, "a": true, "an": true, "and": true, "or": true, "of": true, "to": true, "in": true, "on": true, "for": true, "with": true, "as": true, "at": true, "by": true, "from": true, "is": true, "are": true, "was": true, "were": true, "be": true, "been": true, "it": true, "its": true, "this": true, "that": true, "these": true, "those": true, "before": true, "after": true, "into": true, "over": true, "under": true, "per": true, "via": true}
 
 func terms(s string) []string {
 	var out []string
 	for _, t := range tokenize(s) {
-		if t = strings.Trim(t, "'"); len(t) >= 2 && !stopwords[t] {
+		if t = strings.Trim(t, "'"); len(t) >= 2 {
 			out = append(out, t)
 		}
 	}
@@ -355,12 +354,12 @@ type hit struct {
 	score float64
 }
 
-// query ranks chunks by BM25, best first.
+// query ranks the chunks by BM25, best first (ties by chunk id).
 func (c *corpus) query(text string) []hit {
-	scores := map[int]float64{}
-	seen := map[string]bool{}
-	for _, t := range terms(text) {
-		if seen[t] {
+	scores, seen := map[int]float64{}, map[string]bool{}
+	q, weighted := terms(text), slices.ContainsFunc(terms(text), func(t string) bool { return !stopwords[t] })
+	for _, t := range q {
+		if seen[t] || (weighted && stopwords[t]) {
 			continue
 		}
 		seen[t] = true
@@ -384,7 +383,8 @@ func (c *corpus) query(text string) []hit {
 	return hits
 }
 
-// retrieve is the k best files for text (each file's best paragraph); a 0.00 tail drops.
+// retrieve is the k best files for text: each file's best paragraph, fused= 1/(60+rank).
+// A tail of hits whose score rounds to 0.00 is dropped unless every hit does.
 func (c *corpus) retrieve(text string, k int) []hit {
 	var out []hit
 	seen := map[string]bool{}
