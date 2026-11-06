@@ -3,7 +3,12 @@
 Run one command inside a kernel-enforced wall. You name the directories the
 command may read and write, and you can close its network; everything else is
 out of reach. Linux uses Landlock and seccomp. macOS uses `sandbox-exec`.
-Other systems are refused.
+Other systems are refused. Cd into a directory you grant, and set `TMPDIR`
+inside a `--write`, before you run; pass it with `--env TMPDIR`.
+
+A denial is the kernel's EPERM in the command's own output. nova-sandbox execs
+in place and leaves no process behind. `nova-sandbox probe` confirms the wall
+before you trust a denial.
 
 Words used below: the **wall** is the set of kernel restrictions applied to the
 command. A **grant** is a directory you name with `--read` or `--write`. The
@@ -21,7 +26,7 @@ export PATH="$PWD/bin:$PATH"
 ## Run a command
 
 ```text
-nova-sandbox [--read <dir>]... [--write <dir>]... [--net-deny [--net-allow <host:port>]...] [--gpu] [--unix] [--keep-fds] -- <cmd> <args...>
+nova-sandbox [--read <dir>]... [--write <dir>]... [--net-deny [--net-allow <host:port>]...] [--gpu] [--unix] [--keep-fds] [--env <name>]... -- <cmd> <args...>
 ```
 
 | Flag | Effect |
@@ -33,12 +38,15 @@ nova-sandbox [--read <dir>]... [--write <dir>]... [--net-deny [--net-allow <host
 | `--gpu` | macOS only: allow Metal and video services. On Linux, use `--write /dev/dri`. |
 | `--unix` | Linux only: leave Unix-domain sockets open. |
 | `--keep-fds` | Keep inherited descriptors above stderr open (they are closed by default). |
+| `--env <name>` | Pass this variable by name. `PATH`, `HOME`, `LANG` and `TERM` pass without it. Repeatable. An unset name is refused on a run. |
 
 Flags go before `--`; everything after it is the command. Directories must be
 absolute and exist. The command must lie under a system root or a
-grant, so for a program in `~/bin`, add `--read ~/bin`. Environment and working
-directory pass through: point `HOME` and `TMPDIR` inside a `--write` grant, and
-start in a granted directory.
+grant, so for a program in `~/bin`, add `--read ~/bin`. The working directory
+is the caller's: start in a granted directory. The environment kept is `PATH`,
+`HOME`, `LANG` and `TERM`. `--env <name>` passes another by name; the value
+stays in the environment and is never an argument. An unset name is refused.
+Point `HOME` and `TMPDIR` inside a `--write`, and pass `TMPDIR` with `--env`.
 
 ```sh
 work_dir=$(mktemp -d)
@@ -48,7 +56,8 @@ cat result.txt
 ```
 
 `cat` prints `hello`. The exit status is the command's own. A Go toolchain outside the system roots
-needs `--read "$(go env GOROOT)"`.
+needs `--read "$(go env GOROOT)"`. A Go build also needs `--env TMPDIR --env GOCACHE --env GOMODCACHE --env GOPROXY`,
+each set to a path inside a `--write` (`GOMODCACHE` inside a `--read`). `HOME` is kept.
 
 ## Preview the wall: `show`
 
@@ -98,8 +107,8 @@ proves nothing). The last line is `PROBE OK` (exit 0) or `PROBE FAILED` (exit 1)
 
 ## Refusals
 
-`nova-sandbox`, `help` and `-h` print help and exit 0; `help <verb>` and
-`<verb> -h` print a verb's help. `help` takes no flags (`help -h` exits 2).
+`nova-sandbox`, `help`, `-h` and `help -h` print usage and exit 0. `help <verb>` and
+`<verb> -h` print that verb's usage. Any other argument to `help` exits 2.
 A malformed command line exits 2 with one line naming every problem:
 
 ```text
@@ -126,6 +135,7 @@ example `SANDBOX REFUSED reason=not_found: nosuchcmd is on no PATH entry or does
 | `bad_read`, `bad_write` | 2 | Directory is relative, missing or has unsupported characters, or the command is outside every grant. Create it, use its absolute path, or `--read` the command's directory. |
 | `bad_net` | 2 | Bad loopback `host:port`, or `--net-allow` without `--net-deny`. |
 | `bad_gpu` | 2 | `--gpu` on Linux. Use `--write /dev/dri`. |
+| `bad_env` | 2 | `--env` is not a name of letters, digits and underscores, or the name is unset on a run. Set it in the environment; the value is never an argument. |
 | `not_found` | 127 | Command is on no PATH entry. Fix PATH or the path. |
 | `not_executable` | 126 | Not an executable file. Fix its permissions. |
 | `no_sandbox`, `no_seccomp`, `net_unenforceable`, `sandbox_failed` | 125 | The host cannot apply the wall. Run `check` and use a host that can. |

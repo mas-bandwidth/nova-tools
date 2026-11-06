@@ -21,10 +21,11 @@ func reasons(bad []refusal) []string {
 func TestParseArgs(t *testing.T) {
 	t.Parallel()
 	s, bad := parseArgs([]string{"--read", "/r", "--read", "/r2", "--write", "/w", "--net-deny",
-		"--net-allow", "localhost:1", "--gpu", "--unix", "--keep-fds", "--", "ls", "--read", "-l"}, true)
+		"--net-allow", "localhost:1", "--gpu", "--unix", "--keep-fds", "--env", "TMPDIR", "--", "ls", "--read", "-l"}, true)
 	require.Empty(t, bad)
 	assert.Equal(t, spec{reads: []string{"/r", "/r2"}, writes: []string{"/w"}, netAllow: []string{"localhost:1"},
-		netDeny: true, gpu: true, unix: true, keepFDs: true, argv: []string{"ls", "--read", "-l"}}, s, "everything after -- is the command, verbatim")
+		netDeny: true, gpu: true, unix: true, keepFDs: true, passEnv: []string{"TMPDIR"},
+		argv: []string{"ls", "--read", "-l"}}, s, "everything after -- is the command, verbatim")
 
 	for _, c := range []struct {
 		args []string
@@ -179,6 +180,7 @@ func TestExitCodes(t *testing.T) {
 		{[]string{"--write", "/w", "--read", "--", "true"}, `nova-sandbox: bad_value: --read wants an absolute path, got "--"; run: nova-sandbox -h` + "\n"},
 		{[]string{"--write", "--net-deny", "--", "true"}, `nova-sandbox: bad_value: --write wants an absolute path, got "--net-deny"; run: nova-sandbox -h` + "\n"},
 		{[]string{"--net-deny", "--net-allow", "--", "true"}, `nova-sandbox: bad_value: --net-allow wants host:port, got "--"; run: nova-sandbox -h` + "\n"},
+		{[]string{"--env", "--", "true"}, `nova-sandbox: bad_value: --env wants a name, got "--"; run: nova-sandbox -h` + "\n"},
 		{[]string{"show", "--read", "--unix"}, `nova-sandbox show: bad_value: --read wants an absolute path, got "--unix"; run: nova-sandbox show -h` + "\n"},
 	} {
 		code, out, errs := exit(c.args...)
@@ -187,6 +189,10 @@ func TestExitCodes(t *testing.T) {
 		assert.Equal(t, c.want, errs, "the swallowed value is the only complaint: %v", c.args)
 	}
 	assert.Contains(t, oneLine("nova-sandbox", "--bogus", "--", "ls"), "bad_flag: unknown flag --bogus")
+	errs = oneLine("nova-sandbox", "--env", "NO_SUCH", "--read", "rel", "--", "true")
+	assert.Contains(t, errs, "bad_env", "an unset --env is named even when the wall also refuses")
+	assert.Contains(t, errs, "NO_SUCH")
+	assert.Contains(t, errs, "bad_read")
 	errs = oneLine("nova-sandbox", "--write", "rel", "--", "no-such-command-here")
 	assert.Contains(t, errs, "bad_write")
 	assert.Contains(t, errs, "not_found", "every problem in the one line")
@@ -197,6 +203,12 @@ func TestExitCodes(t *testing.T) {
 	code, _, errs = exit("show", "--", "no-such-command-here")
 	assert.Equal(t, 127, code, "show exits for a missing command as a run does")
 	assert.Contains(t, errs, "SANDBOX REFUSED reason=not_found")
+	for _, form := range [][]string{{"help", "-h"}, {"help", "--help"}} {
+		code, out, errs := exit(form...)
+		assert.Equal(t, 0, code, form)
+		assert.Contains(t, out, "--env <name>", form)
+		assert.Empty(t, errs, form)
+	}
 
 	// The command alone: 127 and 126, SANDBOX REFUSED lines.
 	code, _, errs = exit("--", "no-such-command-here")
@@ -208,6 +220,39 @@ func TestExitCodes(t *testing.T) {
 	require.NoError(t, os.WriteFile(nox, []byte("x"), 0o600))
 	code, _, _ = exit("--", nox)
 	assert.Equal(t, 126, code, "a file that is not executable is 126")
+}
+
+func TestPassedEnv(t *testing.T) {
+	t.Parallel()
+	env := []string{"TOKEN=secret", "PATH=/bin", "TMPDIR=/tmp", "HOME=/h", "PATH=/later", "LANG=C", "TERM=xterm", "ODD"}
+	got := passedEnv(env, []string{"TMPDIR", "TMPDIR"})
+	assert.Equal(t, []string{"PATH=/bin", "TMPDIR=/tmp", "HOME=/h", "LANG=C", "TERM=xterm"}, got)
+	assert.NotContains(t, got, "TOKEN=secret")
+	assert.NotNil(t, passedEnv(nil, nil), "a nil env would make syscall.Exec inherit every name")
+	assert.Empty(t, passedEnv(nil, []string{"NO_SUCH"}))
+
+	var out, errb strings.Builder
+	code := run([]string{"--env", "NO_SUCH", "--", "true"}, &out, &errb, []string{"PATH=/usr/bin:/bin"})
+	assert.Equal(t, 2, code)
+	assert.Empty(t, out.String())
+	assert.Contains(t, errb.String(), "bad_env")
+	assert.Contains(t, errb.String(), "NO_SUCH")
+	assert.Contains(t, errb.String(), "run: nova-sandbox -h")
+
+	out.Reset()
+	errb.Reset()
+	code = run([]string{"--env", "NOT-A-NAME", "--", "true"}, &out, &errb, []string{"PATH=/usr/bin:/bin"})
+	assert.Equal(t, 2, code)
+	assert.Empty(t, out.String())
+	assert.Contains(t, errb.String(), "bad_env")
+	assert.Contains(t, errb.String(), "letters, digits and underscores")
+
+	out.Reset()
+	errb.Reset()
+	code = run([]string{"show", "--env", "NO_SUCH"}, &out, &errb, nil)
+	assert.Equal(t, 0, code, errb.String())
+	assert.NotEmpty(t, out.String())
+	assert.Empty(t, errb.String())
 }
 
 func TestReport(t *testing.T) {
