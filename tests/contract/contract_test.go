@@ -56,7 +56,7 @@ var toolSpecs = []toolSpec{
 		missing: []missingCase{{[]string{"status", "--dir", "@tmp/no-such-dir"}, []string{"--dir"}}}},
 	{dir: "sandbox", verbs: [][]string{{"check"}, {"probe"}, {"show"}}, extra: []int{125, 126, 127},
 		missing: []missingCase{{[]string{"--read", "@tmp/no-such-dir"}, []string{"--read|command"}}}},
-	{dir: "secrets", verbs: [][]string{{"exec"}, {"set"}, {"seat", "add"}, {"init"}, {"names"}}, extra: []int{125},
+	{dir: "secrets", verbs: [][]string{{"exec"}, {"set"}, {"seat", "add"}, {"seat", "remove"}, {"init"}, {"names"}, {"grant"}}, extra: []int{125},
 		missing: []missingCase{{[]string{"exec"}, []string{"--only", "--store", "--key"}}}},
 }
 

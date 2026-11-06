@@ -75,8 +75,9 @@ nova-fleet up --tools v2.0.0 --runners https://github.com/OWNER/REPO store-1=203
 2. The control node: ansible-core, `nova-config`, `nova-secrets`, `nova-bus`, `tailscale` (on the tailnet), `psql`,
    `git`, `gpg`, `sops`, `age`, `age-keygen` and `rsync` on PATH (`gh` too for runners; `nova-fleet check` lists what is
    missing with the line that installs it); a secrets store with this node's seat
-   ([secrets/SPEC.md](../secrets/SPEC.md)); `NOVA_SECRETS_STORE`, `NOVA_SECRETS_KEY` and `NOVA_SECRETS_SEAT` set.
-3. The key in the seat: `nova-secrets set TAILSCALE_AUTHKEY --as <seat>` (the value on stdin), and for runners
+   ([secrets/README.md](../secrets/README.md)) and its pins outside it (`nova-secrets init --pins <dir>` writes the
+   recovery pin there); `NOVA_SECRETS_STORE`, `NOVA_SECRETS_KEY`, `NOVA_SECRETS_SEAT` and `NOVA_SECRETS_PINS` set.
+3. The key in the seat: `nova-secrets set TAILSCALE_AUTHKEY --as <seat> --pins <dir>` (the value on stdin), and for runners
    `GITHUB_RUNNER_TOKEN` as in "github-runners".
 4. Each Linux machine reachable as root over ssh at its address, with the control node's key. A Mac: its login and
    passwordless sudo set up at its console, and the Tailscale app's VPN approved once.
@@ -88,7 +89,7 @@ nova-fleet up --tools v2.0.0 --runners https://github.com/OWNER/REPO store-1=203
 | 1 | control | `nova-fleet check`: every helper, the tailnet, the store, key and seat, and `TAILSCALE_AUTHKEY` (and `GITHUB_RUNNER_TOKEN`) read from the seat; anything missing stops the run with its fix line | a run never starts that a missing secret would stop later |
 | 2 | first | on the first machine, from a hand inventory as root: `tailscale` (no address recorded, firewall later), `postgres` and `redis` (their passwords sealed into your seat as `NOVA_PG_PASSWORD` and `NOVA_BUS_PASSWORD`), then `nova-config schema` applied | nova-config's rows live in this PostgreSQL, so it comes before any row |
 | 3 | join | `join` for each machine, the first too (`services,bench`; the others `bench`; `runner` with `--runners`): its row, its login with passwordless sudo, its tailnet name, its firewall, its seat | the store exists now |
-| 4 | grant | `nova-secrets grant <--grant names> --to <machine>` for each machine: the values written to that seat's file, encrypted to the seat (and recovery) only; your seat is never a recipient of it ([secrets/SPEC.md](../secrets/SPEC.md)) | the seats exist now, and join pinned each one's public key in the store |
+| 4 | grant | `nova-secrets grant <--grant names> --to <machine>` for each machine: the values written to that seat's file, encrypted to the seat (and recovery) only; your seat is never a recipient of it ([secrets/SPEC.md](../secrets/SPEC.md)) | the seats exist now, and join pinned each one's public key on this node (`nova_seal_pins`, outside the store) |
 | 5 | store | `git push` of your secrets store to its upstream, if it has one (else a NOTE): a copy off this node; the machines never read it | |
 | 6 | refresh | the encrypted store copied over ssh with rsync to `<login>@<machine>:~/.local/share/nova/secrets/` (no `.git`, stale files deleted, 0700/0600); under `--check` a dry run, and a machine not reachable yet is named, not failed | each seat opens what step 4 granted; a rerun of `up` pushes again |
 | 7 | health | `health` on every machine (Linux; a Mac is skipped) | the guards are in place before anything long-running starts |
@@ -287,7 +288,7 @@ events may use them.
 **The token.** The play reads `GITHUB_RUNNER_TOKEN` on the control node with `nova-secrets exec --only
 GITHUB_RUNNER_TOKEN` and hands it to the runner on its standard input: never an argument, an environment variable on
 the host, the inventory or a file. A registration token expires in an hour, so store it just before the run (set
-`NOVA_SECRETS_STORE` and `NOVA_SECRETS_KEY` as [secrets/SPEC.md](../secrets/SPEC.md) says, or pass
+`NOVA_SECRETS_STORE`, `NOVA_SECRETS_KEY` and `NOVA_SECRETS_PINS` as [secrets/README.md](../secrets/README.md) says, or pass
 `-e '{"github_runner_secrets_args":["--store","S","--key","K"]}'`):
 
 ```
@@ -339,7 +340,11 @@ passes `-e nova_join_host=<machine>`), never `-l`: a machine with no row yet is 
 the row and reads the inventory again.
 
 1. **The row** (control node). `nova-config machine add` where the row is missing. A row that exists is never edited;
-   one whose user is not `nova_join_user` stops the join by name.
+   one whose user is not `nova_join_user` stops the join by name. The address's SSH host key is pinned into the
+   control node's `known_hosts`: the key you give as `nova_join_host_key` (from the provider's console; this proves
+   which machine it is), else what the address answers at this first connection (trust on first use: this proves only that it is the
+   same machine from here on). A nova-config row write plus a join admits a machine to the fleet: the tailnet-peer
+   check and `nova_join_host_key` are the mitigation, and push access to the config store is the trust boundary.
 2. **The login** (Linux, connecting as root). The row's user: no password, in `nova_join_sudo_group` with
    passwordless sudo (`/etc/sudoers.d/90-nova-<login>`, checked by `visudo` before it lands), root's
    `authorized_keys` copied to it (or the control node's file `nova_join_authorized_keys` names), linger on, the
@@ -348,8 +353,23 @@ the row and reads the inventory again.
 4. **The tools a seat needs** (as the login): `nova_bin_dir` on the login PATH; on Linux the pinned `age` and `sops`
    release binaries, checked against their published digests. A darwin machine takes them from Homebrew
    (`brew install age sops`).
-5. **The seat**: `seat` (below).
-6. **The check**: the control node's `tailscale status` shows the machine as an online peer, and `nova-bus who` from
+5. **The tailnet check** (control node): the row's address is now the machine's MagicDNS name and the control node's
+   `tailscale status` shows it as an online peer; anything else stops the join before a seat is made (skipped with
+   `nova_tailnet=false`).
+6. **The seat**: `seat` (below): the key made on the machine, its rule in the store, its public half pinned on the
+   control node (`nova_seal_pins/<seat>.pub`, outside the store).
+7. **The grant** (control node): with `nova_seal_seat` and `nova_seal_key`, the control seat and its key,
+   `nova-secrets grant` writes the new seat's grants file with the names in `nova_join_grant` (`NOVA_BUS_PASSWORD`
+   unless you list others), sealed to the pinned machine key and the pinned recovery key only: the control key
+   cannot open it. The values pass from one sops to the other in memory, and a refused grant stops the join with its
+   one-line reason. The control node's pins live in `nova_seal_pins`, outside the store: `recovery.pub` comes from
+   `nova-secrets init --pins`, or once from `nova-secrets set ... --pins <dir> --recovery <the recovery public key>`;
+   a grant without it is refused (`reason=no-pin`), and the join stops with that line. Then the store is pushed to
+   the machine (`secrets-refresh`, push mode, when `nova_seal_store` is given) with a copy of the recovery pin
+   (`nova_secrets_pins/recovery.pub`, exported as `NOVA_SECRETS_PINS` in its login profile) for its own `set`.
+   Without `nova_seal_seat` and `nova_seal_key` nothing is granted, and the receipt says so; `up` grants and pushes
+   again in its own steps, which then change nothing.
+8. **The check**: the control node's `tailscale status` shows the machine as an online peer, and `nova-bus who` from
    the machine reaches the bus. Without `nova_bus_redis`, or before the seat holds `NOVA_BUS_PASSWORD`, the bus check
    is a `NOTE`, not a failure.
 
@@ -359,7 +379,8 @@ A Windows machine gets 1 and 3.
 nova-secrets exec --only TAILSCALE_AUTHKEY,NOVA_PG_PASSWORD --store S --key K --as SEAT -- \
   env NOVA_PG_DSN=postgres://nova_config@<store>:5432/nova \
   nova-fleet join web-1 --check --diff -- -e nova_join_user=fleet -e nova_join_address=203.0.113.7 \
-    -e nova_join_os=linux -e nova_join_arch=amd64 -e nova_seal_store=$HOME/secrets
+    -e nova_join_os=linux -e nova_join_arch=amd64 -e nova_seal_store=$HOME/secrets \
+    -e nova_seal_seat=control -e nova_seal_key=$HOME/.config/nova-secrets/control.key
 ```
 
 The same without `--check --diff` joins it. A join that stopped (a failure, a seat waiting for its push) is resumed by
@@ -376,14 +397,23 @@ running the same command again.
 | `nova_join_sudo_group` | `sudo` | the group the login joins (`wheel` on Red Hat) |
 | `nova_join_authorized_keys` | root's on the machine | a file on the control node to install instead |
 | `nova_join_hostname` | `true` | set the hostname to the machine name |
+| `nova_join_host_key` | unset | the machine's host key (`ssh-ed25519 AAAA...`) from the provider's console; without it the first connection's key is pinned |
+| `nova_tailnet` | `true` | `false` skips the tailnet checks (a private network); the rest of the join is unchanged |
+| `nova_seal_seat`, `nova_seal_key` | unset | the control seat and its key file on the control node; without them nothing is granted |
+| `nova_seal_pins` | `~/.config/nova-secrets/pins` | the control node's pins: `recovery.pub` and one `<seat>.pub` per machine |
+| `nova_join_grant` | `[NOVA_BUS_PASSWORD]` | the names granted into the new seat |
 | `nova_bus_redis` | unset | `host:port` of the bus, for the check |
 | `nova_age_version`, `nova_sops_version` and their `*_sha256` | the pinned releases | |
 | `nova_control_config`, `nova_control_secrets`, `nova_control_sops` | `nova-config`, `nova-secrets`, `sops` | the control node's binaries |
 
-**Check.** The receipts `JOIN ROW`, `TAILNET`, `FIREWALL`, `JOIN TOOLS`, `SEAT` and `JOIN CHECK <machine> peer=online
-bus=WHO OK present=<n>`; a second run's `--check --diff` changes nothing. **Rollback.** `nova-config machine remove
-<name> --actor <you>`, the device removed in the Tailscale admin console, the seat's rule reverted in the store
-(`git revert`), and on the machine `userdel -r <login>` and `rm /etc/sudoers.d/90-nova-<login>`.
+**Check.** The receipts `JOIN ROW`, `HOSTKEY`, `TAILNET`, `FIREWALL`, `JOIN TOOLS`, `JOIN PEER`, `SEAT`,
+`JOIN GRANT <seat> from=<control seat> to=<seat> names=<n> changed=<n> committed|unchanged`, `JOIN PIN`,
+`SECRETS-REFRESH` and `JOIN CHECK <machine> peer=online bus=WHO OK present=<n>`; a second run's `--check --diff`
+changes nothing. **Rollback.** `nova-config machine remove <name> --actor <you>`, the device removed in the Tailscale
+admin console, the seat's rule and its grants file reverted in the store (`git revert`), on the control node
+`rm <nova_seal_pins>/<seat>.pub <nova_seal_pins>/<seat>.ledger` and `ssh-keygen -R <address>` for the address given
+and the MagicDNS name, and on the machine `userdel -r <login>` and `rm /etc/sudoers.d/90-nova-<login>`. A rejoin
+under the same name is refused by the seat pin until it is removed.
 
 ## tailscale
 
@@ -399,7 +429,7 @@ the tailnet. `join` runs it; run it alone for machines that already have a row.
    them. The control node runs nova-config against 5432: make it a `tag:nova` machine, or add `tcp:5432` to your
    devices' grant.
 3. An auth key: Settings, Keys, generate auth key, **reusable**, **pre-authorized**, **tagged** `tag:nova` (and
-   `tag:runner`, for the runners). Keep it in the control node's seat: `nova-secrets set TAILSCALE_AUTHKEY --as <seat>
+   `tag:runner`, for the runners). Keep it in the control node's seat: `nova-secrets set TAILSCALE_AUTHKEY --pins P --as <seat>
    --store S --key K` (the value on stdin).
 4. The control node itself on the tailnet, so it resolves MagicDNS names.
 5. On a Mac: open the Tailscale app once at the console and approve its VPN configuration.
@@ -452,8 +482,10 @@ otherwise: the name `nova-secrets --as` and `services` open it by.
 1. On the machine: `<nova_secrets_key_dir>/<seat>.key` made by `age-keygen` where it is missing; never over an
    existing file, never copied. Only the public half leaves the machine.
 2. On the control node, in your clone of the store (`nova_seal_store`): where `.sops.yaml` has no rule for the seat,
-   `nova-secrets seat add <seat> <public half> --store <clone>`, which writes the rule and commits it. A rule that
-   names a different key (a rebuilt machine's old seat) stops the run by name: replacing a seat is yours.
+   `nova-secrets seat add <seat> <public half> --store <clone>`, which writes the rule and commits it. The public
+   half is also pinned outside the store, `<nova_seal_pins>/<seat>.pub`, the key `nova-secrets grant` seals to,
+   before the rule is committed. A rule or a pin that names a different key (a rebuilt machine's old seat) stops the
+   run by name: replacing a seat is yours.
 
 ```
 nova-fleet seat --check --diff -- -l web-1 -e nova_seal_store=$HOME/secrets
@@ -461,18 +493,21 @@ nova-fleet seat -- -l web-1 -e nova_seal_store=$HOME/secrets
 git -C $HOME/secrets push
 ```
 
-Then set the seat's values from a machine that holds a key for it: `nova-secrets set NAME --as <seat> --store S
---key K`.
+Then fill the seat from the control seat on the control node, `nova-secrets grant NAME --to <seat> --pins P --as
+<control seat> --store S --key K` (no `--pub`: the pin is there), which is what `join.yml` does, or set a value of its
+own on the machine with its own key and the recovery pin join.yml put there (`nova-secrets set NAME --as <seat>
+--store S --key K --pins P`).
 
 | Variable | Default | |
 |---|---|---|
 | `nova_seal_store` | none, required | the control node's clone of the secrets store |
+| `nova_seal_pins` | `~/.config/nova-secrets/pins` | where the seat's public key is pinned on the control node |
 | `nova_seat` | the machine's name | |
 | `nova_secrets_key_dir` | `~/.config/nova-secrets` | where `<seat>.key` lives on the machine |
 | `nova_age_keygen` | `<nova_bin_dir>/age-keygen`, Homebrew's on macOS | |
 
-**Check.** `SEAT PUB <seat> age1...` and `SEAT <seat> host=<machine> rule=present`; `nova-secrets seat list --store S`
-shows `rule=yes`. **Rollback.** Before the push, `git -C S reset --hard HEAD~1`; after it, `git revert` the
+**Check.** `SEAT PUB <seat> age1...` and `SEAT <seat> host=<machine> rule=present pin=present`; `nova-secrets seat list
+--store S` shows `rule=yes`. **Rollback.** Before the push, `git -C S reset --hard HEAD~1`; after it, `git revert` the
 `seat <seat>` commit. The key file on the machine is left; delete it by hand if the machine leaves.
 
 ## redis

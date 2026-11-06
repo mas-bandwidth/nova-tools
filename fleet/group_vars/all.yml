@@ -46,6 +46,8 @@ nova_service_retire_all: false
 # (nova-secrets exec requires --store and --key and takes --sops).
 nova_secrets_store: "{{ nova_home }}/.local/share/nova/secrets"
 nova_secrets_key_dir: "{{ nova_home }}/.config/nova-secrets"
+# The pins nova-secrets set seals to on a machine: <dir>/recovery.pub, put there by join.yml from the control node's.
+nova_secrets_pins: "{{ nova_home }}/.config/nova-secrets/pins"
 nova_sops: "{{ '/opt/homebrew/bin/sops' if (nova_system | default(ansible_facts['system'] | default(''))) == 'Darwin' else nova_bin_dir ~ '/sops' }}"
 
 # The seat a machine opens its secrets as (nova-secrets --as, services.yml's
@@ -72,6 +74,12 @@ nova_join_actor: "{{ lookup('ansible.builtin.env', 'USER') or 'fleet' }}"
 nova_join_root_user: root
 nova_join_sudo_group: sudo
 nova_join_hostname: true
+# nova_join_host_key ("ssh-ed25519 AAAA...", from the provider's console) has no default: given, it is the host key
+# pinned for the row's address; else the key the address answers with at the first connection is.
+
+# The names join.yml grants into a new machine's seat from the control seat
+# (nova_seal_seat, opened with nova_seal_key).
+nova_join_grant: [NOVA_BUS_PASSWORD]
 
 # The control node's side of the secrets store: nova_seal_store (its clone of
 # the store) has no default. seat.yml adds seat rules there; redis.yml and
@@ -81,3 +89,7 @@ nova_join_hostname: true
 nova_control_secrets: nova-secrets
 nova_control_config: nova-config
 nova_control_sops: sops
+# The control node's pins, outside the store: recovery.pub (nova-secrets init --pins writes it) and one <seat>.pub
+# per machine, written by seat.yml from the key read on the machine; set and grant seal to these, whatever the
+# store says.
+nova_seal_pins: "{{ lookup('ansible.builtin.env', 'HOME') }}/.config/nova-secrets/pins"
