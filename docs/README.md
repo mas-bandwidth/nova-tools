@@ -25,8 +25,9 @@ tool is.
   macOS.
 - `nova-cairn` saves what a session wants to keep, as plain files, and
   searches it alongside Markdown notes. It needs nothing else.
-- `fleet/` holds Ansible plays that install the tools, keep programs running,
-  and run GitHub Actions runners on many machines. It needs Ansible.
+- `nova-fleet` runs the fleet's Ansible plays from one binary: Tailscale,
+  PostgreSQL, Redis, the tools, the services and GitHub Actions runners on
+  every machine. It needs Ansible, Tailscale, and ssh to the machines.
 
 Each tool runs on its own, and this walkthrough starts and stops a throwaway
 Redis and PostgreSQL on this one machine. A fleet of machines is different: it
@@ -41,15 +42,15 @@ below use a throwaway directory, `$work`, and put the tools on PATH from there.
 ```sh
 work=$(mktemp -d) && cd "$work"
 git clone -q https://github.com/mas-bandwidth/nova-tools
-for t in bus cairn config reserve sandbox secrets; do
+for t in bus cairn config fleet reserve sandbox secrets; do
   go build -C nova-tools -o "$work/bin/nova-$t" "./$t"
 done
 export PATH="$work/bin:$PATH"
-for t in bus cairn config reserve sandbox secrets; do nova-$t -h > /dev/null && echo "nova-$t ok"; done
+for t in bus cairn config fleet reserve sandbox secrets; do nova-$t -h > /dev/null && echo "nova-$t ok"; done
 ```
 
 Each tool prints `nova-<tool> ok`: `-h` prints its usage and exits 0. A GitHub
-release from v2.0.0-rc1 on ships the same six binaries, built for Linux amd64
+release from v2.0.0-rc1 on ships the same seven binaries, built for Linux amd64
 and arm64, macOS arm64 and Windows amd64. Each file is named
 `nova-<tool>_<tag>_<os>_<arch>`, with `.exe` on Windows, beside one
 `SHA256SUMS` file to check them against.
@@ -94,21 +95,96 @@ The whole tool: [bus/README.md](../bus/README.md); how it is tested:
 
 ## Set up and run a fleet of machines connected by tailscale
 
-A **fleet** here is the machines you list in nova-config. They are joined by
-Tailscale, and Ansible reaches each one over SSH through it: a machine row
-holds its tailscale name in `--address` and its login in `--user`. A
-**service** row is a program a machine keeps running. A real fleet needs
-Tailscale, Redis, PostgreSQL and Ansible, and none of the four is optional;
-this walkthrough stays on one machine, with a throwaway PostgreSQL and
-`ansible_connection=local` in place of SSH.
+A **fleet** is a set of machines joined by Tailscale, described as rows in
+nova-config's PostgreSQL, talking over a Redis, and converged by Ansible plays.
+`nova-fleet` is those plays in one binary. Tailscale, Redis, PostgreSQL and
+Ansible are all required: `check` wants Tailscale and Ansible on this machine,
+`up` puts PostgreSQL and Redis on the first machine, and nothing skips one. The
+path is `nova-fleet check`, then your human's steps in the Tailscale console,
+then `nova-fleet up --check`, then `nova-fleet up`.
 
-This block starts the PostgreSQL, adds this machine and one service, and prints
-the inventory. `--actor` names who made a change, and the history keeps it. The
-row's `os` and `arch` come from `uname`, because the runner labels later come
-from the row. On Debian and Ubuntu, apt puts `initdb` and `pg_ctl` in
+`check` needs Ansible on PATH. On Debian and Ubuntu `python3 -m venv` fails
+until `python3-venv` is installed, because those systems ship Python's venv
+support as a separate package, so the first line installs it when the venv
+cannot be made. Without sudo, use `python3 -m venv --without-pip "$work/venv"`
+and then `pip --python "$work/venv/bin/python" install ansible-core` with any
+pip you already have.
+
+```sh
+python3 -m venv "$work/venv" || { rm -rf "$work/venv"; sudo apt install -y python3-venv && python3 -m venv "$work/venv"; }
+"$work/venv/bin/pip" install -q ansible-core
+export PATH="$work/venv/bin:$PATH"
+```
+
+`check` also needs this machine's **control seat**: a nova-secrets store, the
+seat's age key, and a **pins** directory, the public keys the control node keeps
+outside the store so no edit to the store can change who a secret reaches. A
+**seat** is one identity that reads values, with one file and one key. The
+control seat holds the values the fleet needs, starting with the Tailscale auth
+key. `init`, `seat add` and `set` each make a git commit, so git needs an
+author; the first line gives this session one when git has none:
+
+```sh
+git config user.email > /dev/null || export GIT_AUTHOR_NAME=ai GIT_AUTHOR_EMAIL=ai@example.com GIT_COMMITTER_NAME=ai GIT_COMMITTER_EMAIL=ai@example.com
+mkdir -p "$work/keys"
+age-keygen -o "$work/keys/here.key" 2> /dev/null
+age-keygen -o "$work/keys/recovery.key" 2> /dev/null
+chmod 600 "$work/keys/here.key"
+nova-secrets init --store "$work/store" --pins "$work/pins" --recovery "$(age-keygen -y "$work/keys/recovery.key")"
+nova-secrets seat add here "$(age-keygen -y "$work/keys/here.key")" --store "$work/store"
+export NOVA_SECRETS_STORE="$work/store" NOVA_SECRETS_KEY="$work/keys/here.key" NOVA_SECRETS_SEAT=here NOVA_SECRETS_PINS="$work/pins"
+nova-fleet check || echo "exit $?"
+```
+
+`check` prints one line per prerequisite, `CHECK OK <name> <version>`, then
+the tailnet, the store, the key, the seat and the pins. On a machine that has
+the helpers and is on a tailnet, two lines are left, and the run ends
+`CHECK FAILED missing=2`, exit 1:
+
+```text
+CHECK MISSING tag:control: this node is not tagged tag:control (the policy, nova-fleet show tailscale-acl, lets tag:control reach the machines): sudo tailscale up --advertise-tags=tag:control ...
+CHECK MISSING TAILSCALE_AUTHKEY: nova-secrets set TAILSCALE_AUTHKEY --as here (the value on stdin); the read said: SECRETS EXEC REFUSED reason=no-seat: ...
+```
+
+Each `CHECK MISSING` line ends with the command that fixes it. These two are
+your human's, once, in the Tailscale admin console: the account with MagicDNS
+on; the policy, pasted from `nova-fleet show tailscale-acl`, with their account
+where it says `owner@example.com`; a reusable, pre-authorized auth key tagged
+`tag:nova` (and `tag:runner` for runners); and this machine on the tailnet
+tagged `tag:control`. They hand you the auth key, and you store it:
+
+```text
+printf '%s\n' '<the auth key>' | nova-secrets set TAILSCALE_AUTHKEY --as here
+nova-fleet check
+```
+
+Once `check` ends `CHECK OK missing=0`, name the machines, each reachable as
+root over ssh at its address with this machine's key and its host key already
+in `known_hosts`. The first one named holds the fleet's PostgreSQL and Redis.
+`--check` plans; the same line without it runs:
+
+```text
+nova-fleet up --check --tools v2.0.0 store-1=203.0.113.7 web-1=203.0.113.8
+nova-fleet up --tools v2.0.0 store-1=203.0.113.7 web-1=203.0.113.8
+```
+
+The addresses are placeholders; put your machines' in their place. `up` runs
+in a fixed order (check, reach, the first machine's Tailscale, PostgreSQL and
+Redis, join, grant, push the store, health, tools, services, runners, a bus
+message read back), prints `UP <step> OK` per step and `UP MACHINE <name> OK
+...` per machine, and stops at the first `UP <step> FAILED exit=<n>`; the same
+command resumes. Every step and what it prints is in
+[fleet/README.md](../fleet/README.md#up).
+
+To see a play work on this machine alone, give nova-config a throwaway
+PostgreSQL, add this machine and one **service** row (a program a machine keeps
+running), and let `nova-fleet services --check` plan it. `--actor` names who
+made a change, and the history keeps it. The row's `os` and `arch` come from
+`uname`. On Debian and Ubuntu, apt puts `initdb` and `pg_ctl` in
 `/usr/lib/postgresql/<version>/bin`, outside PATH, so the first line adds the
-newest one; on macOS Homebrew's are already on PATH, and the line changes
-nothing:
+newest one; on macOS Homebrew's are already on PATH. `--inventory` names a
+script that prints `nova-config inventory`, and `ansible_connection=local`
+stands in for ssh:
 
 ```sh
 pg_bin=$(ls -d /usr/lib/postgresql/*/bin 2> /dev/null | tail -1); [ -n "$pg_bin" ] && export PATH="$pg_bin:$PATH"
@@ -119,49 +195,27 @@ export NOVA_PG_DSN=postgres://nova@127.0.0.1:54330/nova
 nova-config schema | PGOPTIONS="-c client_min_messages=warning" psql -q "$NOVA_PG_DSN"
 nova-config machine add here --address localhost --user "$(id -un)" --os "$(uname -s | tr '[:upper:]' '[:lower:]')" --arch "$(uname -m | sed 's/x86_64/amd64/; s/aarch64/arm64/')" --runners 1 --actor you
 nova-config service add hello --machine here --argv '["sh","-c","echo hello; sleep 60"]' --keepalive true --actor you
-nova-config inventory --host here
+printf '#!/bin/sh\nexec nova-config inventory "$@"\n' > "$work/inventory" && chmod +x "$work/inventory"
+nova-fleet services --check --inventory "$work/inventory" -- -e ansible_connection=local -e nova_service_only=hello | grep -E 'SERVICES|RESTART'
 ```
 
 The two writes print `CONFIG ADD kind=machine name=here rev=1` and
-`CONFIG ADD kind=service name=hello rev=2`. The inventory is the JSON
-Ansible reads for that host: `ansible_host`, `ansible_user`, `runners` and the
-`nova_services` list.
-
-Now let Ansible plan the service. Ansible comes from pip here; the inventory
-script runs `nova-config inventory`. `ansible_connection=local` stands in for
-SSH so the plan runs on this machine. On Debian and Ubuntu `python3 -m venv`
-fails until `python3-venv` is installed, because those systems ship Python's
-venv support as a separate package, so the first line installs it when the
-venv cannot be made. Without sudo, use `python3 -m venv --without-pip "$work/venv"`
-and then `pip --python "$work/venv/bin/python" install ansible-core` with any
-pip you already have.
-
-```sh
-python3 -m venv "$work/venv" || { rm -rf "$work/venv"; sudo apt install -y python3-venv && python3 -m venv "$work/venv"; }
-"$work/venv/bin/pip" install -q ansible-core
-export PATH="$work/venv/bin:$PATH"
-printf '#!/bin/sh\nexec nova-config inventory "$@"\n' > "$work/inventory" && chmod +x "$work/inventory"
-cd "$work/nova-tools"
-ansible-playbook -i "$work/inventory" fleet/services.yml -e ansible_connection=local -e nova_service_only=hello --check | grep -E 'SERVICES|RESTART'
-```
-
-On Linux it prints two lines, as Ansible prints a message:
+`CONFIG ADD kind=service name=hello rev=2`. The play prints its **receipt**,
+one summary line per host, as Ansible prints a message. On Linux:
 
 ```text
-    "msg": "WOULD-RESTART hello on here: its unit file changed"
-    "msg": "SERVICES host=here place=/home/<you>/.config/systemd/user records=1 enabled=1 written=1 retired=0 only=hello (check: nothing changed)"
+    "msg": "SERVICES host=here place=/home/<you>/.config/systemd/user records=1 enabled=1 written=1 retired=0 would-restart=hello only=hello (check: nothing changed)"
 ```
 
-On macOS it prints one:
+On macOS:
 
 ```text
     "msg": "SERVICES host=here place=/Users/<you>/Library/LaunchAgents records=1 enabled=1 written=1 retired=0 only=hello (check: nothing changed)"
 ```
 
-The `WOULD-RESTART` line says the systemd unit would be written and started;
-on macOS that step runs only for a job launchd already holds, so a check run
-prints none. The `SERVICES` line is the play's **receipt**, its one-line
-summary for the host. ansible-core 2.21 and later also print
+`would-restart=hello` says the systemd unit would be written and started; on
+macOS that part is absent, because the play restarts only a job launchd
+already holds. ansible-core 2.21 and later also print
 `[DEPRECATION WARNING]` lines about `INJECT_FACTS_AS_VARS` on stderr; they do
 not change the result. Without `--check` the play writes a systemd user unit
 on Linux, or a launchd job under `~/Library/LaunchAgents` on macOS, for each
@@ -170,111 +224,144 @@ row and starts it.
 The refusal you will meet first is
 `NOVA_PG_DSN carries a password; remove it and set NOVA_PG_PASSWORD` (exit 2):
 the password goes in `NOVA_PG_PASSWORD`, never in the DSN. The others are in
-[config/README.md](../config/README.md#refusals).
+[config/README.md](../config/README.md#refusals) and
+[fleet/README.md](../fleet/README.md#refusals).
 
-The whole tool: [config/README.md](../config/README.md) and
-[config/SPEC.md](../config/SPEC.md); the plays: [fleet/README.md](../fleet/README.md).
+The whole tool: [fleet/README.md](../fleet/README.md), with
+[config/README.md](../config/README.md) and [config/SPEC.md](../config/SPEC.md)
+for the rows.
 
 ## Run GitHub continuous integration runners across your fleet
 
-`fleet/github-runners.yml` installs GitHub Actions runners on every machine
-whose row has `--runners` above zero, registers them to one repository or
-organization, and runs each as a service that starts at boot. Plan it first:
+The `github-runners` play installs GitHub Actions runners on every machine
+whose row has `runners` above zero, registers them to one repository or
+organization, and runs each as a service that starts at boot; `nova-fleet up
+--runners URL` runs it as its runners step. `check --runners URL` adds what it
+needs to the list:
 
 ```sh
-ansible-playbook -i "$work/inventory" fleet/github-runners.yml -e ansible_connection=local \
-  -e github_runner_url=https://github.com/OWNER/REPO -e github_runner_scope=repo --check | grep 'would register'
+nova-fleet check --runners https://github.com/OWNER/REPO | grep -E 'gh|GITHUB_RUNNER_TOKEN'
 ```
 
-The plan prints, on Linux amd64:
-
 ```text
-    "msg": "here: 1 wanted, would register [1], would retire [], labels amd64,bench,linux,runner"
+CHECK FAILED missing=3
+CHECK OK gh <version>
+CHECK MISSING GITHUB_RUNNER_TOKEN: nova-secrets set GITHUB_RUNNER_TOKEN --as here (the value on stdin); the read said: SECRETS EXEC REFUSED reason=no-seat: ...
 ```
 
-and on macOS arm64:
+The `CHECK FAILED` line is on stderr, so the grep leaves it through; the two
+Tailscale lines from before are still counted.
+
+Under --check, github-runners reads GITHUB_RUNNER_TOKEN on the control node
+before it plans, so a green check is never followed by a run that fails on a
+missing token: store a token first (gh api ... -q .token | nova-secrets set
+GITHUB_RUNNER_TOKEN), then check. The token is passed on stdin, so it never
+appears on a command line or in logs; a registration token expires after an
+hour. With your human's repository:
 
 ```text
-    "msg": "here: 1 wanted, would register [1], would retire [], labels arm64,bench,darwin,runner"
-```
-
-`[1]` lists the runner numbers it would register; runner 1 is named `here-1`.
-The labels are the host's inventory groups, then the `os` and `arch` of its
-machine row. `bench` is there because a machine row without `--roles` gets the
-role `bench`, and `runner` because its `runners` value is above zero. On macOS
-the play then fails after that line with `sudo: a password is required` (exit
-2, which the `grep` above hides), because its look at `/Library/LaunchDaemons`
-runs as root even under `--check`; add `-K` on a Mac to let the check finish.
-
-To apply it, store a registration token, then run without `--check`; `-K`
-asks for the sudo password the service files need. The token goes in a
-nova-secrets store on this machine; this uses the store and seat key that the
-secrets section below creates:
-
-```text
-export NOVA_SECRETS_STORE="$work/store" NOVA_SECRETS_KEY="$work/keys/here.key" NOVA_SECRETS_SEAT=here
 gh api -X POST repos/OWNER/REPO/actions/runners/registration-token -q .token | nova-secrets set GITHUB_RUNNER_TOKEN
-ansible-playbook -i "$work/inventory" fleet/github-runners.yml -e github_runner_url=https://github.com/OWNER/REPO -e github_runner_scope=repo -K
+nova-fleet github-runners --check --diff -- -e github_runner_url=https://github.com/OWNER/REPO -e github_runner_scope=repo
+nova-fleet github-runners -- -e github_runner_url=https://github.com/OWNER/REPO -e github_runner_scope=repo
 ```
 
-The token is passed on stdin, so it never appears on a command line or in
-logs. While the task runs it is inside Ansible's per-task module file under
-`~/.ansible/tmp` (a mode 0700 directory, readable by the login user and root
-only), and it is removed when the task ends. A registration token expires
-after an hour.
+To see the plan on this machine with the throwaway rows above, store a
+placeholder token first. The plan prints one `RUNNER-PLAN` line per machine;
+the `RUNNERS` line after it reads GitHub's own list of runners, which a
+placeholder repository does not have:
+
+```sh
+printf 'example-token\n' | nova-secrets set GITHUB_RUNNER_TOKEN
+nova-fleet github-runners --check --inventory "$work/inventory" -- -e ansible_connection=local -e github_runner_url=https://github.com/OWNER/REPO -e github_runner_scope=repo | grep -E 'RUNNER'
+```
+
+On Linux amd64:
+
+```text
+    "msg": "RUNNER-PLAN here want=1 register=here-1 retire=- labels=amd64,bench,linux,runner (check: nothing changed)"
+    "msg": "RUNNERS here want=1 verified=no reason=gh: Not Found (HTTP 404)  (check: nothing changed)"
+```
+
+On macOS arm64 the labels are `arm64,bench,darwin,runner`. The labels are the
+host's inventory groups, then the `os` and `arch` of its machine row: `bench`
+because a machine row without `--roles` gets that role, `runner` because its
+`runners` value is above zero. A job selects the runner with
+`runs-on: [self-hosted, linux]`. The service files need passwordless sudo on
+Linux and macOS (`join` sets it up on Linux; on a Mac your human sets it at
+the console); no command asks for a password.
+
+Retiring a runner removes it from GitHub, which needs a **removal token**, a
+different one from the registration token, stored the same way:
+
+```text
+gh api -X POST repos/OWNER/REPO/actions/runners/remove-token -q .token | nova-secrets set GITHUB_RUNNER_TOKEN
+nova-fleet github-runners -- -e github_runner_url=https://github.com/OWNER/REPO -e github_runner_scope=repo -e github_runner_state=absent
+```
 
 The refusal you will meet first is
 `github-runner: give -e github_runner_url=... -e github_runner_scope=repo, ...`:
 name the repository or organization and its scope, and give each host a
-`runners` value or pass `-e runner_count=N`.
-
-The plays: [fleet/README.md](../fleet/README.md).
+`runners` value or pass `-e runner_count=N`. The others are in
+[fleet/README.md](../fleet/README.md#github-runners).
 
 ## Deploy secrets to machines in your fleet automatically
 
-A **store** is a git repository of encrypted files. A **seat** is a name for
-one machine or job that reads values: it has one age key and one file of
-values. `exec` decrypts the seat's file and starts a command with only the
-values it names. `init`, `seat add` and `set` each make a git commit in the
-store, so git needs an author. The first line gives this session one when git
-has none:
+Each machine has its own seat, and its key never leaves it. The control seat
+holds the values every machine needs, and `grant` copies named values into a
+machine's **grants file**, sealed to that machine's pinned key and the recovery
+key only; the control node's own key cannot open what it wrote. `nova-fleet
+up` does this for every machine (its grant step, default `NOVA_BUS_PASSWORD`),
+then pushes the encrypted store to each machine over the tailnet (its refresh
+step), so a value set once on the control node reaches every machine without
+anyone copying it by hand. This block plays a machine named `db` here: on a
+real fleet `db`'s key is made on `db`, and only its public half comes back:
 
 ```sh
-git config user.email > /dev/null || export GIT_AUTHOR_NAME=ai GIT_AUTHOR_EMAIL=ai@example.com GIT_COMMITTER_NAME=ai GIT_COMMITTER_EMAIL=ai@example.com
-mkdir -p "$work/keys"
-age-keygen -o "$work/keys/here.key" 2> /dev/null
-age-keygen -o "$work/keys/recovery.key" 2> /dev/null
-chmod 600 "$work/keys/here.key"
-nova-secrets init --store "$work/store" --recovery "$(age-keygen -y "$work/keys/recovery.key")"
-nova-secrets seat add here "$(age-keygen -y "$work/keys/here.key")" --store "$work/store"
-printf 'example-token\n' | nova-secrets set API_TOKEN --store "$work/store" --key "$work/keys/here.key" --as here
-nova-secrets exec --only API_TOKEN --store "$work/store" --key "$work/keys/here.key" --as here -- sh -c 'echo "got ${#API_TOKEN} bytes"'
+printf 'example-bus-password\n' | nova-secrets set NOVA_BUS_PASSWORD
+age-keygen -o "$work/keys/db.key" 2> /dev/null
+chmod 600 "$work/keys/db.key"
+nova-secrets seat add db "$(age-keygen -y "$work/keys/db.key")" --store "$work/store"
+nova-secrets grant NOVA_BUS_PASSWORD --to db --pub "$(age-keygen -y "$work/keys/db.key")"
+nova-secrets grant NOVA_BUS_PASSWORD --to db
+nova-secrets exec --only NOVA_BUS_PASSWORD --key "$work/keys/db.key" --as db -- sh -c 'echo "db got ${#NOVA_BUS_PASSWORD} bytes"'
+nova-secrets exec --only NOVA_BUS_PASSWORD --as db -- true || echo "exit $?"
 ```
 
-The last command prints `SECRETS EXEC OK as=here keys=1 cmd=sh` on stderr and
-`got 13 bytes`.
+```text
+SECRETS SET OK as=here name=NOVA_BUS_PASSWORD file=here.yaml committed; run: git -C <store> push
+SECRETS SEAT ADD OK seat=db committed; next: the seat's own key runs: nova-secrets set NAME --as db --store <store> --key <file> --pins <dir>
+SECRETS GRANT OK from=here to=db names=1 changed=1 committed; run: git -C <store> push
+SECRETS GRANT OK from=here to=db names=1 changed=0 unchanged
+SECRETS EXEC OK as=db keys=1 cmd=sh
+db got 20 bytes
+SECRETS EXEC REFUSED reason=not-recipient: key age1... is not the key in .sops.yaml for db (age1...): ...
+exit 125
+```
 
-To deploy, give a service row a seat and the names it needs. The services play
-then wraps the program in `nova-secrets exec --only <names>`, so the value
-reaches the program when the unit starts and is in no file Ansible writes:
+The first `grant` to a seat takes `--pub`, the machine's public key, and pins
+it; later grants check the pin. The same grant again changes nothing. The last
+line is the control node's own key being refused for `db`'s file, by design.
+
+On a machine, a service row's `seat` and `keys` make the services play wrap the
+program in `nova-secrets exec --only <keys>`, so the granted value reaches the
+program when its unit starts and is in no file Ansible writes:
 
 ```sh
-nova-config service add api --machine here --argv '["sh","-c","test -n \"$API_TOKEN\" && echo token present; sleep 60"]' --seat here --keys API_TOKEN --keepalive true --actor you
-ansible-playbook -i "$work/inventory" fleet/services.yml -e ansible_connection=local -e nova_service_only=api \
-  -e nova_secrets_store="$work/store" -e nova_secrets_key_dir="$work/keys" --check --diff | grep -E 'ExecStart|<string>(.*/nova-secrets|--only|API_TOKEN)</string>'
+nova-config service add api --machine here --argv '["sh","-c","test -n \"$NOVA_BUS_PASSWORD\" && echo password present; sleep 60"]' --seat db --keys NOVA_BUS_PASSWORD --keepalive true --actor you
+nova-fleet services --check --diff --inventory "$work/inventory" -- -e ansible_connection=local -e nova_service_only=api \
+  -e nova_secrets_store="$work/store" -e nova_secrets_key_dir="$work/keys" | grep -E 'ExecStart|<string>(.*/nova-secrets|--only|NOVA_BUS_PASSWORD)</string>'
 ```
 
-The diff shows the unit starting `nova-secrets exec` with `--only API_TOKEN`
-in front of the program: on Linux one `ExecStart=` line, on macOS three
-`<string>` lines of the plist's `ProgramArguments`. The two `-e` values point
-the unit at the store and key directory this session made; without them each
-machine's unit opens `~/.local/share/nova/secrets` with
-`~/.config/nova-secrets/<seat>.key`, as
-[group_vars/all.yml](../fleet/group_vars/all.yml) says. Each machine needs the
-store, its seat's key and sops at those places.
+The diff shows the unit starting `nova-secrets exec` with
+`--only NOVA_BUS_PASSWORD` in front of the program: on Linux one `ExecStart=`
+line, on macOS three `<string>` lines of the plist's `ProgramArguments`. The
+two `-e` values point the unit at this session's store and key directory;
+on a fleet, `up` puts the store at `~/.local/share/nova/secrets` and the key
+at `~/.config/nova-secrets/<seat>.key` on each machine, which the play uses by
+default.
 
 The refusal you will meet first is
-`SECRETS SET REFUSED: key file ... must be a regular file of mode 0600 owned by you`
+`SECRETS SET REFUSED reason=no-key: key file ... must be a regular file of mode 0600 owned by you`
 (exit 2, or 125 from `exec`): run `chmod 600` on the key file. The others are in
 [secrets/README.md](../secrets/README.md#refusals).
 
@@ -373,12 +460,13 @@ here shortened:
 
 ```text
 SEARCH OK hits=1 k=3 channels=bm25 files=0 entries=1 skipped=0 chunks=1: query="bench unit tests"
-SEARCH CAL score=0.97 score-channel=bm25 probe=unrelated-control
+SEARCH CAL score=0.29 score-channel=bm25 probe=unrelated-control
 SEARCH HIT rank=1 score=0.86 ... session=today entry=lesson-1 stamp=<time>
 ```
 
-A search that finds nothing prints a `SEARCH NOTE` instead of a hit, saying
-the search is by keywords only.
+A search that finds nothing prints `SEARCH MISS every query term is out of
+vocabulary for this corpus` and a `SEARCH NOTE` saying the search is by
+keywords only.
 
 The `HIT` line is the entry, with the time it was saved. The `CAL` line is the
 score of a deliberately unrelated query, for comparison. The same `append`
@@ -408,8 +496,8 @@ nova-sandbox check | head -1    # CHECK OK backend=landlock ... (Linux) or backe
 nova-cairn version | head -1    # nova-cairn <version> (dev when built from a clone)
 nova-bus who | head -1          # WHO OK present=<n>
 nova-config machine list | head -1                                   # MACHINE name=here address=localhost user=<you> ...
-nova-secrets seat list --store "${NOVA_SECRETS_STORE:-$work/store}"  # here file=yes rule=yes
-ansible-playbook --version | head -1                                 # ansible-playbook [core <version>]
+nova-secrets seat list --store "${NOVA_SECRETS_STORE:-$work/store}"  # db file=no rule=yes, then here file=yes rule=yes
+nova-fleet check | head -1                                           # CHECK OK ansible-playbook <version>
 ```
 
 ## Clean up
