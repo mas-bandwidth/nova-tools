@@ -175,6 +175,8 @@ func harnessName(w waker) string {
 		return "exec"
 	case *grokWake:
 		return "grok"
+	case *codexWake:
+		return "codex"
 	}
 	return "antigravity"
 }

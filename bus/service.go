@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -139,7 +140,11 @@ func installService(ctx context.Context, s sys, clk Clock, name string, cmd []st
 		return code
 	}
 	var vars [][2]string
-	for _, k := range []string{"NOVA_BUS_REDIS", "NOVA_BUS_USER", "NOVA_BUS_PASSWORD"} {
+	keys := []string{"NOVA_BUS_REDIS", "NOVA_BUS_USER", "NOVA_BUS_PASSWORD"}
+	if slices.Contains(cmd, "--codex-thread") { // codex is found on the installer's PATH, under its CODEX_HOME
+		keys = append(keys, "PATH", "CODEX_HOME")
+	}
+	for _, k := range keys {
 		if v := env(k); v != "" {
 			vars = append(vars, [2]string{k, v})
 		}

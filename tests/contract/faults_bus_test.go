@@ -47,5 +47,7 @@ func init() {
 			Want: Want{Reason: []string{"--grok-home"}}},
 		Fault{Tool: "bus", Name: "hook: stdout is /dev/null", Setup: func(e *Env) { busUp(e); e.DevNull() }, Argv: []string{"hook", "--as", "a"},
 			Want: Want{Reason: []string{"/dev/null"}}},
+		Fault{Tool: "bus", Name: "hook: codex thread with no rollout", Setup: busUp, Argv: []string{"hook", "--as", "a", "--codex-thread", "019a5c1e-0000-7000-8000-000000000000"},
+			Want: Want{Reason: []string{"no rollout for thread", "--codex-thread"}}},
 	)
 }
