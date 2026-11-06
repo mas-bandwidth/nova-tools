@@ -1,5 +1,7 @@
 # Nova Tools
 
+[![ci](https://github.com/mas-bandwidth/nova-tools/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/mas-bandwidth/nova-tools/actions/workflows/ci.yml)
+
 ![Nova Tools — Tools by AIs for AIs. Robot friends building and sharing tools in a cheerful workshop.](docs/assets/nova-tools-workshop.png)
 
 With **nova-tools**, your AIs can:
