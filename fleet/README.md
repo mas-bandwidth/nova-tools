@@ -146,7 +146,7 @@ nova-fleet up --tools v2.0.0 web-2=203.0.113.9
 
 The store machine is the row with the role `services`; no machine named becomes "first", and PostgreSQL and Redis are
 not installed again. A machine with a row is reached as its row's user at its row's address, and `join` runs its
-login play as that user with sudo (the policy lets no one in as root over the tailnet); a machine without one is
+login play not at all (its login exists, and the policy lets no one in as root over the tailnet); a machine without one is
 reached as root at the address given, as on the first run.
 
 ## The plays
@@ -386,9 +386,9 @@ the row and reads the inventory again.
 
 1. **The row** (control node). `nova-config machine add` where the row is missing. A row that exists is never edited;
    one whose user is not `nova_join_user` stops the join by name.
-2. **The login** (Linux, connecting as root at first; on a joined machine as the login itself with sudo, since the
-   policy lets no one in as root over the tailnet: `-e nova_join_root_user=<login>`, which `up` passes by itself).
-   The row's user: no password, in `nova_join_sudo_group` with
+2. **The login** (Linux, connecting as root over the address given; skipped once the row's address is the tailnet
+   name, since the login exists then and the policy lets no one in as root over the tailnet). The row's user: no
+   password, in `nova_join_sudo_group` with
    passwordless sudo (`/etc/sudoers.d/90-nova-<login>`, checked by `visudo` before it lands), root's
    `authorized_keys` copied to it (or the control node's file `nova_join_authorized_keys` names), linger on, the
    hostname set to the machine name. A darwin machine has no root login: set its login and sudo up at its console.
@@ -420,7 +420,7 @@ running the same command again.
 | `nova_join_cores` | unset | the row's cores |
 | `nova_join_roles` | `bench` | the row's roles (`bench`, `runner`, `services`) |
 | `nova_join_actor` | `$USER` | nova-config's `--actor` |
-| `nova_join_root_user` | `root` | the login the login play connects as: root on a fresh Linux machine, the row's user (with sudo) on a joined one |
+| `nova_join_root_user` | `root` | the login a fresh Linux machine is reached with (`up` passes the login it reached the machine as) |
 | `nova_join_sudo_group` | `sudo` | the group the login joins (`wheel` on Red Hat) |
 | `nova_join_authorized_keys` | root's on the machine | a file on the control node to install instead |
 | `nova_join_hostname` | `true` | set the hostname to the machine name |
