@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -57,6 +58,7 @@ type machine struct {
 	row                     map[string]any
 	unreachable             string // the reason, under --check
 	later                   bool   // under --check, a machine with no row yet: the steps after join wait for it
+	roleLater               bool   // under --check, a row that lacks the runner role: the runners wait for it
 }
 
 // upRun is one up: its inputs and what it has learnt so far.
@@ -130,7 +132,7 @@ func parseUp(args []string, stderr io.Writer) (*upRun, int) {
 		default:
 			name, addr, ok := strings.Cut(a, "=")
 			parts := strings.Split(addr, "/")
-			if !ok || name == "" || addr == "" || (len(parts) != 1 && len(parts) != 3) || !machineName(name) {
+			if !ok || name == "" || addr == "" || (len(parts) != 1 && len(parts) != 3) || !nameRE.MatchString(name) {
 				return refuse("want a machine as <name>=<address>[/<os>/<arch>] (a lowercase name), got %s", a)
 			}
 			m := &machine{name: name, address: parts[0], os: "linux", arch: "amd64"}
@@ -162,14 +164,7 @@ func parseUp(args []string, stderr io.Writer) (*upRun, int) {
 	return u, 0
 }
 
-func machineName(s string) bool {
-	for i, c := range s {
-		if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '-' && i > 0) {
-			return false
-		}
-	}
-	return s != ""
-}
+var nameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 
 // runnerScope is repo or org for a GitHub URL, "" for anything else.
 func runnerScope(url string) string {
@@ -190,11 +185,8 @@ func localVersion(dir string) (string, error) {
 		return "", err
 	}
 	for _, line := range strings.Split(string(b), "\n") {
-		f := strings.Fields(line)
-		if len(f) == 2 {
-			if p := strings.Split(strings.TrimPrefix(f[1], "*"), "_"); len(p) == 4 {
-				return p[1], nil
-			}
+		if f := strings.Fields(line); len(f) == 2 && strings.Count(f[1], "_") == 3 {
+			return strings.Split(f[1], "_")[1], nil
 		}
 	}
 	return "", fmt.Errorf("no <tool>_<version>_<os>_<arch> line in %s", filepath.Join(dir, "SHA256SUMS"))
@@ -204,10 +196,7 @@ func (u *upRun) say(format string, a ...any) { fmt.Fprintf(u.stdout, format+"\n"
 
 // would is the state word of a step under --check.
 func (u *upRun) would(did string) string {
-	if u.check {
-		return "WOULD-" + did + " (check: nothing changed)"
-	}
-	return "OK"
+	return map[bool]string{true: "WOULD-" + did + " (check: nothing changed)", false: "OK"}[u.check]
 }
 
 // secrets wraps argv in nova-secrets exec with only the named values.
@@ -512,6 +501,7 @@ func (u *upRun) steps() int {
 					return fail("join "+m.name, c)
 				}
 				u.say("UP ROLE %s %s runner", m.name, u.would("SET"))
+				m.roleLater = u.check
 			}
 		}
 	}
@@ -559,12 +549,7 @@ func (u *upRun) steps() int {
 
 	// 7. refresh: secrets-refresh pushes the encrypted store from this node's clone to each machine
 	// (rsync over the tailnet: no .git, stale files deleted, 0700/0600); a rerun pushes again.
-	var in []string
-	for _, m := range u.machines {
-		if m.unreachable == "" && !m.later {
-			in = append(in, m.name)
-		}
-	}
+	in := u.ready(false)
 	if len(in) == 0 { // every machine named waits for its row: nothing to check the plays against
 		for _, s := range []string{"REFRESH", "HEALTH", "TOOLS", "SERVICES", "RUNNERS", "BUS"} {
 			wouldRun(s, "once join has made the rows")
@@ -605,13 +590,19 @@ func (u *upRun) steps() int {
 	mark("services", u.machines...)
 	u.say("UP SERVICES %s", u.would("RUN"))
 	if u.runners != "" {
+		on := u.ready(true) // the machines whose row has the runner role, so the play finds them in its group
 		seat, _ := json.Marshal(map[string][]string{"github_runner_secrets_args": {"--store", u.store, "--key", u.key, "--as", u.seat}})
-		if c := u.play("github-runners", false, pg, append([]string{"-e", "github_runner_url=" + u.runners, "-e", "github_runner_scope=" + runnerScope(u.runners),
-			"-e", "runner_count=" + strconv.Itoa(u.runnerCount), "-e", string(seat)}, limit...)...); c != 0 {
+		if len(on) == 0 {
+			wouldRun("RUNNERS", "once the runner role is on the rows")
+		} else if c := u.play("github-runners", false, pg, "-e", "github_runner_url="+u.runners, "-e", "github_runner_scope="+runnerScope(u.runners),
+			"-e", "runner_count="+strconv.Itoa(u.runnerCount), "-e", string(seat), "-l", strings.Join(on, ",")); c != 0 {
 			return fail("runners", c)
+		} else {
+			for _, m := range u.machines {
+				pass[m.name] = append(pass[m.name], map[bool][]string{true: {"runners"}}[slices.Contains(on, m.name)]...)
+			}
+			u.say("UP RUNNERS %s %s", u.would("RUN"), u.runners)
 		}
-		mark("runners", u.machines...)
-		u.say("UP RUNNERS %s %s", u.would("RUN"), u.runners)
 	}
 
 	// 12. the bus: a message to this control node's own inbox, read back by its subject.
@@ -635,6 +626,16 @@ func (u *upRun) steps() int {
 		u.say("UP BUS OK %s round-trip=%s", u.bus, word)
 	}
 	return u.end(pass, "")
+}
+
+// ready names the machines a play can run on: reached, with a row (and the runner role, with roles).
+func (u *upRun) ready(roles bool) (names []string) {
+	for _, m := range u.machines {
+		if m.unreachable == "" && !m.later && !(roles && m.roleLater) {
+			names = append(names, m.name)
+		}
+	}
+	return
 }
 
 // end prints one line per machine and, after a run, the store's DSN for the next up.
