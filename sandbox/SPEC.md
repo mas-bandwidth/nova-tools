@@ -20,6 +20,36 @@ does not require it to be set. The guide's Go build passes `TMPDIR`, `GOCACHE`,
 `GOMODCACHE` and `GOPROXY` with `--env`. `TMPDIR`, `GOCACHE` and `GOPROXY` point
 inside a `--write`; `GOMODCACHE` points inside a `--read`. `HOME` is kept.
 
+## What a run prints
+
+Once the wall has been built, stderr gets one `WALL` line before the command,
+and the same line when the working directory is refused. `grants=none` means no
+`--read` and no `--write`. Otherwise the line lists `read=` and `write=`.
+`net=open` unless `--net-deny` was set, in which case it is `net=denied`.
+System roots are not listed.
+
+A working directory outside the system roots and every grant is `cwd` (exit 125,
+not 2). The text is `<cwd> is outside the wall; cd <granted dir> or add --read <cwd>`.
+A missing `--write` includes `mkdir -p` of that path. A path that exists and is
+not a directory keeps the old text and does not say mkdir.
+
+The parent stays for the command's lifetime and in the same process group as
+the command, so a terminal read is not stopped. The child is a re-exec of this
+binary (`wall-apply`, not a public verb) that applies the wall and execs in
+place. A command killed by signal N makes the parent print
+`nova-sandbox: command killed by signal N (exit 128+N)` and exit 128+N.
+SIGINT, SIGTERM, SIGHUP and SIGQUIT delivered to the waiter are forwarded to
+the command's pid.
+
+On Linux the child is started with `Pdeathsig` SIGKILL. When the waiter dies
+for any reason, including SIGKILL, the kernel kills the command. On macOS
+there is no `Pdeathsig`. The four signals above are forwarded only while the
+waiter is still alive to do it. SIGKILL of the waiter is not caught, and the
+command can keep running.
+
+`check` OK carries the field `next=nova-sandbox\x20probe` before `note=`.
+The `\x20` is a space, escaped the way cairn escapes a field.
+
 ## System roots
 
 The command can always read and run these paths.

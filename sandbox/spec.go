@@ -143,6 +143,9 @@ func resolveDir(goos, flag, raw string) (string, *refusal) {
 	}
 	fi, err := os.Stat(raw)
 	if err != nil || !fi.IsDir() {
+		if flag == "--write" && os.IsNotExist(err) {
+			return fail("%s is not an existing directory; mkdir -p %s", raw, raw)
+		}
 		return fail("%s is not an existing directory; none is created", raw)
 	}
 	resolved, err := filepath.EvalSymlinks(raw)
@@ -171,6 +174,42 @@ func badPath(goos, p string) string {
 
 func underAny(p string, roots []string) bool {
 	return slices.ContainsFunc(roots, func(d string) bool { return p == d || strings.HasPrefix(p, strings.TrimSuffix(d, "/")+"/") })
+}
+
+// wallLine is the one stderr line a run prints once the wall has been built.
+// System roots are not listed. net=denied only when --net-deny was set.
+func wallLine(w *wall) string {
+	net := "open"
+	if w.netDeny {
+		net = "denied"
+	}
+	if len(w.reads)+len(w.writes) == 0 {
+		return "WALL grants=none net=" + net
+	}
+	s := "WALL"
+	if len(w.reads) > 0 {
+		s += " read=" + strings.Join(w.reads, ",")
+	}
+	if len(w.writes) > 0 {
+		s += " write=" + strings.Join(w.writes, ",")
+	}
+	return s + " net=" + net
+}
+
+// outsideCwd reports a working directory outside the system roots and every grant.
+// The text names a directory to cd into, or tells the caller to --read this one.
+func outsideCwd(dir string, w *wall, goos string) (refusal, bool) {
+	if underAny(dir, slices.Concat(systemRoots(goos), w.optRoots, w.reads, w.writes)) {
+		return refusal{}, false
+	}
+	grant := "a granted directory"
+	switch {
+	case len(w.writes) > 0:
+		grant = w.writes[0]
+	case len(w.reads) > 0:
+		grant = w.reads[0]
+	}
+	return refuse("cwd", "%s is outside the wall; cd %s or add --read %s", dir, grant, dir), true
 }
 
 // resolveCommand finds the command on PATH and checks it can run, outside the wall:

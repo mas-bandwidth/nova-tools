@@ -6,9 +6,10 @@ out of reach. Linux uses Landlock and seccomp. macOS uses `sandbox-exec`.
 Other systems are refused. Cd into a directory you grant, and set `TMPDIR`
 inside a `--write`, before you run; pass it with `--env TMPDIR`.
 
-A denial is the kernel's EPERM in the command's own output. nova-sandbox execs
-in place and leaves no process behind. `nova-sandbox probe` confirms the wall
-before you trust a denial.
+A denial is the kernel's EPERM in the command's own output. The command replaces
+the walled process. nova-sandbox waits until it exits, so a signal can be
+reported: `nova-sandbox: command killed by signal N (exit 128+N)`, and the
+status is 128+N. `nova-sandbox probe` confirms the wall before you trust a denial.
 
 Words used below: the **wall** is the set of kernel restrictions applied to the
 command. A **grant** is a directory you name with `--read` or `--write`. The
@@ -41,12 +42,19 @@ nova-sandbox [--read <dir>]... [--write <dir>]... [--net-deny [--net-allow <host
 | `--env <name>` | Pass this variable by name. `PATH`, `HOME`, `LANG` and `TERM` pass without it. Repeatable. An unset name is refused on a run. |
 
 Flags go before `--`; everything after it is the command. Directories must be
-absolute and exist. The command must lie under a system root or a
-grant, so for a program in `~/bin`, add `--read ~/bin`. The working directory
-is the caller's: start in a granted directory. The environment kept is `PATH`,
-`HOME`, `LANG` and `TERM`. `--env <name>` passes another by name; the value
-stays in the environment and is never an argument. An unset name is refused.
-Point `HOME` and `TMPDIR` inside a `--write`, and pass `TMPDIR` with `--env`.
+absolute and exist. A missing `--write` names `mkdir -p` of that path. A path
+that exists and is not a directory keeps its refusal and does not name mkdir.
+The command must lie under a system root or a grant, so for a program in
+`~/bin`, add `--read ~/bin`. The working
+directory has to be a system root or a grant. Otherwise the run refuses with
+exit 125, not 2: `<cwd> is outside the wall; cd <granted dir> or add --read <cwd>`.
+Before the command starts, and on that refusal, stderr gets one line.
+`WALL grants=none net=open` means you named no directory and the network is open.
+`net=denied` means you passed `--net-deny`. Reads and writes are listed when you
+named them. The environment kept is `PATH`, `HOME`, `LANG` and `TERM`.
+`--env <name>` passes another by name; the value stays in the environment and is
+never an argument. An unset name is refused. Point `HOME` and `TMPDIR` inside a
+`--write`, and pass `TMPDIR` with `--env`.
 
 ```sh
 work_dir=$(mktemp -d)
@@ -82,7 +90,7 @@ nova-sandbox check
 ```
 
 ```text
-CHECK OK backend=landlock abi=4 net=enforceable note=landlock abi 4; seccomp available; net-deny landlock_tcp+seccomp; signals scoped to the wall at abi 6+
+CHECK OK backend=landlock abi=4 net=enforceable next=nova-sandbox\x20probe note=landlock abi 4; seccomp available; net-deny landlock_tcp+seccomp; signals scoped to the wall at abi 6+
 ```
 
 Exit 1 prints `CHECK FAILED ... reason=...`. `net=unavailable` means
@@ -126,13 +134,16 @@ exit 2
 
 A wall that cannot start prints `SANDBOX REFUSED reason=<reason>: <text>`, for
 example `SANDBOX REFUSED reason=not_found: nosuchcmd is on no PATH entry or does not exist`.
+If the command is killed by signal N, stderr gains
+`nova-sandbox: command killed by signal N (exit 128+N)` and the status is 128+N.
 
 | Reason | Exit | Cause and next step |
 |---|---|---|
 | `bad_flag` | 2 | Unknown flag or missing value. Read `nova-sandbox -h`. |
 | `bad_value` | 2 | A flag's value starts with `--`, so the flag took the next flag or `--`. Give the flag its value. |
 | `no_command` | 2 | No `--`, or nothing after it. Put the command after `--`. |
-| `bad_read`, `bad_write` | 2 | Directory is relative, missing or has unsupported characters, or the command is outside every grant. Create it, use its absolute path, or `--read` the command's directory. |
+| `bad_read`, `bad_write` | 2 | Directory is relative, missing or has unsupported characters, or the command is outside every grant. A missing `--write` names `mkdir -p`. Create it, use its absolute path, or `--read` the command's directory. |
+| `cwd` | 125 | The working directory is outside the system roots and every grant. cd into a granted directory, or add `--read` of the working directory. Exit 2 is the tool's usage code, so this refusal is not 2. |
 | `bad_net` | 2 | Bad loopback `host:port`, or `--net-allow` without `--net-deny`. |
 | `bad_gpu` | 2 | `--gpu` on Linux. Use `--write /dev/dri`. |
 | `bad_env` | 2 | `--env` is not a name of letters, digits and underscores, or the name is unset on a run. Set it in the environment; the value is never an argument. |
@@ -154,5 +165,6 @@ example `SANDBOX REFUSED reason=not_found: nosuchcmd is on no PATH entry or does
 - `--unix` lets the command reach any local socket by path, so use it only for trusted commands.
 - A kept descriptor (`--keep-fds`) can carry access past the grants.
 - CPU, memory, processes and disk use are not limited.
+- nova-sandbox waits for the command, in the same process group, so a terminal read keeps working. SIGINT, SIGTERM, SIGHUP and SIGQUIT are forwarded to the command. On Linux the command is killed when the waiter dies. On macOS, SIGKILL of the waiter can leave the command running. [SPEC.md](SPEC.md) states both.
 
 How the tool is tested is in [SPEC.md](SPEC.md).

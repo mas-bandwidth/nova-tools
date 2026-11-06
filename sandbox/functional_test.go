@@ -83,6 +83,7 @@ func TestCheckAndProbe(t *testing.T) {
 	code, out, _ := sandbox(t, os.TempDir(), "check")
 	require.Equal(t, 0, code, out)
 	assert.Contains(t, out, "CHECK OK backend=")
+	assert.Contains(t, out, " next=nova-sandbox\\x20probe note=")
 	code, out, _ = sandbox(t, os.TempDir(), "probe")
 	require.Equal(t, 0, code, out)
 	assert.Contains(t, out, "PROBE OK")
@@ -135,7 +136,37 @@ func TestExitStatusPassesThrough(t *testing.T) {
 	code, _, _ := sandbox(t, job, "--write", job, "--", "/bin/sh", "-c", "exit 7")
 	assert.Equal(t, 7, code)
 	code, _, stderr := sandbox(t, job, "--write", job, "--", "/bin/sh", "-c", "kill -9 $$")
-	assert.Equal(t, -1, code, "killed by a signal, so the shell parent sees it; "+stderr)
+	assert.Equal(t, 137, code, stderr)
+	assert.Contains(t, stderr, "nova-sandbox: command killed by signal 9 (exit 137)")
+}
+
+func TestWallLineCwdAndMkdir(t *testing.T) {
+	t.Parallel()
+	job, out := scratch(t)
+	code, _, stderr := sandbox(t, "/usr", "--", "/bin/true")
+	require.Equal(t, 0, code, stderr)
+	assert.Contains(t, stderr, "WALL grants=none net=open\n")
+
+	code, _, stderr = sandbox(t, out, "--write", job, "--", "/bin/true")
+	assert.Equal(t, 125, code, stderr)
+	assert.Contains(t, stderr, "WALL write="+job+" net=open\n")
+	assert.Contains(t, stderr, "SANDBOX REFUSED reason=cwd")
+	assert.Contains(t, stderr, "cd "+job+" or add --read "+out)
+	assert.NotContains(t, stderr, "; run:")
+
+	code, _, stderr = sandbox(t, job, "--write", job, "--net-deny", "--", "/bin/true")
+	require.Equal(t, 0, code, stderr)
+	assert.Contains(t, stderr, "WALL write="+job+" net=denied\n")
+
+	missing := filepath.Join(job, "missing")
+	code, _, stderr = sandbox(t, job, "--write", missing, "--", "/bin/true")
+	assert.Equal(t, 2, code, stderr)
+	assert.Contains(t, stderr, "mkdir -p "+missing)
+	file := filepath.Join(job, "f")
+	require.NoError(t, os.WriteFile(file, nil, 0o600))
+	code, _, stderr = sandbox(t, job, "--write", file, "--", "/bin/true")
+	assert.Equal(t, 2, code, stderr)
+	assert.NotContains(t, stderr, "mkdir")
 }
 
 func TestRefusalsExit2And126And127(t *testing.T) {

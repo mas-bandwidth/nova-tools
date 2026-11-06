@@ -262,3 +262,57 @@ func TestReport(t *testing.T) {
 	assert.Equal(t, "SANDBOX REFUSED reason=net_unenforceable: x\nSANDBOX REFUSED reason=no_seccomp: y\n", b.String(),
 		"a wall refusal is runtime, not usage: every reason on its own line, exit 125")
 }
+
+func TestWallCwdMkdirAndSignalText(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, "WALL grants=none net=open", wallLine(&wall{}))
+	assert.Equal(t, "WALL grants=none net=denied", wallLine(&wall{netDeny: true}))
+	assert.Equal(t, "WALL read=/a,/b write=/c net=denied", wallLine(&wall{reads: []string{"/a", "/b"}, writes: []string{"/c"}, netDeny: true}))
+	assert.Equal(t, "WALL write=/c net=open", wallLine(&wall{writes: []string{"/c"}}))
+
+	r, ok := outsideCwd("/work", &wall{writes: []string{"/granted"}}, "linux")
+	require.True(t, ok)
+	assert.Equal(t, "cwd", r.reason)
+	assert.Equal(t, "/work is outside the wall; cd /granted or add --read /work", r.text)
+	_, ok = outsideCwd("/usr/bin", &wall{}, "linux")
+	assert.False(t, ok, "a directory under a system root is inside the wall")
+	_, ok = outsideCwd("/granted/sub", &wall{reads: []string{"/granted"}}, "linux")
+	assert.False(t, ok)
+	r, ok = outsideCwd("/work", &wall{}, "darwin")
+	require.True(t, ok)
+	assert.Contains(t, r.text, "cd a granted directory or add --read /work")
+	assert.Equal(t, "nova-sandbox: command killed by signal 9 (exit 137)", signalText(9))
+
+	root := t.TempDir()
+	_, bad := build(spec{writes: []string{filepath.Join(root, "none")}, argv: []string{"/bin/sh"}}, "linux")
+	require.NotEmpty(t, bad)
+	assert.Contains(t, bad[0].text, "mkdir -p "+filepath.Join(root, "none"))
+	file := filepath.Join(root, "f")
+	require.NoError(t, os.WriteFile(file, nil, 0o600))
+	_, bad = build(spec{writes: []string{file}, argv: []string{"/bin/sh"}}, "linux")
+	require.NotEmpty(t, bad)
+	assert.NotContains(t, bad[0].text, "mkdir")
+	_, bad = build(spec{reads: []string{filepath.Join(root, "none")}, argv: []string{"/bin/sh"}}, "linux")
+	require.NotEmpty(t, bad)
+	assert.NotContains(t, bad[0].text, "mkdir")
+
+	// The test process is not inside root, so this refuses before any exec.
+	var out, errb strings.Builder
+	code := run([]string{"--write", root, "--", "/usr/bin/true"}, &out, &errb, []string{"PATH=/usr/bin:/bin"})
+	assert.Equal(t, 125, code, errb.String())
+	assert.Empty(t, out.String())
+	assert.Contains(t, errb.String(), "WALL write=")
+	assert.Contains(t, errb.String(), "net=open")
+	assert.Contains(t, errb.String(), "SANDBOX REFUSED reason=cwd")
+	assert.Contains(t, errb.String(), "or add --read")
+	assert.NotContains(t, errb.String(), "; run:")
+
+	code, help, errs := func() (int, string, string) {
+		var o, e strings.Builder
+		c := run([]string{"check", "-h"}, &o, &e, nil)
+		return c, o.String(), e.String()
+	}()
+	assert.Equal(t, 0, code)
+	assert.Empty(t, errs)
+	assert.Contains(t, help, `next=nova-sandbox\x20probe`)
+}
