@@ -11,7 +11,7 @@ send them.
 
 ```
 nova-bus send --as <me> --to <name>[,<name>] [--re <id>] <subject> <body | ->
-nova-bus hook --as <name>
+nova-bus hook --as <name> [--harness claude|codex|grok|antigravity] [its flags]
 nova-bus who
 nova-bus pending --as <name> [--list]
 nova-bus help [<verb>] | -h | --help | <verb> -h
@@ -22,11 +22,14 @@ nova-bus help [<verb>] | -h | --help | <verb> -h
   `<name> <id>` for each. The subject may not be empty. A body of `-` is read
   from stdin, less exactly one trailing newline. `--re <id>` names the message
   this one answers and must be an id as hook prints it, `<ms>-<seq>`.
-- **hook** prints every message still waiting for `<name>`, then blocks and
-  prints each new one as it arrives, and holds `<name>`'s presence while it
-  runs. It runs until killed. Its stdout carries only message lines; on stderr
-  it says `HOOK OK name=<name> waiting=<n>` once it holds the name (once per
-  process, not on each reconnect).
+- **hook** delivers every message still waiting for `<name>`, then blocks and
+  delivers each new one as it arrives, into the session that runs it, waking
+  it when idle (see Waking a session), and holds `<name>`'s presence while it
+  runs. It runs until killed. With `--harness claude` (the default) its stdout
+  carries only message lines; with any other harness, only receipts. On stderr
+  it says `HOOK HARNESS OK harness=<h> ...` once a harness other than claude
+  answered, and `HOOK OK name=<name> waiting=<n>` once it holds the name (once
+  per process, not on each reconnect).
 - **who** prints `WHO OK present=<n>`, then `<name><TAB><uptime>` for each
   present name, sorted by name; uptime is a Go duration to the second
   (`1h2m3s`), or `?` when the key does not hold a start time (including a key
@@ -38,8 +41,58 @@ nova-bus help [<verb>] | -h | --help | <verb> -h
   `help <verb>`, `<verb> -h` and `<verb> --help` print that verb's usage.
   Help exits 0 and writes nothing to stderr.
 
-There is no ack verb: hook acks each message after printing its line, and that
-is the one way a message is marked handled.
+There is no ack verb: hook acks each message after delivering it, and that is
+the one way a message is marked handled.
+
+## Waking a session
+
+The wake is the bus: a message that sits unseen because its session is idle is
+not delivered. Each harness has one mechanism, which puts a message into a
+running turn and wakes an idle session alike (from v1.6.29 `nova-hook`):
+
+- **claude**: the hook runs under the session's Monitor tool, which makes each
+  stdout line a notification. The hook does nothing more; run with `&` or into
+  a file, nothing wakes. A hook whose stdout is the `/dev/null` device (same
+  rdev; the Go runtime reopens a closed fd 1 there) would ack every message
+  unread, so it is refused at start, exit 2.
+- **codex** (`--codex-socket <path> --codex-thread <id> --codex-events-dir
+  <dir>`): the message is saved as `<dir>/<id>.json` (`event_id`,
+  `local_receiver`, `message`), then, on the Codex desktop app's IPC socket
+  (frames of a 4-byte little-endian length and one JSON object):
+  `initialize` (version 0), `thread-owner-discovery` (version 1; the owner
+  must report `supportsUntrustedAppInput`), and `thread-follower-start-turn`
+  (version 2, to that owner, `inheritThreadSettings`) with the one fixed text
+  naming the file. A `client-discovery-request` from the app is answered
+  `canHandle: false`. The socket and its directory must be this user's, not
+  symlinks, not group or world writable; the events directory is made (only
+  its last component) mode 0700 and must be private.
+- **grok** (`--grok-home <dir>`): the message's line is appended to
+  `<dir>/nova-hook.wake`, which the Grok session's Monitor tails.
+- **antigravity** (`--antigravity-dir <workspace> --antigravity-session <id>
+  --antigravity-events-dir <dir> [--antigravity-server <port>]`): the message
+  is saved as for codex, then `<language_server> agentapi send-message
+  --title=nova-bus <session> <fixed text>` runs with the port and the CSRF
+  token in its environment. The candidates are every `language_server` of
+  this user in `ps` with a `--csrf_token`, those whose `--workspace_id` is the
+  workspace's (path or symlink target) first; Antigravity 2.29 runs one hub
+  server with no `--workspace_id`. The one taken is the first whose agentapi
+  answers `get-conversation-metadata <session>` on a port from `lsof` (or
+  the one named); none answering is exit 1 naming the candidate count. The
+  hook's stdout never wakes Antigravity: an idle conversation wakes only on a
+  task's exit, a subagent's message, or a SYSTEM_MESSAGE file under
+  `~/.gemini/antigravity/brain/<id>/.system_generated/messages/`.
+
+The wake text is fixed: only the validated name, id and path enter it, never a
+field of the message. The harness is checked at start, before the name is
+claimed: missing (socket, directory, workspace, a bad id) is exit 2, not
+answering is exit 1. Each wake prints one receipt on stdout,
+`HOOK WAKE harness=<h> id=<id> ok` or `HOOK WAKE harness=<h> id=<id> FAILED:
+<reason>` (the reason escaped as a line is). A failed wake is not retried and
+not acked: the hook reads its pending list past it (`XREADGROUP` from the last
+pending id taken), so it neither blocks the pending pass nor is tried twice
+by one hook; the next hook, or the next reconnect, delivers it again. What was
+v1's recovery, lanes, challenges, chat following and consumption tracking is
+not here.
 
 ## Exit codes and refusals
 
@@ -113,9 +166,10 @@ client never retries a command by itself.
 
 ## Delivery
 
-A hook reads its pending entries first (`XREADGROUP ... 0`: handed to a hook
-and never acked), then new ones (`XREADGROUP ... >`, up to 100 at a time). For
-each entry it writes the line, then acks it and deletes it (`XACK` and `XDEL`
+A hook reads its pending entries first (`XREADGROUP ... 0`, then past the
+last one taken: handed to a hook and never acked), then new ones
+(`XREADGROUP ... >`, up to 100 at a time). For each entry it delivers it
+(writes the line, or wakes the session), then acks it and deletes it (`XACK` and `XDEL`
 in one `MULTI`), so an inbox holds only what is waiting. The ack runs to the end
 even if a signal arrives after the write, and no further line is written once
 one has. So:

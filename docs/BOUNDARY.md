@@ -61,6 +61,14 @@ include `boundary` itself (`tests/boundary`, 400).
   shapes, deduped recipients, empty-subject refusal, VERB STATUS lines
   (`HOOK OK`, `WHO OK`, `PENDING OK`), the holder and budget in `HOOK WAIT`,
   and an unreachable server said plainly with the reconnect log rate-limited.
+- `bus` 700 -> 1500 (2026-11-05): the wake is the bus. A hook delivers each
+  message into its session and wakes it when idle; v2 had dropped that for
+  every harness but Claude Code, which is the bus's whole point. This restores
+  v1.6.29 nova-hook's wake and nothing else (no recovery, lanes or friend
+  machinery): `--harness codex` (the desktop IPC socket and saved events),
+  `grok` (the wake file), `antigravity` (agentapi send-message), the receipts,
+  the start-up checks, the /dev/null refusal for `claude`, and the pending
+  read past a failed wake (bus/tla/Bus.tla, BusWake.cfg). 1450 lines plus 50.
 
 ## Adding a tool
 
