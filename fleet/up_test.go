@@ -500,10 +500,13 @@ func TestCheck(t *testing.T) {
 	}
 	for _, w := range []string{"CHECK OK ansible-playbook 1.2.3\n", "CHECK OK ansible.posix\n", "CHECK OK tailscale 1.2.3\n", "CHECK OK nova-config /bin/nova-config\n", "CHECK OK ssh /bin/ssh\n",
 		"CHECK OK tailnet\n", "CHECK OK tag:control\n", "CHECK OK store " + f.store + "\n", "CHECK OK seat control\n", "CHECK OK pins " + os.Getenv("NOVA_SECRETS_PINS") + "\n",
-		"CHECK OK TAILSCALE_AUTHKEY readable in seat control\n", "CHECK OK NOVA_PG_DSN none yet (a new fleet: up prints it)\n"} {
+		"CHECK OK NOVA_PG_DSN none yet (a new fleet: up prints it)\n"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout lacks %q:\n%s", w, out)
 		}
+	}
+	if strings.Contains(out, "TAILSCALE_AUTHKEY") {
+		t.Errorf("check read the join key:\n%s", out)
 	}
 	if strings.Contains(out, "GITHUB_RUNNER_TOKEN") || strings.Contains(out, " gh ") {
 		t.Errorf("runner prerequisites checked without --runners:\n%s", out)

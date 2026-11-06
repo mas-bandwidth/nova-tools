@@ -149,7 +149,7 @@ the helpers and is on a tailnet, two lines are left, and the run ends
 
 ```text
 CHECK MISSING tag:control: sudo tailscale up --advertise-tags=tag:control --auth-key=<a key allowed that tag>  # or tag this node in the admin console: ...
-CHECK MISSING TAILSCALE_AUTHKEY: nova-secrets set TAILSCALE_AUTHKEY --as here  # the value on stdin; the read said: SECRETS EXEC REFUSED reason=no-name: ...
+CHECK MISSING key: export NOVA_SECRETS_KEY=<this seat's age key file>  # new: age-keygen -o ~/.config/nova-secrets/<seat>.key
 ```
 
 Each `CHECK MISSING` line ends with the command that fixes it. These two are

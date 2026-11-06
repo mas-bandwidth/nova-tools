@@ -20,7 +20,7 @@ The control node's preflight, the first step of nova-fleet up: one line per prer
 CHECK OK <name> <version|path> or CHECK MISSING <name>: <the command that fixes it, for this
 OS, pasteable as it stands, a reason after # when there is one, in paste order>; this node on the tailnet and tagged tag:control; the store, key, seat and
 pins of NOVA_SECRETS_STORE, NOVA_SECRETS_KEY, NOVA_SECRETS_SEAT and NOVA_SECRETS_PINS;
-TAILSCALE_AUTHKEY (and GITHUB_RUNNER_TOKEN with --runners) read from the seat, the reason
+GITHUB_RUNNER_TOKEN (with --runners) read from the seat (up also reads TAILSCALE_AUTHKEY), the reason
 printed when a read fails; and NOVA_PG_DSN once a fleet exists. Tailscale and Ansible are
 required here, never optional. Nothing is changed. Exit: 0 all present; 1 something missing
 (CHECK FAILED missing=<n>); 2 could not run.
@@ -238,7 +238,10 @@ func (u *upRun) control(out io.Writer) int {
 			fmt.Fprintf(out, "CHECK OK %s %s\n", in.name, in.val)
 		}
 	}
-	read := []string{"TAILSCALE_AUTHKEY"}
+	var read []string
+	if u.joinKey { // up joins machines with it; a plain check has no machine to join
+		read = append(read, "TAILSCALE_AUTHKEY")
+	}
 	if u.runners != "" {
 		read = append(read, "GITHUB_RUNNER_TOKEN")
 	}

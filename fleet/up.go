@@ -70,6 +70,7 @@ type upRun struct {
 	dir, store, seat     string
 	key, pins, dsn       string
 	bus                  string // the Redis the bus is at, host:port
+	joinKey              bool   // up reads TAILSCALE_AUTHKEY; a plain check does not
 	stdout, stderr       io.Writer
 	bin                  map[string]string
 }
@@ -665,7 +666,7 @@ func runUp(args []string, stdout, stderr io.Writer) int {
 	if u == nil {
 		return code
 	}
-	u.stdout = stdout
+	u.stdout, u.joinKey = stdout, true
 	if noController("up", stderr) {
 		return 2
 	}
