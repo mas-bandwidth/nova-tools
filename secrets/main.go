@@ -7,6 +7,8 @@ package main
 
 import (
 	"bytes"
+	"crypto/hmac"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -29,10 +31,11 @@ import (
 const usage = `nova-secrets: sops-encrypted secrets in a git store, handed to one command at a time.
 A new store takes four commands, in this order: init, seat add, set, exec.
 
-nova-secrets init --store <dir> --recovery <age-public-key>
+nova-secrets init --store <dir> --recovery <age-public-key> [--pins <dir>]
   Create a store in <dir>, which must be absent or empty (its parent must exist) and not inside another git
   work tree: git init, .sops.yaml with no rules, recovery.pub, one commit. Refuses a store that exists.
-  The recovery key is a public key (age-keygen -y <file>); keep its private half offline.
+  The recovery key is a public key (age-keygen -y <file>); keep its private half offline. --pins also writes
+  it to <dir>/recovery.pub, the control node's pin, outside the store (grant reads it).
   Prints: SECRETS INIT OK store=<dir> next: nova-secrets seat add <seat> <age-pubkey> --store <dir>
 
 nova-secrets seat add <seat> <age-public-key> --store <dir>
@@ -42,23 +45,33 @@ nova-secrets seat add <seat> <age-public-key> --store <dir>
 nova-secrets seat list --store <dir>
   List the seats the rules in .sops.yaml name and the seat files present, one "<seat> file=yes|no rule=yes|no" per line.
 
-nova-secrets set NAME --store <dir> --key <file> [--as <seat>] [--sops <path>]
+nova-secrets set NAME --store <dir> --key <file> --pins <dir> [--as <seat>] [--recovery <age1>] [--sops <path>]
   Read one value from stdin (one non-empty line of at most 65536 bytes, never a terminal), set NAME in <seat>.yaml and commit that
-  file. Pushing is yours. Example: pass show db | nova-secrets set DB_PASSWORD --store S --key K --as web
+  file. Pushing is yours. The file is sealed to --key's public half and the recovery pin <dir>/recovery.pub only;
+  --recovery writes that pin when it is absent. Example: pass show db | nova-secrets set DB_PASSWORD --store S --key K --pins P --as web
+
+nova-secrets grant NAME[,NAME] --to <seat> --pins <dir> --store <dir> --key <file> [--as <seat>] [--pub <age1>]
+  [--recovery <age1>] [--sops <path>]
+  Write <seat>.grants.yaml from the named values of the --as seat (the control node's), encrypted to the seat's
+  pinned key and the pinned recovery key only, whatever .sops.yaml says; the granting key never opens it. It is
+  rewritten whole, keeping the names this node's ledger <dir>/<seat>.ledger says it granted. Pins are <dir>/<seat>.pub and <dir>/recovery.pub on this machine;
+  --pub and --recovery write one that is absent and refuse one that differs (reason=key-changed), as does a
+  seat rule whose key is not the pin. A grant that would change nothing writes nothing. Pushing is yours.
 
 nova-secrets names --store <dir> [--as <seat>]
-  List the names in <seat>.yaml, one per line, from the file's plaintext keys. No key, no sops, no value read.
+  List the names in <seat>.yaml and <seat>.grants.yaml, one per line, from the plaintext keys. No key, no value read.
   A key that is no environment variable name is not printed and is counted as refused=<n> on stderr.
 
 nova-secrets exec --only NAME[,NAME] --store <dir> --key <file> [--as <seat>] [--sops <path>] -- <cmd> [args...]
-  Decrypt <seat>.yaml and become <cmd> with only the --only values added to its environment.
+  Decrypt <seat>.yaml and <seat>.grants.yaml (a name in both is refused) and become <cmd> with only the --only values added to its environment.
   Exit: the command's own status; 125 when exec refused at run time and the command never ran.
 
 --store and --key are required where a verb lists them (or NOVA_SECRETS_STORE / NOVA_SECRETS_KEY); the
 current directory is never assumed. --as defaults to $NOVA_SECRETS_SEAT, else the short hostname; --sops
 to sops on PATH. No verb prints a value. Exit codes: 0 done, 2 refused (exec: 125). A refusal is one stderr line,
 SECRETS <VERB> REFUSED reason=<r>: <why>, r one of no-store no-seat no-key not-recipient no-name no-sops
-no-command sops git other.
+no-command sops git other, and for set, grant and the files they read no-pin key-changed untrusted-rule
+wrong-recipients duplicate-name not-regular grants-changed. --pins may come from NOVA_SECRETS_PINS.
 `
 
 // helpFor is the paragraph for a verb, or the whole text for "".
@@ -175,6 +188,8 @@ func (t tool) main(args []string) int {
 		err = t.seatAdd(rest)
 	case "seat list":
 		err = t.seatList(rest)
+	case "grant":
+		err = t.grant(rest)
 	case "seat":
 		verb, err = "seat add", bad("the seat verbs are: seat add <seat> <age-public-key> --store <dir>, and seat list --store <dir>")
 	default:
@@ -200,7 +215,7 @@ func (t tool) main(args []string) int {
 }
 
 func (t tool) unknownVerb(verb string) int {
-	fmt.Fprintf(t.stderr, "nova-secrets: unknown verb %q (init, seat add, seat list, set, names, exec); run: nova-secrets help\n", verb)
+	fmt.Fprintf(t.stderr, "nova-secrets: unknown verb %q (init, seat add, seat list, set, grant, names, exec); run: nova-secrets help\n", verb)
 	return 2
 }
 
@@ -211,7 +226,7 @@ func beforeDashes(verb string, args []string) []string {
 	return args
 }
 
-type opts struct{ store, as, key, sops, only, recovery string }
+type opts struct{ store, as, key, sops, only, recovery, to, pins, pub string }
 
 // parse reads flags after the verb's positional arguments (npos of them) and
 // fills in the defaults; also names inputs the caller found missing, so one refusal names them all.
@@ -221,7 +236,7 @@ func (t tool) parse(verb string, args []string, npos int, needKey bool, also ...
 	}
 	fs := flag.NewFlagSet(verb, flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	for name, p := range map[string]*string{"store": &o.store, "as": &o.as, "key": &o.key, "sops": &o.sops, "only": &o.only, "recovery": &o.recovery} {
+	for name, p := range map[string]*string{"store": &o.store, "as": &o.as, "key": &o.key, "sops": &o.sops, "only": &o.only, "recovery": &o.recovery, "to": &o.to, "pins": &o.pins, "pub": &o.pub} {
 		fs.StringVar(p, name, "", "")
 	}
 	fs.Func("require", "", func(v string) error { o.only += "," + v; return nil }) // hidden alias of --only, for existing units
@@ -248,6 +263,19 @@ func (t tool) parse(verb string, args []string, npos int, needKey bool, also ...
 	}
 	if verb == "init" && o.recovery == "" {
 		missing = append(missing, "--recovery <age-public-key>")
+	}
+	if verb == "grant" && o.to == "" {
+		missing = append(missing, "--to <seat>")
+	}
+	if (verb == "grant" || verb == "set") && o.pins == "" {
+		if o.pins = envValue(t.environ, "NOVA_SECRETS_PINS"); o.pins == "" {
+			missing = append(missing, "--pins <dir> (or NOVA_SECRETS_PINS)")
+		}
+	}
+	for flag, v := range map[string]string{"to": o.to, "pub": o.pub, "recovery": o.recovery, "pins": o.pins} {
+		if v != "" && verb != "grant" && !((verb == "init" || verb == "set") && (flag == "recovery" || flag == "pins")) {
+			return o, nil, bad("unknown flag --%s", flag)
+		}
 	}
 	if needKey && o.key == "" {
 		if o.key = envValue(t.environ, "NOVA_SECRETS_KEY"); o.key == "" {
@@ -381,16 +409,27 @@ func (t tool) set(args []string) error {
 	if _, err := t.toplevel(o.store); err != nil {
 		return refuse("%s is not a git repository; run: git -C %s init && git -C %s add -A && git -C %s commit -m store", o.store, o.store, o.store, o.store)
 	}
+	rec, err := t.pinnedRecovery(o)
+	if err != nil {
+		return err
+	}
 	values := map[string]string{} // a seat's first value starts its file
-	if _, err := os.Stat(o.file(o.as)); err == nil {
-		if values, err = t.decrypt(o, o.as); err != nil {
+	if _, ok, err := seatFile(o, o.as+".yaml"); err != nil {
+		return err
+	} else if ok {
+		if values, err = t.decryptFile(o, o.as, o.as+".yaml"); err != nil {
 			return err
 		}
 	} else if _, err := t.keyVsRule(o, o.as); err != nil { // the first encrypt is checked like the later decrypts
 		return err
 	}
+	if granted, err := plainNames(o, o.as+".grants.yaml"); err != nil {
+		return err
+	} else if slices.Contains(granted, name) {
+		return deny("duplicate-name", "%s is granted to %s already (%s.grants.yaml); a name lives in one file: use another name, or stop granting it", name, o.as, o.as)
+	}
 	values[name] = value
-	if err := t.encrypt(o, o.as, values); err != nil {
+	if err := t.encrypt(o, o.as, values, rec); err != nil {
 		return err
 	}
 	file := o.as + ".yaml"
@@ -409,8 +448,8 @@ func (t tool) seatAdd(args []string) error {
 		return err
 	}
 	seat, pub := pos[0], pos[1]
-	if !seatName.MatchString(seat) || !agePub.MatchString(pub) {
-		return bad("usage: seat add <seat> <age1...>; the seat is letters, digits, - and _")
+	if !seatName.MatchString(seat) || !agePub.MatchString(pub) || strings.EqualFold(seat, "recovery") {
+		return bad("usage: seat add <seat> <age1...>; the seat is letters, digits, - and _, and not recovery")
 	}
 	b, err := os.ReadFile(filepath.Join(o.store, "recovery.pub"))
 	rec := strings.TrimSpace(string(b))
@@ -437,7 +476,7 @@ func (t tool) seatAdd(args []string) error {
 			return fmt.Errorf("%w; .sops.yaml is written: run: git -C %s status", err, o.store)
 		}
 	}
-	fmt.Fprintf(t.stdout, "SECRETS SEAT ADD OK seat=%s committed; next: the seat's own key runs: nova-secrets set NAME --as %s --store %s --key <file>\n", seat, seat, o.store)
+	fmt.Fprintf(t.stdout, "SECRETS SEAT ADD OK seat=%s committed; next: the seat's own key runs: nova-secrets set NAME --as %s --store %s --key <file> --pins <dir>\n", seat, seat, o.store)
 	return nil
 }
 
@@ -520,11 +559,10 @@ func (t tool) sopsRun(o opts, stdin io.Reader, args ...string) ([]byte, error) {
 // diagnose names why sops failed on a seat's file when the key is the cause. It
 // compares the key's public half (age-keygen -y) with the seat's rule in .sops.yaml
 // and with the file's own recipients; it reads no value.
-func (t tool) diagnose(o opts, seat string, fail error) error {
+func (t tool) diagnose(o opts, seat, file string, fail error) error {
 	if _, err := t.lookPath("age-keygen"); err != nil {
 		return refuse("%v; age-keygen not found, so the key cannot be checked: install age", fail)
 	}
-	file := seat + ".yaml"
 	pub, err := t.keyVsRule(o, seat)
 	if err != nil || pub == "" {
 		if err == nil {
@@ -532,7 +570,7 @@ func (t tool) diagnose(o opts, seat string, fail error) error {
 		}
 		return err
 	}
-	data, _ := os.ReadFile(o.file(seat))
+	data, _ := os.ReadFile(filepath.Join(o.store, file))
 	if rs, ok := recipientsOf(data); ok && len(rs) > 0 && !slices.Contains(rs, pub) {
 		return deny("not-recipient", "key %s is the key in .sops.yaml for %s but not among %s's %d recipients: re-key it with: cd %s && SOPS_AGE_KEY_FILE=<recovery.key> sops updatekeys -y %s",
 			pub, seat, file, len(rs), o.store, file)
@@ -542,6 +580,15 @@ func (t tool) diagnose(o opts, seat string, fail error) error {
 
 // keyVsRule is the public half of --key (age-keygen -y) and a refusal when the seat's
 // rule in .sops.yaml names another key. It is "" and nil when it cannot tell.
+// publicOf is the public half of --key.
+func (t tool) publicOf(o opts) (string, error) {
+	out, err := t.run(nil, t.sopsEnv(o.key, os.TempDir()), o.store, "age-keygen", "-y", o.key)
+	if pub := strings.TrimSpace(string(out)); err == nil && agePub.MatchString(pub) {
+		return pub, nil
+	}
+	return "", deny("no-key", "age-keygen -y %s did not print an age public key; is it an age key, and is age-keygen on PATH?", o.key)
+}
+
 func (t tool) keyVsRule(o opts, seat string) (string, error) {
 	out, err := t.run(nil, t.sopsEnv(o.key, os.TempDir()), o.store, "age-keygen", "-y", o.key)
 	pub := strings.TrimSpace(string(out))
@@ -574,20 +621,77 @@ func noSeatFile(o opts, seat string) error {
 	if s := seatsIn(o.store); len(s) > 0 {
 		have = strings.Join(s, ",")
 	}
-	return deny("no-seat", "no %s.yaml in %s: wrong --as? seats here: %s; or create it: nova-secrets set NAME --as %s --store %s --key <file>", seat, o.store, have, seat, o.store)
+	return deny("no-seat", "no %s.yaml in %s: wrong --as? seats here: %s; or create it: nova-secrets set NAME --as %s --store %s --key <file> --pins <dir>", seat, o.store, have, seat, o.store)
 }
 
-// decrypt opens <seat>.yaml into its flat name -> value map.
+// decrypt opens <seat>.yaml and <seat>.grants.yaml into one flat name -> value map; a name in both is refused.
 func (t tool) decrypt(o opts, seat string) (map[string]string, error) {
-	file := seat + ".yaml"
-	if _, err := os.Stat(o.file(seat)); err != nil {
+	values, found := map[string]string{}, false
+	for _, file := range []string{seat + ".yaml", seat + ".grants.yaml"} {
+		if _, ok, err := seatFile(o, file); err != nil {
+			return nil, err
+		} else if !ok {
+			continue
+		}
+		found = true
+		vs, err := t.decryptFile(o, seat, file)
+		if err != nil {
+			return nil, err
+		}
+		for k, v := range vs {
+			if _, dup := values[k]; dup {
+				return nil, deny("duplicate-name", "%s is in both %s.yaml and %s.grants.yaml; a name lives in one file: remove it from %s.yaml with sops, or stop granting it", k, seat, seat, seat)
+			}
+			values[k] = v
+		}
+	}
+	if !found {
 		return nil, noSeatFile(o, seat)
 	}
+	return values, nil
+}
+
+// seatFile is the store's file name; ok is false when it is absent. Anything there but a regular file (a symlink to
+// another seat's file, a directory) is refused, so a seat is only ever read and written as itself.
+func seatFile(o opts, name string) (string, bool, error) {
+	p := filepath.Join(o.store, name)
+	fi, err := os.Lstat(p)
+	if errors.Is(err, os.ErrNotExist) {
+		return p, false, nil
+	}
+	if err != nil || !fi.Mode().IsRegular() {
+		return p, false, deny("not-regular", "%s is not a regular file (a symlink, or a directory); a seat file is read only as itself: remove it, then run again", p)
+	}
+	return p, true, nil
+}
+
+// plainNames lists the names in a seat file's plaintext keys, with no key and no sops; none when it is absent.
+func plainNames(o opts, name string) ([]string, error) {
+	p, ok, err := seatFile(o, name)
+	if err != nil || !ok {
+		return nil, err
+	}
+	b, _ := os.ReadFile(p)
+	_, top, err := parseTop(b)
+	if err != nil {
+		return nil, refuse("%s does not parse as a sops file (anchors, aliases and merge keys are refused)", p)
+	}
+	var names []string
+	for i := 0; i+1 < len(top.Content); i += 2 {
+		if k := top.Content[i].Value; k != "sops" && k != markKey {
+			names = append(names, k)
+		}
+	}
+	return names, nil
+}
+
+// decryptFile opens one seat file into its flat name -> value map.
+func (t tool) decryptFile(o opts, seat, file string) (map[string]string, error) {
 	out, err := t.sopsRun(o, nil, "-d", "--output-type", "json", file)
 	if err != nil {
 		var r refusal
 		if errors.As(err, &r) && r.sops {
-			return nil, t.diagnose(o, seat, err)
+			return nil, t.diagnose(o, seat, file, err)
 		}
 		return nil, err
 	}
@@ -612,7 +716,7 @@ func (t tool) decrypt(o opts, seat string) (map[string]string, error) {
 			s = fmt.Sprint(v)
 		case nil:
 		default: // a nested value is no environment variable; the value is not shown
-			return nil, refuse("%s: %s is not a single value", file, k)
+			return nil, refuse("%s: %q is not a single value", file, k)
 		}
 		if !envName.MatchString(k) || strings.Contains(s, "\x00") {
 			return nil, refuse("%s: %q is not an environment variable name, or its value holds a NUL", file, k)
@@ -622,22 +726,117 @@ func (t tool) decrypt(o opts, seat string) (map[string]string, error) {
 	return values, nil
 }
 
-// encrypt writes values to <seat>.yaml, the plaintext on sops's stdin only.
-func (t tool) encrypt(o opts, seat string, values map[string]string) error {
+// pinsOutside refuses a pin directory that is the store, inside it, or inside any git work tree: a pin a pusher can
+// write is no pin.
+func (t tool) pinsOutside(o opts) error {
+	pins, store := realPath(o.pins), realPath(o.store)
+	if rel, err := filepath.Rel(store, pins); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return deny("no-pin", "pin directory %s is the store or inside it; pins live outside the store, as ~/.config/nova-secrets/pins", o.pins)
+	}
+	if err := os.MkdirAll(o.pins, 0o700); err != nil {
+		return deny("no-pin", "pin directory %s: %v", o.pins, err)
+	}
+	if top, err := t.toplevel(o.pins); err == nil && top != "" {
+		return deny("no-pin", "pin directory %s is inside the git work tree %s; pins live outside any repository, as ~/.config/nova-secrets/pins", o.pins, top)
+	}
+	return nil
+}
+
+// pinnedRecovery is the recovery pin, refused when the store's recovery.pub is another key.
+func (t tool) pinnedRecovery(o opts) (string, error) {
+	if err := t.pinsOutside(o); err != nil {
+		return "", err
+	}
+	rec, err := pinned(o.pins, "recovery", o.recovery)
+	if err != nil {
+		return "", err
+	}
+	if b, _ := os.ReadFile(filepath.Join(o.store, "recovery.pub")); strings.TrimSpace(string(b)) != rec {
+		return "", deny("key-changed", "%s/recovery.pub is not the pinned recovery key %s: the store was edited; restore it, then run again", o.store, rec)
+	}
+	return rec, nil
+}
+
+// encrypt writes values to <seat>.yaml, the plaintext on sops's stdin only, sealed with sops --config /dev/null to
+// the public half of --key and the recovery pin: nothing in the store chooses a recipient. The rule must say the
+// same, so exec's checks agree. Model: secrets/tla/Recipients.tla, Set.
+func (t tool) encrypt(o opts, seat string, values map[string]string, rec string) error {
 	plain, err := json.Marshal(values)
 	if err != nil {
 		return refuse("encoding the seat: %v", err)
 	}
-	out, err := t.sopsRun(o, bytes.NewReader(plain), "-e", "--filename-override", seat+".yaml", "--input-type", "json", "--output-type", "yaml", "/dev/stdin")
+	cfg, err := plainConfig(o)
 	if err != nil {
-		var r refusal
-		cfg, _ := os.ReadFile(filepath.Join(o.store, ".sops.yaml"))
-		if errors.As(err, &r) && r.sops && ruleFor(cfg, seat+".yaml") == nil {
-			return deny("no-seat", "no rule for %s.yaml in %s/.sops.yaml (or it does not parse); run: nova-secrets seat add %s <age-public-key> --store %s", seat, o.store, seat, o.store)
-		}
+		return err
+	}
+	rule := ruleFor(cfg, seat+".yaml")
+	if rule == nil {
+		return deny("no-seat", "no rule for %s.yaml in %s/.sops.yaml; run: nova-secrets seat add %s <age-public-key> --store %s", seat, o.store, seat, o.store)
+	}
+	pub, err := t.publicOf(o)
+	if err != nil {
+		return err
+	}
+	age := ageOf(rule)
+	if len(rule.Content) != 4 || field(rule, "path_regex") == nil || len(age) != 2 || age[1] != rec {
+		return deny("untrusted-rule", "the rule for %s.yaml is not the one seat add writes (path_regex, and age: the seat's key then the recovery key), so a value could reach another key: fix it, then run again", seat)
+	}
+	if age[0] != pub {
+		return deny("key-changed", "the rule for %s.yaml names %s, not --key's %s: the store was edited, or the seat has a new key; fix the rule, then run again", seat, age[0], pub)
+	}
+	out, err := t.sopsRun(o, bytes.NewReader(plain), "--config", os.DevNull, "-e", "--age", pub+","+rec, "--filename-override", seat+".yaml", "--input-type", "json", "--output-type", "yaml", "/dev/stdin")
+	if err != nil {
+		return err
+	}
+	if err := sealedTo(out, seat+".yaml", []string{pub, rec}); err != nil {
 		return err
 	}
 	return writeFile(o.file(seat), out, 0o600)
+}
+
+// plainConfig is .sops.yaml, refused when it is not a plain YAML map: sops resolves anchors, aliases and merge keys
+// that a check of the unresolved tree would not see.
+func plainConfig(o opts) ([]byte, error) {
+	cfg, err := os.ReadFile(filepath.Join(o.store, ".sops.yaml"))
+	if _, _, perr := parseTop(cfg); err != nil || perr != nil {
+		return nil, deny("untrusted-rule", "%s/.sops.yaml is missing or not a plain YAML map (anchors, aliases and merge keys are refused); fix it, then run again", o.store)
+	}
+	return cfg, nil
+}
+
+// ageOf is a rule's age list, each key trimmed.
+func ageOf(r *yaml.Node) []string {
+	a := field(r, "age")
+	if a == nil {
+		return nil
+	}
+	keys := strings.Split(a.Value, ",")
+	for i := range keys {
+		keys[i] = strings.TrimSpace(keys[i])
+	}
+	return keys
+}
+
+// sealedTo refuses what sops returned unless its age recipients are exactly want and it names no other key source;
+// nothing is written before this check.
+func sealedTo(out []byte, file string, want []string) error {
+	_, top, err := parseTop(out)
+	meta := field(top, "sops")
+	if err != nil || meta == nil || meta.Kind != yaml.MappingNode {
+		return deny("wrong-recipients", "sops returned no sops metadata for %s; nothing is written", file)
+	}
+	for i := 0; i+1 < len(meta.Content); i += 2 {
+		k, v := meta.Content[i].Value, meta.Content[i+1]
+		if slices.Contains([]string{"kms", "gcp_kms", "azure_kv", "hc_vault", "pgp", "key_groups"}, k) && (len(v.Content) > 0 || v.Kind == yaml.ScalarNode && v.Value != "" && v.Tag != "!!null") {
+			return deny("wrong-recipients", "sops sealed %s to a %s key too; nothing is written", file, k)
+		}
+	}
+	got, _ := recipientsOf(out)
+	slices.Sort(got)
+	if !slices.Equal(got, slices.Sorted(slices.Values(want))) {
+		return deny("wrong-recipients", "sops sealed %s to %d age keys, not exactly %s; nothing is written", file, len(got), strings.Join(want, ","))
+	}
+	return nil
 }
 
 // gitRun runs git in dir without the caller's repository variables.
@@ -663,15 +862,15 @@ func (t tool) toplevel(dir string) (string, error) {
 	return strings.TrimSpace(string(out)), err
 }
 
-func sameDir(a, b string) bool {
-	real := func(p string) string {
-		if r, err := filepath.EvalSymlinks(p); err == nil {
-			p = r
-		}
-		abs, _ := filepath.Abs(p)
-		return abs
+func sameDir(a, b string) bool { return realPath(a) == realPath(b) }
+
+// realPath is p with symlinks resolved where it exists, absolute.
+func realPath(p string) string {
+	if r, err := filepath.EvalSymlinks(p); err == nil {
+		p = r
 	}
-	return real(a) == real(b)
+	abs, _ := filepath.Abs(p)
+	return abs
 }
 
 // writeFile replaces path through a temporary file beside it and a rename.
@@ -699,10 +898,18 @@ func exitOf(err error) string {
 
 func parseTop(data []byte) (doc, top *yaml.Node, err error) {
 	doc = &yaml.Node{}
-	if err = yaml.Unmarshal(data, doc); err != nil || doc.Kind != yaml.DocumentNode || len(doc.Content) != 1 || doc.Content[0].Kind != yaml.MappingNode {
-		return nil, nil, errors.New("not a YAML map")
+	if err = yaml.Unmarshal(data, doc); err != nil || doc.Kind != yaml.DocumentNode || len(doc.Content) != 1 || doc.Content[0].Kind != yaml.MappingNode || !plain(doc) {
+		return nil, nil, errors.New("not a plain YAML map")
 	}
 	return doc, doc.Content[0], nil
+}
+
+// plain is whether a YAML tree has no anchor, alias or merge key: what is checked is then what sops reads.
+func plain(n *yaml.Node) bool {
+	if n.Anchor != "" || n.Kind == yaml.AliasNode || n.Tag == "!!merge" {
+		return false
+	}
+	return !slices.ContainsFunc(n.Content, func(c *yaml.Node) bool { return !plain(c) })
 }
 
 func field(m *yaml.Node, key string) *yaml.Node {
@@ -812,26 +1019,39 @@ func (t tool) names(args []string) error {
 	if err != nil {
 		return err
 	}
-	b, err := os.ReadFile(o.file(o.as))
-	if err != nil {
-		return noSeatFile(o, o.as)
-	}
-	_, top, err := parseTop(b)
-	if err != nil {
-		return refuse("%s does not parse as a sops file", o.file(o.as))
-	}
 	var out strings.Builder
-	shown, refused := 0, 0
-	for i := 0; i+1 < len(top.Content); i += 2 {
-		k, v := top.Content[i], top.Content[i+1]
-		switch {
-		case k.Value == "sops" || k.Value == markKey:
-		case k.Kind != yaml.ScalarNode || k.Tag != "!!str" || !envName.MatchString(k.Value) || v.Kind != yaml.ScalarNode:
-			refused++
-		default:
-			out.WriteString(k.Value + "\n")
-			shown++
+	var seen []string
+	shown, refused, found := 0, 0, false
+	for _, file := range []string{o.as + ".yaml", o.as + ".grants.yaml"} {
+		p, ok, err := seatFile(o, file)
+		if err != nil {
+			return err
+		} else if !ok {
+			continue
 		}
+		found = true
+		b, _ := os.ReadFile(p)
+		_, top, err := parseTop(b)
+		if err != nil {
+			return refuse("%s does not parse as a sops file (anchors, aliases and merge keys are refused)", p)
+		}
+		for i := 0; i+1 < len(top.Content); i += 2 {
+			k, v := top.Content[i], top.Content[i+1]
+			switch {
+			case k.Value == "sops" || k.Value == markKey:
+			case k.Kind != yaml.ScalarNode || k.Tag != "!!str" || !envName.MatchString(k.Value) || v.Kind != yaml.ScalarNode:
+				refused++
+			case slices.Contains(seen, k.Value):
+				return deny("duplicate-name", "%s is in both %s.yaml and %s.grants.yaml; a name lives in one file", k.Value, o.as, o.as)
+			default:
+				seen = append(seen, k.Value)
+				out.WriteString(k.Value + "\n")
+				shown++
+			}
+		}
+	}
+	if !found {
+		return noSeatFile(o, o.as)
 	}
 	fmt.Fprint(t.stdout, out.String())
 	fmt.Fprintf(t.stderr, "SECRETS NAMES OK as=%s names=%d refused=%d\n", o.as, shown, refused)
@@ -891,6 +1111,184 @@ func (t tool) initStore(args []string) error {
 	if err := t.git(o.store, append([]string{"commit", "-q", "-m", "init secrets store", "--"}, files...)...); err != nil {
 		return err
 	}
+	if o.pins != "" {
+		if err := t.pinsOutside(o); err != nil {
+			return err
+		}
+		if _, err := pinned(o.pins, "recovery", rec); err != nil {
+			return err
+		}
+	}
 	fmt.Fprintf(t.stdout, "SECRETS INIT OK store=%s next: nova-secrets seat add <seat> <age-pubkey> --store %s\n", o.store, o.store)
 	return nil
+}
+
+// pinned is the pin <dir>/<name>.pub, a public key kept on the control node outside the store, so nothing a
+// pusher writes into the store can choose who a grant reaches. want, when given, writes an absent pin and must
+// match a present one.
+func pinned(dir, name, want string) (string, error) {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", deny("no-pin", "pin directory %s: %v", dir, err)
+	}
+	if fi, err := os.Lstat(dir); err != nil || !fi.IsDir() || checkPrivate(dir, fi) != nil {
+		return "", deny("no-pin", "pin directory %s must be a directory of yours that no one else can write; run: chmod 700 %s (Windows: icacls %s /inheritance:r /grant:r %%USERNAME%%:(OI)(CI)F)", dir, dir, dir)
+	}
+	p := filepath.Join(dir, name+".pub")
+	fi, err := os.Lstat(p)
+	if errors.Is(err, os.ErrNotExist) {
+		if want == "" {
+			return "", deny("no-pin", "no pin for %s in %s; pin it once with %s", name, dir, map[bool]string{true: "--recovery <the recovery public key>", false: "--pub <the machine's age public key, read from the machine>"}[name == "recovery"])
+		}
+		if !agePub.MatchString(want) {
+			return "", bad("%q is not an age public key (age1...)", want)
+		}
+		return want, writeFile(p, []byte(want+"\n"), 0o644)
+	}
+	b, _ := os.ReadFile(p)
+	pin := strings.TrimSpace(string(b))
+	if err != nil || !fi.Mode().IsRegular() || checkPrivate(p, fi) != nil || !agePub.MatchString(pin) {
+		return "", deny("no-pin", "%s must be a regular file of yours, writable only by you, holding one age public key", p)
+	}
+	if want != "" && want != pin {
+		return "", deny("key-changed", "%s is pinned to %s, not %s: a rebuilt machine's new key is a person's to pin (remove %s, then grant with --pub)", name, pin, want, p)
+	}
+	return pin, nil
+}
+
+// grant writes <to>.grants.yaml from the --as seat's values, sealed with sops --config /dev/null to the pinned seat
+// key and the pinned recovery key: .sops.yaml, operators and the store's recovery.pub choose nothing, and the
+// granting key is never a recipient. Model: secrets/tla/Recipients.tla, Grant.
+func (t tool) grant(args []string) error {
+	o, pos, err := t.parse("grant", args, 1, true)
+	if err != nil {
+		return err
+	}
+	var names []string
+	for _, n := range strings.Split(pos[0], ",") {
+		if !envName.MatchString(n) {
+			return bad("NAME %q is not an environment variable name", n)
+		}
+		if !slices.Contains(names, n) {
+			names = append(names, n)
+		}
+	}
+	if !seatName.MatchString(o.to) || strings.EqualFold(o.to, o.as) || strings.EqualFold(o.to, "recovery") {
+		return bad("--to %q: another seat's name (letters, digits, - and _; not the granting seat, in any case, nor recovery)", o.to)
+	}
+	rec, err := t.pinnedRecovery(o)
+	if err != nil {
+		return err
+	}
+	pub, err := pinned(o.pins, o.to, o.pub)
+	if err != nil {
+		return err
+	}
+	if self, err := t.publicOf(o); err != nil {
+		return err
+	} else if pub == self || rec == self {
+		return deny("no-pin", "the pin for %s is this node's own key %s; a grant never reaches the granting key: pin the machine's key (remove the pin, then grant with --pub)", map[bool]string{true: o.to, false: "recovery"}[pub == self], self)
+	}
+	cfg, err := plainConfig(o)
+	if err != nil {
+		return err
+	}
+	if r := ruleFor(cfg, o.to+".yaml"); r == nil || len(ageOf(r)) == 0 || ageOf(r)[0] != pub {
+		return deny("key-changed", "the rule for %s.yaml in .sops.yaml does not name the pinned key %s first: the store was edited, or the machine has a new key (a person re-pins it)", o.to, pub)
+	}
+	from, err := t.decrypt(o, o.as)
+	if err != nil {
+		return err
+	}
+	file := o.to + ".grants.yaml"
+	inFile, err := plainNames(o, file)
+	if err != nil {
+		return err
+	}
+	prior, _ := os.ReadFile(filepath.Join(o.pins, o.to+".ledger"))
+	held := ledgerNames(prior) // what this node granted, never what the store's file says it holds
+	if !slices.Equal(slices.Sorted(slices.Values(inFile)), held) {
+		return deny("grants-changed", "%s names %d value(s), not the %d this node's ledger granted: the store was edited, or the ledger is lost; remove %s from the store, commit, then grant every name again", file, len(inFile), len(held), file)
+	}
+	for _, n := range held {
+		if !slices.Contains(names, n) {
+			names = append(names, n)
+		}
+	}
+	slices.Sort(names)
+	values := map[string]string{}
+	var absent []string
+	for _, n := range names {
+		if v, ok := from[n]; ok {
+			values[n] = v
+		} else {
+			absent = append(absent, n)
+		}
+	}
+	if len(absent) > 0 {
+		return deny("no-name", "%s holds no %s to grant (%s.grants.yaml is rewritten whole, keeping its names); set it there first", o.as, strings.Join(absent, ", "), o.to)
+	}
+	ledger, err := t.ledgerOf(o, names, values)
+	if err != nil {
+		return err
+	}
+	// unchanged only when the store holds the very bytes this node wrote: a file a pusher re-sealed to the same
+	// keys with other values is rewritten
+	if data, _ := os.ReadFile(filepath.Join(o.store, file)); string(prior) == ledger+sealedLine(data) && sealedTo(data, file, []string{pub, rec}) == nil && slices.Equal(held, names) {
+		fmt.Fprintf(t.stdout, "SECRETS GRANT OK from=%s to=%s names=%d changed=0 unchanged\n", o.as, o.to, len(names))
+		return nil
+	}
+	plain, _ := json.Marshal(values) // ignored: a map of strings always encodes
+	out, err := t.sopsRun(o, bytes.NewReader(plain), "--config", os.DevNull, "-e", "--age", pub+","+rec, "--filename-override", file, "--input-type", "json", "--output-type", "yaml", "/dev/stdin")
+	if err != nil {
+		return err
+	}
+	if err := sealedTo(out, file, []string{pub, rec}); err != nil {
+		return err
+	}
+	if err := writeFile(filepath.Join(o.store, file), out, 0o600); err != nil {
+		return err
+	}
+	if err := writeFile(filepath.Join(o.pins, o.to+".ledger"), []byte(ledger+sealedLine(out)), 0o600); err != nil {
+		return err
+	}
+	for _, g := range [][]string{{"add", "--", file}, {"commit", "-q", "-m", "grant " + strings.Join(names, ",") + " to " + file, "--", file}} {
+		if err := t.git(o.store, g...); err != nil {
+			return fmt.Errorf("%w; the file is written and the ledger records it: commit it by hand: git -C %s status", err, o.store)
+		}
+	}
+	fmt.Fprintf(t.stdout, "SECRETS GRANT OK from=%s to=%s names=%d changed=1 committed; run: git -C %s push\n", o.as, o.to, len(names), o.store)
+	return nil
+}
+
+// sealedLine is the ledger's last line, the digest of the ciphertext this node wrote.
+func sealedLine(out []byte) string { return fmt.Sprintf("#sealed %x\n", sha256.Sum256(out)) }
+
+// ledgerNames are the names a ledger records, sorted.
+func ledgerNames(ledger []byte) []string {
+	names := []string{}
+	for _, l := range strings.Split(string(ledger), "\n") {
+		if n, _, ok := strings.Cut(l, " "); ok && !strings.HasPrefix(n, "#") {
+			names = append(names, n)
+		}
+	}
+	slices.Sort(names)
+	return names
+}
+
+// ledgerOf is the control node's record of a grant: one "NAME HMAC" line per name, the HMAC of seat, name and
+// value keyed by a hash of the granting key file, so it shows whether a value changed without holding one; the
+// digest of the ciphertext written follows it (sealedLine).
+func (t tool) ledgerOf(o opts, names []string, values map[string]string) (string, error) {
+	secret, err := os.ReadFile(o.key)
+	if err != nil {
+		return "", deny("no-key", "key file %s: %v", o.key, err)
+	}
+	k := sha256.Sum256(append([]byte("nova-secrets grant ledger v1\x00"), secret...))
+	var b strings.Builder
+	for _, n := range names {
+		m := hmac.New(sha256.New, k[:])
+		m.Write([]byte(o.to + "\x00" + n + "\x00" + values[n]))
+		fmt.Fprintf(&b, "%s %x\n", n, m.Sum(nil))
+	}
+	return b.String(), nil
 }

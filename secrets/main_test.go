@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -37,10 +38,12 @@ type harness struct {
 	stderr      bytes.Buffer
 	stdin       string
 	environ     []string
+	pins        string   // the control node's pin directory, holding the recovery pin
 	became      []string // argv
 	env         []string // the environment exec handed the command
 	failEnc     bool
 	failDec     bool
+	extraKey    string // the fake sops seals to this key too, as a hostile config would make it
 	sopsMissing bool
 	noAgeKeygen bool
 	failGit     bool
@@ -51,12 +54,15 @@ type harness struct {
 
 const pubA = "age1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqa"
 const pubB = "age1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqb"
+const pubC = "age1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqc"
 const pubRec = "age1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqr"
 
 func newHarness(t *testing.T) *harness {
 	t.Helper()
 	dir := t.TempDir()
-	h := &harness{t: t, keyPub: pubA, store: filepath.Join(dir, "store"), key: filepath.Join(dir, "keys", "ada.key")}
+	h := &harness{t: t, keyPub: pubA, store: filepath.Join(dir, "store"), key: filepath.Join(dir, "keys", "ada.key"), pins: filepath.Join(dir, "pins")}
+	require.NoError(t, os.MkdirAll(h.pins, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(h.pins, "recovery.pub"), []byte(pubRec+"\n"), 0o600))
 	require.NoError(t, os.MkdirAll(h.store, 0o700))
 	require.NoError(t, os.MkdirAll(filepath.Dir(h.key), 0o700))
 	require.NoError(t, os.WriteFile(h.key, []byte("not a real key: the fake sops never reads it\n"), 0o600))
@@ -67,7 +73,7 @@ func newHarness(t *testing.T) *harness {
 	return h
 }
 
-func sealed(values map[string]string) []byte {
+func sealed(values map[string]string, recipients ...string) []byte {
 	plain, _ := json.Marshal(values) // ignored: a map of strings always encodes
 	var b strings.Builder
 	keys := make([]string, 0, len(values))
@@ -78,8 +84,28 @@ func sealed(values map[string]string) []byte {
 	for _, k := range keys {
 		fmt.Fprintf(&b, "%s: ENC[fake]\n", k)
 	}
-	fmt.Fprintf(&b, "sops:\n    age: []\n#fake %s\n", hex.EncodeToString(plain))
+	if len(recipients) == 0 {
+		fmt.Fprintf(&b, "sops:\n    age: []\n#fake %s\n", hex.EncodeToString(plain))
+		return []byte(b.String())
+	}
+	b.WriteString("sops:\n    age:\n")
+	for _, r := range recipients {
+		fmt.Fprintf(&b, "        - recipient: %s\n", r)
+	}
+	fmt.Fprintf(&b, "#fake %s\n", hex.EncodeToString(plain))
 	return []byte(b.String())
+}
+
+// opens is whether the key opens a fake seat file: one that lists no recipients (seed) opens with any key.
+func (h *harness) opens(data []byte) bool {
+	rs, _ := recipientsOf(data)
+	return len(rs) == 0 || slices.Contains(rs, h.keyPub)
+}
+
+// ruleKeys is the age list of the rule the fake sops applies to file, as the real one reads .sops.yaml in dir.
+func (h *harness) ruleKeys(dir, file string) []string {
+	cfg, _ := os.ReadFile(filepath.Join(dir, ".sops.yaml"))
+	return ageOf(ruleFor(cfg, file))
 }
 
 func (h *harness) seed(seat string, values map[string]string) {
@@ -115,7 +141,7 @@ func (h *harness) run(stdin io.Reader, env []string, dir, name string, args ...s
 			return nil, exitErr(128)
 		}
 		data, err := os.ReadFile(filepath.Join(dir, args[len(args)-1]))
-		if err != nil {
+		if err != nil || !h.opens(data) {
 			return nil, exitErr(128)
 		}
 		_, hx, ok := strings.Cut(string(data), "#fake ")
@@ -123,7 +149,7 @@ func (h *harness) run(stdin io.Reader, env []string, dir, name string, args ...s
 			return nil, exitErr(128)
 		}
 		return hex.DecodeString(strings.TrimSpace(hx))
-	case name == "sops" && args[0] == "-e":
+	case name == "sops" && (args[0] == "-e" || args[0] == "--config"):
 		if h.failEnc {
 			return nil, exitErr(1)
 		}
@@ -131,13 +157,20 @@ func (h *harness) run(stdin io.Reader, env []string, dir, name string, args ...s
 		if err := json.Unmarshal([]byte(c.stdin), &v); err != nil {
 			return nil, err
 		}
-		return sealed(v), nil
+		keys := h.ruleKeys(dir, args[2]) // -e --filename-override <file>: the rule .sops.yaml has for it
+		if args[0] == "--config" {       // --config /dev/null -e --age <keys> --filename-override <file>: those keys only
+			keys = strings.Split(args[4], ",")
+		}
+		if h.extraKey != "" {
+			keys = append(keys, h.extraKey)
+		}
+		return sealed(v, keys...), nil
 	case name == "age-keygen" && args[0] == "-o":
 		return nil, os.WriteFile(args[1], []byte("AGE-SECRET-KEY-FAKE\n"), 0o644)
 	case name == "age-keygen" && args[0] == "-y":
 		return []byte(h.keyPub + "\n"), nil
-	case name == "git" && args[0] == "rev-parse":
-		if h.notRepo {
+	case name == "git" && args[0] == "rev-parse": // a pin directory is in no repository; every other directory is its own
+		if h.notRepo || (h.top == "" && strings.Contains(dir, "pins")) {
 			return nil, exitErr(128)
 		}
 		if h.top != "" {
@@ -174,7 +207,7 @@ func (h *harness) seat(verb string, extra ...string) []string {
 
 // set builds a set call: NAME comes straight after the verb.
 func (h *harness) set(name string, extra ...string) []string {
-	return append([]string{"set", name, "--store", h.store, "--as", "ada", "--key", h.key, "--sops", "sops"}, extra...)
+	return append([]string{"set", name, "--store", h.store, "--as", "ada", "--key", h.key, "--pins", h.pins, "--sops", "sops"}, extra...)
 }
 
 // noLeak holds every value to the rule: never in an argument, an output or an error,
@@ -520,7 +553,7 @@ func TestDecryptRefusesWhatIsNoEnvironmentVariable(t *testing.T) {
 	plain := `{"GOOD":"v","nested":{"a":"secret-nested"}}`
 	require.NoError(t, os.WriteFile(filepath.Join(h.store, "ada.yaml"), []byte("#fake "+hex.EncodeToString([]byte(plain))+"\n"), 0o600))
 	assert.Equal(t, 125, h.main(h.seat("exec", "--only", "GOOD", "--", "true")...))
-	assert.Contains(t, h.stderr.String(), "nested is not a single value")
+	assert.Contains(t, h.stderr.String(), "\"nested\" is not a single value")
 	h.noLeak("secret-nested")
 	plain = `{"N":12,"T":true,"E":null}`
 	require.NoError(t, os.WriteFile(filepath.Join(h.store, "ada.yaml"), []byte("#fake "+hex.EncodeToString([]byte(plain))+"\n"), 0o600))
@@ -696,7 +729,7 @@ func TestOtherRemedies(t *testing.T) {
 	h.failEnc = true
 	h.stdin = "v\n"
 	assert.Equal(t, 2, h.main(h.set("NEW")...))
-	assert.Contains(t, h.stderr.String(), "no rule for ada.yaml in "+h.store+"/.sops.yaml (or it does not parse); run: nova-secrets seat add ada <age-public-key> --store "+h.store)
+	assert.Contains(t, h.stderr.String(), "no rule for ada.yaml in "+h.store+"/.sops.yaml; run: nova-secrets seat add ada <age-public-key> --store "+h.store)
 
 	h = newHarness(t) // git failing after the file is written says so; git failing in init does not
 	h.failGit = true
