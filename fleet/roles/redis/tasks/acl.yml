@@ -19,6 +19,22 @@
   loop: "{{ nova_redis_users }}"
   loop_control: { label: "{{ item.name }}" }
   no_log: true
+  failed_when: false
+  register: redis_pass
+
+# no_log hides the whole result, the cause with it: a failure is printed with any value redacted
+- name: a password file that could not be made (value redacted)
+  ansible.builtin.debug:
+    msg: "REDIS PASS {{ item.item.name }} rc={{ item.rc }} {{ (item.stderr | default('') ~ ' ' ~ item.stdout | default('')) | regex_replace('[0-9a-f]{64}', 'REDACTED') | trim | truncate(400) }}"
+  loop: "{{ redis_pass.results }}"
+  loop_control: { label: "{{ item.item.name }}" }
+  when: item.rc | default(0) != 0
+
+- name: every password file is there
+  ansible.builtin.assert:
+    that: redis_pass.results | map(attribute='rc', default=0) | select('ne', 0) | list | length == 0
+    fail_msg: "{{ inventory_hostname }}: a password file could not be made; the redacted cause is above"
+    quiet: true
 
 - name: users.acl from the hashes of those passwords (written beside the live file, moved in only when it differs)
   ansible.builtin.shell: |

@@ -48,6 +48,14 @@
         content: "{{ lookup('ansible.builtin.env', 'TAILSCALE_AUTHKEY') }}"
         dest: "{{ ansible_facts['env']['TEMP'] }}\\nova-tailscale-authkey"
       no_log: true
+      failed_when: false
+      register: ts_keyfile
+
+    - name: the key file landed (key material redacted)
+      ansible.builtin.assert:
+        that: not (ts_keyfile.failed | default(false))
+        fail_msg: "TAILNET STOP {{ inventory_hostname }}: the key file could not be written: {{ (ts_keyfile.msg | default('')) | regex_replace('tskey-[^\\s\"]*', 'tskey-REDACTED') | truncate(400) }}"
+        quiet: true
 
     - name: tailscale up
       ansible.windows.win_command: >-
@@ -55,9 +63,23 @@
         --hostname={{ inventory_hostname }} --advertise-tags={{ ts_tags | join(',') }}
       register: ts_up
       no_log: true
+      failed_when: false
   always:
     - name: the key file removed
       ansible.windows.win_file: { path: "{{ ansible_facts['env']['TEMP'] }}\\nova-tailscale-authkey", state: absent }
+
+# no_log hides the whole result, the cause with it: the outcome is printed with any key redacted
+- name: the join's outcome (Windows; key material redacted)
+  ansible.builtin.debug:
+    msg: "TAILNET UP rc={{ ts_up.rc | default(-1) }} {{ (ts_up.stderr | default('') ~ ' ' ~ ts_up.stdout | default('')) | regex_replace('tskey-[^\\s\"]*', 'tskey-REDACTED') | trim | truncate(600) }}"
+  when: ts_up is defined and ts_up is not skipped
+
+- name: the join landed (Windows)
+  ansible.builtin.assert:
+    that: (ts_up.rc | default(-1)) == 0
+    fail_msg: "{{ inventory_hostname }}: tailscale up failed (rc={{ ts_up.rc | default(-1) }}); the redacted cause is above"
+    quiet: true
+  when: ts_up is defined and ts_up is not skipped
 
 - name: the state after the join (Windows)
   ansible.windows.win_command: '"{{ nova_tailscale_win_bin }}" status --json'

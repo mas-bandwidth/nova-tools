@@ -46,7 +46,9 @@ The whole path, in order. Each step's output says what to do next.
    stands with any reason after `#`, in paste order: `git` and `go` before the `nova-*` build lines), then the tailnet and this node's `tag:control`, the secrets store, key, seat and pins, the
    secrets `up` will read (`--runners URL` adds `gh` and `GITHUB_RUNNER_TOKEN`), and `NOVA_PG_DSN` once a fleet
    exists. Run each fix line, then `nova-fleet check` again until it ends `CHECK OK missing=0` (exit 0; 1 while
-   anything is missing; the collections of `requirements.yml` count, `ansible.posix` for the push of the store).
+   anything is missing; the collections of `requirements.yml` count, `ansible.posix` for the push of the store). A
+   green check ends `CHECK OK missing=0 next: nova-fleet up --check ...`. Every play verb runs the part of this check
+   it needs (ansible-playbook, the collection, nova-config) before anything else, and refuses with the same lines.
    Tailscale, PostgreSQL, Redis and Ansible are not optional: `check` requires Tailscale and
    Ansible on this node, `up` puts PostgreSQL and Redis on the first machine and requires them after, and no variable
    of nova-fleet skips one.
@@ -714,12 +716,12 @@ Each is one line on stderr, exit 2, and nothing is run:
 | an unknown play or verb | the verbs and the plays, and `run: nova-fleet help` |
 | an unknown flag before `--`, or a word before `--` | `ansible-playbook flags go after --` |
 | `--inventory` naming nothing | the path, and to name an existing file or script |
-| no `--inventory` and no nova-config on PATH | `install nova-tools or run: nova-fleet <play> --inventory <file\|script>` |
-| no ansible-playbook on PATH | `install ansible-core 2.15+ and run: nova-fleet show requirements > requirements.yml && ansible-galaxy collection install -r requirements.yml` |
+| ansible-playbook, its `ansible.posix` collection, or (with no `--inventory`) nova-config missing | one `CHECK MISSING <name>: <the pasteable fix line>` per gap on stdout, all at once, then `this control node lacks <n> of what the play needs ...; run: nova-fleet check` |
 
 Otherwise the exit is 0 when ansible-playbook passed and 1 when it did not, with `nova-fleet <play>: FAILED
-ansible-playbook exit=<n>` naming its status on stderr (2 never means a failed host here). Before running, nova-fleet
-prints the ansible-playbook, inventory and play paths it uses on stderr. The extracted directory is removed on every
+ansible-playbook exit=<n>` naming its status on stderr (2 never means a failed host here); an ansible-playbook killed
+by a signal is `killed by signal <N> (exit 128+N)`. Before running, nova-fleet prints the ansible-playbook, inventory
+and play paths it uses on stderr. The extracted directory is removed on every
 exit, a refusal included.
 
 ## Build and test

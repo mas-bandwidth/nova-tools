@@ -187,7 +187,7 @@ func (u *upRun) control(out io.Writer) int {
 	}
 	if p := u.bin["ansible-playbook"]; p != "" { // the collections the plays use (requirements.yml)
 		galaxy := filepath.Join(filepath.Dir(p), "ansible-galaxy")
-		if o, _, _ := outCmd(galaxy, []string{"collection", "list"}, os.Environ()); !strings.Contains(o, "ansible.posix") {
+		if o, _, c := outCmd(galaxy, []string{"collection", "list"}, os.Environ()); c != 127 && !strings.Contains(o, "ansible.posix") {
 			miss("ansible.posix", "nova-fleet show requirements > requirements.yml && "+galaxy+" collection install -r requirements.yml")
 		} else {
 			fmt.Fprintln(out, "CHECK OK ansible.posix")
@@ -300,6 +300,6 @@ func runCheck(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "CHECK FAILED missing=%d\n", n)
 		return 1
 	}
-	fmt.Fprintln(stdout, "CHECK OK missing=0")
+	fmt.Fprintf(stdout, "CHECK OK missing=0 next: nova-fleet up --check --tools <TAG|DIR>%s <name>=<address>...\n", map[bool]string{true: " --runners " + u.runners}[u.runners != ""])
 	return 0
 }

@@ -82,11 +82,12 @@ If a change exceeds its budget, first look for work the tool no longer needs
 to do. A budget increase needs a reason in the same PR. Lower the budget when
 code is removed, and remove temporary headroom after the work it covers lands.
 
-`fleet` went from 50 to 1400 (2026-11-05) when it became nova-fleet: a program
-that embeds the plays, checks the control node (`check`) and takes a fleet from
-nothing to running (`up`): the fleet read from nova-config, each machine
-reached as its login over the tailnet with pinned host keys, every step with
-its receipt and its `--check` form.
+`fleet` went from 50 to 1450 (2026-11-05) when it became nova-fleet: a program
+that embeds the plays, checks the control node (`check`, which every play verb
+runs its part of first) and takes a fleet from nothing to running (`up`): the
+fleet read from nova-config, each machine reached as its login over the tailnet
+with pinned host keys, every step with its receipt and its `--check` form, and
+a child killed by a signal said so.
 
 ## Adding a tool
 

@@ -499,7 +499,7 @@ func TestCheck(t *testing.T) {
 	f := &upFake{}
 	f.install(t)
 	code, out, errs := runArgs("check")
-	if code != 0 || errs != "" || !strings.HasSuffix(out, "CHECK OK missing=0\n") {
+	if code != 0 || errs != "" || !strings.HasSuffix(out, "CHECK OK missing=0 next: nova-fleet up --check --tools <TAG|DIR> <name>=<address>...\n") {
 		t.Fatalf("all present: code %d stdout %q stderr %q", code, out, errs)
 	}
 	for _, w := range []string{"CHECK OK ansible-playbook 1.2.3\n", "CHECK OK ansible.posix\n", "CHECK OK tailscale 1.2.3\n", "CHECK OK nova-config /bin/nova-config\n", "CHECK OK ssh /bin/ssh\n",
