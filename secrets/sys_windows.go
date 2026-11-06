@@ -15,7 +15,15 @@ func checkKey(path string) error {
 	if fi, err := os.Lstat(path); err != nil || !fi.Mode().IsRegular() {
 		return deny("no-key", "key file %s is absent or not a regular file", path)
 	}
-	bad := deny("no-key", "key file %s must be owned by you and private to you; run: icacls %q /inheritance:r /grant:r %%USERNAME%%:F", path, path)
+	if !private(path) {
+		return deny("no-key", "key file %s must be owned by you and private to you; run: icacls %q /inheritance:r /grant:r %%USERNAME%%:F", path, path)
+	}
+	return nil
+}
+
+// private is whether path is owned by this user, SYSTEM or Administrators and its access list allows no one else.
+func private(path string) bool {
+	bad := false
 	sd, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
 	if err != nil {
 		return bad
@@ -48,7 +56,7 @@ func checkKey(path string) error {
 			return bad
 		}
 	}
-	return nil
+	return true
 }
 
 // become runs argv and exits with its status: Windows has no exec(2).
@@ -68,4 +76,13 @@ func become(argv, env []string) error {
 func isTerminal(f *os.File) bool {
 	var mode uint32
 	return windows.GetConsoleMode(windows.Handle(f.Fd()), &mode) == nil
+}
+
+// checkPrivate refuses a pin file or directory whose owner or access list is not the key file's: this user, SYSTEM
+// and Administrators only.
+func checkPrivate(path string, _ os.FileInfo) error {
+	if !private(path) {
+		return refuse("not private")
+	}
+	return nil
 }

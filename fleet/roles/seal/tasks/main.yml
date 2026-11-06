@@ -7,6 +7,21 @@
 - name: the refusals
   ansible.builtin.include_tasks: check.yml
 
+# checked outside no_log, so a missing pin is named instead of hidden with the set's output
+- name: the control node's recovery pin (set seals to it)
+  ansible.builtin.stat: { path: "{{ nova_seal_pins }}/recovery.pub" }
+  delegate_to: localhost
+  become: false
+  register: seal_rec_pin
+  when: seal_asked
+
+- name: the recovery pin is there
+  ansible.builtin.assert:
+    that: seal_rec_pin.stat.exists
+    fail_msg: "SEAL STOP: no {{ nova_seal_pins }}/recovery.pub on the control node (nova-secrets init --pins, or once: nova-secrets set NAME --pins {{ nova_seal_pins }} --recovery <the recovery public key> ...)"
+    quiet: true
+  when: seal_asked
+
 # a seat's file is made by its first `nova-secrets set`: a seat with a rule and no file yet holds no names, and is
 # not a failure (the first seal on a fresh store makes the file)
 - name: the seats the store has (control node; rule and file per seat)
@@ -63,7 +78,7 @@
 
 - name: "{{ seal_name }} set into the seat (control node, value on stdin)"
   ansible.builtin.command:
-    argv: ["{{ nova_control_secrets }}", set, "{{ seal_name }}", --store, "{{ nova_seal_store }}", --key, "{{ nova_seal_key }}",
+    argv: ["{{ nova_control_secrets }}", set, "{{ seal_name }}", --store, "{{ nova_seal_store }}", --pins, "{{ nova_seal_pins }}", --key, "{{ nova_seal_key }}",
            --as, "{{ nova_seal_seat }}", --sops, "{{ nova_control_sops }}"]
     stdin: "{{ seal_value.content | b64decode | trim }}"
   delegate_to: localhost
