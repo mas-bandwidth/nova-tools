@@ -37,7 +37,16 @@
     stdin: "{{ github_runner_token | default('') }}"
   no_log: true
   register: github_runner_registration
+  failed_when: false
   when: runner_index in github_runner_need and not ansible_check_mode
+
+- name: a failed registration says why (the token, if it ever appeared, redacted)
+  ansible.builtin.fail:
+    msg: >-
+      GITHUB RUNNER REGISTER {{ inventory_hostname }} rc={{ github_runner_registration.rc }}:
+      {%- set s = (github_runner_registration.stderr | default('') ~ ' ' ~ github_runner_registration.stdout | default('')) | trim | truncate(600) %}
+      {{ s | regex_replace(github_runner_token | regex_escape, 'REDACTED') if github_runner_token | default('') | length > 0 else s }}
+  when: github_runner_registration is not skipped and github_runner_registration.rc | default(0) != 0
 
 - name: the labels it was registered with
   ansible.windows.win_copy:

@@ -332,7 +332,7 @@ SECRETS SET OK as=here name=NOVA_BUS_PASSWORD file=here.yaml committed; run: git
 SECRETS SEAT ADD OK seat=db committed; next: the seat's own key runs: nova-secrets set NAME --as db --store <store> --key <file> --pins <dir>
 SECRETS GRANT OK from=here to=db names=1 changed=1 committed; run: git -C <store> push
 SECRETS GRANT OK from=here to=db names=1 changed=0 unchanged
-SECRETS EXEC OK as=db keys=1 cmd=sh
+SECRETS EXEC STARTING as=db keys=1 cmd=sh
 db got 20 bytes
 SECRETS EXEC REFUSED reason=not-recipient: key age1... is not the key in .sops.yaml for db (age1...): ...
 exit 125

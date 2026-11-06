@@ -73,6 +73,11 @@ func TestGrantIsWriteOnly(t *testing.T) {
 	require.Equal(t, 0, f.exec("bo", pubB, "NOVA_BUS_PASSWORD"), f.stderr.String())
 	assert.Equal(t, "bus-sealed-one", envMap(f.env)["NOVA_BUS_PASSWORD"])
 	assert.Equal(t, 125, f.exec("bo", pubA, "NOVA_BUS_PASSWORD"))
+	// a grants file that changed since it was sealed (sops exit 51): the remedy is a fresh grant, not git checkout
+	f.failDec, f.decExit = true, 51
+	assert.Equal(t, 125, f.exec("bo", pubB, "NOVA_BUS_PASSWORD"))
+	assert.Contains(t, f.stderr.String(), "(exit status 51): the file changed since it was sealed (MAC mismatch); a fresh grant from the control node writes it again: nova-secrets grant <names> --to bo --pins <dir> --store "+f.store)
+	f.failDec, f.decExit = false, 0
 
 	// Again: nothing changes, nothing is committed. A changed value is rewritten; a new name keeps the old one.
 	f.keyPub = pubA
