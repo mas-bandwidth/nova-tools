@@ -336,7 +336,7 @@ On macOS:
 ```text
 sh: /Users/<you>/sandbox-escape.txt: Operation not permitted
 exit 1
-CHECK OK backend=sandbox-exec abi=- net=enforceable note=sandbox-exec is deprecated by Apple; the wall is the profile it applies (/usr/bin/sandbox-exec)
+CHECK OK backend=sandbox-exec abi=- net=enforceable note=the wall is the profile it applies (/usr/bin/sandbox-exec)
 ```
 `nova-sandbox probe` tests each of the sandbox's limits on this machine, one
 line per step.
