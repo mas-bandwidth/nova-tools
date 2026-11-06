@@ -18,7 +18,7 @@ const checkHelp = `nova-fleet check [--runners URL]
 
 The control node's preflight, the first step of nova-fleet up: one line per prerequisite,
 CHECK OK <name> <version|path> or CHECK MISSING <name>: <the command that fixes it, for this
-OS, in paste order>; this node on the tailnet and tagged tag:control; the store, key, seat and
+OS, pasteable as it stands, a reason after # when there is one, in paste order>; this node on the tailnet and tagged tag:control; the store, key, seat and
 pins of NOVA_SECRETS_STORE, NOVA_SECRETS_KEY, NOVA_SECRETS_SEAT and NOVA_SECRETS_PINS;
 TAILSCALE_AUTHKEY (and GITHUB_RUNNER_TOKEN with --runners) read from the seat, the reason
 printed when a read fails; and NOVA_PG_DSN once a fleet exists. Tailscale and Ansible are
@@ -76,14 +76,15 @@ func pin(key string, sub ...string) string {
 // fix is the pasteable command that installs a helper on this machine's family.
 func fix(name, fam string) string {
 	pkg := map[string][3]string{ // apt, dnf, brew
-		"age":        {"age", "age", "age"},
-		"age-keygen": {"age", "age", "age"},
-		"psql":       {"postgresql-client", "postgresql", "libpq && brew link --force libpq"},
-		"git":        {"git", "git", "git"},
-		"gpg":        {"gnupg", "gnupg2", "gnupg"},
-		"gh":         {"gh", "gh", "gh"},
-		"rsync":      {"rsync", "rsync", "rsync"},
-		"ssh":        {"openssh-client", "openssh-clients", "openssh"},
+		"age":          {"age", "age", "age"},
+		"age-keygen":   {"age", "age", "age"},
+		"psql":         {"postgresql-client", "postgresql", "libpq && brew link --force libpq"},
+		"git":          {"git", "git", "git"},
+		"gpg":          {"gnupg", "gnupg2", "gnupg"},
+		"gh":           {"gh", "gh", "gh"},
+		"rsync":        {"rsync", "rsync", "rsync"},
+		"ssh":          {"openssh-client", "openssh-clients", "openssh"},
+		"python3-venv": {"python3-venv", "python3", "python3"},
 	}
 	switch {
 	case strings.HasPrefix(name, "nova-"):
@@ -99,11 +100,9 @@ func fix(name, fam string) string {
 	case name == "ansible-playbook":
 		venv := "python3 -m venv ~/.local/ansible && ~/.local/ansible/bin/pip install ansible-core && export PATH=~/.local/ansible/bin:$PATH && echo 'export PATH=~/.local/ansible/bin:$PATH' >> ~/.profile"
 		if fam == "apt" { // Debian and Ubuntu ship python3 without venv
-			return "sudo apt install -y python3-venv && " + venv
+			return "sudo apt-get update -qq && sudo apt-get install -y python3-venv && " + venv
 		}
 		return venv
-	case name == "python3-venv":
-		return map[bool]string{true: "sudo apt install -y python3-venv", false: "sudo dnf install -y python3"}[fam == "apt"]
 	case name == "tailscale" && fam == "brew":
 		return "brew install --cask tailscale"
 	case name == "tailscale":
@@ -121,7 +120,7 @@ func fix(name, fam string) string {
 	case !ok:
 		return "install " + name + " and put it on PATH"
 	case fam == "apt":
-		return "sudo apt install -y " + p[0]
+		return "sudo apt-get update -qq && sudo apt-get install -y " + p[0]
 	case fam == "dnf":
 		return "sudo dnf install -y " + p[1]
 	case fam == "brew":
@@ -150,9 +149,10 @@ func (u *upRun) control(out io.Writer) int {
 	}
 	versionArgs := map[string][]string{"tailscale": {"version"}, "nova-config": nil, "nova-secrets": nil, "nova-bus": nil, "ssh": nil, "go": {"version"}}
 	fam, missing := family(), 0
-	miss := func(name, how string) {
+	// A MISSING line is the command that fixes it, pasteable as it stands; a reason follows as a comment.
+	miss := func(name, cmd string, why ...string) {
 		missing++
-		fmt.Fprintf(out, "CHECK MISSING %s: %s\n", name, how)
+		fmt.Fprintf(out, "CHECK MISSING %s: %s%s\n", name, cmd, map[bool]string{true: "  # " + oneLine(strings.Join(why, " "))}[len(why) > 0])
 	}
 	needGo := slices.ContainsFunc(want, func(b string) bool { _, err := lookPath(b); return err != nil && strings.HasPrefix(b, "nova-") })
 	u.bin = map[string]string{}
@@ -163,7 +163,7 @@ func (u *upRun) control(out io.Writer) int {
 			if p, err := lookPath("go"); err != nil {
 				miss("go", fix("go", fam))
 			} else if o, _, _ := outCmd(p, []string{"version"}, os.Environ()); func() bool { a, c := goVersion(o); return a < wantMajor || a == wantMajor && c < wantMinor }() {
-				miss("go", oneLine(o)+" is older than "+runtime.Version()+", which built this nova-fleet; "+fix("go", fam))
+				miss("go", fix("go", fam), oneLine(o)+" is older than "+runtime.Version()+", which built this nova-fleet")
 			} else {
 				fmt.Fprintf(out, "CHECK OK go %s\n", versionRE.FindString(o))
 			}
@@ -198,38 +198,38 @@ func (u *upRun) control(out io.Writer) int {
 		if py, err := lookPath("python3"); err != nil {
 			miss("python3", fix("python3-venv", fam))
 		} else if _, why, c := outCmd(py, []string{"-c", "import ensurepip, venv"}, os.Environ()); c != 0 {
-			miss("python3-venv", py+" has no venv module ("+oneLine(why)+"); "+fix("python3-venv", fam))
+			miss("python3-venv", fix("python3-venv", fam), py+" has no venv module: "+oneLine(why))
 		}
 	}
 	if p := u.bin["tailscale"]; p != "" {
 		if o, why, c := outCmd(p, []string{"status", "--peers=false"}, os.Environ()); c != 0 {
-			miss("tailnet", "sudo tailscale up --advertise-tags=tag:control (this node on the tailnet, so it reaches the machines by name; "+oneLine(why+" "+o)+")")
+			miss("tailnet", "sudo tailscale up --advertise-tags=tag:control", "this node is not on the tailnet, which it reaches the machines over:", why, o)
 		} else {
 			fmt.Fprintln(out, "CHECK OK tailnet")
 			var self struct{ Self struct{ Tags []string } }
 			if o, _, _ := outCmd(p, []string{"status", "--json"}, os.Environ()); json.Unmarshal([]byte(o), &self) != nil || !slices.Contains(self.Self.Tags, "tag:control") {
-				miss("tag:control", "this node is not tagged tag:control (the policy, nova-fleet show tailscale-acl, lets tag:control reach the machines): sudo tailscale up --advertise-tags=tag:control --auth-key=<a key allowed that tag>, or tag it in the admin console")
+				miss("tag:control", "sudo tailscale up --advertise-tags=tag:control --auth-key=<a key allowed that tag>", "or tag this node in the admin console: the policy (nova-fleet show tailscale-acl) lets tag:control reach the machines")
 			} else {
 				fmt.Fprintln(out, "CHECK OK tag:control")
 			}
 		}
 	}
 	u.store, u.key, u.seat, u.pins = os.Getenv("NOVA_SECRETS_STORE"), os.Getenv("NOVA_SECRETS_KEY"), os.Getenv("NOVA_SECRETS_SEAT"), os.Getenv("NOVA_SECRETS_PINS")
-	inputs := []struct{ env, name, val, how string }{
-		{"NOVA_SECRETS_STORE", "store", u.store, "export NOVA_SECRETS_STORE=<your clone of the secrets store> (new: nova-secrets init --store <dir> --recovery <age public key> --pins <pins dir>)"},
-		{"NOVA_SECRETS_KEY", "key", u.key, "export NOVA_SECRETS_KEY=<this seat's age key file> (new: age-keygen -o ~/.config/nova-secrets/<seat>.key)"},
-		{"NOVA_SECRETS_SEAT", "seat", u.seat, "export NOVA_SECRETS_SEAT=<this node's seat> (new: nova-secrets seat add <seat> <age public key> --store <store>)"},
-		{"NOVA_SECRETS_PINS", "pins", u.pins, "export NOVA_SECRETS_PINS=<the directory of pinned machine keys, outside the store> (new: mkdir -p ~/.config/nova-secrets/pins; nova-secrets init --pins writes recovery.pub there)"},
+	inputs := []struct{ env, name, val, how, new string }{
+		{"NOVA_SECRETS_STORE", "store", u.store, "export NOVA_SECRETS_STORE=<your clone of the secrets store>", "new: nova-secrets init --store <dir> --recovery <age public key> --pins <pins dir>"},
+		{"NOVA_SECRETS_KEY", "key", u.key, "export NOVA_SECRETS_KEY=<this seat's age key file>", "new: age-keygen -o ~/.config/nova-secrets/<seat>.key"},
+		{"NOVA_SECRETS_SEAT", "seat", u.seat, "export NOVA_SECRETS_SEAT=<this node's seat>", "new: nova-secrets seat add <seat> <age public key> --store <store>"},
+		{"NOVA_SECRETS_PINS", "pins", u.pins, "export NOVA_SECRETS_PINS=<the directory of pinned machine keys, outside the store>", "new: mkdir -p ~/.config/nova-secrets/pins; nova-secrets init --pins writes recovery.pub there"},
 	}
 	ready := true
 	for _, in := range inputs {
 		_, err := os.Stat(in.val)
 		switch {
 		case in.val == "":
-			miss(in.name, in.how)
+			miss(in.name, in.how, in.new)
 			ready = false
 		case in.name != "seat" && err != nil:
-			miss(in.name, in.env+"="+in.val+" is not there; "+in.how)
+			miss(in.name, in.how, in.env+"="+in.val+" is not there;", in.new)
 			ready = false
 		default:
 			fmt.Fprintf(out, "CHECK OK %s %s\n", in.name, in.val)
@@ -241,11 +241,11 @@ func (u *upRun) control(out io.Writer) int {
 	}
 	for _, name := range read {
 		if !ready || u.bin["nova-secrets"] == "" {
-			miss(name, "set the store, key and seat above, then: nova-secrets set "+name+" --as <seat> (the value on stdin)")
+			miss(name, "nova-secrets set "+name+" --as <seat>", "the value on stdin, once the store, key and seat above are set")
 			continue
 		}
 		if _, why, c := outCmd(u.bin["nova-secrets"], u.secrets([]string{name}, "true")[1:], os.Environ()); c != 0 {
-			miss(name, fmt.Sprintf("nova-secrets set %s --as %s (the value on stdin); the read said: %s", name, u.seat, oneLine(why)))
+			miss(name, fmt.Sprintf("nova-secrets set %s --as %s", name, u.seat), "the value on stdin; the read said:", why)
 		} else {
 			fmt.Fprintf(out, "CHECK OK %s readable in seat %s\n", name, u.seat)
 		}

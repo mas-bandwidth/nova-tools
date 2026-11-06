@@ -198,7 +198,7 @@ func TestUpControlRefusals(t *testing.T) {
 	}
 	code, out, errs := runArgs("up", "--tools", "v1.0.0", "--runners", "https://github.com/o/r", "a=1.2.3.4")
 	for _, w := range []string{"CHECK MISSING psql: ", "CHECK MISSING gh: ", "CHECK MISSING key: export NOVA_SECRETS_KEY=",
-		"CHECK MISSING TAILSCALE_AUTHKEY: set the store, key and seat above", "CHECK OK sops 1.2.3"} {
+		"CHECK MISSING TAILSCALE_AUTHKEY: nova-secrets set TAILSCALE_AUTHKEY --as <seat>  # the value on stdin, once the store, key and seat above are set", "CHECK OK sops 1.2.3"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout lacks %q:\n%s", w, out)
 		}
@@ -209,7 +209,7 @@ func TestUpControlRefusals(t *testing.T) {
 	f = &upFake{readErr: "SECRETS EXEC REFUSED name=TAILSCALE_AUTHKEY reason=not-in-seat\n"}
 	f.install(t)
 	code, out, errs = runArgs("up", "--check", "--tools", "v1.0.0", "a=1.2.3.4")
-	if code != 2 || !strings.Contains(out, "CHECK MISSING TAILSCALE_AUTHKEY: nova-secrets set TAILSCALE_AUTHKEY --as control (the value on stdin); the read said: SECRETS EXEC REFUSED name=TAILSCALE_AUTHKEY reason=not-in-seat") {
+	if code != 2 || !strings.Contains(out, "CHECK MISSING TAILSCALE_AUTHKEY: nova-secrets set TAILSCALE_AUTHKEY --as control  # the value on stdin; the read said: SECRETS EXEC REFUSED name=TAILSCALE_AUTHKEY reason=not-in-seat") {
 		t.Errorf("a refused secret read under --check: code %d stdout %q stderr %q", code, out, errs)
 	}
 	if len(f.plays()) != 0 {
@@ -506,7 +506,7 @@ func TestCheck(t *testing.T) {
 	}
 	code, out, errs = runArgs("check", "--runners", "https://github.com/o/r")
 	for _, w := range []string{"CHECK MISSING age-keygen: ", "CHECK OK git 1.2.3\nCHECK OK go go1.99.0\n", "CHECK MISSING nova-bus: mkdir -p ~/.local/bin && ([ -d nova-tools ] || git clone --depth 1 https://github.com/mas-bandwidth/nova-tools) && go build -C nova-tools -o ~/.local/bin/nova-bus ./bus\n",
-		"CHECK MISSING gh: ", "CHECK MISSING tailnet: sudo tailscale up --advertise-tags=tag:control", "Logged out.", "CHECK OK GITHUB_RUNNER_TOKEN readable"} {
+		"CHECK MISSING gh: ", "CHECK MISSING tailnet: sudo tailscale up --advertise-tags=tag:control  # this node is not on the tailnet, which it reaches the machines over: Logged out.\n", "CHECK OK GITHUB_RUNNER_TOKEN readable"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout lacks %q:\n%s", w, out)
 		}
@@ -524,7 +524,7 @@ func TestCheck(t *testing.T) {
 		return outCmd2(bin, args, env)
 	}
 	code, out, _ = runArgs("check")
-	if code != 1 || !strings.Contains(out, "CHECK MISSING go: go version go1.19.8 linux/amd64 is older than go1.") || !strings.Contains(out, "CHECK MISSING tag:control: this node is not tagged tag:control") ||
+	if code != 1 || !strings.Contains(out, "CHECK MISSING go: brew install go  # go version go1.19.8 linux/amd64 is older than go1.") || !strings.Contains(out, "CHECK MISSING tag:control: sudo tailscale up --advertise-tags=tag:control --auth-key=<a key allowed that tag>  # or tag this node in the admin console") ||
 		!strings.Contains(out, "CHECK MISSING ansible.posix: nova-fleet show requirements > requirements.yml && /bin/ansible-galaxy collection install -r requirements.yml") {
 		t.Errorf("old go, untagged: code %d\n%s", code, out)
 	}
@@ -541,7 +541,7 @@ func TestCheck(t *testing.T) {
 	}
 	code, out, _ = runArgs("check")
 	if code != 1 || !strings.Contains(out, "CHECK MISSING ansible-playbook: ") ||
-		!strings.Contains(out, "CHECK MISSING python3-venv: /bin/python3 has no venv module (ModuleNotFoundError: No module named 'ensurepip'); ") {
+		!strings.Contains(out, "CHECK MISSING python3-venv: install python3-venv with this system's package manager  # /bin/python3 has no venv module: ModuleNotFoundError: No module named 'ensurepip'\n") {
 		t.Errorf("venv-less python3: code %d\n%s", code, out)
 	}
 	f.noVenv = false
@@ -574,20 +574,21 @@ func TestFixPerFamily(t *testing.T) {
 		}
 	}
 	for _, tc := range []struct{ name, fam, want string }{
-		{"age-keygen", "apt", "sudo apt install -y age"},
+		{"age-keygen", "apt", "sudo apt-get update -qq && sudo apt-get install -y age"},
 		{"psql", "dnf", "sudo dnf install -y postgresql"},
 		{"psql", "brew", "brew install libpq && brew link --force libpq"},
-		{"gpg", "apt", "sudo apt install -y gnupg"},
+		{"gpg", "apt", "sudo apt-get update -qq && sudo apt-get install -y gnupg"},
 		{"tailscale", "brew", "brew install --cask tailscale"},
 		{"tailscale", "apt", "curl -fsSL https://tailscale.com/install.sh | sh"},
 		{"sops", "brew", "brew install sops"},
 		{"git", "", "install git with this system's package manager"},
 		{"ansible-playbook", "brew", "brew install ansible"},
-		{"ansible-playbook", "apt", "sudo apt install -y python3-venv && python3 -m venv ~/.local/ansible && ~/.local/ansible/bin/pip install ansible-core && export PATH=~/.local/ansible/bin:$PATH && echo 'export PATH=~/.local/ansible/bin:$PATH' >> ~/.profile"},
+		{"ansible-playbook", "apt", "sudo apt-get update -qq && sudo apt-get install -y python3-venv && python3 -m venv ~/.local/ansible && ~/.local/ansible/bin/pip install ansible-core && export PATH=~/.local/ansible/bin:$PATH && echo 'export PATH=~/.local/ansible/bin:$PATH' >> ~/.profile"},
 		{"ansible-playbook", "dnf", "python3 -m venv ~/.local/ansible && ~/.local/ansible/bin/pip install ansible-core && export PATH=~/.local/ansible/bin:$PATH && echo 'export PATH=~/.local/ansible/bin:$PATH' >> ~/.profile"},
 		{"go", "brew", "brew install go"},
-		{"ssh", "apt", "sudo apt install -y openssh-client"},
-		{"python3-venv", "apt", "sudo apt install -y python3-venv"},
+		{"ssh", "apt", "sudo apt-get update -qq && sudo apt-get install -y openssh-client"},
+		{"python3-venv", "apt", "sudo apt-get update -qq && sudo apt-get install -y python3-venv"},
+		{"python3-venv", "dnf", "sudo dnf install -y python3"},
 	} {
 		if got := fix(tc.name, tc.fam); got != tc.want {
 			t.Errorf("fix(%s, %s) = %q, want %q", tc.name, tc.fam, got, tc.want)
