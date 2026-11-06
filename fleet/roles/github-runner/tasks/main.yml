@@ -1,7 +1,7 @@
 ---
 # Installs, registers and supervises GitHub Actions runners on this host: runner_count
 # of them (the machine row's `runners`), registered to github_runner_url, labelled with
-# the machine's roles, os and arch. See fleet/README.md.
+# the machine's roles, os and arch. See docs/FLEET.md, "github-runners.yml".
 #
 # Linux (WSL2 too, with systemd on) and macOS: unix.yml. A native Windows host: windows.yml,
 # included only for a Windows host, so ansible.windows is needed only there.

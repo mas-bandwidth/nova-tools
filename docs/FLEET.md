@@ -1,6 +1,5 @@
 # The fleet
 
-<<<<<<< HEAD
 `fleet/` is how the fleet is managed: which machines there are and what they run (nova-config), how a new machine
 joins (`join.yml`, `tailscale.yml`, `seat.yml`), the stores the tools talk to (`redis.yml` for the bus, `postgres.yml`
 for nova-config), the services machines keep running (`services.yml`), the secrets clone they keep current
@@ -120,56 +119,27 @@ root; the tailnet step replaces it with the machine's MagicDNS name, and from th
 SSH as the row's user (the policy lets no one in as root over the tailnet).
 
 ## The machine and service model
-=======
-Install a chosen release and keep recurring commands running on your machines.
-Use [nova-config](../config/README.md) for the inventory, or supply your own.
-Use [nova-reserve](../reserve/README.md) when jobs need to share capacity.
 
-A machine can keep a program running or run it every N seconds. Config calls
-that program a **service**. Its row holds the program, arguments, environment,
-log path and choice of continuous or scheduled running.
+nova-config (`config/README.md`) keeps the fleet as rows in PostgreSQL, each write with a history row. Two kinds
+matter here:
 
-## Before you start
->>>>>>> 961730a02 (docs: human-readable per-tool docs (docs/v2 rebased onto main))
+- `machine`: a host, its login `user` and its `roles`. The role names are the inventory's groups: `bench`, `runner`
+  and `services`, so `-l bench` runs a play on every bench.
+- `service`: a program a machine keeps running; with `--every N` it runs every N seconds instead: `machine`, `argv` (a JSON array), `keys` (secret
+  names, never values; a row with keys also names the `seat` that opens them), `every` (seconds; none means kept
+  alive), `enabled`, `env` (an object of environment variables) and `log` (a path, default
+  `~/.local/state/nova/services/<name>.log`).
 
-Start with hosts that have an operating system, SSH access and the network
-connections your commands use.
+`nova-config inventory` prints them as an Ansible dynamic inventory: each machine is a host in the groups its roles
+name, and its service rows are the host variable `nova_services`. It always emits `nova_services`; an empty list is valid and
+means no services. Use it as an inventory script, and make a failing script fail loudly (Ansible otherwise falls back
+to treating the output as an empty inventory):
 
-Install Ansible on the control node. For Windows targets, install the collection
-with `ansible-galaxy collection install -r fleet/requirements.yml` and configure
-the host connection. Unix targets do not need the Windows collection.
-
-If you use config inventory, provide PostgreSQL with the config schema and
-keep its login credentials on the control node. See
-[SPEC-CONFIG](SPEC-CONFIG.md#connect-and-create-the-schema).
-
-`services.yml` manages systemd units on Linux and launchd jobs on macOS.
-
-A program using secrets needs an encrypted store, its seat's private key and
-sops on that host. Install those prerequisites before applying `services.yml`.
-Use age-keygen where you create keys.
-
-## Inventory
-
-Machine rows hold connection settings, OS, architecture, core and runner
-counts, roles and notes. Program rows hold command arguments, environment variables,
-log paths, secret names and scheduling settings. These are values you set,
-not facts gathered from hosts.
-
-The groups are `all`, `bench`, `services` and `runner`. Every machine has
-a `nova_services` list, even when empty.
-
-With config and its database connection available on the control node:
-
-```sh
-NOVA_INVENTORY=$(mktemp)
-printf '#!/bin/sh\nexec nova-config inventory "$@"\n' > "$NOVA_INVENTORY"
-chmod +x "$NOVA_INVENTORY"
+```
+printf '#!/bin/sh\nexec nova-config inventory "$@"\n' > inventory && chmod +x inventory
 export ANSIBLE_INVENTORY_UNPARSED_FAILED=true
-"$NOVA_INVENTORY" --list
 ```
 
-<<<<<<< HEAD
 The plays take their inventory from that and nothing else, so a change to the fleet is a nova-config write followed
 by a play run. `ansible-galaxy collection install -r fleet/requirements.yml` installs `ansible.posix` (the push of
 the secrets store) and `ansible.windows` (only a Windows host in the inventory needs it).
@@ -207,149 +177,144 @@ inventory does not, because the playbook's own is read after it: use a group nam
 | `nova_launchd_domain` | `auto` (`gui`, `system`) |
 | `nova_systemd_scope` | `user` (`system`) |
 | `nova_system` | the gathered fact (`ansible_facts['system']`); `-e nova_system=Darwin` or `Linux` forces the platform |
-=======
-Inspect that output before applying a play. If you supply inventory yourself,
-include `nova_services` on every host selected for `services.yml`. An absent list
-is not treated as empty.
-
-Defaults are in [group_vars/all.yml](../fleet/group_vars/all.yml).
-Host variables and group-specific variables beside your inventory can override
-them. An inventory-adjacent `group_vars/all.yml` does not override the
-playbook's file of the same name, which Ansible reads later. Use host variables,
-group-specific variables or explicit extra variables for those overrides.
->>>>>>> 961730a02 (docs: human-readable per-tool docs (docs/v2 rebased onto main))
 
 ## Installing a release
 
-Choose a published tag and a host selection. Set `NOVA_TOOLS_VERSION` and
-`NOVA_HOST_LIMIT` to those choices, then check the plan before applying it:
+A release is a git tag `v*` on this repository. `.github/workflows/release.yml` builds the six tools (nova-bus,
+nova-cairn, nova-config, nova-sandbox, nova-secrets, nova-reserve) for linux/amd64, linux/arm64, darwin/arm64 and windows/amd64 with
+`CGO_ENABLED=0 -trimpath`, names each asset `<tool>_<tag>_<os>_<arch>[.exe]` (for example
+`nova-reserve_v1.0.0_linux_amd64`), writes one `SHA256SUMS`, and creates the GitHub release with the workflow's own
+`GITHUB_TOKEN`. Nothing else holds a credential.
 
-<<<<<<< HEAD
 ```
 ansible-playbook -i ./inventory fleet/nova-tools-install.yml -e nova_tools_version=v2.0.0-rc1 -l <machine> --check --diff
 ansible-playbook -i ./inventory fleet/nova-tools-install.yml -e nova_tools_version=v2.0.0-rc1 -l <machine>
-=======
-```sh
-ansible-playbook -i "${NOVA_INVENTORY:?set the inventory script}" fleet/nova-tools-install.yml \
-  -e "nova_tools_version=${NOVA_TOOLS_VERSION:?set a published release tag}" \
-  -l "${NOVA_HOST_LIMIT:?select the hosts}" --check --diff
-ansible-playbook -i "${NOVA_INVENTORY:?set the inventory script}" fleet/nova-tools-install.yml \
-  -e "nova_tools_version=${NOVA_TOOLS_VERSION:?set a published release tag}" \
-  -l "${NOVA_HOST_LIMIT:?select the hosts}"
->>>>>>> 961730a02 (docs: human-readable per-tool docs (docs/v2 rebased onto main))
 ```
 
-The role reads `SHA256SUMS` from that release, including in check mode.
-It refuses unsupported platforms or missing asset digests. Downloads are
-checked against those digests. A matching installed binary is left alone.
+The role reads the release's `SHA256SUMS`, downloads each asset and checks it against its digest before it is put in
+place. A binary that already holds the digest is left alone, so a second run changes nothing and `--check --diff` is
+clean. There is no default version: a run never installs "latest" by accident. A platform the release does not ship
+is refused before anything is written. The Windows tasks are included only for a Windows host, so
+`ansible-galaxy collection install -r fleet/requirements.yml` (ansible.windows) is needed only when a Windows host is
+in the inventory.
 
-On a host without a bin directory, check mode reports the directory change
-and skips the downloads. Applying the play creates the directory and installs
-the binaries. A check run does not establish that installation succeeded.
-
-The supported release platforms are Linux amd64/arm64, macOS arm64 and
-Windows amd64. Asset names are `<tool>_<tag>_<os>_<arch>[.exe]`.
-The Windows sandbox binary has no enforcement backend.
-
-| Variable | Default | Effect |
+| Variable | Default | |
 |---|---|---|
-| `nova_tools_version` | Required | Choose a release tag. There is no implicit latest release. |
-| `nova_tools_names` | Release tools | Select the binaries to install. See [group_vars/all.yml](../fleet/group_vars/all.yml) for the list. |
-| `nova_tools_bin_dir` | `nova_bin_dir`, else the login's `~/.local/bin` | Unix destination. |
-| `nova_tools_win_bin_dir` | `<profile>\.local\bin` | Windows destination. |
-| `nova_tools_release_url` | This repository's GitHub release downloads | Source of checksums and assets. |
-| `nova_tools_restart`, `nova_tools_restart_commands` | false, empty | Run supplied argument lists after a binary changes. |
-| `nova_tools_remove_enabled`, `nova_tools_remove` | false, retired-name list | Move selected old Unix binaries aside after installation. |
+| `nova_tools_version` | none, required | the tag, `vX.Y.Z` |
+| `nova_tools_names` | the six tools | which tools to install (and which `argv[0]` services.yml prefixes) |
+| `nova_bin_dir` | `~/.local/bin` | where they go (Windows: `<profile>\.local\bin`) |
+| `nova_tools_release_url` | the GitHub releases of this repository | `<base>/<tag>/<asset>` |
+| `nova_tools_restart`, `nova_tools_restart_commands` | false, empty | argv lists run once, only if a binary changed |
+| `nova_tools_remove_enabled` | false | retire the binaries below |
+| `nova_tools_remove` | the retired list | names to retire |
 
-Review `nova_tools_remove` in the [role defaults](../fleet/roles/nova-tools-install/defaults/main.yml)
-before enabling removal. It selects the `retired` and `rowan-tools` destinations
-from [retired-tools.txt](../fleet/retired-tools.txt). Commands that moved to
-nova-sprint are excluded from the default list.
+**The retire list.** With `-e nova_tools_remove_enabled=true`, after a successful install each name in
+`nova_tools_remove` found in the bin directory is moved to `<nova_bin_dir>/retired-<date>/`, never deleted; a name
+not there is skipped, so this is idempotent too. A name that is also being installed is refused. The default list is
+the rows of `fleet/retired-tools.txt` that say `retired` or `rowan-tools`: nova-check, nova-ci,
+nova-decide, nova-doctor, nova-fuse, nova-local, nova-loop, nova-memory, nova-redis, nova-self-talk, nova-slot,
+nova-table, nova-tokens, nova-up, nova-update, nova-version. Another product's binaries (nova-sprint, nova-card,
+nova-work, nova-swarm, nova-hook, nova-friend) are never in it. An operator who wants more gone names the whole list:
 
-On Unix, selected files move to `<bin>/retired-<date>/` after a successful
-installation. Absent files are skipped. A name selected for both installation
-and retirement is refused. Windows skips retirement.
-
-To choose a different list, set `nova_tools_remove` explicitly. Review it against
-the programs the selected machines use. Restarts and retirement are opt-in;
-their defaults are false.
-
-## Running programs
-
-`services.yml` writes systemd services on Linux and launchd units on macOS.
-Periodic Linux rows also get a systemd timer.
-
-```sh
-ansible-playbook -i "${NOVA_INVENTORY:?set the inventory script}" fleet/services.yml \
-  -l "${NOVA_HOST_LIMIT:?select the hosts}" --check --diff
-ansible-playbook -i "${NOVA_INVENTORY:?set the inventory script}" fleet/services.yml \
-  -l "${NOVA_HOST_LIMIT:?select the hosts}"
+```
+-e nova_tools_remove_enabled=true -e nova_tools_remove='["nova-sprint","nova-card"]'
 ```
 
-The row's `argv` supplies the command and its arguments. If its first word is
-in `nova_tools_names`, the play prefixes it with `nova_bin_dir`. Other program
-names and arguments pass through. On macOS, a bare system program is resolved
-with `command -v` using the unit's PATH and written as an absolute path.
+Retiring is for Unix machines; on Windows it is skipped.
 
-Units run from the login's home. They receive HOME and `nova_service_path` as PATH,
-then the row's `env` values. A row can override HOME or PATH. Use string values,
-such as `{"REVIEW_MODE":"true"}`. Secrets belong in the row's `keys`, not `env`.
+## services.yml
 
-For example, this row runs the installed bus hook with its Redis address:
+One supervised unit per service row, on the machine the row names: a LaunchAgent (or LaunchDaemon) on macOS, a systemd
+user unit (or system unit) on Linux, with a `.timer` beside the service for a row that runs every n seconds.
 
-```json
-{
-  "name": "reader",
-  "argv": ["nova-bus", "hook", "--as", "reader"],
-  "env": {"NOVA_BUS_REDIS": "redis-host:6379"},
-  "keepalive": true
-}
+```
+ansible-playbook -i ./inventory fleet/services.yml --check --diff
+ansible-playbook -i ./inventory fleet/services.yml
 ```
 
-Stdout and stderr append to the row's `log` on both platforms. The default is
-`~/.local/state/nova/services/<name>.log`. A leading `~/` in the log path expands
-to the login's home, and the play creates its parent directory.
+The unit runs the row's `argv` exactly. If `argv[0]` is one of `nova_tools_names`, it is prefixed with
+`nova_bin_dir`; no other word is changed. The row
+`{"argv":["nova-bus","hook","--as","reader"],"env":{"NOVA_BUS_REDIS":"redis-host:6379"}}` runs
+`<nova_bin_dir>/nova-bus hook --as reader` with `NOVA_BUS_REDIS=redis-host:6379` in its environment. The unit's
+`PATH` includes `nova_bin_dir`, and each `env` entry is a unit environment variable (an `Environment=` line on Linux,
+an `EnvironmentVariables` entry on macOS); a row's `env` wins over `HOME` and `PATH`. Env values are strings: a JSON `true` reaches the program as
+`True`, so write the string you mean. Output is appended to the row's `log` (a `~/` is the login's home), whose directory
+the play creates.
 
-A row with secret names is wrapped in `nova-secrets exec --only ...`.
-The values do not appear in the generated unit. These defaults select the
-store and supervision mode:
+A bare `argv[0]` that is not a tool name (`sleep`, say) is found on the unit's `PATH` by systemd. launchd does not
+search `PATH`, so on macOS the play resolves it with `command -v` against the unit's `PATH` and writes the absolute
+path into the plist; if it is not found the play fails before anything is written.
 
-| Variable | Default |
+A row whose `keys` is not empty is wrapped in
+`nova-secrets exec --store <store> --as <seat> --key <key_dir>/<seat>.key --sops <sops> --only <keys> --`, so the
+values reach the command and never the unit file. `<seat>` and `<keys>` are the row's; `<store>`, `<key_dir>` and
+`<sops>` are `nova_secrets_store`, `nova_secrets_key_dir` and `nova_sops` (see the table above). A row with no keys
+runs its `argv` unchanged. Rows without `every` are kept alive; `enabled` defaults to true. `enabled false` writes
+the unit and does not load it.
+
+- Every unit carries a mark. A marked unit no row names, and a marked unit in the other place (user versus system), is
+  retired: unloaded and removed. `--check` lists each as `WOULD-RETIRE`. A unit of another tool is left alone and
+  named in a `NOTE`; `nova_retire_units` names any to retire.
+- Units written by this play's earlier name, `loops.yml` (`com.nova.loop.<name>.plist`, `nova-loop-<name>.service|timer`, marked `from the loop record`), are retired by the first run, before the new units are loaded (stop old, then load new, so a timer or a kept-alive singleton never runs twice); the log directory changed too (`~/.local/state/nova/loops` to `.../services`).
+- **A host with no rows retires nothing by itself.** An empty `nova_services` is valid, but a run that would retire
+  every unit it ever wrote on that host (all the marked `nova-service-*` and `nova-loop-*` units) refuses instead,
+  naming the units. If the empty list is what you mean, say so with `-e nova_service_retire_all=true`; otherwise
+  check the inventory (`nova-config service list`) first. Units named in `nova_retire_units` are explicit and do not
+  count.
+- A unit whose file changed is restarted (`RESTART`, `WOULD-RESTART` under `--check`).
+- `-e nova_service_only=a,b` renders and restarts only those rows and retires nothing. `-e nova_service_restart=a,b`
+  restarts those rows even if their unit did not change; this is how a hung service is restarted, never by hand. A name
+  no row carries is refused before anything is written.
+- On Linux a changed unit that was not restarted fails the play; the receipt ends each host. The receipt is one line,
+  `SERVICES host=<machine> place=<unit directory> records=<rows> enabled=<rows enabled> written=<unit files created or
+  changed> retired=<units retired>`, then ` only=<names>` when `nova_service_only` was given and
+  ` (check: nothing changed)` under `--check`.
+
+## github-runners.yml
+
+GitHub Actions runners on every machine of the `runner` group: as many as the machine row's `runners` says, each
+registered to one repository or organization, run as a service that starts at boot, labelled with the machine's roles,
+`os` and `arch`. Linux (amd64, arm64; WSL2 with systemd on counts as Linux), macOS (a LaunchDaemon dropped to the
+login) and native Windows (the runner's own Windows service; `ansible.windows` and an administrator login). Linux and
+macOS use sudo for the service files: add `-K`. A Windows host without the collection is refused with the install command
+(`ansible-galaxy collection install -r fleet/requirements.yml`).
+
+| Variable | |
 |---|---|
-| `nova_secrets_store` | `<home>/.local/share/nova/secrets` |
-| `nova_secrets_key_dir` | `<home>/.config/nova-secrets`; keys are `<seat>.key` |
-| `nova_sops` | Linux: `<nova_bin_dir>/sops`; macOS: `/opt/homebrew/bin/sops` |
-| `nova_launchd_domain` | `auto`: GUI agent when available, otherwise a system daemon running as the login user |
-| `nova_systemd_scope` | `user`; `system` runs a system unit as the login user |
+| `github_runner_url` | no default. `https://github.com/<owner>/<repo>`, or `https://github.com/<org>` |
+| `github_runner_scope` | no default. `repo` or `org`; refused if the url is the other shape |
+| `github_runner_labels` | extra labels, a list (default none). Added to the machine's roles, `os` and `arch` |
 
-An `enabled false` row writes a disabled unit. A changed enabled unit is
-restarted. Units marked by this play are unloaded and removed when no row
-names them, or when they are in the other user/system scope.
+```
+ansible-playbook -i ./inventory fleet/github-runners.yml -e github_runner_url=https://github.com/OWNER/REPO -e github_runner_scope=repo -K
+```
 
-The first full run also retires marked units written by the former
-`loops.yml`, before loading their replacements, so both versions do not run
-at once. Old unit names are
-`com.nova.loop.<name>.plist` and `nova-loop-<name>.service` or `.timer`.
-New units use `service` in those names. Logs now default to
-`~/.local/state/nova/services/<name>.log`; explicit row paths are retained.
+**The token.** The play reads `GITHUB_RUNNER_TOKEN` on the control node with `nova-secrets exec --only
+GITHUB_RUNNER_TOKEN` and hands it to the runner on its standard input: never an argument or an environment variable on the host (`ps` shows
+neither), never the inventory, never a file. Put it in the store the hour you run (a registration token expires in an hour; set `NOVA_SECRETS_STORE` and
+`NOVA_SECRETS_KEY` as `docs/SPEC-SECRETS.md` says, or pass `-e '{"github_runner_secrets_args":["--store","S","--key","K"]}'`):
 
-Unmarked units remain unless named in `nova_retire_units`. A row with an
-unmarked unit's name can take it over.
+```
+gh api -X POST repos/OWNER/REPO/actions/runners/registration-token -q .token | nova-secrets set GITHUB_RUNNER_TOKEN
+```
 
-`nova_service_only=a,b` limits the run to those names and retires nothing.
-`nova_service_restart=a,b` requests a restart even when the unit file is unchanged.
-Unknown selected names are refused before writes. Check mode reports proposed
-restarts and retirements.
+For an organization the path is `orgs/ORG/actions/runners/registration-token`. The token is read only when a runner
+needs registering, and never under `--check`.
 
-Each host ends with a `SERVICES host=...` receipt. On Linux, a changed unit that
-was not restarted fails the play.
+**What it does.** Per runner: the pinned release, checked against GitHub's published digest, unpacked in
+`<home>/actions-runner/<owner>-<repo>-<i>` (Windows `C:\actions-runner`); registered as `<machine>-<i>` unless
+`.runner` is already there; one service per runner, enabled at boot (systemd unit on Linux). The labels are fixed at
+registration: change them and the play says `LABEL-DRIFT` and leaves the runner alone. A changed unit restarts its
+runner, which ends a job running on it. A machine whose count drops has its highest-numbered runners retired, and that removes them from GitHub, which needs a removal token
+(`.../actions/runners/remove-token`, stored the same way; `github_runner_deregister` defaults to true).
+A host in the `runner` group with no `runners` value and no `-e runner_count=N` is refused (never read as 0, which would retire its runners); 0 is an explicit choice. `-e runner_count=N` overrides the row for one run; `github_runner_version` and `github_runner_sha256` move the pin.
 
-## Sharing build capacity
+**The check.** A second run changes nothing, and `--check --diff` prints no change:
 
-Choose one reservation directory for callers on each machine, then store
-its capacity while no reservation is held.
+```
+ansible-playbook -i ./inventory fleet/github-runners.yml -e github_runner_url=... -e github_runner_scope=repo -K --check --diff
+```
 
-<<<<<<< HEAD
 **The rollback.** Retire every runner of that url on the machines: services stopped and removed, runners removed from
 GitHub, directories deleted. Store a removal token first (`.../actions/runners/remove-token`, same `nova-secrets set`);
 with `-e github_runner_deregister=false` no token is read and the runner entry stays in GitHub for you to delete.
@@ -685,22 +650,9 @@ dies. A machine has one capacity, N slots, stored in the directory; `docs/SPEC-R
 nova-reserve --wait 15m -- go test ./...
 nova-reserve --exclusive -- ./bench
 nova-reserve hold --for 2h &        # prints HELD, holds until SIGTERM or --for
-=======
-```sh
-nova-reserve set --slots 3
-nova-reserve --wait 15m --why "unit tests" -- go test ./...
-nova-reserve --exclusive -- ./benchmark
->>>>>>> 961730a02 (docs: human-readable per-tool docs (docs/v2 rebased onto main))
 nova-reserve status
+nova-reserve set --slots 3           # refused while a slot is held
 ```
 
-<<<<<<< HEAD
 Every caller on a machine uses the same directory. `reserve/README.md` has the flags, exit codes and the TLA+ models;
 `docs/SPEC-RESERVE.md` specifies the reservations.
-=======
-The first shared reservation sets the capacity. Without `--slots`, its default is the CPU
-count divided by four, with a minimum of one. Later callers use the stored
-count; `set` changes it only while free.
-Set `NOVA_RESERVE_DIR` to choose the shared directory. The [reservation guide](../reserve/README.md)
-covers waiting, exits and command lifetime.
->>>>>>> 961730a02 (docs: human-readable per-tool docs (docs/v2 rebased onto main))

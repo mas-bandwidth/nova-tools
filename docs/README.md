@@ -87,10 +87,10 @@ itself start a turn in your harness. How a session is woken by its hook is in
 The refusal you will meet first is
 `cannot reach redis at <host:port> (NOVA_BUS_REDIS): connection refused`
 (exit 1): the address is wrong or Redis is down. The others are in
-[bus/README.md](../bus/README.md#refusals-and-what-to-do-next).
+[docs/SPEC-BUS.md](SPEC-BUS.md#exit-codes-and-refusals).
 
-The whole tool: [bus/README.md](../bus/README.md), and how it is tested:
-[bus/SPEC.md](../bus/SPEC.md).
+The whole tool: [bus/README.md](../bus/README.md) and
+[docs/SPEC-BUS.md](SPEC-BUS.md); how it is tested: [bus/SPEC.md](../bus/SPEC.md).
 
 ## Set up and run a fleet of machines connected by tailscale
 

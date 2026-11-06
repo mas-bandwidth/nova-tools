@@ -40,57 +40,8 @@ Tools may run a user-selected command or a system helper. They should not call
 a sibling nova tool by name to implement their own job. Review this rule in
 code; the import check alone cannot detect dependencies through subprocesses.
 
-<<<<<<< HEAD
-`go.mod` has no `replace` directive and only the four `tool` entries listed in
-the test. A module that any `.go` file imports counts as direct whatever its
-`// indirect` comment says.
-
-The only shared things are the standard library and the direct dependencies
-listed in `boundary_test.go`. A new direct dependency is added to that list in
-the same PR, with the reason written here under "Dependencies".
-
-## The budget rule
-
-`tests/BUDGET` has one line per tool, `name  max-non-test-go-lines`, counting the
-`*.go` files that are not `_test.go`. The test fails when a tool is over. Each
-budget is the size the tool reached when its spec was settled, plus 50. A tool
-over budget means the spec is not minimal; raising one is a PR that says why.
-
-`BUDGET` lines are exactly `name  number`, with no comments or duplicates, and
-include `boundary` itself (`tests/boundary`, 400).
-
-### Raised budgets
-
-- `bus` 600 -> 700 (2026-11-05): a named ACL user (`NOVA_BUS_USER`) and the
-  cold reviews' fixes, each a rule the spec now states: name and `--re`
-  shapes, deduped recipients, empty-subject refusal, VERB STATUS lines
-  (`HOOK OK`, `WHO OK`, `PENDING OK`), the holder and budget in `HOOK WAIT`,
-  and an unreachable server said plainly with the reconnect log rate-limited.
-- `bus` 700 -> 1500 (2026-11-05): the wake is the bus. A hook delivers each
-  message into its session and wakes it when idle; v2 had dropped that for
-  every harness but Claude Code, which is the bus's whole point. This restores
-  v1.6.29 nova-hook's wake and nothing else (no recovery, lanes or friend
-  machinery): `--harness codex` (the desktop IPC socket and saved events),
-  `grok` (the wake file), `antigravity` (agentapi send-message), the receipts,
-  the start-up checks, the /dev/null refusal for `claude`, and the pending
-  read past a failed wake (bus/tla/Bus.tla, BusWake.cfg). 1450 lines plus 50.
-
-## Adding a tool
-
-1. Make a new top-level directory with `package main` files.
-2. Add its name to the allowed list in `boundary_test.go` (and to `mainTools`).
-3. Add a line to `tests/BUDGET`.
-4. Keep it to a few hundred lines, with a spec in `docs/`.
-
-## What goes elsewhere
-
-Anything that knows our workflow lives outside this repository: policy belongs
-to the sprint; personal tools belong in the owner's own tools repository.
-If a tool needs to know a workflow to do its job, it is in the wrong place.
-=======
 Workflow policy belongs in nova-sprint or another consumer. Personal tools
 belong in their owner's repository.
->>>>>>> 961730a02 (docs: human-readable per-tool docs (docs/v2 rebased onto main))
 
 ## Dependencies
 

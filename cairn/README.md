@@ -1,22 +1,12 @@
 # nova-cairn
 
-<<<<<<< HEAD
-<<<<<<< HEAD
-nova-cairn is the record an AI keeps for its next session: the words a session chose to keep, a search and a check over
-those words and the notes already written, and a reader that flags self-talk, sentences where the writer passes a standing verdict on
-themselves. One binary, standard library only. Search is by keywords only: a paraphrase that shares almost no words with an entry is not found.
-=======
-Leave useful notes for the next session. A **cairn** is a saved session record.
-Keep an entry, read it back, and search it alongside Markdown notes.
->>>>>>> 961730a02 (docs: human-readable per-tool docs (docs/v2 rebased onto main))
-=======
 Save the words of a session, read them back, and search them beside your
 Markdown notes. It also checks notes for broken links and scans text for
 sentences that turn one event into a lasting judgment of the writer. The files
-stay on your machine.
+stay on your machine. Search is by keywords only: a paraphrase that shares
+almost no words with an entry is not found.
 
 ## Build
->>>>>>> 644b32588 (docs: one short guide per tool, beside the tool)
 
 ```sh
 git clone -q https://github.com/mas-bandwidth/nova-tools

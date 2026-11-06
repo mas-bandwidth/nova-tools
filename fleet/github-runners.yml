@@ -1,6 +1,6 @@
 # github-runners.yml: GitHub Actions runners on every machine of the `runner` group, runner_count of them
 # (the machine row's `runners`), registered to one repository or organization, run as a service that
-# starts at boot, labelled with the machine's roles, os and arch. See fleet/README.md.
+# starts at boot, labelled with the machine's roles, os and arch. docs/FLEET.md, "github-runners.yml".
 #
 #   ansible-playbook -i ./inventory fleet/github-runners.yml -e github_runner_url=https://github.com/<owner>/<repo> -e github_runner_scope=repo --check --diff | cat
 #   ansible-playbook -i ./inventory fleet/github-runners.yml -e github_runner_url=https://github.com/<owner>/<repo> -e github_runner_scope=repo -K | cat
