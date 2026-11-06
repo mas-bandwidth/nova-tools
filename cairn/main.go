@@ -18,9 +18,13 @@ import (
 	"unicode/utf8"
 )
 
-const intro = `nova-cairn: the record an AI keeps for its next session: kept words, keyword search, and a self-talk check. Plain files; nothing is ever sent anywhere. Search is by
+const intro = `nova-cairn: the record an AI keeps for its next session: kept words, keyword search,
+and a self-talk check. Plain files; nothing is ever sent anywhere. Search is by
 keywords only: a paraphrase that shares almost no words with the entry is not found.
 `
+
+const longHelp = "Long help for one verb: nova-cairn help <verb>. The full guide: cairn/SPEC.md.\n"
+
 const exits = "Exit 0 done, 1 a finding or a conflict, 2 could not run. Every refusal ends with what to run next.\n"
 
 // groups is the help: each verb's synopsis, under the notes for its group.
@@ -81,7 +85,7 @@ func help(w io.Writer, path string) bool {
 				fmt.Fprintf(w, "  nova-cairn %s\n", strings.Join(strings.Fields(v[1]), " "))
 			}
 		}
-		fmt.Fprint(w, "Long help for one verb: nova-cairn help <verb>. The full guide: cairn/SPEC.md.\n", "\n", exits)
+		fmt.Fprint(w, longHelp, "\n", exits)
 		return true
 	}
 	var b strings.Builder
