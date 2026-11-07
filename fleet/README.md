@@ -163,6 +163,7 @@ reached as root at the address given, as on the first run.
 
 | Play | Purpose | Needs |
 |---|---|---|
+| `ci-rules` | the CI rules on every GitHub Actions runner a machine runs, whoever registered it | nothing; `-l` the machines |
 | `github-runners` | GitHub Actions runners on every machine of the runner group, registered to one repository or organization | `github_runner_url`, `github_runner_scope`; `gh` on the control node logged in with admin on the repository |
 | `health` | guards that let a Linux machine get itself out of trouble, and a disk report | nothing |
 | `install` | install one nova-tools release, by tag, on the machines named | `nova_tools_version` (a tag `vX.Y.Z`; no default) |
@@ -345,6 +346,7 @@ events may use them.
 | `github_runner_state` | `present` (default) or `absent`, which retires every runner of that url |
 | `github_runner_deregister` | true: retiring removes the runner from GitHub (needs a removal token) |
 | `github_runner_version`, `github_runner_sha256` | the pinned actions/runner release and its digests |
+| `github_runner_ci_limit_seconds` | 120: the per-commit job limit every runner enforces ("CI rules") |
 
 **The token.** The play asks GitHub for it on the control node with that node's own `gh` login, `gh api -X POST
 <repos|orgs>/<path>/actions/runners/registration-token -q .token` (`remove-token` to retire), never a pasted token,
@@ -378,6 +380,9 @@ token (`.../actions/runners/remove-token`, asked for the same way). A second run
 **Plan.** Under `--check` each machine prints `RUNNER-PLAN <machine> want=<n> register=<names> retire=<names>
 labels=<labels>`, the runners named `<machine>-<i>` as GitHub will list them.
 
+**CI rules.** Every runner the play sets up enforces the CI rules ("CI rules" below); its receipt is the
+`CI-RULES` lines.
+
 **Rollback.** Retiring asks gh for a **removal** token the same way; run with `-e github_runner_state=absent`:
 
 ```
@@ -388,6 +393,33 @@ nova-fleet github-runners -- -e github_runner_url=https://github.com/OWNER/REPO 
 That stops and removes the services, removes the runners from GitHub and deletes their directories. With `-e
 github_runner_deregister=false` no token is read and the GitHub entries stay for you to delete. A removal token also
 expires in an hour.
+
+## CI rules
+
+Every runner nova-fleet sets up enforces the fleet's CI rules itself, so a repository cannot opt out by forgetting a
+line of YAML. The `github-runners` play applies them to each runner it sets up; the `ci-rules` play applies them to
+every runner running on the machines named, whoever registered it (`nova-fleet ci-rules -- -l <machine>,...`).
+
+| Event | Rule |
+|---|---|
+| `push` | runs only on `refs/heads/main`, a stream base `refs/heads/sprint/<one segment>`, or a tag; any other ref is refused before the first step: `::error::CI rule: push CI runs only on main, sprint/<stream> and tags, not <ref>; ...` (a card branch gets CI through its pull request) |
+| `push`, `pull_request`, `merge_group` | the job finishes within `github_runner_ci_limit_seconds` (default 120) of job wall time, counted from the end of the job-started hook; past it every process under the job's `Runner.Worker` is stopped and killed, each second until the job ends, and the job fails at the job-completed hook: `::error::CI rule: per-commit jobs finish in 2m; move longer work to a nightly (schedule) workflow` |
+| `schedule`, `workflow_dispatch` | nightly or manual: no limit |
+
+**How.** The runner's own job hooks (GitHub's "Running scripts before or after a job"): `ACTIONS_RUNNER_HOOK_JOB_STARTED`
+and `ACTIONS_RUNNER_HOOK_JOB_COMPLETED` in the runner's `.env`, pointing at `job-started` and `job-completed` (`.sh`, or
+`.ps1` on Windows) in `<runner dir>/.nova-ci-rules/`, beside `nova-ci-rules.sh` (`.ps1`) and `limit` (the seconds). The
+started hook arms a watchdog, a detached process that the completed hook stops; a job that ends in time leaves
+nothing behind. A hook the `.env` held before is kept as `NOVA_CI_CHAIN_JOB_STARTED` / `_COMPLETED` and run from ours
+(after the push check, before the watchdog is armed, so waiting for a lock is not job time). The limit is one value
+for the fleet (`group_vars` or `-e`), never per repository.
+
+**Applying.** `nova-ci-rules apply` writes the hooks and the `.env`, and restarts a runner whose `.env` changed (the
+runner reads `.env` only at start) by what supervises it: its systemd unit (system or user, found from the listener's
+cgroup), its launchd job (found by `WorkingDirectory`), or its Windows service. A runner running a job is left alone
+and says `restart=busy`: run the play again. Linux applies as root; macOS as the login, so a runner of another login
+says `denied=` (it needs that login or root). A WSL machine also applies `nova-ci-rules.ps1` to the Windows side's
+`actions.runner.*` services. One line per runner: `CI-RULES <machine> <dir> hooks=<ok|set> restart=<no|done|busy|stopped|failed>`.
 
 ## join
 

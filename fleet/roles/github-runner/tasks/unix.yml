@@ -67,3 +67,11 @@
   ansible.builtin.include_tasks: unix-runner.yml
   loop: "{{ github_runner_want }}"
   loop_control: { loop_var: runner_index }
+
+# The CI rules, by default on every runner this role sets up: the job hooks, the .env pointing at them, and an idle
+# runner restarted to read it (tasks/ci-rules.yml).
+- name: the CI rules on these runners
+  ansible.builtin.include_tasks: ci-rules.yml
+  vars:
+    ci_rules_dirs: "{{ [github_runner_base_dir ~ '/' ~ github_runner_slug ~ '-'] | product(github_runner_want | map('string')) | map('join') | list }}"
+  when: github_runner_want | length > 0
