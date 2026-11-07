@@ -16,6 +16,9 @@ github_runner_state: present
 # No default: a host with neither is refused, so a missing value never reads as 0 and retires
 # the runners. 0 is an explicit choice. A host above n has its extra runners (highest numbers
 # first) retired.
+# runner_count=cores (nova-fleet up's default) sizes each host to its cores: one runner per this
+# many (the row's `cores`, else the host's own count), at least 1. A starting value, not measured.
+github_runner_cores_per_runner: 4
 
 # The actions/runner release and the digests GitHub publishes for its assets.
 github_runner_version: "2.338.2"

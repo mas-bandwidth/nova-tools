@@ -13,7 +13,7 @@ import (
 	"strings"
 )
 
-const upHelp = `nova-fleet up [--check] [--user LOGIN] [--grant NAME[,NAME]] --tools TAG|DIR [--runners URL [--runner-count N]] <name>=<address>[/<os>/<arch>]... [-- -e name=value ...]
+const upHelp = `nova-fleet up [--check] [--user LOGIN] [--grant NAME[,NAME]] --tools TAG|DIR [--runners URL [--runner-count N|cores]] <name>=<address>[/<os>/<arch>]... [-- -e name=value ...]
 
 From nothing to a fleet, in a fixed order (fleet/README.md, "up"). Tailscale, PostgreSQL, Redis and
 Ansible are not optional: nothing here skips one.
@@ -37,7 +37,8 @@ Ansible are not optional: nothing here skips one.
   --grant NAMES     the values each machine's seat is granted (default NOVA_BUS_PASSWORD)
   --tools TAG|DIR   a release tag (vX.Y.Z) or a directory laid out as a release
   --runners URL     https://github.com/<owner>/<repo> or https://github.com/<org>
-  --runner-count N  runners per machine (default 1)
+  --runner-count N  runners per machine; default cores: one per 4 cores of each machine, at least 1
+                    (github_runner_cores_per_runner). Every machine named gets them except this control node
   --check           every step under ansible --check; the secrets are read all the same
   -- -e name=value  passed to every play (a variable up sets itself, or one that skips a pillar, is refused)
 A fleet that exists is read from NOVA_PG_DSN (nova-config's rows): its store machine stays the store, and
@@ -69,7 +70,7 @@ type upRun struct {
 	check                bool
 	user, tools, runners string
 	grant                string
-	runnerCount          int
+	runnerCount          string // N, or cores (the default): sized to each machine's cores by the role
 	machines             []*machine
 	pass                 []string
 	dir, store, seat     string
@@ -84,7 +85,7 @@ type upRun struct {
 }
 
 func parseUp(args []string, stderr io.Writer) (*upRun, int) {
-	u := &upRun{user: "nova", grant: "NOVA_BUS_PASSWORD", runnerCount: 1, stderr: stderr, binDir: "$HOME/.local/bin"}
+	u := &upRun{user: "nova", grant: "NOVA_BUS_PASSWORD", runnerCount: "cores", stderr: stderr, binDir: "$HOME/.local/bin"}
 	refuse := func(format string, a ...any) (*upRun, int) {
 		fmt.Fprintf(stderr, "nova-fleet up: %s; run: nova-fleet up -h\n", fmt.Sprintf(format, a...))
 		return nil, 2
@@ -132,11 +133,10 @@ func parseUp(args []string, stderr io.Writer) (*upRun, int) {
 				val = args[i]
 			}
 			if flag == "--runner-count" {
-				n, err := strconv.Atoi(val)
-				if err != nil || n < 1 {
-					return refuse("--runner-count wants a number of at least 1, got %s", val)
+				if n, err := strconv.Atoi(val); val != "cores" && (err != nil || n < 1) {
+					return refuse("--runner-count wants a number of at least 1, or cores, got %s", val)
 				}
-				u.runnerCount = n
+				u.runnerCount = val
 			} else {
 				*takes[flag] = val
 			}
@@ -488,7 +488,7 @@ func (u *upRun) steps() int {
 		if m == first {
 			roles = "services,bench"
 		}
-		if u.runners != "" {
+		if u.runners != "" && !m.self {
 			roles += ",runner"
 		}
 		if m.self { // this control node: on the tailnet already, and join's peer check cannot see itself
@@ -514,7 +514,7 @@ func (u *upRun) steps() int {
 			m.later = true
 			u.say("UP %s PENDING (check: its row does not exist yet; the steps after join run once join has made it)", m.name)
 		}
-		if u.runners != "" && m.row != nil {
+		if u.runners != "" && m.row != nil && !m.self { // runners, like any heavy work, never default onto the control node
 			if roles, _ := m.row["roles"].(string); !slices.Contains(strings.Split(roles, ","), "runner") {
 				args := []string{"machine", "set", m.name, "--roles", roles + ",runner", "--actor", u.seat, "--reason", "nova-fleet up --runners"}
 				if u.check {
@@ -634,7 +634,7 @@ func (u *upRun) steps() int {
 		if len(on) == 0 {
 			wouldRun("RUNNERS", "once the runner role is on the rows")
 		} else if c := u.play("github-runners", false, pg, "-e", "github_runner_url="+u.runners, "-e", "github_runner_scope="+runnerScope(u.runners),
-			"-e", "runner_count="+strconv.Itoa(u.runnerCount), "-l", strings.Join(on, ",")); c != 0 {
+			"-e", "runner_count="+u.runnerCount, "-l", strings.Join(on, ",")); c != 0 {
 			return fail("runners", c)
 		} else {
 			for _, m := range u.machines {
@@ -664,7 +664,7 @@ func (u *upRun) steps() int {
 // ready names the machines a play can run on: reached, with a row (and the runner role, with roles).
 func (u *upRun) ready(roles bool) (names []string) {
 	for _, m := range u.machines {
-		if m.unreachable == "" && !m.later && !(roles && m.roleLater) {
+		if m.unreachable == "" && !m.later && !(roles && (m.roleLater || m.self)) {
 			names = append(names, m.name)
 		}
 	}
