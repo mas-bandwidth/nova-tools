@@ -347,6 +347,7 @@ events may use them.
 | `github_runner_deregister` | true: retiring removes the runner from GitHub (needs a removal token) |
 | `github_runner_version`, `github_runner_sha256` | the pinned actions/runner release and its digests |
 | `github_runner_ci_limit_seconds` | 120: the per-commit job limit every runner enforces ("CI rules") |
+| `github_runner_ci_push_branches` | `[main, sprint/*]`: the branches a push may run CI on, as globs where `*` and `?` stop at a `/` (tags always may); any other branch gets CI through its pull request |
 
 **The token.** The play asks GitHub for it on the control node with that node's own `gh` login, `gh api -X POST
 <repos|orgs>/<path>/actions/runners/registration-token -q .token` (`remove-token` to retire), never a pasted token,
@@ -402,7 +403,7 @@ every runner running on the machines named, whoever registered it (`nova-fleet c
 
 | Event | Rule |
 |---|---|
-| `push` | runs only on `refs/heads/main`, a stream base `refs/heads/sprint/<one segment>`, or a tag; any other ref is refused before the first step: `::error::CI rule: push CI runs only on main, sprint/<stream> and tags, not <ref>; ...` (a card branch gets CI through its pull request) |
+| `push` | runs only on a branch matching `github_runner_ci_push_branches` (default `main` and `sprint/*`, one segment) or a tag; any other ref is refused before the first step: `::error::CI rule: push CI runs only on main, sprint/* and tags, not <ref>; ...` (a card branch gets CI through its pull request) |
 | `push`, `pull_request`, `merge_group` | the job finishes within `github_runner_ci_limit_seconds` (default 120) of job wall time, counted from the end of the job-started hook; past it every process under the job's `Runner.Worker` is stopped and killed, each second until the job ends, and the job fails at the job-completed hook: `::error::CI rule: per-commit jobs finish in 2m; move longer work to a nightly (schedule) workflow` |
 | `schedule`, `workflow_dispatch` | nightly or manual: no limit |
 
@@ -411,13 +412,13 @@ run in parallel, is the rule repositories follow; no hook checks it.
 
 **How.** The runner's own job hooks (GitHub's "Running scripts before or after a job"): `ACTIONS_RUNNER_HOOK_JOB_STARTED`
 and `ACTIONS_RUNNER_HOOK_JOB_COMPLETED` in the runner's `.env`, pointing at `job-started` and `job-completed` (`.sh`, or
-`.ps1` on Windows) in `<runner dir>/.nova-ci-rules/`, beside `nova-ci-rules.sh` (`.ps1`) and `limit` (the seconds). The
+`.ps1` on Windows) in `<runner dir>/.nova-ci-rules/`, beside `nova-ci-rules.sh` (`.ps1`), `limit` (the seconds) and `push-branches` (the globs, blank separated). The
 started hook arms a watchdog, a detached process that the completed hook stops; a job that ends in time leaves
 nothing behind. A hook the `.env` held before is kept as `NOVA_CI_CHAIN_JOB_STARTED` / `_COMPLETED` and run from ours, in its
 own process by its extension (after the push check, before the watchdog is armed, so waiting for a lock is not job
 time). Each started hook first stops any watchdog and verdict an earlier job left, so a runner that died mid-job
-never fails the next one. The limit is one value
-for the fleet (`group_vars` or `-e`), never per repository.
+never fails the next one. The limit and the push branches are one value
+each for the fleet (`group_vars` or `-e`), never per repository.
 
 **Applying.** `nova-ci-rules apply` writes the hooks and the `.env`, and restarts a runner whose `.env` changed (the
 runner reads `.env` only at start) by what supervises it: its systemd unit (system or user, found from the listener's

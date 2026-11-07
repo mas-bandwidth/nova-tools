@@ -20,7 +20,7 @@
         mode: "0755"
     - name: apply them to the runners
       ansible.builtin.command:
-        argv: "{{ ['sh', ci_rules_stage.path ~ '/nova-ci-rules.sh', 'apply', github_runner_ci_limit_seconds | string] + (ci_rules_dirs | default([])) }}"
+        argv: "{{ ['sh', ci_rules_stage.path ~ '/nova-ci-rules.sh', 'apply', github_runner_ci_limit_seconds | string, github_runner_ci_push_branches | join(' ')] + (ci_rules_dirs | default([])) }}"
       become: "{{ ci_rules_become | default(ansible_facts['system'] == 'Linux') | bool }}"
       register: ci_rules_applied
       changed_when: "'hooks=set' in ci_rules_applied.stdout or 'restart=done' in ci_rules_applied.stdout"
@@ -34,7 +34,7 @@
         stage=/mnt/c/ProgramData/nova-ci-rules-stage
         mkdir -p "$stage"
         cp {{ ci_rules_stage.path }}/*.ps1 "$stage/"
-        "$ps" -NoProfile -ExecutionPolicy Bypass -File 'C:\ProgramData\nova-ci-rules-stage\nova-ci-rules.ps1' apply {{ github_runner_ci_limit_seconds }} </dev/null | tr -d '\r'
+        "$ps" -NoProfile -ExecutionPolicy Bypass -File 'C:\ProgramData\nova-ci-rules-stage\nova-ci-rules.ps1' apply {{ github_runner_ci_limit_seconds }} {{ github_runner_ci_push_branches | join(' ') | quote }} </dev/null | tr -d '\r'
       args: { executable: /bin/sh }
       register: ci_rules_windows
       failed_when: ci_rules_windows.rc != 0 or 'restart=failed' in ci_rules_windows.stdout or 'denied=' in ci_rules_windows.stdout
@@ -57,7 +57,7 @@
         dest: "{{ ci_rules_stage_win.path }}\\"
     - name: apply them to the runners
       ansible.windows.win_shell: >-
-        & '{{ ci_rules_stage_win.path }}\nova-ci-rules.ps1' apply {{ github_runner_ci_limit_seconds }}
+        & '{{ ci_rules_stage_win.path }}\nova-ci-rules.ps1' apply {{ github_runner_ci_limit_seconds }} '{{ github_runner_ci_push_branches | join(' ') }}'
         {% for d in ci_rules_dirs | default([]) %}'{{ d }}' {% endfor %}; exit $LASTEXITCODE
       register: ci_rules_applied_win
       changed_when: "'hooks=set' in ci_rules_applied_win.stdout or 'restart=done' in ci_rules_applied_win.stdout"

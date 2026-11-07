@@ -4,12 +4,14 @@
 # The runner runs job-started.sh before each job and job-completed.sh after it (ACTIONS_RUNNER_HOOK_JOB_STARTED and
 # _COMPLETED in its .env); both call this script, which lives beside them in <runner dir>/.nova-ci-rules/.
 #
-#   started             a push outside main, sprint/<stream> and tags is refused; then the hook the .env held before
+#   started             a push outside the allowed branches (push-branches) and tags is refused; then the hook the .env held before
 #                       (NOVA_CI_CHAIN_JOB_STARTED) runs; then a push, pull_request or merge_group job gets a watchdog
 #   completed           the watchdog is stopped; NOVA_CI_CHAIN_JOB_COMPLETED runs; a job the watchdog stopped fails
 #   watchdog W DEADLINE (internal) at DEADLINE (unix seconds) kills every process under Runner.Worker W but the hooks
-#   apply LIMIT [DIR..] (nova-fleet) puts the hooks into each runner directory (DIR, or every running runner) and
-#                       restarts an idle runner whose .env changed
+#   apply LIMIT BRANCHES [DIR..]
+#                       (nova-fleet) puts the hooks, LIMIT and BRANCHES (the allowed push branch globs, one word, split
+#                       at blanks) into each runner directory (DIR, or every running runner) and restarts an idle
+#                       runner whose .env changed
 #
 # The parts below are pure functions of their arguments and stdin, so the unit tests call them with no clock:
 #   push-ok REF, limited EVENT, overdue NOW DEADLINE, limit-text SECONDS,
@@ -21,16 +23,27 @@ here=$(cd "$(dirname "$0")" && pwd)
 state=$here/state
 limit=120
 [ -r "$here/limit" ] && limit=$(cat "$here/limit")
+branches="main sprint/*"
+[ -r "$here/push-branches" ] && branches=$(cat "$here/push-branches")
 
-# push-ok REF: a push may run CI on main, on a stream base sprint/<one segment>, and on a tag.
+# push-ok REF: a push may run CI on a tag and on a branch matching one of the globs in push-branches, where * and ? stop
+# at a / (sprint/* is one segment) and no segment is empty.
 push_ok() {
 	case $1 in
-	refs/heads/main | refs/tags/?*) return 0 ;;
-	refs/heads/sprint/?*)
-		case ${1#refs/heads/sprint/} in */*) return 1 ;; esac
-		return 0
-		;;
+	refs/tags/?*) return 0 ;;
+	refs/heads/?*) ;;
+	*) return 1 ;;
 	esac
+	b=${1#refs/heads/}
+	case /$b/ in *//*) return 1 ;; esac
+	slashes=$(printf %s "$b" | tr -dc /)
+	set -f
+	for p in $branches; do
+		[ "$(printf %s "$p" | tr -dc /)" = "$slashes" ] || continue
+		# shellcheck disable=SC2254 # the pattern is a glob on purpose
+		case $b in $p) set +f; return 0 ;; esac
+	done
+	set +f
 	return 1
 }
 
@@ -124,7 +137,8 @@ started() {
 	rm -f "$state/fired"
 	event=${GITHUB_EVENT_NAME:-} ref=${GITHUB_REF:-}
 	if [ "$event" = push ] && ! push_ok "$ref"; then
-		echo "::error::CI rule: push CI runs only on main, sprint/<stream> and tags, not $ref; set on.push.branches to [main, 'sprint/*'] and let this branch get CI through its pull request"
+		set -f
+		echo "::error::CI rule: push CI runs only on $(echo $branches | sed 's/ /, /g') and tags, not $ref; set on.push.branches to [$(echo $branches | sed "s/[^ ]*/'&'/g; s/ /, /g")] and let this branch get CI through its pull request"
 		exit 1
 	fi
 	chain "${NOVA_CI_CHAIN_JOB_STARTED:-}" || exit $?
@@ -230,13 +244,14 @@ restart() {
 	done
 }
 
-# apply LIMIT [DIR..]: one line per runner, CI-RULES <dir> hooks=<ok|set> restart=<no|done|busy|stopped|failed|needs-root>,
+# apply LIMIT BRANCHES [DIR..]: one line per runner, CI-RULES <dir> hooks=<ok|set> restart=<no|done|busy|stopped|failed|needs-root>,
 # or CI-RULES <dir> denied=<why> where this login cannot write the runner's directory. Exit 1 when any is denied,
 # failed or needs root. As root (Linux) the hooks and the limit belong to root, so a job cannot rewrite them; only
 # state/ (the watchdog's) belongs to the runner's login.
 apply() {
-	lim=$1
-	shift
+	lim=$1 br=${2:-}
+	[ -n "$br" ] || { echo "nova-ci-rules: apply wants LIMIT BRANCHES [DIR..]" >&2; return 2; }
+	shift 2
 	src=$here
 	if [ $# -eq 0 ]; then
 		# shellcheck disable=SC2046 # runner directories hold no spaces
@@ -264,6 +279,7 @@ apply() {
 			chmod 0755 "$hd/$f"
 		done
 		[ "$(cat "$hd/limit" 2>/dev/null)" = "$lim" ] || { echo "$lim" >"$hd/limit" && hooks='set'; }
+		[ "$(cat "$hd/push-branches" 2>/dev/null)" = "$br" ] || { echo "$br" >"$hd/push-branches" && hooks='set'; }
 		touch "$dir/.env"
 		env_edit "$hd" <"$dir/.env" >"$hd/env.new"
 		cmp -s "$hd/env.new" "$dir/.env" || { cat "$hd/env.new" >"$dir/.env" && hooks='set'; }
@@ -271,7 +287,7 @@ apply() {
 		if [ "$(id -u)" = 0 ]; then
 			chown -R 0:0 "$hd"
 			chmod 0755 "$hd"
-			chmod 0644 "$hd/limit"
+			chmod 0644 "$hd/limit" "$hd/push-branches"
 			chown -R "$who" "$hd/state" "$dir/.env"
 		fi
 		pid=$(listener_of "$dir")
