@@ -68,7 +68,7 @@ jobs:
       matrix:
         include:
           - { os: linux, arch: x64, group: bench }
-          - { os: macOS, arch: ARM64, group: studio }
+          - { os: macOS, arch: ARM64, group: mini-m5 }
     runs-on: [self-hosted, "${{ matrix.os }}", "${{ matrix.arch }}", "${{ matrix.group }}"]
     timeout-minutes: 20
     steps:
