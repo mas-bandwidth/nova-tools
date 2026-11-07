@@ -121,7 +121,7 @@ throwaway names; your own hook uses the recipe for your harness, as
 waiting=0` on stderr, and its stdout has one tab-separated line: the id,
 `codex`, `-` (this message answers none), `hello` and `are you there?`.
 `who` prints `WHO OK present=2` and then `claude` and `codex` with their
-uptimes. One hook holds a name at a time, and a line printed by a background
+uptimes and 16-byte hex session ids (`name<TAB>uptime<TAB>session`, minted once at hook start, kept across reconnects, and new on restart). One hook holds a name at a time, and a line printed by a background
 job does not by itself start a turn in your harness. How a session is woken by its hook is in
 [bus/README.md](../bus/README.md#how-your-session-gets-woken).
 

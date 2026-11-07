@@ -298,7 +298,7 @@ func (l *logWriter) Write(p []byte) (int, error) {
 func hookedIn(t *testing.T, f *fake, name string) {
 	t.Helper()
 	if !f.live(name) { // planted, not claimed: the claims a test counts are the hook's own
-		f.presence[name], f.deadline[name] = "2026-11-05T11:00:00Z\thook-of-"+name, f.clock.Add(24*time.Hour)
+		f.presence[name], f.deadline[name] = "2026-11-05T11:00:00Z", f.clock.Add(24*time.Hour)
 	}
 }
 
@@ -680,7 +680,51 @@ func TestWhoSortsAndShowsUptime(t *testing.T) {
 	f.clock = t0.Add(500 * time.Millisecond)
 	code, out, errOut := call(t, f, testEnv, "", "who")
 	require.Equal(t, 0, code, errOut)
-	assert.Equal(t, "WHO OK present=4\nalpha\t5s\nbeta\t?\ndelta\t?\ngamma\t1h30m0s\n", out)
+	assert.Equal(t, "WHO OK present=4\nalpha\t5s\ta\nbeta\t?\ndelta\t?\ngamma\t1h30m0s\tg\n", out)
+}
+
+func TestWhoPrintsSessionID(t *testing.T) {
+	t.Parallel()
+	f := newFake()
+	send(t, f, "one", "1")
+	f.failRead = 1 // forces a reconnect inside the first hook process
+	var firstWho string
+	ctx1, cancel1 := context.WithCancel(context.Background())
+	f.idle = func() {
+		f.clock = t0.Add(5 * time.Second)
+		code, out, errOut := call(t, f, testEnv, "", "who")
+		require.Equal(t, 0, code, errOut)
+		firstWho = out
+		cancel1()
+	}
+	var out1, err1 bytes.Buffer
+	require.Equal(t, 0, runHook(ctx1, f, "beta", testAddr, f, &out1, &err1, nil, "again", nil))
+	assert.Len(t, f.claims, 2, "claimed at start and again after reconnect")
+	lines1 := strings.Split(strings.TrimSuffix(firstWho, "\n"), "\n")
+	require.Equal(t, []string{"WHO OK present=2", "alpha\t1h0m5s"}, lines1[:2])
+	fields1 := strings.Split(lines1[2], "\t")
+	require.Len(t, fields1, 3)
+	assert.Equal(t, []string{"beta", "5s"}, fields1[:2])
+	assert.Regexp(t, "^[0-9a-f]{32}$", fields1[2], "16-byte random hex session id")
+
+	// A restarted hook process mints a new session id.
+	f.clock = t0.Add(10 * time.Second)
+	var secondWho string
+	ctx2, cancel2 := context.WithCancel(context.Background())
+	f.idle = func() {
+		f.clock = t0.Add(12 * time.Second)
+		code, out, errOut := call(t, f, testEnv, "", "who")
+		require.Equal(t, 0, code, errOut)
+		secondWho = out
+		cancel2()
+	}
+	require.Equal(t, 0, runHook(ctx2, f, "beta", testAddr, f, &out1, &err1, nil, "again", nil))
+	lines2 := strings.Split(strings.TrimSuffix(secondWho, "\n"), "\n")
+	fields2 := strings.Split(lines2[2], "\t")
+	require.Len(t, fields2, 3)
+	assert.Equal(t, []string{"beta", "2s"}, fields2[:2])
+	assert.Regexp(t, "^[0-9a-f]{32}$", fields2[2])
+	assert.NotEqual(t, fields1[2], fields2[2], "a restarted hook gets a new session id")
 }
 
 func TestWhoWithNobody(t *testing.T) {
