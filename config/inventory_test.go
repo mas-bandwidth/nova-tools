@@ -80,3 +80,15 @@ func TestInventoryEmpty(t *testing.T) {
 	require.Equal(t, 0, code, errs)
 	assert.Contains(t, out, `"hosts": []`)
 }
+
+// nova_public is a host variable only when the row has a public address.
+func TestInventoryPublic(t *testing.T) {
+	t.Parallel()
+	h := fleet(t)
+	h.ok(t, "machine", "set", "bench-b", "--public", "edge.example.com", "--actor", "a")
+	_, out, _ := h.run(t, "inventory", "--host", "bench-b")
+	assert.Contains(t, out, `"nova_public": "edge.example.com"`)
+	assert.Contains(t, out, `"ansible_host": "bench-b.tail"`, "Ansible keeps the tailnet address")
+	_, out, _ = h.run(t, "inventory", "--host", "bench-a")
+	assert.NotContains(t, out, "nova_public", "unset is left out")
+}

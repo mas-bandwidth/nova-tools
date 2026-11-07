@@ -133,8 +133,8 @@ func TestListAndShowLines(t *testing.T) {
 	h := fleet(t)
 	h.ok(t, "machine", "set", "bench-b", "--note", strings.Repeat("ab ", 30)+"=", "--cores", "4", "--actor", "t")
 	out := h.ok(t, "machine", "list")
-	assert.Equal(t, "MACHINE name=bench-a address=- user=nova os=- arch=- cores=- roles=bench,services runners=0 note=-\n"+
-		"MACHINE name=bench-b address=bench-b.tail user=nova os=linux arch=amd64 cores=4 roles=bench runners=2 note="+
+	assert.Equal(t, "MACHINE name=bench-a address=- public=- user=nova os=- arch=- cores=- roles=bench,services runners=0 note=-\n"+
+		"MACHINE name=bench-b address=bench-b.tail public=- user=nova os=linux arch=amd64 cores=4 roles=bench runners=2 note="+
 		`"`+strings.Repeat("ab ", 20)+`..."`+"\n"+
 		"CONFIG LIST kind=machine rows=2\n", out)
 	out = h.ok(t, "machine", "show", "bench-b")
@@ -197,7 +197,7 @@ func TestDryRunWritesNothing(t *testing.T) {
 	assert.Equal(t, "CONFIG DRY-RUN op=set kind=service name=member-b actor=a1 wrote=nothing\n  every: 0 -> 5\n  keepalive: true -> false\n  reason: \"a b\"\n",
 		h.ok(t, "service", "set", "member-b", "--every", "5", "--keepalive", "false", "--actor", "a1", "--reason", "a b", "--dry-run"))
 	out := h.ok(t, "machine", "remove", "bench-b", "--actor", "a1", "--dry-run")
-	assert.Equal(t, "CONFIG DRY-RUN op=remove kind=machine name=bench-b actor=a1 wrote=nothing\n  address: \"bench-b.tail\"\n  user: \"nova\"\n  os: \"linux\"\n  arch: \"amd64\"\n  cores: 12\n  roles: \"bench\"\n  runners: 2\n  note: \"\"\n", out)
+	assert.Equal(t, "CONFIG DRY-RUN op=remove kind=machine name=bench-b actor=a1 wrote=nothing\n  address: \"bench-b.tail\"\n  public: \"\"\n  user: \"nova\"\n  os: \"linux\"\n  arch: \"amd64\"\n  cores: 12\n  roles: \"bench\"\n  runners: 2\n  note: \"\"\n", out)
 	assert.Equal(t, "CONFIG DRY-RUN op=set kind=machine name=bench-a actor=a1 wrote=nothing\n  note: \"\" -> \"the first\"\n",
 		h.ok(t, "machine", "set", "bench-a", "--note", "the first", "--actor", "a1", "--dry-run"))
 	assert.Len(t, h.st.history, n)
@@ -215,10 +215,10 @@ func TestRefusals(t *testing.T) {
 		{1, []string{"service", "set", "nope", "--every", "5", "--actor", "a"}, "service nope not found"},
 		{1, []string{"machine", "add", "bench-a", "--user", "u", "--actor", "a"}, "machine bench-a exists"},
 		{2, []string{"machine", "add", "Bad_Name", "--user", "u", "--actor", "a"}, "want lower-case letters"},
-		{2, []string{"machine", "add", "m9", "--actor", "a"}, "missing required flag --user; machine fields: name, address, user, os, arch, cores, roles, runners, note; run: nova-config machine add -h"},
+		{2, []string{"machine", "add", "m9", "--actor", "a"}, "missing required flag --user; machine fields: name, address, public, user, os, arch, cores, roles, runners, note; run: nova-config machine add -h"},
 		{2, []string{"service", "add", "l9"}, "missing required flag --machine, --argv, --actor"},
 		{2, []string{"machine", "set", "bench-a", "--roles", "coordination", "--actor", "a"}, `--roles "coordination"`},
-		{2, []string{"machine", "set", "bench-a", "--slots", "4", "--actor", "a"}, "unknown flag --slots; machine fields: name, address, user, os, arch, cores, roles, runners, note; run: nova-config machine set -h"},
+		{2, []string{"machine", "set", "bench-a", "--slots", "4", "--actor", "a"}, "unknown flag --slots; machine fields: name, address, public, user, os, arch, cores, roles, runners, note; run: nova-config machine set -h"},
 		{2, []string{"version"}, `unknown verb "version"`},
 		{2, []string{"machine", "set", "bench-a", "--roles", "bench,chef", "--actor", "a"}, `--roles "chef"`},
 		{2, []string{"service", "set", "member-b", "--argv", "prog", "--actor", "a"}, "want the command as a JSON array"},
@@ -277,6 +277,55 @@ func TestCoresDefaultUnsets(t *testing.T) {
 	assert.Equal(t, "", h.st.rows["machine"]["bench-a"].F["cores"])
 }
 
+// TestPublicField: --public takes a public IP literal or a DNS name, shows as "-"
+// when unset, is recorded in the history like any field, and "" unsets it.
+func TestPublicField(t *testing.T) {
+	t.Parallel()
+	h := fleet(t)
+	for in, want := range map[string]string{"203.0.113.7": "203.0.113.7", "2001:db8::0:1": "2001:db8::1", "edge.example.com": "edge.example.com", "a-1.b2.io": "a-1.b2.io"} {
+		h.ok(t, "machine", "set", "bench-a", "--public", in, "--actor", "a")
+		assert.Equal(t, want, h.st.rows["machine"]["bench-a"].F["public"], in)
+	}
+	n := len(h.st.history)
+	assert.Equal(t, "CONFIG SET kind=machine name=bench-a rev="+fmt.Sprint(n+1)+" changed=public\n", h.ok(t, "machine", "set", "bench-a", "--public", "dash.example.com", "--actor", "a1"))
+	c := h.st.history[n]
+	assert.Equal(t, "a-1.b2.io", c.before["public"])
+	assert.Equal(t, "dash.example.com", c.after["public"])
+	assert.Contains(t, h.ok(t, "machine", "show", "bench-a"), " address=- public=dash.example.com user=nova ")
+	assert.Contains(t, h.ok(t, "machine", "show", "bench-a", "--json"), `"address":"","public":"dash.example.com","user":"nova"`)
+	assert.Contains(t, h.ok(t, "machine", "list", "--json"), `"public":""`, "unset is empty, like the other text fields")
+	assert.Contains(t, h.ok(t, "machine", "list"), "MACHINE name=bench-b address=bench-b.tail public=- user=nova")
+	h.ok(t, "machine", "set", "bench-a", "--public", "", "--actor", "a")
+	assert.Equal(t, "", h.st.rows["machine"]["bench-a"].F["public"], "an empty value unsets it")
+	h.ok(t, "machine", "add", "edge", "--user", "u", "--public", "198.51.100.2", "--actor", "a")
+	assert.Equal(t, "198.51.100.2", h.st.rows["machine"]["edge"].F["public"])
+	assert.Contains(t, h.ok(t, "machine", "add", "-h"), "[--public <addr>]")
+	for in, want := range map[string]string{
+		"100.101.102.103":                `--public "100.101.102.103": not public: in 100.64.0.0/10, the tailnet's CGNAT range`,
+		"10.1.2.3":                       `--public "10.1.2.3": not public: in 10.0.0.0/8, a private range`,
+		"172.20.0.1":                     `--public "172.20.0.1": not public: in 172.16.0.0/12, a private range`,
+		"192.168.1.1":                    `--public "192.168.1.1": not public: in 192.168.0.0/16, a private range`,
+		"::ffff:192.168.1.1":             `not public: in 192.168.0.0/16, a private range`,
+		"fd7a:115c:a1e0::1":              `--public "fd7a:115c:a1e0::1": not public: in fc00::/7, a private range (unique local)`,
+		"127.0.0.1":                      `not public: in 127.0.0.0/8, the loopback range`,
+		"fe80::1%en0":                    `--public "fe80::1%en0": want an address without a zone`,
+		"Edge.Example.com":               `--public "Edge.Example.com": want an IP address or a DNS name of lower-case labels (RFC 1123)`,
+		"edge_1.example.com":             `--public "edge_1.example.com": want an IP address`,
+		"-edge.example.com":              `--public "-edge.example.com": want an IP address`,
+		"edge..example.com":              `--public "edge..example.com": want an IP address`,
+		"edge.example.com.":              `--public "edge.example.com.": want an IP address`,
+		"1.2.3":                          `--public "1.2.3": want an IP address`,
+		"256.1.1.1":                      `--public "256.1.1.1": want an IP address`,
+		"https://example.com":            `--public "https://example.com": want an IP address`,
+		strings.Repeat("a", 64) + ".com": `want an IP address`,
+	} {
+		code, _, errs := h.run(t, "machine", "set", "bench-a", "--public", in, "--actor", "a")
+		assert.Equal(t, 2, code, in)
+		assert.Contains(t, errs, want, in)
+	}
+	assert.Equal(t, "", h.st.rows["machine"]["bench-a"].F["public"], "a refused value writes nothing")
+}
+
 func TestHelp(t *testing.T) {
 	t.Parallel()
 	h := newHarness()
@@ -323,13 +372,13 @@ func TestKindsAreTheLibraryColumns(t *testing.T) {
 // that still has old columns is written as is.
 func TestSQLNamesItsColumns(t *testing.T) {
 	t.Parallel()
-	row := Row{Name: "m1", F: map[string]string{"user": "u", "address": "", "os": "linux", "arch": "", "cores": "", "runners": "2", "roles": "bench", "note": ""}}
+	row := Row{Name: "m1", F: map[string]string{"user": "u", "address": "", "public": "", "os": "linux", "arch": "", "cores": "", "runners": "2", "roles": "bench", "note": ""}}
 	q, args := writeSQL(kinds["machine"], "add", "m1", row)
-	assert.Equal(t, `INSERT INTO config.machines (name, "address", "user", "os", "arch", "cores", "roles", "runners", "note") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`, q)
-	assert.Equal(t, []any{"m1", "", "u", "linux", "", nil, "bench", int64(2), ""}, args)
+	assert.Equal(t, `INSERT INTO config.machines (name, "address", "public", "user", "os", "arch", "cores", "roles", "runners", "note") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`, q)
+	assert.Equal(t, []any{"m1", "", nil, "u", "linux", "", nil, "bench", int64(2), ""}, args)
 	q, args = writeSQL(kinds["machine"], "set", "m1", row)
 	assert.True(t, strings.HasPrefix(q, `UPDATE config.machines SET "address" = $2, `) && strings.HasSuffix(q, `, updated_at = now() WHERE name = $1`), q)
-	assert.Len(t, args, 9)
+	assert.Len(t, args, 10)
 	q, args = writeSQL(kinds["machine"], "remove", "m1", Row{})
 	assert.Equal(t, "DELETE FROM config.machines WHERE name = $1", q)
 	assert.Equal(t, []any{"m1"}, args)

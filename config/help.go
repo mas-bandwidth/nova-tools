@@ -36,7 +36,7 @@ Make a store current with: nova-config schema | PGPASSWORD="$NOVA_PG_PASSWORD" p
 }()
 
 var placeholders = map[string]string{"int": "<n>", "bool": "<true|false>", "list": "<a,b>", "argv": "<json-array>",
-	"env": "<json-object>", "path": "<path>", "ref": "<machine>"}
+	"env": "<json-object>", "path": "<path>", "ref": "<machine>", "public": "<addr>"}
 
 // opLine is the usage line of a kind's verb, from its field table.
 func (k *kind) opLine(op string) string {

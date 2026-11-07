@@ -603,7 +603,7 @@ nova-reserve status | head -1   # capacity=<n> set_by_pid=<pid> set_at=<time>
 nova-sandbox check | head -1    # CHECK OK backend=landlock ... (Linux) or backend=sandbox-exec ... (macOS)
 nova-cairn version | head -1    # nova-cairn <version> (dev when built from a clone)
 nova-bus who | head -1          # WHO OK present=<n>
-nova-config machine list | head -1                                   # MACHINE name=here address=localhost user=<you> ...
+nova-config machine list | head -1                                   # MACHINE name=here address=localhost public=- user=<you> ...
 nova-secrets seat list --store "${NOVA_SECRETS_STORE:-$work/store}"  # db file=no rule=yes, then here file=yes rule=yes
 nova-fleet check | head -1                                           # CHECK OK ansible-playbook <version>
 ```

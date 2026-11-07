@@ -34,7 +34,7 @@ func TestVerbHelp(t *testing.T) {
 		}
 	}
 	_, out, _ := h.run(t, "machine", "add", "--help")
-	assert.Contains(t, out, "machine fields: name, address, user, os, arch, cores, roles, runners, note")
+	assert.Contains(t, out, "machine fields: name, address, public, user, os, arch, cores, roles, runners, note")
 	assert.Contains(t, out, "--user <text>")
 	for _, p := range paths[6:] { // the banner names each verb path
 		assert.Contains(t, usage, "nova-config "+strings.Join(p, " "))
@@ -119,7 +119,7 @@ func TestHistory(t *testing.T) {
 		"  machine: \"bench-b\"\n  argv: [\"/usr/bin/env\",\"A=b\",\"prog\"]\n  seat: \"s-b\"\n  keys: \"A_KEY,B_KEY\"\n  every: 0\n  keepalive: true\n  enabled: true\n  env: {}\n  log: \"\"\n"+
 		"CONFIG HISTORY rows=2\n", out)
 	out = h.ok(t, "history")
-	assert.True(t, strings.HasPrefix(out, "HISTORY at=2026-01-02T00:00:05Z actor=a2 kind=machine name=bench-a op=remove rev=5\n  address: \"\"\n  user: \"nova\"\n"), out)
+	assert.True(t, strings.HasPrefix(out, "HISTORY at=2026-01-02T00:00:05Z actor=a2 kind=machine name=bench-a op=remove rev=5\n  address: \"\"\n  public: \"\"\n  user: \"nova\"\n"), out)
 	assert.Equal(t, 5, strings.Count(out, "HISTORY at="))
 	assert.Equal(t, 1, strings.Count(h.ok(t, "history", "machine", "bench-b"), "HISTORY at="))
 	assert.Equal(t, 2, strings.Count(h.ok(t, "history", "--since", "2026-01-02T00:00:04Z"), "HISTORY at="), "RFC 3339 since")

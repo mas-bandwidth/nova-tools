@@ -11,7 +11,7 @@ import (
 
 func TestColumns(t *testing.T) {
 	t.Parallel()
-	assert.Equal(t, []string{"address", "user", "os", "arch", "cores", "roles", "runners", "note"}, Columns[Machine]())
+	assert.Equal(t, []string{"address", "public", "user", "os", "arch", "cores", "roles", "runners", "note"}, Columns[Machine]())
 	assert.Equal(t, []string{"harness", "model", "width", "tiers", "pronouns", "note", "enabled"}, Columns[Friend]())
 	assert.Equal(t, []string{"machine", "argv", "seat", "keys", "every", "keepalive", "enabled", "env", "log"}, Columns[Service]())
 }
@@ -41,6 +41,9 @@ func TestFillTypesEachField(t *testing.T) {
 	require.NoError(t, fill(reflect.ValueOf(&m).Elem(), Row{Name: "m1", F: map[string]string{"cores": "12", "runners": "0"}}))
 	require.NotNil(t, m.Cores)
 	assert.Equal(t, 12, *m.Cores)
+	assert.Empty(t, m.Public, "an unset public address is empty")
+	require.NoError(t, fill(reflect.ValueOf(&m).Elem(), Row{Name: "m1", F: map[string]string{"public": "edge.example.com"}}))
+	assert.Equal(t, "edge.example.com", m.Public)
 	m = Machine{}
 	require.NoError(t, fill(reflect.ValueOf(&m).Elem(), Row{Name: "m1", F: map[string]string{"cores": ""}}))
 	assert.Nil(t, m.Cores, "an unset int is nil")
