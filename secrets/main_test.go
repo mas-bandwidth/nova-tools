@@ -269,6 +269,7 @@ func TestExecDeliversOnlyTheNamedValues(t *testing.T) {
 	assert.NotContains(t, env, "SOPS_AGE_KEY")
 	assert.Equal(t, "yes", env["KEEP"])
 	assert.Equal(t, "SECRETS EXEC STARTING as=ada keys=1 cmd=true\n", h.stderr.String())
+	assert.Empty(t, h.stdout.String(), "stdout is the command's alone: a caller parses it")
 	sops := envMap(h.calls[0].env)
 	assert.Equal(t, h.key, sops["SOPS_AGE_KEY_FILE"])
 	assert.NotEqual(t, "/home/ada", sops["HOME"], "sops gets a HOME of its own, so no keys.txt of the caller's is read")
