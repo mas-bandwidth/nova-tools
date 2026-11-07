@@ -86,9 +86,10 @@ jobs:
       - *clean
       - *checkout
       - *go
-      - name: redis-server and postgres on PATH
+      - name: redis-server, postgres, sops and age on PATH
         shell: bash
         run: |
+          [ -d "$HOME/.local/bin" ] && echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           need=()
           command -v redis-server >/dev/null || need+=(redis-server)
           command -v postgres >/dev/null || ls /usr/lib/postgresql/*/bin/postgres >/dev/null 2>&1 || need+=(postgresql)
