@@ -246,7 +246,7 @@ apply() {
 	for given in "$@"; do
 		# the listener runs from the physical path (run-helper.sh cd -P), so a symlinked directory is resolved first
 		dir=$(cd -P "$given" 2>/dev/null && pwd -P) || {
-			echo "CI-RULES $given denied=no-such-directory"
+			echo "CI-RULES $given denied=not-reachable-by-$(id -un)"
 			bad=1
 			continue
 		}

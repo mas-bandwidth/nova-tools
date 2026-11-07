@@ -34,7 +34,7 @@
         stage=/mnt/c/ProgramData/nova-ci-rules-stage
         mkdir -p "$stage"
         cp {{ ci_rules_stage.path }}/*.ps1 "$stage/"
-        "$ps" -NoProfile -ExecutionPolicy Bypass -File 'C:\ProgramData\nova-ci-rules-stage\nova-ci-rules.ps1' apply {{ github_runner_ci_limit_seconds }} | tr -d '\r'
+        "$ps" -NoProfile -ExecutionPolicy Bypass -File 'C:\ProgramData\nova-ci-rules-stage\nova-ci-rules.ps1' apply {{ github_runner_ci_limit_seconds }} </dev/null | tr -d '\r'
       args: { executable: /bin/sh }
       register: ci_rules_windows
       failed_when: ci_rules_windows.rc != 0 or 'restart=failed' in ci_rules_windows.stdout or 'denied=' in ci_rules_windows.stdout
