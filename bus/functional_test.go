@@ -187,7 +187,7 @@ func TestPresenceWhoAndPending(t *testing.T) {
 	assert.Error(t, rerr)
 	assert.Equal(t, "nova-bus send: no hook has ever held nobody, so nothing would read it; run: nova-bus who, or send --new to a name about to hook in\n", string(rout), "XINFO GROUPS on a missing stream is no hook")
 	assert.True(t, strings.HasPrefix(bus("send", "--as", "alpha", "--to", "beta", "three", "3"), "beta "), "a name with the group takes a send without --new")
-	assert.Regexp(t, `^WHO OK present=2\nalpha\t\d+[hms0-9]*\nbeta\t`, bus("who"), "the planted keys show as present")
+	assert.Regexp(t, `^WHO OK present=2\nalpha\t\d+[hms0-9]*\tplanted\nbeta\t`, bus("who"), "the planted keys show as present")
 	unhook(t, c, "alpha")
 	unhook(t, c, "beta")
 	notIn := exec.Command(bin, "pending", "--as", "beta")
@@ -201,7 +201,7 @@ func TestPresenceWhoAndPending(t *testing.T) {
 	h.next(t)
 	h.next(t)
 	require.Eventually(t, func() bool { return bus("pending", "--as", "beta") == "PENDING OK waiting=0\n" }, wait, 20*time.Millisecond)
-	assert.Regexp(t, `^WHO OK present=1\nbeta\t\d+s\n$`, bus("who"))
+	assert.Regexp(t, `^WHO OK present=1\nbeta\t\d+s\t[0-9a-f]{32}\n$`, bus("who"))
 	ttl, err := c.TTL(ctx, "bus:presence:beta").Result()
 	require.NoError(t, err)
 	assert.True(t, ttl > 0 && ttl <= presenceTTL, ttl)
@@ -211,7 +211,7 @@ func TestPresenceWhoAndPending(t *testing.T) {
 	assert.Equal(t, 1, second.ProcessState.ExitCode(), string(out))
 	assert.Regexp(t, `^HOOK WAIT name=beta held_since=\S+Z ttl=30s budget=40s\n`, string(out))
 	assert.Contains(t, string(out), "name already hooked: beta after 40s", "after 40 s of the first hook refreshing")
-	assert.Regexp(t, `^WHO OK present=1\nbeta\t\d+s\n$`, bus("who"), "the first hook's presence is untouched")
+	assert.Regexp(t, `^WHO OK present=1\nbeta\t\d+s\t[0-9a-f]{32}\n$`, bus("who"), "the first hook's presence is untouched")
 	stopped := time.Now()
 	require.NoError(t, h.cmd.Process.Signal(syscall.SIGTERM))
 	require.NoError(t, h.cmd.Wait(), "a clean exit")
@@ -227,7 +227,7 @@ func TestPresenceWhoAndPending(t *testing.T) {
 	assert.True(t, ttl > 0 && ttl <= presenceTTL, "and then lapses: %v", ttl)
 
 	require.NoError(t, c.XAdd(ctx, &redis.XAddArgs{Stream: "bus:presence:zeta", Values: []string{"k", "v"}}).Err())
-	assert.Regexp(t, `^WHO OK present=2\nbeta\t\d+s\nzeta\t\?\n$`, bus("who"), "a key that is not a string is shown, not fatal")
+	assert.Regexp(t, `^WHO OK present=2\nbeta\t\d+s\t[0-9a-f]{32}\nzeta\t\?\n$`, bus("who"), "a key that is not a string is shown, not fatal")
 }
 
 // TestHookOnAClosedPipe is hook | true: the reader is gone before the first

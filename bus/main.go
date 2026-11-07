@@ -125,9 +125,9 @@ var verbUsage = map[string]string{
 `,
 	"who": `  nova-bus who
       Print WHO OK present=<n>, then each name whose hook is running (or
-      whose recv is reading) and how long it has been up, one per line,
-      name<TAB>uptime[<TAB>recv holding <id>], sorted by name. A crashed hook
-      drops out within 30 seconds.
+      whose recv is reading), how long it has been up, and the hook's session id,
+      one per line, name<TAB>uptime[<TAB>session | <TAB>recv holding <id>],
+      sorted by name. A crashed hook drops out within 30 seconds.
 `,
 	"pending": `  nova-bus pending --as <name> [--list]
       Print PENDING OK waiting=<n>, the messages for <name> no hook has handled;
@@ -592,14 +592,14 @@ func missingFields(m Msg) string {
 	return strings.Join(missing, ",")
 }
 
-// runHook runs hook, reconnecting after an error, until ctx ends (exit 0) or
-// stdout fails or loses its reader, or a wake fails (exit 1), releasing
-// presence either way; or until the name is
-// found hooked by another process (exit 1, its presence left alone)
+// runHook runs hook, reconnecting after an error, until ctx ends (exit 0), stdout
+// fails or loses its reader, or a wake fails (exit 1), releasing presence; or until
+// the name is found hooked by another process (exit 1, its presence left alone)
 // (tla/Presence.tla Exit, Claim: OnlyOwnerDeletes, GoneAfterExit).
-// A reconnect is logged once, then at most once a minute.
 func runHook(ctx context.Context, store Store, name, addr string, clk Clock, stdout, stderr io.Writer, w waker, again string, gone func() bool) int {
-	value := clk.Now().UTC().Format(time.RFC3339) + "\t" + rand.Text()
+	var sid [16]byte
+	_, _ = rand.Read(sid[:]) // ignored: crypto/rand.Read never fails
+	value := fmt.Sprintf("%s\t%x", clk.Now().UTC().Format(time.RFC3339), sid)
 	var logged time.Time
 	announced := false
 	onClaim := func(waiting int64) { // HOOK OK once; after a reconnect, HOOK RECONNECTED where the Monitor sees it
@@ -936,8 +936,8 @@ func ack(ctx context.Context, store Store, name, addr, id string, stdout, stderr
 	return 0
 }
 
-// who prints WHO OK present=<n>, then name<TAB>uptime for every present name,
-// sorted by name; ? when the value is not a start time.
+// who prints WHO OK present=<n>, then name<TAB>uptime[<TAB>session] for every
+// present name, sorted by name; ? when the value is not a start time.
 func who(ctx context.Context, store Store, addr string, now time.Time, stdout, stderr io.Writer) int {
 	present, err := store.Presence(ctx)
 	if err != nil {
@@ -957,6 +957,8 @@ func who(ctx context.Context, store Store, addr string, now time.Time, stdout, s
 		}
 		if token, id, ok := strings.Cut(rest, "\t"); ok && token == "recv" { // a recv's checked-out message
 			up += "\trecv holding " + id
+		} else if rest != "" && rest != "recv" {
+			up += "\t" + rest
 		}
 		fmt.Fprintf(stdout, "%s\t%s\n", n, up)
 	}
