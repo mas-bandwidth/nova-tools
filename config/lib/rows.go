@@ -73,6 +73,35 @@ func (s *Store) Services(ctx context.Context) ([]Service, error) {
 	return read[Service](ctx, s, "services")
 }
 
+// Snapshot is every row of the three kinds, read at one instant.
+type Snapshot struct {
+	Machines []Machine
+	Friends  []Friend
+	Services []Service
+}
+
+// Snapshot reads Machines, Friends and Services inside one read-only
+// REPEATABLE READ transaction, so all three are from the same instant.
+func (s *Store) Snapshot(ctx context.Context) (Snapshot, error) {
+	tx, err := s.begin(ctx)
+	if err != nil {
+		return Snapshot{}, s.Err(err, "read")
+	}
+	defer func() { _ = tx.Rollback(ctx) }() // ignored: a no-op after the commit; on failure the failure is returned
+	view := &Store{user: s.user, q: tx}
+	var snap Snapshot
+	if snap.Machines, err = view.Machines(ctx); err != nil {
+		return Snapshot{}, err
+	}
+	if snap.Friends, err = view.Friends(ctx); err != nil {
+		return Snapshot{}, err
+	}
+	if snap.Services, err = view.Services(ctx); err != nil {
+		return Snapshot{}, err
+	}
+	return snap, s.Err(tx.Commit(ctx), "read")
+}
+
 // stamped are the tags a row carries outside its columns.
 var stamped = map[string]bool{"name": true, "created": true, "updated": true}
 

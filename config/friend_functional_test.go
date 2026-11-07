@@ -86,4 +86,9 @@ func TestFunctionalLibrary(t *testing.T) {
 	fr, err := st.Friends(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, []any{"f1", "claude", 4, true}, []any{fr[0].Name, fr[0].Harness, fr[0].Width, fr[0].Enabled})
+	snap, err := st.Snapshot(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, config.Snapshot{Machines: ms, Friends: fr, Services: ss}, snap, "one transaction reads what the three reads did")
+	_, err = st.Conn().Exec(ctx, "SELECT 1")
+	require.NoError(t, err, "the snapshot's transaction is over: the connection is idle again")
 }

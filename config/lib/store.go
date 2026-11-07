@@ -29,9 +29,26 @@ const SchemaMissing = `store has no current schema; run: nova-config schema | ps
 
 // Store is one open connection to the store.
 type Store struct {
-	c    *pgx.Conn
-	user string
+	c     *pgx.Conn
+	user  string
+	q     querier                                    // what reads run on: the connection, or a snapshot's transaction
+	begin func(context.Context) (transaction, error) // a snapshot's transaction
 }
+
+// querier runs a read: a *pgx.Conn or a pgx.Tx.
+type querier interface {
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+}
+
+// transaction is a snapshot's read-only transaction.
+type transaction interface {
+	querier
+	Commit(ctx context.Context) error
+	Rollback(ctx context.Context) error
+}
+
+// snapshotTx is a snapshot's transaction: every read sees the same instant.
+var snapshotTx = pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly}
 
 // Row is one row as text: its name, its fields by column name, and its
 // stamps (RFC 3339, UTC). An unset value is "".
@@ -123,7 +140,8 @@ func Open(ctx context.Context, dsn, password string) (*Store, error) {
 	if err != nil {
 		return nil, connectError(cfg, err)
 	}
-	return &Store{c, cfg.User}, nil
+	begin := func(ctx context.Context) (transaction, error) { return c.BeginTx(ctx, snapshotTx) }
+	return &Store{c: c, user: cfg.User, q: c, begin: begin}, nil
 }
 
 // Close closes the connection.
@@ -137,7 +155,7 @@ func (s *Store) Err(err error, op string) error { return storeError(err, s.user,
 
 // Text runs a query whose columns are all text and returns its rows.
 func (s *Store) Text(ctx context.Context, query string, args ...any) ([][]string, error) {
-	rows, err := s.c.Query(ctx, query, args...)
+	rows, err := s.q.Query(ctx, query, args...)
 	if err != nil {
 		return nil, s.Err(err, "read")
 	}

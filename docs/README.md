@@ -310,7 +310,9 @@ row and starts it.
 The same store keeps the **friends**, the AIs that work on the fleet, one row
 each, and Go programs read every kind through the package
 `github.com/mas-bandwidth/nova-tools/config/lib` (`Machines`, `Friends`,
-`Services`) rather than keeping a copy:
+`Services`) rather than keeping a copy; `Snapshot` reads all three inside one
+read-only REPEATABLE READ transaction, so machines and friends come from the
+same instant:
 
 ```sh
 nova-config friend add emma --harness claude --width 4 --actor you
