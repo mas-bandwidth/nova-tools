@@ -226,7 +226,7 @@ func TestUpParse(t *testing.T) {
 		{[]string{"--tools", "v1", "a=1.2.3.4/linux"}, "nova-fleet up: want a machine as"},
 		{[]string{"--tools", "v1", "a=1", "a=2"}, "nova-fleet up: machine a is named twice"},
 		{[]string{"--tools", "v1", "--runners", "https://gitlab.com/x", "a=1"}, "nova-fleet up: --runners wants"},
-		{[]string{"--tools", "v1", "--runner-count", "0", "a=1"}, "nova-fleet up: --runner-count wants a number of at least 1"},
+		{[]string{"--tools", "v1", "--runner-count", "0", "a=1"}, "nova-fleet up: --runner-count wants a number of at least 1, or cores"},
 		{[]string{"--tools"}, "nova-fleet up: --tools wants a value"},
 		{[]string{"--tools", "v1", "a=1", "--", "-v"}, "nova-fleet up: after -- only -e name=value is passed on, got -v"},
 		{[]string{"--tools", "v1", "a=1", "--", "-e"}, "nova-fleet up: -e wants name=value"},
@@ -240,7 +240,7 @@ func TestUpParse(t *testing.T) {
 		}
 	}
 	u, _ := parseUp([]string{"--check", "--user=fleet", "--tools", "v2.0.0", "--runners", "https://github.com/o/r", "a=10.0.0.1", "b=b.example/darwin/arm64", "--", "-e", "nova_pg_version=17"}, nil)
-	if !u.check || u.user != "fleet" || u.runners != "https://github.com/o/r" || u.runnerCount != 1 || len(u.machines) != 2 ||
+	if !u.check || u.user != "fleet" || u.runners != "https://github.com/o/r" || u.runnerCount != "cores" || len(u.machines) != 2 ||
 		fmt.Sprintf("%s %s %s %s", u.machines[0].name, u.machines[0].address, u.machines[0].os, u.machines[0].arch) != "a 10.0.0.1 linux amd64" ||
 		fmt.Sprintf("%s %s %s %s", u.machines[1].name, u.machines[1].address, u.machines[1].os, u.machines[1].arch) != "b b.example darwin arm64" ||
 		!slices.Equal(u.pass, []string{"-e", "nova_pg_version=17"}) {
@@ -390,7 +390,7 @@ func TestUpAddsAMachine(t *testing.T) {
 		"join.yml -e nova_join_host=third -e nova_join_user=nova -e nova_join_address=203.0.113.9 -e nova_join_root_user=root -e nova_join_os=linux -e nova_join_arch=amd64 -e nova_join_roles=bench,runner",
 		"nova-config machine set second --roles bench,runner --actor control --reason nova-fleet up --runners\n",
 		"health.yml -l second,third\n",
-		"github-runners.yml -e github_runner_url=https://github.com/o/r -e github_runner_scope=repo -e runner_count=1 -l second,third\n",
+		"github-runners.yml -e github_runner_url=https://github.com/o/r -e github_runner_scope=repo -e runner_count=cores -l second,third\n",
 	} {
 		if !strings.Contains(all, w) {
 			t.Errorf("no call contains %q; calls:\n%s", w, all)
@@ -824,6 +824,15 @@ func TestUpControlNodeInTheInventory(t *testing.T) {
 		!strings.Contains(out, "UP REACH control OK ops@control.ts.example") || !strings.Contains(out, "UP JOIN control SKIPPED this control node (tailscale status Self): already joined") ||
 		!strings.Contains(out, "UP MACHINE control OK address=203.0.113.5 steps=grant,refresh,health,tools,services,bus") {
 		t.Errorf("code %d keys %d\n%s\n%s\n%s", code, f.api.keys, out, errs, all)
+	}
+	// with --runners, the control node gets no runner role and no runners: heavy work never defaults onto it
+	f = &upFake{self: "control"}
+	existing(t, f, `,{"kind":"machine","fields":{"name":"control","address":"control.ts.example","user":"ops","os":"linux","arch":"amd64","roles":"bench"}}`)
+	code, out, errs = runArgs("up", "--tools", "v2.0.0", "--runners", "https://github.com/o/r", "control=203.0.113.5", "second=203.0.113.8")
+	all = strings.Join(f.calls, "\n")
+	if code != 0 || strings.Contains(all, "machine set control") || !strings.Contains(all, "-e runner_count=cores -l second\n") ||
+		!strings.Contains(out, "UP MACHINE control OK address=203.0.113.5 steps=grant,refresh,health,tools,services,bus") {
+		t.Errorf("runners: code %d\n%s\n%s\n%s", code, out, errs, all)
 	}
 	// with no row, join cannot be skipped into one: the run stops with the line that adds it
 	f = &upFake{self: "control"}

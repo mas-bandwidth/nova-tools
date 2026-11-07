@@ -121,7 +121,7 @@ machine is the one nova-config's rows say ("Adding a machine" below). Nothing he
 | 9 | health | `health` on every machine (Linux; a Mac is skipped) | the guards are in place before anything long-running starts |
 | 10 | tools | `install` on every machine, from the release `--tools vX.Y.Z` or a local build `--tools DIR` | the services run these binaries |
 | 11 | services | `services` | each seat holds its granted values now |
-| 12 | runners | `github-runners`, `--runner-count` per machine (only with `--runners`); the play asks GitHub for its token with this node's `gh` login | |
+| 12 | runners | `github-runners` on every machine named except this control node, `--runner-count` per machine (default `cores`: one per `github_runner_cores_per_runner`, 4, cores, at least 1) (only with `--runners`); the play asks GitHub for its token with this node's `gh` login | |
 | 13 | bus | `nova-bus who` over the store machine's Redis with the fleet's `NOVA_BUS_PASSWORD`; it names no inbox and sends nothing as a person (receipt `UP BUS OK <redis> present=<n>`) | the fleet is reached end to end |
 
 Each play prints its own receipts; each step adds `UP <step> OK` (or `WOULD-...` under `--check`), and the run ends
@@ -342,7 +342,7 @@ events may use them.
 | `github_runner_url` | no default. `https://github.com/<owner>/<repo>`, or `https://github.com/<org>` |
 | `github_runner_scope` | no default. `repo` or `org`; refused if the url is the other shape |
 | `github_runner_labels` | extra labels, a list (default none), added to the machine's labels |
-| `runner_count` | overrides the row's `runners` for one run; 0 retires every runner. A host with neither is refused |
+| `runner_count` | overrides the row's `runners` for one run; 0 retires every runner; `cores` is one runner per `github_runner_cores_per_runner` (4) of the row's `cores`, else the host's own, at least 1. A host with neither is refused |
 | `github_runner_state` | `present` (default) or `absent`, which retires every runner of that url |
 | `github_runner_deregister` | true: retiring removes the runner from GitHub (needs a removal token) |
 | `github_runner_version`, `github_runner_sha256` | the pinned actions/runner release and its digests |

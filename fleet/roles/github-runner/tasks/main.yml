@@ -17,13 +17,22 @@
       - (github_runner_scope == 'repo' and github_runner_path.count('/') == 1) or (github_runner_scope == 'org' and github_runner_path.count('/') == 0)
       - github_runner_state in ['present', 'absent']
       - github_runner_state == 'absent' or runner_count is defined or runners is defined
-      - (runner_count | default(runners | default(0)) | int) >= 0
+      - (runner_count | default(runners | default(0)) | string) is match('^([0-9]+|cores)$')
       - github_runner_labels is sequence and github_runner_labels is not string
     fail_msg: >-
       github-runner: give -e github_runner_url=https://github.com/<owner>/<repo> -e github_runner_scope=repo,
-      or https://github.com/<org> with scope org (no defaults); state is present or absent; a host needs `runners` in the inventory or -e runner_count=<n> (a missing count is refused, not read as 0 and retired); the count is not negative
+      or https://github.com/<org> with scope org (no defaults); state is present or absent; a host needs `runners` in the inventory or -e runner_count=<n> (a missing count is refused, not read as 0 and retired); the count is a number of 0 or more, or cores
   vars:
     github_runner_path: "{{ (github_runner_url | default('') | regex_replace('^https://[^/]+/', '') | regex_replace('/$', '')) }}"
+
+# runner_count=cores (nova-fleet up's default): one runner per github_runner_cores_per_runner cores, at least 1. The cores
+# are the machine row's `cores` when set, else the host's own count.
+- name: the host's cores, for runner_count=cores
+  ansible.builtin.command: getconf _NPROCESSORS_ONLN
+  register: github_runner_nproc
+  changed_when: false
+  check_mode: false
+  when: ansible_facts['os_family'] != 'Windows' and (runner_count | default('') | string) == 'cores' and cores is not defined
 
 - name: the platform, the names and the labels
   ansible.builtin.set_fact:
@@ -35,7 +44,16 @@
     github_runner_arch: >-
       {{ 'arm64' if (ansible_facts['architecture'] | lower) in ['arm64', 'aarch64']
          or (ansible_facts['env'] | default({})).get('PROCESSOR_ARCHITECTURE', '') == 'ARM64' else 'x64' }}
-    github_runner_want: "{{ range(1, ((runner_count | default(runners | default(0))) | int if github_runner_state == 'present' else 0) + 1) | list }}"
+
+- name: the runner count
+  ansible.builtin.set_fact:
+    github_runner_count: >-
+      {{ ([1, (cores | default((ansible_facts['env'] | default({})).get('NUMBER_OF_PROCESSORS', 1) if ansible_facts['os_family'] == 'Windows'
+         else github_runner_nproc.stdout | default(1))) | int // (github_runner_cores_per_runner | int)] | max)
+         if (runner_count | default('') | string) == 'cores' else (runner_count | default(runners | default(0))) | int }}
+- name: the runners wanted
+  ansible.builtin.set_fact:
+    github_runner_want: "{{ range(1, (github_runner_count | int if github_runner_state == 'present' else 0) + 1) | list }}"
 
 - name: this platform is one the runner ships
   ansible.builtin.assert:
