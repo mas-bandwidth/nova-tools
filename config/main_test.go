@@ -282,9 +282,10 @@ func TestCoresDefaultUnsets(t *testing.T) {
 func TestPublicField(t *testing.T) {
 	t.Parallel()
 	h := fleet(t)
-	for in, want := range map[string]string{"203.0.113.7": "203.0.113.7", "2001:db8::0:1": "2001:db8::1", "edge.example.com": "edge.example.com", "a-1.b2.io": "a-1.b2.io"} {
-		h.ok(t, "machine", "set", "bench-a", "--public", in, "--actor", "a")
-		assert.Equal(t, want, h.st.rows["machine"]["bench-a"].F["public"], in)
+	// A slice, not a map: the last value set is the "before" asserted below.
+	for _, c := range [][2]string{{"203.0.113.7", "203.0.113.7"}, {"2001:db8::0:1", "2001:db8::1"}, {"edge.example.com", "edge.example.com"}, {"a-1.b2.io", "a-1.b2.io"}} {
+		h.ok(t, "machine", "set", "bench-a", "--public", c[0], "--actor", "a")
+		assert.Equal(t, c[1], h.st.rows["machine"]["bench-a"].F["public"], c[0])
 	}
 	n := len(h.st.history)
 	assert.Equal(t, "CONFIG SET kind=machine name=bench-a rev="+fmt.Sprint(n+1)+" changed=public\n", h.ok(t, "machine", "set", "bench-a", "--public", "dash.example.com", "--actor", "a1"))
