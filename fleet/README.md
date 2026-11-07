@@ -47,7 +47,7 @@ The whole path, in order. Each step's output says what to do next.
    `TAILSCALE_API_KEY` (`--runners URL` adds `gh` and its login, `gh auth login`), and `NOVA_PG_DSN` once a fleet
    exists. Run each fix line, then `nova-fleet check` again until it ends `CHECK OK missing=0` (exit 0; 1 while
    anything is missing; the collections of `requirements.yml` count, `ansible.posix` for the push of the store). A
-   green check ends `CHECK OK missing=0 next: nova-fleet up --check ...`. Every play verb runs the part of this check
+   green check ends `CHECK OK missing=0` and the line `next: nova-fleet up --check ...`. Every play verb runs the part of this check
    it needs (ansible-playbook, the collection, nova-config) before anything else, and refuses with the same lines.
    Tailscale, PostgreSQL, Redis and Ansible are not optional: `check` requires Tailscale and
    Ansible on this node, `up` puts PostgreSQL and Redis on the first machine and requires them after, and no variable
@@ -126,7 +126,7 @@ machine is the one nova-config's rows say ("Adding a machine" below). Nothing he
 
 Each play prints its own receipts; each step adds `UP <step> OK` (or `WOULD-...` under `--check`), and the run ends
 with one line per machine, `UP MACHINE <name> OK address=<address> steps=<the steps it passed>`, and on a new fleet
-`UP DONE next: export NOVA_PG_DSN=...`, the line the next `up` and nova-config read the fleet from. A failed step
+`UP DONE` and the line `next: export NOVA_PG_DSN=...`, which the next `up` and nova-config read the fleet from. A failed step
 prints `UP <step> FAILED exit=<n>` (n is ansible-playbook's status, or the failed command's) and `up` exits 1; every
 step is idempotent, so the same command resumes. Exit 2 means it could not run (a refusal, a missing prerequisite).
 
@@ -347,6 +347,7 @@ events may use them.
 | `github_runner_deregister` | true: retiring removes the runner from GitHub (needs a removal token) |
 | `github_runner_version`, `github_runner_sha256` | the pinned actions/runner release and its digests |
 | `github_runner_ci_limit_seconds` | 120: the per-commit job limit every runner enforces ("CI rules") |
+| `github_runner_ci_push_branches` | `[main, sprint/*]`: the branches a push may run CI on, as globs where `*` and `?` stop at a `/` (tags always may); any other branch gets CI through its pull request |
 
 **The token.** The play asks GitHub for it on the control node with that node's own `gh` login, `gh api -X POST
 <repos|orgs>/<path>/actions/runners/registration-token -q .token` (`remove-token` to retire), never a pasted token,
@@ -402,19 +403,22 @@ every runner running on the machines named, whoever registered it (`nova-fleet c
 
 | Event | Rule |
 |---|---|
-| `push` | runs only on `refs/heads/main`, a stream base `refs/heads/sprint/<one segment>`, or a tag; any other ref is refused before the first step: `::error::CI rule: push CI runs only on main, sprint/<stream> and tags, not <ref>; ...` (a card branch gets CI through its pull request) |
+| `push` | runs only on a branch matching `github_runner_ci_push_branches` (default `main` and `sprint/*`, one segment) or a tag; any other ref is refused before the first step: `::error::CI rule: push CI runs only on main, sprint/* and tags, not <ref>; ...` (a card branch gets CI through its pull request) |
 | `push`, `pull_request`, `merge_group` | the job finishes within `github_runner_ci_limit_seconds` (default 120) of job wall time, counted from the end of the job-started hook; past it every process under the job's `Runner.Worker` is stopped and killed, each second until the job ends, and the job fails at the job-completed hook: `::error::CI rule: per-commit jobs finish in 2m; move longer work to a nightly (schedule) workflow` |
 | `schedule`, `workflow_dispatch` | nightly or manual: no limit |
 
+The hooks enforce only these rows. That unit tests use no real time, sleep or network, and that unit and functional jobs
+run in parallel, is the rule repositories follow; no hook checks it.
+
 **How.** The runner's own job hooks (GitHub's "Running scripts before or after a job"): `ACTIONS_RUNNER_HOOK_JOB_STARTED`
 and `ACTIONS_RUNNER_HOOK_JOB_COMPLETED` in the runner's `.env`, pointing at `job-started` and `job-completed` (`.sh`, or
-`.ps1` on Windows) in `<runner dir>/.nova-ci-rules/`, beside `nova-ci-rules.sh` (`.ps1`) and `limit` (the seconds). The
+`.ps1` on Windows) in `<runner dir>/.nova-ci-rules/`, beside `nova-ci-rules.sh` (`.ps1`), `limit` (the seconds) and `push-branches` (the globs, blank separated). The
 started hook arms a watchdog, a detached process that the completed hook stops; a job that ends in time leaves
 nothing behind. A hook the `.env` held before is kept as `NOVA_CI_CHAIN_JOB_STARTED` / `_COMPLETED` and run from ours, in its
 own process by its extension (after the push check, before the watchdog is armed, so waiting for a lock is not job
 time). Each started hook first stops any watchdog and verdict an earlier job left, so a runner that died mid-job
-never fails the next one. The limit is one value
-for the fleet (`group_vars` or `-e`), never per repository.
+never fails the next one. The limit and the push branches are one value
+each for the fleet (`group_vars` or `-e`), never per repository.
 
 **Applying.** `nova-ci-rules apply` writes the hooks and the `.env`, and restarts a runner whose `.env` changed (the
 runner reads `.env` only at start) by what supervises it: its systemd unit (system or user, found from the listener's

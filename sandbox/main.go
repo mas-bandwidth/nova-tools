@@ -83,8 +83,8 @@ const checkUsage = `nova-sandbox check: say which backend this machine has and w
 
   nova-sandbox check
 
-One line on stdout: CHECK OK backend=<b> abi=<n> net=enforceable|unavailable note=<text> next=nova-sandbox\x20probe,
-or CHECK FAILED backend=<b> abi=<n> reason=<text>. It applies nothing to a command.
+On stdout: CHECK OK backend=<b> abi=<n> net=enforceable|unavailable note=<text> and a line
+next: nova-sandbox probe, or CHECK FAILED backend=<b> abi=<n> reason=<text>. It applies nothing to a command.
 net=unavailable means --net-deny will be refused here.
 
 Exit: 0 CHECK OK; 1 CHECK FAILED; 2 the invocation is malformed.
@@ -342,7 +342,7 @@ func check(stdout io.Writer) int {
 	if !netOK {
 		net = "unavailable"
 	}
-	fmt.Fprintf(stdout, "CHECK OK backend=%s abi=%s net=%s note=%s next=nova-sandbox\\x20probe\n", backendName, abi, net, note)
+	fmt.Fprintf(stdout, "CHECK OK backend=%s abi=%s net=%s note=%s\nnext: nova-sandbox probe\n", backendName, abi, net, note)
 	return 0
 }
 

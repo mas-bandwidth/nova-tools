@@ -206,7 +206,7 @@ func TestCIRulesStartedRefusesAPushOutsideTheScope(t *testing.T) {
 	for _, sh := range ciShells(t) {
 		dir := ciCopy(t, "")
 		code, out := ciRun(t, sh, dir, "", []string{"GITHUB_EVENT_NAME=push", "GITHUB_REF=refs/heads/sprint/v2-review/c1", "NOVA_CI_CHAIN_JOB_STARTED="}, "started")
-		if code == 0 || !strings.Contains(out, "::error::CI rule: push CI runs only on main, sprint/<stream> and tags, not refs/heads/sprint/v2-review/c1") {
+		if code == 0 || !strings.Contains(out, "::error::CI rule: push CI runs only on main, sprint/* and tags, not refs/heads/sprint/v2-review/c1") {
 			t.Errorf("%s started on a card branch push = %d %q, want a refusal naming the ref", sh.name, code, out)
 		}
 	}

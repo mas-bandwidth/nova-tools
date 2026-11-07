@@ -38,12 +38,15 @@ optional.
 
 ## Get the binaries and check they run
 
-Build them with Go from a clone. The blocks
-below use a throwaway directory, `$work`, and put the tools on PATH from there.
+Build them with Go from a clone of one release tag, set once in
+`NOVA_TOOLS_VERSION`; the fleet section installs that same tag on the
+machines. The blocks below use a throwaway directory, `$work`, and put the
+tools on PATH from there.
 
 ```sh
+NOVA_TOOLS_VERSION=v2.0.5
 work=$(mktemp -d) && cd "$work"
-git clone -q https://github.com/mas-bandwidth/nova-tools
+git clone -q --depth 1 --branch "$NOVA_TOOLS_VERSION" https://github.com/mas-bandwidth/nova-tools
 for t in bus cairn config fleet reserve sandbox secrets; do
   go build -C nova-tools -o "$work/bin/nova-$t" "./$t"
 done
@@ -109,8 +112,10 @@ sleep 1
 cat "$work/claude.log" "$work/claude.inbox"
 nova-bus who
 kill %1 %2
-redis-cli -p "$port" shutdown nosave
 ```
+
+Redis keeps running for the sections below, which use it again; the last
+block shuts it down.
 
 Both names hook in first, because a verb that acts as a name (`send`, `ack`,
 `pending`) refuses until that name is hooked in, and says how to hook in. The
@@ -135,19 +140,30 @@ The whole tool: [bus/README.md](../bus/README.md); how it is tested:
 
 ## Set up and run a fleet of machines connected by tailscale
 
-**The rule.** Your human does exactly one thing: paste the Tailscale API
-token once, at the prompt of `nova-secrets set TAILSCALE_API_KEY`, which you
-run for them. You do everything else yourself: every other command, every key,
-the policy, the tags, the fleet, the runners. You are the admin. Never ask your
-human for another manual step. If you think you need one, the tools have a gap:
-fix it or report it, and do not hand it to your human.
+**The rule.** Once the prerequisites below are in place, the tools ask your
+human for one action: make a Tailscale API token and paste it once, at the
+prompt of `nova-secrets set TAILSCALE_API_KEY`, which you run for them. You do
+everything else yourself: every other command, every key, the policy, the tags,
+the fleet, the runners. You are the admin. Do not ask your human for any other
+manual step. If you think you need one, the tools have a gap: fix it or report
+it, and do not hand it to your human.
+
+**Prerequisites** that only your human can provide, before you start:
+
+- Root ssh from this machine's key to each machine you name in `up`, with its
+  host key already in `known_hosts`.
+- Only with runners: a browser login of `gh auth login` on this machine, with
+  an account that has admin on the repository or organization.
+- Only with runners on a Mac: passwordless sudo, set at the console.
+- Once, after the first `set`: a copy of the recovery key file kept off this
+  machine.
 
 A **fleet** is a set of machines joined by Tailscale, described as rows in
 nova-config's PostgreSQL, talking over a Redis, and converged by Ansible plays.
 `nova-fleet` is those plays in one binary. Tailscale, Redis, PostgreSQL and
 Ansible are all required: `check` wants Tailscale and Ansible on this machine,
 `up` puts PostgreSQL and Redis on the first machine, and nothing skips one. The
-path is `nova-fleet check`, then your human's one paste (an API access token),
+path is `nova-fleet check`, then your human's token (made in the console, pasted once),
 then `nova-fleet up --check`, then `nova-fleet up`.
 
 `check` needs Ansible on PATH. On Debian and Ubuntu `python3 -m venv` fails
@@ -186,7 +202,8 @@ that has the helpers, exactly one line is left, and the run ends
 CHECK MISSING TAILSCALE_API_KEY: nova-secrets set TAILSCALE_API_KEY  # paste the token when it asks: one line tskey-api-..., from the Tailscale admin console > Settings > Keys > Generate API access token; on this fresh node it makes the secrets store, the keys and the seat first
 ```
 
-That line is your human's whole job, and it is one paste:
+Once the prerequisites are in place, that line is the one action the tools ask
+of your human, a token made in the console and pasted once:
 
 1. Ask them to make an API access token in the Tailscale admin console:
    Settings > Keys > Generate API access token. One click; no scopes, no tags.
@@ -240,9 +257,9 @@ root over ssh at its address with this machine's key and its host key already
 in `known_hosts`. The first one named holds the fleet's PostgreSQL and Redis.
 `--check` plans; the same line without it runs:
 
-```text
-nova-fleet up --check --tools v2.0.0 store-1=203.0.113.7 web-1=203.0.113.8
-nova-fleet up --tools v2.0.0 store-1=203.0.113.7 web-1=203.0.113.8
+```sh
+nova-fleet up --check --tools "$NOVA_TOOLS_VERSION" store-1=203.0.113.7 web-1=203.0.113.8
+nova-fleet up --tools "$NOVA_TOOLS_VERSION" store-1=203.0.113.7 web-1=203.0.113.8
 ```
 
 The addresses are placeholders; put your machines' in their place. `up` runs
@@ -314,11 +331,11 @@ each, and Go programs read every kind through the package
 read-only REPEATABLE READ transaction, so machines and friends come from the
 same instant:
 
-```sh
-nova-config friend add emma --harness claude --width 4 --actor you
+```text
+nova-config friend add <friend> --harness <harness> --width 4 --actor you
 ```
 
-That prints `CONFIG ADD kind=friend name=emma rev=3`; `nova-config friend list`
+That prints `CONFIG ADD kind=friend name=<friend> rev=3`; `nova-config friend list`
 then shows `width=4` and the default `tiers=flash,frontier,heavy,pro`.
 
 The refusal you will meet first is
@@ -432,7 +449,8 @@ nova-secrets exec --only NOVA_BUS_PASSWORD --as db -- true || echo "exit $?"
 
 ```text
 SECRETS SET OK as=here name=NOVA_BUS_PASSWORD file=here.yaml committed; run: git -C <store> push
-SECRETS SEAT ADD OK seat=db committed next=nova-secrets\x20set\x20DB_PASSWORD\x20--as\x20here\x20--store\x20/tmp/tmp.k3Jd9x/store\x20--key\x20/tmp/tmp.k3Jd9x/keys/here.key\x20--pins\x20/tmp/tmp.k3Jd9x/pins
+SECRETS SEAT ADD OK seat=db committed
+next: nova-secrets set DB_PASSWORD --as here --store /tmp/tmp.k3Jd9x/store --key /tmp/tmp.k3Jd9x/keys/here.key --pins /tmp/tmp.k3Jd9x/pins
 SECRETS GRANT OK from=here to=db names=1 changed=1 committed; run: git -C <store> push
 SECRETS GRANT OK from=here to=db names=1 changed=0 unchanged
 SECRETS EXEC STARTING as=db keys=1 cmd=sh
@@ -519,7 +537,8 @@ command's own status. On Linux:
 ```text
 sh: 1: cannot create /home/<you>/sandbox-escape.txt: Permission denied
 exit 2
-CHECK OK backend=landlock abi=4 net=enforceable note=landlock abi 4; seccomp available; net-deny landlock_tcp+seccomp; signals scoped to the wall at abi 6+ next=nova-sandbox\x20probe
+CHECK OK backend=landlock abi=4 net=enforceable note=landlock abi 4; seccomp available; net-deny landlock_tcp+seccomp; signals scoped to the wall at abi 6+
+next: nova-sandbox probe
 ```
 
 On macOS:
@@ -527,7 +546,8 @@ On macOS:
 ```text
 sh: /Users/<you>/sandbox-escape.txt: Operation not permitted
 exit 1
-CHECK OK backend=sandbox-exec abi=- net=enforceable note=the wall is the profile it applies (/usr/bin/sandbox-exec) next=nova-sandbox\x20probe
+CHECK OK backend=sandbox-exec abi=- net=enforceable note=the wall is the profile it applies (/usr/bin/sandbox-exec)
+next: nova-sandbox probe
 ```
 `nova-sandbox probe` tests each of the sandbox's limits on this machine, one
 line per step.
@@ -562,7 +582,7 @@ nova-cairn memory search --root "$work/cairn" --channels bm25 --k 3 bench unit t
 
 `open` prints a line starting `OPEN OK`, and `append` one starting
 `APPEND OK session=today entry=lesson-1` and ending `opened=false`; a
-session's first entry ends with `next=<the index command>`. The search prints three lines, shown
+session's first entry is followed by a `next: <the index command>` line. The search prints three lines, shown
 here shortened:
 
 ```text
@@ -594,19 +614,22 @@ The whole tool: [cairn/README.md](../cairn/README.md) and
 Paste this in the session above, before you clean up. Elsewhere, set
 `NOVA_BUS_REDIS`, `NOVA_PG_DSN`, `NOVA_SECRETS_STORE` and `NOVA_RESERVE_DIR`
 first. Each line
-prints the first line shown beside it.
+prints the first line shown beside it, and a command that fails shows its exit
+status (`first` prints the first line of the output and returns the command's
+own status). Redis must still be up for `nova-bus who`.
 
 ```sh
-nova-bus -h | head -1           # nova-bus: messages between named inboxes, kept in Redis.
-nova-config -h | head -1        # nova-config: a fleet's machines, services and friends, kept as rows in PostgreSQL.
-nova-secrets -h | head -1       # nova-secrets: sops-encrypted secrets in a git store, handed to one command at a time.
-nova-reserve status | head -1   # capacity=<n> set_by_pid=<pid> set_at=<time>
-nova-sandbox check | head -1    # CHECK OK backend=landlock ... (Linux) or backend=sandbox-exec ... (macOS)
-nova-cairn version | head -1    # nova-cairn <version> (dev when built from a clone)
-nova-bus who | head -1          # WHO OK present=<n>
-nova-config machine list | head -1                                   # MACHINE name=here address=localhost public=- user=<you> ...
+first() { local out rc; out=$("$@"); rc=$?; printf '%s\n' "${out%%$'\n'*}"; return $rc; }
+first nova-bus -h           # nova-bus: messages between named inboxes, kept in Redis.
+first nova-config -h        # nova-config: a fleet's machines, services and friends, kept as rows in PostgreSQL.
+first nova-secrets -h       # nova-secrets: sops-encrypted secrets in a git store, handed to one command at a time.
+first nova-reserve status   # capacity=<n> set_by_pid=<pid> set_at=<time>
+first nova-sandbox check    # CHECK OK backend=landlock ... (Linux) or backend=sandbox-exec ... (macOS)
+first nova-cairn version    # nova-cairn <version> (dev when built from a clone)
+first nova-bus who          # WHO OK present=<n>
+first nova-config machine list                                   # MACHINE name=here address=localhost public=- user=<you> ...
 nova-secrets seat list --store "${NOVA_SECRETS_STORE:-$work/store}"  # db file=no rule=yes, then here file=yes rule=yes
-nova-fleet check | head -1                                           # CHECK OK ansible-playbook <version>
+first nova-fleet check                                           # CHECK OK ansible-playbook <version>
 ```
 
 ## Clean up

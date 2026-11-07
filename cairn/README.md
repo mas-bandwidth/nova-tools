@@ -37,13 +37,14 @@ nova-cairn receipt --store store --session 2026-11-05 --entry lesson-1 --text
 
 ```text
 OPEN OK session=2026-11-05 store=store source=notes/today.md publish=manual stamp=2026-11-05T23:45:59.429450238Z
-APPEND OK session=2026-11-05 entry=lesson-1 source=notes/today.md persisted=true published=false publish=manual duplicate=false stamp=2026-11-05T23:45:59.433149355Z opened=false next=nova-cairn\x20index\x20--store\x20store
+APPEND OK session=2026-11-05 entry=lesson-1 source=notes/today.md persisted=true published=false publish=manual duplicate=false stamp=2026-11-05T23:45:59.433149355Z opened=false
+next: nova-cairn index --store store
 INDEX OK sessions=1 entries=1
 ```
 
 `index` also prints a line per session and entry, and `receipt` the entry's
-facts and its quoted words. Stamps vary. A session's first entry ends the
-APPEND OK line with `next=<the index command>`. Give words with `--text` or
+facts and its quoted words. Stamps vary. A session's first entry is followed by
+`next: <the index command>`. Give words with `--text` or
 `--file <path>` (`-` reads stdin). The text is kept byte for byte, and input
 that is not valid UTF-8 is refused. The same `append` again gives
 `duplicate=true`. `index` takes `--session <id>` and `--max <n>` (default 20,

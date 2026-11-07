@@ -3,12 +3,14 @@
 # The runner runs job-started.ps1 before each job and job-completed.ps1 after it (ACTIONS_RUNNER_HOOK_JOB_STARTED and
 # _COMPLETED in its .env); both call this script, which lives beside them in <runner dir>\.nova-ci-rules\.
 #
-#   started             a push outside main, sprint/<stream> and tags is refused; then NOVA_CI_CHAIN_JOB_STARTED runs;
+#   started             a push outside the allowed branches (push-branches) and tags is refused; then NOVA_CI_CHAIN_JOB_STARTED runs;
 #                       then a push, pull_request or merge_group job gets a watchdog
 #   completed           the watchdog is stopped; NOVA_CI_CHAIN_JOB_COMPLETED runs; a job the watchdog stopped fails
 #   watchdog W DEADLINE (internal) at DEADLINE (unix seconds) kills every process under Runner.Worker W but the hooks
-#   apply LIMIT [DIR..] (nova-fleet) puts the hooks into each runner directory (DIR, or every actions.runner.* service)
-#                       and restarts an idle runner whose .env changed
+#   apply LIMIT BRANCHES [DIR..]
+#                       (nova-fleet) puts the hooks, LIMIT and BRANCHES (the allowed push branch globs, one word, split
+#                       at blanks) into each runner directory (DIR, or every actions.runner.* service) and restarts an
+#                       idle runner whose .env changed
 #
 # The pure parts take their inputs as arguments (the unit tests call them with no clock):
 #   push-ok REF, limited EVENT, overdue NOW DEADLINE, limit-text SECONDS,
@@ -18,10 +20,20 @@ $here = $PSScriptRoot
 $state = Join-Path $here 'state'
 $limit = 120
 if (Test-Path (Join-Path $here 'limit')) { $limit = [int](Get-Content -Raw (Join-Path $here 'limit')).Trim() }
+$branches = 'main sprint/*'
+if (Test-Path (Join-Path $here 'push-branches')) { $branches = (Get-Content -Raw (Join-Path $here 'push-branches')).Trim() }
 
+# Test-PushOk REF: a tag, or a branch matching one of the globs in push-branches, where * and ? stop at a / and no
+# segment is empty.
 function Test-PushOk([string]$ref) {
-    if ($ref -ceq 'refs/heads/main' -or $ref -cmatch '^refs/tags/.+') { return $true }
-    return $ref -cmatch '^refs/heads/sprint/[^/]+$'
+    if ($ref -cmatch '^refs/tags/.+') { return $true }
+    if ($ref -cnotmatch '^refs/heads/[^/]+(/[^/]+)*$') { return $false }
+    $b = $ref.Substring('refs/heads/'.Length)
+    foreach ($g in ($branches -split '\s+' | Where-Object { $_ })) {
+        $re = '^' + (($g -split '/' | ForEach-Object { [regex]::Escape($_) -replace '\\\*', '[^/]*' -replace '\\\?', '[^/]' }) -join '/') + '$'
+        if ($b -cmatch $re) { return $true }
+    }
+    return $false
 }
 function Test-Limited([string]$event) { return @('push', 'pull_request', 'merge_group') -ccontains $event }
 function Test-Overdue([long]$now, [long]$deadline) { return $now -ge $deadline }
@@ -111,7 +123,8 @@ function Invoke-Started {
     Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path $state 'fired')
     $event = "$env:GITHUB_EVENT_NAME"; $ref = "$env:GITHUB_REF"
     if ($event -eq 'push' -and -not (Test-PushOk $ref)) {
-        "::error::CI rule: push CI runs only on main, sprint/<stream> and tags, not $ref; set on.push.branches to [main, 'sprint/*'] and let this branch get CI through its pull request"
+        $list = @($branches -split '\s+' | Where-Object { $_ })
+        "::error::CI rule: push CI runs only on $($list -join ', ') and tags, not $ref; set on.push.branches to [$(($list | ForEach-Object { "'$_'" }) -join ', ')] and let this branch get CI through its pull request"
         exit 1
     }
     $rc = Invoke-Chain "$env:NOVA_CI_CHAIN_JOB_STARTED"
@@ -155,8 +168,9 @@ function Invoke-Watchdog([long]$worker, [long]$deadline) {
     }
 }
 
-# apply LIMIT [DIR..]: one line per runner, CI-RULES <dir> hooks=<ok|set> restart=<no|done|busy|stopped|failed>.
-function Invoke-Apply([int]$lim, [string[]]$dirs) {
+# apply LIMIT BRANCHES [DIR..]: one line per runner, CI-RULES <dir> hooks=<ok|set> restart=<no|done|busy|stopped|failed>.
+function Invoke-Apply([int]$lim, [string]$br, [string[]]$dirs) {
+    if (-not $br) { [Console]::Error.WriteLine('nova-ci-rules: apply wants LIMIT BRANCHES [DIR..]'); exit 2 }
     $services = @(Get-CimInstance Win32_Service | Where-Object { $_.Name -like 'actions.runner.*' } | ForEach-Object {
             [pscustomobject]@{ Name = $_.Name; Dir = (Split-Path (Split-Path ($_.PathName.Trim('"')))) }
         })
@@ -175,6 +189,8 @@ function Invoke-Apply([int]$lim, [string[]]$dirs) {
         }
         $lf = Join-Path $hd 'limit'
         if (-not (Test-Path $lf) -or (Get-Content -Raw $lf).Trim() -ne "$lim") { Set-Content -Path $lf -Value $lim; $hooks = 'set' }
+        $bf = Join-Path $hd 'push-branches'
+        if (-not (Test-Path $bf) -or (Get-Content -Raw $bf).Trim() -ne $br) { Set-Content -Path $bf -Value $br; $hooks = 'set' }
         $envFile = Join-Path $dir '.env'
         $lines = @(); if (Test-Path $envFile) { $lines = @(Get-Content $envFile) }
         $new = Edit-Env $hd $lines
@@ -217,7 +233,7 @@ switch -CaseSensitive ($verb) {
     'started' { Invoke-Started }
     'completed' { Invoke-Completed }
     'watchdog' { Invoke-Watchdog ([long]$rest[0]) ([long]$rest[1]) }
-    'apply' { Invoke-Apply ([int]$rest[0]) @($rest | Select-Object -Skip 1) }
+    'apply' { Invoke-Apply ([int]$rest[0]) $rest[1] @($rest | Select-Object -Skip 2) }
     'push-ok' { if (Test-PushOk $rest[0]) { exit 0 } exit 1 }
     'limited' { if (Test-Limited $rest[0]) { exit 0 } exit 1 }
     'overdue' { if (Test-Overdue ([long]$rest[0]) ([long]$rest[1])) { exit 0 } exit 1 }

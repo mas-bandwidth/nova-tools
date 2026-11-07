@@ -57,3 +57,6 @@ github_runner_gh: gh
 # after this many seconds of job wall time and fails with the rule's line; schedule and workflow_dispatch jobs have no
 # limit. One value for the fleet; override it in group_vars or with -e, never per repository.
 github_runner_ci_limit_seconds: 120
+# The branches a push may run CI on, as globs (tags always may): * and ? stop at a /, so sprint/* is one segment. Any
+# other branch gets CI through its pull request. One list for the fleet, like the limit.
+github_runner_ci_push_branches: [main, sprint/*]

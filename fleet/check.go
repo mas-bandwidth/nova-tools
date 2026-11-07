@@ -18,7 +18,9 @@ const checkHelp = `nova-fleet check [--runners URL]
 
 The control node's preflight, the first step of nova-fleet up: one line per prerequisite,
 CHECK OK <name> <version|path> or CHECK MISSING <name>: <the command that fixes it, for this
-OS, pasteable as it stands, a reason after # when there is one, in paste order>; this node on
+OS, pasteable as it stands, a reason after # when there is one, in paste order>; the helpers
+are found in ~/.local/bin too, where the repairs install them, and CHECK MISSING PATH prints the
+line that puts that directory on PATH; this node on
 the tailnet (a NOTE when not: up joins it); with --runners gh and its login; the store, key,
 seat and pins of NOVA_SECRETS_STORE, NOVA_SECRETS_KEY, NOVA_SECRETS_SEAT and NOVA_SECRETS_PINS;
 TAILSCALE_API_KEY, the one credential a human gives, read from the seat, the reason printed when
@@ -130,6 +132,30 @@ func fix(name, fam string) string {
 	return "install " + p[0] + " with this system's package manager"
 }
 
+// localBin is the directory the nova-* and sops repairs install into.
+func localBin() string {
+	home, _ := os.UserHomeDir() // ignored: with no home and no HOME the path is relative and finds nothing
+	return filepath.Join(cmp.Or(os.Getenv("HOME"), home), ".local", "bin")
+}
+
+// onPath reports whether dir is one of the directories of the PATH value path.
+func onPath(dir, path string) bool {
+	return slices.ContainsFunc(filepath.SplitList(path), func(d string) bool { return d != "" && filepath.Clean(d) == filepath.Clean(dir) })
+}
+
+// find is lookPath, then localBin: the repairs install there whether or not it is on PATH.
+func find(name string) (string, error) {
+	p, err := lookPath(name)
+	if err == nil {
+		return p, nil
+	}
+	local := filepath.Join(localBin(), name)
+	if fi, e := os.Stat(local); e == nil && fi.Mode().IsRegular() && fi.Mode().Perm()&0o111 != 0 {
+		return local, nil
+	}
+	return "", err
+}
+
 // goVersion is major.minor of a "goX.Y[.Z]" string, or 0 0.
 func goVersion(s string) (int, int) {
 	var a, b int
@@ -155,8 +181,9 @@ func (u *upRun) control(out io.Writer) int {
 		missing++
 		fmt.Fprintf(out, "CHECK MISSING %s: %s%s\n", name, cmd, map[bool]string{true: "  # " + oneLine(strings.Join(why, " "))}[len(why) > 0])
 	}
-	needGo := slices.ContainsFunc(want, func(b string) bool { _, err := lookPath(b); return err != nil && strings.HasPrefix(b, "nova-") })
+	needGo := slices.ContainsFunc(want, func(b string) bool { _, err := find(b); return err != nil && strings.HasPrefix(b, "nova-") })
 	u.bin = map[string]string{}
+	var local []string // found only in localBin
 	for _, b := range want {
 		if needGo && b == "nova-config" { // the nova-* lines build from source: Go at least this binary's
 			needGo = false
@@ -169,10 +196,13 @@ func (u *upRun) control(out io.Writer) int {
 				fmt.Fprintf(out, "CHECK OK go %s\n", versionRE.FindString(o))
 			}
 		}
-		p, err := lookPath(b)
+		p, err := find(b)
 		if err != nil {
 			miss(b, fix(b, fam))
 			continue
+		}
+		if _, e := lookPath(b); e != nil {
+			local = append(local, b)
 		}
 		u.bin[b] = p
 		what := p
@@ -185,6 +215,9 @@ func (u *upRun) control(out io.Writer) int {
 			}
 		}
 		fmt.Fprintf(out, "CHECK OK %s %s\n", b, what)
+	}
+	if dir := localBin(); len(local) > 0 && !onPath(dir, os.Getenv("PATH")) {
+		miss("PATH", `export PATH="$HOME/.local/bin:$PATH"`, strings.Join(local, " ")+" found only in "+dir+", which is not on PATH; append the line to ~/.profile to keep it")
 	}
 	galaxy, posix := "ansible-galaxy", true      // without ansible, the line is printed for after its fix line has run
 	if p := u.bin["ansible-playbook"]; p != "" { // the collections the plays use (requirements.yml)
@@ -324,6 +357,6 @@ func runCheck(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "CHECK FAILED missing=%d\n", n)
 		return 1
 	}
-	fmt.Fprintf(stdout, "CHECK OK missing=0 next: nova-fleet up --check --tools <TAG|DIR>%s <name>=<address>...\n", map[bool]string{true: " --runners " + u.runners}[u.runners != ""])
+	fmt.Fprintf(stdout, "CHECK OK missing=0\nnext: nova-fleet up --check --tools <TAG|DIR>%s <name>=<address>...\n", map[bool]string{true: " --runners " + u.runners}[u.runners != ""])
 	return 0
 }

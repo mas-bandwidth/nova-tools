@@ -53,12 +53,11 @@ read the final status as well as any earlier results.
 Each tool has its own output format. Parse the one its guide describes. A
 successful item can precede a later failure.
 
-An OK line may end with one `next=<command>` field: the command to run next,
-built with the tool's command helper so it is shell-quoted, then field-escaped
-like every other field. It is a real command with a real example value, such as
-`next=nova-cairn append --store /tmp/c --session s1 --entry first`, so it pastes
-and runs. It is never a `<placeholder>` or `...`, and nothing follows it, so
-there is no free text such as `next: ...` after the fields.
+An OK line may be followed by one final line `next: <command>`: the command to
+run next, built with the tool's command helper so it is shell-quoted, with real
+spaces and no escaping. It is a real command with a real example value, such as
+`next: nova-cairn append --store /tmp/c --session s1 --entry first`, so it pastes
+and runs. It is never a `next=` field, and nothing follows it.
 
 ## Exit codes
 
