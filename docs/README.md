@@ -443,7 +443,8 @@ exit 125
 
 The first `grant` to a seat takes `--pub`, the machine's public key, and pins
 it; later grants check the pin. The same grant again changes nothing. The last
-line is the control node's own key being refused for `db`'s file, by design.
+line is the control node's own key being refused for `db`'s file, by design. `exec`'s own
+lines (`STARTING`, `REFUSED`) go to stderr; stdout is the command's alone.
 
 On a machine, a service row's `seat` and `keys` make the services play wrap the
 program in `nova-secrets exec --only <keys>`, so the granted value reaches the

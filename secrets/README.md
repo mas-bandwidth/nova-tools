@@ -128,6 +128,9 @@ SECRETS EXEC STARTING as=web keys=2 cmd=sh
 13 13
 ```
 
+The `SECRETS EXEC STARTING` line, and any refusal, goes to stderr; stdout is the
+command's alone, byte for byte, so a command that prints JSON parses through `exec`.
+
 `exec` decrypts the seat file, and the seat's grants file when there is one, and starts the command, with `--only` values
 added to its environment. The command's environment is the caller's, except
 that names the seat holds are removed, sops identity variables and
