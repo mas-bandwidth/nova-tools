@@ -383,7 +383,10 @@ func installArgs(args []string) ([]string, error) {
 	}
 	out := append(keep, "--")
 	if len(ev) > 0 {
-		b, _ := json.Marshal(ev)
+		b, err := json.Marshal(ev)
+		if err != nil {
+			return nil, err
+		}
 		out = append(out, "-e", string(b))
 	}
 	if len(hosts) > 0 {
