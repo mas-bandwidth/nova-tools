@@ -27,27 +27,37 @@ function Test-Limited([string]$event) { return @('push', 'pull_request', 'merge_
 function Test-Overdue([long]$now, [long]$deadline) { return $now -ge $deadline }
 function Get-LimitText([int]$s) { if ($s % 60 -eq 0) { return "$($s / 60)m" } return "${s}s" }
 
-# rows: objects with Id, Parent, Text (the command name for ancestor, the command line for tree)
+# rows: objects with Id, Parent, Text (the command name for ancestor, the command line for tree) and Created (a
+# number, may be 0 when unknown). Windows never reparents and reuses ids, so a row is a child of its Parent only when
+# it was created after that parent: a process whose parent exited long ago is never taken for the worker's child.
+function Test-ChildOf($r, $byId) {
+    $p = $byId[[long]$r.Parent]
+    if (-not $p) { return $false }
+    return -not ([long]$r.Created -and [long]$p.Created -and [long]$r.Created -lt [long]$p.Created)
+}
+function Get-ById($rows) { $m = @{}; foreach ($r in $rows) { $m[[long]$r.Id] = $r }; return $m }
 function Find-Ancestor([long]$start, [string]$name, $rows) {
-    $parent = @{}; $text = @{}
-    foreach ($r in $rows) { $parent[[long]$r.Id] = [long]$r.Parent; $text[[long]$r.Id] = [string]$r.Text }
-    $p = $start
-    for ($i = 0; $i -lt 64 -and $p -gt 0; $i++) {
-        if ($text.ContainsKey($p) -and ($text[$p] -replace '\.exe$', '').EndsWith($name)) { return $p }
-        if (-not $parent.ContainsKey($p)) { break }
-        $p = $parent[$p]
+    $byId = Get-ById $rows
+    $r = $byId[$start]
+    for ($i = 0; $i -lt 64 -and $r; $i++) {
+        if (([string]$r.Text -replace '\.exe$', '').EndsWith($name)) { return [long]$r.Id }
+        if (-not (Test-ChildOf $r $byId)) { break }
+        $r = $byId[[long]$r.Parent]
     }
     return $null
 }
+# Everything under ROOT but the hooks (with all under them) and the worker's own console host.
 function Get-Tree([long]$root, [string]$exclude, $rows) {
+    $byId = Get-ById $rows
     $keep = @{ $root = $true }
     do {
         $more = $false
         foreach ($r in $rows) {
-            $id = [long]$r.Id
-            if (-not $keep.ContainsKey($id) -and $keep.ContainsKey([long]$r.Parent) -and -not ($exclude -and ([string]$r.Text).Contains($exclude))) {
-                $keep[$id] = $true; $more = $true
-            }
+            $id = [long]$r.Id; $t = [string]$r.Text
+            if ($keep.ContainsKey($id) -or -not $keep.ContainsKey([long]$r.Parent) -or -not (Test-ChildOf $r $byId)) { continue }
+            if ($exclude -and $t.Contains($exclude)) { continue }
+            if ([long]$r.Parent -eq $root -and $t -match 'conhost\.exe') { continue }
+            $keep[$id] = $true; $more = $true
         }
     } while ($more)
     return @($rows | Where-Object { [long]$_.Id -ne $root -and $keep.ContainsKey([long]$_.Id) } | ForEach-Object { [long]$_.Id })
@@ -69,25 +79,43 @@ function Edit-Env([string]$dir, [string[]]$lines) {
 
 function Get-Rows([string]$what) {
     Get-CimInstance Win32_Process | ForEach-Object {
-        [pscustomobject]@{ Id = $_.ProcessId; Parent = $_.ParentProcessId; Text = $(if ($what -eq 'name') { $_.Name } else { [string]$_.CommandLine }) }
+        [pscustomobject]@{ Id = $_.ProcessId; Parent = $_.ParentProcessId; Text = $(if ($what -eq 'name') { $_.Name } else { [string]$_.CommandLine })
+            Created = $(if ($_.CreationDate) { $_.CreationDate.ToUniversalTime().Ticks } else { 0 }) }
     }
 }
 function Get-Now { [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() }
+# Invoke-Chain HOOK: the hook the .env held before ours, in its own process as the runner would run it; its exit code.
 function Invoke-Chain([string]$hook) {
-    if (-not $hook) { return }
-    "CI rule: running the chained hook $hook"
-    & $hook
-    if (-not $?) { exit 1 }
-    if ($LASTEXITCODE) { exit $LASTEXITCODE }
+    if (-not $hook) { return 0 }
+    Write-Host "CI rule: running the chained hook $hook"
+    $shell = (Get-Process -Id $PID).Path
+    if ($hook -like '*.ps1') { & $shell -NoProfile -ExecutionPolicy Bypass -File $hook | Write-Host }
+    else { & bash -e $hook | Write-Host }
+    return $LASTEXITCODE
+}
+# Invoke-Disarm: stop a watchdog left from an earlier job (checked by its command line) and forget its verdict.
+function Invoke-Disarm {
+    $pidFile = Join-Path $state 'watchdog.pid'
+    if (Test-Path $pidFile) {
+        $w = [long](Get-Content -Raw $pidFile).Trim()
+        $p = Get-CimInstance Win32_Process -Filter "ProcessId = $w"
+        if ($p -and ([string]$p.CommandLine).Contains('nova-ci-rules.ps1') -and ([string]$p.CommandLine).Contains('watchdog')) {
+            Stop-Process -Id $w -Force -ErrorAction SilentlyContinue
+        }
+        Remove-Item -Force $pidFile
+    }
 }
 
 function Invoke-Started {
+    Invoke-Disarm
+    Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path $state 'fired')
     $event = "$env:GITHUB_EVENT_NAME"; $ref = "$env:GITHUB_REF"
     if ($event -eq 'push' -and -not (Test-PushOk $ref)) {
         "::error::CI rule: push CI runs only on main, sprint/<stream> and tags, not $ref; set on.push.branches to [main, 'sprint/*'] and let this branch get CI through its pull request"
         exit 1
     }
-    Invoke-Chain "$env:NOVA_CI_CHAIN_JOB_STARTED"
+    $rc = Invoke-Chain "$env:NOVA_CI_CHAIN_JOB_STARTED"
+    if ($rc) { exit $rc }
     if (-not (Test-Limited $event)) { "CI rule: a $event job has no time limit"; exit 0 }
     $worker = Find-Ancestor $PID 'Runner.Worker' (Get-Rows 'name')
     if (-not $worker) {
@@ -95,7 +123,6 @@ function Invoke-Started {
         exit 1
     }
     New-Item -ItemType Directory -Force -Path $state | Out-Null
-    Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path $state 'fired')
     $deadline = (Get-Now) + $limit
     $shell = (Get-Process -Id $PID).Path
     $w = Start-Process -FilePath $shell -WindowStyle Hidden -PassThru -ArgumentList @(
@@ -106,23 +133,15 @@ function Invoke-Started {
 }
 
 function Invoke-Completed {
-    $pidFile = Join-Path $state 'watchdog.pid'
-    if (Test-Path $pidFile) {
-        $w = [long](Get-Content -Raw $pidFile).Trim()
-        $p = Get-CimInstance Win32_Process -Filter "ProcessId = $w"
-        if ($p -and ([string]$p.CommandLine).Contains('nova-ci-rules.ps1') -and ([string]$p.CommandLine).Contains('watchdog')) {
-            Stop-Process -Id $w -Force -ErrorAction SilentlyContinue
-        }
-        Remove-Item -Force $pidFile
-    }
-    Invoke-Chain "$env:NOVA_CI_CHAIN_JOB_COMPLETED"
+    Invoke-Disarm
+    $rc = Invoke-Chain "$env:NOVA_CI_CHAIN_JOB_COMPLETED"
     $fired = Join-Path $state 'fired'
     if (Test-Path $fired) {
         Remove-Item -Force $fired
         "::error::CI rule: per-commit jobs finish in $(Get-LimitText $limit); move longer work to a nightly (schedule) workflow"
         exit 1
     }
-    exit 0
+    exit $rc
 }
 
 function Invoke-Watchdog([long]$worker, [long]$deadline) {
@@ -144,6 +163,7 @@ function Invoke-Apply([int]$lim, [string[]]$dirs) {
     if (-not $dirs) { $dirs = @($services | ForEach-Object { $_.Dir } | Sort-Object -Unique) }
     $bad = 0
     foreach ($dir in $dirs) {
+      try {
         $hd = Join-Path $dir '.nova-ci-rules'
         New-Item -ItemType Directory -Force -Path $hd | Out-Null
         $hooks = 'ok'
@@ -158,7 +178,9 @@ function Invoke-Apply([int]$lim, [string[]]$dirs) {
         $envFile = Join-Path $dir '.env'
         $lines = @(); if (Test-Path $envFile) { $lines = @(Get-Content $envFile) }
         $new = Edit-Env $hd $lines
-        if (($new -join "`n") -ne ($lines -join "`n")) { Set-Content -Path $envFile -Value $new -Encoding ascii; $hooks = 'set' }
+        if (($new -join "`n") -ne ($lines -join "`n")) {
+            [IO.File]::WriteAllLines($envFile, [string[]]$new, (New-Object System.Text.UTF8Encoding $false)); $hooks = 'set'
+        }
         $applied = Join-Path $hd 'env.applied'
         $now = (Get-Content -Raw $envFile)
         $r = 'no'
@@ -168,11 +190,23 @@ function Invoke-Apply([int]$lim, [string[]]$dirs) {
             if (-not $svc -or -not $listener) { $r = 'stopped'; Set-Content -Path $applied -Value $now -NoNewline }
             elseif (Get-CimInstance Win32_Process -Filter "ParentProcessId = $($listener.ProcessId) AND Name = 'Runner.Worker.exe'") { $r = 'busy' }
             else {
-                try { Restart-Service -Name $svc.Name -Force; $r = 'done'; Set-Content -Path $applied -Value $now -NoNewline }
+                try {
+                    Restart-Service -Name $svc.Name -Force
+                    $exe = Join-Path $dir 'bin\Runner.Listener.exe'
+                    $seen = $false
+                    for ($i = 0; $i -lt 60 -and -not $seen; $i++) {
+                        $seen = [bool](Get-CimInstance Win32_Process -Filter "Name = 'Runner.Listener.exe'" | Where-Object { $_.ExecutablePath -eq $exe -and $_.ProcessId -ne $listener.ProcessId })
+                        if (-not $seen) { Start-Sleep -Seconds 1 }
+                    }
+                    if (-not $seen) { throw 'no new listener' }
+                    $r = 'done'; Set-Content -Path $applied -Value $now -NoNewline
+                }
                 catch { $r = 'failed'; $bad = 1 }
             }
         }
         "CI-RULES $dir hooks=$hooks restart=$r"
+      }
+      catch { "CI-RULES $dir denied=$($_.Exception.Message -replace '\s+', ' ')"; $bad = 1 }
     }
     exit $bad
 }

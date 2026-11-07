@@ -410,15 +410,20 @@ every runner running on the machines named, whoever registered it (`nova-fleet c
 and `ACTIONS_RUNNER_HOOK_JOB_COMPLETED` in the runner's `.env`, pointing at `job-started` and `job-completed` (`.sh`, or
 `.ps1` on Windows) in `<runner dir>/.nova-ci-rules/`, beside `nova-ci-rules.sh` (`.ps1`) and `limit` (the seconds). The
 started hook arms a watchdog, a detached process that the completed hook stops; a job that ends in time leaves
-nothing behind. A hook the `.env` held before is kept as `NOVA_CI_CHAIN_JOB_STARTED` / `_COMPLETED` and run from ours
-(after the push check, before the watchdog is armed, so waiting for a lock is not job time). The limit is one value
+nothing behind. A hook the `.env` held before is kept as `NOVA_CI_CHAIN_JOB_STARTED` / `_COMPLETED` and run from ours, in its
+own process by its extension (after the push check, before the watchdog is armed, so waiting for a lock is not job
+time). Each started hook first stops any watchdog and verdict an earlier job left, so a runner that died mid-job
+never fails the next one. The limit is one value
 for the fleet (`group_vars` or `-e`), never per repository.
 
 **Applying.** `nova-ci-rules apply` writes the hooks and the `.env`, and restarts a runner whose `.env` changed (the
 runner reads `.env` only at start) by what supervises it: its systemd unit (system or user, found from the listener's
-cgroup), its launchd job (found by `WorkingDirectory`), or its Windows service. A runner running a job is left alone
-and says `restart=busy`: run the play again. Linux applies as root; macOS as the login, so a runner of another login
-says `denied=` (it needs that login or root). A WSL machine also applies `nova-ci-rules.ps1` to the Windows side's
+cgroup), its launchd job (found by `WorkingDirectory`), or its Windows service. Before the restart every process of a systemd unit gets SIGINT, so
+the listener ends even where the unit is `KillMode=process`; a restart counts only once a new listener is seen. A
+runner running a job is left alone and says `restart=busy`: run the play again. Linux applies as root, and then the
+hooks and `limit` belong to root, so a job cannot rewrite them (only `state/`, the watchdog's, is the runner login's).
+macOS applies as root from `github-runners` (its runners are LaunchDaemons) and as the login from `ci-rules`, so there a
+runner of another login says `denied=` and a LaunchDaemon `restart=needs-root`. A WSL machine also applies `nova-ci-rules.ps1` to the Windows side's
 `actions.runner.*` services. One line per runner: `CI-RULES <machine> <dir> hooks=<ok|set> restart=<no|done|busy|stopped|failed>`.
 
 ## join

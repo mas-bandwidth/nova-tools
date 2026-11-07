@@ -98,13 +98,30 @@ env_edit() {
 
 procs() { ps -A -o pid= -o ppid= -o "$1=" | awk '{$1 = $1; print}'; }
 
+
+# chain HOOK: the hook the .env held before ours, run as the runner would run it (by its extension).
 chain() {
 	[ -n "$1" ] || return 0
 	echo "CI rule: running the chained hook $1"
-	bash -e "$1"
+	case $1 in
+	*.ps1) pwsh -NoProfile -File "$1" ;;
+	*) bash -e "$1" ;;
+	esac
+}
+
+# disarm: stop a watchdog left from an earlier job (pid checked against its command line) and forget its verdict.
+disarm() {
+	if [ -r "$state/watchdog.pid" ]; then
+		w=$(cat "$state/watchdog.pid")
+		case $(ps -o command= -p "$w" 2>/dev/null) in *nova-ci-rules.sh\ watchdog*) kill "$w" 2>/dev/null ;; esac
+		rm -f "$state/watchdog.pid"
+	fi
 }
 
 started() {
+	# whatever an earlier job left (a runner that died before its completed hook) never touches this one
+	disarm
+	rm -f "$state/fired"
 	event=${GITHUB_EVENT_NAME:-} ref=${GITHUB_REF:-}
 	if [ "$event" = push ] && ! push_ok "$ref"; then
 		echo "::error::CI rule: push CI runs only on main, sprint/<stream> and tags, not $ref; set on.push.branches to [main, 'sprint/*'] and let this branch get CI through its pull request"
@@ -119,7 +136,7 @@ started() {
 		echo "::error::CI rule: no Runner.Worker above this hook, so the $(limit_text "$limit") limit cannot be enforced; tell the fleet admin"
 		exit 1
 	}
-	mkdir -p "$state" && rm -f "$state/fired"
+	mkdir -p "$state"
 	deadline=$(($(date +%s) + limit))
 	nohup sh "$here/nova-ci-rules.sh" watchdog "$worker" "$deadline" </dev/null >>"$state/watchdog.log" 2>&1 &
 	echo $! >"$state/watchdog.pid"
@@ -127,11 +144,7 @@ started() {
 }
 
 completed() {
-	if [ -r "$state/watchdog.pid" ]; then
-		w=$(cat "$state/watchdog.pid")
-		case $(ps -o command= -p "$w" 2>/dev/null) in *nova-ci-rules.sh\ watchdog*) kill "$w" 2>/dev/null ;; esac
-		rm -f "$state/watchdog.pid"
-	fi
+	disarm
 	rc=0
 	chain "${NOVA_CI_CHAIN_JOB_COMPLETED:-}" || rc=$?
 	if [ -e "$state/fired" ]; then
@@ -162,65 +175,106 @@ watchdog() {
 
 owner() { stat -c %U "$1" 2>/dev/null || stat -f %Su "$1"; }
 
-# restart DIR PID: the runner of DIR (its listener PID) restarted by what supervises it.
+listener_of() { ps -A -o pid= -o command= | awk -v want="$1/bin/Runner.Listener" '$2 == want { print $1; exit }'; }
+
+# gone PID SECONDS: true once PID has exited, waiting up to SECONDS.
+gone() {
+	i=0
+	while kill -0 "$1" 2>/dev/null; do
+		[ "$i" -ge "$2" ] && return 1
+		sleep 1
+		i=$((i + 1))
+	done
+}
+
+# restart DIR PID: the runner of DIR (its listener PID) restarted by what supervises it, then a new listener seen.
+# Exit 0 done, 1 failed, 2 needs root (a launchd daemon from a login that is not root).
 restart() {
 	if [ "$(uname)" = Linux ]; then
 		unit=$(awk -F/ 'END { print $NF }' "/proc/$2/cgroup")
 		uid=$(awk -F/ 'END { for (i = 1; i <= NF; i++) if ($i ~ /^user@[0-9]+\.service$/) { sub(/^user@/, "", $i); sub(/\.service$/, "", $i); print $i } }' "/proc/$2/cgroup")
 		case $unit in *.service) ;; *) return 1 ;; esac
-		if [ -n "$uid" ]; then
-			systemctl --user -M "$(id -nu "$uid")@" restart "$unit"
-		else
-			systemctl restart "$unit"
-		fi
-		return
+		set -- "$1" "$2" systemctl
+		[ -n "$uid" ] && set -- "$1" "$2" systemctl --user -M "$(id -nu "$uid")@"
+		d=$1 old=$2
+		shift 2
+		# SIGINT to every process of the unit, so the listener ends cleanly even where the unit is KillMode=process
+		# and its main process (run.sh) would not pass a stop on; then start it again
+		"$@" kill --kill-who=all --signal=SIGINT "$unit" || return 1
+		gone "$old" 60 || { kill -KILL "$old" 2>/dev/null; gone "$old" 5; }
+		"$@" restart "$unit" || return 1
+	else
+		d=$1 old=$2 label='' domain=''
+		for plist in /Library/LaunchDaemons/*.plist "$(eval echo "~$(owner "$d")")"/Library/LaunchAgents/*.plist; do
+			[ -f "$plist" ] || continue
+			[ "$(plutil -extract WorkingDirectory raw "$plist" 2>/dev/null)" = "$d" ] || continue
+			label=$(plutil -extract Label raw "$plist") || return 1
+			case $plist in
+			/Library/*) domain=system ;;
+			*) domain=gui/$(id -u "$(owner "$d")") ;;
+			esac
+			break
+		done
+		[ -n "$label" ] || return 1
+		[ "$domain" = system ] && [ "$(id -u)" != 0 ] && return 2
+		launchctl kickstart -k "$domain/$label" || return 1
+		gone "$old" 60 || return 1
 	fi
-	for plist in /Library/LaunchDaemons/*.plist "$(eval echo "~$(owner "$1")")"/Library/LaunchAgents/*.plist; do
-		[ -f "$plist" ] || continue
-		wd=$(plutil -extract WorkingDirectory raw "$plist" 2>/dev/null) || continue
-		[ "$wd" = "$1" ] || continue
-		label=$(plutil -extract Label raw "$plist") || return 1
-		case $plist in
-		/Library/*) launchctl kickstart -k "system/$label" ;;
-		*) launchctl kickstart -k "gui/$(id -u "$(owner "$1")")/$label" ;;
-		esac
-		return
+	i=0
+	while :; do
+		new=$(listener_of "$d")
+		[ -n "$new" ] && [ "$new" != "$old" ] && return 0
+		[ "$i" -ge 60 ] && return 1
+		sleep 1
+		i=$((i + 1))
 	done
-	return 1
 }
 
-# apply LIMIT [DIR..]: one line per runner, CI-RULES <dir> hooks=<ok|set> restart=<no|done|busy|stopped|failed>, or
-# CI-RULES <dir> denied=<why> where this login cannot write the runner's directory (the exit is then 1).
+# apply LIMIT [DIR..]: one line per runner, CI-RULES <dir> hooks=<ok|set> restart=<no|done|busy|stopped|failed|needs-root>,
+# or CI-RULES <dir> denied=<why> where this login cannot write the runner's directory. Exit 1 when any is denied,
+# failed or needs root. As root (Linux) the hooks and the limit belong to root, so a job cannot rewrite them; only
+# state/ (the watchdog's) belongs to the runner's login.
 apply() {
 	lim=$1
 	shift
 	src=$here
-	listeners=$(ps -A -o pid= -o command= | awk '$2 ~ /\/bin\/Runner\.Listener$/ { print $1, $2 }')
 	if [ $# -eq 0 ]; then
 		# shellcheck disable=SC2046 # runner directories hold no spaces
-		set -- $(echo "$listeners" | awk 'NF { sub(/\/bin\/Runner\.Listener$/, "", $2); print $2 }' | sort -u)
+		set -- $(ps -A -o command= | awk '$1 ~ /\/bin\/Runner\.Listener$/ { sub(/\/bin\/Runner\.Listener$/, "", $1); print $1 }' | sort -u)
 	fi
 	bad=0
-	for dir in "$@"; do
+	for given in "$@"; do
+		# the listener runs from the physical path (run-helper.sh cd -P), so a symlinked directory is resolved first
+		dir=$(cd -P "$given" 2>/dev/null && pwd -P) || {
+			echo "CI-RULES $given denied=no-such-directory"
+			bad=1
+			continue
+		}
 		hd=$dir/.nova-ci-rules
-		if ! [ -w "$dir" ] || { [ -e "$dir/.env" ] && ! [ -w "$dir/.env" ]; }; then
+		if ! [ -w "$dir" ] || { [ -e "$dir/.env" ] && ! [ -w "$dir/.env" ]; } || { [ -e "$hd" ] && ! [ -w "$hd" ]; }; then
 			echo "CI-RULES $dir denied=not-writable-by-$(id -un)"
 			bad=1
 			continue
 		fi
 		who=$(owner "$dir")
 		hooks=ok
-		mkdir -p "$hd"
+		mkdir -p "$hd/state"
 		for f in nova-ci-rules.sh job-started.sh job-completed.sh; do
-			cmp -s "$src/$f" "$hd/$f" || { cp "$src/$f" "$hd/$f" && chmod 0755 "$hd/$f" && hooks='set'; }
+			cmp -s "$src/$f" "$hd/$f" || { cp "$src/$f" "$hd/$f" && hooks='set'; }
+			chmod 0755 "$hd/$f"
 		done
 		[ "$(cat "$hd/limit" 2>/dev/null)" = "$lim" ] || { echo "$lim" >"$hd/limit" && hooks='set'; }
 		touch "$dir/.env"
 		env_edit "$hd" <"$dir/.env" >"$hd/env.new"
 		cmp -s "$hd/env.new" "$dir/.env" || { cat "$hd/env.new" >"$dir/.env" && hooks='set'; }
 		rm -f "$hd/env.new"
-		[ "$(id -u)" = 0 ] && chown -R "$who" "$hd" "$dir/.env"
-		pid=$(echo "$listeners" | awk -v want="$dir/bin/Runner.Listener" '$2 == want { print $1; exit }')
+		if [ "$(id -u)" = 0 ]; then
+			chown -R 0:0 "$hd"
+			chmod 0755 "$hd"
+			chmod 0644 "$hd/limit"
+			chown -R "$who" "$hd/state" "$dir/.env"
+		fi
+		pid=$(listener_of "$dir")
 		r=no
 		if cmp -s "$dir/.env" "$hd/env.applied"; then
 			r=no
@@ -229,18 +283,28 @@ apply() {
 			cp "$dir/.env" "$hd/env.applied"
 		elif ps -A -o ppid= -o command= | awk -v p="$pid" '$1 == p && /Runner\.Worker/ { found = 1 } END { exit !found }'; then
 			r=busy
-		elif restart "$dir" "$pid" >/dev/null 2>&1; then
-			r='done'
-			cp "$dir/.env" "$hd/env.applied"
 		else
-			r=failed
-			bad=1
+			restart "$dir" "$pid" >/dev/null 2>&1
+			case $? in
+			0)
+				r='done'
+				cp "$dir/.env" "$hd/env.applied"
+				;;
+			2)
+				r=needs-root
+				bad=1
+				;;
+			*)
+				r=failed
+				bad=1
+				;;
+			esac
 		fi
-		[ "$(id -u)" = 0 ] && chown "$who" "$hd/env.applied" 2>/dev/null
 		echo "CI-RULES $dir hooks=$hooks restart=$r"
 	done
 	return $bad
 }
+
 
 cmd=${1:-}
 [ $# -gt 0 ] && shift

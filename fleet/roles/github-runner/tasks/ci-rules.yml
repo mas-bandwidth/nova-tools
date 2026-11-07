@@ -3,8 +3,9 @@
 # <runner dir>/.nova-ci-rules/, points the runner's .env at them (a hook the .env held before is chained, not lost) and
 # restarts an idle runner whose .env changed. ci_rules_dirs names the runner directories; empty means every runner
 # running on the machine (the ci-rules play). A busy runner is left running and says restart=busy: run again.
-# Linux and macOS: nova-ci-rules.sh, as root on Linux (runners of other logins); macOS as the login, which reaches
-# the login's own runners only. Windows: nova-ci-rules.ps1, and a WSL machine also applies it to the Windows side.
+# Linux and macOS: nova-ci-rules.sh, as root on Linux (runners of other logins) and wherever ci_rules_become is true (the
+# github-runners play, whose macOS runners are LaunchDaemons); otherwise macOS applies as the login, which reaches the
+# login's own runners only (a daemon says restart=needs-root). Windows: nova-ci-rules.ps1, and a WSL machine also applies it to the Windows side.
 
 - name: the CI rules, staged (Linux and macOS)
   when: ansible_facts['os_family'] != 'Windows' and not ansible_check_mode
@@ -20,7 +21,7 @@
     - name: apply them to the runners
       ansible.builtin.command:
         argv: "{{ ['sh', ci_rules_stage.path ~ '/nova-ci-rules.sh', 'apply', github_runner_ci_limit_seconds | string] + (ci_rules_dirs | default([])) }}"
-      become: "{{ ansible_facts['system'] == 'Linux' }}"
+      become: "{{ ci_rules_become | default(ansible_facts['system'] == 'Linux') | bool }}"
       register: ci_rules_applied
       changed_when: "'hooks=set' in ci_rules_applied.stdout or 'restart=done' in ci_rules_applied.stdout"
       failed_when: ci_rules_applied.rc != 0

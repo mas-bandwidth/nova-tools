@@ -266,3 +266,23 @@ func TestCIRulesCompletedFailsAStoppedJob(t *testing.T) {
 		}
 	}
 }
+
+// A verdict an earlier job left (its runner died before the completed hook) never fails the next job.
+func TestCIRulesStartedForgetsAnEarlierVerdict(t *testing.T) {
+	for _, sh := range ciShells(t) {
+		dir := ciCopy(t, "")
+		if err := os.MkdirAll(filepath.Join(dir, "state"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "state", "fired"), []byte("x\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		env := []string{"GITHUB_EVENT_NAME=schedule", "GITHUB_REF=refs/heads/main", "NOVA_CI_CHAIN_JOB_STARTED=", "NOVA_CI_CHAIN_JOB_COMPLETED="}
+		if code, out := ciRun(t, sh, dir, "", env, "started"); code != 0 {
+			t.Fatalf("%s started = %d %q", sh.name, code, out)
+		}
+		if code, out := ciRun(t, sh, dir, "", env, "completed"); code != 0 || strings.Contains(out, "::error::") {
+			t.Errorf("%s completed after a stale verdict = %d %q, want 0", sh.name, code, out)
+		}
+	}
+}

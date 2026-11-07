@@ -73,5 +73,6 @@
 - name: the CI rules on these runners
   ansible.builtin.include_tasks: ci-rules.yml
   vars:
+    ci_rules_become: true
     ci_rules_dirs: "{{ [github_runner_base_dir ~ '/' ~ github_runner_slug ~ '-'] | product(github_runner_want | map('string')) | map('join') | list }}"
   when: github_runner_want | length > 0
