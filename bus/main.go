@@ -592,20 +592,14 @@ func missingFields(m Msg) string {
 	return strings.Join(missing, ",")
 }
 
-// runHook runs hook, reconnecting after an error, until ctx ends (exit 0) or
-// stdout fails or loses its reader, or a wake fails (exit 1), releasing
-// presence either way; or until the name is
-// found hooked by another process (exit 1, its presence left alone)
+// runHook runs hook, reconnecting after an error, until ctx ends (exit 0), stdout
+// fails or loses its reader, or a wake fails (exit 1), releasing presence; or until
+// the name is found hooked by another process (exit 1, its presence left alone)
 // (tla/Presence.tla Exit, Claim: OnlyOwnerDeletes, GoneAfterExit).
-// A reconnect is logged once, then at most once a minute.
-func newSession() string {
-	var b [16]byte
-	_, _ = rand.Read(b[:])
-	return fmt.Sprintf("%x", b)
-}
-
 func runHook(ctx context.Context, store Store, name, addr string, clk Clock, stdout, stderr io.Writer, w waker, again string, gone func() bool) int {
-	value := clk.Now().UTC().Format(time.RFC3339) + "\t" + newSession()
+	var sid [16]byte
+	_, _ = rand.Read(sid[:]) // ignored: crypto/rand.Read never fails
+	value := fmt.Sprintf("%s\t%x", clk.Now().UTC().Format(time.RFC3339), sid)
 	var logged time.Time
 	announced := false
 	onClaim := func(waiting int64) { // HOOK OK once; after a reconnect, HOOK RECONNECTED where the Monitor sees it
