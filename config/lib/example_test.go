@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	config "github.com/mas-bandwidth/nova-tools/config/lib"
+	config "github.com/mas-bandwidth/nova-tools/v2/config/lib"
 )
 
 // Read the friends nova-config keeps, as nova-config friend list does.

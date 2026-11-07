@@ -16,7 +16,7 @@ import (
 	"testing"
 )
 
-const modulePath = "github.com/mas-bandwidth/nova-tools"
+const modulePath = "github.com/mas-bandwidth/nova-tools/v2"
 
 // allowedTop is every entry that may exist at the top level of the repository.
 // Anything else fails the test; see docs/BOUNDARY.md before extending it.

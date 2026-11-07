@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5"
-	config "github.com/mas-bandwidth/nova-tools/config/lib"
+	config "github.com/mas-bandwidth/nova-tools/v2/config/lib"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

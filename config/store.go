@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
-	config "github.com/mas-bandwidth/nova-tools/config/lib"
+	config "github.com/mas-bandwidth/nova-tools/v2/config/lib"
 )
 
 // Store is the part of PostgreSQL nova-config uses: the rows of the schema

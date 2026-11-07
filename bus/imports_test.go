@@ -41,8 +41,8 @@ func allowed(path string, test bool) bool {
 // TestAllowedRefusesTheRepository is the rule's reversed witness.
 func TestAllowedRefusesTheRepository(t *testing.T) {
 	t.Parallel()
-	assert.False(t, allowed("github.com/mas-bandwidth/nova-tools/pkg/tool", false))
-	assert.False(t, allowed("github.com/mas-bandwidth/nova-tools/pkg/tool", true))
+	assert.False(t, allowed("github.com/mas-bandwidth/nova-tools/v2/pkg/tool", false))
+	assert.False(t, allowed("github.com/mas-bandwidth/nova-tools/v2/pkg/tool", true))
 	assert.False(t, allowed("github.com/stretchr/testify/require", false))
 	assert.True(t, allowed("github.com/redis/go-redis/v9", false))
 	assert.True(t, allowed("net/http", false))

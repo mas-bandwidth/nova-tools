@@ -1,4 +1,4 @@
-module github.com/mas-bandwidth/nova-tools
+module github.com/mas-bandwidth/nova-tools/v2
 
 go 1.26.6
 

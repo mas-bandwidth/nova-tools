@@ -1,7 +1,7 @@
 // Command nova-config keeps a fleet's machines and services, and the friends
 // that work on it, as rows in PostgreSQL, each write with a history row, and
 // prints the machines and services as an Ansible inventory. Other programs
-// read the same rows through package github.com/mas-bandwidth/nova-tools/config/lib.
+// read the same rows through package github.com/mas-bandwidth/nova-tools/v2/config/lib.
 package main
 
 import (
@@ -19,7 +19,7 @@ import (
 	"strings"
 	"time"
 
-	config "github.com/mas-bandwidth/nova-tools/config/lib"
+	config "github.com/mas-bandwidth/nova-tools/v2/config/lib"
 )
 
 //go:embed schema.sql

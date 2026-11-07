@@ -12,7 +12,7 @@ import (
 	"strconv"
 	"strings"
 
-	config "github.com/mas-bandwidth/nova-tools/config/lib"
+	config "github.com/mas-bandwidth/nova-tools/v2/config/lib"
 )
 
 // field is one column of a kind's table. typ is text, int, bool, list (a

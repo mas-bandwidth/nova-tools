@@ -38,17 +38,17 @@ func TestSelfContained(t *testing.T) {
 func allowed(path string, test bool) bool {
 	under := func(mod string) bool { return path == mod || strings.HasPrefix(path, mod+"/") }
 	std := !strings.Contains(strings.SplitN(path, "/", 2)[0], ".")
-	return std || under("github.com/jackc/pgx/v5") || path == "github.com/mas-bandwidth/nova-tools/config/lib" || (test && under("github.com/stretchr/testify"))
+	return std || under("github.com/jackc/pgx/v5") || path == "github.com/mas-bandwidth/nova-tools/v2/config/lib" || (test && under("github.com/stretchr/testify"))
 }
 
 // TestAllowedRefusesTheRepository is the rule's reversed witness.
 func TestAllowedRefusesTheRepository(t *testing.T) {
 	t.Parallel()
-	assert.False(t, allowed("github.com/mas-bandwidth/nova-tools/pkg/tool", false))
-	assert.False(t, allowed("github.com/mas-bandwidth/nova-tools/pkg/tool", true))
+	assert.False(t, allowed("github.com/mas-bandwidth/nova-tools/v2/pkg/tool", false))
+	assert.False(t, allowed("github.com/mas-bandwidth/nova-tools/v2/pkg/tool", true))
 	assert.False(t, allowed("github.com/stretchr/testify/require", false))
-	assert.False(t, allowed("github.com/mas-bandwidth/nova-tools/config/lib/x", false))
-	assert.True(t, allowed("github.com/mas-bandwidth/nova-tools/config/lib", false))
+	assert.False(t, allowed("github.com/mas-bandwidth/nova-tools/v2/config/lib/x", false))
+	assert.True(t, allowed("github.com/mas-bandwidth/nova-tools/v2/config/lib", false))
 	assert.True(t, allowed("github.com/jackc/pgx/v5/pgconn", false))
 	assert.False(t, allowed("github.com/redis/go-redis/v9", false))
 	assert.True(t, allowed("net/http", false))
