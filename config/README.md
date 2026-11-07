@@ -110,14 +110,14 @@ machines.
 | `pronouns` | Text; empty (stored as NULL) when unstated. |
 | `enabled` | Default true. |
 
-```sh
-nova-config friend add emma --harness claude --model opus --width 4 --tiers pro,heavy --pronouns she/her --actor ops
-nova-config friend show emma
+```text
+nova-config friend add <friend> --harness <harness> --model <model> --width 4 --tiers pro,heavy --pronouns she/her --actor ops
+nova-config friend show <friend>
 ```
 
 ```text
-CONFIG ADD kind=friend name=emma rev=4
-FRIEND name=emma harness=claude model=opus width=4 tiers=heavy,pro pronouns=she/her note=- enabled=true created=2026-11-07T01:55:27Z updated=2026-11-07T01:55:27Z
+CONFIG ADD kind=friend name=<friend> rev=4
+FRIEND name=<friend> harness=<harness> model=<model> width=4 tiers=heavy,pro pronouns=she/her note=- enabled=true created=2026-11-07T01:55:27Z updated=2026-11-07T01:55:27Z
 ```
 
 A store with the older friends table (columns such as `slots`, `mode` and
@@ -184,8 +184,8 @@ connection failure. Missing or invalid flags and the store DSN are checked toget
 | `machine remove: machine bench-a still runs services hello; ...` (1) | Remove or move its services first. |
 | `service add: service x has neither --every nor --keepalive; ...` (2) | Give exactly one of them. |
 | `service add: service x names secrets (--keys A) and no --seat ...` (2) | Add `--seat` or drop `--keys`. |
-| `friend set: friend emma has --width 0; ...` (1) | Give `--width 1` or more. |
-| `friend remove: friend rowan is still named by config.sprint; ...` (1) | Change the row that names it first. |
+| `friend set: friend <friend> has --width 0; ...` (1) | Give `--width 1` or more. |
+| `friend remove: friend <friend> is still named by config.sprint; ...` (1) | Change the row that names it first. |
 | `machine list: NOVA_PG_DSN carries a password; ...` (2) | Move the password to `NOVA_PG_PASSWORD`. |
 | `inventory: takes --list or --host <name>, not both; ...` (2) | Give one. |
 | `inventory: no machine row named nope; ...` or `NOVA_MACHINE nope names no machine row` (1) | Check the name. |
@@ -200,8 +200,11 @@ connection failure. Missing or invalid flags and the store DSN are checked toget
 
 Clean up:
 
+```text
+nova-config friend remove <friend> --actor ops
+```
+
 ```sh
-nova-config friend remove emma --actor ops
 nova-config service remove hello --actor ops
 nova-config machine remove bench-a --actor ops
 pg_ctl -D "$work/pg" -m fast stop
