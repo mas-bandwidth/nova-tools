@@ -636,6 +636,59 @@ func TestCheck(t *testing.T) {
 	}
 }
 
+func TestOnPath(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		dir, path string
+		want      bool
+	}{
+		{"/h/.local/bin", "/usr/bin:/h/.local/bin:/bin", true},
+		{"/h/.local/bin", "/usr/bin:/h/.local/bin/:/bin", true},
+		{"/h/.local/bin", "/usr/bin:/h/.local/binx:/h/.local", false},
+		{"/h/.local/bin", "", false},
+		{"/h/.local/bin", "::bin", false},
+	} {
+		if got := onPath(tc.dir, tc.path); got != tc.want {
+			t.Errorf("onPath(%q, %q) = %v, want %v", tc.dir, tc.path, got, tc.want)
+		}
+	}
+}
+
+// A tool the repair built into ~/.local/bin is found there; with that directory off PATH, check says so once and
+// prints the line that puts it on, instead of repeating the build.
+func TestCheckFindsLocalBin(t *testing.T) {
+	oldOS, oldArch, oldRel := goos, goarch, osRelease
+	t.Cleanup(func() { goos, goarch, osRelease = oldOS, oldArch, oldRel })
+	goos, goarch, osRelease = "linux", "amd64", filepath.Join(t.TempDir(), "no-os-release")
+	f := &upFake{}
+	f.install(t)
+	home := os.Getenv("HOME")
+	if err := os.MkdirAll(filepath.Join(home, ".local", "bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".local", "bin", "nova-config"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	lookPath = func(name string) (string, error) {
+		if name == "nova-config" {
+			return "", os.ErrNotExist
+		}
+		return "/bin/" + name, nil
+	}
+	t.Setenv("PATH", "/usr/bin")
+	code, out, errs := runArgs("check")
+	if code != 1 || errs != "CHECK FAILED missing=1\n" ||
+		!strings.Contains(out, "CHECK OK nova-config "+filepath.Join(home, ".local", "bin", "nova-config")+"\n") ||
+		!strings.Contains(out, "CHECK MISSING PATH: export PATH=\"$HOME/.local/bin:$PATH\"  # nova-config found only in "+filepath.Join(home, ".local", "bin")+", which is not on PATH; ") ||
+		strings.Contains(out, "CHECK MISSING nova-config") {
+		t.Errorf("tool in ~/.local/bin, directory off PATH: code %d stdout %q stderr %q", code, out, errs)
+	}
+	t.Setenv("PATH", "/usr/bin:"+filepath.Join(home, ".local", "bin"))
+	if code, out, errs = runArgs("check"); code != 0 || errs != "" || strings.Contains(out, "CHECK MISSING") {
+		t.Errorf("directory on PATH: code %d stdout %q stderr %q", code, out, errs)
+	}
+}
+
 func TestFixPerFamily(t *testing.T) {
 	dir := t.TempDir()
 	old, oldOS := osRelease, goos
