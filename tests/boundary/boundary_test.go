@@ -19,7 +19,7 @@ import (
 const modulePath = "github.com/mas-bandwidth/nova-tools/v2"
 
 // allowedTop is every entry that may exist at the top level of the repository.
-// Anything else fails the test; see docs/BOUNDARY.md before extending it.
+// Anything else fails the test; see AGENTS.md before extending it.
 var allowedTop = map[string]bool{
 	// tools and support directories
 	"bus": true, "config": true, "sandbox": true, "secrets": true, "reserve": true, "cairn": true,
@@ -27,7 +27,7 @@ var allowedTop = map[string]bool{
 	// version control
 	".git": true,
 	// root files: exactly these, nothing else (nothing in root unless a user cares about it)
-	"README.md": true, "LICENSE": true, "go.mod": true, "go.sum": true,
+	"README.md": true, "AGENTS.md": true, "LICENSE": true, "go.mod": true, "go.sum": true,
 	".gitignore": true, ".gitattributes": true,
 }
 
@@ -74,21 +74,21 @@ func TestTopLevelShape(t *testing.T) {
 	for _, e := range entries {
 		name := e.Name()
 		if fi, err := os.Lstat(filepath.Join(base, name)); err != nil || fi.Mode()&os.ModeSymlink != 0 {
-			t.Errorf("%s: top-level entries must not be symlinks; see docs/BOUNDARY.md", name)
+			t.Errorf("%s: top-level entries must not be symlinks; see AGENTS.md", name)
 			continue
 		}
 		if allowedTop[name] {
 			continue
 		}
 		if libraryDirs[name] {
-			t.Errorf("%s: nova-tools has no library layer: each tool is one top-level package main; see docs/BOUNDARY.md", name)
+			t.Errorf("%s: nova-tools has no library layer: each tool is one top-level package main; see AGENTS.md", name)
 			continue
 		}
 		if strings.HasSuffix(name, ".md") {
 			t.Errorf("%s: root holds README.md only; docs go in docs/", name)
 			continue
 		}
-		t.Errorf("%s: not an allowed top-level entry; see docs/BOUNDARY.md", name)
+		t.Errorf("%s: not an allowed top-level entry; see AGENTS.md", name)
 	}
 }
 
@@ -106,7 +106,7 @@ func TestNoSymlinks(t *testing.T) {
 			}
 			if d.Type()&fs.ModeSymlink != 0 {
 				rel, _ := filepath.Rel(base, p)
-				t.Errorf("%s is a symlink: no symlinks anywhere in the repository; see docs/BOUNDARY.md", rel)
+				t.Errorf("%s is a symlink: no symlinks anywhere in the repository; see AGENTS.md", rel)
 			}
 			return nil
 		})
@@ -150,7 +150,7 @@ func isOwn(p string) bool { return p == modulePath || strings.HasPrefix(p, modul
 // toolLibs are the one library a tool may carry, by tool: a directory under
 // it whose package (named here) imports nothing from this module and is
 // imported by that tool alone, so other programs read what the tool keeps the
-// way the tool does. nova-config's config/lib is the only one (docs/BOUNDARY.md).
+// way the tool does. nova-config's config/lib is the only one (AGENTS.md).
 var toolLibs = map[string]struct{ dir, pkg string }{"config": {"config/lib", "config"}}
 
 func TestToolsAreIndependentMains(t *testing.T) {
@@ -171,7 +171,7 @@ func TestToolsAreIndependentMains(t *testing.T) {
 			}
 			for _, p := range imps {
 				if isOwn(p) && (!hasLib || p != modulePath+"/"+lib.dir || inLib && pkg == want) {
-					t.Errorf("%s imports %s: tools do not import each other or any shared package; see docs/BOUNDARY.md", rel, p)
+					t.Errorf("%s imports %s: tools do not import each other or any shared package; see AGENTS.md", rel, p)
 				}
 			}
 		}
@@ -228,7 +228,7 @@ func TestDirectDependencies(t *testing.T) {
 	}
 	reqs, replaces, tools := parseGoMod(string(data))
 	for _, r := range replaces {
-		t.Errorf("go.mod has a replace directive (%s): replace is not allowed; see docs/BOUNDARY.md", r)
+		t.Errorf("go.mod has a replace directive (%s): replace is not allowed; see AGENTS.md", r)
 	}
 	okTool := map[string]bool{}
 	for _, m := range allowedTools {
@@ -236,7 +236,7 @@ func TestDirectDependencies(t *testing.T) {
 	}
 	for _, m := range tools {
 		if !okTool[m] {
-			t.Errorf("go.mod tool %s is not in allowedTools in boundary_test.go: add it in the same PR and say why in docs/BOUNDARY.md", m)
+			t.Errorf("go.mod tool %s is not in allowedTools in boundary_test.go: add it in the same PR and say why in AGENTS.md", m)
 		}
 	}
 	// A module imported by any .go file is direct whatever its comment says.
@@ -270,7 +270,7 @@ func TestDirectDependencies(t *testing.T) {
 			continue
 		}
 		if !want[m] {
-			t.Errorf("new direct dependency %s: add it to the list in boundary_test.go in the same PR and say why in docs/BOUNDARY.md", m)
+			t.Errorf("new direct dependency %s: add it to the list in boundary_test.go in the same PR and say why in AGENTS.md", m)
 		}
 		delete(want, m)
 	}
@@ -366,7 +366,7 @@ func countLines(dir string) (int, error) {
 
 // TestNoCompiledBinaries fails on any tracked file that is a compiled binary
 // (ELF, Mach-O or PE magic) or larger than 1 MiB outside docs/assets: build
-// outputs belong outside the checkout (docs/TESTING.md).
+// outputs belong outside the checkout (AGENTS.md).
 func TestNoCompiledBinaries(t *testing.T) {
 	base := root(t)
 	out, err := exec.Command("git", "-C", base, "ls-files", "-z").Output()

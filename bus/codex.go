@@ -135,7 +135,7 @@ func threadSource(home, thread string) (string, error) {
 // that happens to hold a GEMINI_API_KEY is not taken for Antigravity).
 // Antigravity's agent runs its commands with ANTIGRAVITY_AGENT_PORT,
 // ANTIGRAVITY_LS_ADDRESS, ANTIGRAVITY_CSRF_TOKEN and GEMINI_CLI_CSRF_TOKEN
-// (the variables v1.6.29 nova-hook read from its shell and passed on to
+// (the variables the hook reads from its shell and passes on to
 // agentapi), and only those count. Grok sets GROK_HOME. Anything else is
 // taken for Claude Code or Muse Code, whose recipe is the Monitor.
 func harnessOf(environ []string) string {
@@ -158,9 +158,8 @@ func harnessOf(environ []string) string {
 }
 
 // hookInRecipe is the one or two lines that hook name in on harness: what a
-// verb that acts as name says when name is not hooked in (Glenn,
-// 2026-11-06: "you have to hook in before you can send messages on nova-bus
-// ... if you try to send without hooking in, it tells you how to hook in").
+// verb that acts as name says when name is not hooked in:
+// a send without a hook-in says how to hook in.
 func hookInRecipe(harness, name, addr string) string {
 	cmd := "NOVA_BUS_REDIS=" + addr + " nova-bus"
 	switch harness {

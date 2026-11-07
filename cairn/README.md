@@ -175,5 +175,3 @@ prints a FAILED line and exits 1.
   is never overwritten; an edit by hand is not detected.
 - `search` and `check` find shared words only. `self-talk` matches known
   shapes only.
-
-How the tool is tested is in [SPEC.md](SPEC.md).

@@ -96,7 +96,7 @@ const probeUsage = `nova-sandbox probe: prove the wall on this machine by runnin
 
 It walls children of this binary in a scratch directory and prints one line per step,
 PROBE STEP name=<step> expect=allow|deny got=<what happened>, then PROBE OK or
-PROBE FAILED. The steps are listed in sandbox/SPEC.md.
+PROBE FAILED. The steps are listed in the Reference section of sandbox/README.md.
 
 Exit: 0 PROBE OK; 1 PROBE FAILED; 2 the invocation is malformed.
 `
@@ -109,7 +109,7 @@ func main() {
 
 func isHelp(a string) bool { return a == "-h" || a == "--help" }
 
-// malformed prints the one CLI-STYLE refusal line for a malformed invocation of verb
+// malformed prints the one refusal line for a malformed invocation of verb
 // ("" is the run form) and returns 2.
 func malformed(stderr io.Writer, verb string, what ...string) int {
 	tool := "nova-sandbox"
@@ -231,7 +231,7 @@ func beforeDashes(args []string) []string {
 var usageReasons = []string{"bad_flag", "bad_value", "no_command", "bad_read", "bad_write", "bad_net", "bad_gpu", "bad_env"}
 
 // report prints the refusals and returns the exit status. A malformed invocation is one
-// CLI-STYLE line naming every problem at once, exit 2. Otherwise each refusal is a
+// refusal line naming every problem at once, exit 2. Otherwise each refusal is a
 // SANDBOX REFUSED line: 125 when the wall refused to start, and when the only problem
 // is the command itself, 126 not executable (shell convention) or 127 on no PATH entry.
 func report(stderr io.Writer, verb string, bad []refusal) int {

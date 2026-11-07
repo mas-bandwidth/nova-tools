@@ -3,7 +3,7 @@
 package contract
 
 // The fault contract: every row provokes one real fault in one tool and holds
-// the tool to the same five rules (docs/TESTING.md, "Fault contract"):
+// the tool to the same five rules (AGENTS.md, "Fault contract"):
 //
 //  1. a non-zero exit (a tool killed by a signal, or hung, is a failure);
 //  2. exactly one stderr line, apart from the receipt lines the row declares;
@@ -13,10 +13,9 @@ package contract
 //     row's own command is rerun and must get past the failure;
 //  5. stdout is empty unless the row documents what it carries.
 //
-// A row that fails today carries Known, the number of the gap in the audit
-// (PRECONDITIONS-2026-11-06.md, section 9; a label starting with a section sign names a section where the audit lists no ranked gap). It still runs: it is skipped with
-// the printed reason while it fails, and fails the build the day it passes, so
-// the fix PR deletes its Known. Every table is in faults_<tool>_test.go.
+// A row that fails today carries Known, a short label for the gap. It still
+// runs: it is skipped with the printed reason while it fails, and fails the
+// build the day it passes, so the fix deletes its Known. Every table is in faults_<tool>_test.go.
 
 import (
 	"bytes"
@@ -62,7 +61,7 @@ type Fault struct {
 	Argv  []string // {name} is replaced by the Env variable of that name; {dir} is the row's directory
 	Stdin string
 	Want  Want
-	Known string // the audit's gap number; empty when the row passes
+	Known string // a short label for the known gap; empty when the row passes
 }
 
 var tables = map[string][]Fault{}
@@ -378,11 +377,7 @@ func runFault(t *testing.T, f Fault) {
 	switch {
 	case len(problems) > 0 && f.Known != "":
 		known.Add(1)
-		label := f.Known
-		if label[0] >= '0' && label[0] <= '9' {
-			label = "#" + label
-		}
-		t.Skipf("known gap %s: %s", label, strings.Join(problems, "; "))
+		t.Skipf("known gap %s: %s", f.Known, strings.Join(problems, "; "))
 	case len(problems) > 0:
 		for _, p := range problems {
 			t.Errorf("%s %s %s: %s\n  exit %d, stdout %q, stderr %q", f.Tool, f.Name, strings.Join(argv, " "), p, first.code, first.out, first.errs)

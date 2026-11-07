@@ -68,14 +68,14 @@ func TestSnapshotReadsAllThreeInOneTransaction(t *testing.T) {
 	stamp := []string{"2026-11-06T00:00:00Z", "2026-11-06T00:00:01Z"}
 	tx := &fakeTx{tables: map[string][][]string{
 		"machines": {append([]string{"m1", "", "", "nova", "linux", "amd64", "8", "bench", "0", ""}, stamp...)},
-		"friends":  {append([]string{"emma", "claude", "opus", "4", "heavy,pro", "she/her", "", "true"}, stamp...)},
+		"friends":  {append([]string{"alice", "claude", "opus", "4", "heavy,pro", "she/her", "", "true"}, stamp...)},
 		"services": {append([]string{"s1", "m1", `["/p"]`, "", "", "60", "false", "true", "{}", ""}, stamp...)},
 	}}
 	snap, err := snapshotStore(tx).Snapshot(context.Background())
 	require.NoError(t, err)
 	require.Len(t, snap.Machines, 1)
 	assert.Equal(t, 8, *snap.Machines[0].Cores)
-	assert.Equal(t, Friend{Name: "emma", Harness: "claude", Model: "opus", Width: 4, Tiers: "heavy,pro", Pronouns: "she/her", Enabled: true, Created: stamp[0], Updated: stamp[1]}, snap.Friends[0])
+	assert.Equal(t, Friend{Name: "alice", Harness: "claude", Model: "opus", Width: 4, Tiers: "heavy,pro", Pronouns: "she/her", Enabled: true, Created: stamp[0], Updated: stamp[1]}, snap.Friends[0])
 	assert.Equal(t, []string{"/p"}, snap.Services[0].Argv)
 	assert.Equal(t, []string{listSQL("machines", Columns[Machine]()), listSQL("friends", Columns[Friend]()), listSQL("services", Columns[Service]())}, tx.queries, "the scanners' own queries, all on the transaction")
 	assert.True(t, tx.committed)

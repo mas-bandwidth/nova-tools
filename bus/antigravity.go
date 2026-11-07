@@ -16,7 +16,7 @@ import (
 	"unicode"
 )
 
-// Antigravity (v1.6.29 cmd/nova-hook/antigravity.go): the candidates are
+// Antigravity: the candidates are
 // this user's language_servers in ps with a --csrf_token, the workspace's
 // own (--workspace_id) first; Antigravity 2.29 runs one hub server with no
 // --workspace_id. The program is the process's own executable, never its
@@ -238,7 +238,7 @@ type server struct{ pid, bin, token string }
 // flag) and token. Those whose --workspace_id is one of ids come first; the
 // rest follow, because a server may name the workspace another way (its
 // symlink's other side) or not at all, and get-conversation-metadata picks
-// the one that has the conversation (v1.6.29 fell back the same way).
+// the one that has the conversation.
 func findServers(ps, uid string, ids []string) []server {
 	var match, rest []server
 	for _, l := range strings.Split(ps, "\n") {

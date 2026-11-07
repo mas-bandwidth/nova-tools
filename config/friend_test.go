@@ -13,7 +13,7 @@ import (
 func friends(t *testing.T) *harness {
 	h := newHarness()
 	h.ok(t, "friend", "add", "alex", "--harness", "codex", "--actor", "t")
-	h.ok(t, "friend", "add", "emma", "--harness", "claude", "--model", "opus", "--width", "16", "--tiers", "pro,flash",
+	h.ok(t, "friend", "add", "alice", "--harness", "claude", "--model", "opus", "--width", "16", "--tiers", "pro,flash",
 		"--pronouns", "she/her", "--note", "kin", "--enabled", "false", "--actor", "t")
 	return h
 }
@@ -22,13 +22,13 @@ func TestFriendListAndShow(t *testing.T) {
 	t.Parallel()
 	h := friends(t)
 	assert.Equal(t, "FRIEND name=alex harness=codex model=- width=1 tiers=flash,frontier,heavy,pro pronouns=- note=- enabled=true\n"+
-		`FRIEND name=emma harness=claude model=opus width=16 tiers=flash,pro pronouns=she/her note="kin" enabled=false`+"\n"+
+		`FRIEND name=alice harness=claude model=opus width=16 tiers=flash,pro pronouns=she/her note="kin" enabled=false`+"\n"+
 		"CONFIG LIST kind=friend rows=2\n", h.ok(t, "friend", "list"))
-	assert.Equal(t, `FRIEND name=emma harness=claude model=opus width=16 tiers=flash,pro pronouns=she/her note="kin" enabled=false created=2026-01-01T00:00:00Z updated=2026-01-02T00:00:00Z`+"\n",
-		h.ok(t, "friend", "show", "emma"), "a friend's show names no services")
+	assert.Equal(t, `FRIEND name=alice harness=claude model=opus width=16 tiers=flash,pro pronouns=she/her note="kin" enabled=false created=2026-01-01T00:00:00Z updated=2026-01-02T00:00:00Z`+"\n",
+		h.ok(t, "friend", "show", "alice"), "a friend's show names no services")
 	assert.Equal(t, `{"result":{"verb":"friend list","status":"ok","exit":0},"facts":{"kind":"friend","rows":2},"items":[`+
 		`{"kind":"friend","fields":{"name":"alex","harness":"codex","model":"","width":1,"tiers":"flash,frontier,heavy,pro","pronouns":"","note":"","enabled":true}},`+
-		`{"kind":"friend","fields":{"name":"emma","harness":"claude","model":"opus","width":16,"tiers":"flash,pro","pronouns":"she/her","note":"kin","enabled":false}}]}`+"\n",
+		`{"kind":"friend","fields":{"name":"alice","harness":"claude","model":"opus","width":16,"tiers":"flash,pro","pronouns":"she/her","note":"kin","enabled":false}}]}`+"\n",
 		h.ok(t, "friend", "list", "--json"))
 	var got struct {
 		Items []struct{ Fields map[string]any }
@@ -62,7 +62,7 @@ func TestFriendDryRunWritesNothing(t *testing.T) {
 	assert.Equal(t, "CONFIG DRY-RUN op=set kind=friend name=alex actor=a1 wrote=nothing\n  width: 1 -> 4\n  pronouns: \"\" -> \"he/him\"\n",
 		h.ok(t, "friend", "set", "alex", "--width", "4", "--pronouns", "he/him", "--actor", "a1", "--dry-run"))
 	assert.Contains(t, h.ok(t, "friend", "add", "new", "--harness", "grok", "--actor", "a1", "--dry-run"), "CONFIG DRY-RUN op=add kind=friend name=new actor=a1 wrote=nothing\n  harness: \"grok\"\n")
-	assert.Contains(t, h.ok(t, "friend", "remove", "emma", "--actor", "a1", "--dry-run"), "  width: 16\n")
+	assert.Contains(t, h.ok(t, "friend", "remove", "alice", "--actor", "a1", "--dry-run"), "  width: 16\n")
 	assert.Len(t, h.st.history, n)
 }
 
@@ -105,7 +105,7 @@ func TestFriendRefusals(t *testing.T) {
 	assert.Contains(t, errs, "postgres: down")
 }
 
-// An empty pronouns is NULL in the store, so the v1 table's check (she/her,
+// An empty pronouns is NULL in the store, so an older table's check (she/her,
 // he/him, they/them) takes a friend whose pronouns are unstated.
 func TestFriendUnstatedPronounsWriteNull(t *testing.T) {
 	t.Parallel()
@@ -119,6 +119,6 @@ func TestDiagnoseFriendStillNamed(t *testing.T) {
 	t.Parallel()
 	p := pe("23503", "update or delete on table \"friends\" violates foreign key constraint")
 	p.TableName = "sprint"
-	assert.EqualError(t, diagnose(p, kinds["friend"], "remove", "rowan", Row{}, nil, nil),
-		"friend rowan is still named by config.sprint; change that row first, then: nova-config friend remove rowan --actor <you>")
+	assert.EqualError(t, diagnose(p, kinds["friend"], "remove", "coord", Row{}, nil, nil),
+		"friend coord is still named by config.sprint; change that row first, then: nova-config friend remove coord --actor <you>")
 }

@@ -337,5 +337,3 @@ Limits:
 - `.sops.yaml` and `recovery.pub` in the store are what `exec` and the refusal lines read; review changes to
   them like code, since a wrong rule stops a seat until it is fixed.
 - A value is at most 65536 bytes; `set` refuses a longer one and writes nothing.
-
-How the tool is tested, and the model of its recipients, are in [SPEC.md](SPEC.md).

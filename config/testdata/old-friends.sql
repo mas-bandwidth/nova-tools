@@ -1,6 +1,6 @@
--- The v1 config.friends of the live store (2026-11-06), its columns and checks
+-- An older config.friends table, its columns and checks
 -- as \d prints them, and config.sprint naming a coordinator; seeded with two
--- rows the way v1 wrote them. Idempotent, as startPG runs it twice.
+-- rows the way the older tool wrote them. Idempotent, as startPG runs it twice.
 CREATE SCHEMA IF NOT EXISTS config;
 CREATE TABLE IF NOT EXISTS config.friends (
     name       text PRIMARY KEY CONSTRAINT friends_name_pattern CHECK (name ~ '^[a-z0-9][a-z0-9-]*$'),
@@ -24,6 +24,6 @@ CREATE TABLE IF NOT EXISTS config.sprint (
 );
 INSERT INTO config.friends (name, slots, tiers, roles, width, pronouns) VALUES
     ('alex', 8, 'heavy,pro', 'builder', 2, 'he/him'),
-    ('rowan', 16, 'flash,frontier,heavy,pro', 'builder,reader', 32, 'they/them')
+    ('coord', 16, 'flash,frontier,heavy,pro', 'builder,reader', 32, 'they/them')
     ON CONFLICT DO NOTHING;
-INSERT INTO config.sprint (name, coordinator) VALUES ('sprint', 'rowan') ON CONFLICT DO NOTHING;
+INSERT INTO config.sprint (name, coordinator) VALUES ('sprint', 'coord') ON CONFLICT DO NOTHING;

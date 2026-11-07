@@ -152,5 +152,3 @@ Limits:
 - On Windows a hold notices its parent's exit by PID only; a reused PID can
   keep an untimed hold alive.
 - Release builds cover Linux amd64 and arm64, macOS arm64 and Windows amd64.
-
-How the tool is tested is in [SPEC.md](SPEC.md).

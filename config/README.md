@@ -210,5 +210,3 @@ nova-config machine remove bench-a --actor ops
 pg_ctl -D "$work/pg" -m fast stop
 rm -rf "$work"
 ```
-
-How the tool is tested is in [SPEC.md](SPEC.md).

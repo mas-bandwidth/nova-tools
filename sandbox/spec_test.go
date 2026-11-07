@@ -152,7 +152,7 @@ func TestExitCodes(t *testing.T) {
 	assert.Equal(t, 0, code, "-h before -- is the run form's help")
 	assert.Contains(t, out, "nova-sandbox show")
 
-	// A malformed invocation: exit 2, one CLI-STYLE line naming every problem.
+	// A malformed invocation: exit 2, one refusal line naming every problem.
 	oneLine := func(prefix string, args ...string) string {
 		t.Helper()
 		code, out, errs := exit(args...)

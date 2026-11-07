@@ -65,7 +65,7 @@ type sys struct {
 	shell   func(ctx context.Context, env []string, stdin, command string) (int, error)
 }
 
-// execWake runs one command per message (v1.6.29 recv --exec): the
+// execWake runs one command per message (the exec wake): the
 // message's line on its stdin, its fields in NOVA_BUS_ID, _FROM, _RE,
 // _SUBJECT and _BODY, its stdout and stderr the hook's own. Exit 0 is the
 // delivery, and the ack follows it; anything else ends the hook with the
@@ -246,8 +246,7 @@ func (g *grokWake) wake(ctx context.Context, m Msg) error {
 }
 
 // dirShape holds an events directory's path to what may be spelled into a
-// wake text: clean, absolute, letters, digits, space, '/', '.', '_' and '-'
-// (as v1.6.29 did).
+// wake text: clean, absolute, letters, digits, space, '/', '.', '_' and '-'.
 func dirShape(flag, dir string) error {
 	if !filepath.IsAbs(dir) || filepath.Clean(dir) != dir || len(dir) > 1024 || strings.Trim(dir, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 /._-") != "" {
 		return badInput("%s %q wants a clean absolute path of letters, digits, space, '/', '.', '_' and '-'", flag, dir)
@@ -290,12 +289,12 @@ func ownDir(dir string, uid int, deny os.FileMode) error {
 	return nil
 }
 
-// maxSaved bounds one saved event, as v1.6.29 did (notice.MaxSaved): a
+// maxSaved bounds one saved event: a
 // longer body is cut, and the event says how long it was.
 const maxSaved = 64 << 10
 
 // save writes the message as the saved event <dir>/<id>.json, the shape
-// v1.6.29 nova-hook saved (event_id, local_receiver), and returns its path.
+// (event_id, local_receiver), and returns its path.
 // The wake text names only that path: no field of the message enters it.
 func save(dir, name string, m Msg) (string, error) {
 	if !idShape(m.ID) {

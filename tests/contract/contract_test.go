@@ -111,7 +111,7 @@ func (h *harness) run(args ...string) result {
 		}
 	}
 	r := result{code, so.String(), se.String()}
-	// CLI-STYLE: the command to run next is a line "next: <command>", never a next= field.
+	// the command to run next is a line "next: <command>", never a next= field.
 	for _, out := range []string{r.stdout, r.stderr} {
 		for _, line := range strings.Split(out, "\n") {
 			if nextField.MatchString(line) {
@@ -325,7 +325,7 @@ func firstVerb(args []string, spec toolSpec) []string {
 	return best
 }
 
-// oneLine checks the CLI-STYLE (f) shape: one line, plus at most one hint line.
+// oneLine checks the refusal shape: one line, plus at most one hint line.
 func (h *harness) oneLine(id, verb, form string, r result) {
 	h.t.Helper()
 	who := h.tool

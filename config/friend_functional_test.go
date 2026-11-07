@@ -12,13 +12,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestFunctionalV1Friends models the live store: the v1 friends table and a
-// sprint row naming one of them, then schema.sql twice. The v1 rows read
-// through the new columns' defaults, a write leaves v1's columns alone, and
+// TestFunctionalOldFriends starts from an older friends table and a sprint row
+// naming one of them, then applies schema.sql twice. The old rows read
+// through the new columns' defaults, a write leaves the old columns alone, and
 // the library reads what the CLI prints.
-func TestFunctionalV1Friends(t *testing.T) {
+func TestFunctionalOldFriends(t *testing.T) {
 	t.Parallel()
-	env := map[string]string{"NOVA_PG_DSN": startPG(t, "testdata/v1-friends.sql", "schema.sql")}
+	env := map[string]string{"NOVA_PG_DSN": startPG(t, "testdata/old-friends.sql", "schema.sql")}
 	ok := func(args ...string) string {
 		t.Helper()
 		code, out, errs := realRun(t, env, args...)
@@ -26,15 +26,15 @@ func TestFunctionalV1Friends(t *testing.T) {
 		return out
 	}
 	assert.Equal(t, "FRIEND name=alex harness=- model=- width=2 tiers=heavy,pro pronouns=he/him note=- enabled=true\n"+
-		"FRIEND name=rowan harness=- model=- width=32 tiers=flash,frontier,heavy,pro pronouns=they/them note=- enabled=true\n"+
+		"FRIEND name=coord harness=- model=- width=32 tiers=flash,frontier,heavy,pro pronouns=they/them note=- enabled=true\n"+
 		"CONFIG LIST kind=friend rows=2\n", ok("friend", "list"))
-	assert.Equal(t, "CONFIG ADD kind=friend name=zhi rev=1\n", ok("friend", "add", "zhi", "--harness", "muse", "--actor", "a1"), "unstated pronouns pass v1's check as NULL")
+	assert.Equal(t, "CONFIG ADD kind=friend name=zhi rev=1\n", ok("friend", "add", "zhi", "--harness", "muse", "--actor", "a1"), "unstated pronouns pass the old check as NULL")
 	ok("friend", "set", "alex", "--harness", "codex", "--width", "3", "--actor", "a1")
-	code, _, errs := realRun(t, env, "friend", "remove", "rowan", "--actor", "a1")
+	code, _, errs := realRun(t, env, "friend", "remove", "coord", "--actor", "a1")
 	assert.Equal(t, 1, code)
-	assert.Equal(t, "nova-config friend remove: friend rowan is still named by config.sprint; change that row first, then: nova-config friend remove rowan --actor <you>\n", errs)
+	assert.Equal(t, "nova-config friend remove: friend coord is still named by config.sprint; change that row first, then: nova-config friend remove coord --actor <you>\n", errs)
 	code, _, errs = realRun(t, env, "friend", "set", "alex", "--pronouns", "xe/xem", "--actor", "a1")
-	assert.Equal(t, 1, code, "v1's pronouns check is the store's: a refusal")
+	assert.Equal(t, 1, code, "the old pronouns check is the store's: a refusal")
 	assert.Contains(t, errs, "nova-config friend set: friend alex: ")
 
 	ctx := context.Background()
@@ -44,7 +44,7 @@ func TestFunctionalV1Friends(t *testing.T) {
 	var slots int
 	var mode string
 	require.NoError(t, c.QueryRow(ctx, "SELECT slots, mode FROM config.friends WHERE name = 'alex'").Scan(&slots, &mode))
-	assert.Equal(t, []any{8, "batch"}, []any{slots, mode}, "v1's columns keep their values")
+	assert.Equal(t, []any{8, "batch"}, []any{slots, mode}, "the old columns keep their values")
 
 	st, err := config.Open(ctx, env["NOVA_PG_DSN"], "")
 	require.NoError(t, err)

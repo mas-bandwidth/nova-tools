@@ -17,7 +17,7 @@ func TestColumns(t *testing.T) {
 }
 
 // TestListSQLNamesItsColumns: no *, and none of the old columns, so a store
-// that still has them (the v1 friends' slots, mode, session) is read as is.
+// that still has them (an older friends table's slots, mode, session) is read as is.
 func TestListSQLNamesItsColumns(t *testing.T) {
 	t.Parallel()
 	q := listSQL("friends", Columns[Friend]())
@@ -34,9 +34,9 @@ func TestListSQLNamesItsColumns(t *testing.T) {
 func TestFillTypesEachField(t *testing.T) {
 	t.Parallel()
 	var f Friend
-	r := Row{Name: "emma", Created: "c", Updated: "u", F: map[string]string{"harness": "claude", "width": "16", "tiers": "flash,pro", "pronouns": "she/her", "enabled": "true"}}
+	r := Row{Name: "alice", Created: "c", Updated: "u", F: map[string]string{"harness": "claude", "width": "16", "tiers": "flash,pro", "pronouns": "she/her", "enabled": "true"}}
 	require.NoError(t, fill(reflect.ValueOf(&f).Elem(), r))
-	assert.Equal(t, Friend{Name: "emma", Harness: "claude", Width: 16, Tiers: "flash,pro", Pronouns: "she/her", Enabled: true, Created: "c", Updated: "u"}, f)
+	assert.Equal(t, Friend{Name: "alice", Harness: "claude", Width: 16, Tiers: "flash,pro", Pronouns: "she/her", Enabled: true, Created: "c", Updated: "u"}, f)
 	var m Machine
 	require.NoError(t, fill(reflect.ValueOf(&m).Elem(), Row{Name: "m1", F: map[string]string{"cores": "12", "runners": "0"}}))
 	require.NotNil(t, m.Cores)

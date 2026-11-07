@@ -147,7 +147,7 @@
       when: (nova_os | default('linux')) != 'linux'
 
     # the joined state: the row's address is the MagicDNS name, so the login was made before the tailnet step and
-    # root is no longer let in (the policy allows no root over Tailscale SSH; ufw closed the public address)
+    # root is not let in (the policy allows no root over Tailscale SSH; ufw closed the public address)
     - name: the login, made already (the address is the tailnet name)
       ansible.builtin.debug:
         msg: "JOIN LOGIN {{ inventory_hostname }} joined already: {{ ansible_host }} is the tailnet name; the plays from the tailnet step on run as {{ join_login }} over it"

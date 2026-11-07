@@ -1,7 +1,7 @@
 # The tools nova-tools shipped and ships no more: name, date retired, where it
-# went (sprint: nova-sprint, rowan-tools: rowan-tools, retired: no successor).
+# went (sprint: nova-sprint, moved: now in another product, retired: no successor).
 # The install play's default retire list (nova_tools_remove) is the rows that say
-# rowan-tools or retired, and nothing else: another product's binaries (the
+# moved or retired, and nothing else: another product's binaries (the
 # sprint rows) are never in it. A name here is never also a binary this
 # repository builds.
 nova-card	2026-11-05	sprint
@@ -10,9 +10,9 @@ nova-sprint	2026-11-05	sprint
 nova-swarm	2026-11-05	sprint
 nova-hook	2026-11-05	sprint
 nova-friend	2026-11-05	sprint
-nova-decide	2026-11-05	rowan-tools
-nova-doctor	2026-11-05	rowan-tools
-nova-tokens	2026-11-05	rowan-tools
+nova-decide	2026-11-05	moved
+nova-doctor	2026-11-05	moved
+nova-tokens	2026-11-05	moved
 nova-ci	2026-11-05	retired
 nova-check	2026-11-05	retired
 nova-up	2026-11-05	retired

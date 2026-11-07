@@ -467,7 +467,7 @@ go test .                           # unit tests, an in-memory store
 go test -tags functional .          # against a real redis-server on a free local port (skipped without one)
 ```
 
-[SPEC.md](SPEC.md) has the tests and models. `tla/Presence.tla` models the presence key and hooks that compete for it;
+`tla/Presence.tla` models the presence key and hooks that compete for it;
 `tla/CASES.tsv` names every case and what TLC must find (`tests/tla/check.sh JAR bus/tla` runs them). `tla/Bus.tla` models the inbox, the sender and a hook that crashes between print and ack: no message is acked before
 it is printed, no acked message is printed again, every sent message is printed. `tla/BusBroken*.cfg` are reversed witnesses (ack before print; a restarted hook that skips its pending
 messages; a failed wake that acks; a failed wake that does not end the hook, so the message is never delivered)

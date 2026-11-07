@@ -107,15 +107,15 @@ func init() {
 		Fault{Tool: "config", Name: "dsn carries a password", Setup: dsn("postgres://u:pw@127.0.0.1:1/db"), Argv: list,
 			Want: Want{Reason: []string{"NOVA_PG_PASSWORD"}}},
 		Fault{Tool: "config", Name: "postgres stopped", Setup: stopped, Argv: list,
-			Want: Want{Reason: []string{"cannot reach postgres"}}, Known: "7"},
+			Want: Want{Reason: []string{"cannot reach postgres"}}, Known: "config-store-refusal"},
 		Fault{Tool: "config", Name: "inventory: postgres stopped", Setup: stopped, Argv: []string{"inventory"},
-			Want: Want{Reason: []string{"cannot reach postgres"}}, Known: "7"},
+			Want: Want{Reason: []string{"cannot reach postgres"}}, Known: "config-store-refusal"},
 		Fault{Tool: "config", Name: "schema not loaded", Setup: func(e *Env) { e.PG(false) }, Argv: list,
 			Want: Want{Reason: []string{"schema"}}},
 		Fault{Tool: "config", Name: "database missing", Setup: func(e *Env) {
 			e.PG(false)
 			e.Set("NOVA_PG_DSN", "postgres://nova@127.0.0.1:"+pg.port+"/nodb?sslmode=disable")
-		}, Argv: list, Want: Want{Reason: []string{"does not exist"}}, Known: "7"},
+		}, Argv: list, Want: Want{Reason: []string{"does not exist"}}, Known: "config-store-refusal"},
 		Fault{Tool: "config", Name: "inventory: a service row with corrupt argv", Setup: func(e *Env) {
 			d := e.PG(true)
 			e.SQL(d, `INSERT INTO config.machines(name,"user") VALUES ('m1','u'); INSERT INTO config.services(name,machine,argv,every) VALUES ('s1','m1','[not json]',5)`)

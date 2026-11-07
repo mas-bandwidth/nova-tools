@@ -29,7 +29,7 @@ func init() {
 		Fault{Tool: "reserve", Name: "run: directory path runs through a file",
 			Setup: func(e *Env) { e.Write("afile", "x"); e.Var("r", e.Dir+"/afile/r") },
 			Argv:  []string{"run", "--dir", "{r}", "--slots", "2", "--", "true"},
-			Want:  Want{Reason: []string{"not a directory"}}, Known: "16"},
+			Want:  Want{Reason: []string{"not a directory"}}, Known: "reserve-dir-refusal"},
 		Fault{Tool: "reserve", Name: "run: parent directory not writable",
 			Setup: func(e *Env) { os.Mkdir(e.Dir+"/ro", 0o755); e.Chmod(e.Dir+"/ro", 0o500); e.Var("r", e.Dir+"/ro/r") },
 			Argv:  []string{"run", "--dir", "{r}", "--slots", "2", "--", "true"},
@@ -37,8 +37,8 @@ func init() {
 		Fault{Tool: "reserve", Name: "run: command not found", Setup: dir, Argv: []string{"run", "--dir", "{r}", "--slots", "2", "--", "nosuchcmd"},
 			Want: Want{Exit: []int{127}, Reason: []string{"not found"}, Remedy: None, Info: receipts}},
 		Fault{Tool: "reserve", Name: "run: command killed by SIGKILL", Setup: dir, Argv: killed("9"),
-			Want: Want{Exit: []int{137}, Reason: []string{"killed by signal 9"}, Remedy: None, Info: receipts}, Known: "10"},
+			Want: Want{Exit: []int{137}, Reason: []string{"killed by signal 9"}, Remedy: None, Info: receipts}, Known: "signal-death-line"},
 		Fault{Tool: "reserve", Name: "run: command killed by SIGTERM", Setup: dir, Argv: killed("TERM"),
-			Want: Want{Exit: []int{143}, Reason: []string{"killed by signal 15"}, Remedy: None, Info: receipts}, Known: "10"},
+			Want: Want{Exit: []int{143}, Reason: []string{"killed by signal 15"}, Remedy: None, Info: receipts}, Known: "signal-death-line"},
 	)
 }
