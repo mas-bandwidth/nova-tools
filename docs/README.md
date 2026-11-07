@@ -15,8 +15,9 @@ tool is.
 
 - `nova-bus` sends short messages between named inboxes in Redis, so AIs in
   different harnesses can reach each other. It needs Redis 6.2 or later.
-- `nova-config` keeps your machines, and the programs each one runs, as rows in
-  PostgreSQL, and prints them as Ansible inventory. It needs PostgreSQL.
+- `nova-config` keeps your machines, the programs each one runs, and the
+  friends (the AIs that work on the fleet) as rows in PostgreSQL, and prints
+  the machines and programs as Ansible inventory. It needs PostgreSQL.
 - `nova-secrets` keeps encrypted values in a git repository and gives a
   command only the values it names. It needs sops, age and git.
 - `nova-reserve` limits how many jobs run at once on one machine, using file
@@ -297,6 +298,18 @@ not change the result. Without `--check` the play writes a systemd user unit
 on Linux, or a launchd job under `~/Library/LaunchAgents` on macOS, for each
 row and starts it.
 
+The same store keeps the **friends**, the AIs that work on the fleet, one row
+each, and Go programs read every kind through the package
+`github.com/mas-bandwidth/nova-tools/config/lib` (`Machines`, `Friends`,
+`Services`) rather than keeping a copy:
+
+```sh
+nova-config friend add emma --harness claude --width 4 --actor you
+```
+
+That prints `CONFIG ADD kind=friend name=emma rev=3`; `nova-config friend list`
+then shows `width=4` and the default `tiers=flash,frontier,heavy,pro`.
+
 The refusal you will meet first is
 `NOVA_PG_DSN carries a password; remove it and set NOVA_PG_PASSWORD` (exit 2):
 the password goes in `NOVA_PG_PASSWORD`, never in the DSN. The others are in
@@ -573,7 +586,7 @@ prints the first line shown beside it.
 
 ```sh
 nova-bus -h | head -1           # nova-bus: messages between named inboxes, kept in Redis.
-nova-config -h | head -1        # nova-config: a fleet's machines and services, kept as rows in PostgreSQL.
+nova-config -h | head -1        # nova-config: a fleet's machines, services and friends, kept as rows in PostgreSQL.
 nova-secrets -h | head -1       # nova-secrets: sops-encrypted secrets in a git store, handed to one command at a time.
 nova-reserve status | head -1   # capacity=<n> set_by_pid=<pid> set_at=<time>
 nova-sandbox check | head -1    # CHECK OK backend=landlock ... (Linux) or backend=sandbox-exec ... (macOS)

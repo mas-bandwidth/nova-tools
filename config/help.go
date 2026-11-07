@@ -9,7 +9,7 @@ import (
 var kindOps = []string{"list", "show", "add", "set", "remove"}
 
 // verbs are the root verbs, for an unknown-verb refusal.
-const verbs = "machine, service, history, inventory, schema, help"
+const verbs = "machine, service, friend, history, inventory, schema, help"
 
 const writeLine = "[--actor <name>] [--reason <line>] [--dry-run]"
 
@@ -22,14 +22,14 @@ NOVA_PG_PASSWORD_ENV names, else NOVA_PG_PASSWORD). Exit codes: 0 done, 1 refuse
 // usage is the root help: every verb path by name, from the kind tables.
 var usage = func() string {
 	var b strings.Builder
-	b.WriteString("nova-config: a fleet's machines and services, kept as rows in PostgreSQL.\n\n")
-	for _, n := range []string{"machine", "service"} {
+	b.WriteString("nova-config: a fleet's machines, services and friends, kept as rows in PostgreSQL.\n\n")
+	for _, n := range []string{"machine", "service", "friend"} {
 		for _, op := range kindOps {
 			b.WriteString("  " + kinds[n].opLine(op) + "\n")
 		}
 	}
 	return b.String() + "  " + historyLine + "\n  nova-config inventory [--list | --host <name>]\n  nova-config schema\n  nova-config help [<verb>]\n\n" +
-		kinds["machine"].fieldsLine() + "\n" + kinds["service"].fieldsLine() + "\n" +
+		kinds["machine"].fieldsLine() + "\n" + kinds["service"].fieldsLine() + "\n" + kinds["friend"].fieldsLine() + "\n" +
 		`Every verb takes -h or --help. Use inventory as an Ansible script: #!/bin/sh, then: exec nova-config inventory "$@".
 Make a store current with: nova-config schema | PGPASSWORD="$NOVA_PG_PASSWORD" psql "$NOVA_PG_DSN"
 ` + trailer

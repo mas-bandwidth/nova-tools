@@ -1,5 +1,7 @@
-// Command nova-config keeps a fleet's machines and services as rows in PostgreSQL,
-// each write with a history row, and prints them as an Ansible inventory.
+// Command nova-config keeps a fleet's machines and services, and the friends
+// that work on it, as rows in PostgreSQL, each write with a history row, and
+// prints the machines and services as an Ansible inventory. Other programs
+// read the same rows through package github.com/mas-bandwidth/nova-tools/config/lib.
 package main
 
 import (
@@ -16,6 +18,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	config "github.com/mas-bandwidth/nova-tools/config/lib"
 )
 
 //go:embed schema.sql
@@ -154,8 +158,8 @@ func storeDSN(fs *flag.FlagSet, d deps) (string, string) {
 		return "", "--pg carries a password; leave it out and name its variable in NOVA_PG_PASSWORD_ENV"
 	case dsnPassword(dsn):
 		return "", "NOVA_PG_DSN carries a password; remove it and set NOVA_PG_PASSWORD"
-	case dsnProblem(dsn) != "":
-		return "", "the postgres dsn is wrong: " + dsnProblem(dsn)
+	case config.DSNProblem(dsn) != "":
+		return "", "the postgres dsn is wrong: " + config.DSNProblem(dsn)
 	}
 	return dsn, ""
 }

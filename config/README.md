@@ -1,8 +1,9 @@
 # nova-config
 
-nova-config keeps your machines, and the programs they run, as rows in a
-PostgreSQL database, with a history row for every change. It prints the rows as
-an Ansible inventory that plays can use.
+nova-config keeps your machines, the programs they run, and the friends (the
+AIs that work on the fleet) as rows in a PostgreSQL database, with a history row
+for every change. It prints the machines and programs as an Ansible inventory
+that plays can use, and Go programs read the same rows through its library.
 
 ## Install
 
@@ -92,6 +93,51 @@ SERVICE name=hello machine=bench-a argv=["/usr/bin/printf","hello\n"] seat=- key
 Config starts nothing; the rows are data for your own tooling. `--json` on
 `list`, `show` or `history` prints one JSON object (`result`, `facts`, `items`).
 
+## Friends
+
+A friend is an AI that works on the fleet, named by its bus name. Same verbs as
+machines.
+
+| Field | Meaning |
+|---|---|
+| `harness` | What it runs in: `claude`, `codex`, `antigravity`, `grok`, `muse`, ...; required. |
+| `model`, `note` | A label; one line of notes. |
+| `width` | How many cards it works at once; default 1, at least 1. |
+| `tiers` | Comma-separated `flash`, `pro`, `heavy`, `frontier`; default all four, at least one. |
+| `pronouns` | Text; empty (stored as NULL) when unstated. |
+| `enabled` | Default true. |
+
+```sh
+nova-config friend add emma --harness claude --model opus --width 4 --tiers pro,heavy --pronouns she/her --actor ops
+nova-config friend show emma
+```
+
+```text
+CONFIG ADD kind=friend name=emma rev=4
+FRIEND name=emma harness=claude model=opus width=4 tiers=heavy,pro pronouns=she/her note=- enabled=true created=2026-11-07T01:55:27Z updated=2026-11-07T01:55:27Z
+```
+
+A store with the older friends table (columns such as `slots`, `mode` and
+`session`) keeps it: `nova-config schema` adds `harness`, `model`, `note` and
+`enabled`, and nova-config never reads or changes the older columns.
+
+## Reading the rows from Go
+
+Package `github.com/mas-bandwidth/nova-tools/config/lib` (package `config`)
+reads the rows through the same query the `list` verbs run: `Open(ctx, dsn,
+password)`, then `Machines`, `Friends` or `Services` on the `*Store`. The row
+types carry the field names `--json` prints. It only reads; write through
+nova-config, which keeps the history.
+
+```go
+st, err := config.Open(ctx, os.Getenv("NOVA_PG_DSN"), os.Getenv("NOVA_PG_PASSWORD"))
+if err != nil {
+	return err
+}
+defer st.Close()
+friends, err := st.Friends(ctx) // []config.Friend, in name order
+```
+
 ## History
 
 ```sh
@@ -104,7 +150,7 @@ HISTORY at=2026-11-05T23:51:58Z actor=ops kind=machine name=bench-a op=set rev=2
 CONFIG HISTORY rows=1 more=true
 ```
 
-Filter by `machine` or `service`, then by name. `--since` takes `90m`, `7d` or
+Filter by `machine`, `service` or `friend`, then by name. `--since` takes `90m`, `7d` or
 an RFC 3339 time. `--max` defaults to 20; 0 means all. `more=true` means the cap
 left some writes out.
 
@@ -135,6 +181,8 @@ connection failure. Missing or invalid flags and the store DSN are checked toget
 | `machine remove: machine bench-a still runs services hello; ...` (1) | Remove or move its services first. |
 | `service add: service x has neither --every nor --keepalive; ...` (2) | Give exactly one of them. |
 | `service add: service x names secrets (--keys A) and no --seat ...` (2) | Add `--seat` or drop `--keys`. |
+| `friend set: friend emma has --width 0; ...` (1) | Give `--width 1` or more. |
+| `friend remove: friend rowan is still named by config.sprint; ...` (1) | Change the row that names it first. |
 | `machine list: NOVA_PG_DSN carries a password; ...` (2) | Move the password to `NOVA_PG_PASSWORD`. |
 | `inventory: takes --list or --host <name>, not both; ...` (2) | Give one. |
 | `inventory: no machine row named nope; ...` or `NOVA_MACHINE nope names no machine row` (1) | Check the name. |
@@ -150,6 +198,7 @@ connection failure. Missing or invalid flags and the store DSN are checked toget
 Clean up:
 
 ```sh
+nova-config friend remove emma --actor ops
 nova-config service remove hello --actor ops
 nova-config machine remove bench-a --actor ops
 pg_ctl -D "$work/pg" -m fast stop

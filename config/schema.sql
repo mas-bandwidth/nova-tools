@@ -79,6 +79,29 @@ ALTER TABLE config.services ADD COLUMN IF NOT EXISTS env text NOT NULL DEFAULT '
 ALTER TABLE config.services ADD COLUMN IF NOT EXISTS log text NOT NULL DEFAULT '';
 CREATE INDEX IF NOT EXISTS services_machine ON config.services (machine, name);
 
+-- A friend: an AI that works on the fleet, named by its bus name; width is
+-- the cards it works at once, tiers a comma list of flash, frontier, heavy, pro.
+-- A store that has the v1 table (slots, roles, mode, config_dir, token_cap,
+-- streams, kinds, session, a width default of 8) keeps it and those columns as
+-- they are, unread; the ALTERs add the columns it lacks.
+CREATE TABLE IF NOT EXISTS config.friends (
+    name       text PRIMARY KEY CONSTRAINT friends_name_pattern CHECK (name ~ '^[a-z0-9][a-z0-9-]*$'),
+    harness    text NOT NULL DEFAULT '',
+    model      text NOT NULL DEFAULT '',
+    width      integer NOT NULL DEFAULT 1 CHECK (width >= 1),
+    tiers      text NOT NULL DEFAULT 'flash,frontier,heavy,pro'
+               CHECK (tiers = '' OR tiers ~ '^(flash|pro|heavy|frontier)(,(flash|pro|heavy|frontier))*$'),
+    pronouns   text,
+    note       text NOT NULL DEFAULT '',
+    enabled    boolean NOT NULL DEFAULT true,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now()
+);
+ALTER TABLE config.friends ADD COLUMN IF NOT EXISTS harness text NOT NULL DEFAULT '';
+ALTER TABLE config.friends ADD COLUMN IF NOT EXISTS model text NOT NULL DEFAULT '';
+ALTER TABLE config.friends ADD COLUMN IF NOT EXISTS note text NOT NULL DEFAULT '';
+ALTER TABLE config.friends ADD COLUMN IF NOT EXISTS enabled boolean NOT NULL DEFAULT true;
+
 -- Older stores: a fleet table (a kind this tool no longer has; it is left as it
 -- is, unread) had store and coordinator pointing at machines, and machines.seat
 -- was required. Lift those, so a machine can be removed or added; no column

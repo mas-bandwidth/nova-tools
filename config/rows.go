@@ -11,6 +11,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	config "github.com/mas-bandwidth/nova-tools/config/lib"
 )
 
 // field is one column of a kind's table. typ is text, int, bool, list (a
@@ -34,17 +36,14 @@ type kind struct {
 }
 
 // Row is one row: its name, its fields as text, and its stamps (RFC 3339).
-type Row struct {
-	Name             string
-	F                map[string]string
-	Created, Updated string
-}
+type Row = config.Row
 
 var (
 	namePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 	roleWord    = regexp.MustCompile(`^(bench|runner|services)$`)
 	keyWord     = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 	envName     = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
+	tierWord    = regexp.MustCompile(`^(flash|pro|heavy|frontier)$`)
 )
 
 var kinds = map[string]*kind{
@@ -70,6 +69,16 @@ var kinds = map[string]*kind{
 			{name: "enabled", typ: "bool", def: "true"},
 			{name: "env", typ: "env", def: "{}"},
 			{name: "log", typ: "path"},
+		}},
+	"friend": {name: "friend", table: "friends", check: checkFriend,
+		fields: []field{
+			{name: "harness", typ: "text", required: true},
+			{name: "model", typ: "text"},
+			{name: "width", typ: "int", def: "1"},
+			{name: "tiers", typ: "list", def: "flash,frontier,heavy,pro", word: tierWord},
+			{name: "pronouns", typ: "text", null: true},
+			{name: "note", typ: "text", cut: true, free: true},
+			{name: "enabled", typ: "bool", def: "true"},
 		}},
 }
 
@@ -233,6 +242,20 @@ func checkService(r Row) error {
 	}
 	if r.F["keys"] != "" && r.F["seat"] == "" {
 		p = append(p, fmt.Sprintf("service %s names secrets (--keys %s) and no --seat to open them from", r.Name, r.F["keys"]))
+	}
+	if len(p) > 0 {
+		return fmt.Errorf("%s", strings.Join(p, "; "))
+	}
+	return nil
+}
+
+func checkFriend(r Row) error {
+	var p []string
+	if r.F["width"] == "0" {
+		p = append(p, fmt.Sprintf("friend %s has --width 0; a friend works at least one card at once: --width 1 or more", r.Name))
+	}
+	if r.F["tiers"] == "" {
+		p = append(p, fmt.Sprintf("friend %s has no --tiers; want a comma list of flash, pro, heavy, frontier", r.Name))
 	}
 	if len(p) > 0 {
 		return fmt.Errorf("%s", strings.Join(p, "; "))
