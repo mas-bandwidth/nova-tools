@@ -123,7 +123,7 @@ A store with the older friends table (columns such as `slots`, `mode` and
 
 ## Reading the rows from Go
 
-Package `github.com/mas-bandwidth/nova-tools/config/lib` (package `config`)
+Package `github.com/mas-bandwidth/nova-tools/v2/config/lib` (package `config`)
 reads the rows through the same query the `list` verbs run: `Open(ctx, dsn,
 password)`, then `Machines`, `Friends` or `Services` on the `*Store`. The row
 types carry the field names `--json` prints. It only reads; write through
