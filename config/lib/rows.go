@@ -16,7 +16,8 @@ import (
 // Machine is a machine of the fleet, named by its tailnet host.
 type Machine struct {
 	Name    string `json:"name"`
-	Address string `json:"address"`
+	Address string `json:"address"` // the tailnet address Ansible and the fleet use
+	Public  string `json:"public"`  // the address the internet reaches it at; "" when unset
 	User    string `json:"user"`
 	OS      string `json:"os"`
 	Arch    string `json:"arch"`

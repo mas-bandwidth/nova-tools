@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"net/netip"
 	"net/url"
 	"regexp"
 	"slices"
@@ -17,8 +18,9 @@ import (
 
 // field is one column of a kind's table. typ is text, int, bool, list (a
 // sorted comma list of words matching word), argv (a JSON array of strings),
-// env (a JSON object of NAME to value), path (an absolute or ~/ path) or ref
-// (the name of a machine row, NULL when empty).
+// env (a JSON object of NAME to value), path (an absolute or ~/ path), ref
+// (the name of a machine row, NULL when empty) or public (a public IP literal
+// or a DNS name).
 type field struct {
 	name, typ string
 	required  bool
@@ -50,6 +52,7 @@ var kinds = map[string]*kind{
 	"machine": {name: "machine", table: "machines",
 		fields: []field{
 			{name: "address", typ: "text"},
+			{name: "public", typ: "public", null: true},
 			{name: "user", typ: "text", required: true},
 			{name: "os", typ: "text"},
 			{name: "arch", typ: "text"},
@@ -136,6 +139,10 @@ func (f field) canonical(raw string) (string, error) {
 		if raw != "" && !namePattern.MatchString(raw) {
 			return "", fmt.Errorf("--%s %q: want the name of a machine row", f.name, raw)
 		}
+	case "public":
+		if raw != "" {
+			return canonicalPublic(f, raw)
+		}
 	}
 	if strings.ContainsAny(raw, "\r\n") {
 		return "", fmt.Errorf("--%s: want one line", f.name)
@@ -163,6 +170,41 @@ func canonicalEnv(f field, raw string) (string, error) {
 		}
 	}
 	return marshal(m), nil
+}
+
+// dnsLabel is one lower-case label of a DNS name (RFC 1123).
+var dnsLabel = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
+
+// notPublic are the ranges a public address is never in (they are disjoint), each with its name.
+var notPublic = map[string]string{"100.64.0.0/10": "the tailnet's CGNAT range", "10.0.0.0/8": "a private range",
+	"172.16.0.0/12": "a private range", "192.168.0.0/16": "a private range", "fc00::/7": "a private range (unique local)",
+	"127.0.0.0/8": "the loopback range", "::1/128": "the loopback address", "169.254.0.0/16": "the link-local range",
+	"fe80::/10": "the link-local range", "0.0.0.0/8": "the unspecified range", "::/128": "the unspecified address"}
+
+// canonicalPublic is a public address as it is stored: an IP literal in its
+// canonical form, or a DNS name of lower-case labels (RFC 1123). An address in
+// the tailnet's CGNAT range or a private range is refused as not public.
+func canonicalPublic(f field, raw string) (string, error) {
+	if a, err := netip.ParseAddr(raw); err == nil {
+		if a.Zone() != "" {
+			return "", fmt.Errorf("--%s %q: want an address without a zone", f.name, raw)
+		}
+		for p, what := range notPublic {
+			if netip.MustParsePrefix(p).Contains(a.Unmap()) {
+				return "", fmt.Errorf("--%s %q: not public: in %s, %s; want the address the internet reaches the machine at", f.name, raw, p, what)
+			}
+		}
+		return a.String(), nil
+	}
+	labels := strings.Split(raw, ".")
+	ok := len(raw) <= 253 && strings.Trim(labels[len(labels)-1], "0123456789") != ""
+	for _, l := range labels {
+		ok = ok && dnsLabel.MatchString(l)
+	}
+	if !ok {
+		return "", fmt.Errorf("--%s %q: want an IP address or a DNS name of lower-case labels (RFC 1123)", f.name, raw)
+	}
+	return raw, nil
 }
 
 // marshal is v as compact JSON, with < > & left alone.

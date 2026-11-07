@@ -137,7 +137,7 @@ func build(machines []Row, services []Row, local string) (*inventory, error) {
 		if cores, err := strconv.Atoi(v["cores"]); err == nil {
 			hv["cores"] = cores
 		}
-		for k, val := range map[string]string{"ansible_host": v["address"], "ansible_user": v["user"], "nova_os": v["os"], "nova_arch": v["arch"]} {
+		for k, val := range map[string]string{"ansible_host": v["address"], "ansible_user": v["user"], "nova_os": v["os"], "nova_arch": v["arch"], "nova_public": v["public"]} {
 			if val != "" {
 				hv[k] = val
 			}

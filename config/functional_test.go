@@ -95,12 +95,13 @@ func TestFunctionalStore(t *testing.T) {
 	assert.Equal(t, "CONFIG SET kind=machine name=m1 changed=none rev=unchanged\n", ok("machine", "set", "m1", "--user", "nova", "--actor", "a1"), "a no-op set")
 	assert.Equal(t, "CONFIG SET kind=service name=r-m1 rev=3 changed=enabled next=\"nova-fleet services --check\"\n", ok("service", "set", "r-m1", "--enabled", "false", "--actor", "a1", "--reason", "why"))
 	assert.Equal(t, `SERVICE name=r-m1 machine=m1 argv=["prog","a b"] seat=- keys=- every=0 keepalive=true enabled=false env={} log=-`+"\nCONFIG LIST kind=service rows=1\n", ok("service", "list"))
-	assert.Equal(t, "MACHINE name=m1 address=- user=nova os=- arch=- cores=- roles=bench runners=0 note=-\nCONFIG LIST kind=machine rows=1\n", ok("machine", "list"))
+	assert.Equal(t, "MACHINE name=m1 address=- public=- user=nova os=- arch=- cores=- roles=bench runners=0 note=-\nCONFIG LIST kind=machine rows=1\n", ok("machine", "list"))
 	show := ok("machine", "show", "m1")
 	assert.Regexp(t, `created=20\d\d-\d\d-\d\dT\d\d:\d\d:\d\dZ updated=20\d\d-.*Z services=r-m1\n$`, show)
 	ok("machine", "set", "m1", "--cores", "4", "--note", "a note", "--actor", "a1")
 	ok("machine", "set", "m1", "--cores", "default", "--actor", "a1")
 	ok("machine", "set", "m1", "--cores", "16", "--os", "linux", "--arch", "amd64", "--roles", "bench,services", "--actor", "a1")
+	ok("machine", "set", "m1", "--public", "edge.example.com", "--actor", "a1")
 
 	c, err := pgx.Connect(context.Background(), env["NOVA_PG_DSN"])
 	require.NoError(t, err)
@@ -110,6 +111,13 @@ func TestFunctionalStore(t *testing.T) {
 	assert.JSONEq(t, `{"argv":"[\"prog\",\"a b\"]","enabled":"true","env":"{}","every":"0","keepalive":"true","keys":"","log":"","machine":"m1","seat":""}`, before)
 	assert.JSONEq(t, `{"argv":"[\"prog\",\"a b\"]","enabled":"false","env":"{}","every":"0","keepalive":"true","keys":"","log":"","machine":"m1","seat":"","reason":"why"}`, after)
 	assert.Equal(t, "a1", actor)
+	var public *string
+	require.NoError(t, c.QueryRow(context.Background(), "SELECT public FROM config.machines WHERE name = 'm1'").Scan(&public))
+	require.NotNil(t, public)
+	assert.Equal(t, "edge.example.com", *public)
+	ok("machine", "set", "m1", "--public", "", "--actor", "a1")
+	require.NoError(t, c.QueryRow(context.Background(), "SELECT public FROM config.machines WHERE name = 'm1'").Scan(&public))
+	assert.Nil(t, public, "an unset public address is NULL")
 	var cores *int
 	require.NoError(t, c.QueryRow(context.Background(), "SELECT cores FROM config.machines WHERE name = 'm1'").Scan(&cores))
 	require.NotNil(t, cores)
@@ -140,11 +148,12 @@ func TestFunctionalStore(t *testing.T) {
 	for _, want := range []string{`"cores": 16`, `"nova_os": "linux"`, `"ansible_connection": "local"`, `"__ansible_unsafe": "~/.local/state/nova/services/r-m1.log"`, `"env": {}`} {
 		assert.Contains(t, out, want)
 	}
+	assert.NotContains(t, out, "nova_public", "the public address was unset")
 	code, out, errs = realRun(t, env, "inventory", "--list")
 	require.Equal(t, 0, code, errs)
 	assert.NotContains(t, out, "nova_pg_dsn")
 
-	assert.Equal(t, "CONFIG REMOVE kind=service name=r-m1 rev=7\n", ok("service", "remove", "r-m1", "--actor", "a1"))
+	assert.Equal(t, "CONFIG REMOVE kind=service name=r-m1 rev=9\n", ok("service", "remove", "r-m1", "--actor", "a1"))
 }
 
 // TestFunctionalOldColumns models the live store: main's schema, seeded the way
@@ -198,8 +207,8 @@ func TestFunctionalOldColumns(t *testing.T) {
 	assert.Equal(t, 6380, port, "the old fleet columns keep their values")
 	assert.Equal(t, "postgres://nova@old-store/x", dsn)
 	var n int
-	require.NoError(t, c.QueryRow(ctx, `SELECT count(*) FROM information_schema.columns WHERE table_schema = 'config' AND table_name = 'machines' AND column_name IN ('address', 'os', 'arch', 'cores')`).Scan(&n))
-	assert.Equal(t, 4, n, "the four new columns exist exactly once")
+	require.NoError(t, c.QueryRow(ctx, `SELECT count(*) FROM information_schema.columns WHERE table_schema = 'config' AND table_name = 'machines' AND column_name IN ('address', 'os', 'arch', 'cores', 'public')`).Scan(&n))
+	assert.Equal(t, 5, n, "the five new columns exist exactly once")
 	require.NoError(t, c.QueryRow(ctx, `SELECT count(*) FROM information_schema.columns WHERE table_schema = 'config' AND table_name = 'services' AND column_name IN ('env', 'log')`).Scan(&n))
 	assert.Equal(t, 2, n, "the service columns env and log exist exactly once")
 	code, out, errs = realRun(t, env, "inventory", "--host", "old-plain")
