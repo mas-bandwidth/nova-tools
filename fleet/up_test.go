@@ -350,7 +350,7 @@ func TestUpOrder(t *testing.T) {
 		"UP HEALTH OK", "UP TOOLS OK v2.0.0", "UP SERVICES OK", "UP RUNNERS OK https://github.com/o/r", "UP BUS OK first.ts.example:6379 present=2",
 		"UP MACHINE first OK address=203.0.113.7 steps=tailnet,postgres,redis,join,grant,refresh,health,tools,services,runners,bus",
 		"UP MACHINE second OK address=203.0.113.8 steps=join,grant,refresh,health,tools,services,runners,bus",
-		"UP DONE next: export NOVA_PG_DSN=postgres://nova_config@first.ts.example:5432/nova"} {
+		"UP DONE: nova-config and the next nova-fleet up read the fleet from NOVA_PG_DSN\nnext: export NOVA_PG_DSN=postgres://nova_config@first.ts.example:5432/nova"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout lacks %q:\n%s", w, out)
 		}
@@ -405,7 +405,7 @@ func TestUpAddsAMachine(t *testing.T) {
 			t.Errorf("stdout lacks %q:\n%s", w, out)
 		}
 	}
-	if strings.Contains(out, "UP FIRST") || strings.Contains(out, "UP DONE next: export") {
+	if strings.Contains(out, "UP FIRST") || strings.Contains(out, "\nnext: export NOVA_PG_DSN") {
 		t.Errorf("stdout:\n%s", out)
 	}
 }
@@ -428,7 +428,7 @@ func TestUpResumes(t *testing.T) {
 			t.Errorf("no call contains %q; calls:\n%s", w, all)
 		}
 	}
-	if !strings.Contains(out, "UP REACH first OK root@203.0.113.7") || !strings.Contains(out, "UP DONE next: export NOVA_PG_DSN=postgres://nova_config@first.ts.example:5432/nova") {
+	if !strings.Contains(out, "UP REACH first OK root@203.0.113.7") || !strings.Contains(out, "UP DONE: nova-config and the next nova-fleet up read the fleet from NOVA_PG_DSN\nnext: export NOVA_PG_DSN=postgres://nova_config@first.ts.example:5432/nova") {
 		t.Errorf("stdout:\n%s", out)
 	}
 }
@@ -567,7 +567,7 @@ func TestCheck(t *testing.T) {
 	f := &upFake{}
 	f.install(t)
 	code, out, errs := runArgs("check")
-	if code != 0 || errs != "" || !strings.HasSuffix(out, "CHECK OK missing=0 next: nova-fleet up --check --tools <TAG|DIR> <name>=<address>...\n") {
+	if code != 0 || errs != "" || !strings.HasSuffix(out, "CHECK OK missing=0\nnext: nova-fleet up --check --tools <TAG|DIR> <name>=<address>...\n") {
 		t.Fatalf("all present: code %d stdout %q stderr %q", code, out, errs)
 	}
 	for _, w := range []string{"CHECK OK ansible-playbook 1.2.3\n", "CHECK OK ansible.posix\n", "CHECK OK tailscale 1.2.3\n", "CHECK OK nova-config /bin/nova-config\n", "CHECK OK ssh /bin/ssh\n",

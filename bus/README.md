@@ -57,8 +57,8 @@ Monitor: NOVA_BUS_REDIS=<host:port> nova-bus hook --as <name>
 ```
 
 Its first lines are the start, on stderr: `HOOK HARNESS OK ...` (another harness only), `HOOK WAIT name=<name>
-held_since=... ttl=30s budget=40s` while a dead hook's key lapses, then `HOOK OK name=<name> waiting=<n>
-next="nova-bus send --as <name> --to <name> <subject> <body>"` once it holds the name: the next line names how to
+held_since=... ttl=30s budget=40s` while a dead hook's key lapses, then `HOOK OK name=<name> waiting=<n>` once it holds the name, then
+`next: nova-bus send --as <name> --to <name> <subject> <body>`: the line that names how to
 answer. From then each message is one line on stdout, `<id><TAB><from><TAB><re or ->
 <TAB><subject><TAB><body>`, for example `1762400000000-0	alpha	-	hi	are you there?`, and each line becomes a
 notification in the session, into a running turn or waking an idle one; that is the wake. A line starting `HOOK `

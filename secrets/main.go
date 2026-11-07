@@ -23,7 +23,6 @@ import (
 	"runtime"
 	"slices"
 	"strings"
-	"unicode"
 
 	"gopkg.in/yaml.v3"
 )
@@ -38,7 +37,7 @@ nova-secrets init --store <dir> --recovery <age-public-key> [--pins <dir>]
   work tree: git init, .sops.yaml with no rules, recovery.pub, one commit. Refuses a store that exists.
   The recovery key is a public key (age-keygen -y <file>); keep its private half offline. --pins also writes
   it to <dir>/recovery.pub, the control node's pin, outside the store (grant reads it).
-  Prints: SECRETS INIT OK store=<dir> next=<this node's seat add, or the age-keygen -o that makes its key first>
+  Prints: SECRETS INIT OK store=<dir>, then next: <this node's seat add, or the age-keygen -o that makes its key first>
 
 nova-secrets seat add <seat> <age-public-key> --store <dir>
   Add the seat's rule to .sops.yaml: its key and the recovery key may open <seat>.yaml. Commits .sops.yaml.
@@ -335,22 +334,13 @@ func (t tool) keyFile(seat string) string {
 	return filepath.Join(cmp.Or(envValue(t.environ, "HOME"), home), ".config", "nova-secrets", seat+".key")
 }
 
-// next is an OK line's last field (docs/CLI-STYLE.md): the command to run next, each word shell-quoted (q), then
-// field-escaped, a blank, =, backslash or control character written \xNN (\uNNNN past ASCII).
+// next is the command to run next, each word shell-quoted (q); an OK line is followed by it on a line "next: <command>".
 func next(argv ...string) string {
 	words := make([]string, len(argv))
 	for i, a := range argv {
 		words[i] = q(a)
 	}
-	var b strings.Builder
-	for _, r := range strings.Join(words, " ") {
-		if r == '=' || r == '\\' || unicode.IsSpace(r) || unicode.IsControl(r) {
-			fmt.Fprintf(&b, map[bool]string{true: `\x%02x`, false: `\u%04x`}[r < 0x80], r)
-		} else {
-			b.WriteRune(r)
-		}
-	}
-	return "next=" + b.String()
+	return strings.Join(words, " ")
 }
 
 func envValue(env []string, name string) string {
@@ -576,7 +566,7 @@ func (t tool) seatAdd(args []string) error {
 	if _, err := os.Stat(t.keyFile(own)); err == nil {
 		then = next("nova-secrets", "set", "DB_PASSWORD", "--as", own, "--store", o.store, "--key", t.keyFile(own), "--pins", pins)
 	}
-	fmt.Fprintf(t.stdout, "SECRETS SEAT ADD OK seat=%s committed %s\n", seat, then)
+	fmt.Fprintf(t.stdout, "SECRETS SEAT ADD OK seat=%s committed\nnext: %s\n", seat, then)
 	return nil
 }
 
@@ -1389,7 +1379,7 @@ func (t tool) initStore(args []string) error {
 	if pub, err := t.publicOf(opts{store: o.store, key: key}); err == nil {
 		then = next("nova-secrets", "seat", "add", seat, pub, "--store", o.store)
 	}
-	fmt.Fprintf(t.stdout, "SECRETS INIT OK store=%s %s\n", o.store, then)
+	fmt.Fprintf(t.stdout, "SECRETS INIT OK store=%s\nnext: %s\n", o.store, then)
 	return nil
 }
 

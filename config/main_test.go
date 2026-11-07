@@ -174,7 +174,7 @@ func TestWritesRecordHistory(t *testing.T) {
 	t.Parallel()
 	h := fleet(t)
 	n := len(h.st.history)
-	assert.Equal(t, "CONFIG SET kind=service name=member-b rev=4 changed=enabled next=\"nova-fleet services --check\"\n", h.ok(t, "service", "set", "member-b", "--enabled", "false", "--actor", "a1", "--reason", "rest it"))
+	assert.Equal(t, "CONFIG SET kind=service name=member-b rev=4 changed=enabled\nnext: nova-fleet services --check\n", h.ok(t, "service", "set", "member-b", "--enabled", "false", "--actor", "a1", "--reason", "rest it"))
 	c := h.st.history[n]
 	assert.Equal(t, change{"service", "member-b", "set", "a1", c.before, c.after}, c)
 	assert.Equal(t, "true", c.before["enabled"])
@@ -185,7 +185,7 @@ func TestWritesRecordHistory(t *testing.T) {
 	c = h.st.history[n+1]
 	assert.Nil(t, c.after)
 	assert.Equal(t, "gone", c.before["reason"])
-	assert.Equal(t, "CONFIG ADD kind=machine name=m3 rev=6 next=\"nova-fleet join m3\"\n", h.ok(t, "machine", "add", "m3", "--user", "u", "--actor", "a1"))
+	assert.Equal(t, "CONFIG ADD kind=machine name=m3 rev=6\nnext: nova-fleet join m3\n", h.ok(t, "machine", "add", "m3", "--user", "u", "--actor", "a1"))
 	assert.Nil(t, h.st.history[n+2].before)
 	assert.Equal(t, "bench", h.st.history[n+2].after["roles"], "an add writes every field, the defaults too")
 }

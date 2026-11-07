@@ -712,7 +712,8 @@ func runStore(verb string, args []string, stdin io.Reader, stdout, stderr io.Wri
 				now = rec.opened
 			}
 		}
-		line(stdout, "OPEN OK", append(kv, "stamp", stamp(now), "next", command("append", "--store", *store, "--session", *session, "--entry", "first", "--text", "the words to keep"))...)
+		line(stdout, "OPEN OK", append(kv, "stamp", stamp(now))...)
+		fmt.Fprintln(stdout, "next: "+command("append", "--store", *store, "--session", *session, "--entry", "first", "--text", "the words to keep"))
 	case "append":
 		words := []byte(*text)
 		if given["file"] {
@@ -740,10 +741,10 @@ func runStore(verb string, args []string, stdin io.Reader, stdout, stderr io.Wri
 			return fail(err)
 		}
 		kv := []any{"session", *session, "entry", *entry, "source", r.source, "persisted", true, "published", false, "publish", r.policy, "duplicate", dup, "stamp", stamp(r.stamp), "opened", created}
-		if first {
-			kv = append(kv, "next", command("index", "--store", *store))
-		}
 		line(stdout, "APPEND OK", kv...)
+		if first {
+			fmt.Fprintln(stdout, "next: "+command("index", "--store", *store))
+		}
 	case "receipt":
 		r, words, err := receipt(*store, *session, *entry)
 		if err != nil {

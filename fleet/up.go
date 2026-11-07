@@ -692,7 +692,7 @@ func (u *upRun) end(pass map[string][]string, note string) int {
 		return 1
 	}
 	if !u.check && u.dsn != "" && os.Getenv("NOVA_PG_DSN") == "" {
-		u.say("UP DONE next: export NOVA_PG_DSN=%s (nova-config and the next nova-fleet up read the fleet from it)", u.dsn)
+		u.say("UP DONE: nova-config and the next nova-fleet up read the fleet from NOVA_PG_DSN\nnext: export NOVA_PG_DSN=%s", u.dsn)
 	}
 	if u.refused {
 		fmt.Fprintf(u.stderr, "UP STORE FAILED: the store's commits are on a branch, not its upstream; merge the PR (the UP STORE PUSH REFUSED line above)\n")

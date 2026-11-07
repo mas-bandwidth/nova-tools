@@ -432,7 +432,8 @@ nova-secrets exec --only NOVA_BUS_PASSWORD --as db -- true || echo "exit $?"
 
 ```text
 SECRETS SET OK as=here name=NOVA_BUS_PASSWORD file=here.yaml committed; run: git -C <store> push
-SECRETS SEAT ADD OK seat=db committed next=nova-secrets\x20set\x20DB_PASSWORD\x20--as\x20here\x20--store\x20/tmp/tmp.k3Jd9x/store\x20--key\x20/tmp/tmp.k3Jd9x/keys/here.key\x20--pins\x20/tmp/tmp.k3Jd9x/pins
+SECRETS SEAT ADD OK seat=db committed
+next: nova-secrets set DB_PASSWORD --as here --store /tmp/tmp.k3Jd9x/store --key /tmp/tmp.k3Jd9x/keys/here.key --pins /tmp/tmp.k3Jd9x/pins
 SECRETS GRANT OK from=here to=db names=1 changed=1 committed; run: git -C <store> push
 SECRETS GRANT OK from=here to=db names=1 changed=0 unchanged
 SECRETS EXEC STARTING as=db keys=1 cmd=sh
@@ -519,7 +520,8 @@ command's own status. On Linux:
 ```text
 sh: 1: cannot create /home/<you>/sandbox-escape.txt: Permission denied
 exit 2
-CHECK OK backend=landlock abi=4 net=enforceable note=landlock abi 4; seccomp available; net-deny landlock_tcp+seccomp; signals scoped to the wall at abi 6+ next=nova-sandbox\x20probe
+CHECK OK backend=landlock abi=4 net=enforceable note=landlock abi 4; seccomp available; net-deny landlock_tcp+seccomp; signals scoped to the wall at abi 6+
+next: nova-sandbox probe
 ```
 
 On macOS:
@@ -527,7 +529,8 @@ On macOS:
 ```text
 sh: /Users/<you>/sandbox-escape.txt: Operation not permitted
 exit 1
-CHECK OK backend=sandbox-exec abi=- net=enforceable note=the wall is the profile it applies (/usr/bin/sandbox-exec) next=nova-sandbox\x20probe
+CHECK OK backend=sandbox-exec abi=- net=enforceable note=the wall is the profile it applies (/usr/bin/sandbox-exec)
+next: nova-sandbox probe
 ```
 `nova-sandbox probe` tests each of the sandbox's limits on this machine, one
 line per step.
@@ -562,7 +565,7 @@ nova-cairn memory search --root "$work/cairn" --channels bm25 --k 3 bench unit t
 
 `open` prints a line starting `OPEN OK`, and `append` one starting
 `APPEND OK session=today entry=lesson-1` and ending `opened=false`; a
-session's first entry ends with `next=<the index command>`. The search prints three lines, shown
+session's first entry is followed by a `next: <the index command>` line. The search prints three lines, shown
 here shortened:
 
 ```text

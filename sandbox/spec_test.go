@@ -314,5 +314,5 @@ func TestWallCwdMkdirAndSignalText(t *testing.T) {
 	}()
 	assert.Equal(t, 0, code)
 	assert.Empty(t, errs)
-	assert.Contains(t, help, `next=nova-sandbox\x20probe`)
+	assert.Contains(t, help, "next: nova-sandbox probe")
 }

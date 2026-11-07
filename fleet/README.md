@@ -47,7 +47,7 @@ The whole path, in order. Each step's output says what to do next.
    `TAILSCALE_API_KEY` (`--runners URL` adds `gh` and its login, `gh auth login`), and `NOVA_PG_DSN` once a fleet
    exists. Run each fix line, then `nova-fleet check` again until it ends `CHECK OK missing=0` (exit 0; 1 while
    anything is missing; the collections of `requirements.yml` count, `ansible.posix` for the push of the store). A
-   green check ends `CHECK OK missing=0 next: nova-fleet up --check ...`. Every play verb runs the part of this check
+   green check ends `CHECK OK missing=0` and the line `next: nova-fleet up --check ...`. Every play verb runs the part of this check
    it needs (ansible-playbook, the collection, nova-config) before anything else, and refuses with the same lines.
    Tailscale, PostgreSQL, Redis and Ansible are not optional: `check` requires Tailscale and
    Ansible on this node, `up` puts PostgreSQL and Redis on the first machine and requires them after, and no variable
@@ -126,7 +126,7 @@ machine is the one nova-config's rows say ("Adding a machine" below). Nothing he
 
 Each play prints its own receipts; each step adds `UP <step> OK` (or `WOULD-...` under `--check`), and the run ends
 with one line per machine, `UP MACHINE <name> OK address=<address> steps=<the steps it passed>`, and on a new fleet
-`UP DONE next: export NOVA_PG_DSN=...`, the line the next `up` and nova-config read the fleet from. A failed step
+`UP DONE` and the line `next: export NOVA_PG_DSN=...`, which the next `up` and nova-config read the fleet from. A failed step
 prints `UP <step> FAILED exit=<n>` (n is ansible-playbook's status, or the failed command's) and `up` exits 1; every
 step is idempotent, so the same command resumes. Exit 2 means it could not run (a refusal, a missing prerequisite).
 

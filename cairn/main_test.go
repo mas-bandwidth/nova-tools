@@ -55,7 +55,7 @@ func TestStoreRoundTrip(t *testing.T) {
 	store := filepath.Join(t.TempDir(), "s")
 	code, out, _ := do(t, "", "open", "--store", store, "--session", "s1", "--source", "src", "--publish", "manual")
 	require.Equal(t, 0, code)
-	assert.Contains(t, out, ` next=nova-cairn\x20append\x20--store\x20`+store+`\x20--session\x20s1\x20--entry\x20first`)
+	assert.Contains(t, out, "\nnext: nova-cairn append --store "+store+" --session s1 --entry first ")
 
 	code, out, _ = do(t, "", "append", "--store", store, "--session", "s1", "--entry", "e1", "--text", "the words")
 	require.Equal(t, 0, code)
@@ -153,13 +153,13 @@ func TestAppendNextOnlyOnFirstEntry(t *testing.T) {
 	do(t, "", "open", "--store", store, "--session", "s1", "--publish", "manual")
 	code, out, _ := do(t, "", "append", "--store", store, "--session", "s1", "--entry", "e1", "--text", "words")
 	require.Equal(t, 0, code)
-	assert.Contains(t, out, ` next=nova-cairn\x20index\x20--store\x20`+store)
+	assert.Contains(t, out, "\nnext: nova-cairn index --store "+store+"\n")
 	code, out, _ = do(t, "", "append", "--store", store, "--session", "s1", "--entry", "e2", "--text", "more")
 	require.Equal(t, 0, code)
-	assert.NotContains(t, out, "next=")
+	assert.NotContains(t, out, "next")
 	code, out, _ = do(t, "", "append", "--store", store, "--session", "s1", "--entry", "e1", "--text", "words")
 	require.Equal(t, 0, code)
-	assert.NotContains(t, out, "next=")
+	assert.NotContains(t, out, "next")
 }
 
 // TestFilesOnDisk pins the formats on disk, so cairns already written keep reading.

@@ -84,7 +84,7 @@ func run(ctx context.Context, args []string, d deps, stdout, stderr io.Writer) i
 		err = usagef(name, "", "%s", map[bool]string{true: "unknown flag " + rest[0], false: "takes no arguments"}[strings.HasPrefix(rest[0], "-")])
 	case path[0] == "schema":
 		fmt.Fprint(stdout, schemaSQL)
-		fmt.Fprintln(stderr, "CONFIG SCHEMA OK next="+value(`nova-config schema | PGPASSWORD="$NOVA_PG_PASSWORD" psql "$NOVA_PG_DSN"`))
+		fmt.Fprintln(stderr, "CONFIG SCHEMA OK\nnext: nova-config schema | PGPASSWORD=\"$NOVA_PG_PASSWORD\" psql \"$NOVA_PG_DSN\"")
 	case path[0] == "inventory":
 		err = runInventory(ctx, rest, d, stdout)
 	case path[0] == "history":
@@ -312,11 +312,11 @@ func runKind(ctx context.Context, k *kind, verb string, args []string, d deps, s
 	if op == "set" {
 		line += " changed=" + value(strings.Join(changed, ","))
 	}
-	if k.name == "machine" && op == "add" {
-		line += " next=" + value("nova-fleet join "+name)
-	} else if k.name == "service" && op != "remove" {
-		line += " next=" + value("nova-fleet services --check")
-	}
 	fmt.Fprintln(stdout, line)
+	if k.name == "machine" && op == "add" {
+		fmt.Fprintln(stdout, "next: nova-fleet join "+name)
+	} else if k.name == "service" && op != "remove" {
+		fmt.Fprintln(stdout, "next: nova-fleet services --check")
+	}
 	return nil
 }

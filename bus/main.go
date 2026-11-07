@@ -102,7 +102,7 @@ var verbUsage = map[string]string{
       it to lapse (a restart after a crash), then claims it or, if it is still
       held, exits 1 "name already hooked". On stderr: HOOK HARNESS OK once the
       harness answered, HOOK WAIT while waiting, HOOK OK name=<name>
-      waiting=<n> next="<the send line>" once claimed. On stdout, where the
+      waiting=<n> once claimed, then the line next: <the send line>. On stdout, where the
       Monitor sees it: HOOK RECONNECTED name=<name> waiting=<n> once a lost
       connection is back, and HOOK BAD id=<id> missing=<fields> for an entry
       send did not write (acked, never delivered as mail).
@@ -604,7 +604,7 @@ func runHook(ctx context.Context, store Store, name, addr string, clk Clock, std
 	announced := false
 	onClaim := func(waiting int64) { // HOOK OK once; after a reconnect, HOOK RECONNECTED where the Monitor sees it
 		if !announced {
-			fmt.Fprintf(stderr, "HOOK OK name=%s waiting=%d next=\"NOVA_BUS_REDIS=%s nova-bus send --as %s --to <name> <subject> <body>\"\n", name, waiting, addr, name)
+			fmt.Fprintf(stderr, "HOOK OK name=%s waiting=%d\nnext: NOVA_BUS_REDIS=%s nova-bus send --as %s --to <name> <subject> <body>\n", name, waiting, addr, name)
 			announced = true
 		} else if !logged.IsZero() {
 			fmt.Fprintf(stdout, "HOOK RECONNECTED name=%s waiting=%d\n", name, waiting)

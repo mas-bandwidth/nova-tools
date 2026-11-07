@@ -63,12 +63,14 @@ nova-secrets seat add web "$(age-keygen -y "$key_dir/web.key")" --store "$secret
 
 Output (paths vary):
 ```text
-SECRETS INIT OK store=/tmp/tmp.k3Jd9x/store next=age-keygen\x20-o\x20/home/you/.config/nova-secrets/web.key
-SECRETS SEAT ADD OK seat=web committed next=nova-secrets\x20set\x20DB_PASSWORD\x20--as\x20web\x20--store\x20/tmp/tmp.k3Jd9x/store\x20--key\x20/home/you/.config/nova-secrets/web.key\x20--pins\x20/home/you/.config/nova-secrets/pins
+SECRETS INIT OK store=/tmp/tmp.k3Jd9x/store
+next: age-keygen -o /home/you/.config/nova-secrets/web.key
+SECRETS SEAT ADD OK seat=web committed
+next: nova-secrets set DB_PASSWORD --as web --store /tmp/tmp.k3Jd9x/store --key /home/you/.config/nova-secrets/web.key --pins /home/you/.config/nova-secrets/pins
 ```
 
-Each OK line ends with `next=`, the command to run next: shell-quoted, then
-field-escaped (`\x20` is a blank, `\x3d` an `=`). After `init` it is this
+Each OK line is followed by `next: <command>`, the command to run next,
+shell-quoted. After `init` it is this
 node's `seat add` (the seat `$NOVA_SECRETS_SEAT`, else the short hostname, with
 the public half of `$NOVA_SECRETS_KEY` or `~/.config/nova-secrets/<seat>.key`),
 or the `age-keygen -o` that makes that key while there is none. After `seat add`
@@ -182,7 +184,8 @@ nova-secrets exec --only NOVA_BUS_PASSWORD --store "$secrets_dir" --key "$key_di
 
 ```text
 SECRETS SET OK as=web name=NOVA_BUS_PASSWORD file=web.yaml committed; run: git -C /tmp/tmp.k3Jd9x/store push
-SECRETS SEAT ADD OK seat=db committed next=nova-secrets\x20set\x20DB_PASSWORD\x20--as\x20here\x20--store\x20/tmp/tmp.k3Jd9x/store\x20--key\x20/tmp/tmp.k3Jd9x/keys/here.key\x20--pins\x20/home/you/.config/nova-secrets/pins
+SECRETS SEAT ADD OK seat=db committed
+next: nova-secrets set DB_PASSWORD --as here --store /tmp/tmp.k3Jd9x/store --key /tmp/tmp.k3Jd9x/keys/here.key --pins /home/you/.config/nova-secrets/pins
 SECRETS GRANT OK from=web to=db names=1 changed=1 committed; run: git -C /tmp/tmp.k3Jd9x/store push
 SECRETS GRANT OK from=web to=db names=1 changed=0 unchanged
 SECRETS EXEC STARTING as=db keys=1 cmd=sh

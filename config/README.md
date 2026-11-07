@@ -57,7 +57,8 @@ nova-config machine show bench-a
 ```
 
 ```text
-CONFIG ADD kind=machine name=bench-a rev=1 next="nova-fleet join bench-a"
+CONFIG ADD kind=machine name=bench-a rev=1
+next: nova-fleet join bench-a
 CONFIG SET kind=machine name=bench-a rev=2 changed=note
 CONFIG SET kind=machine name=bench-a changed=none rev=unchanged
 MACHINE name=bench-a address=- public=- user=nova os=linux arch=amd64 cores=16 roles=bench,services runners=0 note="Example host" created=2026-11-05T23:51:58Z updated=2026-11-05T23:51:58Z services=-
@@ -87,7 +88,8 @@ nova-config service show hello
 ```
 
 ```text
-CONFIG ADD kind=service name=hello rev=3 next="nova-fleet services --check"
+CONFIG ADD kind=service name=hello rev=3
+next: nova-fleet services --check
 SERVICE name=hello machine=bench-a argv=["/usr/bin/printf","hello\n"] seat=- keys=- every=60 keepalive=false enabled=true env={"LANG":"C"} log=- created=2026-11-05T23:51:58Z updated=2026-11-05T23:51:58Z
 ```
 

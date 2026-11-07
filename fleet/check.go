@@ -357,6 +357,6 @@ func runCheck(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "CHECK FAILED missing=%d\n", n)
 		return 1
 	}
-	fmt.Fprintf(stdout, "CHECK OK missing=0 next: nova-fleet up --check --tools <TAG|DIR>%s <name>=<address>...\n", map[bool]string{true: " --runners " + u.runners}[u.runners != ""])
+	fmt.Fprintf(stdout, "CHECK OK missing=0\nnext: nova-fleet up --check --tools <TAG|DIR>%s <name>=<address>...\n", map[bool]string{true: " --runners " + u.runners}[u.runners != ""])
 	return 0
 }

@@ -566,7 +566,7 @@ func TestRestartWaitsForACrashedHooksKey(t *testing.T) {
 	var out, errOut bytes.Buffer
 	code := runHook(ctx, f, "beta", testAddr, f, &out, &errOut, nil, "again", nil)
 	assert.Equal(t, 0, code, errOut.String())
-	assert.Equal(t, "HOOK WAIT name=beta held_since=2026-11-05T12:00:00Z ttl=30s budget=40s\nHOOK OK name=beta waiting=1 next=\"NOVA_BUS_REDIS=127.0.0.1:1 nova-bus send --as beta --to <name> <subject> <body>\"\n", errOut.String())
+	assert.Equal(t, "HOOK WAIT name=beta held_since=2026-11-05T12:00:00Z ttl=30s budget=40s\nHOOK OK name=beta waiting=1\nnext: NOVA_BUS_REDIS=127.0.0.1:1 nova-bus send --as beta --to <name> <subject> <body>\n", errOut.String())
 	assert.Len(t, f.afters, 25, "polled each second from 5 s to 30 s")
 	assert.Equal(t, t0.Add(30*time.Second), f.claims[len(f.claims)-1], "claimed as the key lapsed")
 	assert.Equal(t, "1-0\talpha\t-\tone\t1\n", out.String())
@@ -649,7 +649,7 @@ func TestLostReadReplyIsPrintedAfterReconnect(t *testing.T) {
 	var out, errOut bytes.Buffer
 	code := runHook(ctx, f, "beta", testAddr, f, &out, &errOut, nil, "again", nil)
 	assert.Equal(t, 0, code)
-	assert.Equal(t, "HOOK OK name=beta waiting=1 next=\"NOVA_BUS_REDIS=127.0.0.1:1 nova-bus send --as beta --to <name> <subject> <body>\"\nnova-bus hook: cannot reach redis at 127.0.0.1:1 (NOVA_BUS_REDIS): connection lost; check that NOVA_BUS_REDIS=127.0.0.1:1 is the fleet's Redis and that it is up; reconnecting\n", errOut.String())
+	assert.Equal(t, "HOOK OK name=beta waiting=1\nnext: NOVA_BUS_REDIS=127.0.0.1:1 nova-bus send --as beta --to <name> <subject> <body>\nnova-bus hook: cannot reach redis at 127.0.0.1:1 (NOVA_BUS_REDIS): connection lost; check that NOVA_BUS_REDIS=127.0.0.1:1 is the fleet's Redis and that it is up; reconnecting\n", errOut.String())
 	assert.Equal(t, []time.Duration{time.Second}, f.afters, "the wait is on the injected clock")
 	assert.Equal(t, "HOOK RECONNECTED name=beta waiting=1\n1-0\talpha\t-\tone\t1\n", out.String(), "the batch whose reply was lost is printed after the reconnect, which the Monitor sees")
 	assert.Empty(t, f.pending["bus:beta"])
@@ -822,7 +822,7 @@ func TestReconnectIsLoggedOnceAMinute(t *testing.T) {
 	code := runHook(ctx, f, "beta", testAddr, f, &out, &errOut, nil, "again", nil)
 	assert.Equal(t, 0, code)
 	line := "nova-bus hook: cannot reach redis at 127.0.0.1:1 (NOVA_BUS_REDIS): connection refused; check that NOVA_BUS_REDIS=127.0.0.1:1 is the fleet's Redis and that it is up; reconnecting\n"
-	assert.Equal(t, line+line+"HOOK OK name=beta waiting=0 next=\"NOVA_BUS_REDIS=127.0.0.1:1 nova-bus send --as beta --to <name> <subject> <body>\"\n", errOut.String())
+	assert.Equal(t, line+line+"HOOK OK name=beta waiting=0\nnext: NOVA_BUS_REDIS=127.0.0.1:1 nova-bus send --as beta --to <name> <subject> <body>\n", errOut.String())
 	assert.Len(t, f.afters, 70)
 	assert.Empty(t, out.String(), "the first claim is HOOK OK, not a reconnect")
 
