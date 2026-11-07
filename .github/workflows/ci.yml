@@ -27,7 +27,7 @@ env:
 jobs:
   lint:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: [self-hosted, linux, x64, space]
+    runs-on: [self-hosted, linux, x64, bench]
     timeout-minutes: 10
     steps:
       - &clean
@@ -67,7 +67,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { os: linux, arch: x64, group: space }
+          - { os: linux, arch: x64, group: bench }
           - { os: macOS, arch: ARM64, group: studio }
     runs-on: [self-hosted, "${{ matrix.os }}", "${{ matrix.arch }}", "${{ matrix.group }}"]
     timeout-minutes: 20
@@ -80,15 +80,16 @@ jobs:
 
   functional:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: [self-hosted, linux, x64, space]
+    runs-on: [self-hosted, linux, x64, bench]
     timeout-minutes: 30
     steps:
       - *clean
       - *checkout
       - *go
-      - name: redis-server and postgres on PATH
+      - name: redis-server, postgres, sops and age on PATH
         shell: bash
         run: |
+          [ -d "$HOME/.local/bin" ] && echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           need=()
           command -v redis-server >/dev/null || need+=(redis-server)
           command -v postgres >/dev/null || ls /usr/lib/postgresql/*/bin/postgres >/dev/null 2>&1 || need+=(postgresql)
@@ -112,7 +113,7 @@ jobs:
 
   fleet:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: [self-hosted, linux, x64, space]
+    runs-on: [self-hosted, linux, x64, bench]
     timeout-minutes: 5
     steps:
       - *clean

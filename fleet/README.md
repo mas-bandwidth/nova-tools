@@ -244,10 +244,19 @@ refused before anything is written.
 | `nova_tools_version` | none, required | the tag, `vX.Y.Z` |
 | `nova_tools_names` | the seven tools | which tools to install (and which `argv[0]` services prefixes) |
 | `nova_bin_dir` | `~/.local/bin` | where they go (Windows: `<profile>\.local\bin`); v2 binaries replace v1's of the same name there, so a v1 sprint still running from it stops working after `up` (accepted) |
-| `nova_tools_release_url` | this repository's GitHub releases | `<base>/<tag>/<asset>` |
+| `nova_tools_repo` | `mas-bandwidth/nova-tools` | whose release (`--repo`); `--names` is `nova_tools_names`, empty for every binary listed |
+| `nova_tools_release_url` | `nova_tools_repo`'s GitHub releases | `<base>/<tag>/<asset>` |
 | `nova_tools_restart`, `nova_tools_restart_commands` | false, empty | argv lists run once, only if a binary changed |
 | `nova_tools_remove_enabled` | false | retire the binaries below |
 | `nova_tools_remove` | the retired list | names to retire |
+
+**Another repository's release.** A dependent tool whose release is laid out the same way (assets
+`<name>_<tag>_<os>_<arch>[.exe]` and one `SHA256SUMS`) installs with `--repo` and `--tag`, getting every binary its
+`SHA256SUMS` lists for each machine's platform unless `--names` says which, checked the same way:
+
+```
+nova-fleet install --check --repo mas-bandwidth/nova-sprint --tag v2.0.0 --names nova-sprint,nova-sprint-dash bench
+```
 
 A release from before nova-fleet shipped has no nova-fleet asset; install one with
 `-e '{"nova_tools_names":["nova-bus","nova-cairn","nova-config","nova-sandbox","nova-secrets","nova-reserve"]}'`.

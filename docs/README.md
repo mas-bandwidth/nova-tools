@@ -253,6 +253,15 @@ message read back), prints `UP <step> OK` per step and `UP MACHINE <name> OK
 command resumes. Every step and what it prints is in
 [fleet/README.md](../fleet/README.md#up).
 
+A tool whose release is laid out as nova-tools' is (assets
+`<name>_<tag>_<os>_<arch>[.exe]` and one `SHA256SUMS`) puts its binaries on
+machines the same way, every binary its `SHA256SUMS` lists unless `--names`
+says which ([fleet/README.md](../fleet/README.md#install)):
+
+```text
+nova-fleet install --repo mas-bandwidth/nova-sprint --tag v2.0.0 web-1
+```
+
 To see a play work on this machine alone, give nova-config a throwaway
 PostgreSQL, add this machine and one **service** row (a program a machine keeps
 running), and let `nova-fleet services --check` plan it. `--actor` names who

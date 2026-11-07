@@ -5,10 +5,15 @@ nova_tools_version: ""
 
 # The tools to install, by name: nova_tools_names, in group_vars/all.yml (services.yml
 # reads it too). Each is a release asset <tool>_<tag>_<os>_<arch>[.exe] listed in
-# the release's SHA256SUMS.
+# the release's SHA256SUMS. An empty list installs every asset SHA256SUMS lists for
+# the machine's platform.
+
+# The repository whose release is installed: nova-tools, or a dependent tool whose
+# release is laid out the same way (nova-fleet install --repo OWNER/NAME).
+nova_tools_repo: mas-bandwidth/nova-tools
 
 # Where the release assets live: <base>/<tag>/<asset> and <base>/<tag>/SHA256SUMS.
-nova_tools_release_url: https://github.com/mas-bandwidth/nova-tools/releases/download
+nova_tools_release_url: "https://github.com/{{ nova_tools_repo }}/releases/download"
 
 # The local mode: a directory on the control node laid out as a release is
 # (<tool>_<version>_<os>_<arch> and SHA256SUMS; fleet/README.md, "install"). When set,
