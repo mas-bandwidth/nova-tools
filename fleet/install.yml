@@ -8,6 +8,11 @@
 #   nova-fleet install --check --diff -- -e nova_tools_version=v1.0.0 -l <machine>
 #   nova-fleet install -- -e nova_tools_version=v1.0.0 -l <machine>
 #
+# A dependent tool's release, laid out the same way, installs with --repo (every
+# binary its SHA256SUMS lists for the machine's platform unless --names says which):
+#
+#   nova-fleet install --repo OWNER/NAME --tag v2.0.0 [--names a,b] <machine>...
+#
 # Variables: roles/nova-tools-install/defaults/main.yml. A Windows host
 # needs the ansible.windows collection on the control node (requirements.yml).
 - name: nova-tools release on the machine

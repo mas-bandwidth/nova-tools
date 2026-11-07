@@ -298,6 +298,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "nova-fleet: unknown verb or play %s; verbs: plays, show, check, up, help; plays: %s; run: nova-fleet help\n", verb, strings.Join(all, ", "))
 		return 2
 	}
+	if verb == "install" {
+		var err error
+		if rest, err = installArgs(rest); err != nil {
+			return refuse(verb, "%v", err)
+		}
+	}
 	return runPlay(verb, rest, stdout, stderr, refuse)
 }
 
@@ -325,6 +331,70 @@ func gate(play string, need []string, stdout, stderr io.Writer) bool {
 	return missing == 0
 }
 
+// installNote is the help of install's own flags.
+const installNote = `
+  --repo OWNER/NAME  another repository's release, laid out as nova-tools' (-e nova_tools_repo)
+  --tag vX.Y.Z       the release (-e nova_tools_version)
+  --names a,b        which binaries (-e nova_tools_names); with --repo, default every one
+                     its SHA256SUMS lists for the machine's platform
+  <machine>...       the machines to install on (-l)
+`
+
+// installVars maps install's own flags to the variables they set.
+var installVars = map[string]string{"--repo": "nova_tools_repo", "--tag": "nova_tools_version", "--names": "nova_tools_names"}
+
+// installArgs turns install's own flags into ansible-playbook arguments after --: --repo,
+// --tag and --names become one -e (nova_tools_names empty with --repo and no --names, so
+// the play installs every binary the release lists), and the machines named become -l.
+// Arguments with neither pass unchanged.
+func installArgs(args []string) ([]string, error) {
+	var keep, tail, hosts []string
+	ev := map[string]any{}
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		flag, val, eq := strings.Cut(a, "=")
+		switch v, ours := installVars[flag]; {
+		case a == "--":
+			tail, i = args[i+1:], len(args)
+		case ours:
+			if !eq {
+				if i+1 >= len(args) {
+					return nil, fmt.Errorf("%s wants a value", flag)
+				}
+				i++
+				val = args[i]
+			}
+			ev[v] = val
+		case a == "--inventory" && i+1 < len(args):
+			keep, i = append(keep, a, args[i+1]), i+1
+		case strings.HasPrefix(a, "-"):
+			keep = append(keep, a)
+		default:
+			hosts = append(hosts, a)
+		}
+	}
+	if n, ok := ev["nova_tools_names"].(string); ok {
+		ev["nova_tools_names"] = strings.Split(n, ",")
+	} else if _, ok := ev["nova_tools_repo"]; ok {
+		ev["nova_tools_names"] = []string{}
+	}
+	if len(ev) == 0 && len(hosts) == 0 {
+		return args, nil
+	}
+	out := append(keep, "--")
+	if len(ev) > 0 {
+		b, err := json.Marshal(ev)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, "-e", string(b))
+	}
+	if len(hosts) > 0 {
+		out = append(out, "-l", strings.Join(hosts, ","))
+	}
+	return append(out, tail...), nil
+}
+
 func runPlay(play string, args []string, stdout, stderr io.Writer, refuse func(string, string, ...any) int) int {
 	var inventory string
 	var pass []string
@@ -338,6 +408,9 @@ func runPlay(play string, args []string, stdout, stderr io.Writer, refuse func(s
 			usage, note := "", ""
 			if argVar != "" {
 				usage, note = " <"+argVar+">", "\n  <"+argVar+">  passed to ansible-playbook as -e "+argVar+"=<value>\n"
+			}
+			if play == "install" {
+				usage, note = " [--repo OWNER/NAME] [--tag TAG] [--names a,b] [<machine>...]", installNote
 			}
 			fmt.Fprintf(stdout, playHelp, play, header(string(text), "purpose"), usage, note)
 			return 0
