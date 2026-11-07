@@ -100,6 +100,6 @@ func init() {
 			Setup: func(e *Env) { secretsStore(e); os.WriteFile(e.Dir+"/store/web.yaml", []byte("corrupt\n"), 0o644) },
 			Argv:  ex("true"), Want: Want{Reason: []string{"sops"}}, Known: "8"},
 		Fault{Tool: "secrets", Name: "exec: command killed by SIGKILL", Setup: secretsStore, Argv: ex("sh", "-c", "kill -9 $$"),
-			Want: Want{Signal: 9, Info: regexp.MustCompile(`^SECRETS EXEC OK `)}},
+			Want: Want{Signal: 9, Info: regexp.MustCompile(`^SECRETS EXEC STARTING `)}},
 	)
 }
