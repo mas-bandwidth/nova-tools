@@ -36,6 +36,13 @@ Each tool is one directory of `package main` files. A tool must not import anoth
 package from this module. A few repeated lines are preferable to a shared layer
 that ties the tools together.
 
+The one exception is `config/lib` (package `config`): nova-config's reader of
+its own store, so another program (nova-sprint) reads the machines, friends
+and services from the same rows through the same query instead of keeping a
+copy. It imports nothing from this module, only nova-config imports it among
+the tools, and its lines count in config's budget. `toolLibs` in the test
+names it; another tool library needs the same case made here.
+
 Tools may run a user-selected command or a system helper. They should not call
 a sibling nova tool by name to implement their own job. Review this rule in
 code; the import check alone cannot detect dependencies through subprocesses.

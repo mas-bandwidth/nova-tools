@@ -12,12 +12,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestSelfContained holds nova-config to the standard library and pgx, so it can
-// be lifted out of this repository as it is: it reads the imports of every
-// .go file here; the tests may also import testify.
+// TestSelfContained holds nova-config to the standard library, pgx and its own
+// config/lib, so it can be lifted out of this repository as it is: it reads
+// the imports of every .go file here and in lib; the tests may also import testify.
 func TestSelfContained(t *testing.T) {
 	t.Parallel()
 	files, err := filepath.Glob("*.go")
+	require.NoError(t, err)
+	lib, err := filepath.Glob("lib/*.go")
+	files = append(files, lib...)
 	require.NoError(t, err)
 	require.NotEmpty(t, files)
 	for _, name := range files {
@@ -27,7 +30,7 @@ func TestSelfContained(t *testing.T) {
 			path, err := strconv.Unquote(imp.Path.Value)
 			require.NoError(t, err)
 			assert.True(t, allowed(path, strings.HasSuffix(name, "_test.go")),
-				"%s imports %s: nova-config imports only the standard library and github.com/jackc/pgx/v5", name, path)
+				"%s imports %s: nova-config imports only the standard library, github.com/jackc/pgx/v5 and its config/lib", name, path)
 		}
 	}
 }
@@ -35,7 +38,7 @@ func TestSelfContained(t *testing.T) {
 func allowed(path string, test bool) bool {
 	under := func(mod string) bool { return path == mod || strings.HasPrefix(path, mod+"/") }
 	std := !strings.Contains(strings.SplitN(path, "/", 2)[0], ".")
-	return std || under("github.com/jackc/pgx/v5") || (test && under("github.com/stretchr/testify"))
+	return std || under("github.com/jackc/pgx/v5") || path == "github.com/mas-bandwidth/nova-tools/config/lib" || (test && under("github.com/stretchr/testify"))
 }
 
 // TestAllowedRefusesTheRepository is the rule's reversed witness.
@@ -44,6 +47,8 @@ func TestAllowedRefusesTheRepository(t *testing.T) {
 	assert.False(t, allowed("github.com/mas-bandwidth/nova-tools/pkg/tool", false))
 	assert.False(t, allowed("github.com/mas-bandwidth/nova-tools/pkg/tool", true))
 	assert.False(t, allowed("github.com/stretchr/testify/require", false))
+	assert.False(t, allowed("github.com/mas-bandwidth/nova-tools/config/lib/x", false))
+	assert.True(t, allowed("github.com/mas-bandwidth/nova-tools/config/lib", false))
 	assert.True(t, allowed("github.com/jackc/pgx/v5/pgconn", false))
 	assert.False(t, allowed("github.com/redis/go-redis/v9", false))
 	assert.True(t, allowed("net/http", false))

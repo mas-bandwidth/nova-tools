@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	config "github.com/mas-bandwidth/nova-tools/config/lib"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -31,7 +32,7 @@ type change struct {
 }
 
 func newFake() *fake {
-	return &fake{rows: map[string]map[string]Row{"machine": {}, "service": {}}}
+	return &fake{rows: map[string]map[string]Row{"machine": {}, "service": {}, "friend": {}}}
 }
 
 func (f *fake) List(_ context.Context, k *kind) ([]Row, error) {
@@ -229,7 +230,7 @@ func TestRefusals(t *testing.T) {
 		{2, []string{"service", "set", "member-b", "--env", "{\"bad-name\":\"1\"}", "--actor", "a"}, `--env name "bad-name"`},
 		{2, []string{"machine", "history", "bench-a"}, `unknown verb "machine history"`},
 		{2, []string{"fleet", "show"}, `unknown verb "fleet show"`},
-		{2, []string{"friend", "list"}, `unknown verb "friend list"`},
+		{2, []string{"friend", "fly"}, `unknown verb "friend fly"`},
 		{2, []string{"machine", "list", "--pg", "postgres://u:hunter2@h/x"}, "--pg carries a password"},
 		{2, []string{"machine", "show"}, "nova-config machine show: wants a name"},
 		{2, []string{"machine", "show", "a", "b"}, "unexpected words"},
@@ -303,20 +304,25 @@ func TestSchemaHoldsEveryField(t *testing.T) {
 	}
 }
 
-// TestSQLNamesItsColumns holds the SQL to the fields it knows: no *, none of
-// the old columns, so a store that still has them is read and written as is.
+// TestKindsAreTheLibraryColumns keeps the kinds and the config package's row
+// types in step: a list verb reads exactly the columns Machines, Friends and
+// Services read, in the same order, so the two print the same fields.
+func TestKindsAreTheLibraryColumns(t *testing.T) {
+	t.Parallel()
+	for name, cols := range map[string][]string{"machine": config.Columns[config.Machine](), "friend": config.Columns[config.Friend](), "service": config.Columns[config.Service]()} {
+		var fields []string
+		for _, f := range kinds[name].fields {
+			fields = append(fields, f.name)
+		}
+		assert.Equal(t, cols, fields, name)
+	}
+	assert.Len(t, kinds, 3)
+}
+
+// TestSQLNamesItsColumns holds the writes to the fields they know, so a store
+// that still has old columns is written as is.
 func TestSQLNamesItsColumns(t *testing.T) {
 	t.Parallel()
-	for _, k := range kinds {
-		q := listSQL(k)
-		assert.NotContains(t, q, "*")
-		for _, old := range []string{"seat", "slots", "width", "gates_only", "tla", "redis_port", "bus", "store", "coordinator", "loops_dir"} {
-			if old == "seat" && k.name == "service" {
-				continue // a service still carries its seat
-			}
-			assert.NotRegexp(t, `"`+old+`"`, q, "%s reads %s", k.name, old)
-		}
-	}
 	row := Row{Name: "m1", F: map[string]string{"user": "u", "address": "", "os": "linux", "arch": "", "cores": "", "runners": "2", "roles": "bench", "note": ""}}
 	q, args := writeSQL(kinds["machine"], "add", "m1", row)
 	assert.Equal(t, `INSERT INTO config.machines (name, "address", "user", "os", "arch", "cores", "roles", "runners", "note") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`, q)

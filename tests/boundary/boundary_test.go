@@ -147,6 +147,12 @@ func imports(t *testing.T, f string) (string, []string) {
 
 func isOwn(p string) bool { return p == modulePath || strings.HasPrefix(p, modulePath+"/") }
 
+// toolLibs are the one library a tool may carry, by tool: a directory under
+// it whose package (named here) imports nothing from this module and is
+// imported by that tool alone, so other programs read what the tool keeps the
+// way the tool does. nova-config's config/lib is the only one (docs/BOUNDARY.md).
+var toolLibs = map[string]struct{ dir, pkg string }{"config": {"config/lib", "config"}}
+
 func TestToolsAreIndependentMains(t *testing.T) {
 	base := root(t)
 	for _, tool := range mainTools {
@@ -154,14 +160,17 @@ func TestToolsAreIndependentMains(t *testing.T) {
 		if len(files) == 0 {
 			t.Errorf("%s: no Go files (is it a symlink or missing?)", tool)
 		}
+		lib, hasLib := toolLibs[tool]
 		for _, f := range files {
 			rel, _ := filepath.Rel(base, f)
 			pkg, imps := imports(t, f)
-			if pkg != "main" {
-				t.Errorf("%s: package %s, want main", rel, pkg)
+			inLib := hasLib && filepath.ToSlash(filepath.Dir(rel)) == lib.dir
+			want := map[bool]string{true: lib.pkg, false: "main"}[inLib]
+			if pkg != want && !(inLib && pkg == want+"_test" && strings.HasSuffix(rel, "_test.go")) {
+				t.Errorf("%s: package %s, want %s", rel, pkg, want)
 			}
 			for _, p := range imps {
-				if isOwn(p) {
+				if isOwn(p) && (!hasLib || p != modulePath+"/"+lib.dir || inLib && pkg == want) {
 					t.Errorf("%s imports %s: tools do not import each other or any shared package; see docs/BOUNDARY.md", rel, p)
 				}
 			}
