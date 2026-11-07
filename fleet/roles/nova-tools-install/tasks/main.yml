@@ -1,5 +1,5 @@
 ---
-# Installs the nova-tools release nova_tools_version on this machine: each tool's
+# Installs the release nova_tools_version of nova_tools_repo (nova-tools by default) on this machine: each tool's
 # asset is downloaded, checked against the release's SHA256SUMS and put in the
 # bin directory. get_url with a checksum leaves a binary that already holds the
 # digest alone, so a second run changes nothing. Nothing is restarted unless
@@ -12,13 +12,12 @@
     quiet: true
     that:
       - nova_tools_version is match('^v[0-9]+[.][0-9]+[.][0-9]+(-[0-9A-Za-z.]+)?$') or (nova_tools_local_dir | length > 0 and nova_tools_version is match('^[0-9A-Za-z][0-9A-Za-z.-]*$'))
-      - nova_tools_names | length > 0
+      - nova_tools_repo is match('^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$')
       - nova_tools_names | reject('match', '^[a-z0-9][a-z0-9-]*$') | list | length == 0
       - nova_tools_remove | reject('match', '^[a-z0-9][a-z0-9-]*$') | list | length == 0
-      - nova_tools_remove | intersect(nova_tools_names) | length == 0
     fail_msg: >-
-      nova-tools-install: name the release (-e nova_tools_version=vX.Y.Z, or with nova_tools_local_dir the version its file names carry), give a non-empty nova_tools_names, and keep
-      nova_tools_names and nova_tools_remove to plain tool names with nothing in both lists (a tool cannot be installed and retired)
+      nova-tools-install: name the release (-e nova_tools_version=vX.Y.Z, or with nova_tools_local_dir the version its file names carry), name its
+      repository as OWNER/NAME, and keep nova_tools_names and nova_tools_remove to plain tool names
 
 - name: the platform
   ansible.builtin.set_fact:
@@ -55,6 +54,27 @@
     fail_msg: "nova-tools-install: nova_tools_local_dir copies to Linux and macOS only; install {{ inventory_hostname }} from a release"
   when: nova_tools_local_dir | length > 0
 
+# An empty nova_tools_names is every asset SHA256SUMS lists for this platform, by name.
+- name: the tools to install
+  ansible.builtin.set_fact:
+    nova_tools_install_names: >-
+      {{ nova_tools_names if nova_tools_names | length > 0 else
+         (nova_tools_sums.content.splitlines() | select | map('split') | map('last')
+          | select('match', '^[a-z0-9][a-z0-9-]*' ~ nova_tools_suffix ~ '$')
+          | map('regex_replace', nova_tools_suffix ~ '$', '') | list) }}
+  vars:
+    nova_tools_suffix: "{{ ('_' ~ nova_tools_version ~ '_' ~ nova_tools_os ~ '_' ~ nova_tools_arch ~ ('.exe' if nova_tools_win else '')) | regex_escape }}"
+
+- name: something to install, and nothing both installed and retired
+  ansible.builtin.assert:
+    quiet: true
+    that:
+      - nova_tools_install_names | length > 0
+      - nova_tools_remove | intersect(nova_tools_install_names) | length == 0
+    fail_msg: >-
+      nova-tools-install: install at least one tool ({{ nova_tools_repo }} {{ nova_tools_version }} lists none for {{ nova_tools_os }}-{{ nova_tools_arch }} when nova_tools_names is empty),
+      and keep nova_tools_names out of nova_tools_remove (a tool cannot be installed and retired)
+
 - name: each asset's digest, by the asset's name in SHA256SUMS
   ansible.builtin.set_fact:
     nova_tools_plan: >-
@@ -66,7 +86,7 @@
                       | select('search', ' ' ~ item ~ '_' ~ nova_tools_version ~ '_' ~ nova_tools_os ~ '_' ~ nova_tools_arch ~ ('.exe' if nova_tools_win else '') ~ '$')
                       | map('split') | map('first') | list | first | default(''))
          }] }}
-  loop: "{{ nova_tools_names }}"
+  loop: "{{ nova_tools_install_names }}"
 
 - name: every tool has a digest in the release
   ansible.builtin.assert:

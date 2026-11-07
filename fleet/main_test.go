@@ -167,6 +167,39 @@ func TestPassThrough(t *testing.T) {
 	}
 }
 
+// install's own flags reach ansible-playbook as one -e and one -l, before what follows --.
+func TestInstallRepoTagHosts(t *testing.T) {
+	f := &fake{found: map[string]string{"ansible-playbook": "/a/ansible-playbook"}}
+	f.install(t)
+	inv := filepath.Join(t.TempDir(), "hosts.ini")
+	if err := os.WriteFile(inv, []byte("hetzner2\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	code, _, errs := runArgs("install", "--check", "--repo", "mas-bandwidth/nova-sprint", "--inventory", inv, "--tag=v2.0.0", "hetzner2", "bench", "--", "-v")
+	if code != 0 {
+		t.Fatalf("exit %d: %s", code, errs)
+	}
+	want := []string{"-i", inv, f.argv[2], "--check", "-e",
+		`{"nova_tools_names":[],"nova_tools_repo":"mas-bandwidth/nova-sprint","nova_tools_version":"v2.0.0"}`, "-l", "hetzner2,bench", "-v"}
+	if !slices.Equal(f.argv, want) {
+		t.Errorf("argv = %q, want %q", f.argv, want)
+	}
+}
+
+func TestInstallArgs(t *testing.T) {
+	for _, tc := range []struct{ in, want []string }{
+		{[]string{"--tag", "v2.0.0", "bench"}, []string{"--", "-e", `{"nova_tools_version":"v2.0.0"}`, "-l", "bench"}},
+		{[]string{"--repo", "o/n", "--names", "nova-sprint,nova-sprint-dash", "--tag", "v2.0.0"},
+			[]string{"--", "-e", `{"nova_tools_names":["nova-sprint","nova-sprint-dash"],"nova_tools_repo":"o/n","nova_tools_version":"v2.0.0"}`}},
+		{[]string{"--check", "--", "-e", "nova_tools_version=v1.0.0", "-l", "x"}, []string{"--check", "--", "-e", "nova_tools_version=v1.0.0", "-l", "x"}},
+		{[]string{"-h"}, []string{"-h"}},
+	} {
+		if got, err := installArgs(tc.in); err != nil || !slices.Equal(got, tc.want) {
+			t.Errorf("installArgs(%q) = %q, %v; want %q", tc.in, got, err, tc.want)
+		}
+	}
+}
+
 func TestDefaultInventoryExecsNovaConfig(t *testing.T) {
 	f := &fake{found: map[string]string{"ansible-playbook": "/a/ansible-playbook", "nova-config": "/b/nova-config"}}
 	f.install(t)
@@ -196,7 +229,8 @@ func TestRefusals(t *testing.T) {
 	}{
 		{[]string{"install", "--bogus"}, "nova-fleet install: unknown flag --bogus (ansible-playbook flags go after --); run: nova-fleet install -h\n"},
 		{[]string{"install", "-l", "x"}, "nova-fleet install: unknown flag -l (ansible-playbook flags go after --); run: nova-fleet install -h\n"},
-		{[]string{"install", "localhost"}, "nova-fleet install: unexpected argument localhost (ansible-playbook arguments go after --); run: nova-fleet install -h\n"},
+		{[]string{"install", "localhost", "--tag"}, "nova-fleet install: --tag wants a value; run: nova-fleet install -h\n"},
+		{[]string{"services", "localhost"}, "nova-fleet services: unexpected argument localhost (ansible-playbook arguments go after --); run: nova-fleet services -h\n"},
 		{[]string{"install", "--inventory"}, "nova-fleet install: --inventory wants a file or script; run: nova-fleet install -h\n"},
 		{[]string{"install", "--inventory", "/no/such/inv"}, "nova-fleet install: --inventory /no/such/inv: no such file; run: nova-fleet install --inventory <an existing file or script>\n"},
 		{[]string{"nope"}, "nova-fleet: unknown verb or play nope; verbs: plays, show, check, up, help; plays: " + strings.Join(plays(tree), ", ") + "; run: nova-fleet help\n"},
