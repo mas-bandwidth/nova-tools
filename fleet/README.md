@@ -406,6 +406,9 @@ every runner running on the machines named, whoever registered it (`nova-fleet c
 | `push`, `pull_request`, `merge_group` | the job finishes within `github_runner_ci_limit_seconds` (default 120) of job wall time, counted from the end of the job-started hook; past it every process under the job's `Runner.Worker` is stopped and killed, each second until the job ends, and the job fails at the job-completed hook: `::error::CI rule: per-commit jobs finish in 2m; move longer work to a nightly (schedule) workflow` |
 | `schedule`, `workflow_dispatch` | nightly or manual: no limit |
 
+The hooks enforce only these rows. That unit tests use no real time, sleep or network, and that unit and functional jobs
+run in parallel, is the rule repositories follow; no hook checks it.
+
 **How.** The runner's own job hooks (GitHub's "Running scripts before or after a job"): `ACTIONS_RUNNER_HOOK_JOB_STARTED`
 and `ACTIONS_RUNNER_HOOK_JOB_COMPLETED` in the runner's `.env`, pointing at `job-started` and `job-completed` (`.sh`, or
 `.ps1` on Windows) in `<runner dir>/.nova-ci-rules/`, beside `nova-ci-rules.sh` (`.ps1`) and `limit` (the seconds). The
