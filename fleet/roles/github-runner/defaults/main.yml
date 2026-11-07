@@ -49,3 +49,8 @@ github_runner_deregister: true
 # check (the receipt is then not printed).
 github_runner_verify: true
 github_runner_gh: gh
+
+# The CI rules every runner enforces (fleet/README.md, "CI rules"): a push, pull_request or merge_group job is stopped
+# after this many seconds of job wall time and fails with the rule's line; schedule and workflow_dispatch jobs have no
+# limit. One value for the fleet; override it in group_vars or with -e, never per repository.
+github_runner_ci_limit_seconds: 120
