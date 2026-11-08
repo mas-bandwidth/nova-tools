@@ -240,6 +240,11 @@ func TestWindowsRetireV1ShipsNothingOfCaptain(t *testing.T) {
 			t.Errorf("retire lacks %q", want)
 		}
 	}
+	reg := ps[strings.Index(ps, "  'register' {"):]
+	reg = reg[:strings.Index(reg, "\n  }\n")]
+	if !strings.Contains(reg, "icacls.exe $Dir /reset /T /C /Q") || !strings.Contains(ps, `-replace '[^\x20-\x7E]', '?'`) {
+		t.Error("register resets the runner directory's ACL first, and config.cmd's lines reach ansible as ASCII")
+	}
 	del := ps[strings.Index(ps, "  'delete' {"):]
 	del = del[:strings.Index(del, "\n  }\n")]
 	if !strings.Contains(del, "Remove-Item -LiteralPath $i.FullName -Recurse -Force") || strings.Contains(retire+del, "Move-Aside") {

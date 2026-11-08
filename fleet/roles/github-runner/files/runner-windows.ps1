@@ -67,7 +67,8 @@ function Invoke-Config([string[]]$a) {
   try {
     $env:ACTIONS_RUNNER_INPUT_TOKEN = $tok
     # its lines go straight to stdout, so the function's only output is the exit code
-    & .\config.cmd @a | ForEach-Object { [Console]::Out.WriteLine("CONFIG $_") }
+    # config.cmd prints in the console code page (a check mark is not UTF-8): ASCII only, or ansible refuses the result
+    & .\config.cmd @a | ForEach-Object { [Console]::Out.WriteLine("CONFIG " + ("$_" -replace '[^\x20-\x7E]', '?')) }
     return $LASTEXITCODE
   } finally {
     Remove-Item Env:\ACTIONS_RUNNER_INPUT_TOKEN -ErrorAction SilentlyContinue
@@ -131,6 +132,10 @@ switch ($Action) {
       if ($s) { Stop-Service -Name $s.Name -Force -ErrorAction SilentlyContinue; & sc.exe delete $s.Name | Out-Null }
       "REPAIR $Dir -> $to"
     }
+    # A directory made through WSL carries an ACL that is not in canonical form, and config.cmd's service step cannot
+    # change it ("This access control list is not in canonical form"): put it back to the inherited ACL first.
+    & icacls.exe $Dir /reset /T /C /Q | Out-Null
+    if ($LASTEXITCODE -ne 0) { "ACL-RESET-FAILED $Dir rc=$LASTEXITCODE"; exit $LASTEXITCODE }
     $rc = Invoke-Config @('--unattended', '--url', $Url, '--name', $Name, '--labels', $Labels, '--work', '_work', '--replace', '--runasservice')
     if ($rc -ne 0) { "REGISTER-FAILED $Dir rc=$rc"; exit $rc }
     "REGISTERED $Name $Dir"
