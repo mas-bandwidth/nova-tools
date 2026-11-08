@@ -268,10 +268,9 @@ func TestSelfTalkFlags(t *testing.T) {
 	assert.Equal(t, 1, strings.Count(errs, "SELFTALK FAIL "), "--max 1 prints one finding")
 	assert.Contains(t, errs, "SELFTALK MORE kind=installation shown=1 total=3 --max <n> raises the ceiling")
 
-	code, out, _ = do(t, "", "self-talk", "--skip", "RULES.md", rules)
-	assert.Equal(t, 0, code, "an all-skipped run is not a green")
+	code, out, _ = do(t, "", "self-talk", "--skip", "RULES.md", rules, "-")
+	assert.Equal(t, 0, code)
 	assert.Contains(t, out, "SELFTALK SKIP "+rules+" (--skip)\n")
-	assert.Contains(t, out, "SELFTALK SKIP files=0 skipped=1 reason=all-skipped")
 
 	_, out, _ = do(t, "", "self-talk", "--skip", "other.md", "--rule-doc", "none.md", rules)
 	assert.Contains(t, out, "SELFTALK NOTE --skip other.md matched no file named on the line")
@@ -407,7 +406,9 @@ func TestVerify(t *testing.T) {
 		"--frontmatter", "notes/*.md", "--exempt", "index-")
 	assert.Equal(t, 0, code)
 	assert.Empty(t, errs)
-	assert.Equal(t, "VERIFY INFO wikilink: [[storm-glass]] resolves to no file (e.g. from log/1974-03-11.md)\n"+
+	assert.Equal(t, "VERIFY CHECKED rule=coverage glob=notes/*.md:notes/index-*.md files=4 indexes=1\n"+
+		"VERIFY CHECKED rule=frontmatter glob=notes/*.md files=3\n"+
+		"VERIFY INFO wikilink: [[storm-glass]] resolves to no file (e.g. from log/1974-03-11.md)\n"+
 		"VERIFY OK gating=0 info=1 shown=1 coverage=0 frontmatter=0 links=info\n", out)
 
 	code, _, errs = do(t, "", "memory", "verify", "--root", c, "--links", "gate", "--frontmatter", "log/*.md")
@@ -743,4 +744,130 @@ func TestMemoryReadsSymlinkedNotes(t *testing.T) {
 	code, _, errs := do(t, "", "memory", "search", "--root", filepath.Join(dir, "notes"), "--channels", "bm25", "--k", "1", "brass")
 	assert.Equal(t, 2, code)
 	assert.Contains(t, errs, "--exclude broken.md")
+}
+
+// TestVerifyGlobWithoutSlashMatchesAtAnyDepth: '*.md' checks nested notes too,
+// and each rule says how many files it checked.
+func TestVerifyGlobWithoutSlashMatchesAtAnyDepth(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "sub"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "a.md"), []byte("---\nname: a\n---\nbody\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "sub", "nameless.md"), []byte("body\n"), 0o644))
+	code, out, errs := do(t, "", "memory", "verify", "--root", root, "--links", "gate", "--frontmatter", "*.md")
+	assert.Equal(t, 1, code, out)
+	assert.Contains(t, errs, "VERIFY FAIL frontmatter sub/nameless.md: no name: in frontmatter\n")
+	assert.Contains(t, out, "VERIFY CHECKED rule=frontmatter glob=*.md files=2\n")
+
+	code, out, _ = do(t, "", "memory", "verify", "--root", root, "--links", "gate", "--frontmatter", "a.md", "--coverage", "*.md:a.md")
+	assert.Equal(t, 1, code, out)
+	assert.Contains(t, out, "VERIFY CHECKED rule=coverage glob=*.md:a.md files=2 indexes=1\n")
+	assert.Contains(t, out, "VERIFY CHECKED rule=frontmatter glob=a.md files=1\n")
+}
+
+// TestSelfTalkScanningNothingIsRefused: a run whose every file is skipped scanned
+// nothing, so it is refused, never a pass.
+func TestSelfTalkScanningNothingIsRefused(t *testing.T) {
+	t.Parallel()
+	f := filepath.Join(t.TempDir(), "a.md")
+	require.NoError(t, os.WriteFile(f, []byte("I always break the build.\n"), 0o644))
+	code, out, errs := do(t, "", "self-talk", "--skip", "a.md", f)
+	assert.Equal(t, 2, code)
+	assert.Empty(t, out)
+	assertRefusal(t, errs, nil)
+	assert.Contains(t, errs, "run: nova-cairn self-talk "+f+"\n")
+}
+
+// TestIndexRefusesWhatItCannotRead: an unreadable sessions/ directory or a corrupt
+// open record is refused by index as append refuses it, never listed as empty or unknown.
+func TestIndexRefusesWhatItCannotRead(t *testing.T) {
+	t.Parallel()
+	store := filepath.Join(t.TempDir(), "s")
+	code, _, errs := do(t, "", "open", "--store", store, "--session", "s1", "--publish", "manual")
+	require.Equal(t, 0, code, errs)
+	log := filepath.Join(store, "log.jsonl")
+	raw, err := os.ReadFile(log)
+	require.NoError(t, err)
+	line := strings.TrimSpace(string(raw))
+	require.NoError(t, os.WriteFile(log, []byte(line[:len(line)-10]+"\n"), 0o644))
+	code, _, appendErrs := do(t, "", "append", "--store", store, "--session", "s1", "--entry", "e1", "--text", "x")
+	assert.Equal(t, 2, code)
+	code, out, errs := do(t, "", "index", "--store", store)
+	assert.Equal(t, 2, code, out)
+	assert.Empty(t, out)
+	assert.Equal(t, strings.Replace(appendErrs, "nova-cairn append:", "nova-cairn index:", 1), errs)
+
+	if os.Geteuid() == 0 {
+		t.Skip("root reads anything")
+	}
+	require.NoError(t, os.WriteFile(log, raw, 0o644))
+	sessions := filepath.Join(store, "sessions")
+	require.NoError(t, os.Chmod(sessions, 0o000))
+	defer os.Chmod(sessions, 0o755)
+	code, out, errs = do(t, "", "index", "--store", store)
+	assert.Equal(t, 2, code, out)
+	assert.Empty(t, out)
+	assert.Contains(t, errs, "run: ls -ld "+sessions+"\n")
+}
+
+// TestMemoryReportsACorruptStoreEntry: an entry file of a store that does not decode
+// is refused as corrupt with the repair, not skipped as some other .json.
+func TestMemoryReportsACorruptStoreEntry(t *testing.T) {
+	t.Parallel()
+	store := filepath.Join(t.TempDir(), "s")
+	at := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
+	_, _, err := open(store, "s1", "", at, "manual")
+	require.NoError(t, err)
+	_, _, _, _, err = appendEntry(store, "s1", "e1", "The brass lantern lights the harbor.", "", at, "manual")
+	require.NoError(t, err)
+	entry := filepath.Join(store, "entries", "s1", "e1.json")
+	require.NoError(t, os.WriteFile(entry, []byte(`{"session":"s1","id":"e1","te`), 0o644))
+	code, out, errs := do(t, "", "memory", "search", "--root", store, "--channels", "bm25", "--k", "1", "brass")
+	assert.Equal(t, 2, code, out)
+	assert.Empty(t, out)
+	assert.Contains(t, errs, `stored entry "e1" is corrupt`)
+	assert.True(t, strings.HasSuffix(errs, "; run: cat "+entry+"\n"), errs)
+}
+
+// TestAppendHealsAMissingLogLine: when the log line fails after the entry is kept,
+// the refusal says the entry was kept and points at the log; the retry writes the line.
+func TestAppendHealsAMissingLogLine(t *testing.T) {
+	t.Parallel()
+	if os.Geteuid() == 0 {
+		t.Skip("root writes anything")
+	}
+	store := filepath.Join(t.TempDir(), "s")
+	code, _, errs := do(t, "", "open", "--store", store, "--session", "s1", "--publish", "manual")
+	require.Equal(t, 0, code, errs)
+	log := filepath.Join(store, "log.jsonl")
+	require.NoError(t, os.Chmod(log, 0o444))
+	code, _, errs = do(t, "", "append", "--store", store, "--session", "s1", "--entry", "e1", "--text", "the words")
+	assert.Equal(t, 2, code)
+	assert.Contains(t, errs, `entry "e1" is kept`)
+	assert.True(t, strings.HasSuffix(errs, "; run: ls -l "+log+"\n"), errs)
+
+	require.NoError(t, os.Chmod(log, 0o644))
+	code, out, errs := do(t, "", "append", "--store", store, "--session", "s1", "--entry", "e1", "--text", "the words")
+	require.Equal(t, 0, code, errs)
+	assert.Contains(t, out, "duplicate=true")
+	raw, err := os.ReadFile(log)
+	require.NoError(t, err)
+	assert.Equal(t, 1, strings.Count(string(raw), `"event":"append"`), string(raw))
+	do(t, "", "append", "--store", store, "--session", "s1", "--entry", "e1", "--text", "the words")
+	raw, _ = os.ReadFile(log)
+	assert.Equal(t, 1, strings.Count(string(raw), `"event":"append"`), "a second retry logs nothing more")
+}
+
+// TestMemoryRefusesAMalformedExclude: an --exclude that is not a valid glob is refused,
+// never applied as a literal path.
+func TestMemoryRefusesAMalformedExclude(t *testing.T) {
+	t.Parallel()
+	for _, verb := range [][]string{{"stats"}, {"search", "--channels", "bm25", "--k", "1", "brass"}} {
+		args := append([]string{"memory", verb[0], "--root", "testdata/corpus", "--exclude", "["}, verb[1:]...)
+		code, out, errs := do(t, "", args...)
+		assert.Equal(t, 2, code, "%v", args)
+		assert.Empty(t, out)
+		assertRefusal(t, errs, args)
+		assert.Contains(t, errs, `--exclude "[" is not a valid glob`)
+	}
 }
