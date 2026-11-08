@@ -171,7 +171,7 @@ reached as root at the address given, as on the first run.
 | `postgres` | the PostgreSQL nova-config keeps the fleet in, on each machine of the services group | `nova_seal_*` to seal its password |
 | `redis` | the Redis nova-bus talks to, on each machine of the services group | `nova_seal_*` to seal its password |
 | `seat` | each machine's seat in the secrets store | `nova_seal_store` |
-| `secrets-refresh` | the control node's encrypted store pushed to every machine with `ansible.posix.synchronize` (`verify_host: true`, no `.git`, stale files deleted, 0700/0600); with `nova_secrets_repo` set, a timer pulls a clone fast-forward instead | `nova_seal_store` (the control node's clone) to push; `nova_secrets_repo` for pull |
+| `secrets-refresh` | the control node's encrypted store pushed to every machine with `ansible.posix.synchronize` (`verify_host: true`, no `.git`, stale files deleted, 0700/0600); no machine runs a timer (pull mode is retired; one left is removed) | `nova_seal_store` (the control node's clone) to push |
 | `services` | one supervised unit per service record, on the machine the record names (bench, runner and services groups) | the inventory's `nova_services` |
 | `tailscale` | each machine on the tailnet, its address the MagicDNS name, its firewall closed to all but the tailnet | `TAILSCALE_AUTHKEY` in the environment for a machine not on the tailnet (`up` mints it) |
 
@@ -710,34 +710,29 @@ roles and the dumps are left.
 
 ## secrets-refresh
 
-The usual way a machine's copy of the store stays fresh is a push from the control node (rsync over the ssh the
-play has, the machine's host key verified as everywhere else; rsync on the machine comes from join): `nova-fleet up` step 6
-copies the encrypted store over the ssh it already has (rsync: no `.git`, stale files deleted, 0700/0600) to each
-machine's `nova_secrets_store`, and running `up` again pushes again. No machine needs read access to the store's
-repository. The pull timer below is the optional form, for an adopter who gives `nova_secrets_repo` and lets each
-machine read that repository.
+A machine's copy of the store stays fresh by a push from the control node (rsync over the ssh the play has, the
+machine's host key verified as everywhere else; rsync on the machine comes from join): `nova-fleet up` step 8 copies
+the encrypted store (no `.git`, stale files deleted, 0700/0600) to each machine's `nova_secrets_store`, and running
+`up` again, or `nova-fleet secrets-refresh -- -e nova_seal_store=S`, pushes again. No machine needs read access to the
+store's repository, and nothing on a machine fetches the store on a clock.
 
-The optional pull form: each machine's clone of the secrets store (`nova_secrets_store`) pulled fast-forward only every
-`nova_secrets_refresh_every` seconds, so a seat never opens a stale store. The pull reads no value, prints no
-credential and logs one line per run (time, commit, `ok` or `FAIL rc=<n>`) to `nova_secrets_refresh_log`. Linux: a
-systemd user timer (linger on), or a crontab line where the login has no user manager; macOS: a LaunchAgent in the
-login's GUI domain. With `nova_secrets_repo`, a machine with no clone gets one; without it, such a machine is skipped
-and named. The machine that writes the store sets `nova_secrets_refresh: false`, which removes its timer.
+Pull mode (`nova_secrets_repo`: a timer on each machine pulling a git clone) is retired: with it set the play stops
+before changing anything. On every machine the play removes what pull mode installed (the systemd user timer and
+unit, the crontab line or the LaunchAgent, and the `nova-secrets-refresh` script). The machine that writes the store
+sets `nova_secrets_refresh: false`, which removes those and changes nothing else.
 
 ```
-nova-fleet secrets-refresh --check --diff
-nova-fleet secrets-refresh
+nova-fleet secrets-refresh --check --diff -- -e nova_seal_store=S
+nova-fleet secrets-refresh -- -e nova_seal_store=S
 ```
 
 | Variable | Default | |
 |---|---|---|
-| `nova_secrets_refresh` | `true` | `false` removes the timer |
-| `nova_secrets_refresh_every` | `600` | seconds |
-| `nova_secrets_refresh_log` | `~/.local/state/nova/secrets-refresh.log` | |
-| `nova_secrets_repo` | empty | the store's git URL, to clone where there is none |
+| `nova_seal_store` | unset | the control node's clone of the store, to push |
+| `nova_secrets_refresh` | `true` | `false` removes the pull timer and skips the push |
 
-**Check.** `SECRETS-REFRESH <machine> via=systemd-user-timer every=600s last: <time> head=<commit> ok`. **Rollback.**
-`-e nova_secrets_refresh=false`.
+**Check.** `SECRETS-REFRESH <machine> mode=push files=<n> pushed` (or `same`). **Rollback.** Push the previous
+commit of the store: check it out in the clone and run again.
 
 ## health
 
