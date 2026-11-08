@@ -76,6 +76,7 @@ nova-secrets names --store <dir> [--as <seat>]
 
 nova-secrets exec --only NAME[,NAME] --store <dir> --key <file> [--as <seat>] [--sops <path>] -- <cmd> [args...]
   Decrypt <seat>.yaml and <seat>.grants.yaml (a name in both is refused) and become <cmd> with only the --only values added to its environment.
+  A --only value that is null or empty is refused.
   Prints SECRETS EXEC STARTING as=<seat> keys=<n> cmd=<name> on stderr, then becomes the command (nothing of the tool
   runs after it: the shell reports a command killed by a signal as 128+N, as for any process).
   Exit: the command's own status; 125 when exec refused at run time and the command never ran.
@@ -249,11 +250,21 @@ func (t tool) parse(verb string, args []string, npos int, needKey bool, also ...
 		}
 		return o, nil, bad("%s", msg)
 	}
+	takes := map[string]string{"init": "store recovery pins", "seat add": "store", "seat list": "store", "seat remove": "store pins", "names": "store as",
+		"set": "store key pins as recovery sops", "grant": "to pins store key as pub recovery sops", "exec": "only require store key as sops"}[verb]
+	fs.Visit(func(f *flag.Flag) {
+		if err == nil && !slices.Contains(strings.Fields(takes), f.Name) {
+			err = bad("unknown flag --%s", f.Name)
+		}
+	})
+	if err != nil {
+		return o, nil, err
+	}
 	if pos = append(pos, fs.Args()...); len(pos) != npos {
 		return o, nil, bad("takes %d argument(s) before its flags, got %d", npos, len(pos))
 	}
 	var missing []string
-	if verb == "exec" && o.only == "" {
+	if verb == "exec" && strings.Trim(o.only, ", \t") == "" { // --only , names nothing
 		missing = append(missing, "--only NAME[,NAME]")
 	}
 	if o.store == "" {
@@ -275,11 +286,6 @@ func (t tool) parse(verb string, args []string, npos int, needKey bool, also ...
 			missing = append(missing, "--pins <dir> (or NOVA_SECRETS_PINS)")
 		}
 	}
-	for flag, v := range map[string]string{"to": o.to, "pub": o.pub, "recovery": o.recovery, "pins": o.pins} {
-		if v != "" && verb != "grant" && !((verb == "init" || verb == "set") && (flag == "recovery" || flag == "pins")) && !(verb == "seat remove" && flag == "pins") {
-			return o, nil, bad("unknown flag --%s", flag)
-		}
-	}
 	if needKey && o.key == "" {
 		if o.key = envValue(t.environ, "NOVA_SECRETS_KEY"); o.key == "" && verb == "set" {
 			o.key = t.keyFile(cmp.Or(o.as, t.ownSeat()))
@@ -298,9 +304,6 @@ func (t tool) parse(verb string, args []string, npos int, needKey bool, also ...
 		o.sops = "sops"
 	}
 	noSeat := verb == "init" || strings.HasPrefix(verb, "seat ")
-	if noSeat && o.as != "" {
-		return o, nil, bad("unknown flag --as")
-	}
 	if o.as == "" && !noSeat {
 		o.as = t.ownSeat() // an empty name fails the seat check below
 	}
@@ -379,18 +382,24 @@ func (t tool) exec(args []string) error {
 	if err != nil {
 		return err
 	}
-	var pick, missing []string
+	var pick, missing, empty []string
 	for _, n := range strings.Split(o.only, ",") {
 		if n = strings.TrimSpace(n); n == "" || slices.Contains(pick, n) {
 			continue
 		}
-		if _, ok := values[n]; !ok {
+		if v, ok := values[n]; !ok {
 			missing = append(missing, n)
+		} else if v == "" { // a null or "" in the file: set never writes one
+			empty = append(empty, n)
 		}
 		pick = append(pick, n)
 	}
 	if len(missing) > 0 {
 		return deny("no-name", "unknown secret name(s) %s: %s holds no such name; run: nova-secrets names --store %s --as %s", strings.Join(missing, ", "), o.file(o.as), o.store, o.as)
+	}
+	if len(empty) > 0 {
+		return refuse("%s is empty (null or \"\") in %s's files, and a command is never handed an empty secret; set it: run: nova-secrets set %s --store %s --key %s --as %s",
+			strings.Join(empty, ", "), o.as, empty[0], q(o.store), q(o.key), o.as)
 	}
 	// The inherited environment loses every name the seat holds (a value left out
 	// must not arrive another way) and every sops identity variable.
@@ -554,7 +563,7 @@ func (t tool) seatAdd(args []string) error {
 		return refuse("%s/recovery.pub is missing or not an age public key; run: age-keygen -y <recovery.key> > %s/recovery.pub, then commit it", o.store, o.store)
 	}
 	if rec == pub {
-		return refuse("that key is the recovery key, not a seat's")
+		return refuse("that key is the recovery key, not a seat's; make the seat a key of its own: run: age-keygen -o %s", q(t.keyFile(seat)))
 	}
 	cfgPath := filepath.Join(o.store, ".sops.yaml")
 	cfg, err := os.ReadFile(cfgPath)
@@ -563,7 +572,7 @@ func (t tool) seatAdd(args []string) error {
 	}
 	out, err := addRule(cfg, seat, pub+","+rec)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w; run: nova-secrets seat list --store %s", err, q(o.store))
 	}
 	if err := writeFile(cfgPath, out, 0o644); err != nil {
 		return err
@@ -573,6 +582,11 @@ func (t tool) seatAdd(args []string) error {
 	}
 	home, _ := os.UserHomeDir()
 	pins := cmp.Or(envValue(t.environ, "NOVA_SECRETS_PINS"), filepath.Join(cmp.Or(envValue(t.environ, "HOME"), home), ".config", "nova-secrets", "pins"))
+	// where init --pins put this store's recovery pin, as the guide does: beside the store
+	beside := filepath.Join(filepath.Dir(o.store), "pins")
+	if b, _ := os.ReadFile(filepath.Join(beside, "recovery.pub")); envValue(t.environ, "NOVA_SECRETS_PINS") == "" && strings.TrimSpace(string(b)) == rec { // ignored: no pin there
+		pins = beside
+	}
 	// next: set as the seat just added, on this store; --key only when this machine holds that seat's key, else set reads NOVA_SECRETS_KEY
 	then := []string{"nova-secrets", "set", "DB_PASSWORD", "--as", seat, "--store", o.store}
 	key := t.keyFile(seat)
@@ -893,7 +907,10 @@ func plainNames(o opts, name string) ([]string, error) {
 	if err != nil || !ok {
 		return nil, err
 	}
-	b, _ := os.ReadFile(p)
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return nil, refuse("reading %s: %v; run: ls -l %s", p, err, q(p))
+	}
 	_, top, err := parseTop(b)
 	if err != nil {
 		return nil, refuse("%s does not parse as a sops file (anchors, aliases and merge keys are refused)", p)
@@ -1261,7 +1278,7 @@ func addRule(cfg []byte, seat, age string) ([]byte, error) {
 				return refuse(".sops.yaml: a creation rule is not a map; it is left as it was")
 			}
 			if pr := field(r, "path_regex"); pr != nil && pr.Value == pathRegex {
-				return refuse(".sops.yaml already has a rule for %s", seat)
+				return refuse(".sops.yaml already has a rule for %s (a new key for it: seat remove it first)", seat)
 			}
 			if a := field(r, "age"); a != nil && strings.Contains(a.Value, strings.SplitN(age, ",", 2)[0]) {
 				return refuse(".sops.yaml already has a seat with that key")
@@ -1300,7 +1317,10 @@ func (t tool) names(args []string) error {
 			continue
 		}
 		found = true
-		b, _ := os.ReadFile(p)
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return refuse("reading %s: %v; run: ls -l %s", p, err, q(p))
+		}
 		_, top, err := parseTop(b)
 		if err != nil {
 			return refuse("%s does not parse as a sops file (anchors, aliases and merge keys are refused)", p)
@@ -1375,7 +1395,7 @@ func (t tool) initStore(args []string) error {
 	}
 	if gerr != nil {
 		if err := t.git(o.store, "init", "-q"); err != nil {
-			return err
+			return fmt.Errorf("%w; git says why: run: git init %s, then init again", err, q(o.store))
 		}
 	}
 	files := []string{".sops.yaml", "recovery.pub"}
@@ -1545,7 +1565,8 @@ func (t tool) grant(args []string) error {
 		return err
 	}
 	if err := writeFile(filepath.Join(o.pins, o.to+".ledger"), []byte(ledger+sealedLine(out)), 0o600); err != nil {
-		return err
+		undo := map[bool]string{true: next("git", "-C", o.store, "checkout", "--", file), false: next("rm", "--", filepath.Join(o.store, file))}[present]
+		return fmt.Errorf("%w; %s is written but this node's ledger is not, so the next grant would refuse it as edited: put it back: run: %s, then grant again", err, file, undo)
 	}
 	if err := t.commitGrant(o, file, names); err != nil {
 		return err
