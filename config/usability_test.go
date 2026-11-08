@@ -33,7 +33,7 @@ func TestVerbHelp(t *testing.T) {
 		}
 	}
 	_, out, _ := h.run(t, "machine", "add", "--help")
-	assert.Contains(t, out, "machine fields: name, address, public, user, os, arch, cores, roles, runners, note")
+	assert.Contains(t, out, "machine fields: name, address, public, user, os, arch, cores, roles, runners, windows_runners, note")
 	assert.Contains(t, out, "--user <text>")
 	for _, p := range paths[6:] { // the banner names each verb path
 		assert.Contains(t, usage, "nova-config "+strings.Join(p, " "))

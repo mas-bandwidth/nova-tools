@@ -30,6 +30,7 @@ func TestPlaysTargetTheirGroups(t *testing.T) {
 		"seat":            {"{{ nova_join_host | default('all') }}"},
 		"tailscale":       {"{{ nova_join_host | default('all') }}"},
 		"secrets-refresh": {"all"},
+		"windows-runners": {workers},
 	}
 	for _, name := range plays(tree) {
 		allowed, ok := want[name]

@@ -1,0 +1,68 @@
+---
+# Retire v1's Windows side of a WSL machine (fleet/README.md, "Windows runners of a WSL machine"): opt-in, with
+# -e '{"nova_windows_retire_v1": true}', and refused unless every v2 Windows runner the record names is registered and
+# online (wsl-windows.yml read both just before), so CI keeps its Windows runners throughout. Nothing is deleted: v1's
+# runners are removed from GitHub (config.cmd remove, a removal token on stdin) and their services go; every directory
+# and file is moved under C:\nova-retired-<date>\. The lists are this role's defaults (github_runner_windows_v1_*).
+# One line per item: V1-RETIRE <host> <what happened>.
+
+- name: v1 is retired only beside a v2 that is up
+  ansible.builtin.assert:
+    quiet: true
+    that:
+      - nova_windows_runners | default([]) | length > 0
+      - github_runner_win_unread | length == 0
+      - github_runner_win_registered_n | int == github_runner_win_want | length
+      - github_runner_win_online_n | int == github_runner_win_want | length
+    fail_msg: >-
+      V1-RETIRE {{ inventory_hostname }} refused: {{ github_runner_win_want | length }} v2 Windows runners wanted,
+      {{ github_runner_win_registered_n }} registered, {{ github_runner_win_online_n }} online; every one must be
+      registered and online before v1 goes. Run the play without the opt-in until the GITHUB-RUNNERS line is whole.
+
+- name: where v1 goes aside
+  ansible.builtin.set_fact:
+    github_runner_v1_aside: "{{ github_runner_windows_v1_aside_root }}-{{ now(utc=true, fmt='%Y%m%d') }}"
+
+- name: the plan
+  ansible.builtin.debug:
+    msg: >-
+      V1-RETIRE {{ inventory_hostname }} would: remove {{ github_runner_windows_v1_runners | map(attribute='dir') | join(',') }};
+      move aside to {{ github_runner_v1_aside }} {{ github_runner_windows_v1_items | join(',') }};
+      unregister the scheduled task(s) {{ github_runner_windows_v1_tasks | join(',') }};
+      keep {{ github_runner_windows_v1_kept | join('; ') }} (check: nothing changed)
+  when: ansible_check_mode
+
+- name: v1's runners, one target at a time (each target's own removal token)
+  ansible.builtin.include_tasks: wsl-windows-retire-v1-runners.yml
+  loop: "{{ github_runner_windows_v1_runners | map(attribute='url') | unique | list }}"
+  loop_control: { loop_var: github_runner_v1_url }
+  when: not ansible_check_mode
+
+- name: v1's files, moved aside
+  ansible.builtin.shell: >-
+    "{{ github_runner_wsl_powershell }}" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File {{ github_runner_wsl_script | quote }}
+    -Action aside -Path {{ item | quote }} -Aside {{ github_runner_v1_aside | quote }} </dev/null
+  args: { executable: /bin/sh }
+  loop: "{{ github_runner_windows_v1_items }}"
+  register: github_runner_v1_moved
+  changed_when: "'MOVED ' in github_runner_v1_moved.stdout"
+  when: not ansible_check_mode
+
+- name: v1's scheduled tasks, unregistered
+  ansible.builtin.shell: >-
+    "{{ github_runner_wsl_powershell }}" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File {{ github_runner_wsl_script | quote }}
+    -Action untask -Task {{ item | quote }} </dev/null
+  args: { executable: /bin/sh }
+  loop: "{{ github_runner_windows_v1_tasks }}"
+  register: github_runner_v1_untasked
+  changed_when: "'UNTASKED ' in github_runner_v1_untasked.stdout"
+  when: not ansible_check_mode
+
+- name: the retirement's receipt, one line per item
+  ansible.builtin.debug:
+    msg: >-
+      {{ ((github_runner_v1_lines | default([]))
+          + ((github_runner_v1_moved.results | default([])) + (github_runner_v1_untasked.results | default([]))) | map(attribute='stdout_lines') | flatten | list
+          + (github_runner_windows_v1_kept | map('regex_replace', '^', 'kept: ') | list))
+         | map('regex_replace', '^', 'V1-RETIRE ' ~ inventory_hostname ~ ' ') | list }}
+  when: not ansible_check_mode

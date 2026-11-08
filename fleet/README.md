@@ -174,6 +174,7 @@ reached as root at the address given, as on the first run.
 | `seat` | each machine's seat in the secrets store | `nova_seal_store` |
 | `secrets-refresh` | the control node's encrypted store pushed to every machine with `ansible.posix.synchronize` (`verify_host: true`, no `.git`, stale files deleted, 0700/0600); no machine runs a timer (pull mode is retired; one left is removed) | `nova_seal_store` (the control node's clone) to push |
 | `services` | one supervised unit per service record, on the machine the record names (bench, runner and services groups) | the inventory's `nova_services` |
+| `windows-runners` | a WSL machine's Windows-side GitHub Actions runners, from its record's `windows_runners`, through WSL interop | the record's `windows_runners`; `gh` on the control node logged in with admin on each repository or organization |
 | `tailscale` | each machine on the tailnet, its address the MagicDNS name, its firewall closed to all but the tailnet | `TAILSCALE_AUTHKEY` in the environment for a machine not on the tailnet (`up` mints it) |
 
 ```
@@ -428,6 +429,51 @@ That stops and removes the services, removes the runners from GitHub and deletes
 github_runner_deregister=false` no token is read and the GitHub entries stay for you to delete. A removal token also
 expires in an hour.
 
+## Windows runners of a WSL machine
+
+A WSL machine's Windows side runs its own runners (captain: rocketnet's and robotgamedevelopers' Windows CI). They are
+a field of the machine's record and a play, like everything else on the fleet:
+
+```
+nova-config machine set captain --windows_runners 'https://github.com/mas-bandwidth/rocketnet=3:rocketnet-windows,https://github.com/robotgamedevelopers=2:fleet' --actor rowan
+nova-fleet windows-runners --check -- -l captain
+nova-fleet windows-runners -- -l captain
+```
+
+`windows_runners` is `<url>=<count>[:<label>+<label>]`, comma-separated (config/README.md); the inventory hands it to
+the play as `nova_windows_runners`. A machine without it is skipped; one with it that is not WSL with interop is
+refused. **The channel** is the one `ci-rules` already uses: from the WSL login, `powershell.exe` by its full path
+runs the role's `files/runner-windows.ps1`, staged to `C:\ProgramData\nova-runner-stage`. It acts as the Windows account
+that started WSL, elevated; no Windows login, password or key is involved, and no port is opened. **Each runner** is
+`<machine>-win-<slug>-<i>` in `C:\actions-runner\<slug>-<i>` (`<slug>` is `<owner>-<repo>` or `<org>`), the pinned
+release checked against its digest, a Windows service run as `NETWORK SERVICE` (`config.cmd --runasservice`) that starts
+at boot. **Labels** are `fleet` and the machine's name plus the record's extras (`github_runner_wsl_labels`); GitHub adds
+`self-hosted`, `X64` and `Windows`. Unlike the Linux runners they carry no roles, os or arch, so a job that selects
+`[self-hosted, bench]` never lands on Windows. Each runner's `.env` gets the job `PATH` (`github_runner_windows_path`),
+its own `GOCACHE` and `DOTNET_INSTALL_DIR`, and then the CI rules. **The token** comes from `tasks/token.yml` as for the
+other runners (one per repository or organization) and reaches `config.cmd` on stdin, as `ACTIONS_RUNNER_INPUT_TOKEN`:
+never an argument, a file or a log line. A registered runner (its directory holds `.runner`) is left alone, so a
+second run registers nothing. Each machine prints `GITHUB-RUNNERS host=<machine> windows=<n> registered=<n> online=<n>`
+from its directories and GitHub's own list; a run where any is short fails. `--check` reads both, asks for the tokens it
+would need, and prints `RUNNER-PLAN <machine> windows=<n> register=<names> labels=<labels>`.
+
+**Retiring v1's Windows side** is opt-in and comes after v2 is up, so CI keeps its Windows runners throughout:
+
+```
+nova-fleet windows-runners --check -- -l captain -e '{"nova_windows_retire_v1": true}'
+nova-fleet windows-runners -- -l captain -e '{"nova_windows_retire_v1": true}'
+```
+
+It is refused (`V1-RETIRE <machine> refused: ...`) unless every v2 Windows runner the record names is registered and
+online. Then v1's runners (`C:\actions-runner-rocketnet\1..3`, `C:\actions-runner-rgd\1..2`) are removed from GitHub with
+a removal token on stdin, their services go, and their directories move under `C:\nova-retired-<yyyymmdd>\`; v1's
+ci-hold (`C:\rowan-jobs\ci-hold`), the winlock state, the installer script and its backups, the runner zip cache and
+`C:\fleet-windows-tools` move there too, and the scheduled task `\nova-wsl-keepalive` is unregistered. Nothing is
+deleted. One line per item: `V1-RETIRE <machine> RETIRED|MOVED|ABSENT|UNTASKED ...`, then `kept:` lines for what stays
+and why: `C:\tools` (CI may use goose, lobster, dxc, ccache), the two hand-made firewall rules, the job-scratch
+directories, and `\WSL2 keepalive (Ubuntu-24.04)`, which keeps WSL up at boot. The lists are the role's defaults
+(`github_runner_windows_v1_*`).
+
 ## CI rules
 
 Every runner nova-fleet sets up enforces the fleet's CI rules itself, so a repository cannot opt out by forgetting a
@@ -450,7 +496,8 @@ started hook arms a watchdog, a detached process that the completed hook stops; 
 nothing behind. A hook the `.env` held before is kept as `NOVA_CI_CHAIN_JOB_STARTED` / `_COMPLETED` and run from ours, in its
 own process by its extension (after the push check, before the watchdog is armed, so waiting for a lock is not job
 time). Each started hook first stops any watchdog and verdict an earlier job left, so a runner that died mid-job
-never fails the next one. The limit and the push branches are one value
+never fails the next one. A chained hook under `C:\rowan-jobs\` (v1's ci-hold) or naming a file that is not there is
+dropped from the `.env`, never chained (the unchain rule), so applying the rules again takes v1's chain off a runner. The limit and the push branches are one value
 each for the fleet (`group_vars` or `-e`), never per repository.
 
 **Applying.** `nova-ci-rules apply` writes the hooks and the `.env`, and restarts a runner whose `.env` changed (the

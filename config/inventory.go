@@ -142,6 +142,13 @@ func build(machines []Row, services []Row, local string) (*inventory, error) {
 				hv[k] = val
 			}
 		}
+		if v["windows_runners"] != "" {
+			ws, err := parseWinRunners(v["windows_runners"])
+			if err != nil {
+				return nil, refused("machine %s has corrupt windows_runners (%v); run: nova-config machine set %s --windows_runners <value>", m, err, m)
+			}
+			hv["nova_windows_runners"] = ws
+		}
 		if m == local {
 			hv["ansible_connection"] = "local"
 		}

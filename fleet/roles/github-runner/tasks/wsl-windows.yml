@@ -1,0 +1,186 @@
+---
+# A WSL machine's Windows-side runners (fleet/README.md, "Windows runners of a WSL machine"): what its machine record's
+# windows_runners names (the inventory's nova_windows_runners, a list of {url, scope, count, labels}), set up from the
+# WSL login through interop: powershell.exe by its full path runs files/runner-windows.ps1, staged to
+# C:\ProgramData\nova-runner-stage, as the Windows account that started WSL (elevated). No Windows login, password or
+# key is involved. Each runner is <host>-win-<slug>-<i> in C:\actions-runner\<slug>-<i>, a Windows service run as
+# NETWORK SERVICE (config.cmd --runasservice), registered with a token from token.yml on its stdin. An existing
+# registered runner is left alone. --check reads, asks for the tokens it would need, and prints the plan.
+# With -e '{"nova_windows_retire_v1": true}' it then retires v1's Windows side (wsl-windows-retire-v1.yml).
+
+- name: is this a WSL machine with interop
+  ansible.builtin.stat: { path: "{{ github_runner_wsl_interop }}" }
+  register: github_runner_wsl_interop_stat
+
+- name: is powershell.exe reachable
+  ansible.builtin.stat: { path: "{{ github_runner_wsl_powershell }}" }
+  register: github_runner_wsl_ps
+
+- name: windows_runners is for a WSL machine
+  ansible.builtin.assert:
+    quiet: true
+    that:
+      - github_runner_wsl_interop_stat.stat.exists
+      - github_runner_wsl_ps.stat.exists
+      - nova_windows_runners is sequence and nova_windows_runners is not string
+    fail_msg: >-
+      GITHUB-RUNNERS {{ inventory_hostname }}: its record names windows_runners, but this is not a WSL machine with
+      interop ({{ github_runner_wsl_powershell }}); clear the field: nova-config machine set {{ inventory_hostname }} --windows_runners ''
+
+# Every wanted runner, one entry each: its target, name, directory and labels. The labels are the role's own for the
+# Windows side (github_runner_wsl_labels: fleet and the machine's name; GitHub adds self-hosted, X64 and Windows) and the
+# record's extras for the target.
+- name: the wanted Windows runners
+  ansible.builtin.set_fact:
+    github_runner_win_want: >-
+      {%- set out = [] -%}
+      {%- for t in nova_windows_runners -%}
+      {%- set path = t.url | regex_replace('^https://[^/]+/', '') -%}
+      {%- set slug = path | replace('/', '-') -%}
+      {%- for i in range(1, (t.count | int) + 1) -%}
+      {%- set _ = out.append({'url': t.url, 'scope': t.scope, 'path': path, 'index': i,
+            'name': inventory_hostname ~ '-win-' ~ slug ~ '-' ~ i,
+            'dir': github_runner_wsl_base_dir ~ '\\' ~ slug ~ '-' ~ i,
+            'labels': (github_runner_wsl_labels + (t.labels | default([]))) | unique | sort | join(',')}) -%}
+      {%- endfor -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: the Windows runners as the machine has them
+  ansible.builtin.include_tasks: wsl-windows-state.yml
+
+- name: the runners that need registering
+  ansible.builtin.set_fact:
+    github_runner_win_need: "{{ github_runner_win_want | rejectattr('dir', 'in', github_runner_win_registered) | list }}"
+
+- name: the plan
+  ansible.builtin.debug:
+    msg: >-
+      RUNNER-PLAN {{ inventory_hostname }} windows={{ github_runner_win_want | length }}
+      register={{ github_runner_win_need | map(attribute='name') | join(',') or '-' }}
+      labels={{ github_runner_win_want | map(attribute='labels') | unique | join(' ') }} (check: nothing changed)
+  when: ansible_check_mode
+
+- name: the script, staged on the Windows side
+  when: not ansible_check_mode
+  block:
+    - name: the staging directory
+      ansible.builtin.file: { path: "{{ github_runner_wsl_stage_unix }}", state: directory, mode: "0755" }
+    - name: runner-windows.ps1
+      ansible.builtin.copy: { src: runner-windows.ps1, dest: "{{ github_runner_wsl_stage_unix }}/runner-windows.ps1", mode: "0644" }
+
+- name: each wanted runner unpacked, with the .env lines the role owns
+  ansible.builtin.shell: >-
+    "{{ github_runner_wsl_powershell }}" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File {{ github_runner_wsl_script | quote }}
+    -Action install -Dir {{ item.dir | quote }} -Cache {{ github_runner_wsl_cache | quote }}
+    -Version {{ github_runner_version | quote }} -Sha {{ github_runner_sha256['win-x64'] | quote }}
+    {{ ('-PathList ' ~ (github_runner_windows_path | join(';') | quote)) if github_runner_windows_path | length > 0 else '' }} </dev/null
+  args: { executable: /bin/sh }
+  loop: "{{ github_runner_win_want }}"
+  loop_control: { label: "{{ item.name }}" }
+  register: github_runner_win_installed
+  changed_when: github_runner_win_installed.stdout is search('DOWNLOADED|EXTRACTED|ENV-CHANGED')
+  when: not ansible_check_mode
+
+- name: register, one target at a time (each target's own token)
+  ansible.builtin.include_tasks: wsl-windows-register.yml
+  loop: "{{ github_runner_win_need | map(attribute='url') | unique | list }}"
+  loop_control: { loop_var: github_runner_win_url }
+
+- name: each wanted runner's service starts at boot and is running
+  ansible.builtin.shell: >-
+    "{{ github_runner_wsl_powershell }}" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File {{ github_runner_wsl_script | quote }}
+    -Action ensure -Dir {{ item.dir | quote }} </dev/null
+  args: { executable: /bin/sh }
+  loop: "{{ github_runner_win_want }}"
+  loop_control: { label: "{{ item.name }}" }
+  register: github_runner_win_service
+  changed_when: "' started ' in github_runner_win_service.stdout"
+  when: not ansible_check_mode
+
+# The CI rules on these runners: nova-ci-rules.ps1 apply with their directories (tasks/ci-rules.yml does every runner
+# on the machine; this does the ones set up here). An idle runner whose .env changed is restarted to read it.
+- name: the CI rules on these runners
+  when: not ansible_check_mode
+  block:
+    - name: the hooks, staged
+      ansible.builtin.copy: { src: "ci-rules/{{ item }}", dest: "{{ github_runner_wsl_ci_stage_unix }}/{{ item }}", mode: "0644" }
+      loop: [nova-ci-rules.ps1, job-started.ps1, job-completed.ps1]
+    - name: apply them
+      ansible.builtin.shell: >-
+        "{{ github_runner_wsl_powershell }}" -NoProfile -NonInteractive -ExecutionPolicy Bypass
+        -File {{ github_runner_wsl_ci_script | quote }} apply {{ github_runner_ci_limit_seconds }}
+        {{ github_runner_ci_push_branches | join(' ') | quote }} {{ github_runner_win_want | map(attribute='dir') | map('quote') | join(' ') }}
+        </dev/null
+      args: { executable: /bin/sh }
+      register: github_runner_win_ci
+      failed_when: github_runner_win_ci.rc != 0 or 'restart=failed' in github_runner_win_ci.stdout or 'denied=' in github_runner_win_ci.stdout
+      changed_when: "'hooks=set' in github_runner_win_ci.stdout or 'restart=done' in github_runner_win_ci.stdout"
+
+- name: the CI rules' receipt
+  ansible.builtin.debug:
+    msg: "{{ github_runner_win_ci.stdout_lines | map('regex_replace', '^CI-RULES ', 'CI-RULES ' ~ inventory_hostname ~ ' ') | join('\n') }}"
+  when: not ansible_check_mode
+
+- name: the Windows runners as the machine has them now
+  ansible.builtin.include_tasks: wsl-windows-state.yml
+  when: not ansible_check_mode
+
+# GitHub's own list, per target, read on the control node with gh (as main.yml does for the other runners); a runner
+# that has just started is given a minute.
+- name: the runners as GitHub lists them
+  ansible.builtin.command:
+    argv:
+      - "{{ github_runner_gh }}"
+      - api
+      - "{{ 'orgs' if item.scope == 'org' else 'repos' }}/{{ item.url | regex_replace('^https://[^/]+/', '') }}/actions/runners"
+      - --paginate
+      - -q
+      - '.runners[] | "\(.name) \(.status)"'
+  delegate_to: localhost
+  become: false
+  loop: "{{ nova_windows_runners }}"
+  loop_control: { label: "{{ item.url }}" }
+  register: github_runner_win_listed
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  vars:
+    github_runner_win_online_want: "{{ github_runner_win_want | selectattr('url', 'equalto', item.url) | map(attribute='name') | map('regex_replace', '$', ' online') | list }}"
+  until: >-
+    ansible_check_mode or github_runner_win_listed.rc != 0
+    or (github_runner_win_online_want | difference(github_runner_win_listed.stdout_lines) | length == 0)
+  retries: 12
+  delay: 5
+
+- name: the counts
+  ansible.builtin.set_fact:
+    github_runner_win_unread: "{{ github_runner_win_listed.results | rejectattr('rc', 'equalto', 0) | map(attribute='item.url') | list }}"
+    github_runner_win_registered_n: "{{ github_runner_win_want | selectattr('dir', 'in', github_runner_win_registered) | list | length }}"
+    github_runner_win_online_n: >-
+      {{ github_runner_win_want | map(attribute='name') | map('regex_replace', '$', ' online')
+         | intersect(github_runner_win_listed.results | map(attribute='stdout_lines') | flatten) | length }}
+
+- name: the Windows runners' receipt
+  ansible.builtin.debug:
+    msg: >-
+      GITHUB-RUNNERS host={{ inventory_hostname }} windows={{ github_runner_win_want | length }}
+      registered={{ github_runner_win_registered_n }} online={{ github_runner_win_online_n }}
+      {{- (' unread=' ~ github_runner_win_unread | join(',')) if github_runner_win_unread | length > 0 else '' }}
+      {{- ' (check: nothing changed)' if ansible_check_mode else '' }}
+
+- name: every wanted Windows runner is registered and online in GitHub
+  ansible.builtin.assert:
+    quiet: true
+    that:
+      - github_runner_win_unread | length == 0
+      - github_runner_win_registered_n | int == github_runner_win_want | length
+      - github_runner_win_online_n | int == github_runner_win_want | length
+    fail_msg: >-
+      GITHUB-RUNNERS {{ inventory_hostname }}: not every Windows runner is registered and online (see the GITHUB-RUNNERS
+      line); check: {{ github_runner_gh }} api repos/<owner>/<repo>/actions/runners (orgs/<org> for an organization)
+  when: not ansible_check_mode
+
+- name: retire v1's Windows side (opt-in)
+  ansible.builtin.include_tasks: wsl-windows-retire-v1.yml
+  when: nova_windows_retire_v1 | bool

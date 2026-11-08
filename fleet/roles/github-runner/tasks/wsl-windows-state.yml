@@ -1,0 +1,19 @@
+---
+# Which wanted Windows runners are registered (their directory holds .runner): read only, so it runs under --check
+# too. The query goes to powershell.exe as -EncodedCommand, so nothing is staged for it and no quoting reaches it.
+- name: the Windows runners' directories, read
+  ansible.builtin.shell: >-
+    "{{ github_runner_wsl_powershell }}" -NoProfile -NonInteractive -EncodedCommand {{ github_runner_wsl_query | b64encode(encoding='utf-16-le') }}
+    </dev/null
+  args: { executable: /bin/sh }
+  vars:
+    github_runner_wsl_query: >-
+      foreach ($d in @({% for r in github_runner_win_want %}'{{ r.dir }}'{{ '' if loop.last else ',' }}{% endfor %})) {
+      if (Test-Path -LiteralPath (Join-Path $d '.runner')) { 'REG ' + $d } }
+  register: github_runner_win_state
+  changed_when: false
+  check_mode: false
+
+- name: the registered ones
+  ansible.builtin.set_fact:
+    github_runner_win_registered: "{{ github_runner_win_state.stdout_lines | select('match', '^REG ') | map('regex_replace', '^REG ', '') | list }}"

@@ -1,0 +1,21 @@
+# purpose: a WSL machine's Windows-side GitHub Actions runners, from its record's windows_runners, through WSL interop
+#
+# The machines whose record names windows_runners (nova-config machine set <m> --windows_runners
+# '<url>=<count>[:<label>+<label>],...'); every other machine is skipped. Each runner is <machine>-win-<slug>-<i> in
+# C:\actions-runner\<slug>-<i>, a Windows service, with the CI rules. fleet/README.md, "Windows runners of a WSL machine".
+#
+#   nova-fleet windows-runners --check -- -l <machine>
+#   nova-fleet windows-runners -- -l <machine>
+#   nova-fleet windows-runners -- -l <machine> -e '{"nova_windows_retire_v1": true}'   # then retire v1's Windows side
+#
+# gh on the control node, logged in with admin on each repository or organization, asks GitHub for the tokens.
+- name: the Windows-side runners of WSL machines
+  hosts: bench:runner:services   # the fleet's workers, as ci-rules; a machine without windows_runners is skipped
+  gather_facts: true
+  gather_subset: [min]
+  tasks:
+    - name: the Windows-side runners
+      ansible.builtin.include_role:
+        name: github-runner
+        tasks_from: wsl-windows.yml
+      when: nova_windows_runners | default([]) | length > 0

@@ -1,0 +1,44 @@
+---
+# v1's Windows runners of one target, github_runner_v1_url: config.cmd remove with a removal token from token.yml on
+# runner-windows.ps1's stdin (never an argument, a file or a line of output; the task is pipelined), the service gone,
+# the directory moved aside. A directory already gone says ABSENT.
+- name: this target's v1 runners
+  ansible.builtin.set_fact:
+    github_runner_v1_target: "{{ github_runner_windows_v1_runners | selectattr('url', 'equalto', github_runner_v1_url) | list }}"
+
+- name: a removal token for this target
+  ansible.builtin.include_tasks: token.yml
+  vars:
+    github_runner_scope: "{{ 'repo' if (github_runner_v1_url | regex_replace('^https://[^/]+/', '')) is search('/') else 'org' }}"
+    github_runner_path: "{{ github_runner_v1_url | regex_replace('^https://[^/]+/', '') }}"
+    github_runner_need: []
+
+- name: remove from GitHub, the service gone, the directory moved aside (the token reaches the runner on its stdin)
+  ansible.builtin.shell: >-
+    "{{ github_runner_wsl_powershell }}" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File {{ github_runner_wsl_script | quote }}
+    -Action retire -Dir {{ item.dir | quote }} -Aside {{ github_runner_v1_aside | quote }}
+  args:
+    executable: /bin/sh
+    stdin: "{{ github_runner_token }}"
+  vars: { ansible_pipelining: true }
+  loop: "{{ github_runner_v1_target }}"
+  loop_control: { label: "{{ item.dir }}" }
+  no_log: true
+  failed_when: false
+  register: github_runner_v1_retired
+
+- name: the lines so far (token redacted)
+  ansible.builtin.set_fact:
+    github_runner_v1_lines: >-
+      {{ github_runner_v1_lines | default([]) + (github_runner_v1_retired.results
+         | map(attribute='stdout_lines') | flatten | map('replace', github_runner_token, 'REDACTED')
+         | map('regex_replace', '[A-Z0-9]{20,}', 'REDACTED') | reject('match', '^CONFIG ') | list) }}
+
+- name: every v1 runner of this target retired
+  ansible.builtin.assert:
+    quiet: true
+    that: github_runner_v1_retired.results | rejectattr('rc', 'equalto', 0) | list | length == 0
+    fail_msg: >-
+      V1-RETIRE {{ inventory_hostname }}: a v1 runner of {{ github_runner_v1_url }} did not retire:
+      {{ (github_runner_v1_retired.results | rejectattr('rc', 'equalto', 0) | map(attribute='stdout_lines') | flatten
+          | map('replace', github_runner_token, 'REDACTED') | map('regex_replace', '[A-Z0-9]{20,}', 'REDACTED') | join('; ')) | truncate(800) }}

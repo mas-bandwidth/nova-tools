@@ -60,3 +60,71 @@ github_runner_ci_limit_seconds: 120
 # The branches a push may run CI on, as globs (tags always may): * and ? stop at a /, so sprint/* is one segment. Any
 # other branch gets CI through its pull request. One list for the fleet, like the limit.
 github_runner_ci_push_branches: [main, sprint/*]
+
+# ---- The Windows side of a WSL machine (tasks/wsl-windows.yml, the windows-runners play; fleet/README.md, "Windows
+# runners of a WSL machine"). Its runners are the machine record's windows_runners (the inventory's
+# nova_windows_runners); these are how they are reached and laid out.
+github_runner_wsl_interop: /proc/sys/fs/binfmt_misc/WSLInterop
+github_runner_wsl_powershell: /mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe
+github_runner_wsl_stage_unix: /mnt/c/ProgramData/nova-runner-stage
+github_runner_wsl_script: 'C:\ProgramData\nova-runner-stage\runner-windows.ps1'
+github_runner_wsl_ci_stage_unix: /mnt/c/ProgramData/nova-ci-rules-stage
+github_runner_wsl_ci_script: 'C:\ProgramData\nova-ci-rules-stage\nova-ci-rules.ps1'
+github_runner_wsl_base_dir: 'C:\actions-runner'
+github_runner_wsl_cache: 'C:\actions-runner\.cache'
+# The labels every Windows-side runner gets, before the record's extras (GitHub adds self-hosted, X64 and Windows).
+# Not the machine's roles, os and arch as on Linux: a job that selects [self-hosted, bench] or [self-hosted, amd64]
+# must never land on Windows.
+github_runner_wsl_labels: "{{ ['fleet', inventory_hostname] }}"
+# The job PATH each Windows runner's .env and .path carry, so a job sees these and nothing of the machine PATH (console
+# SDKs, a second Visual Studio, WSL's System32\bash.exe ahead of Git's). Empty leaves PATH to the service.
+github_runner_windows_path:
+  - 'C:\Program Files\Git\bin'
+  - 'C:\Program Files\Git\cmd'
+  - 'C:\Program Files\Python39'
+  - 'C:\Program Files\Python39\Scripts'
+  - 'C:\Program Files\CMake\bin'
+  - 'C:\Program Files\PowerShell\7'
+  - 'C:\Program Files\dotnet'
+  - 'C:\Program Files\Go\bin'
+  - 'C:\Windows\System32'
+  - 'C:\Windows'
+  - 'C:\Windows\System32\Wbem'
+  - 'C:\Windows\System32\WindowsPowerShell\v1.0'
+  - 'C:\Windows\System32\OpenSSH'
+
+# Retiring v1's Windows side: opt-in, -e '{"nova_windows_retire_v1": true}', and refused unless every v2 Windows runner
+# the record names is registered and online. Nothing is deleted: each item is moved under <aside_root>-<yyyymmdd>\.
+nova_windows_retire_v1: false
+github_runner_windows_v1_aside_root: 'C:\nova-retired'
+# v1's runners (rowan-tools fleet/runners-windows.yml): removed from GitHub with a removal token, service gone, moved aside.
+github_runner_windows_v1_runners:
+  - { dir: 'C:\actions-runner-rocketnet\1', url: https://github.com/mas-bandwidth/rocketnet }
+  - { dir: 'C:\actions-runner-rocketnet\2', url: https://github.com/mas-bandwidth/rocketnet }
+  - { dir: 'C:\actions-runner-rocketnet\3', url: https://github.com/mas-bandwidth/rocketnet }
+  - { dir: 'C:\actions-runner-rgd\1', url: https://github.com/robotgamedevelopers }
+  - { dir: 'C:\actions-runner-rgd\2', url: https://github.com/robotgamedevelopers }
+# v1's files, moved aside after its runners (a wildcard is allowed): the ci-hold hooks and the winlock state, the
+# installer script and its backups, the runner zip cache, then the emptied parent dirs, and the Windows tool installer.
+# Each runner's .env.bak goes with its runner directory.
+github_runner_windows_v1_items:
+  - 'C:\rowan-jobs\ci-hold'
+  - 'C:\rowan-jobs\win.lock'
+  - 'C:\rowan-jobs\win.lock.gate'
+  - 'C:\rowan-jobs\win.lock.d'
+  - 'C:\actions-runner-rocketnet\runner-windows.ps1*'
+  - 'C:\actions-runner-rocketnet\cache'
+  - 'C:\actions-runner-rocketnet'
+  - 'C:\actions-runner-rgd\runner-windows.ps1*'
+  - 'C:\actions-runner-rgd\cache'
+  - 'C:\actions-runner-rgd'
+  - 'C:\fleet-windows-tools'
+# v1's scheduled tasks, unregistered by name (under \): the duplicate WSL keepalive. "WSL2 keepalive (Ubuntu-24.04)"
+# stays: it keeps WSL, and so this channel, up at boot.
+github_runner_windows_v1_tasks: [nova-wsl-keepalive]
+# What retiring leaves, and why: printed as "kept:" lines.
+github_runner_windows_v1_kept:
+  - 'C:\tools (CI may use goose, lobster, dxc, ccache)'
+  - 'firewall rules fleet-rocketnet-lan-proof-udp-40000 and "rocketnet load_split (rowan, 2026-10-22)" (not v1 runner state; their owner decides)'
+  - 'job-scratch dirs under C:\ (C:\rowan-jobs\* and the rest: a scratch sweep, not this play)'
+  - '\WSL2 keepalive (Ubuntu-24.04) (keeps WSL up at boot)'
