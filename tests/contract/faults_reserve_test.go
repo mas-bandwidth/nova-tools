@@ -29,7 +29,7 @@ func init() {
 		Fault{Tool: "reserve", Name: "run: directory path runs through a file",
 			Setup: func(e *Env) { e.Write("afile", "x"); e.Var("r", e.Dir+"/afile/r") },
 			Argv:  []string{"run", "--dir", "{r}", "--slots", "2", "--", "true"},
-			Want:  Want{Reason: []string{"not a directory"}}, Known: "reserve-dir-refusal"},
+			Want:  Want{Reason: []string{"not a directory"}}},
 		Fault{Tool: "reserve", Name: "run: parent directory not writable",
 			Setup: func(e *Env) { os.Mkdir(e.Dir+"/ro", 0o755); e.Chmod(e.Dir+"/ro", 0o500); e.Var("r", e.Dir+"/ro/r") },
 			Argv:  []string{"run", "--dir", "{r}", "--slots", "2", "--", "true"},

@@ -34,7 +34,8 @@ A new store takes four commands, in this order: init, seat add, set, exec.
 
 nova-secrets init --store <dir> --recovery <age-public-key> [--pins <dir>]
   Create a store in <dir>, which must be absent or empty (its parent must exist) and not inside another git
-  work tree: git init, .sops.yaml with no rules, recovery.pub, one commit. Refuses a store that exists.
+  work tree: git init, .sops.yaml with no rules, recovery.pub, one commit. Refuses a store that exists, but finishes one
+  whose commit failed.
   The recovery key is a public key (age-keygen -y <file>); keep its private half offline. --pins also writes
   it to <dir>/recovery.pub, the control node's pin, outside the store (grant reads it).
   Prints: SECRETS INIT OK store=<dir>, then next: <this node's seat add, or the age-keygen -o that makes its key first>
@@ -75,6 +76,7 @@ nova-secrets names --store <dir> [--as <seat>]
 
 nova-secrets exec --only NAME[,NAME] --store <dir> --key <file> [--as <seat>] [--sops <path>] -- <cmd> [args...]
   Decrypt <seat>.yaml and <seat>.grants.yaml (a name in both is refused) and become <cmd> with only the --only values added to its environment.
+  A --only value that is null or empty is refused.
   Prints SECRETS EXEC STARTING as=<seat> keys=<n> cmd=<name> on stderr, then becomes the command (nothing of the tool
   runs after it: the shell reports a command killed by a signal as 128+N, as for any process).
   Exit: the command's own status; 125 when exec refused at run time and the command never ran.
@@ -248,11 +250,21 @@ func (t tool) parse(verb string, args []string, npos int, needKey bool, also ...
 		}
 		return o, nil, bad("%s", msg)
 	}
+	takes := map[string]string{"init": "store recovery pins", "seat add": "store", "seat list": "store", "seat remove": "store pins", "names": "store as",
+		"set": "store key pins as recovery sops", "grant": "to pins store key as pub recovery sops", "exec": "only require store key as sops"}[verb]
+	fs.Visit(func(f *flag.Flag) {
+		if err == nil && !slices.Contains(strings.Fields(takes), f.Name) {
+			err = bad("unknown flag --%s", f.Name)
+		}
+	})
+	if err != nil {
+		return o, nil, err
+	}
 	if pos = append(pos, fs.Args()...); len(pos) != npos {
 		return o, nil, bad("takes %d argument(s) before its flags, got %d", npos, len(pos))
 	}
 	var missing []string
-	if verb == "exec" && o.only == "" {
+	if verb == "exec" && strings.Trim(o.only, ", \t") == "" { // --only , names nothing
 		missing = append(missing, "--only NAME[,NAME]")
 	}
 	if o.store == "" {
@@ -274,11 +286,6 @@ func (t tool) parse(verb string, args []string, npos int, needKey bool, also ...
 			missing = append(missing, "--pins <dir> (or NOVA_SECRETS_PINS)")
 		}
 	}
-	for flag, v := range map[string]string{"to": o.to, "pub": o.pub, "recovery": o.recovery, "pins": o.pins} {
-		if v != "" && verb != "grant" && !((verb == "init" || verb == "set") && (flag == "recovery" || flag == "pins")) && !(verb == "seat remove" && flag == "pins") {
-			return o, nil, bad("unknown flag --%s", flag)
-		}
-	}
 	if needKey && o.key == "" {
 		if o.key = envValue(t.environ, "NOVA_SECRETS_KEY"); o.key == "" && verb == "set" {
 			o.key = t.keyFile(cmp.Or(o.as, t.ownSeat()))
@@ -297,9 +304,6 @@ func (t tool) parse(verb string, args []string, npos int, needKey bool, also ...
 		o.sops = "sops"
 	}
 	noSeat := verb == "init" || strings.HasPrefix(verb, "seat ")
-	if noSeat && o.as != "" {
-		return o, nil, bad("unknown flag --as")
-	}
 	if o.as == "" && !noSeat {
 		o.as = t.ownSeat() // an empty name fails the seat check below
 	}
@@ -378,18 +382,24 @@ func (t tool) exec(args []string) error {
 	if err != nil {
 		return err
 	}
-	var pick, missing []string
+	var pick, missing, empty []string
 	for _, n := range strings.Split(o.only, ",") {
 		if n = strings.TrimSpace(n); n == "" || slices.Contains(pick, n) {
 			continue
 		}
-		if _, ok := values[n]; !ok {
+		if v, ok := values[n]; !ok {
 			missing = append(missing, n)
+		} else if v == "" { // a null or "" in the file: set never writes one
+			empty = append(empty, n)
 		}
 		pick = append(pick, n)
 	}
 	if len(missing) > 0 {
 		return deny("no-name", "unknown secret name(s) %s: %s holds no such name; run: nova-secrets names --store %s --as %s", strings.Join(missing, ", "), o.file(o.as), o.store, o.as)
+	}
+	if len(empty) > 0 {
+		return refuse("%s is empty (null or \"\") in %s's files, and a command is never handed an empty secret; set it: run: nova-secrets set %s --store %s --key %s --as %s",
+			strings.Join(empty, ", "), o.as, empty[0], q(o.store), q(o.key), o.as)
 	}
 	// The inherited environment loses every name the seat holds (a value left out
 	// must not arrive another way) and every sops identity variable.
@@ -479,17 +489,22 @@ func (t tool) set(args []string) error {
 // absent elsewhere is no-store; absent with a key, the recovery key or the pin there is partial: a store made now
 // would not match them, and nothing that exists is ever overwritten.
 func (t tool) bootstrap(o opts) error {
-	if _, err := os.Stat(o.store); err == nil {
-		return nil
-	}
 	dir := filepath.Dir(t.keyFile("x"))
+	rk := filepath.Join(dir, "recovery.key")
+	resume := false // a store this bootstrap made and stopped in before the seat (a failed commit): finished with its keys
+	if _, err := os.Stat(o.store); err == nil {
+		cfg, _ := os.ReadFile(filepath.Join(o.store, ".sops.yaml")) // ignored: an unreadable one is no store to finish
+		if _, kerr := os.Lstat(rk); o.store != filepath.Join(dir, "store") || string(cfg) != "creation_rules: []\n" || kerr != nil {
+			return nil
+		}
+		resume = true
+	}
 	if o.store != filepath.Join(dir, "store") {
 		return deny("no-store", "store %s does not exist; run: nova-secrets init --store %s --recovery <age-public-key>", o.store, o.store)
 	}
-	rk := filepath.Join(dir, "recovery.key")
 	var there []string
 	for _, p := range []string{o.key, rk, filepath.Join(o.pins, "recovery.pub")} {
-		if _, err := os.Lstat(p); err == nil {
+		if _, err := os.Lstat(p); err == nil && !resume {
 			there = append(there, p)
 		}
 	}
@@ -497,16 +512,25 @@ func (t tool) bootstrap(o opts) error {
 		return deny("partial", "there is no store at %s, but %s: a store made now would not match, and nothing that exists is overwritten; "+
 			"put the store back (git clone <its upstream> %s), or move those aside and run again", o.store, strings.Join(there, " and ")+" exist", o.store)
 	}
+	made := resume // the recovery key exists from here, so its backup line is printed whatever follows
+	defer func() {
+		if made {
+			fmt.Fprintf(t.stdout, "SECRETS SET NEW store=%s seat=%s key=%s: back up %s, the recovery key, off this machine now: it opens every seat if a key is lost\n", o.store, o.as, o.key, rk)
+		}
+	}()
 	pub := map[string]string{}
 	for _, k := range []string{rk, o.key} {
-		if err := os.MkdirAll(filepath.Dir(k), 0o700); err != nil {
-			return refuse("creating %s: %v", filepath.Dir(k), err)
-		}
-		if _, err := t.run(nil, t.environ, filepath.Dir(k), "age-keygen", "-o", k); err != nil {
-			return refuse("age-keygen -o %s: %v; install age", k, err)
-		}
-		if err := os.Chmod(k, 0o600); err != nil {
-			return refuse("chmod 600 %s: %v", k, err)
+		if !resume {
+			if err := os.MkdirAll(filepath.Dir(k), 0o700); err != nil {
+				return refuse("creating %s: %v", filepath.Dir(k), err)
+			}
+			if _, err := t.run(nil, t.environ, filepath.Dir(k), "age-keygen", "-o", k); err != nil {
+				return refuse("age-keygen -o %s: %v; install age", k, err)
+			}
+			made = true
+			if err := os.Chmod(k, 0o600); err != nil {
+				return refuse("chmod 600 %s: %v", k, err)
+			}
 		}
 		p, err := t.publicOf(opts{store: filepath.Dir(k), key: k})
 		if err != nil {
@@ -516,14 +540,12 @@ func (t tool) bootstrap(o opts) error {
 	}
 	quiet := t
 	quiet.stdout = io.Discard
-	if err := quiet.initStore([]string{"--store", o.store, "--recovery", pub[rk], "--pins", o.pins}); err != nil {
-		return err
+	if !resume || t.initPending(o.store, pub[rk]) {
+		if err := quiet.initStore([]string{"--store", o.store, "--recovery", pub[rk], "--pins", o.pins}); err != nil {
+			return fmt.Errorf("%w, then run the same nova-secrets set again", err) // which finishes this store with these keys
+		}
 	}
-	if err := quiet.seatAdd([]string{o.as, pub[o.key], "--store", o.store}); err != nil {
-		return err
-	}
-	fmt.Fprintf(t.stdout, "SECRETS SET NEW store=%s seat=%s key=%s: back up %s, the recovery key, off this machine now: it opens every seat if a key is lost\n", o.store, o.as, o.key, rk)
-	return nil
+	return quiet.seatAdd([]string{o.as, pub[o.key], "--store", o.store})
 }
 
 func (t tool) seatAdd(args []string) error {
@@ -541,7 +563,7 @@ func (t tool) seatAdd(args []string) error {
 		return refuse("%s/recovery.pub is missing or not an age public key; run: age-keygen -y <recovery.key> > %s/recovery.pub, then commit it", o.store, o.store)
 	}
 	if rec == pub {
-		return refuse("that key is the recovery key, not a seat's")
+		return refuse("that key is the recovery key, not a seat's; make the seat a key of its own: run: age-keygen -o %s", q(t.keyFile(seat)))
 	}
 	cfgPath := filepath.Join(o.store, ".sops.yaml")
 	cfg, err := os.ReadFile(cfgPath)
@@ -550,7 +572,7 @@ func (t tool) seatAdd(args []string) error {
 	}
 	out, err := addRule(cfg, seat, pub+","+rec)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w; run: nova-secrets seat list --store %s", err, q(o.store))
 	}
 	if err := writeFile(cfgPath, out, 0o644); err != nil {
 		return err
@@ -560,6 +582,11 @@ func (t tool) seatAdd(args []string) error {
 	}
 	home, _ := os.UserHomeDir()
 	pins := cmp.Or(envValue(t.environ, "NOVA_SECRETS_PINS"), filepath.Join(cmp.Or(envValue(t.environ, "HOME"), home), ".config", "nova-secrets", "pins"))
+	// where init --pins put this store's recovery pin, as the guide does: beside the store
+	beside := filepath.Join(filepath.Dir(o.store), "pins")
+	if b, _ := os.ReadFile(filepath.Join(beside, "recovery.pub")); envValue(t.environ, "NOVA_SECRETS_PINS") == "" && strings.TrimSpace(string(b)) == rec { // ignored: no pin there
+		pins = beside
+	}
 	// next: set as the seat just added, on this store; --key only when this machine holds that seat's key, else set reads NOVA_SECRETS_KEY
 	then := []string{"nova-secrets", "set", "DB_PASSWORD", "--as", seat, "--store", o.store}
 	key := t.keyFile(seat)
@@ -880,7 +907,10 @@ func plainNames(o opts, name string) ([]string, error) {
 	if err != nil || !ok {
 		return nil, err
 	}
-	b, _ := os.ReadFile(p)
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return nil, refuse("reading %s: %v; run: ls -l %s", p, err, q(p))
+	}
 	_, top, err := parseTop(b)
 	if err != nil {
 		return nil, refuse("%s does not parse as a sops file (anchors, aliases and merge keys are refused)", p)
@@ -1248,7 +1278,7 @@ func addRule(cfg []byte, seat, age string) ([]byte, error) {
 				return refuse(".sops.yaml: a creation rule is not a map; it is left as it was")
 			}
 			if pr := field(r, "path_regex"); pr != nil && pr.Value == pathRegex {
-				return refuse(".sops.yaml already has a rule for %s", seat)
+				return refuse(".sops.yaml already has a rule for %s (a new key for it: seat remove it first)", seat)
 			}
 			if a := field(r, "age"); a != nil && strings.Contains(a.Value, strings.SplitN(age, ",", 2)[0]) {
 				return refuse(".sops.yaml already has a seat with that key")
@@ -1287,7 +1317,10 @@ func (t tool) names(args []string) error {
 			continue
 		}
 		found = true
-		b, _ := os.ReadFile(p)
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return refuse("reading %s: %v; run: ls -l %s", p, err, q(p))
+		}
 		_, top, err := parseTop(b)
 		if err != nil {
 			return refuse("%s does not parse as a sops file (anchors, aliases and merge keys are refused)", p)
@@ -1341,13 +1374,14 @@ func (t tool) initStore(args []string) error {
 	} else if err != nil {
 		return refuse("%s cannot be read: %v", o.store, err)
 	}
+	pending := t.initPending(o.store, rec) // written by an init whose commit failed: this one commits it
 	var names []string
 	for _, e := range entries {
-		if names = append(names, e.Name()); e.Name() == ".sops.yaml" || e.Name() == "recovery.pub" {
+		if names = append(names, e.Name()); !pending && (e.Name() == ".sops.yaml" || e.Name() == "recovery.pub") {
 			return refuse("store %s exists; use: nova-secrets seat add <seat> <age-public-key> --store %s", o.store, o.store)
 		}
 	}
-	if names = slices.DeleteFunc(names, func(n string) bool { return n == ".git" }); len(names) > 0 {
+	if names = slices.DeleteFunc(names, func(n string) bool { return n == ".git" || pending && (n == ".sops.yaml" || n == "recovery.pub") }); len(names) > 0 {
 		return refuse("%s is not empty (it holds %s); init needs a directory that is absent or empty, and never touches files that are there", o.store, strings.Join(names[:min(len(names), 5)], ", "))
 	}
 	top, gerr := t.toplevel(at)
@@ -1361,7 +1395,7 @@ func (t tool) initStore(args []string) error {
 	}
 	if gerr != nil {
 		if err := t.git(o.store, "init", "-q"); err != nil {
-			return err
+			return fmt.Errorf("%w; git says why: run: git init %s, then init again", err, q(o.store))
 		}
 	}
 	files := []string{".sops.yaml", "recovery.pub"}
@@ -1370,10 +1404,8 @@ func (t tool) initStore(args []string) error {
 			return err
 		}
 	}
-	for _, g := range [][]string{append([]string{"add", "--"}, files...), append([]string{"commit", "-q", "-m", "init secrets store", "--"}, files...)} {
-		if err := t.git(o.store, g...); err != nil {
-			return err
-		}
+	if err := t.commit(o, "", "init secrets store", "the store is written: run:", files...); err != nil {
+		return err
 	}
 	seat := t.ownSeat() // next: its seat add, with its key's public half; the age-keygen -o that makes the key first
 	key := t.keyFile(seat)
@@ -1383,6 +1415,14 @@ func (t tool) initStore(args []string) error {
 	}
 	fmt.Fprintf(t.stdout, "SECRETS INIT OK store=%s\nnext: %s\n", o.store, then)
 	return nil
+}
+
+// initPending is whether store holds what init writes for the recovery key rec and no commit: an init whose commit
+// failed, which a second init finishes.
+func (t tool) initPending(store, rec string) bool {
+	cfg, _ := os.ReadFile(filepath.Join(store, ".sops.yaml"))   // ignored: absent or unreadable is not what init wrote
+	pub, _ := os.ReadFile(filepath.Join(store, "recovery.pub")) // ignored: as above
+	return string(cfg) == "creation_rules: []\n" && string(pub) == rec+"\n" && t.git(store, "rev-parse", "-q", "--verify", "HEAD") != nil
 }
 
 // pinned is the pin <dir>/<name>.pub, a public key kept on the control node outside the store, so nothing a
@@ -1525,7 +1565,8 @@ func (t tool) grant(args []string) error {
 		return err
 	}
 	if err := writeFile(filepath.Join(o.pins, o.to+".ledger"), []byte(ledger+sealedLine(out)), 0o600); err != nil {
-		return err
+		undo := map[bool]string{true: next("git", "-C", o.store, "checkout", "--", file), false: next("rm", "--", filepath.Join(o.store, file))}[present]
+		return fmt.Errorf("%w; %s is written but this node's ledger is not, so the next grant would refuse it as edited: put it back: run: %s, then grant again", err, file, undo)
 	}
 	if err := t.commitGrant(o, file, names); err != nil {
 		return err
@@ -1539,6 +1580,10 @@ func (t tool) grant(args []string) error {
 func (t tool) commit(o opts, flag, msg, done string, files ...string) error {
 	for _, g := range [][]string{append(strings.Fields("add "+flag+" --"), files...), append([]string{"commit", "-q", "-m", msg, "--"}, files...)} {
 		if err := t.git(o.store, g...); err != nil {
+			if g[0] == "commit" && t.git(o.store, "var", "GIT_COMMITTER_IDENT") != nil { // git commits only with an author
+				return fmt.Errorf("%w: git has no commit identity; %s git -C %s config user.name 'Your Name' && git -C %s config user.email you@example.com && %s",
+					err, done, q(o.store), q(o.store), next(append([]string{"git", "-C", o.store}, g...)...))
+			}
 			return fmt.Errorf("%w; %s git -C %s status", err, done, o.store)
 		}
 	}

@@ -22,7 +22,8 @@ type Store interface {
 	List(ctx context.Context, k *kind) ([]Row, error)
 	// Write adds (before empty), sets or removes (after empty) one row and
 	// appends its history row, in one transaction; it returns the history id.
-	Write(ctx context.Context, k *kind, op string, before, after Row, actor, reason string) (int64, error)
+	// With dry it runs the row's statement and rolls it back, returning 0.
+	Write(ctx context.Context, k *kind, op string, before, after Row, actor, reason string, dry bool) (int64, error)
 	// History returns history rows, newest first.
 	History(ctx context.Context, q HistoryQuery) ([]HistoryEntry, error)
 	Close()
@@ -61,7 +62,7 @@ func diagnose(pe *pgconn.PgError, k *kind, op, name string, after Row, machines,
 	case pe.Code == "23505":
 		return refused("%s %s exists; use: nova-config %s set %s", k.name, name, k.name, name)
 	}
-	return refused("%s %s: %s", k.name, name, oneLine(pe.Message))
+	return refused("%s %s: the store refused the row: %s; read the constraint, then give a value it takes; run: psql \"$NOVA_PG_DSN\" -c '\\d config.%s'", k.name, name, oneLine(pe.Message), k.table)
 }
 
 func ident(s string) string { return `"` + s + `"` }
@@ -175,7 +176,7 @@ func writeSQL(k *kind, op, name string, before, after Row) (string, []any) {
 	return "DELETE FROM config." + k.table + " WHERE name = $1" + fmt.Sprintf(same, 2), []any{name, jsonb(before.F)}
 }
 
-func (p pgStore) Write(ctx context.Context, k *kind, op string, before, after Row, actor, reason string) (int64, error) {
+func (p pgStore) Write(ctx context.Context, k *kind, op string, before, after Row, actor, reason string, dry bool) (int64, error) {
 	tx, err := p.Conn().Begin(ctx)
 	if err != nil {
 		return 0, p.Err(err, op)
@@ -198,7 +199,7 @@ func (p pgStore) Write(ctx context.Context, k *kind, op string, before, after Ro
 		return 0, p.Err(err, op)
 	}
 	if tag.RowsAffected() == 0 {
-		return 0, refused("%s %s was changed or removed by another write since it was read; nothing written; run: nova-config %s show %s, then again", k.name, name, k.name, name)
+		return 0, refused("%s %s was changed or removed by another write since it was read; nothing written; run: nova-config %s show %s, then repeat the %s", k.name, name, k.name, name, op)
 	}
 	b, a := before.F, after.F
 	if reason != "" && a != nil {
@@ -207,6 +208,9 @@ func (p pgStore) Write(ctx context.Context, k *kind, op string, before, after Ro
 	} else if reason != "" {
 		b = maps.Clone(b)
 		b["reason"] = reason
+	}
+	if dry {
+		return 0, nil // the deferred rollback undoes the statement
 	}
 	var id int64
 	err = tx.QueryRow(ctx, "INSERT INTO config.history (kind, name, op, before, after, actor) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",

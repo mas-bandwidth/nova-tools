@@ -27,7 +27,7 @@ func TestStoreErrors(t *testing.T) {
 		"42P01": SchemaMissing, "42703": SchemaMissing, "3F000": SchemaMissing,
 		"28P01": login, "28000": login,
 		"42501": "nova may not add machines",
-		"57014": "store error (SQLSTATE 57014): canceling statement due to timeout",
+		"57014": `store error (SQLSTATE 57014): canceling statement due to timeout; check the store answers, then try again; run: psql "$NOVA_PG_DSN" -c 'select 1'`,
 	} {
 		err := storeError(fmt.Errorf("list machine: %w", pe(code, "permission denied for table machines\nLINE 1: SELECT")), "nova", "add")
 		if code == "57014" {

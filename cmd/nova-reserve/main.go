@@ -50,8 +50,8 @@ Wait for a slot, run the command, free the slot; exit with the command's status.
   --exclusive  take every slot: wait for every holder and keep new ones out
   --wait D     give up after D (above 0: 90s, 15m), exit 1; default no bound
   --why TEXT   a label for status and refusals
-The command is found before a slot is taken (127, 126). It dies with nova-reserve, even on SIGKILL (on macOS and the BSDs a
-watchdog process kills its group within about a second).
+The command is found before a slot is taken (127, 126). It dies with nova-reserve, even on SIGKILL (a watchdog
+process kills its group within about a second; on Windows, a job object at once).
 `,
 	"hold": `nova-reserve hold [--for D] [--slots N | --exclusive] [--wait D] [--why TEXT] [--dir DIR]
 
@@ -368,7 +368,10 @@ func do(o options, w world) error {
 		if errors.Is(err, fs.ErrPermission) {
 			return refuse(2, "%s %s: parent %s is not writable by this user; run: ls -ld %s", o.dirFrom, o.dir, parent, shellQuote(parent))
 		}
-		return err
+		return refuse(2, "%s %s: %v; run: ls -ld %s", o.dirFrom, o.dir, errors.Unwrap(err), shellQuote(parent))
+	}
+	if fi, err := os.Stat(o.dir); err == nil && !fi.IsDir() {
+		return refuse(2, "%s %s is a file, not a directory; run: ls -ld %s", o.dirFrom, o.dir, shellQuote(o.dir))
 	}
 	// ignored: only the directory's owner may widen it; others share it as it is
 	_ = os.Chmod(o.dir, 0o777|os.ModeSticky)
@@ -380,7 +383,9 @@ func do(o options, w world) error {
 		return err
 	}
 	defer t.release()
-	t.mark(t.name())
+	if err := t.mark(t.name()); err != nil {
+		return err
+	}
 	out, lead := w.stderr, "nova-reserve: "
 	if o.verb == "hold" {
 		out, lead = w.stdout, ""
@@ -453,11 +458,11 @@ func readCapacity(dir string) (capacity, bool, error) {
 func writeCapacity(dir string, n, pid int, at time.Time) error {
 	path := filepath.Join(dir, "capacity")
 	rec := fmt.Appendf(nil, "%d\npid %d at %s\n", n, pid, at.UTC().Format(time.RFC3339))
-	target := path
+	target, flags := path, os.O_RDWR // no O_CREATE: fs.protected_regular refuses it on another user's file
 	if _, err := os.Lstat(path); errors.Is(err, fs.ErrNotExist) {
-		target = path + "." + strconv.Itoa(pid) + ".tmp"
+		target, flags = path+"."+strconv.Itoa(pid)+".tmp", os.O_RDWR|os.O_CREATE
 	}
-	f, err := os.OpenFile(target, os.O_RDWR|os.O_CREATE, 0o666)
+	f, err := os.OpenFile(target, flags, 0o666)
 	if err != nil {
 		return err
 	}
@@ -515,7 +520,8 @@ func setCapacity(o options, w world) error {
 	}
 	defer free()
 	if err := writeCapacity(o.dir, o.slots, w.pid, w.now()); err != nil {
-		return err
+		p := filepath.Join(o.dir, "capacity")
+		return refuse(2, "%v; run: sudo rm -f %s && nova-reserve %s", err, shellQuote(p), quoteAll(o.args))
 	}
 	fmt.Fprintf(w.stdout, "CAPACITY SET slots=%d\n", o.slots)
 	return nil
@@ -545,9 +551,13 @@ type taker struct {
 
 func (t *taker) path(name string) string { return filepath.Join(t.o.dir, name) }
 
-// mark writes <name>.holder for status to read, and takes it away on release
-// before the lock it names. A holder is believed only while its pid lives.
-func (t *taker) mark(name string) {
+// mark writes <name>.holder for status to read, and empties and removes it on
+// release before the lock it names. A holder is believed only while its pid
+// lives. Another user's file in the sticky directory cannot be removed, so it
+// is rewritten in place, opened without O_CREATE, which fs.protected_regular
+// refuses there. A file that cannot be written is a refusal: status would
+// show the slot free, or held by a stale pid.
+func (t *taker) mark(name string) error {
 	f := []string{"pid=" + strconv.Itoa(t.w.pid), "since=" + t.w.now().UTC().Format(time.RFC3339)}
 	if t.o.why != "" {
 		f = append(f, "why="+esc(t.o.why))
@@ -556,11 +566,24 @@ func (t *taker) mark(name string) {
 		f = append(f, "cmd="+esc(strings.Join(t.o.argv, " ")))
 	}
 	p := t.path(name + ".holder")
-	// ignored: the holder file is for status to read; the lock is the slot either way
+	// ignored: a file that stays is rewritten in place
 	_ = os.Remove(p)
-	_ = os.WriteFile(p, []byte(strings.Join(f, " ")+"\n"), 0o666)
-	_ = os.Chmod(p, 0o666)
-	t.held = append(t.held, func() { _ = os.Remove(p) })
+	file, err := os.OpenFile(p, os.O_WRONLY|os.O_TRUNC, 0)
+	if errors.Is(err, fs.ErrNotExist) {
+		file, err = os.OpenFile(p, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o666)
+		// ignored: only the file's owner may widen it, and this process made it
+		_ = os.Chmod(p, 0o666)
+	}
+	if err == nil {
+		_, err = file.WriteString(strings.Join(f, " ") + "\n")
+		err = errors.Join(err, file.Close())
+	}
+	if err != nil {
+		return refuse(2, "%v; status could not show this hold; run: sudo rm -f %s && nova-reserve %s", err, shellQuote(p), quoteAll(t.o.args))
+	}
+	// ignored: emptied, a file that cannot be removed names no holder
+	t.held = append(t.held, func() { _ = os.Truncate(p, 0); _ = os.Remove(p) })
+	return nil
 }
 
 // step makes one attempt without waiting; it reports true once held.
@@ -572,7 +595,9 @@ func (t *taker) step() (bool, error) {
 				return false, err
 			}
 			t.held = []func(){gate}
-			t.mark("gate")
+			if err := t.mark("gate"); err != nil {
+				return false, err
+			}
 		}
 		all, ok, err := t.w.lock(t.path("all"), true)
 		if ok {
@@ -898,14 +923,15 @@ func runCommand(path string, argv []string) int {
 			forward(cmd, s)
 		}
 	}()
-	err = cmd.Wait()
+	ws, err := wait(cmd)
 	signal.Stop(sigs)
-	if cmd.ProcessState == nil {
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "nova-reserve:", err)
 		return 126
 	}
-	if ws, ok := cmd.ProcessState.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
+	if ws.Signaled() {
+		fmt.Fprintf(os.Stderr, "nova-reserve: %s ended by signal %s; exit %d\n", argv[0], signalName(ws.Signal()), 128+int(ws.Signal()))
 		return 128 + int(ws.Signal())
 	}
-	return cmd.ProcessState.ExitCode()
+	return ws.ExitStatus()
 }
