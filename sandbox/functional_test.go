@@ -100,7 +100,7 @@ func scratch(t *testing.T) (job, out string) {
 }
 
 // linuxOnly skips a test or step that checks the Landlock and seccomp wall: the
-// macOS sandbox-exec profile fences other things (SPEC.md, "Functional tests").
+// macOS sandbox-exec profile fences other things (README.md, Reference).
 func linuxOnly(t *testing.T) {
 	t.Helper()
 	if runtime.GOOS != "linux" {

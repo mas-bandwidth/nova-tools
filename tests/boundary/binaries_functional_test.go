@@ -14,7 +14,7 @@ import (
 
 // TestNoCompiledBinaries fails on any tracked file that is a compiled binary
 // (ELF, Mach-O or PE magic) or larger than 1 MiB outside docs/assets: build
-// outputs belong outside the checkout (docs/TESTING.md).
+// outputs belong outside the checkout (AGENTS.md).
 func TestNoCompiledBinaries(t *testing.T) {
 	base := root(t)
 	out, err := exec.Command("git", "-C", base, "ls-files", "-z").Output()

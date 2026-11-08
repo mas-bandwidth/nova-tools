@@ -31,7 +31,7 @@ func init() {
 		Fault{Tool: "sandbox", Name: "command not found", Setup: walled, Argv: []string{"--read", "{dir}", "--", "nosuchcmd"},
 			Want: Want{Exit: []int{127}, Reason: []string{"not_found"}, Remedy: None}},
 		Fault{Tool: "sandbox", Name: "working directory outside the grants", Setup: walled, Argv: []string{"--read", "{dir}/ok", "--", "ls", "."},
-			Want: Want{Reason: []string{"cwd|working directory"}}, Known: "4"},
+			Want: Want{Reason: []string{"cwd|working directory"}}, Known: "sandbox-cwd-refusal"},
 		Fault{Tool: "sandbox", Name: "command killed by SIGKILL", Setup: walled, Argv: []string{"--read", "{dir}", "--", "sh", "-c", "kill -9 $$"},
 			Want: Want{Exit: []int{137}, Reason: []string{"killed by signal 9"}, Remedy: None, Info: wall}},
 	)

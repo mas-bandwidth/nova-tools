@@ -89,7 +89,7 @@ CREATE INDEX IF NOT EXISTS services_machine ON config.services (machine, name);
 
 -- A friend: an AI that works on the fleet, named by its bus name; width is
 -- the cards it works at once, tiers a comma list of flash, frontier, heavy, pro.
--- A store that has the v1 table (slots, roles, mode, config_dir, token_cap,
+-- A store that has an older table (slots, roles, mode, config_dir, token_cap,
 -- streams, kinds, session, a width default of 8) keeps it and those columns as
 -- they are, unread; the ALTERs add the columns it lacks.
 CREATE TABLE IF NOT EXISTS config.friends (

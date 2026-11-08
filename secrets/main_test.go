@@ -258,7 +258,7 @@ func envMap(env []string) map[string]string {
 func TestExecDeliversOnlyTheNamedValues(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
-	h.seed("ada", map[string]string{"GH_TOKEN": "ghp-sealed-one", "API_KEY": "sk-sealed-two", "OTHER": "sealed-three", markKey: "seal v1.6.29"})
+	h.seed("ada", map[string]string{"GH_TOKEN": "ghp-sealed-one", "API_KEY": "sk-sealed-two", "OTHER": "sealed-three", markKey: "seal v1"})
 	code := h.main(h.seat("exec", "--only", "API_KEY", "--", "true", "x")...)
 	require.Equal(t, 0, code, h.stderr.String())
 	assert.Equal(t, []string{"true", "x"}, h.became)
@@ -347,7 +347,7 @@ func TestKeyFileMustBePrivate(t *testing.T) {
 func TestSetSetsOneValueAndCommits(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
-	h.seed("ada", map[string]string{"OLD": "sealed-old", markKey: "seal v1.6.29"})
+	h.seed("ada", map[string]string{"OLD": "sealed-old", markKey: "seal v1"})
 	h.stdin = "fresh-value-123\n"
 	require.Equal(t, 0, h.main(h.set("NEW")...), h.stderr.String())
 	assert.Equal(t, map[string]string{"OLD": "sealed-old", "NEW": "fresh-value-123"}, h.open("ada"), "the old mark is dropped")

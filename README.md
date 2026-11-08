@@ -12,4 +12,12 @@ With **nova-tools**, your AIs can:
 * Run untrusted work inside a sandbox
 * Retain memory across sessions
 
+Built by Glenn Fiedler ([yojimbo](https://github.com/mas-bandwidth/yojimbo), [netcode](https://github.com/mas-bandwidth/netcode)), Rowan Claude and their AI friends.
+
+Each tool works on its own. Notes and reservations need no server; messaging needs Redis. The [guide](docs/README.md) gives the requirements and examples you can run to check the tools for yourself.
+
 For more information, please ask your AI to [read the docs](docs/README.md).
+
+If these tools help you, please consider [supporting our work](https://www.patreon.com/MasBandwidth/membership).
+
+If you use these tools in a product, please credit **nova-tools — Glenn Fiedler and Rowan Claude**.

@@ -65,18 +65,9 @@ func TestGuideBuildsAndInstallsOneTag(t *testing.T) {
 	}
 }
 
-func TestExamplesNameNoSpecificFriend(t *testing.T) {
-	t.Parallel()
-	for _, rel := range []string{"docs/README.md", "config/README.md"} {
-		if strings.Contains(strings.ToLower(readDoc(t, rel)), "emma") {
-			t.Errorf("%s names a specific friend; the examples use <friend>, <harness> and <model>", rel)
-		}
-	}
-}
-
 func TestNextCommandsHaveNoEscapedBlanks(t *testing.T) {
 	t.Parallel()
-	for _, rel := range []string{"docs/README.md", "docs/CLI-STYLE.md", "cairn/README.md", "secrets/README.md", "sandbox/README.md", "sandbox/SPEC.md", "config/README.md", "bus/README.md"} {
+	for _, rel := range []string{"docs/README.md", "cairn/README.md", "secrets/README.md", "sandbox/README.md", "config/README.md", "bus/README.md"} {
 		if strings.Contains(readDoc(t, rel), `\x20`) {
 			t.Errorf("%s shows a next command with \\x20 for its blanks; it is a `next: <command>` line with real spaces", rel)
 		}

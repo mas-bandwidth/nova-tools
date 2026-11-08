@@ -23,7 +23,7 @@ and a self-talk check. Plain files; nothing is ever sent anywhere. Search is by
 keywords only: a paraphrase that shares almost no words with the entry is not found.
 `
 
-const longHelp = "Long help for one verb: nova-cairn help <verb>. The full guide: cairn/SPEC.md.\n"
+const longHelp = "Long help for one verb: nova-cairn help <verb>. The full guide: cairn/README.md.\n"
 
 const exits = "Exit 0 done, 1 a finding or a conflict, 2 could not run. Every refusal ends with what to run next.\n"
 

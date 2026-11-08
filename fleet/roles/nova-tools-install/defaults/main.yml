@@ -36,7 +36,7 @@ nova_tools_restart_commands: []
 # name in nova_tools_remove found in the bin directory is moved, after a
 # successful install, into <bin dir>/retired-<date>/ rather than deleted. Unix
 # machines only. A name also in nova_tools_names is refused. The default list is
-# the rows of fleet/retired-tools.txt that say "retired" or "rowan-tools": tools
+# the rows of fleet/retired-tools.txt that say "retired" or "moved": tools
 # nova-tools shipped and ships no more. Another product's binaries are not in
 # it; an operator who wants more gone names them:
 #   -e '{"nova_tools_remove_enabled":true,"nova_tools_remove":["nova-sprint","nova-card"]}'

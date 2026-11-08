@@ -31,7 +31,7 @@ Ansible are not optional: nothing here skips one.
   10 tools     the nova-tools release (TAG) or local build (DIR) on every machine
   11 services  the service units
   12 runners   GitHub Actions runners (only with --runners)
-  13 bus       a message sent and read back over the bus
+  13 bus       list present inboxes over the bus
   <name>=<address>  a machine, reached at first as root over ssh at <address>; os/arch default linux/amd64
   --user LOGIN      the login join makes on each machine (default nova)
   --grant NAMES     the values each machine's seat is granted (default NOVA_BUS_PASSWORD)

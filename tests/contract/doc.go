@@ -1,11 +1,11 @@
-// Package contract pins docs/CLI-STYLE.md to the real binaries.
+// Package contract pins the command-line rules in AGENTS.md to the real binaries.
 //
 // It holds no code, only a test: contract_test.go builds each nova tool
 // (bus, cairn, config, fleet, reserve, sandbox, secrets; a directory absent from the
 // checkout is skipped by name) with go build into a temporary directory, runs
 // it as a subprocess with a scrubbed environment and every path under the
 // temporary directory, and asserts the help, flag, verb, missing-input and
-// exit-code rules of CLI-STYLE.md (b), (d), (f) and (g).
+// exit-code rules of the command-line contract.
 //
 // Banners differ per tool, so the verbs of each tool are listed in the test
 // (toolSpecs) and each is checked to appear in the tool's own help banner.
@@ -16,7 +16,7 @@
 // The functional tier (build tag functional) adds the fault contract: faults_test.go
 // runs the rows of faults_<tool>_test.go against real failures, and lint_test.go
 // reads the source for silent discards, silent exits and no_log tasks with no
-// receipt. docs/TESTING.md has the rules.
+// receipt. AGENTS.md has the rules.
 //
 // The CLI contract above is test-only and needs no network and no real store.
 package contract

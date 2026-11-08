@@ -6,13 +6,18 @@ sentences that turn one event into a lasting judgment of the writer. The files
 stay on your machine. Search is by keywords only: a paraphrase that shares
 almost no words with an entry is not found.
 
-## Build
+## Install and try
 
-```sh
-git clone -q https://github.com/mas-bandwidth/nova-tools
-go build -C nova-tools -o "$PWD/bin/nova-cairn" ./cairn
-export PATH="$PWD/bin:$PATH"
-```
+[Install one tool](../docs/README.md#install-one-tool), choosing `cairn`.
+It needs no database, model API or background service. Keeping entries needs
+a writable directory; searching reads the directories you name.
+`nova-cairn help` lists the commands and changes nothing.
+
+For durable session notes, start with [Keep and read entries](#keep-and-read-entries).
+For existing Markdown notes, go directly to [Search your notes](#search-your-notes)
+and use their directory as `--root`; there is no import or persistent search
+index to create. Retaining an entry does not load it into a future AI session:
+that session must run `index`, `receipt` or `memory search` to read it.
 
 The blocks below run in order, in one shell, from a fresh directory:
 
@@ -42,8 +47,9 @@ next: nova-cairn index --store store
 INDEX OK sessions=1 entries=1
 ```
 
-`index` also prints a line per session and entry, and `receipt` the entry's
-facts and its quoted words. Stamps vary. A session's first entry is followed by
+`open` also prints a `next:` append command, `index` a line per session and
+entry, and `receipt` the entry's facts and its quoted words. Those lines are
+left out above. Stamps vary. A session's first entry is followed by
 `next: <the index command>`. Give words with `--text` or
 `--file <path>` (`-` reads stdin). The text is kept byte for byte, and input
 that is not valid UTF-8 is refused. The same `append` again gives
@@ -78,8 +84,7 @@ nova-cairn memory check --root notes --root store --channels bm25 --k 2 draft.tx
 ```text
 SEARCH OK hits=1 k=3 channels=bm25 files=2 entries=1 skipped=0 chunks=2: query="brass lantern"
 SEARCH HIT rank=1 score=1.39 score-channel=bm25 class=. name=lantern type=note root=notes: lantern.md:6 "The brass lantern lights the harbor at night."
-MEMORY HIT cand=1 rank=1 score=3.02 score-channel=bm25 class=. name=lantern type=note root=notes: lantern.md:6 "The brass lantern lights the harbor at night."
-MEMORY HIT cand=1 rank=2 score=0.18 score-channel=bm25 class=entries name=- type=- root=store store=store session=2026-11-05 entry=lesson-1 stamp=2026-11-05T23:45:59.433149355Z: entries/2026-11-05/lesson-1.json:1 "Read the file before claiming what it says."
+MEMORY HIT cand=1 rank=1 score=2.77 score-channel=bm25 class=. name=lantern type=note root=notes: lantern.md:6 "The brass lantern lights the harbor at night."
 ```
 
 `OK`, `CAND`, `NOTE` and `CAL` lines are partly left out. `search` and `check` take
@@ -175,5 +180,3 @@ prints a FAILED line and exits 1.
   is never overwritten; an edit by hand is not detected.
 - `search` and `check` find shared words only. `self-talk` matches known
   shapes only.
-
-How the tool is tested is in [SPEC.md](SPEC.md).

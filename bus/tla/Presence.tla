@@ -47,8 +47,7 @@
 \*   "slowbatch"    a delivery is not bounded: the refresh comes when the
 \*                  batch is done, however long that takes, so time passes
 \*                  the refresh and the key lapses under a running hook
-\*                  (LiveIsPresent fails; the wake was unbounded before
-\*                  2026-11-06)
+\*                  (LiveIsPresent fails)
 \* LiveIsPresentStrict, which counts a stuck hook too, is the property that
 \* is allowed to fail: PresenceStuckStrict.cfg shows it does.
 EXTENDS Naturals

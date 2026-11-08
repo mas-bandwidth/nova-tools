@@ -12,8 +12,8 @@ package contract
 //     the cause is not lost with the hidden output.
 //
 // Where a tool breaks a rule today, the count is in the known tables below,
-// with the audit's gap number. A count may not grow, and it must be lowered the
-// day it shrinks, so a fix PR edits one number.
+// by file. A count may not grow, and it must be lowered the day it shrinks, so
+// a fix edits one number.
 
 import (
 	"fmt"
@@ -30,7 +30,7 @@ import (
 
 var lintTools = []string{"bus", "cairn", "config", "fleet", "reserve", "sandbox", "secrets"}
 
-// Files that break rule 1 or 2 today and how many places each has (the audit's section 8).
+// Files that break rule 1 or 2 today and how many places each has.
 var knownDiscards = map[string]int{
 	"bus/main.go": 3, "bus/service.go": 3, "bus/wake.go": 1, "cairn/main.go": 1, "cairn/memory.go": 1, "cairn/store.go": 6, "config/inventory.go": 2, "config/rows.go": 1, "config/store.go": 1,
 	"fleet/check.go": 5, "fleet/main.go": 13, "fleet/up.go": 6, "reserve/main.go": 5, "reserve/os_windows.go": 2,
@@ -41,7 +41,7 @@ var knownDiscards = map[string]int{
 // sandbox/probe.go is the probe's helper child: its exit status is the finding, which the parent prints.
 var knownSilentExits = map[string]int{"sandbox/probe.go": 3}
 
-// no_log tasks in fleet/ with no receipt today, as "<file>: <task name>"; gap 9 of the audit.
+// no_log tasks in fleet/ with no receipt today, as "<file>: <task name>".
 var knownNoLog = map[string]bool{
 	"fleet/roles/seal/tasks/main.yml: the password, read on this machine":                                                     true,
 	"fleet/roles/postgres/tasks/main.yml: each role answers with its file's password over the listen address (scram-sha-256)": true,
@@ -281,7 +281,7 @@ func TestLintNoLogReceipts(t *testing.T) {
 	}
 	for label := range found {
 		if knownNoLog[label] {
-			t.Logf("known gap #9: no_log without a receipt: %s", label)
+			t.Logf("known gap: no_log without a receipt: %s", label)
 		} else {
 			t.Errorf("no_log task without a receipt (a later debug, fail or assert reading its registered result): %s", label)
 		}

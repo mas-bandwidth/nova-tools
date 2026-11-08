@@ -1,5 +1,5 @@
 # CI for nova-tools: gofmt, vet, the unit tier, the functional tier and TLC.
-# Each job runs one plain command; docs/TESTING.md lists the same commands to run
+# Each job runs one plain command; AGENTS.md lists the same commands to run
 # by hand. Pull requests run on the self-hosted runners, and only for branches
 # of this repository: a fork's code never runs on them.
 

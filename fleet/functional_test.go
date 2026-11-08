@@ -222,6 +222,39 @@ func TestInstallFromALocalBuild(t *testing.T) {
 	if code, out, _ = runFleet(t, bin, svc...); code != 0 || !strings.Contains(out, "INSTALL localhost leftovers=0") || strings.Contains(out, "WARNING unrecorded") {
 		t.Errorf("only what belongs: exit %d, want leftovers=0 and no warning:\n%s", code, out)
 	}
+	// Moved tools and their backup copies are refused, not merely warned about.
+	// The printed remedy retires them; unrelated current tools remain in place.
+	moved := []string{"nova-decide", "nova-decide.bak", "nova-doctor", "nova-doctor.old", "nova-tokens", "nova-tokens.before"}
+	for _, name := range moved {
+		plant(filepath.Join(binDir, name))
+	}
+	code, out, _ = runFleet(t, bin, svc...)
+	if code == 0 || !strings.Contains(out, "INSTALL localhost leftovers=6: "+strings.Join(moved, ", ")+";") || strings.Contains(out, "WARNING unrecorded") {
+		t.Fatalf("moved tools and backups: exit %d, want six refused leftovers and no warning:\n%s", code, out)
+	}
+	for _, name := range moved {
+		if _, err := os.Stat(filepath.Join(binDir, name)); err != nil {
+			t.Errorf("the refusal changed %s: %v", name, err)
+		}
+	}
+	m = regexp.MustCompile(`nova-fleet install --tag local -- -l localhost -e '(\{[^']*\})'`).FindStringSubmatch(out)
+	if m == nil {
+		t.Fatalf("no install command for moved leftovers:\n%s", out)
+	}
+	code, out, _ = runFleet(t, bin, append(svc, "-e", m[1])...)
+	if code != 0 || !strings.Contains(out, "INSTALL localhost leftovers=0") {
+		t.Fatalf("the printed command for moved leftovers: exit %d, want leftovers=0:\n%s", code, out)
+	}
+	for _, name := range moved {
+		if got, _ := filepath.Glob(filepath.Join(binDir, "retired-*", name)); len(got) != 1 {
+			t.Errorf("moved tool not retired: %s (%v)", name, got)
+		}
+	}
+	for _, name := range []string{"nova-fleet", "nova-worker"} {
+		if _, err := os.Stat(filepath.Join(binDir, name)); err != nil {
+			t.Errorf("the retire changed current tool %s: %v", name, err)
+		}
+	}
 	// A binary no release, manifest or retired row accounts for (nova-card from v1 sprint, or a
 	// tool the machine uses) is a warning naming it, never a refusal, manifest or not.
 	if err := os.Rename(filepath.Join(home, "nova-card.x"), filepath.Join(binDir, "nova-card")); err != nil {

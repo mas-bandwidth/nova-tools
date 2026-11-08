@@ -1,0 +1,6 @@
+{
+  "name": "nova-tools",
+  "version": "1.0.0",
+  "description": "Choose, install and use nova-tools command-line tools with the maintained guides.",
+  "contextFileName": "docs/integrations/GEMINI.md"
+}

@@ -12,7 +12,7 @@ import (
 
 // impure are the calls a unit test may not make: real time, sockets, the network and other
 // programs. A test that needs one is a functional test, in a file built with the functional (or
-// slow) tag, which CI runs in its own job (docs/TESTING.md).
+// slow) tag, which CI runs in its own job (AGENTS.md).
 var impure = map[string]map[string]bool{
 	"time": {"Sleep": true, "After": true, "Tick": true, "NewTimer": true, "NewTicker": true, "AfterFunc": true},
 	"net":  {"Listen": true, "ListenPacket": true, "Dial": true, "DialTimeout": true, "DialTCP": true, "DialUDP": true, "ListenTCP": true, "ListenUDP": true},

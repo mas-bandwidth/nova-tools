@@ -162,8 +162,8 @@ func TestInstallRoleDefaults(t *testing.T) {
 }
 
 // The default retire list is the rows of retired-tools.txt that say "retired"
-// or "rowan-tools", and no other row: another product's binaries are never in it.
-func TestRetireListIsOnlyRetiredAndRowanTools(t *testing.T) {
+// or "moved", and no other row: another product's binaries are never in it.
+func TestRetireListIsOnlyRetiredAndMoved(t *testing.T) {
 	t.Parallel()
 	b, err := os.ReadFile("roles/nova-tools-install/defaults/main.yml")
 	require.NoError(t, err)
@@ -177,7 +177,7 @@ func TestRetireListIsOnlyRetiredAndRowanTools(t *testing.T) {
 		if len(f) < 3 || strings.HasPrefix(line, "#") {
 			continue
 		}
-		if strings.HasPrefix(f[2], "retired") || f[2] == "rowan-tools" {
+		if strings.HasPrefix(f[2], "retired") || f[2] == "moved" {
 			want = append(want, f[0])
 		}
 	}

@@ -126,7 +126,7 @@ func (o options) remedy(args ...string) string {
 	return "nova-reserve " + quoteAll(args)
 }
 
-// helpFor is a malformed invocation's remedy (CLI-STYLE (f)).
+// helpFor is a malformed invocation's remedy (one refusal line plus at most one hint line).
 func helpFor(verb string) string {
 	if verb == "run" {
 		return "nova-reserve -h"

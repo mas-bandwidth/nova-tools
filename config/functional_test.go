@@ -191,8 +191,8 @@ func TestFunctionalStore(t *testing.T) {
 	assert.Equal(t, "CONFIG REMOVE kind=service name=r-m1 rev=9\n", ok("service", "remove", "r-m1", "--actor", "a1"))
 }
 
-// TestFunctionalOldColumns models the live store: main's schema, seeded the way
-// the old tool wrote it, then the new schema.sql twice.
+// TestFunctionalOldColumns starts from an older schema, seeded the way
+// the old tool wrote it, then applies the current schema.sql twice.
 func TestFunctionalOldColumns(t *testing.T) {
 	t.Parallel()
 	env := map[string]string{"NOVA_PG_DSN": startPG(t, "testdata/old-schema.sql")}
