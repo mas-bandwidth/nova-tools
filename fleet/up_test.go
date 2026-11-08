@@ -589,7 +589,7 @@ func TestCheck(t *testing.T) {
 	f.peers, f.bytes = map[string]string{"bench-a": "100.64.0.11", "studio": "100.64.0.12", "idle": "100.64.0.13"}, map[string][2]int64{"bench-a": {2_500_000_000, 700_000_000}, "studio": {1_080_000_000_000, 12_345_678_901}}
 	code, out, errs = runArgs("check")
 	want := "CHECK OK tailnet\nCHECK traffic bench-a tx=2.5GB rx=0.7GB\nCHECK traffic studio tx=1080.0GB rx=12.3GB\n" +
-		"CHECK WARN traffic studio tx=1080.0GB is over 100GB with one peer: something fetches or mirrors on a clock; find it: nova-config service list\nCHECK OK seat"
+		"CHECK WARN traffic studio tx=1080.0GB is over 100GB with one peer since tailscaled started: something fetches or mirrors on a clock; find it: nova-config service list\nCHECK OK seat"
 	if code != 0 || errs != "" || !strings.Contains(out, want) {
 		t.Errorf("traffic: code %d stderr %q, stdout lacks %q:\n%s", code, errs, want, out)
 	}
@@ -666,8 +666,8 @@ func TestCheckTraffic(t *testing.T) {
 	var out strings.Builder
 	traffic(&out, st)
 	want := "CHECK traffic bench-a tx=2.5GB rx=0.7GB\n" +
-		"CHECK traffic puller tx=0.0GB rx=250.0GB\nCHECK WARN traffic puller rx=250.0GB is over 100GB with one peer: something fetches or mirrors on a clock; find it: nova-config service list\n" +
-		"CHECK traffic studio tx=1080.0GB rx=12.3GB\nCHECK WARN traffic studio tx=1080.0GB is over 100GB with one peer: something fetches or mirrors on a clock; find it: nova-config service list\n"
+		"CHECK traffic puller tx=0.0GB rx=250.0GB\nCHECK WARN traffic puller rx=250.0GB is over 100GB with one peer since tailscaled started: something fetches or mirrors on a clock; find it: nova-config service list\n" +
+		"CHECK traffic studio tx=1080.0GB rx=12.3GB\nCHECK WARN traffic studio tx=1080.0GB is over 100GB with one peer since tailscaled started: something fetches or mirrors on a clock; find it: nova-config service list\n"
 	if out.String() != want {
 		t.Errorf("traffic lines:\n%s\nwant:\n%s", out.String(), want)
 	}

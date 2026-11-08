@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
 
 	config "github.com/mas-bandwidth/nova-tools/v2/config/lib"
 )
@@ -280,18 +281,20 @@ func (k *kind) merge(cur Row, raw map[string]string) (Row, error) {
 // organisations every minute through one home connection (1.08 TB sent) and nothing refused it. A service whose
 // argv names a fetcher and a loop, or a fetcher with --every above 0, is refused: fetch on an event (a push) or once
 // per job, never on a clock. This table is the whole rule, read over every word of argv (its base name, any =value
-// cut off, a shell string split into its words): a fetcher; a git verb that fetches, counted after a git word; a loop.
+// cut off, a shell string split into its words at white space and ; & | ( )): a fetcher; a git verb that fetches,
+// counted after a git word; a loop. Only the words listed are in scope; `for` is not one, since a for over a list of
+// repositories runs once.
 var clockFetch = map[string]string{
 	"rsync": "fetcher", "curl": "fetcher", "wget": "fetcher", "mirror-refresh": "fetcher",
 	"fetch": "git", "pull": "git", "clone": "git",
-	"--loop": "loop", "--every": "loop", "watch": "loop", "while": "loop",
+	"--loop": "loop", "--every": "loop", "watch": "loop", "while": "loop", "until": "loop", "--interval": "loop",
 }
 
 // fetchOnClock is the first fetcher and the first loop of argv under clockFetch, each "" when there is none.
 func fetchOnClock(argv []string) (fetcher, loop string) {
 	git := false
 	for _, w := range argv {
-		for _, tok := range strings.Fields(w) {
+		for _, tok := range strings.FieldsFunc(w, func(r rune) bool { return unicode.IsSpace(r) || strings.ContainsRune(";&|()", r) }) {
 			tok, _, _ = strings.Cut(tok, "=")
 			tok = tok[strings.LastIndex(tok, "/")+1:]
 			switch clockFetch[tok] {
@@ -304,7 +307,7 @@ func fetchOnClock(argv []string) (fetcher, loop string) {
 			case "loop":
 				loop = cmp.Or(loop, tok)
 			}
-			git = git || tok == "git"
+			git = git || tok == "git" // once a git word is seen it stays seen for the rest of argv: a later pull is counted
 		}
 	}
 	return fetcher, loop

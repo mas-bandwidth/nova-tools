@@ -241,6 +241,12 @@ func TestRefusals(t *testing.T) {
 			"service sync fetches on a clock (rsync with --every 300); fetch on an event"},
 		{2, []string{"service", "add", "shloop", "--machine", "bench-a", "--argv", `["sh","-c","while true; do git -C /r fetch --all; sleep 60; done"]`, "--keepalive", "true", "--actor", "a"},
 			"service shloop fetches on a clock (git fetch with while)"},
+		// The D8 shape with the shell's punctuation against the words: ; & | ( ) split a word as white space does.
+		{2, []string{"service", "add", "pull-loop", "--machine", "bench-a", "--argv", `["sh","-c","while true; do git pull; sleep 60; done"]`, "--keepalive", "true", "--actor", "a"},
+			"service pull-loop fetches on a clock (git pull with while)"},
+		{2, []string{"service", "add", "amp", "--machine", "bench-a", "--argv", `["sh","-c","until false; do git fetch&&sleep 60; done"]`, "--keepalive", "true", "--actor", "a"},
+			"service amp fetches on a clock (git fetch with until)"},
+		{1, []string{"service", "set", "member-b", "--argv", `["(curl","https://x/y)|tee","/l","--interval","60"]`, "--actor", "a"}, "(curl with --interval)"},
 		{1, []string{"service", "set", "member-b", "--argv", `["git","pull","--loop=60"]`, "--actor", "a"}, "service member-b fetches on a clock (git pull with --loop)"},
 		{1, []string{"service", "set", "member-b", "--every", "60", "--keepalive", "false", "--argv", `["curl","-fsSL","https://x/y"]`, "--actor", "a"}, "(curl with --every 60)"},
 		{1, []string{"service", "set", "member-b", "--argv", `["watch","-n","60","wget","https://x/y"]`, "--actor", "a"}, "(wget with watch)"},

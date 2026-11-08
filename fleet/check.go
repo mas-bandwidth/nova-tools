@@ -353,7 +353,7 @@ func traffic(out io.Writer, st tsStatus) {
 			over = "rx=" + gb(p.RxBytes)
 		}
 		if over != "" {
-			fmt.Fprintf(out, "CHECK WARN traffic %s %s is over %.0fGB with one peer: something fetches or mirrors on a clock; find it: nova-config service list\n",
+			fmt.Fprintf(out, "CHECK WARN traffic %s %s is over %.0fGB with one peer since tailscaled started: something fetches or mirrors on a clock; find it: nova-config service list\n",
 				name, over, trafficWarnBytes/1e9)
 		}
 	}
