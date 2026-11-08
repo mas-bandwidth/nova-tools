@@ -1,0 +1,48 @@
+---
+# Register the wanted Windows runners of one target, github_runner_win_url, that are not registered yet. The token
+# (token.yml, gh on the control node) reaches runner-windows.ps1 on its stdin and config.cmd in its environment only:
+# never an argument, a file or a line of output. The task is pipelined (ansible_pipelining), so the module that carries
+# it runs from the ssh pipe and is never a file on the machine's disk. Under --check the token is still asked for.
+- name: this target's runners to register
+  ansible.builtin.set_fact:
+    github_runner_win_target_need: "{{ github_runner_win_need | selectattr('url', 'equalto', github_runner_win_url) | list }}"
+
+- name: a registration token for this target
+  ansible.builtin.include_tasks: token.yml
+  vars:
+    github_runner_scope: "{{ github_runner_win_target_need[0].scope }}"
+    github_runner_path: "{{ github_runner_win_target_need[0].path }}"
+    github_runner_need: "{{ github_runner_win_target_need }}"
+
+- name: register with GitHub as a Windows service (the token reaches the runner on its stdin)
+  ansible.builtin.shell: >-
+    "{{ github_runner_wsl_powershell }}" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File {{ github_runner_wsl_script | quote }}
+    -Action register -Dir {{ item.dir | quote }} -Url {{ item.url | quote }} -Name {{ item.name | quote }} -Labels {{ item.labels | quote }}
+  args:
+    executable: /bin/sh
+    stdin: "{{ github_runner_token }}"
+  vars: { ansible_pipelining: true }
+  loop: "{{ github_runner_win_target_need }}"
+  loop_control: { label: "{{ item.name }}" }
+  no_log: true
+  failed_when: false
+  register: github_runner_win_registration
+  when: not ansible_check_mode
+
+# no_log hides the whole result, the cause with it: each outcome is printed with the token redacted
+- name: the registrations' outcome (token redacted)
+  ansible.builtin.debug:
+    msg: >-
+      RUNNER REGISTER {{ item.item.name }} rc={{ item.rc | default(-1) }}
+      {{ ((item.stdout_lines | default([])) + (item.stderr_lines | default([]))) | join(' ') | replace(github_runner_token, 'REDACTED')
+         | regex_replace('[A-Z0-9]{20,}', 'REDACTED') | trim | truncate(600) }}
+  loop: "{{ github_runner_win_registration.results | default([]) }}"
+  loop_control: { label: "{{ item.item.name | default('-') }}" }
+  when: not ansible_check_mode and item.rc | default(0) != 0
+
+- name: every registration landed
+  ansible.builtin.assert:
+    quiet: true
+    that: github_runner_win_registration.results | default([]) | rejectattr('rc', 'equalto', 0) | list | length == 0
+    fail_msg: "GITHUB-RUNNERS {{ inventory_hostname }}: a Windows runner of {{ github_runner_win_url }} failed to register; the redacted cause is above"
+  when: not ansible_check_mode

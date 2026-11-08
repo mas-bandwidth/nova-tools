@@ -24,9 +24,11 @@ type Machine struct {
 	Cores   *int   `json:"cores"` // nil when unknown
 	Roles   string `json:"roles"` // of bench, runner, services
 	Runners int    `json:"runners"`
-	Note    string `json:"note"`
-	Created string `json:"created"`
-	Updated string `json:"updated"`
+	// WindowsRunners is a WSL machine's Windows-side runners: <url>=<count>[:<label>+<label>], comma-separated
+	WindowsRunners string `json:"windows_runners"`
+	Note           string `json:"note"`
+	Created        string `json:"created"`
+	Updated        string `json:"updated"`
 }
 
 // Friend is an AI that works on the fleet, named by its bus name.

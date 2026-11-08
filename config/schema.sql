@@ -22,7 +22,8 @@ CREATE INDEX IF NOT EXISTS history_kind_name ON config.history (kind, name, id);
 -- A machine, named by its tailnet host. cores NULL is unknown. address is the
 -- tailnet address the fleet uses; public, NULL when unset, is the address the
 -- internet reaches it at (an IP literal or a DNS name), for services that face
--- the internet.
+-- the internet. windows_runners is a WSL machine's Windows-side runners,
+-- <url>=<count>[:<label>+<label>] comma-separated ('' is none).
 CREATE TABLE IF NOT EXISTS config.machines (
     name       text PRIMARY KEY CONSTRAINT machines_name_pattern CHECK (name ~ '^[a-z0-9][a-z0-9-]*$'),
     "user"     text NOT NULL,
@@ -36,13 +37,15 @@ CREATE TABLE IF NOT EXISTS config.machines (
     os         text NOT NULL DEFAULT '',
     arch       text NOT NULL DEFAULT '',
     cores      integer CHECK (cores >= 0),
-    "public"   text
+    "public"   text,
+    windows_runners text NOT NULL DEFAULT ''
 );
 ALTER TABLE config.machines ADD COLUMN IF NOT EXISTS address text NOT NULL DEFAULT '';
 ALTER TABLE config.machines ADD COLUMN IF NOT EXISTS os text NOT NULL DEFAULT '';
 ALTER TABLE config.machines ADD COLUMN IF NOT EXISTS arch text NOT NULL DEFAULT '';
 ALTER TABLE config.machines ADD COLUMN IF NOT EXISTS cores integer CHECK (cores >= 0);
 ALTER TABLE config.machines ADD COLUMN IF NOT EXISTS "public" text;
+ALTER TABLE config.machines ADD COLUMN IF NOT EXISTS windows_runners text NOT NULL DEFAULT '';
 
 -- A store older than the rename has this table as config.loops: rename it (and
 -- its index and name check) once; a fresh store, or one run twice, skips this.
