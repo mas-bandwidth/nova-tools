@@ -32,7 +32,7 @@
 \* cmd is the set of processes whose command runs. The command starts once
 \* the hold is complete and ends before the locks are let go (runCommand
 \* returns, then release), so a finish is one step; a crash takes the
-\* command with it (proc_unix.go watchdog, os_windows.go job object).
+\* command with it (proc_unix.go watchdog).
 EXTENDS Naturals, FiniteSets
 
 CONSTANTS Procs, N, Rounds, MaxCrash, Broken

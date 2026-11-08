@@ -221,8 +221,7 @@ keys with other values is rewritten, not reported unchanged.
 The pins live in the `--pins` directory (or `NOVA_SECRETS_PINS`) on the control
 node: `recovery.pub` and one `<seat>.pub` per machine. The directory is outside
 the store and outside any git work tree (a pin a pusher could write is no pin),
-and it and each pin must be yours and writable by no one else (on Windows, the same access list the
-key file needs: `icacls <dir> /inheritance:r /grant:r %USERNAME%:(OI)(CI)F`). The first grant to a seat needs
+and it and each pin must be yours and writable by no one else. The first grant to a seat needs
 `--pub` with the machine's public key, read from the machine itself; later
 grants check the pin. `grant` refuses with `key-changed` when the pin and the
 seat's rule in `.sops.yaml` disagree, or when the store's `recovery.pub` is not
@@ -297,7 +296,7 @@ status through.
 | `--recovery` is not an age public key | Pass `age-keygen -y <file>` output. |
 | `usage: seat add <seat> <age1...>; the seat is letters, digits, - and _` | Use a valid seat name and a full `age1` key (`age1` and 58 lowercase letters and digits). A seat refuses the recovery key (`that key is the recovery key, not a seat's`). |
 | No rule or no seat file | `seat add`, then `set` with the seat's key. |
-| Key file must be mode 0600 and owned by you | `chmod 600` the file. On Windows the owner may be you, SYSTEM or Administrators, and only those may have access. |
+| Key file must be mode 0600 and owned by you | `chmod 600` the file. |
 | Key is not the key in `.sops.yaml` for the seat (`not-recipient`) | Use the right `--key` and `--as`. The control node's key opens no machine's grants file, by design. To change a seat's key, edit its `age:` in `.sops.yaml`, then re-key the file with a key it lists. |
 | Key is in the rule but not among the file's recipients (`not-recipient`) | The file was sealed before the rule changed. Re-key it once with the recovery key, as the line says. |
 | The rule is not `path_regex` and `age:` with the seat key then the recovery key, or `.sops.yaml` uses anchors, aliases or merge keys (`untrusted-rule`) | Someone edited `.sops.yaml` by hand. Fix it, commit, and run again. |

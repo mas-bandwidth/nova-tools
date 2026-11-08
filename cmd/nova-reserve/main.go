@@ -35,10 +35,10 @@ slot, or with --exclusive every slot, while a command runs or a hold lasts.
   nova-reserve set --slots N [--dir DIR]
   nova-reserve help [run|hold|status|set]
 
-DIR: --dir, else $NOVA_RESERVE_DIR, else /var/tmp/nova-reserve (C:\ProgramData\nova-reserve
-on Windows); one per machine, on a local disk. Exit: 0 done; 1 refused (no slot within
---wait, capacity in use); 2 could not run; 126 the command cannot be executed; 127 the
-command is not found; else the command's status. cmd/nova-reserve/README.md has the rest.
+DIR: --dir, else $NOVA_RESERVE_DIR, else /var/tmp/nova-reserve; one per machine, on a
+local disk. Exit: 0 done; 1 refused (no slot within --wait, capacity in use); 2 could not
+run; 126 the command cannot be executed; 127 the command is not found; else the command's
+status. cmd/nova-reserve/README.md has the rest.
 `
 
 var verbHelp = map[string]string{
@@ -51,7 +51,7 @@ Wait for a slot, run the command, free the slot; exit with the command's status.
   --wait D     give up after D (above 0: 90s, 15m), exit 1; default no bound
   --why TEXT   a label for status and refusals
 The command is found before a slot is taken (127, 126). It dies with nova-reserve, even on SIGKILL (a watchdog
-process kills its group within about a second; on Windows, a job object at once).
+process kills its group within about a second).
 `,
 	"hold": `nova-reserve hold [--for D] [--slots N | --exclusive] [--wait D] [--why TEXT] [--dir DIR]
 

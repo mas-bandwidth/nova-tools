@@ -23,9 +23,7 @@ nova-fleet install -- -e nova_tools_version="$NOVA_TOOLS_VERSION" -l <machine>
 [Install one tool](../../docs/README.md#install-one-tool), choosing `tool=fleet`.
 The [shared guide](../../docs/README.md) covers choosing tools and trying them together.
 This installs the command on your control node; the `install` play deploys tools to the inventory machines.
-On Windows `plays`, `show` and `help` work, and running a play is refused with the reason: ansible-core has
-no native Windows controller, so a Windows machine is a host the plays reach, never the one running them (use a
-Linux, macOS or WSL control node).
+On Windows, run it under WSL2: ansible-core has no native Windows controller.
 
 The control machine needs ansible-core 2.15 or later on PATH. On macOS `brew install ansible`; on Linux a venv (Debian and Ubuntu ship python3 without it, so there the
 line starts `sudo apt-get update -qq && sudo apt-get install -y python3-venv && `; `nova-fleet check` prints the line for this machine, and says so when
@@ -240,8 +238,8 @@ nova_service_path: "{{ nova_bin_dir }}:/usr/local/bin:/usr/bin:/bin"
 ## install
 
 A release is a git tag `v*` on this repository: seven binaries (nova-bus, nova-cairn, nova-config, nova-sandbox,
-nova-secrets, nova-reserve, nova-fleet) for linux/amd64, linux/arm64, darwin/arm64 and windows/amd64, each asset
-`<tool>_<tag>_<os>_<arch>[.exe]`, with one `SHA256SUMS`. The play reads `SHA256SUMS`, downloads each asset and checks
+nova-secrets, nova-reserve, nova-fleet) for linux/amd64, linux/arm64 and darwin/arm64, each asset
+`<tool>_<tag>_<os>_<arch>`, with one `SHA256SUMS`. The play reads `SHA256SUMS`, downloads each asset and checks
 its digest before putting it in place. A binary that already holds the digest is left alone, so a second run changes
 nothing and `--check --diff` is clean. There is no default version, and a platform the release does not ship is
 refused before anything is written.
@@ -256,7 +254,7 @@ refused before anything is written.
 | `nova_tools_restart`, `nova_tools_restart_commands` | false, empty | argv lists run once, only if a binary changed |
 
 **Another repository's release.** A dependent tool whose release is laid out the same way (assets
-`<name>_<tag>_<os>_<arch>[.exe]` and one `SHA256SUMS`) installs with `--repo` and `--tag`, getting every binary its
+`<name>_<tag>_<os>_<arch>` and one `SHA256SUMS`) installs with `--repo` and `--tag`, getting every binary its
 `SHA256SUMS` lists for each machine's platform unless `--names` says which, checked the same way:
 
 ```
