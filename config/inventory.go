@@ -145,9 +145,7 @@ func build(machines []Row, services []Row, local string) (*inventory, error) {
 		if m == local {
 			hv["ansible_connection"] = "local"
 		}
-		// a Mac: the system python carries the system certificate bundle; the python ansible
-		// discovers there (Homebrew's, or /usr/local's) may not, and get_url then fails with
-		// CERTIFICATE_VERIFY_FAILED (studio, 2026-11-07)
+		// a Mac: the system python has the system certificate bundle; a discovered Homebrew python may not (get_url fails)
 		if v["os"] == "darwin" {
 			hv["ansible_python_interpreter"] = "/usr/bin/python3"
 		}
