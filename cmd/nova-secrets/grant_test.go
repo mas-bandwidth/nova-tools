@@ -336,3 +336,33 @@ func TestInitWritesTheRecoveryPin(t *testing.T) {
 	assert.Equal(t, pubRec+"\n", string(b))
 	assert.NoFileExists(t, filepath.Join(store, "pins"), "pins live outside the store")
 }
+
+// A ledger that cannot be written after the grants file was says so and how to put the file back, so the next grant
+// is not refused as a store someone edited.
+func TestGrantSaysHowToRecoverAFailedLedgerWrite(t *testing.T) {
+	t.Parallel()
+	if os.Getuid() == 0 {
+		t.Skip("root writes into a mode 500 directory")
+	}
+	f := newFleet(t)
+	f.seed("ada", map[string]string{"NOVA_BUS_PASSWORD": "bus-sealed-one", "TOKEN": "tok-sealed-two"})
+	require.NoError(t, os.MkdirAll(f.pins, 0o700))
+	f.pin("bo.pub", pubB)
+	f.pin("recovery.pub", pubRec)
+	require.NoError(t, os.Chmod(f.pins, 0o500))
+	assert.Equal(t, 2, f.main(f.grant("NOVA_BUS_PASSWORD")...))
+	assert.Contains(t, f.stderr.String(), "; bo.grants.yaml is written but this node's ledger is not, so the next grant would refuse it as edited: put it back: run: rm -- "+
+		filepath.Join(f.store, "bo.grants.yaml")+", then grant again\n", "a new file is removed")
+	require.NoError(t, os.Remove(filepath.Join(f.store, "bo.grants.yaml")))
+	require.NoError(t, os.Chmod(f.pins, 0o700))
+	require.Equal(t, 0, f.main(f.grant("NOVA_BUS_PASSWORD")...), f.stderr.String())
+	before, err := os.ReadFile(filepath.Join(f.store, "bo.grants.yaml"))
+	require.NoError(t, err)
+	require.NoError(t, os.Chmod(f.pins, 0o500))
+	assert.Equal(t, 2, f.main(f.grant("TOKEN")...))
+	assert.Contains(t, f.stderr.String(), "put it back: run: git -C "+f.store+" checkout -- bo.grants.yaml, then grant again\n", "a committed file is checked out")
+	require.NoError(t, os.WriteFile(filepath.Join(f.store, "bo.grants.yaml"), before, 0o600)) // what git checkout does
+	require.NoError(t, os.Chmod(f.pins, 0o700))
+	require.Equal(t, 0, f.main(f.grant("TOKEN")...), f.stderr.String())
+	assert.Equal(t, map[string]string{"NOVA_BUS_PASSWORD": "bus-sealed-one", "TOKEN": "tok-sealed-two"}, f.open("bo.grants"))
+}

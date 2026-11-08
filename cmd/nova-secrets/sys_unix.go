@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"syscall"
 
 	"golang.org/x/sys/unix"
@@ -67,10 +68,19 @@ func readHidden(f *os.File) ([]byte, error) {
 	quiet := *old
 	quiet.Lflag &^= unix.ECHO
 	quiet.Lflag |= unix.ICANON | unix.ISIG
+	sig := make(chan os.Signal, 1) // Ctrl-C runs no defer: echo is put back, then the signal ends the process as it would have
+	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sig)
 	if err := unix.IoctlSetTermios(fd, setTermios, &quiet); err != nil {
 		return nil, err
 	}
 	defer func() { _ = unix.IoctlSetTermios(fd, setTermios, old) }()
+	go func() {
+		s := <-sig
+		_ = unix.IoctlSetTermios(fd, setTermios, old) // ignored: the process ends next either way
+		signal.Reset(s)
+		_ = syscall.Kill(os.Getpid(), s.(syscall.Signal)) // ignored: a process may always signal itself
+	}()
 	var line []byte
 	b := make([]byte, 1)
 	for len(line) <= maxValue+2 {
