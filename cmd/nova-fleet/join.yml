@@ -34,12 +34,12 @@
 # A darwin machine skips 2 (it has no root login: its login and sudo are set up at its console) and takes age and
 # sops from Homebrew. A Windows machine gets 1 and 3 only.
 #
-# The machine is named by -e nova_join_host, never by -l (a machine with no row yet is in no inventory):
+# The machine is the argument (nova_join_host), never -l (a machine with no row yet is in no inventory):
 #
 #   nova-secrets exec --only TAILSCALE_AUTHKEY,NOVA_PG_PASSWORD --store S --key K --as SEAT -- \
 #     env NOVA_PG_DSN=postgres://nova_config@HOST:5432/nova \
-#     ansible-playbook -i ./inventory cmd/nova-fleet/join.yml \
-#       -e nova_join_host=<name> -e nova_join_user=<login> -e nova_join_address=<address> \
+#     nova-fleet join <name> -- \
+#       -e nova_join_user=<login> -e nova_join_address=<address> \
 #       -e nova_join_os=linux -e nova_join_arch=amd64 -e nova_seal_store=<store clone> \
 #       -e nova_seal_seat=<control seat> -e nova_seal_key=<its key>
 - name: the machine row (control node)
@@ -52,7 +52,7 @@
     - name: one machine, named
       ansible.builtin.assert:
         that: nova_join_host is defined and nova_join_host is match('^[a-z0-9][a-z0-9-]*$')
-        fail_msg: "JOIN STOP: join.yml takes the machine as -e nova_join_host=<name> (a lowercase machine name), never -l"
+        fail_msg: "JOIN STOP: join takes one machine, a lowercase name, as its argument, never -l; run: nova-fleet join <machine>"
         quiet: true
 
     - name: the control node has what the run needs
@@ -295,7 +295,7 @@
 
     - name: age-keygen and sops answer
       ansible.builtin.shell: |
-        printf 'age=%s sops=%s\n' "$({{ nova_age_keygen }} --version 2>/dev/null || echo none)" "$({{ nova_sops }} --version 2>/dev/null | head -1 | awk '{print $2}' || echo none)"
+        printf 'age=%s sops=%s\n' "$({{ nova_age_keygen }} --version 2>/dev/null || echo none)" "$(v=$({{ nova_sops }} --version 2>/dev/null | head -1 | awk '{print $2}'); echo "${v:-none}")"
       args: { executable: /bin/bash }
       register: join_tools
       changed_when: false
@@ -305,6 +305,14 @@
     - name: the tools' receipt
       ansible.builtin.debug:
         msg: "JOIN TOOLS {{ inventory_hostname }} {{ join_tools.stdout | trim }}{{ ' (darwin: brew install age sops where none)' if (nova_system | default(ansible_facts['system'])) == 'Darwin' else '' }}"
+
+    - name: sops answers (a seat cannot open its secrets without it)
+      ansible.builtin.fail:
+        msg: >-
+          JOIN STOP {{ inventory_hostname }}: no sops answers at {{ nova_sops }}
+          ({{ 'brew install sops on the machine' if (nova_system | default(ansible_facts['system'])) == 'Darwin' else 'the pinned release above did not land' }}),
+          then run: nova-fleet join {{ inventory_hostname }}
+      when: "'sops=none' in join_tools.stdout and not ansible_check_mode"
 
 - name: the tailnet check, before any seat is made (control node)
   hosts: localhost
@@ -470,4 +478,4 @@
 
     - name: the check's receipt
       ansible.builtin.debug:
-        msg: "JOIN CHECK {{ inventory_hostname }} peer={{ 'online' if check_peer.Online | default(false) else ('WOULD-CHECK' if ansible_check_mode else 'missing') }} seat=present"
+        msg: "JOIN CHECK {{ inventory_hostname }} peer={{ 'online' if check_peer.Online | default(false) else ('WOULD-CHECK' if ansible_check_mode else 'missing') }} seat={{ {'present': 'present', 'add': ('WOULD-ADD' if ansible_check_mode else 'added'), 'no-key': 'WOULD-MAKE'}.get(seat_state | default(''), 'none') }}"

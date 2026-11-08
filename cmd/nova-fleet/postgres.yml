@@ -12,8 +12,8 @@
 # The machines are the `services` group, or the hosts -e nova_store_hosts names: the first store, before nova-config
 # has a row, is run from a one-machine inventory (cmd/nova-fleet/README.md, "The first machine").
 #
-#   ansible-playbook -i ./inventory cmd/nova-fleet/postgres.yml --check --diff
-#   ansible-playbook -i ./inventory cmd/nova-fleet/postgres.yml -e nova_seal_store=S -e nova_seal_seat=SEAT -e nova_seal_key=K
+#   nova-fleet postgres --check --diff
+#   nova-fleet postgres -- -e nova_seal_store=S -e nova_seal_seat=SEAT -e nova_seal_key=K
 - name: nova-config's PostgreSQL
   hosts: "{{ nova_store_hosts | default('services') }}"
   become: true

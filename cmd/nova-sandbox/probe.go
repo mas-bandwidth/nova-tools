@@ -114,7 +114,13 @@ func probe(stdout io.Writer, env []string) int {
 	// only the seccomp fence refuses it; dial reaches it by path, as an escape would.
 	// --unix is Linux-only: the macOS profile denies a socket outside the writes anyway.
 	sock := filepath.Join(out, "s")
-	if ul, err := net.Listen("unix", sock); err == nil {
+	if ul, err := net.Listen("unix", sock); err != nil {
+		note := " note=the probe could not listen on its own unix socket (" + err.Error() + "), so the step proves nothing"
+		line("unix_deny", "deny", "untested", note)
+		if linux {
+			line("unix_allow", "allow", "untested", note)
+		}
+	} else {
 		defer ul.Close()
 		go acceptClose(ul, nil)
 		run(probeStep{name: "unix_deny", expect: "deny", flags: readSelf, argv: client("dial", sock)})
@@ -154,7 +160,12 @@ func probe(stdout io.Writer, env []string) int {
 
 	// UDP: Landlock has no UDP rights, so on Linux these are the seccomp filter's. The
 	// listener judges: a datagram that arrives got through, whatever the sender says.
-	if u, err := net.ListenPacket("udp", "127.0.0.1:0"); err == nil {
+	if u, err := net.ListenPacket("udp", "127.0.0.1:0"); err != nil {
+		note := " note=the probe could not open its own UDP listener (" + err.Error() + "), so the step proves nothing"
+		line("udp_control", "allow", "untested", note)
+		line("udp_deny", "deny", "untested", note)
+		line("udp_deny_allowmode", "deny", "untested", note)
+	} else {
 		defer u.Close()
 		datagrams := make(chan struct{}, 16)
 		go func() {

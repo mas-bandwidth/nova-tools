@@ -46,7 +46,10 @@ func (f *fake) List(_ context.Context, k *kind) ([]Row, error) {
 	return out, nil
 }
 
-func (f *fake) Write(_ context.Context, k *kind, op string, before, after Row, actor, reason string) (int64, error) {
+func (f *fake) Write(_ context.Context, k *kind, op string, before, after Row, actor, reason string, dry bool) (int64, error) {
+	if dry {
+		return 0, nil
+	}
 	b, a := before.F, after.F
 	if reason != "" && a != nil {
 		a = maps.Clone(a)
@@ -196,8 +199,8 @@ func TestDryRunWritesNothing(t *testing.T) {
 	n := len(h.st.history)
 	assert.Equal(t, "CONFIG DRY-RUN op=set kind=service name=member-b actor=a1 wrote=nothing\n  every: 0 -> 5\n  keepalive: true -> false\n  reason: \"a b\"\n",
 		h.ok(t, "service", "set", "member-b", "--every", "5", "--keepalive", "false", "--actor", "a1", "--reason", "a b", "--dry-run"))
-	out := h.ok(t, "machine", "remove", "bench-b", "--actor", "a1", "--dry-run")
-	assert.Equal(t, "CONFIG DRY-RUN op=remove kind=machine name=bench-b actor=a1 wrote=nothing\n  address: \"bench-b.tail\"\n  public: \"\"\n  user: \"nova\"\n  os: \"linux\"\n  arch: \"amd64\"\n  cores: 12\n  roles: \"bench\"\n  runners: 2\n  windows_runners: \"\"\n  note: \"\"\n", out)
+	out := h.ok(t, "machine", "remove", "bench-a", "--actor", "a1", "--dry-run") // bench-b runs member-b: its dry-run is refused (TestFunctionalDryRunReal)
+	assert.Equal(t, "CONFIG DRY-RUN op=remove kind=machine name=bench-a actor=a1 wrote=nothing\n  address: \"\"\n  public: \"\"\n  user: \"nova\"\n  os: \"\"\n  arch: \"\"\n  cores: null\n  roles: \"bench,services\"\n  runners: 0\n  windows_runners: \"\"\n  note: \"\"\n", out)
 	assert.Equal(t, "CONFIG DRY-RUN op=set kind=machine name=bench-a actor=a1 wrote=nothing\n  note: \"\" -> \"the first\"\n",
 		h.ok(t, "machine", "set", "bench-a", "--note", "the first", "--actor", "a1", "--dry-run"))
 	assert.Len(t, h.st.history, n)
@@ -393,15 +396,19 @@ func TestKindsAreTheLibraryColumns(t *testing.T) {
 func TestSQLNamesItsColumns(t *testing.T) {
 	t.Parallel()
 	row := Row{Name: "m1", F: map[string]string{"user": "u", "address": "", "public": "", "os": "linux", "arch": "", "cores": "", "runners": "2", "roles": "bench", "windows_runners": "", "note": ""}}
-	q, args := writeSQL(kinds["machine"], "add", "m1", row)
+	q, args := writeSQL(kinds["machine"], "add", "m1", Row{}, row)
 	assert.Equal(t, `INSERT INTO config.machines (name, "address", "public", "user", "os", "arch", "cores", "roles", "runners", "windows_runners", "note") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`, q)
 	assert.Equal(t, []any{"m1", "", nil, "u", "linux", "", nil, "bench", int64(2), "", ""}, args)
-	q, args = writeSQL(kinds["machine"], "set", "m1", row)
-	assert.True(t, strings.HasPrefix(q, `UPDATE config.machines SET "address" = $2, `) && strings.HasSuffix(q, `, updated_at = now() WHERE name = $1`), q)
-	assert.Len(t, args, 11)
-	q, args = writeSQL(kinds["machine"], "remove", "m1", Row{})
-	assert.Equal(t, "DELETE FROM config.machines WHERE name = $1", q)
-	assert.Equal(t, []any{"m1"}, args)
+	old := Row{Name: "m1", F: map[string]string{"user": "u", "address": "", "public": "", "os": "", "arch": "", "cores": "4", "runners": "2", "roles": "bench", "windows_runners": "", "note": ""}}
+	same := ` AND jsonb_build_object('address', coalesce("address"::text, ''), 'public', coalesce("public"::text, ''), 'user', coalesce("user"::text, ''), 'os', coalesce("os"::text, ''), 'arch', coalesce("arch"::text, ''), 'cores', coalesce("cores"::text, ''), 'roles', coalesce("roles"::text, ''), 'runners', coalesce("runners"::text, ''), 'windows_runners', coalesce("windows_runners"::text, ''), 'note', coalesce("note"::text, '')) = `
+	oldJSON := `{"address":"","arch":"","cores":"4","note":"","os":"","public":"","roles":"bench","runners":"2","user":"u","windows_runners":""}`
+	q, args = writeSQL(kinds["machine"], "set", "m1", old, row)
+	assert.True(t, strings.HasPrefix(q, `UPDATE config.machines SET "address" = $2, `) && strings.HasSuffix(q, `, updated_at = now() WHERE name = $1`+same+`$12::jsonb`), q)
+	assert.Len(t, args, 12)
+	assert.Equal(t, oldJSON, args[11], "a set matches the row only as it was read")
+	q, args = writeSQL(kinds["machine"], "remove", "m1", old, Row{})
+	assert.Equal(t, "DELETE FROM config.machines WHERE name = $1"+same+"$2::jsonb", q)
+	assert.Equal(t, []any{"m1", oldJSON}, args, "a remove matches the row only as it was read")
 }
 
 // TestSchemaIsAdditive: schema.sql never drops a column, a table or a row.

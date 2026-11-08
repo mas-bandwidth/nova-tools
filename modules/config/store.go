@@ -94,7 +94,7 @@ func storeError(err error, user, op string) error {
 		return fmt.Errorf("%s may not %s %s", user, op, cmp.Or(pe.TableName, words[len(words)-1]))
 	}
 	msg, _, _ := strings.Cut(strings.Split(pe.Message, "\n")[0], ". ")
-	return fmt.Errorf("store error (SQLSTATE %s): %s", pe.Code, strings.TrimSuffix(msg, "."))
+	return fmt.Errorf("store error (SQLSTATE %s): %s; check the store answers, then try again; run: psql \"$NOVA_PG_DSN\" -c 'select 1'", pe.Code, strings.TrimSuffix(msg, "."))
 }
 
 // DSNProblem says which part of a postgres:// URL is wrong, "" for none; it

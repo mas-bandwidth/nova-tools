@@ -52,7 +52,7 @@ func TestInventoryLocalMachine(t *testing.T) {
 	h.env["NOVA_MACHINE"] = "nope"
 	code, _, errs := h.run(t, "inventory")
 	assert.Equal(t, 1, code)
-	assert.Contains(t, errs, "NOVA_MACHINE nope names no machine row")
+	assert.Contains(t, errs, "NOVA_MACHINE nope names no machine row; the machines are bench-a,bench-b; set NOVA_MACHINE to one of them, or run: nova-config machine add nope --user <user>\n")
 }
 
 func TestInventoryRefusals(t *testing.T) {

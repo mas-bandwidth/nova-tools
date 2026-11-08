@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -705,4 +706,82 @@ print("listening", l.getsockname()[1])`
 p = os.path.join(os.getcwd(), "srv")
 l = s.socket(s.AF_UNIX, s.SOCK_STREAM); l.bind(p); l.listen(1); print("unix listening")`)
 	assert.Equal(t, 0, code, "--net-deny --unix without --net-allow still serves a unix socket: "+out)
+}
+
+// TestFunctionalProbeReportsAStepItCannotSetUpAsUntested runs the probe under a
+// TMPDIR so deep that its unix socket path is past the kernel's limit, so the probe's
+// own listener cannot be made. The unix steps are reported untested, never dropped.
+func TestFunctionalProbeReportsAStepItCannotSetUpAsUntested(t *testing.T) {
+	t.Parallel()
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	deep := filepath.Join(root, strings.Repeat("d", 110))
+	require.NoError(t, os.Mkdir(deep, 0o700))
+	_, out, _ := sandbox(t, deep, "probe")
+	assert.Contains(t, out, "PROBE STEP name=unix_deny expect=deny got=untested note=")
+	if runtime.GOOS == "linux" {
+		assert.Contains(t, out, "PROBE STEP name=unix_allow expect=allow got=untested note=")
+	}
+}
+
+// TestFunctionalEverySignalIsForwarded sends the waiter SIGINT, then SIGTERM. The
+// command traps both and records each, so a signal the waiter swallows shows as a
+// missing line and a command that never exits 3.
+func TestFunctionalEverySignalIsForwarded(t *testing.T) {
+	t.Parallel()
+	job, _ := scratch(t)
+	got, ready := filepath.Join(job, "got"), filepath.Join(job, "ready")
+	script := "trap 'echo INT >> " + got + "' INT; trap 'echo TERM >> " + got + "; exit 3' TERM; echo > " + ready +
+		"; i=0; while [ $i -lt 100 ]; do sleep 0.1; i=$((i+1)); done"
+	cmd := exec.Command(bin(t), "--write", job, "--", "/bin/sh", "-c", script)
+	cmd.Env, cmd.Dir = []string{"PATH=/usr/bin:/bin", "HOME=" + job}, job
+	require.NoError(t, cmd.Start())
+	waitFor := func(path, want string) {
+		for i := 0; i < 100; i++ {
+			if b, err := os.ReadFile(path); err == nil && strings.Contains(string(b), want) {
+				return
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+	}
+	waitFor(ready, "")
+	require.NoError(t, cmd.Process.Signal(os.Interrupt))
+	waitFor(got, "INT")
+	require.NoError(t, cmd.Process.Signal(syscall.SIGTERM))
+	err := cmd.Wait()
+	b, _ := os.ReadFile(got)
+	assert.Equal(t, "INT\nTERM\n", string(b))
+	var ee *exec.ExitError
+	require.ErrorAs(t, err, &ee)
+	assert.Equal(t, 3, ee.ExitCode())
+}
+
+// TestFunctionalPlantedSandboxExecIsIgnored puts a fake sandbox-exec, which runs the
+// command with no profile, first on PATH. The wall must still be the real
+// /usr/bin/sandbox-exec, so the write outside the grant is refused.
+func TestFunctionalPlantedSandboxExecIsIgnored(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS != "darwin" {
+		t.Skip("checks the macOS wall; this is " + runtime.GOOS)
+	}
+	job, out := scratch(t)
+	fake := filepath.Join(filepath.Dir(job), "fake")
+	require.NoError(t, os.Mkdir(fake, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(fake, "sandbox-exec"),
+		[]byte("#!/bin/sh\nwhile [ $# -gt 0 ] && [ \"$1\" != \"--\" ]; do shift; done\n[ $# -gt 0 ] || exit 0\nshift\nexec \"$@\"\n"), 0o700))
+	run := func(args ...string) (string, error) {
+		cmd := exec.Command(bin(t), args...)
+		cmd.Env, cmd.Dir = []string{"PATH=" + fake + ":/usr/bin:/bin", "HOME=" + job}, job
+		b, err := cmd.CombinedOutput()
+		return string(b), err
+	}
+	got, err := run("check")
+	require.NoError(t, err, got)
+	assert.Contains(t, got, "(/usr/bin/sandbox-exec)")
+	got, err = run("--write", job, "--", "/bin/sh", "-c", "echo hi > "+filepath.Join(out, "bad"))
+	var ee *exec.ExitError
+	require.ErrorAs(t, err, &ee, "the walled write must fail: "+got)
+	assert.NotContains(t, got, "SANDBOX REFUSED", "the wall ran and denied the write; it did not refuse to start")
+	assert.NotContains(t, got, "run: nova-sandbox -h", "the invocation was not malformed")
+	assert.NoFileExists(t, filepath.Join(out, "bad"), "the real profile refused the write: "+got)
 }

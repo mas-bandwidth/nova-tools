@@ -14,10 +14,9 @@ import (
 // sandbox-exec in place; the parent waits so a killed command can be reported.
 const backendName = "sandbox-exec"
 
+// sandboxExec is the system sandbox-exec by its absolute path only: a PATH lookup would
+// let any directory earlier on PATH supply a binary that applies no wall.
 func sandboxExec() (string, bool) {
-	if p, err := exec.LookPath("sandbox-exec"); err == nil {
-		return p, true
-	}
 	fi, err := os.Stat("/usr/bin/sandbox-exec")
 	return "/usr/bin/sandbox-exec", err == nil && fi.Mode().Perm()&0o111 != 0
 }
@@ -27,7 +26,7 @@ func sandboxExec() (string, bool) {
 func wallCheck() (abi string, netOK bool, note string, err error) {
 	bin, ok := sandboxExec()
 	if !ok {
-		return "-", false, "", fmt.Errorf("sandbox-exec is on no PATH entry and is not at /usr/bin/sandbox-exec")
+		return "-", false, "", fmt.Errorf("sandbox-exec is not at /usr/bin/sandbox-exec")
 	}
 	if out, err := exec.Command(bin, "-p", "(version 1)(allow default)", "/usr/bin/true").CombinedOutput(); err != nil {
 		return "-", false, "", fmt.Errorf("sandbox-exec cannot apply a profile here: %v: %s", err, out)
@@ -47,7 +46,9 @@ func execWall(w *wall, env []string) []refusal {
 	}
 	argv = append(append(argv, "--"), w.argv...)
 	if !w.keepFDs {
-		closeInheritedFDs()
+		if err := closeInheritedFDs(fdDir()); err != nil {
+			return []refusal{refuse("sandbox_failed", "inherited descriptors could not be closed: %v", err)}
+		}
 	}
 	err := syscall.Exec(bin, argv, env)
 	return []refusal{refuse("sandbox_failed", "%s could not be started: %v", bin, err)}

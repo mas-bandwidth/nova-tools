@@ -7,3 +7,6 @@ scratch/
 
 # built binaries never belong in the tree
 /cmd/*/nova-*
+
+# the release workflow builds into dist/; an untracked dist/ stamps every later binary +dirty
+/dist/

@@ -291,6 +291,9 @@ func runKind(ctx context.Context, k *kind, verb string, args []string, d deps, s
 		}
 	}
 	if str(fs, "dry-run") == "true" {
+		if _, err := st.Write(ctx, k, op, before, after, actor, reason, true); err != nil {
+			return err
+		}
 		fmt.Fprintln(stdout, planLines(k, op, name, actor, reason, before.F, after.F))
 		return nil
 	}
@@ -304,7 +307,7 @@ func runKind(ctx context.Context, k *kind, verb string, args []string, d deps, s
 		fmt.Fprintf(stdout, "CONFIG SET kind=%s name=%s changed=none rev=unchanged\n", k.name, value(name))
 		return nil
 	}
-	rev, err := st.Write(ctx, k, op, before, after, actor, reason)
+	rev, err := st.Write(ctx, k, op, before, after, actor, reason, false)
 	if err != nil {
 		return err
 	}

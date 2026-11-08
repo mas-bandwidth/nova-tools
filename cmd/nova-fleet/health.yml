@@ -6,8 +6,8 @@
 # manager that comes back, and a DISK line in the journal every 6 hours (DISK-WARN over nova_health_disk_warn_pct).
 # A darwin machine is skipped.
 #
-#   ansible-playbook -i ./inventory cmd/nova-fleet/health.yml --check --diff
-#   ansible-playbook -i ./inventory cmd/nova-fleet/health.yml
+#   nova-fleet health --check --diff
+#   nova-fleet health
 - name: self-healing guards and the disk report (Linux)
   hosts: bench:runner:services   # the fleet's workers, never all: a seat-only machine (roles -) is not ours to tune (D13, 2026-11-07)
   gather_facts: true

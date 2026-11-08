@@ -12,8 +12,8 @@
 # board's hardware watchdog driven by systemd (kernel.panic is the health play's). The model is
 # cmd/nova-fleet/tla/NetWatch.tla. A darwin machine is skipped.
 #
-#   ansible-playbook -i ./inventory cmd/nova-fleet/netwatch.yml --check --diff -l bench-1
-#   ansible-playbook -i ./inventory cmd/nova-fleet/netwatch.yml -l bench-1
+#   nova-fleet netwatch --check --diff -- -l bench-1
+#   nova-fleet netwatch -- -l bench-1
 - name: the network self-heal ladder and the hang guard (Linux)
   hosts: bench:runner:services
   gather_facts: true
