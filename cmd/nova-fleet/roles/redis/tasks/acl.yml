@@ -47,7 +47,11 @@
     {% endfor %}
     }
     {% for u in nova_redis_users %}
+    {% if ansible_check_mode %}
     [ -s "$d/{{ u.name }}.pass" ] || { echo changed; exit 0; }   # --check before the passwords exist
+    {% else %}
+    [ -s "$d/{{ u.name }}.pass" ] || { echo "$d/{{ u.name }}.pass is empty, so users.acl was not written; remove it and run again to make a new password" >&2; exit 1; }
+    {% endif %}
     {% endfor %}
     if cmp -s <(gen) "$d/users.acl"; then echo same; exit 0; fi
     {% if not ansible_check_mode %}
