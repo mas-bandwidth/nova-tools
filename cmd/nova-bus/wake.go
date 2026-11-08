@@ -144,7 +144,7 @@ func noAnswer(format string, a ...any) error { return startError{false, fmt.Spri
 func newWaker(ctx context.Context, harness, name string, f map[string]string, s sys, stderr io.Writer) (waker, error) {
 	switch harness {
 	case "grok":
-		g, err := newGrok(ctx, f["grok-home"], name, s)
+		g, err := newGrok(f["grok-home"], name, s)
 		if err != nil {
 			return nil, err
 		}
@@ -190,7 +190,7 @@ type grokWake struct {
 	s               sys
 }
 
-func newGrok(ctx context.Context, home, name string, s sys) (*grokWake, error) {
+func newGrok(home, name string, s sys) (*grokWake, error) {
 	if !filepath.IsAbs(home) {
 		return nil, badInput("--grok-home %q wants an absolute path (normally $HOME/.grok)", home)
 	}
