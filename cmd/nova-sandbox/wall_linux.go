@@ -109,7 +109,9 @@ func execWall(w *wall, env []string) []refusal {
 		}
 	}
 	if !w.keepFDs {
-		closeInheritedFDs()
+		if err := closeInheritedFDs(fdDir()); err != nil {
+			return fail("sandbox_failed", "inherited descriptors could not be closed: %v", err)
+		}
 	}
 	// Restriction is per thread and Go moves goroutines between threads: pin this one
 	// to the thread that is restricted, so the exec happens on it. It is never

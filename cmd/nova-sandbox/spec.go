@@ -51,6 +51,9 @@ func build(s spec, goos string) (*wall, []refusal) {
 	if s.gpu && goos != "darwin" {
 		bad = append(bad, refuse("bad_gpu", "--gpu is macOS only; on Linux grant the device directory itself, e.g. --write /dev/dri"))
 	}
+	if s.unix && goos == "darwin" {
+		bad = append(bad, refuse("bad_unix", "--unix is Linux only; on macOS a socket inside a --write grant is reachable without it, e.g. --write <socket dir>"))
+	}
 	if len(s.netAllow) > 0 && !s.netDeny {
 		bad = append(bad, refuse("bad_net", "--net-allow reopens a port under --net-deny and means nothing without it"))
 	}

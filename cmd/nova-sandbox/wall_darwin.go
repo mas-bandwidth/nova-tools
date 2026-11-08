@@ -47,7 +47,9 @@ func execWall(w *wall, env []string) []refusal {
 	}
 	argv = append(append(argv, "--"), w.argv...)
 	if !w.keepFDs {
-		closeInheritedFDs()
+		if err := closeInheritedFDs(fdDir()); err != nil {
+			return []refusal{refuse("sandbox_failed", "inherited descriptors could not be closed: %v", err)}
+		}
 	}
 	err := syscall.Exec(bin, argv, env)
 	return []refusal{refuse("sandbox_failed", "%s could not be started: %v", bin, err)}
