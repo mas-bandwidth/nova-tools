@@ -21,6 +21,17 @@ jobs:
       - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
         with:
           go-version-file: go.mod
+      - name: the guide pins this tag
+        shell: bash
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          pin=$(sed -n 's/^NOVA_TOOLS_VERSION=//p' docs/README.md)
+          if [ "$pin" != "$TAG" ]; then
+            echo "::error file=docs/README.md::docs/README.md pins NOVA_TOOLS_VERSION=$pin, but the tag is $TAG; set the pin to $TAG on main and tag again"
+            exit 1
+          fi
       - name: build every tool for every platform
         shell: bash
         env:

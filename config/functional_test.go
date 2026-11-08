@@ -42,20 +42,55 @@ func pgBin(t *testing.T) string {
 	return ""
 }
 
+// pgEnv is the environment for initdb and postgres: the test's own, with
+// LC_ALL=C added when no locale is set, since Homebrew postgres on macOS
+// refuses to start without one ("postmaster became multithreaded").
+func pgEnv() []string {
+	if os.Getenv("LC_ALL") == "" && os.Getenv("LANG") == "" {
+		return append(os.Environ(), "LC_ALL=C")
+	}
+	return os.Environ()
+}
+
+// stopPostgres asks the server for a fast shutdown, so it removes its System V
+// shared memory segment: a SIGKILLed postmaster leaks it, and macOS allows only
+// 32 (kern.sysv.shmmni) before every initdb fails. It kills after 10 seconds.
+func stopPostgres(cmd *exec.Cmd) {
+	done := make(chan struct{})
+	go func() { _ = cmd.Wait(); close(done) }() // ignored: the server is ours and disposable
+	_ = cmd.Process.Signal(os.Interrupt)        // ignored: it may have exited already
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		_ = cmd.Process.Kill() // ignored: the server is ours and disposable
+		<-done
+	}
+}
+
 // startPG starts a PostgreSQL of this test's own on a free local port, makes
 // the tables with schema.sql and returns its password-free DSN.
 func startPG(t *testing.T, schemas ...string) string {
 	t.Helper()
 	bin, dir := pgBin(t), t.TempDir()
-	out, err := exec.Command(filepath.Join(bin, "initdb"), "-D", filepath.Join(dir, "data"), "-U", "nova", "--auth=trust", "-E", "UTF8").CombinedOutput()
+	initdb := exec.Command(filepath.Join(bin, "initdb"), "-D", filepath.Join(dir, "data"), "-U", "nova", "--auth=trust", "-E", "UTF8")
+	initdb.Env = pgEnv()
+	out, err := initdb.CombinedOutput()
 	require.NoError(t, err, "%s", out)
 	port := freePort(t)
 	cmd := exec.Command(filepath.Join(bin, "postgres"), "-D", filepath.Join(dir, "data"), "-p", port, "-k", dir, "-c", "listen_addresses=127.0.0.1", "-c", "fsync=off")
+	cmd.Env = pgEnv()
+	logs, err := os.Create(filepath.Join(dir, "postgres.log"))
+	require.NoError(t, err)
+	defer func() { _ = logs.Close() }() // ignored: the child holds its own descriptor
+	cmd.Stdout, cmd.Stderr = logs, logs
 	require.NoError(t, cmd.Start())
-	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() }) // ignored: the server is ours and disposable
+	t.Cleanup(func() { stopPostgres(cmd) })
 	dsn := "postgres://nova@127.0.0.1:" + port + "/postgres?sslmode=disable"
 	var c *pgx.Conn
-	require.Eventually(t, func() bool { c, err = pgx.Connect(context.Background(), dsn); return err == nil }, wait, 50*time.Millisecond)
+	if !assert.Eventually(t, func() bool { c, err = pgx.Connect(context.Background(), dsn); return err == nil }, wait, 50*time.Millisecond) {
+		log, _ := os.ReadFile(logs.Name()) // ignored: the log is a diagnostic
+		t.Fatalf("postgres never answered: %v\npostgres said:\n%s", err, log)
+	}
 	defer func() { _ = c.Close(context.Background()) }() // ignored: closing the setup connection
 	if len(schemas) == 0 {
 		schemas = []string{"schema.sql"}

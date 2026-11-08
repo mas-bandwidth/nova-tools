@@ -99,7 +99,8 @@ jobs:
       - name: functional tests
         env:
           NOVA_CONTRACT_STRICT: "1" # a missing dependency fails the fault contract rows instead of skipping them
-        run: go test -p 4 -tags functional,slow ./...
+        # -count=1: these tests run redis-server, postgres and sops, which the test cache cannot see
+        run: go test -count=1 -p 4 -tags functional,slow ./...
 
   tlc:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository

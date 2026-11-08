@@ -620,6 +620,29 @@ func TestInitCreatesTheStore(t *testing.T) {
 	require.Equal(t, 0, h.main("seat", "add", "bo", pubB, "--store", store), h.stderr.String(), "the rule list init wrote is one seat add accepts")
 }
 
+// TestNextNamesTheGivenStoreAndSeat: a throwaway store's next: lines act on that store and the seat just
+// added, never this machine's default store or seat.
+func TestNextNamesTheGivenStoreAndSeat(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.notRepo = true
+	dir := t.TempDir()
+	store, pins := filepath.Join(dir, "store"), filepath.Join(dir, "pins")
+	h.environ = append(h.environ, "NOVA_SECRETS_SEAT=ada", "NOVA_SECRETS_KEY="+h.key)
+	require.Equal(t, 0, h.main("init", "--store", store, "--pins", pins, "--recovery", pubRec), h.stderr.String())
+	assert.Equal(t, "SECRETS INIT OK store="+store+"\nnext: nova-secrets seat add ada "+pubA+" --store "+store+"\n", h.stdout.String(),
+		"seat add takes no --pins; the pins init wrote are the ones set reads")
+	h.stdout.Reset()
+	require.Equal(t, 0, h.main("seat", "add", "here", pubB, "--store", store), h.stderr.String())
+	assert.Equal(t, "SECRETS SEAT ADD OK seat=here committed\nnext: nova-secrets set DB_PASSWORD --as here --store "+store+
+		" --pins /home/ada/.config/nova-secrets/pins\n", h.stdout.String(), "here's key is not known here: no --key")
+	h.stdout.Reset()
+	h.environ = append(h.environ, "NOVA_SECRETS_PINS="+pins)
+	require.Equal(t, 0, h.main("seat", "add", "ada", pubA, "--store", store), h.stderr.String())
+	assert.Equal(t, "SECRETS SEAT ADD OK seat=ada committed\nnext: nova-secrets set DB_PASSWORD --as ada --store "+store+
+		" --key "+h.key+" --pins "+pins+"\n", h.stdout.String(), "ada's key is here and is the one added")
+}
+
 func TestInitIntoAnEmptyRepositoryOfItsOwn(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
@@ -838,8 +861,9 @@ func TestSeatAddWritesABlockListAndCommits(t *testing.T) {
 	b, err := os.ReadFile(filepath.Join(h.store, ".sops.yaml"))
 	require.NoError(t, err)
 	assert.Equal(t, "creation_rules:\n  - path_regex: ^bo\\.yaml$\n    age: "+pubB+","+pubRec+"\n", string(b))
-	assert.Equal(t, "SECRETS SEAT ADD OK seat=bo committed\nnext: nova-secrets set DB_PASSWORD --as ada --store "+h.store+
-		" --key "+h.key+" --pins /home/ada/.config/nova-secrets/pins\n", h.stdout.String())
+	// bo's key is not on this machine: no --key, set reads NOVA_SECRETS_KEY
+	assert.Equal(t, "SECRETS SEAT ADD OK seat=bo committed\nnext: nova-secrets set DB_PASSWORD --as bo --store "+h.store+
+		" --pins /home/ada/.config/nova-secrets/pins\n", h.stdout.String())
 	h.failGit = true
 	assert.Equal(t, 2, h.main("seat", "add", "cy", pub3, "--store", h.store))
 	assert.Contains(t, h.stderr.String(), ".sops.yaml is written: run: git -C "+h.store+" status")
