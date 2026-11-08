@@ -168,6 +168,7 @@ reached as root at the address given, as on the first run.
 | `github-runners` | GitHub Actions runners on every machine of the runner group, registered to one repository or organization | `github_runner_url`, `github_runner_scope`; `gh` on the control node logged in with admin on the repository |
 | `health` | guards that let a Linux machine get itself out of trouble, and a disk report (bench, runner and services groups) | nothing |
 | `install` | install one nova-tools release, by tag, on the machines named (bench, runner and services groups) | `nova_tools_version` (a tag `vX.Y.Z`; no default) |
+| `netwatch` | a Linux machine that loses its network or the tailnet recovers by itself, and a hung one resets (bench, runner and services groups) | nothing; `-l` the machines |
 | `join` | a new machine joins the fleet: its row, its login, the tailnet, the tools a seat needs, its seat | the machine as the argument; its row's fields; `NOVA_PG_DSN` and `NOVA_PG_PASSWORD` in the environment, and `TAILSCALE_AUTHKEY` for a machine not on the tailnet (`up` mints it) |
 | `postgres` | the PostgreSQL nova-config keeps the fleet in, on each machine of the services group | `nova_seal_*` to seal its password |
 | `redis` | the Redis nova-bus talks to, on each machine of the services group | `nova_seal_*` to seal its password |
@@ -877,6 +878,70 @@ journalctl -t nova-disk-report --since -1d        # the disk lines
 **Check.** `HEALTH <machine> journal=persistent panic=10 ssh_oom=0 slice_max=<bytes> | DISK <machine> root=<n>%
 swap=<n>%`. **Rollback.** Remove the file of the guard (named above), then `systemctl daemon-reload` and restart the
 daemon it configures (`systemd-journald`, `ssh`) or `sysctl --system`; `systemctl disable --now nova-disk-report.timer`.
+
+## netwatch
+
+A Linux machine that loses its network or the tailnet gets itself back, with no person and no power cycle; one that
+hangs is reset by its hardware watchdog. A darwin machine is skipped.
+
+Every `nova_netwatch_tick_seconds` (30) the timer `nova-netwatch@<interface>.timer` runs one tick of
+`/usr/local/sbin/nova-netwatch <interface>`, for each of `nova_netwatch_interfaces` (default: the interface of the
+default IPv4 route). A tick is a miss when either signal fails:
+
+- the LAN: the default gateway does not answer one ping and the interface received no packet since the last tick (a
+  router outage, where packets still arrive, is no miss);
+- the tailnet, on `nova_netwatch_tailnet_interface` (default: the default route's): `tailscale status --json` fails
+  or hangs for 10 s, its `BackendState` is not `Running`, the machine's own node is offline, or none of up to
+  `nova_netwatch_tailnet_tries` peers answers `tailscale ping` (`nova_netwatch_tailnet_peers`, else the peers the
+  status lists online). `Stopped` (a `tailscale down` by hand) and a tailnet with no peer online are no miss.
+
+After `nova_netwatch_threshold` misses in a row the tick climbs one rung at a time, waiting `nova_netwatch_backoff`
+times the rung's number of ticks before the next:
+
+| Rung | Action |
+|---|---|
+| 1 | `systemctl restart tailscaled` (on the tailnet's interface; another interface's instance does nothing here) |
+| 2 | `ethtool -r <interface>` |
+| 3 | `ip link set <interface> down`, then up |
+| 4 | the interface's driver unloaded and loaded again (`modprobe -r`, `modprobe`) |
+| 5 | `systemctl reboot`: never while a protected job runs (a process matching one of `nova_netwatch_busy_patterns`, or any file in `/run/nova-netwatch/hold.d`), at most `nova_netwatch_max_reboots` times in `nova_netwatch_window` seconds |
+
+The alert is a journal line at priority crit and `/var/lib/nova-netwatch/ALERT`, raised when the reboot budget is
+spent or the reboot has been deferred `nova_netwatch_busy_wait_limit` times; a healthy tick clears it and logs
+`RECOVERED`. To hold the reboot by hand, `touch /run/nova-netwatch/hold.d/<name>`; remove the file to release it.
+A tailnet that needs a new login fails at every rung: it climbs to the reboot budget and the alert.
+
+The hang guard: the health play's panic guard (`kernel.panic`), `kernel.softlockup_panic` and
+`kernel.hung_task_panic` (`/etc/sysctl.d/91-nova-lockup.conf`, off by default), and, when `/dev/watchdog0` exists,
+systemd driving the hardware watchdog (`/etc/systemd/system.conf.d/90-nova-watchdog.conf`), its driver loaded at boot
+by `nova-watchdog-module.service` when `nova_netwatch_watchdog_module` names one.
+
+The model is `cmd/nova-fleet/tla/NetWatch.tla`, and `NetWatchTrace.tla` checks the ticks the script takes in its
+tests against it.
+
+```
+nova-fleet netwatch --check --diff -- -l bench-1
+nova-fleet netwatch -- -l bench-1
+journalctl -t nova-netwatch --since -1d           # the ladder's lines
+```
+
+| Variable | Default | |
+|---|---|---|
+| `nova_netwatch_interfaces` | `[]` | empty is the default route's interface |
+| `nova_netwatch_tailnet_interface`, `nova_netwatch_tailnet_peers`, `nova_netwatch_tailnet_tries` | `""`, `[]`, `3` | |
+| `nova_netwatch_tick_seconds`, `nova_netwatch_threshold`, `nova_netwatch_backoff` | `30`, `4`, `2` | |
+| `nova_netwatch_busy_patterns`, `nova_netwatch_busy_backoff`, `nova_netwatch_busy_wait_limit` | `[]`, `4`, `10` | pgrep -f extended regular expressions |
+| `nova_netwatch_max_reboots`, `nova_netwatch_window` | `2`, `21600` | |
+| `nova_netwatch_dry` | `false` | `true` logs each action (`DRY`) instead of taking it |
+| `nova_netwatch_watchdog_module`, `nova_netwatch_runtime_watchdog` | `""`, `2min` | `sp5100_tco` on AMD mini PCs |
+| `nova_netwatch_softlockup_panic`, `nova_netwatch_hung_task_panic` | `0`, `0` | |
+
+**Check.** `NETWATCH <machine> <interface> timer=active state=<misses rung wait busywaits lastrx> alert=no
+tailnet=<interface> dry=False watchdog=<interval> device=yes panic=10 oops=1 softlockup=0 hungtask=0`.
+**Rollback.** `systemctl disable --now nova-netwatch@<interface>.timer`, remove `nova-netwatch@.service`,
+`nova-netwatch@.timer` and `nova-watchdog-module.service` from `/etc/systemd/system`,
+`/etc/systemd/system.conf.d/90-nova-watchdog.conf` (then `systemctl daemon-reexec`) and
+`/etc/sysctl.d/91-nova-lockup.conf`.
 
 ## runner-packages
 

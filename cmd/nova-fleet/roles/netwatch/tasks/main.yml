@@ -1,0 +1,200 @@
+---
+# The netwatch role (cmd/nova-fleet/netwatch.yml): a Linux machine that loses its network or the tailnet recovers by
+# itself, and one that hangs is reset by the hardware watchdog. Each piece is a file this role owns; applying one
+# restarts only what it configures.
+- name: Linux only
+  ansible.builtin.meta: end_host
+  when: (nova_system | default(ansible_facts['system'])) != 'Linux'
+
+- name: the interfaces watched (the default route's when none is named)
+  ansible.builtin.set_fact:
+    netwatch_ifs: "{{ nova_netwatch_interfaces if nova_netwatch_interfaces | length > 0 else [netwatch_default_if] | select | list }}"
+    netwatch_tailnet_if: "{{ nova_netwatch_tailnet_interface or netwatch_default_if }}"
+  vars:
+    netwatch_default_if: "{{ ansible_facts['default_ipv4']['interface'] | default('') }}"
+
+- name: an interface to watch
+  ansible.builtin.assert:
+    quiet: true
+    that: netwatch_ifs | length > 0
+    fail_msg: >-
+      NETWATCH FAIL {{ inventory_hostname }}: no default IPv4 route and no nova_netwatch_interfaces; run: nova-fleet netwatch -- -l {{ inventory_hostname }}
+      -e '{"nova_netwatch_interfaces":["<interface>"]}'
+
+# ---- the hang guard ----
+- name: a panicked machine reboots itself (the health role's panic guard)
+  ansible.builtin.include_role: { name: health, tasks_from: panic }
+
+- name: the lockup panics, off unless a journal has shown one
+  ansible.builtin.copy:
+    dest: /etc/sysctl.d/91-nova-lockup.conf
+    mode: "0644"
+    content: |
+      # managed by Ansible (fleet/netwatch.yml): 1 turns the lockup into a panic, and kernel.panic reboots it
+      kernel.softlockup_panic = {{ nova_netwatch_softlockup_panic }}
+      kernel.hung_task_panic = {{ nova_netwatch_hung_task_panic }}
+  become: true
+  register: netwatch_lockup
+
+- name: load the lockup sysctl now
+  ansible.builtin.command: sysctl -p /etc/sysctl.d/91-nova-lockup.conf
+  become: true
+  when: not ansible_check_mode and netwatch_lockup is changed
+
+- name: the hardware watchdog module, loaded by name on every boot (the distribution blacklists it from autoload)
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/nova-watchdog-module.service
+    mode: "0644"
+    content: |
+      # managed by Ansible (fleet/netwatch.yml): systemd opens the device once it appears
+      [Unit]
+      Description=load the hardware watchdog driver {{ nova_netwatch_watchdog_module }}
+      DefaultDependencies=no
+      After=systemd-modules-load.service
+      Before=sysinit.target
+      [Service]
+      Type=oneshot
+      RemainAfterExit=yes
+      ExecStart=/usr/sbin/modprobe {{ nova_netwatch_watchdog_module }}
+      [Install]
+      WantedBy=sysinit.target
+  become: true
+  register: netwatch_wdmod
+  when: nova_netwatch_watchdog_module | length > 0
+
+- name: the watchdog module unit, enabled and started
+  ansible.builtin.systemd_service: { name: nova-watchdog-module.service, enabled: true, state: started, daemon_reload: "{{ netwatch_wdmod is changed }}" }
+  become: true
+  when: not ansible_check_mode and nova_netwatch_watchdog_module | length > 0
+
+- name: the hardware watchdog device
+  ansible.builtin.stat: { path: /dev/watchdog0 }
+  register: netwatch_wddev
+
+- name: the system manager's drop-in directory
+  ansible.builtin.file: { path: /etc/systemd/system.conf.d, state: directory, mode: "0755" }
+  become: true
+  when: netwatch_wddev.stat.exists
+
+- name: systemd drives the hardware watchdog
+  ansible.builtin.copy:
+    dest: /etc/systemd/system.conf.d/90-nova-watchdog.conf
+    mode: "0644"
+    content: |
+      # managed by Ansible (fleet/netwatch.yml): a hard hang resets the machine by itself
+      [Manager]
+      RuntimeWatchdogSec={{ nova_netwatch_runtime_watchdog }}
+      RebootWatchdogSec=10min
+  become: true
+  register: netwatch_wdconf
+  when: netwatch_wddev.stat.exists
+
+- name: the system manager re-reads its configuration (re-executes in place; no unit is restarted)
+  ansible.builtin.command: systemctl daemon-reexec
+  become: true
+  when: not ansible_check_mode and netwatch_wdconf is changed
+
+# ---- the self-heal ladder ----
+- name: what the tick runs (apt)
+  ansible.builtin.apt: { name: [ethtool, iputils-ping, iproute2, python3], state: present, update_cache: true, cache_valid_time: 3600 }
+  become: true
+  when: ansible_facts['os_family'] == 'Debian'
+
+- name: the tick
+  ansible.builtin.copy: { src: nova-netwatch, dest: /usr/local/sbin/nova-netwatch, mode: "0755", owner: root, group: root }
+  become: true
+
+- name: the configuration directory
+  ansible.builtin.file: { path: /etc/nova-netwatch, state: directory, mode: "0755" }
+  become: true
+
+- name: the protected-job process patterns (one per line; a match defers the reboot)
+  ansible.builtin.copy:
+    dest: /etc/nova-netwatch/busy-patterns
+    mode: "0644"
+    content: |
+      {% for p in nova_netwatch_busy_patterns %}
+      {{ p }}
+      {% endfor %}
+  become: true
+
+- name: the oneshot unit
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/nova-netwatch@.service
+    mode: "0644"
+    content: |
+      # managed by Ansible (fleet/netwatch.yml); the model is cmd/nova-fleet/tla/NetWatch.tla
+      [Unit]
+      Description=nova netwatch tick on %i
+      After=network.target
+      [Service]
+      Type=oneshot
+      TimeoutStartSec=60
+      Environment=NETWATCH_THRESHOLD={{ nova_netwatch_threshold }} NETWATCH_BACKOFF={{ nova_netwatch_backoff }}
+      Environment=NETWATCH_BUSY_BACKOFF={{ nova_netwatch_busy_backoff }} NETWATCH_BUSY_WAIT_LIMIT={{ nova_netwatch_busy_wait_limit }}
+      Environment=NETWATCH_MAX_REBOOTS={{ nova_netwatch_max_reboots }} NETWATCH_WINDOW={{ nova_netwatch_window }}
+      Environment=NETWATCH_DRY={{ nova_netwatch_dry | ternary(1, 0) }} NETWATCH_TAILNET_IF={{ netwatch_tailnet_if }}
+      Environment="NETWATCH_TAILNET_PEERS={{ nova_netwatch_tailnet_peers | join(' ') }}" NETWATCH_TAILNET_TRIES={{ nova_netwatch_tailnet_tries }}
+      ExecStart=/usr/local/sbin/nova-netwatch %i
+  become: true
+  register: netwatch_service
+
+- name: the timer
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/nova-netwatch@.timer
+    mode: "0644"
+    content: |
+      # managed by Ansible (fleet/netwatch.yml)
+      [Unit]
+      Description=nova netwatch on %i every {{ nova_netwatch_tick_seconds }} s
+      [Timer]
+      OnBootSec=2min
+      OnUnitActiveSec={{ nova_netwatch_tick_seconds }}s
+      AccuracySec=1s
+      [Install]
+      WantedBy=timers.target
+  become: true
+  register: netwatch_timer
+
+- name: reload the system manager
+  ansible.builtin.systemd_service: { daemon_reload: true }
+  become: true
+  when: not ansible_check_mode and (netwatch_service is changed or netwatch_timer is changed)
+
+- name: the timer, enabled and started per interface
+  ansible.builtin.systemd_service: { name: "nova-netwatch@{{ item }}.timer", enabled: true, state: started }
+  loop: "{{ netwatch_ifs }}"
+  become: true
+  when: not (ansible_check_mode and (netwatch_service is changed or netwatch_timer is changed))   # a unit check mode has not written
+
+- name: the changes, applied now
+  ansible.builtin.meta: flush_handlers
+
+# ---- the receipt, read back ----
+- name: the hang guard as it stands
+  ansible.builtin.shell: |
+    set -u
+    echo "watchdog=$(systemctl show -p RuntimeWatchdogUSec --value) device=$(test -e /dev/watchdog0 && echo yes || echo no) panic=$(sysctl -n kernel.panic) oops=$(sysctl -n kernel.panic_on_oops) softlockup=$(sysctl -n kernel.softlockup_panic) hungtask=$(sysctl -n kernel.hung_task_panic)"
+  args: { executable: /bin/bash }
+  become: true
+  register: netwatch_guard
+  changed_when: false
+  check_mode: false
+
+- name: the state per interface
+  ansible.builtin.shell: |
+    set -u
+    echo "{{ item }} timer=$(systemctl is-active nova-netwatch@{{ item }}.timer) state=$(cat /run/nova-netwatch/{{ item }} 2>/dev/null || echo none) alert=$(test -e /var/lib/nova-netwatch/ALERT && echo yes || echo no)"
+  args: { executable: /bin/bash }
+  loop: "{{ netwatch_ifs }}"
+  become: true
+  register: netwatch_show
+  changed_when: false
+  check_mode: false
+
+- name: the receipt
+  ansible.builtin.debug:
+    msg: >-
+      NETWATCH {{ inventory_hostname }} {{ netwatch_show.results | map(attribute='stdout') | join(' ; ') }}
+      tailnet={{ netwatch_tailnet_if }} dry={{ nova_netwatch_dry }} {{ netwatch_guard.stdout }}
+      {{- ' (check: nothing changed)' if ansible_check_mode else '' }}

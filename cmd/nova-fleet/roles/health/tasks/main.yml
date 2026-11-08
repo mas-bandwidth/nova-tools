@@ -30,18 +30,9 @@
   notify: restart journald
   when: nova_health_journal | bool
 
-# ---- a panic reboots the machine ----
-- name: a panicked machine reboots itself
-  ansible.builtin.copy:
-    dest: /etc/sysctl.d/90-nova-panic.conf
-    mode: "0644"
-    content: |
-      # managed by Ansible (fleet/health.yml): a panic is past any userspace watchdog; the kernel's timer reboots
-      kernel.panic = {{ nova_health_panic_reboot }}
-      kernel.panic_on_oops = 1
-  become: true
-  notify: load the panic sysctl
-  when: (nova_health_panic_reboot | int) > 0
+# ---- a panic reboots the machine (tasks/panic.yml) ----
+- name: the panic guard
+  ansible.builtin.import_tasks: panic.yml
 
 # ---- ssh sessions can be killed by the OOM killer ----
 - name: the ssh unit exists

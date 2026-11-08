@@ -16,7 +16,6 @@ com.nova.limit.maxfiles.plist	2026-11-08	v1 rowan-tools maxfiles
 com.nova.converge-check.plist	2026-11-08	v1 rowan-tools converge check
 com.nova.scratch-sweep.plist	2026-11-08	v1 rowan-tools scratch sweep
 nova-scratch-sweep.*	2026-11-08	v1 rowan-tools scratch sweep
-nova-netwatch@.*	2026-11-08	v1 rowan-tools netwatch
 ci-hold-broker.service	2026-11-08	v1 rowan-tools CI hold broker
 novadog-*	2026-11-08	v1 novadog watchdogs
 nova-dashboard-pull.*	2026-11-08	v1 dashboard pull

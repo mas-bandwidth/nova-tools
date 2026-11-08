@@ -145,7 +145,7 @@ func TestInstallRoleEndsWithTheLeftoverInventory(t *testing.T) {
 	fo := taskIndex(tasks, "what the fleet's own roles write")
 	ownsVars, err := yaml.Marshal(tasks[fo]["vars"])
 	require.NoError(t, err)
-	for _, want := range []string{"nova_secrets_refresh_owns", "nova_health_owns", "nova_postgres_owns", "/redis/defaults/main.yml"} {
+	for _, want := range []string{"nova_secrets_refresh_owns", "nova_health_owns", "nova_postgres_owns", "nova_netwatch_owns", "/redis/defaults/main.yml"} {
 		assert.Contains(t, string(ownsVars), want)
 	}
 	assert.Contains(t, asText(tasks[fo]["ansible.builtin.set_fact"].(map[string]any)["nova_tools_fleet_owns"]), "nova_redis_unit | default(nova_tools_redis_defaults.nova_redis_unit)")
@@ -226,9 +226,9 @@ func TestInstallRoleLeftoverDefaults(t *testing.T) {
 // in the tasks, every unit stem under /etc/systemd/system, the LaunchAgent label, the script.
 func TestInstallRoleLeftoverOwnsAreTheRolesNames(t *testing.T) {
 	t.Parallel()
-	unit := regexp.MustCompile(`\bnova-[a-z0-9-]+[.](service|timer)\b`)
-	stem := regexp.MustCompile(`/etc/systemd/system/(nova[a-z0-9-]*)[.]`)
-	for role, key := range map[string]string{"secrets-refresh": "nova_secrets_refresh_owns", "health": "nova_health_owns", "postgres": "nova_postgres_owns"} {
+	unit := regexp.MustCompile(`\bnova-[a-z0-9-]+@?[.](service|timer)\b`)
+	stem := regexp.MustCompile(`/etc/systemd/system/(nova[a-z0-9-]*@?)[.]`)
+	for role, key := range map[string]string{"secrets-refresh": "nova_secrets_refresh_owns", "health": "nova_health_owns", "postgres": "nova_postgres_owns", "netwatch": "nova_netwatch_owns"} {
 		b, err := os.ReadFile("roles/" + role + "/defaults/main.yml")
 		require.NoError(t, err)
 		var d map[string]map[string][]string
@@ -254,7 +254,7 @@ func TestInstallRoleLeftoverOwnsAreTheRolesNames(t *testing.T) {
 	dirs, err := os.ReadDir("roles")
 	require.NoError(t, err)
 	plist := regexp.MustCompile(`com[.]nova[.][a-z0-9.-]+[.]plist|\bsr_label\b`)
-	declared := map[string]bool{"secrets-refresh": true, "health": true, "postgres": true, "redis": true, "nova-tools-install": true}
+	declared := map[string]bool{"secrets-refresh": true, "health": true, "postgres": true, "netwatch": true, "redis": true, "nova-tools-install": true}
 	for _, d := range dirs {
 		files, _ := filepath.Glob("roles/" + d.Name() + "/tasks/*.yml")
 		for _, f := range files {

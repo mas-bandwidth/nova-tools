@@ -1,0 +1,151 @@
+#!/bin/bash
+# nova-netwatch <interface>: one tick of the network self-heal ladder (cmd/nova-fleet/netwatch.yml). The model is
+# cmd/nova-fleet/tla/NetWatch.tla: the counters below are its record w, and each branch of the ladder is one branch of
+# its Step. Run by nova-netwatch@<interface>.timer.
+#
+# A tick is a MISS when either signal fails:
+#   - the LAN: the default gateway does not answer one ping AND the interface received no packet since the last tick.
+#     The second half is the signature of a card that stops receiving while its link stays up (incoming traffic at
+#     exactly 0), and keeps a router outage, where the LAN's broadcasts still arrive, from walking every machine up
+#     the ladder at once;
+#   - the tailnet, on the interface NETWATCH_TAILNET_IF names: `tailscale status --json` fails or hangs, its
+#     BackendState is not Running, the machine's own node is offline, or none of up to NETWATCH_TAILNET_TRIES peers
+#     (NETWATCH_TAILNET_PEERS, else the peers the status lists online) answers a `tailscale ping`. BackendState
+#     Stopped is a `tailscale down` by hand and is no miss.
+# After THRESHOLD consecutive misses: 1 restart tailscaled, 2 renegotiate (ethtool -r), 3 link bounce, 4 driver
+# reload, 5 reboot, with BACKOFF*r ticks after rung r. Rung 1 acts only on the tailnet's interface. The reboot never
+# runs while a protected job runs (any file in $RUN/hold.d, or a process matching a line of $ETC/busy-patterns), and
+# at most MAX_REBOOTS times in WINDOW seconds. The alert (journal priority crit, $LIB/ALERT) is raised when the reboot
+# budget is spent or the reboot has been deferred BUSY_WAIT_LIMIT times; a healthy tick clears it (RECOVERED).
+# State: volatile in $RUN/<interface> (misses rung wait busywaits lastrx; lost on reboot, as in the model),
+# persistent in $LIB (reboot times, ALERT). NETWATCH_DRY=1 logs each action instead of taking it.
+#
+# The roots, the clock and NETWATCH_TRACE are the test's seams (netwatch_functional_test.go): NETWATCH_TRACE names a
+# file that gets one line per tick, the record before, the inputs and the record after, checked against the model.
+set -u
+IF=${1:?usage: nova-netwatch <interface>}
+THRESHOLD=${NETWATCH_THRESHOLD:-4}
+BACKOFF=${NETWATCH_BACKOFF:-2}
+BUSY_BACKOFF=${NETWATCH_BUSY_BACKOFF:-4}
+BUSY_WAIT_LIMIT=${NETWATCH_BUSY_WAIT_LIMIT:-10}
+MAX_REBOOTS=${NETWATCH_MAX_REBOOTS:-2}
+WINDOW=${NETWATCH_WINDOW:-21600}
+TAILNET_IF=${NETWATCH_TAILNET_IF:-}
+TAILNET_PEERS=${NETWATCH_TAILNET_PEERS:-}
+TAILNET_TRIES=${NETWATCH_TAILNET_TRIES:-3}
+RUN=${NETWATCH_RUN:-/run/nova-netwatch}; LIB=${NETWATCH_LIB:-/var/lib/nova-netwatch}
+ETC=${NETWATCH_ETC:-/etc/nova-netwatch}; SYS=${NETWATCH_SYS:-/sys/class/net}
+now() { echo "${NETWATCH_NOW:-$(date +%s)}"; }
+mkdir -p "$RUN/hold.d" "$LIB"
+VOL="$RUN/$IF"; REB="$LIB/reboots"; ALERT="$LIB/ALERT"
+
+log() { logger -t nova-netwatch -p "daemon.${2:-notice}" "NETWATCH $IF $1"; }
+act() { if [ "${NETWATCH_DRY:-0}" = 1 ]; then log "DRY $*"; else "$@"; fi; }
+
+reboots_in_window() {
+  local now n=0 t; now=$(now)
+  [ -f "$REB" ] || { echo 0; return; }
+  while read -r t; do [ -n "$t" ] && [ $((now - t)) -lt "$WINDOW" ] && n=$((n + 1)); done < "$REB"
+  echo "$n"
+}
+
+misses=0; rung=0; wait=0; busywaits=0; lastrx=-1
+[ -f "$VOL" ] && read -r misses rung wait busywaits lastrx < "$VOL"
+reboots=$(reboots_in_window); alerted=0; [ -e "$ALERT" ] && alerted=1
+pre="$misses $rung $wait $busywaits $reboots $alerted"
+healthy=0; isbusy=0
+
+rx=$(cat "$SYS/$IF/statistics/rx_packets" 2>/dev/null || echo -1)
+save() {
+  echo "$misses $rung $wait $busywaits $rx" > "$VOL"
+  if [ -n "${NETWATCH_TRACE:-}" ]; then
+    local a=0; [ -e "$ALERT" ] && a=1
+    echo "$pre $healthy $isbusy $misses $rung $wait $busywaits $reboots $a" >> "$NETWATCH_TRACE"
+  fi
+}
+
+# ---- the signals ----
+gw=$(ip -4 route show default dev "$IF" 2>/dev/null | awk '{print $3; exit}')
+lan=no
+if [ -n "$gw" ] && ping -c 1 -W 2 -I "$IF" "$gw" >/dev/null 2>&1; then lan=yes; fi
+if [ "$rx" != -1 ] && [ "$lastrx" != -1 ] && [ "$rx" -gt "$lastrx" ]; then lan=yes; fi
+
+# tailnet_ok sets tail to yes, no (with why) or skip (not the tailnet's interface).
+tail=skip; why=""
+tailnet_ok() {
+  [ -n "$TAILNET_IF" ] && [ "$IF" = "$TAILNET_IF" ] || return 0
+  tail=no
+  local st backend self peers p n=0
+  if ! st=$(timeout 10 tailscale status --json 2>/dev/null); then why="status failed"; return 0; fi
+  st=$(printf '%s' "$st" | python3 -I -c '
+import json, sys
+try:
+    s = json.load(sys.stdin)
+except ValueError:
+    print("unparsable false"); sys.exit()
+me = s.get("Self") or {}
+peers = sorted(p["TailscaleIPs"][0] for p in (s.get("Peer") or {}).values() if p.get("Online") and p.get("TailscaleIPs"))
+print(s.get("BackendState") or "none", "true" if me.get("Online") else "false", " ".join(peers))
+' 2>/dev/null)
+  read -r backend self peers <<< "$st"
+  [ "$backend" = Stopped ] && { tail=yes; return 0; }
+  [ "$backend" = Running ] || { why="backend=${backend:-none}"; return 0; }
+  [ "$self" = true ] || { why="self offline"; return 0; }
+  [ -n "$TAILNET_PEERS" ] && peers=$TAILNET_PEERS
+  [ -z "$peers" ] && { tail=yes; return 0; }
+  for p in $peers; do
+    n=$((n + 1)); [ "$n" -gt "$TAILNET_TRIES" ] && break
+    if timeout 5 tailscale ping -c 1 --timeout 3s --until-direct=false "$p" >/dev/null 2>&1; then tail=yes; return 0; fi
+  done
+  why="no peer answered"
+}
+tailnet_ok
+[ "$lan" = yes ] && [ "$tail" != no ] && healthy=1
+
+# ---- Step: healthy ----
+if [ "$healthy" = 1 ]; then
+  if [ "$rung" != 0 ] || [ "$misses" -ge "$THRESHOLD" ] || [ -e "$ALERT" ]; then
+    log "RECOVERED misses=$misses rung=$rung busywaits=$busywaits"
+  fi
+  misses=0; rung=0; wait=0; busywaits=0; rm -f "$ALERT"; save; exit 0
+fi
+
+busy() {
+  [ -n "$(ls -A "$RUN/hold.d" 2>/dev/null)" ] && return 0
+  [ -f "$ETC/busy-patterns" ] || return 1
+  local p
+  while read -r p; do [ -n "$p" ] && pgrep -f -- "$p" >/dev/null && return 0; done < "$ETC/busy-patterns"
+  return 1
+}
+alert() { [ -e "$ALERT" ] || log "ALERT $1" crit; echo "$(date -u +%FT%TZ) $1" > "$ALERT"; }
+
+# ---- Step: a miss ----
+if [ "$misses" -lt "$THRESHOLD" ]; then
+  misses=$((misses + 1))
+  [ "$misses" -eq "$THRESHOLD" ] && log "MISS threshold reached lan=$lan gw=${gw:-none} rx=$rx tailnet=$tail${why:+ ($why)}" warning
+elif [ "$wait" -gt 0 ]; then
+  wait=$((wait - 1))
+elif [ "$rung" -lt 4 ]; then
+  rung=$((rung + 1)); wait=$((BACKOFF * rung))
+  drv=$(basename "$(readlink -f "$SYS/$IF/device/driver" 2>/dev/null)")
+  case $rung in
+    1) if [ "$tail" = skip ]; then log "RUNG 1 restart tailscaled: not the tailnet's interface, nothing to do"
+       else log "RUNG 1 restart tailscaled${why:+ ($why)}" warning; act systemctl restart tailscaled; fi ;;
+    2) log "RUNG 2 renegotiate" warning; act ethtool -r "$IF" ;;
+    3) log "RUNG 3 link bounce" warning; act ip link set "$IF" down; sleep 2; act ip link set "$IF" up ;;
+    4) log "RUNG 4 driver reload $drv" warning; [ -n "$drv" ] && { act modprobe -r "$drv"; sleep 2; act modprobe "$drv"; } ;;
+  esac
+elif [ "$reboots" -ge "$MAX_REBOOTS" ]; then
+  alert "reboot budget spent ($MAX_REBOOTS in ${WINDOW}s); the card, cable, switch port or tailnet needs a person"
+elif busy; then
+  isbusy=1
+  busywaits=$((busywaits + 1)); [ "$busywaits" -gt "$BUSY_WAIT_LIMIT" ] && busywaits=$BUSY_WAIT_LIMIT
+  wait=$BUSY_BACKOFF; log "DEFER reboot for a protected job ($busywaits/$BUSY_WAIT_LIMIT)" warning
+  [ "$busywaits" -ge "$BUSY_WAIT_LIMIT" ] && alert "reboot deferred $BUSY_WAIT_LIMIT times for a protected job"
+else
+  now >> "$REB"; misses=0; rung=0; wait=0; busywaits=0; reboots=$(reboots_in_window); save
+  log "RUNG 5 reboot ($reboots/$MAX_REBOOTS in window)" crit
+  act systemctl reboot
+  exit 0
+fi
+save
