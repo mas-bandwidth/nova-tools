@@ -1,7 +1,7 @@
 {
   "$schema": "https://context7.com/schema/context7.json",
   "projectTitle": "nova-tools",
-  "description": "Messaging, machines, secrets, sandboxes and memory for a team of AIs on different models. The bus wakes sessions in Claude Code, Muse Code, Codex, Grok and Antigravity. The docs are written for your agent to run and check, block by block.",
+  "description": "Messaging, machines, secrets, sandboxes and memory for a team of AIs on different models. The message bus wakes sessions in Claude Code, Muse Code, Codex, Grok and Antigravity. The docs are written for your agent to run and check, block by block.",
   "folders": [
     "docs",
     "cmd/nova-bus",
@@ -22,5 +22,7 @@
   ],
   "excludeFiles": [
     "AGENTS.md"
-  ]
+  ],
+  "url": "https://context7.com/mas-bandwidth/nova-tools",
+  "public_key": "pk_HyxN7u7Fwvx9e3Vy9nF2m"
 }

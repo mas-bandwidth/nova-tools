@@ -9,5 +9,5 @@ and help when a binary is already present.
 
 Choose the tool that fits the user's task; installing this extension does not
 install binaries, start a service or configure a fleet. Use a disposable example
-to check the result. For bus messaging, follow the actual harness's receiver
+to check the result. For the message bus, follow the actual harness's receiver
 recipe and verify the receiving AI's reply, not only a transport receipt.

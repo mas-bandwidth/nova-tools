@@ -17,7 +17,7 @@ prerequisites and limits that matter to the user before recommending adoption.
 Fleet provisioning, service setup and secret distribution belong only to tasks
 that require those effects.
 
-For bus messaging, use the receiver recipe for the actual harness. A stored
+For the message bus, use the receiver recipe for the actual harness. A stored
 message, running hook or queued wake is not proof the receiving AI read it;
 verify a reply from that AI. For notes, retaining text does not automatically
 load it into another session: use the documented retrieval commands.
