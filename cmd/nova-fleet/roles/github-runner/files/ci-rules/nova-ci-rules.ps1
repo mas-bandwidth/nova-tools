@@ -1,4 +1,4 @@
-# nova-ci-rules on Windows: the same rules, verbs and lines as nova-ci-rules.sh (cmd/nova-fleet/README.md, "CI rules").
+# nova-ci-rules on Windows: the same rules, verbs and lines as nova-ci-rules.sh (fleet/README.md, "CI rules").
 #
 # The runner runs job-started.ps1 before each job and job-completed.ps1 after it (ACTIONS_RUNNER_HOOK_JOB_STARTED and
 # _COMPLETED in its .env); both call this script, which lives beside them in <runner dir>\.nova-ci-rules\.

@@ -1,4 +1,4 @@
-# /etc/systemd/system/nova-pg-dump.service: managed by Ansible (cmd/nova-fleet/postgres.yml).
+# /etc/systemd/system/nova-pg-dump.service: managed by Ansible (fleet/postgres.yml).
 # One pg_dump -Fc of {{ nova_pg_db }} into {{ nova_pg_dir }}/dumps/{{ nova_pg_db }}-<date>.dump, written as .partial and renamed
 # in, then the dumps older than {{ nova_pg_dump_keep_days }} days removed. As postgres over the unix socket; the output goes
 # to the journal (`journalctl -u nova-pg-dump`). Started by nova-pg-dump.timer. The dumps stay on this machine.

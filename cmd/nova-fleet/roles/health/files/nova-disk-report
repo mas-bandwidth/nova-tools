@@ -1,5 +1,5 @@
 #!/bin/bash
-# nova-disk-report [home]: one DISK line for this machine (cmd/nova-fleet/health.yml): the use of / and of the home filesystem
+# nova-disk-report [home]: one DISK line for this machine (fleet/health.yml): the use of / and of the home filesystem
 # (when it is another one) and of swap, in percent. Over DISK_WARN_PCT (80) on any of them the line is DISK-WARN at
 # journal priority warning, naming each one over; else DISK at notice. Also printed on stdout.
 set -u

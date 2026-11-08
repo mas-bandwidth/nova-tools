@@ -63,7 +63,7 @@
         group: root
         mode: "0644"
         content: |
-          # managed by Ansible (cmd/nova-fleet/postgres.yml): the PostgreSQL project's apt repository. A hand edit is overwritten.
+          # managed by Ansible (fleet/postgres.yml): the PostgreSQL project's apt repository. A hand edit is overwritten.
           Types: deb
           URIs: {{ nova_pg_pgdg_repo }}
           Suites: {{ ansible_facts['distribution_release'] }}-pgdg

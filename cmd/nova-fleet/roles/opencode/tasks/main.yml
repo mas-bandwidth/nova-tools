@@ -78,7 +78,7 @@
         mode: "0755"
         content: |
           #!/bin/sh
-          # opencode {{ nova_opencode_version }}, from nova-tools cmd/nova-fleet/roles/opencode: the binary is opencode.bin beside it
+          # opencode {{ nova_opencode_version }}, from nova-tools fleet/roles/opencode: the binary is opencode.bin beside it
           {% for k, v in nova_opencode_env | dictsort %}
           export {{ k }}={{ v | quote }}
           {% endfor %}

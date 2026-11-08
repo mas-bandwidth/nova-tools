@@ -129,7 +129,7 @@ func TestOpencodeRoleInstallsThePinnedBinaryAndWrapper(t *testing.T) {
 	assert.Equal(t, fakeOpencode, string(b))
 	w, err := os.ReadFile(filepath.Join(bin, "opencode"))
 	require.NoError(t, err)
-	assert.Equal(t, "#!/bin/sh\n# opencode 1.18.20, from nova-tools cmd/nova-fleet/roles/opencode: the binary is opencode.bin beside it\n"+
+	assert.Equal(t, "#!/bin/sh\n# opencode 1.18.20, from nova-tools fleet/roles/opencode: the binary is opencode.bin beside it\n"+
 		"export OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER=1\nexport OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX=128000\n"+
 		"exec \"$(dirname \"$0\")/opencode.bin\" \"$@\"\n", string(w))
 	env, err := exec.Command(filepath.Join(bin, "opencode"), "env").Output()

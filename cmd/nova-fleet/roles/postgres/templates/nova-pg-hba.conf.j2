@@ -1,4 +1,4 @@
-# pg_hba.conf of cluster {{ nova_pg_version }}/{{ nova_pg_cluster }}: managed by Ansible (cmd/nova-fleet/postgres.yml). A hand edit is overwritten.
+# pg_hba.conf of cluster {{ nova_pg_version }}/{{ nova_pg_cluster }}: managed by Ansible (fleet/postgres.yml). A hand edit is overwritten.
 # postgres over the unix socket (this play, the dump timer, pg_ctlcluster), and the one database from
 # {{ nova_pg_allow_cidr }} by password. Everything else is rejected: the server listens on the addresses of
 # conf.d/nova.conf only, and the last two lines are the second lock.

@@ -1,7 +1,7 @@
 # runner-windows.ps1: a WSL machine's Windows-side GitHub Actions runners, driven by the github-runner role's
 # tasks/wsl-windows.yml through WSL interop (powershell.exe run from the machine's WSL login, which acts with the Windows
 # account that started WSL, elevated). The role stages this file to C:\ProgramData\nova-runner-stage and calls one verb
-# at a time; every line it prints starts with a word the role matches. cmd/nova-fleet/README.md, "Windows runners of a WSL machine".
+# at a time; every line it prints starts with a word the role matches. fleet/README.md, "Windows runners of a WSL machine".
 #
 #   install   -Dir -Cache -Version -Sha [-PathList]   the pinned runner zip in -Cache (its sha256 checked before it is
 #             used), unpacked into -Dir where config.cmd is missing (a dir with files but no config.cmd, an

@@ -1,4 +1,4 @@
-# conf.d/nova.conf of cluster {{ nova_pg_version }}/{{ nova_pg_cluster }}: managed by Ansible (cmd/nova-fleet/postgres.yml). A hand edit
+# conf.d/nova.conf of cluster {{ nova_pg_version }}/{{ nova_pg_cluster }}: managed by Ansible (fleet/postgres.yml). A hand edit
 # is overwritten. postgresql.conf's `include_dir = 'conf.d'` reads it last, so every line here wins over the distribution's
 # file and any edit in it. A change restarts the cluster (listen_addresses and shared_buffers take effect at a restart).
 listen_addresses = '{{ pg_listen | join(',') }}'

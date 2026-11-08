@@ -1,5 +1,5 @@
 #!/bin/sh
-# nova-ci-rules: the CI rules every GitHub Actions runner nova-fleet sets up enforces (cmd/nova-fleet/README.md, "CI rules").
+# nova-ci-rules: the CI rules every GitHub Actions runner nova-fleet sets up enforces (fleet/README.md, "CI rules").
 #
 # The runner runs job-started.sh before each job and job-completed.sh after it (ACTIONS_RUNNER_HOOK_JOB_STARTED and
 # _COMPLETED in its .env); both call this script, which lives beside them in <runner dir>/.nova-ci-rules/.
