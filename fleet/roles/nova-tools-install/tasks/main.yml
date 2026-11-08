@@ -338,7 +338,7 @@
 
     - name: the retired names and units (fleet/retired-tools.txt, fleet/retired-units.txt, read on the control node)
       ansible.builtin.set_fact:
-        nova_tools_own_retired: "{{ nova_tools_retired_rows | selectattr(2, 'match', '^(retired|rowan-tools)') | map(attribute=0) | list }}"
+        nova_tools_own_retired: "{{ nova_tools_retired_rows | selectattr(2, 'match', '^(retired|moved)') | map(attribute=0) | list }}"
       vars:
         nova_tools_retired_rows: "{{ lookup('ansible.builtin.file', role_path ~ '/../../retired-tools.txt').splitlines() | reject('match', '^#') | select | map('split', '\t') | list }}"
 
@@ -371,7 +371,7 @@
                         else '^com[.]nova[.]service[.](' ~ nova_tools_records ~ ')[.]plist$'}] if nova_services is defined else []) }}
 
     # Each name found and allowed by none of the above is sorted by what can retire it.
-    # A binary fleet/retired-tools.txt retires (v1, retired or rowan-tools), or a backup
+    # A binary fleet/retired-tools.txt marks retired or moved, or a backup
     # of one (its name before .bak, .old or .before is retired: winlock.bak-4slots):
     # nova-fleet install retires it (nova_tools_remove). A unit fleet/retired-units.txt names:
     # nova-fleet install retires it (nova_tools_remove_units). A unit of the services
