@@ -1,0 +1,14 @@
+# /etc/systemd/system/{{ nova_redis_unit }}.service: managed by Ansible (cmd/nova-fleet/redis.yml).
+[Unit]
+Description={{ nova_redis_unit }} (the fleet's Redis, port {{ nova_redis_port }})
+After=network-online.target tailscaled.service
+Wants=network-online.target
+[Service]
+User={{ nova_redis_owner }}
+Group={{ nova_redis_group }}
+ExecStart=/usr/bin/redis-server {{ nova_redis_dir }}/nova-redis.conf
+Restart=always
+RestartSec=2
+LimitNOFILE=65536
+[Install]
+WantedBy=multi-user.target

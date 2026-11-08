@@ -4,13 +4,13 @@
   "description": "Command-line tools for messaging between AI sessions across models and harnesses, managing fleets and CI runners, distributing encrypted secrets, reserving machine capacity, sandboxing commands, and keeping searchable session notes. Each tool can be used on its own.",
   "folders": [
     "docs",
-    "bus",
-    "cairn",
-    "config",
-    "fleet",
-    "reserve",
-    "sandbox",
-    "secrets"
+    "cmd/nova-bus",
+    "cmd/nova-cairn",
+    "cmd/nova-config",
+    "cmd/nova-fleet",
+    "cmd/nova-reserve",
+    "cmd/nova-sandbox",
+    "cmd/nova-secrets"
   ],
   "excludeFolders": [
     "docs/assets",

@@ -1,0 +1,236 @@
+---
+# The release to install, by tag (for example v1.0.0). Required; there is no
+# default, so a run never installs "latest" by accident.
+nova_tools_version: ""
+
+# The tools to install, by name: nova_tools_names, in group_vars/all.yml (services.yml
+# reads it too). Each is a release asset <tool>_<tag>_<os>_<arch>[.exe] listed in
+# the release's SHA256SUMS. An empty list installs every asset SHA256SUMS lists for
+# the machine's platform.
+
+# The repository whose release is installed: nova-tools, or a dependent tool whose
+# release is laid out the same way (nova-fleet install --repo OWNER/NAME).
+nova_tools_repo: mas-bandwidth/nova-tools
+
+# Where the release assets live: <base>/<tag>/<asset> and <base>/<tag>/SHA256SUMS.
+nova_tools_release_url: "https://github.com/{{ nova_tools_repo }}/releases/download"
+
+# The local mode: a directory on the control node laid out as a release is
+# (<tool>_<version>_<os>_<arch> and SHA256SUMS; cmd/nova-fleet/README.md, "install"). When set,
+# the binaries are copied from it instead of downloaded, and nova_tools_version is the
+# version its file names carry (any word, e.g. local). Linux and macOS hosts only.
+nova_tools_local_dir: ""
+
+# The bin directory. Unix: nova_bin_dir, default the login's ~/.local/bin.
+# Windows: <profile>\.local\bin.
+nova_tools_bin_dir: "{{ nova_bin_dir | default(ansible_facts['env']['HOME'] ~ '/.local/bin') }}"
+nova_tools_win_bin_dir: "{{ ansible_facts['env']['USERPROFILE'] }}\\.local\\bin"
+
+# Nothing is restarted unless asked: set nova_tools_restart true and list the
+# commands in nova_tools_restart_commands (each an argv list); they run once,
+# only when a binary changed.
+nova_tools_restart: false
+nova_tools_restart_commands: []
+
+# Retired binaries. When nova_tools_remove_enabled is true (default false), each
+# name in nova_tools_remove found in the bin directory is moved, after a
+# successful install, into <bin dir>/retired-<date>/ rather than deleted. Unix
+# machines only. A name also in nova_tools_names is refused. The default list is
+# the rows of cmd/nova-fleet/retired-tools.txt that say "retired" or "moved": tools
+# nova-tools shipped and ships no more. Another product's binaries are not in
+# it; an operator who wants more gone names them:
+#   -e '{"nova_tools_remove_enabled":true,"nova_tools_remove":["nova-sprint","nova-card"]}'
+# (JSON: a key=value -e is a string, never a list). Retiring nova-push-credential
+# also unsets every global git credential.*helper whose value is that script.
+nova_tools_remove_enabled: false
+nova_tools_remove:
+  - _rowan-bifrost
+  - adopt.sh
+  - backpressure
+  - bats
+  - bench-conform
+  - bench-hygiene.sh
+  - bench-queue-control
+  - bench-reset
+  - bench-row
+  - bench-sweep
+  - benchslot
+  - bin-prune
+  - blocked-pass.bash
+  - blocked-resolve
+  - build-ledger.sh
+  - captain-reap
+  - card-dealer
+  - card-end-backfill
+  - card-end-event
+  - card-release
+  - card-report
+  - child-check
+  - ci-hold-broker
+  - ci-hold-start.sh
+  - ci-hold-stop.sh
+  - ci-hold-wait
+  - disk-guard
+  - emma-wait
+  - fill-loop.sh
+  - fill-loops-up
+  - fleet-converge-check
+  - fleet-fn
+  - fleet-install-tools.sh
+  - fleet-live
+  - fleet-state
+  - friend-autotake
+  - friend-bus-keeper
+  - friend-bus-keeper-control
+  - friend-harness
+  - friend-queue
+  - friend-queue-control
+  - friend-row
+  - friend-row-control
+  - friends-line
+  - gate-on
+  - github-read-key-register
+  - harvest-bench.sh
+  - harvest-priority
+  - harvest.sh
+  - hold-to-fix
+  - hold-to-fix-control
+  - idle-watch
+  - install-github-read-ssh
+  - jev-eval
+  - jev-eval-control
+  - jev-lander-control
+  - jev-loop
+  - johnny-wait
+  - land-lane
+  - land-lane-capdrop-control
+  - land-lane-ciredjq-control
+  - land-lane-close-control
+  - land-lane-holdpin-control
+  - land-lane-holds-control
+  - land-lane-ownsession-control
+  - land-lane-whorule-control
+  - land-loop-schema
+  - land-loop-schema-control
+  - land-loop-tools
+  - land-loop-tools-control
+  - landred
+  - live-drift
+  - migrate-friend-dependencies
+  - mirror-refresh
+  - mk-read-card.sh
+  - nca-loop.sh
+  - nova-card-push
+  - nova-check
+  - nova-ci
+  - nova-decide
+  - nova-doctor
+  - nova-fuse
+  - nova-local
+  - nova-loop
+  - nova-memory
+  - nova-push-credential
+  - nova-redis
+  - nova-scratch-sweep
+  - nova-self-talk
+  - nova-slot
+  - nova-space-runner.sh
+  - nova-table
+  - nova-tokens
+  - nova-up
+  - nova-update
+  - nova-version
+  - ok-to-friend
+  - ok-to-friend-control
+  - pitstop
+  - port-chain
+  - post-reads
+  - post-reports
+  - pr-facts
+  - pr-to-read
+  - pr-to-read-control
+  - progress.sh
+  - provision-mac-bench.sh
+  - redis-acl-gen
+  - redis-pipe
+  - redis-pipe.bash
+  - refill.sh
+  - release-sums
+  - report-to-read
+  - route-health
+  - route-health-control
+  - rowan-anchors
+  - rowan-inbox
+  - rowan-local
+  - rowan-local-eval
+  - rowan-model-lock
+  - rowan-no-code
+  - rowan-row
+  - rowan-self-talk
+  - rowan-tcc-guard
+  - rowan-voice-gate
+  - rowan-workset-graph
+  - rr-run.sh
+  - rrpro-inner.sh
+  - safe-rm.sh
+  - scratch-clone
+  - search-reaper
+  - self-ssh
+  - space-build
+  - sprint-canary
+  - sprint-lineup
+  - sprint-models
+  - sprint-requeue
+  - sprint-stage
+  - sprint-table
+  - sprint-table-control
+  - sprint-table-friends-control
+  - sprint-table-redis
+  - sprint-xy
+  - stage-schema
+  - status.sh
+  - stuck-done
+  - tools-aside
+  - wait-for
+  - waiting-pass.bash
+  - waiting-resolve
+  - wake-emma.sh
+  - wake-johnny.sh
+  - wake-rowan.sh
+  - wake-watch.sh
+  - winlock
+  - with-secrets.sh
+  - zhi-turn
+
+# Leftovers. After the install the role lists what an older install left beside the
+# new binaries and refuses the host when it finds any, naming the plays that retire
+# them (cmd/nova-fleet/README.md, "install", Leftovers). Allowed beside the release: what another
+# repository's release (--repo) recorded in nova_tools_manifest_dir, what the fleet's
+# own roles write (their nova_<role>_owns), a friend's nova-bus
+# hook unit and a service record's unit. Only a retired name (cmd/nova-fleet/retired-tools.txt)
+# or a retired unit (cmd/nova-fleet/retired-units.txt) refuses a host; any other binary nothing
+# accounts for is a warning naming it. Unix machines, nova-tools' own release only;
+# the check removes nothing.
+# Retired units to stop and move aside (into retired-<date>/ beside them) when
+# nova_tools_remove_enabled is true: file names, as the leftover refusal prints them
+# (cmd/nova-fleet/retired-units.txt). nova_tools_unit_manager false asks nothing of systemd or
+# launchd and takes no sudo (a test's directories).
+nova_tools_remove_units: []
+# The globs of cmd/nova-fleet/retired-units.txt, as one regex: the leftover check reads for
+# them, and nova_tools_remove_units may name nothing else.
+nova_tools_unit_globs: "{{ lookup('ansible.builtin.file', role_path ~ '/../../retired-units.txt').splitlines() | reject('match', '^#') | select | map('split', '\t') | map('first') | list }}"
+nova_tools_retired_unit_re: "{{ '^(' ~ (nova_tools_unit_globs | map('regex_replace', '[.]', '[.]') | map('regex_replace', '[*]', '.*') | join('|')) ~ ')$' }}"
+nova_tools_unit_manager: true
+nova_tools_user_unit_dir: "{{ nova_home ~ ('/.config/systemd/user' if nova_tools_os == 'linux' else '/Library/LaunchAgents') }}"
+# A git credential helper value that runs the retired nova-push-credential (git's
+# extended regex: the script's path in the bin directory or ~/.local/bin, with git's
+# leading !),
+# and the global config keys that hold one (credential.helper, credential.<url>.helper).
+nova_tools_gitcred_value: "^!?({{ [nova_tools_bin_dir, ansible_facts['env']['HOME'] ~ '/.local/bin'] | unique | map('regex_escape', 'posix_basic') | map('regex_replace', '$', '/nova-push-credential') | join('|') }})$"
+nova_tools_gitcred_keys: "{{ (nova_tools_gitcred.stdout_lines | default([]) | map('split') | map('first') | unique | list) if (nova_tools_gitcred.rc | default(1)) == 0 else [] }}"
+# The system unit directory: systemd's on Linux, launchd's daemons on macOS (where
+# services.yml puts a headless Mac's units, nova_launchd_domain auto or system).
+nova_tools_system_unit_dir: "{{ '/Library/LaunchDaemons' if nova_tools_os == 'darwin' else '/etc/systemd/system' }}"
+# Where another repository's release (--repo) records the names it installs, one
+# <owner>_<name>.names per repository, for the leftover check to allow.
+nova_tools_manifest_dir: "{{ nova_home }}/.local/share/nova/installed"

@@ -1,6 +1,6 @@
 # Release for nova-tools: a pushed tag v* builds the seven binaries for four
 # platforms, writes one SHA256SUMS and creates the GitHub release. Assets are
-# named <tool>_<tag>_<os>_<arch>[.exe]; fleet/roles/nova-tools-install reads
+# named <tool>_<tag>_<os>_<arch>[.exe]; cmd/nova-fleet/roles/nova-tools-install reads
 # exactly that scheme. The only credential is the workflow's GITHUB_TOKEN.
 
 name: release
@@ -43,13 +43,13 @@ jobs:
           for tool in bus cairn config sandbox secrets reserve fleet; do
             # main.version is set only for a main that declares it
             flags="-s -w"
-            if grep -q '^var version ' "$tool/main.go"; then flags="$flags -X main.version=$TAG"; fi
+            if grep -q '^var version ' "cmd/nova-$tool/main.go"; then flags="$flags -X main.version=$TAG"; fi
             pids=()
             for target in linux/amd64 linux/arm64 darwin/arm64 windows/amd64; do
               os=${target%/*}; arch=${target#*/}
               ext=""; [ "$os" = windows ] && ext=".exe"
               GOOS=$os GOARCH=$arch go build -trimpath -ldflags "$flags" \
-                -o "dist/nova-${tool}_${TAG}_${os}_${arch}${ext}" "./$tool" &
+                -o "dist/nova-${tool}_${TAG}_${os}_${arch}${ext}" "./cmd/nova-$tool" &
               pids+=($!)
             done
             for pid in "${pids[@]}"; do wait "$pid"; done

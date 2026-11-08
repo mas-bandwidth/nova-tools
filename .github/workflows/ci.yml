@@ -112,7 +112,7 @@ jobs:
       - *checkout
       - *go
       - name: PostgreSQL from the fleet play, never from CI
-        # mini-m5's packages come from `nova-fleet runner-packages` (fleet/README.md); this step only finds them
+        # mini-m5's packages come from `nova-fleet runner-packages` (cmd/nova-fleet/README.md); this step only finds them
         shell: bash
         run: |
           [ -d "$HOME/.local/bin" ] && echo "$HOME/.local/bin" >> "$GITHUB_PATH"
@@ -153,20 +153,20 @@ jobs:
         run: |
           python3 -m venv "$RUNNER_TEMP/ansible"
           "$RUNNER_TEMP/ansible/bin/pip" install --quiet ansible-core
-          "$RUNNER_TEMP/ansible/bin/ansible-galaxy" collection install -r fleet/requirements.yml
+          "$RUNNER_TEMP/ansible/bin/ansible-galaxy" collection install -r cmd/nova-fleet/requirements.yml
       - name: syntax-check every play
         shell: bash
         run: |
           export PATH="$RUNNER_TEMP/ansible/bin:$PATH"
-          for play in fleet/*.yml; do
-            [ "$play" = fleet/requirements.yml ] && continue
-            ansible-playbook -i fleet/ci/inventory --syntax-check "$play"
+          for play in cmd/nova-fleet/*.yml; do
+            [ "$play" = cmd/nova-fleet/requirements.yml ] && continue
+            ansible-playbook -i cmd/nova-fleet/ci/inventory --syntax-check "$play"
           done
       - name: services.yml --check against the stub inventory
         shell: bash
         run: |
           export PATH="$RUNNER_TEMP/ansible/bin:$PATH"
-          ansible-playbook -i fleet/ci/inventory fleet/services.yml --check --diff </dev/null
+          ansible-playbook -i cmd/nova-fleet/ci/inventory cmd/nova-fleet/services.yml --check --diff </dev/null
 
   ci-ok:
     if: always()

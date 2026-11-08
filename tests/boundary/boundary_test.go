@@ -20,8 +20,7 @@ const modulePath = "github.com/mas-bandwidth/nova-tools/v2"
 // Anything else fails the test; see AGENTS.md before extending it.
 var allowedTop = map[string]bool{
 	// tools and support directories
-	"bus": true, "config": true, "sandbox": true, "secrets": true, "reserve": true, "cairn": true,
-	"fleet": true, "docs": true, "tests": true, ".github": true,
+	"cmd": true, "modules": true, "docs": true, "tests": true, ".github": true,
 	// version control
 	".git": true,
 	// root files: exactly these, nothing else (nothing in root unless a user cares about it)
@@ -31,7 +30,7 @@ var allowedTop = map[string]bool{
 }
 
 // libraryDirs are named in the failure message when present.
-var libraryDirs = map[string]bool{"pkg": true, "internal": true, "cmd": true}
+var libraryDirs = map[string]bool{"pkg": true, "internal": true}
 
 // mainTools are the tools that are one package main and import nothing from
 // this module.
@@ -80,7 +79,7 @@ func TestTopLevelShape(t *testing.T) {
 			continue
 		}
 		if libraryDirs[name] {
-			t.Errorf("%s: nova-tools has no library layer: each tool is one top-level package main; see AGENTS.md", name)
+			t.Errorf("%s: commands live in cmd/ and approved libraries in modules/; see AGENTS.md", name)
 			continue
 		}
 		if strings.HasSuffix(name, ".md") {
@@ -88,6 +87,37 @@ func TestTopLevelShape(t *testing.T) {
 			continue
 		}
 		t.Errorf("%s: not an allowed top-level entry; see AGENTS.md", name)
+	}
+}
+
+// cmd and modules contain only the named commands and approved libraries.
+func TestCommandAndModuleShape(t *testing.T) {
+	t.Parallel()
+	base := root(t)
+	commands, modules := map[string]bool{}, map[string]bool{}
+	for _, tool := range mainTools {
+		commands["nova-"+tool] = true
+	}
+	for _, lib := range toolLibs {
+		modules[strings.TrimPrefix(lib.dir, "modules/")] = true
+	}
+	for parent, allowed := range map[string]map[string]bool{"cmd": commands, "modules": modules} {
+		entries, err := os.ReadDir(filepath.Join(base, parent))
+		if err != nil {
+			t.Fatal(err)
+		}
+		seen := map[string]bool{}
+		for _, e := range entries {
+			if !e.IsDir() || !allowed[e.Name()] {
+				t.Errorf("%s/%s: not an approved directory; see AGENTS.md", parent, e.Name())
+			}
+			seen[e.Name()] = true
+		}
+		for name := range allowed {
+			if !seen[name] {
+				t.Errorf("%s/%s: required directory is missing", parent, name)
+			}
+		}
 	}
 }
 
@@ -146,20 +176,27 @@ func imports(t *testing.T, f string) (string, []string) {
 
 func isOwn(p string) bool { return p == modulePath || strings.HasPrefix(p, modulePath+"/") }
 
-// toolLibs are the one library a tool may carry, by tool: a directory under
-// it whose package (named here) imports nothing from this module and is
-// imported by that tool alone, so other programs read what the tool keeps the
-// way the tool does. nova-config's config/lib is the only one (AGENTS.md).
-var toolLibs = map[string]struct{ dir, pkg string }{"config": {"config/lib", "config"}}
+// toolLibs are the approved library for a tool. The library imports nothing
+// from this module and is imported by that tool alone; its lines count toward
+// the tool's budget. modules/config is the only one (AGENTS.md).
+var toolLibs = map[string]struct{ dir, pkg string }{"config": {"modules/config", "config"}}
 
 func TestToolsAreIndependentMains(t *testing.T) {
 	base := root(t)
 	for _, tool := range mainTools {
-		files := goFiles(filepath.Join(base, tool))
+		dir := filepath.Join("cmd", "nova-"+tool)
+		files := goFiles(filepath.Join(base, dir))
 		if len(files) == 0 {
 			t.Errorf("%s: no Go files (is it a symlink or missing?)", tool)
 		}
 		lib, hasLib := toolLibs[tool]
+		if hasLib {
+			libFiles := goFiles(filepath.Join(base, lib.dir))
+			if len(libFiles) == 0 {
+				t.Errorf("%s: no Go files (is it a symlink or missing?)", lib.dir)
+			}
+			files = append(files, libFiles...)
+		}
 		for _, f := range files {
 			rel, _ := filepath.Rel(base, f)
 			pkg, imps := imports(t, f)
@@ -308,17 +345,17 @@ func TestBudgets(t *testing.T) {
 			t.Errorf("%s: tests/ holds packages, not files: put it in tests/<name>/ with a BUDGET line", filepath.Base(f))
 		}
 	}
-	// Every directory holding Go code needs a line: each top-level directory
-	// except docs/ and tests/, and each package directly under tests/.
+	// Every command, module and test package with Go code needs a budget.
+	// An approved module shares its owning command's existing budget.
 	var dirs []string
-	for _, parent := range []string{"", "tests"} {
+	for _, parent := range []string{"", "cmd", "modules", "tests"} {
 		entries, err := os.ReadDir(filepath.Join(base, parent))
 		if err != nil {
 			t.Fatal(err)
 		}
 		for _, e := range entries {
 			name := filepath.ToSlash(filepath.Join(parent, e.Name()))
-			if !e.IsDir() || name == ".git" || name == "docs" || name == "tests" {
+			if !e.IsDir() || name == ".git" || name == "docs" || name == "cmd" || name == "modules" || name == "tests" {
 				continue
 			}
 			dirs = append(dirs, name)
@@ -328,8 +365,14 @@ func TestBudgets(t *testing.T) {
 		if len(goFiles(filepath.Join(base, name))) == 0 {
 			continue
 		}
-		if _, ok := budgets[name]; !ok {
-			t.Errorf("%s has Go code but no line in BUDGET: add one in the same PR", name)
+		owner := name
+		for tool, lib := range toolLibs {
+			if name == lib.dir {
+				owner = "cmd/nova-" + tool
+			}
+		}
+		if _, ok := budgets[owner]; !ok {
+			t.Errorf("%s has Go code but no %s line in BUDGET: add one in the same PR", name, owner)
 		}
 	}
 	for tool, b := range budgets {
@@ -337,6 +380,14 @@ func TestBudgets(t *testing.T) {
 		if err != nil {
 			t.Errorf("BUDGET names %s: %v", tool, err)
 			continue
+		}
+		if lib, ok := toolLibs[strings.TrimPrefix(tool, "cmd/nova-")]; ok {
+			libLines, err := countLines(filepath.Join(base, lib.dir))
+			if err != nil {
+				t.Errorf("BUDGET for %s includes %s: %v", tool, lib.dir, err)
+				continue
+			}
+			n += libLines
 		}
 		if n > b {
 			t.Errorf("%s is %d non-test .go lines, budget %d: a tool over budget means the spec is not minimal; raise the budget only in a PR that says why", tool, n, b)

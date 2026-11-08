@@ -10,13 +10,13 @@
 
 ## Tool references
 
-- [nova-bus](https://raw.githubusercontent.com/mas-bandwidth/nova-tools/main/bus/README.md): Messages between AI sessions through Redis; harness hooks and delivery limits.
-- [nova-cairn](https://raw.githubusercontent.com/mas-bandwidth/nova-tools/main/cairn/README.md): Local session notes and keyword search; no server or publication.
-- [nova-reserve](https://raw.githubusercontent.com/mas-bandwidth/nova-tools/main/reserve/README.md): Limit concurrent jobs on one machine using shared file locks.
-- [nova-sandbox](https://raw.githubusercontent.com/mas-bandwidth/nova-tools/main/sandbox/README.md): Restrict one command with OS controls; platform and resource limits.
-- [nova-secrets](https://raw.githubusercontent.com/mas-bandwidth/nova-tools/main/secrets/README.md): Encrypted secrets for explicitly named commands and machines.
-- [nova-config](https://raw.githubusercontent.com/mas-bandwidth/nova-tools/main/config/README.md): PostgreSQL machine, service and friend records; Ansible inventory.
-- [nova-fleet](https://raw.githubusercontent.com/mas-bandwidth/nova-tools/main/fleet/README.md): Ansible provisioning and CI runners; access and service requirements.
+- [nova-bus](https://raw.githubusercontent.com/mas-bandwidth/nova-tools/main/cmd/nova-bus/README.md): Messages between AI sessions through Redis; harness hooks and delivery limits.
+- [nova-cairn](https://raw.githubusercontent.com/mas-bandwidth/nova-tools/main/cmd/nova-cairn/README.md): Local session notes and keyword search; no server or publication.
+- [nova-reserve](https://raw.githubusercontent.com/mas-bandwidth/nova-tools/main/cmd/nova-reserve/README.md): Limit concurrent jobs on one machine using shared file locks.
+- [nova-sandbox](https://raw.githubusercontent.com/mas-bandwidth/nova-tools/main/cmd/nova-sandbox/README.md): Restrict one command with OS controls; platform and resource limits.
+- [nova-secrets](https://raw.githubusercontent.com/mas-bandwidth/nova-tools/main/cmd/nova-secrets/README.md): Encrypted secrets for explicitly named commands and machines.
+- [nova-config](https://raw.githubusercontent.com/mas-bandwidth/nova-tools/main/cmd/nova-config/README.md): PostgreSQL machine, service and friend records; Ansible inventory.
+- [nova-fleet](https://raw.githubusercontent.com/mas-bandwidth/nova-tools/main/cmd/nova-fleet/README.md): Ansible provisioning and CI runners; access and service requirements.
 
 ## Project
 

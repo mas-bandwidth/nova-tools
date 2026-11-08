@@ -32,20 +32,20 @@ var lintTools = []string{"bus", "cairn", "config", "fleet", "reserve", "sandbox"
 
 // Files that break rule 1 or 2 today and how many places each has.
 var knownDiscards = map[string]int{
-	"bus/main.go": 3, "bus/service.go": 3, "bus/wake.go": 1, "cairn/main.go": 1, "cairn/memory.go": 1, "cairn/store.go": 6, "config/inventory.go": 2, "config/rows.go": 1, "config/store.go": 1,
-	"fleet/check.go": 5, "fleet/main.go": 13, "fleet/up.go": 6, "reserve/main.go": 5, "reserve/os_windows.go": 2,
-	"sandbox/closefds.go": 2, "sandbox/probe.go": 1, "sandbox/probeclient_linux.go": 1, "sandbox/seccomp_linux.go": 1,
-	"secrets/main.go": 16,
+	"cmd/nova-bus/main.go": 3, "cmd/nova-bus/service.go": 3, "cmd/nova-bus/wake.go": 1, "cmd/nova-cairn/main.go": 1, "cmd/nova-cairn/memory.go": 1, "cmd/nova-cairn/store.go": 6, "cmd/nova-config/inventory.go": 2, "cmd/nova-config/rows.go": 1, "cmd/nova-config/store.go": 1,
+	"cmd/nova-fleet/check.go": 5, "cmd/nova-fleet/main.go": 13, "cmd/nova-fleet/up.go": 6, "cmd/nova-reserve/main.go": 5, "cmd/nova-reserve/os_windows.go": 2,
+	"cmd/nova-sandbox/closefds.go": 2, "cmd/nova-sandbox/probe.go": 1, "cmd/nova-sandbox/probeclient_linux.go": 1, "cmd/nova-sandbox/seccomp_linux.go": 1,
+	"cmd/nova-secrets/main.go": 16,
 }
 
-// sandbox/probe.go is the probe's helper child: its exit status is the finding, which the parent prints.
-var knownSilentExits = map[string]int{"sandbox/probe.go": 3}
+// cmd/nova-sandbox/probe.go is the probe's helper child: its exit status is the finding, which the parent prints.
+var knownSilentExits = map[string]int{"cmd/nova-sandbox/probe.go": 3}
 
-// no_log tasks in fleet/ with no receipt today, as "<file>: <task name>".
+// no_log tasks in cmd/nova-fleet/ with no receipt today, as "<file>: <task name>".
 var knownNoLog = map[string]bool{
-	"fleet/roles/seal/tasks/main.yml: the password, read on this machine":                                                     true,
-	"fleet/roles/postgres/tasks/main.yml: each role answers with its file's password over the listen address (scram-sha-256)": true,
-	"fleet/roles/postgres/tasks/main.yml: every role answers now":                                                             true,
+	"cmd/nova-fleet/roles/seal/tasks/main.yml: the password, read on this machine":                                                     true,
+	"cmd/nova-fleet/roles/postgres/tasks/main.yml: each role answers with its file's password over the listen address (scram-sha-256)": true,
+	"cmd/nova-fleet/roles/postgres/tasks/main.yml: every role answers now":                                                             true,
 }
 
 func goSources(t *testing.T) map[string]*ast.File {
@@ -53,7 +53,7 @@ func goSources(t *testing.T) map[string]*ast.File {
 	fset := token.NewFileSet()
 	out := map[string]*ast.File{}
 	for _, tool := range lintTools {
-		files, _ := filepath.Glob(filepath.Join("..", "..", tool, "*.go"))
+		files, _ := filepath.Glob(filepath.Join("..", "..", "cmd", "nova-"+tool, "*.go"))
 		for _, p := range files {
 			if strings.HasSuffix(p, "_test.go") {
 				continue
@@ -62,7 +62,7 @@ func goSources(t *testing.T) map[string]*ast.File {
 			if err != nil {
 				t.Fatal(err)
 			}
-			out[tool+"/"+filepath.Base(p)] = f
+			out["cmd/nova-"+tool+"/"+filepath.Base(p)] = f
 			fileSet[f] = fset
 		}
 	}
@@ -240,7 +240,7 @@ func taskAt(lines []string, i int) (int, int) {
 
 func TestLintNoLogReceipts(t *testing.T) {
 	var plays []string
-	filepath.WalkDir(filepath.Join("..", "..", "fleet"), func(p string, d os.DirEntry, err error) error {
+	filepath.WalkDir(filepath.Join("..", "..", "cmd", "nova-fleet"), func(p string, d os.DirEntry, err error) error {
 		if err == nil && !d.IsDir() && strings.HasSuffix(p, ".yml") {
 			plays = append(plays, p)
 		}

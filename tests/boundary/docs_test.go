@@ -67,7 +67,7 @@ func TestGuideBuildsAndInstallsOneTag(t *testing.T) {
 
 func TestNextCommandsHaveNoEscapedBlanks(t *testing.T) {
 	t.Parallel()
-	for _, rel := range []string{"docs/README.md", "cairn/README.md", "secrets/README.md", "sandbox/README.md", "config/README.md", "bus/README.md"} {
+	for _, rel := range []string{"docs/README.md", "cmd/nova-cairn/README.md", "cmd/nova-secrets/README.md", "cmd/nova-sandbox/README.md", "cmd/nova-config/README.md", "cmd/nova-bus/README.md"} {
 		if strings.Contains(readDoc(t, rel), `\x20`) {
 			t.Errorf("%s shows a next command with \\x20 for its blanks; it is a `next: <command>` line with real spaces", rel)
 		}

@@ -14,13 +14,13 @@ installation shows how they fit together. Contributor instructions live in
 
 | You want to | Tool and guide | Needs and limits |
 |---|---|---|
-| Let AI sessions on different models or harnesses exchange messages | [nova-bus](../bus/README.md) | Redis 6.2+. A receiving harness needs its documented hook to wake a session; storing a message is not proof an AI read it. |
-| Keep and search notes across sessions | [nova-cairn](../cairn/README.md) | Local files; no server. Search matches keywords, not semantic similarity. It publishes nothing. |
-| Share a machine without running too many jobs at once | [nova-reserve](../reserve/README.md) | Local file locks; no server. Only jobs using the same reservation directory share the limit. |
-| Restrict the files and network a command can access | [nova-sandbox](../sandbox/README.md) | Linux with Landlock (5.13+) or macOS. Run `probe` on the host; CPU, memory, process count and disk use are not limited. |
-| Give a command only the secrets it needs | [nova-secrets](../secrets/README.md) | sops, age and git, with a key and encrypted store. Secret values go through stdin or the command's environment. |
-| Keep machines, services and AI friends as rows, with change history | [nova-config](../config/README.md) | PostgreSQL. Rows and Ansible inventory describe machines; writing a row starts no service. |
-| Set up machines, services and GitHub Actions runners together | [nova-fleet](../fleet/README.md) | Ansible, Tailscale, PostgreSQL, Redis and SSH access to the machines. Applying plays changes those machines. |
+| Let AI sessions on different models or harnesses exchange messages | [nova-bus](../cmd/nova-bus/README.md) | Redis 6.2+. A receiving harness needs its documented hook to wake a session; storing a message is not proof an AI read it. |
+| Keep and search notes across sessions | [nova-cairn](../cmd/nova-cairn/README.md) | Local files; no server. Search matches keywords, not semantic similarity. It publishes nothing. |
+| Share a machine without running too many jobs at once | [nova-reserve](../cmd/nova-reserve/README.md) | Local file locks; no server. Only jobs using the same reservation directory share the limit. |
+| Restrict the files and network a command can access | [nova-sandbox](../cmd/nova-sandbox/README.md) | Linux with Landlock (5.13+) or macOS. Run `probe` on the host; CPU, memory, process count and disk use are not limited. |
+| Give a command only the secrets it needs | [nova-secrets](../cmd/nova-secrets/README.md) | sops, age and git, with a key and encrypted store. Secret values go through stdin or the command's environment. |
+| Keep machines, services and AI friends as rows, with change history | [nova-config](../cmd/nova-config/README.md) | PostgreSQL. Rows and Ansible inventory describe machines; writing a row starts no service. |
+| Set up machines, services and GitHub Actions runners together | [nova-fleet](../cmd/nova-fleet/README.md) | Ansible, Tailscale, PostgreSQL, Redis and SSH access to the machines. Applying plays changes those machines. |
 
 Start with `nova-bus` for messaging. If you want a local trial with no server,
 choose `nova-cairn` or `nova-reserve`. The individual guides are independent
@@ -83,7 +83,9 @@ on this page uses Bash on Linux or macOS.
 ### Or build one tool from source
 
 This needs git and the Go version in [go.mod](../go.mod), or a compatible
-newer version. It builds only your chosen tool from the same release tag:
+newer version. It builds only your chosen tool from the same release tag.
+These source paths match the pinned release; for a checkout of `main`, use
+`./cmd/nova-<tool>` as described in the [build checks](../AGENTS.md#build-and-ci-checks):
 
 ```sh
 (
@@ -210,7 +212,7 @@ Use one receiver per inbox. Stop an older child receiver before starting the
 service; the child-only relay does not wake an idle parent chat. Do not use
 `codex queue --resume` or attach a second app-server to the same chat.
 The setup, receipts, and recovery behavior are in
-[bus/README.md](../bus/README.md#how-your-session-gets-woken).
+[cmd/nova-bus/README.md](../cmd/nova-bus/README.md#how-your-session-gets-woken).
 
 ### Start the walkthrough's Redis
 
@@ -255,21 +257,21 @@ Both names hook in first, because a verb that acts as a name (`send`, `ack`,
 `pending`) refuses until that name is hooked in, and says how to hook in. The
 two hooks here are background jobs into files only because this is a demo on
 throwaway names; your own hook uses the recipe for your harness, as
-[bus/README.md](../bus/README.md#how-your-session-gets-woken) says.
+[cmd/nova-bus/README.md](../cmd/nova-bus/README.md#how-your-session-gets-woken) says.
 `send` prints `claude <id>`. claude's hook says `HOOK OK name=claude
 waiting=0` on stderr, and its stdout has one tab-separated line: the id,
 `codex`, `-` (this message answers none), `hello` and `are you there?`.
 `who` prints `WHO OK present=2` and then `claude` and `codex` with their
 uptimes and 16-byte hex session ids (`name<TAB>uptime<TAB>session`, minted once at hook start, kept across reconnects, and new on restart). One hook holds a name at a time, and a line printed by a background
 job does not by itself start a turn in your harness. How a session is woken by its hook is in
-[bus/README.md](../bus/README.md#how-your-session-gets-woken).
+[cmd/nova-bus/README.md](../cmd/nova-bus/README.md#how-your-session-gets-woken).
 
 The refusal you will meet first is
 `cannot reach redis at <host:port> (NOVA_BUS_REDIS): connection refused`
 (exit 1): the address is wrong or Redis is down. The others are in
-[bus/README.md](../bus/README.md#exit-codes-and-refusals).
+[cmd/nova-bus/README.md](../cmd/nova-bus/README.md#exit-codes-and-refusals).
 
-The whole tool: [bus/README.md](../bus/README.md).
+The whole tool: [cmd/nova-bus/README.md](../cmd/nova-bus/README.md).
 
 ## Set up and run a fleet of machines connected by tailscale
 
@@ -412,12 +414,12 @@ Redis, join, grant, push the store, health, tools, services, runners, a bus
 message read back), prints `UP <step> OK` per step and `UP MACHINE <name> OK
 ...` per machine, and stops at the first `UP <step> FAILED exit=<n>`; the same
 command resumes. Every step and what it prints is in
-[fleet/README.md](../fleet/README.md#up).
+[cmd/nova-fleet/README.md](../cmd/nova-fleet/README.md#up).
 
 A tool whose release is laid out as nova-tools' is (assets
 `<name>_<tag>_<os>_<arch>[.exe]` and one `SHA256SUMS`) puts its binaries on
 machines the same way, every binary its `SHA256SUMS` lists unless `--names`
-says which ([fleet/README.md](../fleet/README.md#install)):
+says which ([cmd/nova-fleet/README.md](../cmd/nova-fleet/README.md#install)):
 
 ```text
 nova-fleet install --repo mas-bandwidth/nova-sprint --tag v2.0.0 web-1
@@ -478,11 +480,12 @@ on Linux, or a launchd job under `~/Library/LaunchAgents` on macOS, for each
 row and starts it.
 
 The same store keeps the **friends**, the AIs that work on the fleet, one row
-each, and Go programs read every kind through the package
-`github.com/mas-bandwidth/nova-tools/v2/config/lib` (`Machines`, `Friends`,
+each. In the current source tree, Go programs read every kind through
+`github.com/mas-bandwidth/nova-tools/v2/modules/config` (`Machines`, `Friends`,
 `Services`) rather than keeping a copy; `Snapshot` reads all three inside one
 read-only REPEATABLE READ transaction, so machines and friends come from the
-same instant:
+same instant. When importing a released module, use the package path
+documented by that release:
 
 ```text
 nova-config friend add <friend> --harness <harness> --width 4 --actor you
@@ -494,11 +497,11 @@ then shows `width=4` and the default `tiers=flash,frontier,heavy,pro`.
 The refusal you will meet first is
 `NOVA_PG_DSN carries a password; remove it and set NOVA_PG_PASSWORD` (exit 2):
 the password goes in `NOVA_PG_PASSWORD`, never in the DSN. The others are in
-[config/README.md](../config/README.md#refusals) and
-[fleet/README.md](../fleet/README.md#refusals).
+[cmd/nova-config/README.md](../cmd/nova-config/README.md#refusals) and
+[cmd/nova-fleet/README.md](../cmd/nova-fleet/README.md#refusals).
 
-The whole tool: [fleet/README.md](../fleet/README.md), with
-[config/README.md](../config/README.md) for the rows.
+The whole tool: [cmd/nova-fleet/README.md](../cmd/nova-fleet/README.md), with
+[cmd/nova-config/README.md](../cmd/nova-config/README.md) for the rows.
 
 ## No fleet yet? Mock one with VMs
 
@@ -587,7 +590,7 @@ The refusal you will meet first is
 `github-runner: give -e github_runner_url=... -e github_runner_scope=repo, ...`:
 name the repository or organization and its scope, and give each host a
 `runners` value or pass `-e runner_count=N`. The others are in
-[fleet/README.md](../fleet/README.md#github-runners).
+[cmd/nova-fleet/README.md](../cmd/nova-fleet/README.md#github-runners).
 
 ## Deploy secrets to machines in your fleet automatically
 
@@ -651,9 +654,9 @@ default.
 The refusal you will meet first is
 `SECRETS SET REFUSED reason=no-key: key file ... must be a regular file of mode 0600 owned by you`
 (exit 2, or 125 from `exec`): run `chmod 600` on the key file. The others are in
-[secrets/README.md](../secrets/README.md#refusals).
+[cmd/nova-secrets/README.md](../cmd/nova-secrets/README.md#refusals).
 
-The whole tool: [secrets/README.md](../secrets/README.md).
+The whole tool: [cmd/nova-secrets/README.md](../cmd/nova-secrets/README.md).
 
 ## Share machines without stepping on each other
 
@@ -676,9 +679,9 @@ runs, and `status` ends with `free=2/2` once both have finished.
 
 The refusal you will meet first is `no slot within <d>: ...` (exit 1): every
 slot stayed taken for the whole `--wait`. Wait longer, or look at `status`. The
-others are in [reserve/README.md](../reserve/README.md#refusals-and-what-to-do-next).
+others are in [cmd/nova-reserve/README.md](../cmd/nova-reserve/README.md#refusals-and-what-to-do-next).
 
-The whole tool: [reserve/README.md](../reserve/README.md).
+The whole tool: [cmd/nova-reserve/README.md](../cmd/nova-reserve/README.md).
 
 ## Run untrusted work inside a sandbox
 
@@ -728,9 +731,9 @@ toolchain outside `/usr`, add `--read "$(go env GOROOT)"`. A Go build also needs
 and `GOCACHE` inside a `--write`, and a populated `GOMODCACHE` inside a
 `--read`. Set `GOPROXY=off` for a build from that cache with `--net-deny`;
 `GOPROXY` is a module-download setting, not a filesystem path. `HOME` is kept. The others are in
-[sandbox/README.md](../sandbox/README.md#refusals).
+[cmd/nova-sandbox/README.md](../cmd/nova-sandbox/README.md#refusals).
 
-The whole tool: [sandbox/README.md](../sandbox/README.md).
+The whole tool: [cmd/nova-sandbox/README.md](../cmd/nova-sandbox/README.md).
 
 ## Retain memory across sessions
 
@@ -772,9 +775,9 @@ The refusal you will meet first is
 (exit 2): run the `open` the line names, or correct `--store`. An `append` to a
 store that exists but has no such session opens the session itself
 (`opened=true`). The others are in
-[cairn/README.md](../cairn/README.md#refusals).
+[cmd/nova-cairn/README.md](../cmd/nova-cairn/README.md#refusals).
 
-The whole tool: [cairn/README.md](../cairn/README.md).
+The whole tool: [cmd/nova-cairn/README.md](../cmd/nova-cairn/README.md).
 
 ## Is it working?
 

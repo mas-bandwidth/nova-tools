@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- {{ github_runner_label_id }}: managed by Ansible (cmd/nova-fleet/github-runners.yml). Edits are overwritten.
+     A system LaunchDaemon dropped to the login: it starts at boot with nobody logged in. -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>{{ github_runner_label_id }}</string>
+  <key>UserName</key>
+  <string>{{ ansible_facts['user_id'] }}</string>
+  <key>WorkingDirectory</key>
+  <string>{{ github_runner_dir }}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>{{ github_runner_dir }}/run.sh</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>{{ github_runner_dir }}/_diag/daemon.log</string>
+  <key>StandardErrorPath</key>
+  <string>{{ github_runner_dir }}/_diag/daemon.log</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key>
+    <string>{{ ansible_facts['user_dir'] }}</string>
+    <key>PATH</key>
+    <string>{{ github_runner_env.get('PATH', github_runner_default_path_darwin) }}</string>
+{% for k, v in github_runner_env.items() | sort if k != 'PATH' %}
+    <key>{{ k }}</key>
+    <string>{{ v }}</string>
+{% endfor %}
+  </dict>
+</dict>
+</plist>

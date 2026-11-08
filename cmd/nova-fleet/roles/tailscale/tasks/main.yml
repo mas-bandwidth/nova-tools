@@ -1,0 +1,170 @@
+---
+# The tailscale role (cmd/nova-fleet/tailscale.yml): install, join with the adopter's auth key, record the MagicDNS name.
+# The key is TAILSCALE_AUTHKEY in the control node's environment (the run is under nova-secrets exec); it reaches the
+# machine only on the module's stdin (pipelining, so never on its disk, argv or environment). A machine Running with
+# the wanted tags is not joined again.
+- name: the platform
+  ansible.builtin.set_fact:
+    ts_os: "{{ 'windows' if ansible_facts['os_family'] == 'Windows' else ('darwin' if (nova_system | default(ansible_facts['system'])) == 'Darwin' else ('debian' if ansible_facts['os_family'] == 'Debian' else 'other')) }}"
+    ts_tags: "{{ nova_tailscale_tags | sort }}"
+
+- name: a platform this play installs on
+  ansible.builtin.assert:
+    that: ts_os != 'other'
+    fail_msg: "{{ inventory_hostname }} is {{ ansible_facts['os_family'] }}: tailscale.yml installs on Debian/Ubuntu (apt), macOS (brew) and Windows (winget)"
+    quiet: true
+
+- name: install and join (Windows)
+  ansible.builtin.include_tasks: windows.yml
+  when: ts_os == 'windows'
+
+- name: install (Debian, Ubuntu)
+  ansible.builtin.include_tasks: install-debian.yml
+  when: ts_os == 'debian'
+
+- name: install (macOS)
+  ansible.builtin.include_tasks: install-darwin.yml
+  when: ts_os == 'darwin'
+
+- name: join (Linux, macOS)
+  when: ts_os != 'windows'
+  block:
+    - name: the machine's tailnet state
+      ansible.builtin.command: "{{ nova_tailscale_bin }} status --json"
+      register: ts_status
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: the state, parsed
+      ansible.builtin.set_fact:
+        ts_self: "{{ (ts_status.stdout | from_json).Self | default({}) if (ts_status.stdout | default('') | trim).startswith('{') else {} }}"
+        ts_state: "{{ (ts_status.stdout | from_json).BackendState | default('Absent') if (ts_status.stdout | default('') | trim).startswith('{') else 'Absent' }}"
+
+    - name: what the join must do
+      ansible.builtin.set_fact:
+        ts_join: "{{ ts_state != 'Running' }}"
+        ts_retag: "{{ ts_state == 'Running' and (ts_self.Tags | default([], true) | sort) != ts_tags }}"
+        ts_ssh_flag: "{{ ['--ssh'] if (ts_os == 'debian' and nova_tailscale_ssh | bool) else [] }}"
+
+    # Changing a running node's tags needs `tailscale up --reset` with a new key: that drops the node's other
+    # preferences and can cut the connection this run comes in on. The play never does it; it names the command.
+    - name: a running node keeps its tags (retagging is done at its console)
+      ansible.builtin.fail:
+        msg: >-
+          TAILNET STOP {{ inventory_hostname }}: it is Running with tags {{ ts_self.Tags | default([], true) | join(',') or 'none' }},
+          and {{ ts_tags | join(',') }} is wanted. Retag it at the machine's own console (not over the tailnet: the command
+          drops the connection), with a key allowed those tags:
+          printf %s "$TAILSCALE_AUTHKEY" | sudo tailscale up --reset --force-reauth --auth-key=file:/dev/stdin
+          --hostname={{ inventory_hostname }} --advertise-tags={{ ts_tags | join(',') }} {{ ts_ssh_flag | join(' ') }}
+          -- or set nova_tailscale_tags for this machine to the tags it has.
+      when: ts_retag
+
+    - name: the join has its key (refused before anything runs when it has not)
+      ansible.builtin.assert:
+        that: lookup('ansible.builtin.env', 'TAILSCALE_AUTHKEY') | length > 0
+        fail_msg: >-
+          {{ inventory_hostname }}: tailnet state {{ ts_state }} (tags {{ ts_self.Tags | default([], true) }}, want {{ ts_tags }}) and no
+          TAILSCALE_AUTHKEY in the environment; run the play under nova-secrets exec --only TAILSCALE_AUTHKEY (cmd/nova-fleet/README.md, "tailscale.yml")
+        quiet: true
+      when: ts_join and not ansible_check_mode
+
+    - name: "tailscale up as {{ inventory_hostname }} with {{ ts_tags | join(',') }} (the key on stdin)"
+      ansible.builtin.command:
+        argv: "{{ [nova_tailscale_bin, 'up', '--reset', '--auth-key=file:/dev/stdin', '--hostname=' ~ inventory_hostname,
+                   '--advertise-tags=' ~ (ts_tags | join(','))] + ts_ssh_flag }}"
+        stdin: "{{ lookup('ansible.builtin.env', 'TAILSCALE_AUTHKEY') }}"
+        stdin_add_newline: false
+      vars:
+        ansible_pipelining: true
+      become: "{{ ts_os == 'debian' }}"
+      register: ts_up
+      failed_when: false
+      no_log: true
+      when: ts_join and not ansible_check_mode
+
+    - name: the join a run would make (--check)
+      ansible.builtin.debug:
+        msg: "WOULD-UP {{ inventory_hostname }}: state {{ ts_state }}, want {{ ts_tags | join(',') }}"
+      changed_when: true
+      when: ts_join and ansible_check_mode
+
+    # no_log hides the whole result, the cause with it: the outcome is printed with any key redacted
+    - name: the join's outcome (key material redacted)
+      ansible.builtin.debug:
+        msg: "TAILNET UP rc={{ ts_up.rc | default(-1) }} {{ (ts_up.stderr | default('') ~ ' ' ~ ts_up.stdout | default('')) | regex_replace('tskey-[^\\s\"]*', 'tskey-REDACTED') | trim | truncate(600) }}"
+      when: ts_up is not skipped
+
+    - name: the join landed
+      ansible.builtin.assert:
+        that: (ts_up.rc | default(-1)) == 0
+        fail_msg: "{{ inventory_hostname }}: tailscale up failed (rc={{ ts_up.rc | default(-1) }}); the redacted cause is above"
+        quiet: true
+      when: ts_up is not skipped
+
+    # on a machine already joined: the hostname and Tailscale SSH set in place, with no new key
+    - name: the running node's preferences (Linux)
+      ansible.builtin.command: "{{ nova_tailscale_bin }} debug prefs"
+      register: ts_prefs
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      when: not ts_join and ts_os == 'debian'
+
+    - name: tailscale set (hostname, ssh) where the running node differs
+      ansible.builtin.command:
+        argv: "{{ [nova_tailscale_bin, 'set', '--hostname=' ~ inventory_hostname] + (['--ssh=' ~ ((nova_tailscale_ssh | bool) | string | lower)] if ts_os == 'debian' else []) }}"
+      become: "{{ ts_os == 'debian' }}"
+      when: >-
+        not ts_join and (ts_self.HostName | default('') != inventory_hostname
+        or (ts_os == 'debian' and ((ts_prefs.stdout | default('{}') | from_json).RunSSH | default(false)) != (nova_tailscale_ssh | bool)))
+
+    - name: the state after the join
+      ansible.builtin.command: "{{ nova_tailscale_bin }} status --json"
+      register: ts_after
+      changed_when: false
+      check_mode: false
+      when: ts_up is not skipped
+
+    - name: the node, as it is now
+      ansible.builtin.set_fact:
+        ts_self: "{{ (ts_after.stdout | from_json).Self }}"
+      when: ts_up is not skipped
+
+# ---- the MagicDNS name, recorded as the machine's address ----
+- name: the machine's MagicDNS name
+  ansible.builtin.set_fact:
+    ts_dns: "{{ ts_self.DNSName | default('') | regex_replace('\\.$', '') }}"
+
+- name: nova-config's store is in the environment
+  ansible.builtin.assert:
+    that: lookup('ansible.builtin.env', 'NOVA_PG_DSN') | length > 0
+    fail_msg: >-
+      {{ inventory_hostname }}: its address is to become {{ ts_dns }} and there is no NOVA_PG_DSN in the environment (the password in
+      NOVA_PG_PASSWORD); give it, or -e nova_tailscale_record_address=false
+    quiet: true
+  when: nova_tailscale_record_address | bool and ts_dns | length > 0 and ts_dns != (ansible_host | default(''))
+
+- name: "the address in nova-config is {{ ts_dns }}"
+  ansible.builtin.command:
+    argv: "{{ [nova_control_config, 'machine', 'set', inventory_hostname, '--address', ts_dns, '--actor', nova_join_actor,
+               '--reason', 'tailnet address (cmd/nova-fleet/tailscale.yml)'] + (['--dry-run'] if ansible_check_mode else []) }}"
+  delegate_to: localhost
+  become: false
+  check_mode: false   # nova-config's own --dry-run under --check
+  register: ts_recorded
+  changed_when: not ansible_check_mode
+  when: nova_tailscale_record_address | bool and ts_dns | length > 0 and ts_dns != (ansible_host | default(''))
+
+- name: the MagicDNS name's host key (Tailscale SSH's), pinned on the control node
+  ansible.builtin.include_role: { name: hostkey }
+  vars: { hostkey_name: "{{ ts_dns }}" }
+  when: ts_recorded is not skipped and not ansible_check_mode
+
+- name: the receipt
+  ansible.builtin.debug:
+    msg: >-
+      TAILNET {{ inventory_hostname }} dns={{ ts_dns or ('WOULD-JOIN' if ansible_check_mode else 'none') }}
+      ip={{ ((ts_self.TailscaleIPs | default([], true)) or ['none']) | first }} tags={{ ts_self.Tags | default([], true) | join(',') or 'none' }}
+      address={{ ('WOULD-SET ' if ansible_check_mode else 'SET ') ~ ts_dns if ts_recorded is not skipped else 'kept' }}
+      {{- ' (check: nothing changed)' if ansible_check_mode else '' }}

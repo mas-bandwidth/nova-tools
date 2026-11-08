@@ -1,0 +1,473 @@
+# purpose: a new machine joins the fleet: its row, its login, the tailnet, the tools a seat needs, its seat
+# argument: nova_join_host
+#
+# join.yml: a new machine joins the fleet (cmd/nova-fleet/README.md, "join"). In order, each play only after the one before
+# passed, all idempotent, so a join that stopped is resumed by running the same command again:
+#
+#   1. the machine row (control node): `nova-config machine add` where the row of nova_join_host is missing, then the
+#      inventory is read again so the plays below find it. A row that exists is never edited; a row whose user differs
+#      from nova_join_user stops the join by name.
+#   2. the login (Linux, as root over the address given; skipped once the address is the MagicDNS name): rsync (the control node pushes the secrets store with it), the row's user, no
+#      password, in nova_join_sudo_group with passwordless sudo (checked by visudo before it lands), root's
+#      authorized_keys copied to it (or the file nova_join_authorized_keys names on the control node), linger on, the
+#      hostname set to the inventory name.
+#   3. tailscale.yml: Tailscale installed and up with the adopter's tagged auth key, the MagicDNS name recorded as the
+#      machine's address, the firewall closed to everything but the tailnet. From here on the plays reach the machine
+#      over the tailnet, as the login: a run that finds the row's address already the MagicDNS name (the joined
+#      state) skips 2 and starts here.
+#   4. the tools a seat needs (as the login): the bin directory on the login PATH, and on Linux the pinned age and sops.
+#   5. the tailnet check (control node): the row's address is a tailnet peer name the control node sees online; else
+#      the join stops here, before any seat is made.
+#   6. seat.yml: the seat key made on the machine by age-keygen, its rule added to the secrets store, its public half
+#      pinned on the control node (nova_seal_pins/<seat>.pub, outside the store).
+#   7. the grant (control node, with nova_seal_seat and nova_seal_key, the control seat and its key): `nova-secrets
+#      grant` writes <seat>.grants.yaml with the names in nova_join_grant, sealed to the pinned machine key and the
+#      pinned recovery key only (the control key cannot open it); a refusal stops the join with its one-line reason.
+#      Then the store is pushed to the machine (secrets-refresh, push mode) with the recovery pin its own `set` seals to.
+#   8. the check: the control node sees the machine as an online tailnet peer. The bus is not checked here (the login
+#      has no nova-bus until the tools are installed); nova-fleet does that after install and refresh.
+#
+# The machine's SSH host key is pinned into the control node's known_hosts at the first connection (the address
+# given; or the key given as nova_join_host_key, from the provider's console, which proves which machine it is), and
+# the MagicDNS name's once tailscale.yml records it.
+#
+# A darwin machine skips 2 (it has no root login: its login and sudo are set up at its console) and takes age and
+# sops from Homebrew. A Windows machine gets 1 and 3 only.
+#
+# The machine is named by -e nova_join_host, never by -l (a machine with no row yet is in no inventory):
+#
+#   nova-secrets exec --only TAILSCALE_AUTHKEY,NOVA_PG_PASSWORD --store S --key K --as SEAT -- \
+#     env NOVA_PG_DSN=postgres://nova_config@HOST:5432/nova \
+#     ansible-playbook -i ./inventory cmd/nova-fleet/join.yml \
+#       -e nova_join_host=<name> -e nova_join_user=<login> -e nova_join_address=<address> \
+#       -e nova_join_os=linux -e nova_join_arch=amd64 -e nova_seal_store=<store clone> \
+#       -e nova_seal_seat=<control seat> -e nova_seal_key=<its key>
+- name: the machine row (control node)
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    join_dry: "{{ ['--dry-run'] if ansible_check_mode else [] }}"
+  tasks:
+    - name: one machine, named
+      ansible.builtin.assert:
+        that: nova_join_host is defined and nova_join_host is match('^[a-z0-9][a-z0-9-]*$')
+        fail_msg: "JOIN STOP: join.yml takes the machine as -e nova_join_host=<name> (a lowercase machine name), never -l"
+        quiet: true
+
+    - name: the control node has what the run needs
+      ansible.builtin.include_role: { name: preflight }
+      vars:
+        preflight_control: >-
+          {{ [{'cmd': nova_control_config, 'for': 'the machine row', 'v2': true}, {'cmd': nova_control_secrets, 'for': 'the seat', 'v2': true},
+              {'cmd': 'git', 'for': 'the seat: nova-secrets commits the store'}]
+             + [{'cmd': 'rsync', 'for': 'the push of the store to the machine'}, {'cmd': 'ssh-keyscan', 'for': 'pinning the host key'},
+                {'cmd': 'tailscale', 'for': 'the check: the control node sees the peer'}] }}
+
+    - name: nova-config's store is in the environment
+      ansible.builtin.assert:
+        that: lookup('ansible.builtin.env', 'NOVA_PG_DSN') | length > 0
+        fail_msg: "JOIN STOP {{ nova_join_host }} at the machine row: no NOVA_PG_DSN in the environment (the password in NOVA_PG_PASSWORD, under nova-secrets exec; cmd/nova-fleet/README.md, \"join\")"
+        quiet: true
+
+    - name: the machine row now
+      ansible.builtin.command: { argv: ["{{ nova_control_config }}", machine, show, "{{ nova_join_host }}", --json] }
+      register: join_show
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: the row, parsed
+      ansible.builtin.set_fact:
+        join_row: >-
+          {{ ((((join_show.stdout | from_json).get('items') or [{}]) | first).get('fields', {}))
+             if (join_show.rc == 0 and (join_show.stdout | trim).startswith('{')) else {} }}
+
+    - name: a missing row has its fields given
+      ansible.builtin.assert:
+        that:
+          - nova_join_user is defined and nova_join_user | length > 0
+          - nova_join_address is defined and nova_join_address | length > 0
+          - nova_join_os is defined and nova_join_os in ['linux', 'darwin']
+          - nova_join_arch is defined and nova_join_arch | length > 0
+        fail_msg: >-
+          JOIN STOP {{ nova_join_host }} at the machine row: there is no row yet, and adding one needs -e nova_join_user,
+          nova_join_address, nova_join_os (linux|darwin) and nova_join_arch
+        quiet: true
+      when: join_row | length == 0
+
+    - name: an existing row is the declared machine (its user is its identity)
+      ansible.builtin.assert:
+        that: nova_join_user is not defined or join_row.user == nova_join_user
+        fail_msg: >-
+          JOIN STOP {{ nova_join_host }} at the machine row: nova-config has user={{ join_row.user }}, the join says
+          user={{ nova_join_user | default('') }}; settle it with nova-config machine set, then run the join again
+        quiet: true
+      when: join_row | length > 0
+
+    - name: the machine row added
+      ansible.builtin.command:
+        argv: >-
+          {{ [nova_control_config, 'machine', 'add', nova_join_host, '--address', nova_join_address, '--user', nova_join_user,
+              '--os', nova_join_os, '--arch', nova_join_arch, '--roles', nova_join_roles]
+             + (['--cores', nova_join_cores | string] if nova_join_cores is defined else [])
+             + ['--actor', nova_join_actor, '--reason', 'fleet join (fleet/join.yml)'] + join_dry }}
+      check_mode: false   # nova-config's own --dry-run under --check: it reads the store and writes nothing
+      when: join_row | length == 0
+
+    # read before the root plays below replace ansible_user for their connection
+    - name: the machine's login
+      ansible.builtin.set_fact:
+        nova_join_login: "{{ join_row.user if join_row | length > 0 else nova_join_user }}"
+        nova_join_row_address: "{{ join_row.address if join_row | length > 0 else nova_join_address }}"
+
+    - name: the machine's host key, pinned at the first connection (or the key given as nova_join_host_key)
+      ansible.builtin.include_role: { name: hostkey }
+      vars: { hostkey_name: "{{ nova_join_row_address }}", hostkey_key: "{{ nova_join_host_key | default('') }}" }
+      when: nova_join_row_address | length > 0
+
+    - name: the inventory, read again (a new row is a host now)
+      ansible.builtin.meta: refresh_inventory
+
+    - name: the row's receipt
+      ansible.builtin.debug:
+        msg: >-
+          JOIN ROW {{ nova_join_host }} user={{ nova_join_login }}
+          {{ 'present' if join_row | length > 0 else ('WOULD-ADD (check: nothing written; the plays below match no host)' if ansible_check_mode else 'ADDED') }}
+
+- name: the login (Linux, as root)
+  hosts: "{{ nova_join_host | default('!all') }}"   # no machine named, no host
+  gather_facts: false
+  vars:
+    ansible_user: "{{ nova_join_root_user }}"
+    join_login: "{{ hostvars['localhost']['nova_join_login'] }}"
+  tasks:
+    - name: only a Linux machine has a root login to set up
+      ansible.builtin.meta: end_host
+      when: (nova_os | default('linux')) != 'linux'
+
+    # the joined state: the row's address is the MagicDNS name, so the login was made before the tailnet step and
+    # root is not let in (the policy allows no root over Tailscale SSH; ufw closed the public address)
+    - name: the login, made already (the address is the tailnet name)
+      ansible.builtin.debug:
+        msg: "JOIN LOGIN {{ inventory_hostname }} joined already: {{ ansible_host }} is the tailnet name; the plays from the tailnet step on run as {{ join_login }} over it"
+      when: ansible_host | default('') is match('.*\\.ts\\.net$')
+
+    - name: nothing to do as root on a joined machine
+      ansible.builtin.meta: end_host
+      when: ansible_host | default('') is match('.*\\.ts\\.net$')
+
+    - name: the machine has a login to make
+      ansible.builtin.assert:
+        that: join_login | length > 0 and join_login != nova_join_root_user
+        fail_msg: "JOIN STOP {{ inventory_hostname }}: its machine row has no user other than {{ nova_join_root_user }} (nova-config machine set {{ inventory_hostname }} --user <login>)"
+        quiet: true
+
+    - name: the machine's facts, as root
+      ansible.builtin.setup:
+        gather_subset: [min]
+
+    - name: a Linux machine
+      ansible.builtin.assert:
+        that: (nova_system | default(ansible_facts['system'])) == 'Linux'
+        fail_msg: "{{ inventory_hostname }} reports {{ (nova_system | default(ansible_facts['system'])) }}; its row says os={{ nova_os | default('') }}"
+        quiet: true
+
+    - name: rsync, which the control node pushes the secrets store with (Debian, Ubuntu)
+      ansible.builtin.apt: { name: rsync, state: present, update_cache: true, cache_valid_time: 3600 }
+      when: ansible_facts['os_family'] == 'Debian'
+
+    - name: "the login {{ join_login }} (no password, bash, group {{ nova_join_sudo_group }})"
+      ansible.builtin.user:
+        name: "{{ join_login }}"
+        shell: /bin/bash
+        groups: ["{{ nova_join_sudo_group }}"]
+        append: true
+        create_home: true
+      register: join_user
+
+    - name: "sudo without a password for {{ join_login }} (visudo checks it before it lands)"
+      ansible.builtin.copy:
+        content: "{{ join_login }} ALL=(ALL) NOPASSWD:ALL\n"
+        dest: "/etc/sudoers.d/90-nova-{{ join_login }}"
+        owner: root
+        group: root
+        mode: "0440"
+        validate: /usr/sbin/visudo -cf %s
+
+    - name: "~{{ join_login }}/.ssh"
+      ansible.builtin.file:
+        path: "{{ join_user.home | default('/home/' ~ join_login) }}/.ssh"
+        state: directory
+        owner: "{{ join_login }}"
+        group: "{{ join_login }}"
+        mode: "0700"
+      register: join_ssh_dir
+
+    # under --check a directory not made yet cannot take the copy; the task above already says it would be made
+    - name: "the authorized keys of {{ join_login }}: root's, or the control node's file nova_join_authorized_keys names"
+      ansible.builtin.copy:
+        src: "{{ nova_join_authorized_keys | default('/root/.ssh/authorized_keys') }}"
+        remote_src: "{{ nova_join_authorized_keys is not defined }}"
+        dest: "{{ join_user.home | default('/home/' ~ join_login) }}/.ssh/authorized_keys"
+        owner: "{{ join_login }}"
+        group: "{{ join_login }}"
+        mode: "0600"
+      when: not (ansible_check_mode and join_ssh_dir is changed)
+
+    - name: "linger for {{ join_login }} (its user units run with no session open)"
+      ansible.builtin.command: "loginctl enable-linger {{ join_login }}"
+      args: { creates: "/var/lib/systemd/linger/{{ join_login }}" }
+
+    - name: "the hostname is {{ inventory_hostname }}"
+      ansible.builtin.hostname: { name: "{{ inventory_hostname }}" }
+      when: nova_join_hostname | bool
+
+- name: the tailnet
+  ansible.builtin.import_playbook: tailscale.yml
+
+- name: the tools a seat needs (as the login)
+  hosts: "{{ nova_join_host | default('!all') }}"   # no machine named, no host
+  gather_facts: true
+  gather_subset: [min]
+  vars:
+    join_platform: "{{ (nova_system | default(ansible_facts['system'])) | lower }}-{{ 'arm64' if ansible_facts['architecture'] in ['arm64', 'aarch64'] else 'amd64' }}"
+  tasks:
+    - name: a Windows machine has no seat here
+      ansible.builtin.meta: end_host
+      when: ansible_facts['os_family'] == 'Windows'
+
+    - name: the bin directory
+      ansible.builtin.file: { path: "{{ nova_bin_dir }}", state: directory, mode: "0755" }
+      register: join_bin_dir
+
+    - name: the login profile bash -l reads
+      ansible.builtin.shell: |
+        for f in .bash_profile .bash_login .profile; do [ -f "$HOME/$f" ] && { echo "$HOME/$f"; exit 0; }; done; echo "$HOME/.profile"
+      args: { executable: /bin/bash }
+      register: join_profile
+      changed_when: false
+      check_mode: false
+
+    - name: the bin directory on the login PATH
+      ansible.builtin.blockinfile:
+        path: "{{ join_profile.stdout | trim }}"
+        create: true
+        mode: "0644"
+        # The marker identifies existing shell blocks independently of the source directory.
+        marker: "# {mark} nova bin directory (fleet/join.yml)"
+        block: |
+          case ":$PATH:" in *":{{ nova_bin_dir }}:"*) ;; *) PATH="{{ nova_bin_dir }}:$PATH"; export PATH;; esac
+          NOVA_SECRETS_PINS="{{ nova_secrets_pins }}"; export NOVA_SECRETS_PINS
+
+    - name: "age {{ nova_age_version }} (Linux, the release archive at its pinned digest)"
+      ansible.builtin.get_url:
+        url: "https://github.com/FiloSottile/age/releases/download/v{{ nova_age_version }}/age-v{{ nova_age_version }}-{{ join_platform }}.tar.gz"
+        dest: "{{ nova_bin_dir }}/.age-v{{ nova_age_version }}-{{ join_platform }}.tar.gz"
+        checksum: "sha256:{{ nova_age_sha256[join_platform] }}"
+        mode: "0644"
+      register: join_age_archive
+      when: (nova_system | default(ansible_facts['system'])) == 'Linux' and not (ansible_check_mode and join_bin_dir is changed)   # --check: no directory to fetch into yet
+
+    - name: age-keygen in the bin directory
+      ansible.builtin.stat: { path: "{{ nova_bin_dir }}/age-keygen" }
+      register: join_keygen
+      when: (nova_system | default(ansible_facts['system'])) == 'Linux'
+
+    - name: age and age-keygen unpacked into the bin directory (a new archive, or none there)
+      ansible.builtin.unarchive:
+        src: "{{ nova_bin_dir }}/.age-v{{ nova_age_version }}-{{ join_platform }}.tar.gz"
+        dest: "{{ nova_bin_dir }}"
+        remote_src: true
+        include: [age/age, age/age-keygen]
+        extra_opts: [--strip-components=1]
+      when: >-
+        (nova_system | default(ansible_facts['system'])) == 'Linux' and (join_age_archive is changed or not join_keygen.stat.exists)
+        and not (ansible_check_mode and (join_age_archive is changed or join_age_archive is skipped))
+
+    - name: "sops {{ nova_sops_version }} (Linux, the release binary at its pinned digest)"
+      ansible.builtin.get_url:
+        url: "https://github.com/getsops/sops/releases/download/v{{ nova_sops_version }}/sops-v{{ nova_sops_version }}.{{ join_platform | replace('-', '.') }}"
+        dest: "{{ nova_sops }}"
+        checksum: "sha256:{{ nova_sops_sha256[join_platform] }}"
+        mode: "0755"
+      when: (nova_system | default(ansible_facts['system'])) == 'Linux' and not (ansible_check_mode and join_bin_dir is changed)
+
+    - name: age-keygen and sops answer
+      ansible.builtin.shell: |
+        printf 'age=%s sops=%s\n' "$({{ nova_age_keygen }} --version 2>/dev/null || echo none)" "$({{ nova_sops }} --version 2>/dev/null | head -1 | awk '{print $2}' || echo none)"
+      args: { executable: /bin/bash }
+      register: join_tools
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: the tools' receipt
+      ansible.builtin.debug:
+        msg: "JOIN TOOLS {{ inventory_hostname }} {{ join_tools.stdout | trim }}{{ ' (darwin: brew install age sops where none)' if (nova_system | default(ansible_facts['system'])) == 'Darwin' else '' }}"
+
+- name: the tailnet check, before any seat is made (control node)
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    peer_address: "{{ hostvars[nova_join_host].ansible_host | default('') if nova_join_host in hostvars else '' }}"
+  tasks:
+    - name: the control node's view of the tailnet
+      ansible.builtin.command: tailscale status --json
+      register: peer_status
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      when: nova_tailnet | default(true) | bool
+
+    - name: the machine among the control node's peers, by the row's address
+      ansible.builtin.set_fact:
+        peer_row: >-
+          {{ ((peer_status.stdout | from_json).Peer | default({})).values() | selectattr('DNSName', 'defined')
+             | selectattr('DNSName', 'equalto', peer_address ~ '.') | list | first | default({})
+             if (peer_status.stdout | default('') | trim).startswith('{') else {} }}
+
+    - name: the row's address is an online tailnet peer name
+      ansible.builtin.assert:
+        that: peer_address | length > 0 and peer_row.Online | default(false)
+        fail_msg: >-
+          JOIN STOP {{ nova_join_host }} at the tailnet check: the row's address {{ peer_address }} is not an online peer in
+          the control node's `tailscale status` (tailscale.yml records the MagicDNS name; the policy must let this node
+          see tag:nova); no seat is made for a machine that is not on the tailnet
+        quiet: true
+      when: not ansible_check_mode and nova_tailnet | default(true) | bool
+
+    - name: the tailnet check's receipt
+      ansible.builtin.debug:
+        msg: >-
+          JOIN PEER {{ nova_join_host }} address={{ peer_address }}
+          peer={{ 'not checked (nova_tailnet false)' if not (nova_tailnet | default(true) | bool) else ('online' if peer_row.Online | default(false) else ('WOULD-CHECK' if ansible_check_mode else 'missing')) }}
+
+- name: the seat
+  ansible.builtin.import_playbook: seat.yml
+
+- name: the fleet values, granted into the seat (control node)
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    grant_seat: "{{ hostvars[nova_join_host].nova_seat | default(nova_join_host) if nova_join_host in hostvars else nova_join_host }}"
+    # the machine's key as seat.yml read it on the machine: grant pins it, or checks it against the pin
+    grant_pub: "{{ hostvars[nova_join_host].seat_pub | default('') if nova_join_host in hostvars else '' }}"
+  tasks:
+    - name: nova_join_grant is a list of names
+      ansible.builtin.assert:
+        that: nova_join_grant is iterable and nova_join_grant is not string and nova_join_grant is not mapping
+        fail_msg: "JOIN STOP {{ nova_join_host }} at the fleet values: nova_join_grant is a list, as -e '{\"nova_join_grant\": [\"A\", \"B\"]}'"
+        quiet: true
+
+    - name: granting is asked for
+      ansible.builtin.set_fact:
+        grant_asked: "{{ nova_seal_seat is defined and nova_seal_key is defined and (nova_join_grant | length) > 0 }}"
+
+    # grant reads the values from the control seat and writes the new seat's grants file in memory, sealed to the pinned
+    # machine key and the pinned recovery key: no value is an argument or an output, so the task needs no no_log, and a
+    # refusal is one line that names no value
+    - name: "{{ nova_join_grant | join(',') }} granted into the new seat (nova-secrets grant)"
+      ansible.builtin.command:
+        argv: >-
+          {{ [nova_control_secrets, 'grant', nova_join_grant | join(','), '--to', grant_seat, '--pins', nova_seal_pins,
+              '--store', nova_seal_store, '--key', nova_seal_key, '--as', nova_seal_seat, '--sops', nova_control_sops]
+             + (['--pub', grant_pub] if grant_pub is match('^age1') else []) }}
+      register: join_grant
+      changed_when: "'committed' in join_grant.stdout"
+      failed_when: false
+      when: grant_asked and not ansible_check_mode
+
+    - name: a refused grant stops the join with its reason
+      ansible.builtin.fail:
+        msg: >-
+          JOIN STOP {{ nova_join_host }} at the fleet values:
+          {{ join_grant.stderr_lines | select('match', '^(SECRETS GRANT REFUSED|nova-secrets grant:) ') | first
+             | default(join_grant.stderr_lines | last | default('rc=' ~ join_grant.rc), true) }}
+      when: join_grant is not skipped and join_grant.rc != 0
+
+    - name: the grant's receipt
+      ansible.builtin.debug:
+        msg: >-
+          JOIN GRANT {{ grant_seat }}
+          {%- if not grant_asked %} not asked (give nova_seal_seat, the control seat, and nova_seal_key, its key)
+          {%- elif ansible_check_mode %} would run grant {{ nova_join_grant | join(',') }} from {{ nova_seal_seat }} (check: nothing written; grant decides what changes)
+          {%- else %} {{ join_grant.stdout | trim | regex_replace('^SECRETS GRANT OK ', '') | regex_replace(';.*$', '') }}{% endif %}
+
+- name: the store pushed to the machine, with its recovery pin
+  hosts: "{{ nova_join_host | default('!all') }}"
+  gather_facts: true
+  gather_subset: [min]
+  pre_tasks:
+    - name: a Windows machine has no store here
+      ansible.builtin.meta: end_host
+      when: ansible_facts.os_family == 'Windows'
+
+    - name: the control node's recovery pin
+      ansible.builtin.stat: { path: "{{ nova_seal_pins }}/recovery.pub" }
+      delegate_to: localhost
+      become: false
+      register: join_rec_pin
+
+    - name: a join that granted has the pin; one that did not says so
+      ansible.builtin.assert:
+        that: join_rec_pin.stat.exists or not (hostvars['localhost'].grant_asked | default(false))
+        fail_msg: "JOIN STOP {{ inventory_hostname }} at the recovery pin: no {{ nova_seal_pins }}/recovery.pub on the control node (nova-secrets init --pins, or once: nova-secrets set NAME --pins {{ nova_seal_pins }} --recovery <the recovery public key> ...)"
+        quiet: true
+
+    - name: the machine's pin directory (private)
+      ansible.builtin.file: { path: "{{ nova_secrets_pins }}", state: directory, mode: "0700" }
+      when: join_rec_pin.stat.exists
+
+    - name: "the recovery pin on the machine, from the control node's (what its own `set` seals to)"
+      ansible.builtin.copy:
+        src: "{{ nova_seal_pins }}/recovery.pub"
+        dest: "{{ nova_secrets_pins }}/recovery.pub"
+        mode: "0600"
+      when: join_rec_pin.stat.exists
+      register: join_pin_copy
+
+    - name: the pin's receipt
+      ansible.builtin.debug:
+        msg: >-
+          JOIN PIN {{ inventory_hostname }} recovery={{ 'none (no pin on the control node; its own set needs one: NOVA_SECRETS_PINS=' ~ nova_secrets_pins ~ ')'
+          if not join_rec_pin.stat.exists else ('WOULD-COPY' if (ansible_check_mode and join_pin_copy is changed) else ('copied' if join_pin_copy is changed else 'present')) }}
+          ({{ nova_secrets_pins }}/recovery.pub, exported as NOVA_SECRETS_PINS in the login profile)
+  roles:
+    - role: secrets-refresh
+      when: nova_seal_store is defined
+
+- name: the join's check
+  hosts: "{{ nova_join_host | default('!all') }}"   # no machine named, no host
+  gather_facts: false
+  tasks:
+    - name: the control node's view of the tailnet
+      ansible.builtin.command: tailscale status --json
+      delegate_to: localhost
+      become: false
+      register: check_peers
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: the machine among the control node's peers
+      ansible.builtin.set_fact:
+        check_peer: >-
+          {{ ((check_peers.stdout | from_json).Peer | default({})).values() | selectattr('DNSName', 'defined')
+             | selectattr('DNSName', 'equalto', (ansible_host | default('')) ~ '.') | list | first | default({})
+             if (check_peers.stdout | default('') | trim).startswith('{') else {} }}
+
+    - name: the peer is online
+      ansible.builtin.assert:
+        that: check_peer.Online | default(false)
+        fail_msg: >-
+          JOIN CHECK {{ inventory_hostname }}: the control node's `tailscale status` has no online peer {{ ansible_host | default('') }}
+          (the control node must be on the same tailnet, and the policy must let it see tag:nova)
+        quiet: true
+      when: not ansible_check_mode
+
+    - name: the check's receipt
+      ansible.builtin.debug:
+        msg: "JOIN CHECK {{ inventory_hostname }} peer={{ 'online' if check_peer.Online | default(false) else ('WOULD-CHECK' if ansible_check_mode else 'missing') }} seat=present"

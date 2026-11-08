@@ -1,0 +1,29 @@
+#!/bin/bash
+# nova-disk-report [home]: one DISK line for this machine (cmd/nova-fleet/health.yml): the use of / and of the home filesystem
+# (when it is another one) and of swap, in percent. Over DISK_WARN_PCT (80) on any of them the line is DISK-WARN at
+# journal priority warning, naming each one over; else DISK at notice. Also printed on stdout.
+set -u
+HOMEDIR=${1:-$HOME}
+WARN=${DISK_WARN_PCT:-80}
+MEMINFO=${DISK_MEMINFO:-/proc/meminfo}
+use() { df -P "$1" 2>/dev/null | awk 'NR == 2 {sub("%", "", $5); print $5 " " $6}'; }
+read -r root_pct root_mnt <<< "$(use /)"
+read -r home_pct home_mnt <<< "$(use "$HOMEDIR")"
+swap_pct=$(awk '/^SwapTotal:/ {t = $2} /^SwapFree:/ {f = $2} END {if (t > 0) printf "%d", (t - f) * 100 / t; else print 0}' "$MEMINFO")
+line="root=${root_pct:-?}%"
+over=""
+[ -n "${root_pct:-}" ] && [ "$root_pct" -gt "$WARN" ] && over="$over root"
+if [ -n "${home_mnt:-}" ] && [ "$home_mnt" != "${root_mnt:-}" ]; then
+  line="$line home=${home_pct}%"
+  [ "$home_pct" -gt "$WARN" ] && over="$over home"
+fi
+line="$line swap=${swap_pct}%"
+[ "$swap_pct" -gt "$WARN" ] && over="$over swap"
+host=$(hostname -s)
+if [ -n "$over" ]; then
+  msg="DISK-WARN $host $line over ${WARN}%:$over"; pri=warning
+else
+  msg="DISK $host $line"; pri=notice
+fi
+[ -n "${DISK_NO_LOG:-}" ] || logger -t nova-disk-report -p "user.$pri" "$msg"
+echo "$msg"

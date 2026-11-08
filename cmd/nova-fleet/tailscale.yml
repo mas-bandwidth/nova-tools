@@ -1,0 +1,54 @@
+# purpose: each machine on the tailnet, its address the MagicDNS name, its firewall closed to all but the tailnet
+#
+# tailscale.yml: each machine on the tailnet, its address the MagicDNS name, its firewall closed to everything but
+# the tailnet (cmd/nova-fleet/README.md, "tailscale"; join.yml imports it). nova-fleet up merges the policy
+# (cmd/nova-fleet/tailscale-acl.json) and mints a single-use auth key per machine with TAILSCALE_API_KEY; this play does the rest:
+#
+#   1. Tailscale installed: Tailscale's apt repository on Debian and Ubuntu, Homebrew's cask on macOS, winget on Windows.
+#   2. `tailscale up --auth-key=file:/dev/stdin --hostname <machine> --advertise-tags=tag:nova[,tag:runner] [--ssh]`,
+#      the key TAILSCALE_AUTHKEY from the control node's environment (up puts it there), on stdin, on a machine that is not Running. A Running
+#      machine is never brought up again: a hostname or Tailscale SSH that differs is set in place with no key, and
+#      tags that differ stop the run with the command to retag it at its console.
+#   3. The machine's MagicDNS name (<machine>.<tailnet>.ts.net) recorded as its address in nova-config
+#      (`nova-config machine set <name> --address ...`), then the inventory read again, so the next play, every later
+#      run, the bus and the services reach it there.
+#   4. The firewall: ufw denies incoming on Linux but on tailscale0 (only over a run that already comes in on the
+#      tailnet, so it cannot lock itself out); the application firewall on macOS.
+#
+# The machine's host key is pinned into the control node's known_hosts at the first connection, and the MagicDNS
+# name's (Tailscale SSH's own) once it is recorded (roles/hostkey).
+#
+#   nova-secrets exec --only TAILSCALE_AUTHKEY,NOVA_PG_PASSWORD --store S --key K --as SEAT -- \
+#     env NOVA_PG_DSN=postgres://nova_config@HOST:5432/nova ansible-playbook -i ./inventory cmd/nova-fleet/tailscale.yml -l <machine>
+- name: the tailnet
+  hosts: "{{ nova_join_host | default('all') }}"
+  gather_facts: false   # the host key is pinned first; the facts are gathered below, after it
+  tasks:
+    - name: the control node has what the run needs
+      ansible.builtin.include_role: { name: preflight }
+      vars:
+        preflight_control: >-
+          {{ [{'cmd': 'ssh-keyscan', 'for': 'pinning the host key'}]
+             + ([{'cmd': nova_control_config, 'for': 'the address: nova-config machine set', 'v2': true}] if (nova_tailscale_record_address | default(true) | bool) else []) }}
+
+    - name: the machine's host key, pinned at the first connection
+      ansible.builtin.include_role: { name: hostkey }
+      vars: { hostkey_name: "{{ ansible_host | default(inventory_hostname) }}" }
+
+    - name: the machine's facts (the first connection)
+      ansible.builtin.setup:
+        gather_subset: [min]
+
+    - name: install, join, record the address
+      ansible.builtin.include_role: { name: tailscale }
+
+    - name: the inventory, read again (the address is the tailnet name now)
+      ansible.builtin.meta: refresh_inventory
+
+- name: the firewall (over the tailnet)
+  hosts: "{{ nova_join_host | default('all') }}"
+  gather_facts: true
+  gather_subset: [min]
+  tasks:
+    - name: deny incoming but the tailnet
+      ansible.builtin.include_role: { name: tailscale, tasks_from: firewall }

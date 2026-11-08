@@ -1,0 +1,111 @@
+---
+# Defaults of the github-runner role (cmd/nova-fleet/github-runners.yml). Three values have
+# no default and must be given: github_runner_url, github_runner_scope and, for the
+# labels, whatever extra ones the jobs select on (github_runner_labels, may be empty).
+
+# Where to register: https://github.com/<owner>/<repo> (scope repo) or
+# https://github.com/<org> (scope org). No default; the play refuses to run without it.
+# github_runner_url:
+# github_runner_scope: repo | org
+github_runner_labels: []
+
+# present converges the runners; absent retires every runner of this url on the host.
+github_runner_state: present
+
+# Runners a host carries: runner_count if given (-e), else the machine row's `runners`.
+# No default: a host with neither is refused, so a missing value never reads as 0 and retires
+# the runners. 0 is an explicit choice. A host above n has its extra runners (highest numbers
+# first) retired.
+# runner_count=cores (nova-fleet up's default) sizes each host to its cores: one runner per this
+# many (the row's `cores`, else the host's own count), at least 1. A starting value, not measured.
+github_runner_cores_per_runner: 4
+
+# The actions/runner release and the digests GitHub publishes for its assets.
+github_runner_version: "2.338.2"
+github_runner_sha256:
+  linux-x64: "baebf204307bac6193480852732f0aba2ae97b6c5597c244f4d5558390147c40"
+  linux-arm64: "670adb2f268fe21dcbb58b3db0e0aa9d5b3bddfe2c651481336e561ff86de945"
+  osx-x64: "109fff505a34014a7e8d1acb850c33d404811102f572b8fb9788e2fff013cc49"
+  osx-arm64: "25a065af409ffa317ab4d5a3b614dd15fc9c40f2172bc1b35a1b1258e919a388"
+  win-x64: "a1f17aa987fc8158bc7521d284912267a0d01b7c2c4684b33c86783b5e8221cc"
+  win-arm64: "0790e3f586c2c5388ed8e293e7cef01bd0e8a2c5c68dd0a628f848b61da4b3a7"
+github_runner_release_url: "https://github.com/actions/runner/releases/download"
+
+# Where a host keeps them: <base>/<owner>-<repo>-<i> (or <org>-<i>). Unix: the
+# login's home; Windows: set by the role to C:\actions-runner unless given.
+github_runner_base_dir: "{{ ansible_facts['user_dir'] ~ '/actions-runner' if ansible_facts['os_family'] != 'Windows' else 'C:\\actions-runner' }}"
+
+# Extra environment for the service (Linux and macOS), name: value.
+github_runner_env: {}
+
+# The PATH the service starts with when github_runner_env has none; its jobs inherit it, so a step finds the nova
+# tools (`nova-reserve run ...`): nova_bin_dir first (group_vars/all.yml, where install.yml puts them), then the
+# system's. Linux: systemd's list and the Debian/Ubuntu login tail runners had before; macOS: the daemon's old default.
+github_runner_default_path_linux: "{{ nova_bin_dir }}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin"
+github_runner_default_path_darwin: "{{ nova_bin_dir }}:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+
+# Linux only: run the runner's bin/installdependencies.sh (system packages) once per
+# release on the host.
+github_runner_install_dependencies: true
+
+# Retiring a runner also removes it from GitHub, with a removal token asked of GitHub by gh on the
+# control node; false skips that and leaves the entry for you to delete.
+github_runner_deregister: true
+
+# gh on the control node, logged in (gh auth login) with admin on the repository or organization:
+# it asks GitHub for the registration and removal tokens (tasks/token.yml), and after a run reads
+# GitHub's list of runners, every wanted runner online (the RUNNERS receipt); false skips that
+# check (the receipt is then not printed).
+github_runner_verify: true
+github_runner_gh: gh
+
+# The CI rules every runner enforces (cmd/nova-fleet/README.md, "CI rules"): a push, pull_request or merge_group job is stopped
+# after this many seconds of job wall time and fails with the rule's line; schedule and workflow_dispatch jobs have no
+# limit. One value for the fleet; override it in group_vars or with -e, never per repository.
+github_runner_ci_limit_seconds: 120
+# The branches a push may run CI on, as globs (tags always may): * and ? stop at a /, so sprint/* is one segment. Any
+# other branch gets CI through its pull request. One list for the fleet, like the limit.
+github_runner_ci_push_branches: [main, sprint/*]
+
+# ---- The Windows side of a WSL machine (tasks/wsl-windows.yml, the windows-runners play; cmd/nova-fleet/README.md, "Windows
+# runners of a WSL machine"). Its runners are the machine record's windows_runners (the inventory's
+# nova_windows_runners); these are how they are reached and laid out.
+github_runner_wsl_interop: /proc/sys/fs/binfmt_misc/WSLInterop
+github_runner_wsl_powershell: /mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe
+github_runner_wsl_stage_unix: /mnt/c/ProgramData/nova-runner-stage
+github_runner_wsl_script: 'C:\ProgramData\nova-runner-stage\runner-windows.ps1'
+github_runner_wsl_ci_stage_unix: /mnt/c/ProgramData/nova-ci-rules-stage
+github_runner_wsl_ci_script: 'C:\ProgramData\nova-ci-rules-stage\nova-ci-rules.ps1'
+github_runner_wsl_base_dir: 'C:\actions-runner'
+github_runner_wsl_cache: 'C:\actions-runner\.cache'
+# The labels every Windows-side runner gets, before the record's extras (GitHub adds self-hosted, X64 and Windows).
+# Not the machine's roles, os and arch as on Linux: a job that selects [self-hosted, bench] or [self-hosted, amd64]
+# must never land on Windows.
+github_runner_wsl_labels: "{{ ['fleet', inventory_hostname] }}"
+# The job PATH each Windows runner's .env and .path carry, so a job sees these and nothing of the machine PATH (console
+# SDKs, a second Visual Studio, WSL's System32\bash.exe ahead of Git's). Empty leaves PATH to the service.
+github_runner_windows_path:
+  - 'C:\Program Files\Git\bin'
+  - 'C:\Program Files\Git\cmd'
+  - 'C:\Program Files\Python39'
+  - 'C:\Program Files\Python39\Scripts'
+  - 'C:\Program Files\CMake\bin'
+  - 'C:\Program Files\PowerShell\7'
+  - 'C:\Program Files\dotnet'
+  - 'C:\Program Files\Go\bin'
+  - 'C:\Windows\System32'
+  - 'C:\Windows'
+  - 'C:\Windows\System32\Wbem'
+  - 'C:\Windows\System32\WindowsPowerShell\v1.0'
+  - 'C:\Windows\System32\OpenSSH'
+
+# Retiring v1's Windows side (tasks/wsl-windows-retire-v1.yml): opt-in, the run's own list of what v1 left on that
+# machine, given only as JSON extra vars, so the role ships no machine's names or paths. Empty retires nothing.
+#   runners: [{dir, name, url}]  v1's runners: stopped, checked for a job, removed from GitHub and deleted
+#   labels:  {url: [labels]}     what each v1 target's workflows select; v2's runners there must carry them
+#   delete:  [path]              files and directories deleted after the runners (a wildcard is allowed)
+#   tasks:   [name]              scheduled tasks under \ unregistered
+#   kept:    [line]              what stays and why, printed as kept: lines
+# Refused unless every v2 Windows runner the record names is whole and online, every v1 target is covered, and no v1
+# runner is busy. Nothing of v1 is moved aside: it is deleted.
+nova_windows_retire_v1: {}
