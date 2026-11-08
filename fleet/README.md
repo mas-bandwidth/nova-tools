@@ -366,6 +366,10 @@ none. Only a run needs sudo for that file (`/Library/LaunchDaemons` is world-rea
 as the login and finishes without a password). Linux and macOS write the service files with sudo, so the login needs
 passwordless sudo: `join.yml` sets it up on Linux (`/etc/sudoers.d/90-nova-<login>`); on macOS set it at the console.
 No command here asks for a sudo password: an interactive prompt is a stall for an AI running the play.
+A stop or restart ends the whole runner: on Linux the unit sets `RUNNER_MANUALLY_TRAP_SIG=1`, so the release's `run.sh`
+passes the stop to its listener as SIGINT and waits for it (a running job is cancelled by the runner, not killed), and
+`KillMode=mixed` kills whatever is left in the unit once `run.sh` exits, or after `TimeoutStopSec` (5 minutes). On macOS
+launchd kills what is left of the job's process group.
 
 **Public repositories.** A self-hosted runner runs the code of any workflow that reaches it, and on a public repository
 that includes pull requests from forks. Use these runners on private repositories, or restrict which workflows and
