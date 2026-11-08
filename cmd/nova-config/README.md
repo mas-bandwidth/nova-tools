@@ -127,10 +127,6 @@ CONFIG ADD kind=friend name=<friend> rev=4
 FRIEND name=<friend> harness=<harness> model=<model> width=4 tiers=heavy,pro pronouns=she/her note=- enabled=true created=2026-11-07T01:55:27Z updated=2026-11-07T01:55:27Z
 ```
 
-A store with the older friends table (columns such as `slots`, `mode` and
-`session`) keeps it: `nova-config schema` adds `harness`, `model`, `note` and
-`enabled`, and nova-config never reads or changes the older columns.
-
 ## Reading the rows from Go
 
 This source tree provides `github.com/mas-bandwidth/nova-tools/v2/modules/config`

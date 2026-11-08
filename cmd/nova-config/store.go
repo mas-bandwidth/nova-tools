@@ -91,7 +91,7 @@ func (p pgStore) List(ctx context.Context, k *kind) ([]Row, error) {
 // (” for any), $3 a time or NULL.
 const historySQL = `SELECT id::text, to_char(at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), actor, kind, name, op, coalesce(before::text, ''), coalesce(after::text, '')
  FROM config.history
- WHERE ($1::text = '' OR kind = $1::text OR ($1::text = 'service' AND kind = 'loop')) AND ($2::text = '' OR name = $2::text) AND ($3::timestamptz IS NULL OR at >= $3::timestamptz)
+ WHERE ($1::text = '' OR kind = $1::text) AND ($2::text = '' OR name = $2::text) AND ($3::timestamptz IS NULL OR at >= $3::timestamptz)
  ORDER BY at DESC, id DESC LIMIT $4::int`
 
 func (p pgStore) History(ctx context.Context, q HistoryQuery) ([]HistoryEntry, error) {

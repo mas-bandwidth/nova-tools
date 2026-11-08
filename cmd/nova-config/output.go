@@ -95,15 +95,6 @@ func (k *kind) findField(name string) field {
 	return field{name: name, typ: "text"}
 }
 
-// kindNamed is the kind of a name, or an empty one for a kind this tool no
-// longer has, so its old history still prints.
-func kindNamed(name string) *kind {
-	if k, ok := kinds[name]; ok {
-		return k
-	}
-	return &kind{name: name}
-}
-
 func rowLine(k *kind, r Row, cut bool) string {
 	line := strings.ToUpper(k.name) + " name=" + value(r.Name)
 	for _, f := range k.fields {
