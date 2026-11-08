@@ -311,6 +311,10 @@ func runSelfTalk(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return refuse("name the files to scan (- is stdin) and give --max zero or more; refusing to guess")
 	}
 	base := func(f string) string { return path.Base(strings.ReplaceAll(f, `\`, "/")) }
+	if !slices.ContainsFunc(files, func(f string) bool { return !slices.Contains(skips, base(f)) }) {
+		return refused(stderr, "self-talk", fmt.Sprintf("--skip leaves none of the %d files named to scan; a run that scans nothing is not a pass", len(files)),
+			shell(append([]string{"nova-cairn", "self-talk"}, files...)...))
+	}
 
 	// Read everything first: a file that cannot be read is not a clean one.
 	texts := make([]string, len(files))
@@ -388,11 +392,6 @@ func runSelfTalk(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			}
 		}
 		fmt.Fprintf(stdout, "SELFTALK NOTE %s\n", note)
-	}
-	if scanned == 0 {
-		fmt.Fprintf(stdout, "SELFTALK SKIP files=0 skipped=%d reason=all-skipped\n", len(files))
-		notes()
-		return 0
 	}
 	if datedN > 0 {
 		fmt.Fprintf(stdout, "SELFTALK DATED n=%d files=%d\n", datedN, scanned)

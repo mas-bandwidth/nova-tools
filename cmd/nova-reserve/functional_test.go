@@ -255,8 +255,8 @@ func TestSetRefusedWhileHeldOnRealLocks(t *testing.T) {
 }
 
 // TestKilledHolderTakesItsCommandWith SIGKILLs nova-reserve itself: its command
-// must not run on without the slot (Linux: Pdeathsig; macOS and the BSDs: the
-// watchdog, which polls each second; Windows: the job), and the slot frees.
+// must not run on without the slot (Linux, macOS and the BSDs: the watchdog,
+// which polls each second, and Pdeathsig on Linux; Windows: the job), and the slot frees.
 func TestKilledHolderTakesItsCommandWith(t *testing.T) {
 	t.Parallel()
 	bin, dir := build(t), t.TempDir()
@@ -280,4 +280,51 @@ func TestKilledHolderTakesItsCommandWith(t *testing.T) {
 		out, _ := exec.Command(bin, "status", "--dir", dir).Output()
 		return strings.Contains(string(out), "slot1 free")
 	}, patience, 50*time.Millisecond)
+}
+
+// TestFunctionalKilledHolderTakesItsWholeGroupWith SIGKILLs nova-reserve while
+// its command waits on a process it started (make -j's jobs): that process
+// must not run on without the slot either.
+func TestFunctionalKilledHolderTakesItsWholeGroupWith(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("no sh on Windows")
+	}
+	t.Parallel()
+	bin, dir := build(t), t.TempDir()
+	self, err := os.Executable()
+	require.NoError(t, err)
+	pidfile := filepath.Join(t.TempDir(), "job.pid")
+	holder := exec.Command(bin, "--dir", dir, "--slots", "1", "--", "sh", "-c", `"$0" & wait`, self)
+	holder.Env = append(os.Environ(), "NOVA_RESERVE_CHILD=sleep", "NOVA_RESERVE_PIDFILE="+pidfile)
+	require.NoError(t, holder.Start())
+	t.Cleanup(func() { _ = holder.Process.Kill(); _ = holder.Wait() })
+	var job int
+	require.Eventually(t, func() bool {
+		b, err := os.ReadFile(pidfile)
+		job, _ = strconv.Atoi(string(b))
+		return err == nil && job > 0
+	}, patience, 50*time.Millisecond)
+	t.Cleanup(func() { _ = syscall.Kill(job, syscall.SIGKILL) })
+	require.NoError(t, holder.Process.Kill())
+	_ = holder.Wait()
+	assert.Eventually(t, func() bool { return !alive(job) }, 3*time.Second, 50*time.Millisecond,
+		"the command's job outlived nova-reserve and its slot")
+}
+
+// TestFunctionalSignalledCommandIsNamed: a command a signal ended exits 128+n,
+// and nova-reserve says which signal on one stderr line.
+func TestFunctionalSignalledCommandIsNamed(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("no signals on Windows")
+	}
+	t.Parallel()
+	bin, dir := build(t), t.TempDir()
+	cmd := exec.Command(bin, "--dir", dir, "--slots", "1", "--", "sh", "-c", "kill -TERM $$")
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	var ee *exec.ExitError
+	require.ErrorAs(t, err, &ee)
+	assert.Equal(t, 143, ee.ExitCode())
+	assert.True(t, strings.HasSuffix(stderr.String(), "\nnova-reserve: sh ended by signal SIGTERM; exit 143\n"), stderr.String())
 }

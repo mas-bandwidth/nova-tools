@@ -52,7 +52,7 @@ the session when it is idle. The wake is the point of the bus.
 One recipe per harness. **Claude Code and Muse Code** run the hook under the session's Monitor; **Codex** is woken
 with `codex queue` while its chat is idle; **Grok** tails a wake file under its Monitor;
 **Antigravity** is sent to with `agentapi send-message`. The hook checks its harness at start, before it claims the
-name: a harness that is not there (a missing directory or workspace, a bad id) is refused with exit 2, one that
+name: a harness that is not there (a missing directory or workspace, a bad id, no `codex` on PATH) is refused with exit 2, one that
 does not answer with exit 1. With `grok` and `antigravity`, stdout carries one receipt per message,
 `HOOK WAKE OK harness=<h> id=<id>` (`confirmed=no reason=<r>` when the send was cut off and may have arrived: the
 message is marked handled, so a turn is never started twice), or `HOOK WAKE FAILED harness=<h> id=<id> reason=<r>`
@@ -210,7 +210,10 @@ The unit runs exactly the hook command, with `NOVA_BUS_REDIS`, `NOVA_BUS_USER` a
 environment and never on its command line, written mode 0600, logging to `~/.local/state/nova-bus/<name>.log`. The
 harness is checked in the installing process before any unit is written; then the unit starts, and the command
 waits up to 45 s for its `HOOK OK name=<name>` in the log and prints `HOOK SERVICE OK name=<name> unit=<unit>
-log=<log> changed=true`. Run again with the same flags it changes nothing (`changed=false`); with new flags (a new
+log=<log> changed=true`. Run again with the same flags it changes nothing (`changed=false`), and is OK only while
+the unit's hook holds the name: a unit that is loaded but not hooked in (retrying a login Redis refuses, say) is
+`HOOK SERVICE FAILED name=<name> unit=<unit> reason=the unit is loaded but <name> is not hooked in; its log ends:
+<line>; run: tail -n 20 <log>`, exit 1. With new flags (a new
 session id) it rewrites and restarts the unit. `--service stop` stops and removes it (`state=stopped`, or
 `state=absent`). Without `launchctl` or `systemctl` it refuses, exit 2. Not for `claude` without `--exec` or `--codex-thread`: that
 wake is the Monitor of the session itself. The foreground form, the same command without `--service`, is for
@@ -307,7 +310,10 @@ An unreachable server is said plainly: `cannot reach redis at <host:port>
 send it follows `SEND FAILED to <name>:`. A hook that loses Redis logs
 `nova-bus hook: <what>; reconnecting` once, then at most once a minute, while
 it retries every second, and prints `HOOK RECONNECTED name=<name> waiting=<n>`
-on stdout, where a Monitor sees it, once it holds the name again. Redis's own
+on stdout, where a Monitor sees it, once it holds the name again. A login Redis
+wants or refuses, a login short of permission, or an address that is not Redis
+is not retried: the hook exits 1 with that reason and `once that is fixed, run:
+<the hook command>`. Redis's own
 words are never shown raw: a missing login is `redis at <addr> wants a login:
 set NOVA_BUS_USER and NOVA_BUS_PASSWORD`, a wrong one `refused the login:
 check ...`, one short of permission `the login lacks permission on this
@@ -449,7 +455,9 @@ only until it lapses).
   next recv prints it again; the reader sees it twice, by its id.
 - **Redis is unreachable.** send, recv, ack, pending and who exit 1. A hook logs
   `nova-bus: <error>; reconnecting` to stderr and retries every second; its
-  presence may lapse meanwhile, and it claims again when Redis is back.
+  presence may lapse meanwhile, and it claims again when Redis is back. A
+  refused or missing login, a missing permission, or an address that is not
+  Redis ends the hook, exit 1, with the fix.
 
 ## An example session
 

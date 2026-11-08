@@ -127,6 +127,8 @@ Every refusal is one line on stderr.
 | `NAME: command not found on PATH=...` | 127 | Fix PATH or give the full path. A name with a slash prints `NAME: no such file`. No slot was taken. |
 | `NAME: not executable` | 126 | Fix the file's permissions. No slot was taken. |
 | `--dir DIR: parent PARENT does not exist; run: mkdir -p PARENT && ...` | 2 | Run the printed `mkdir` and repeat the command. |
+| `--dir DIR is a file, not a directory; run: ls -ld DIR` | 2 | Give a directory, or a path that does not exist yet. |
+| `... status could not show this hold; run: sudo rm -f FILE && ...` | 2 | A holder file this user can neither remove nor write (another user's). Run the printed command. No slot is kept. |
 | `... is not a reservation directory ...` | 2 | `status` found no reservation there. Use the directory your jobs use. |
 | `no parent to watch (parent pid 1); run: nova-reserve hold --for ...` | 2 | An untimed `hold` started by init, systemd or launchd needs `--for`. |
 | `capacity=? # corrupt: ...` | 0 | The capacity file is damaged. Run the printed `set` command while no job holds a slot. |
@@ -134,7 +136,8 @@ Every refusal is one line on stderr.
 A bad or repeated flag, a missing command, a number outside 1 to 1024, or a
 `--wait` or `--for` not above zero exits 2; `nova-reserve help run` (or `hold`,
 `status`, `set`) shows the usage. A run that starts returns the
-command's own status; if a signal ended it, 128 plus the signal number.
+command's own status; if a signal ended it, 128 plus the signal number, and
+stderr says so: `nova-reserve: make ended by signal SIGKILL; exit 137`.
 
 ## Guarantees and limits
 
@@ -149,9 +152,10 @@ Limits:
 - Only jobs that use nova-reserve with the same directory share the limit.
 - The directory must be on a local disk. Keep it out of places that clean
   temporary files, or the stored capacity is lost.
-- On macOS and the BSDs, a watchdog process (nova-reserve --watch) polls once a
-  second and kills the command's process group after a SIGKILL of nova-reserve.
-  Linux uses Pdeathsig and Windows a job object.
+- On Linux, macOS and the BSDs, a watchdog process (nova-reserve --watch) polls
+  once a second and kills the command's process group after a SIGKILL of
+  nova-reserve; on Linux, Pdeathsig kills the command itself at once. Windows
+  uses a job object.
 - On Windows a hold notices its parent's exit by PID only; a reused PID can
   keep an untimed hold alive.
 - Release builds cover Linux amd64 and arm64, macOS arm64 and Windows amd64.

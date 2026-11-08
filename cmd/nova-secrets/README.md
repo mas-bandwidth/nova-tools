@@ -33,7 +33,8 @@ On a node with nothing at the defaults (no `~/.config/nova-secrets/store`, no
 `NOVA_SECRETS_STORE`), the first `set` makes them before it sets: a recovery
 key at `~/.config/nova-secrets/recovery.key` (0600) with its public half pinned
 in `pins/recovery.pub`, the store (as `init`), this node's key (0600) and its
-seat (as `seat add`). It prints one line first:
+seat (as `seat add`). It prints one line first, and prints it even when a later
+step is refused, since the recovery key exists from then on:
 
 ```text
 SECRETS SET NEW store=/home/you/.config/nova-secrets/store seat=studio key=/home/you/.config/nova-secrets/studio.key: back up /home/you/.config/nova-secrets/recovery.key, the recovery key, off this machine now: it opens every seat if a key is lost
@@ -42,7 +43,9 @@ SECRETS SET NEW store=/home/you/.config/nova-secrets/store seat=studio key=/home
 On a terminal `set` asks for the value and does not show it:
 `nova-secrets set TAILSCALE_API_KEY`, paste, enter. With no store but any of
 the others there it refuses, `reason=partial`, and writes nothing: a store made
-then would not match them, and nothing that exists is overwritten.
+then would not match them, and nothing that exists is overwritten. A `set` that
+stopped at a failed commit is finished by the same `set` again, with the keys it
+made.
 
 The blocks below share one shell session. This one makes a temporary store and key
 directory; for real use choose permanent places, keys outside the store. Seat
@@ -66,7 +69,7 @@ Output (paths vary):
 SECRETS INIT OK store=/tmp/tmp.k3Jd9x/store
 next: age-keygen -o /home/you/.config/nova-secrets/web.key
 SECRETS SEAT ADD OK seat=web committed
-next: nova-secrets set DB_PASSWORD --as web --store /tmp/tmp.k3Jd9x/store --pins /home/you/.config/nova-secrets/pins
+next: nova-secrets set DB_PASSWORD --as web --store /tmp/tmp.k3Jd9x/store --pins /tmp/tmp.k3Jd9x/pins
 ```
 
 Each OK line is followed by `next: <command>`, the command to run next,
@@ -75,13 +78,16 @@ node's `seat add` (the seat `$NOVA_SECRETS_SEAT`, else the short hostname, with
 the public half of `$NOVA_SECRETS_KEY` or `~/.config/nova-secrets/<seat>.key`),
 or the `age-keygen -o` that makes that key while there is none. After `seat add`
 it is the `set` as the seat just added, on the `--store` given, with `--pins`
-from `$NOVA_SECRETS_PINS` or `~/.config/nova-secrets/pins`. It carries `--key`
+from `$NOVA_SECRETS_PINS`, else `pins` beside the store when it holds this
+store's recovery pin (as `init --pins` writes it above), else
+`~/.config/nova-secrets/pins`. It carries `--key`
 only when that seat's key file (`~/.config/nova-secrets/<seat>.key`, or
 `$NOVA_SECRETS_KEY` for this node's own seat) is on this machine and is the key
 just added; otherwise it has no `--key`, and `set` reads `$NOVA_SECRETS_KEY`.
 
 `init` takes an absent or empty directory whose parent exists, and
-writes `.sops.yaml`, `recovery.pub` and one commit. `--pins` also writes the
+writes `.sops.yaml`, `recovery.pub` and one commit; when that commit fails
+(git has no commit identity, for one), the same `init` again commits them. `--pins` also writes the
 recovery key to `<dir>/recovery.pub` outside the store: the **pin** that `set`
 and `grant` seal to, whatever the store's copy says. Every machine that writes
 the store has a pin directory; `set --recovery <key>` writes the pin on one that
@@ -305,6 +311,7 @@ status through.
 | `set: empty or multi-line value on stdin; the value must be one non-empty line` | Pipe one non-empty line without a NUL byte; a terminal is refused. |
 | `nova-secrets set: value is over 65536 bytes; a secret is a key or token` (exit 2) | Store a key or token, not a file. Nothing was written. |
 | Unknown selected secret | Check `names`, then fix `--only` or `set` it. |
+| `<NAME> is empty (null or "") in <seat>'s files` | `exec` never hands a command an empty value, exit 125. `set` it, as the line says. |
 | `"bad-key" is not an environment variable name, or its value holds a NUL` | `exec` refuses the whole file, exit 125; `names` lists the other names and counts it in `refused=`. Remove the key with sops. |
 | sops or git failed | The output is withheld because it can hold a value. Run the `run:` command shown in the error; after a git failure inspect `git status`, since files may be written. Two sops exits are named: 51, the file changed since it was sealed (restore it with `git checkout -- <file>`, or seal it again); 128, no key given opens it. |
 | `git not found on PATH` or `sops not found at <path>` (`git`, `no-sops`) | The install line for this OS is in the message; `--sops <path>` names a sops elsewhere. |
