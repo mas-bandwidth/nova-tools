@@ -40,7 +40,7 @@ they are kept for people and other tools and are not rendered. A row marked
 
 The evidence overlay, roadmap-evidence/*.sexp beside the data, holds any number
 of (:id "<task id>" :state :done :evidence (...)) forms, applied in file-name
-order, each file whole or not at all, and held to the same rule.
+order and held to the same rule; one bad entry refuses the whole load.
 */
 package roadmap
 
@@ -771,7 +771,11 @@ func Blocks(text string) []string {
 // source is the data file as the [Source data] link names it.
 func (rm *Roadmap) Splice(page, source string) (string, error) {
 	if have := Blocks(page); !slices.Equal(have, rm.Areas) {
-		return "", fmt.Errorf("the page carries blocks %q; the data's :page :roadmaps are %q: give each area its own pair of marker lines, in that order (nova-roadmap help form)", have, rm.Areas)
+		var want strings.Builder
+		for _, id := range rm.Areas {
+			fmt.Fprintf(&want, "\n  %s\n  %s", StartMarker(id), EndMarker(id))
+		}
+		return "", fmt.Errorf("the page carries marker pairs for %q; the data's :page :roadmaps are %q. Each area needs its own pair of marker lines, each on a line of its own, in this order, wherever its table belongs on the page:%s", have, rm.Areas, want.String())
 	}
 	text := page
 	for _, id := range rm.Areas {
@@ -784,6 +788,27 @@ func (rm *Roadmap) Splice(page, source string) (string, error) {
 		return "", errors.New("splicing changed the page outside the nova-work markers")
 	}
 	return text, nil
+}
+
+// blockText is what sits between block id's markers; "" when the block is not found.
+func blockText(text, id string) string {
+	start := strings.Index(text, StartMarker(id))
+	end := strings.Index(text, EndMarker(id))
+	if start < 0 || end < start {
+		return ""
+	}
+	return text[start+len(StartMarker(id)) : end]
+}
+
+// Changed is the areas whose tables differ between two pages: the ones a drift names.
+func (rm *Roadmap) Changed(before, after string) []string {
+	var out []string
+	for _, id := range rm.Areas {
+		if blockText(before, id) != blockText(after, id) {
+			out = append(out, id)
+		}
+	}
+	return out
 }
 
 // Starter is a first page for the data: a title, a notice, and for each area a

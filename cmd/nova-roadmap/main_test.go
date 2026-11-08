@@ -121,7 +121,7 @@ func TestRenderAndCheck(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(ev, "ipv6.sexp"), []byte(`(:id "t-ipv6" :state :done :evidence ("ipv6_test.go: TestIPv6"))`+"\n"), 0o644))
 	r = call(dir, "check")
 	require.Equal(t, 1, r.code)
-	require.Contains(t, r.stderr, "DRIFT: a table in ROADMAP.md differs from what docs/roadmap.sexp renders; run: nova-roadmap render")
+	require.Contains(t, r.stderr, "DRIFT: a table in ROADMAP.md differs from what docs/roadmap.sexp renders (areas: protocol); run: nova-roadmap render")
 	require.Equal(t, page, read(t, pagePath), "check writes nothing")
 
 	r = call(dir, "render")
@@ -164,7 +164,7 @@ func TestRefusalsExitTwo(t *testing.T) {
 		"check --file missing.sexp":                 "missing.sexp: open ",
 		"check --file bad.sexp":                     "want :schema 1",
 		"check --evidence no-dir":                   "no-dir is not a directory",
-		"render --out NOMARKERS.md":                 `NOMARKERS.md: the page carries blocks []; the data's :page :roadmaps are ["protocol" "clients"]`,
+		"render --out NOMARKERS.md":                 "NOMARKERS.md: the page carries marker pairs for []; the data's :page :roadmaps are [\"protocol\" \"clients\"]. Each area needs its own pair of marker lines, each on a line of its own, in this order, wherever its table belongs on the page:\n  <!-- nova-work:protocol:start -->\n  <!-- nova-work:protocol:end -->\n  <!-- nova-work:clients:start -->",
 		"example":                                   "docs/roadmap.sexp is there already",
 		"help nothing":                              "help nothing: no such topic",
 		"render --out NOMARKERS.md --file bad.sexp": "want :schema 1",

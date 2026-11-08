@@ -194,7 +194,7 @@ func (a *app) render(args []string, check bool) int {
 			return a.refuse("%s: %v", *out, err)
 		}
 		if page != string(have) {
-			fmt.Fprintf(a.err, "DRIFT: a table in %s differs from what %s renders; run: nova-roadmap render, then commit %s\n", *out, *file, *out)
+			fmt.Fprintf(a.err, "DRIFT: a table in %s differs from what %s renders (areas: %s); run: nova-roadmap render, then commit %s\n", *out, *file, strings.Join(rm.Changed(string(have), page), ", "), *out)
 			return exitDrift
 		}
 		fmt.Fprintf(a.stdout, "OK: the tables in %s are up to date with %s (%s)\n", *out, *file, stats)
@@ -257,8 +257,8 @@ usage:
 The data's shape, with a worked example: nova-roadmap help form
 
 exit codes: 0 done (render) or up to date (check); 1 drift (check: a table is not what the
-data renders, or the page is missing); 2 refused (the data or the page is malformed, every
-problem named, or a bad invocation).
+data renders, or the page is missing); 2 refused (the data or the page is malformed, or a
+bad invocation; the first problem found is named, with what to fix).
 
 example (a first run, in a repository's root):
   nova-roadmap example
@@ -321,17 +321,24 @@ The nodes:
 :page (:roadmaps (...)) lists the areas in page order, and holds nothing else.
 
 The rule: a cell is ✅ only when every task under it is :done with non-blank :evidence.
-The complete row is the share of ✅ cells in each column, rounded down.
+:unknown, :todo and :doing all render ❌; the difference is for people reading the data.
+The complete row is the share of ✅ cells in each column, rounded down; a :later row counts.
+Every node is checked, whether or not a cell reaches it (a :done task anywhere needs
+:evidence), but only the areas in :page are rendered.
 Nodes may carry other keys (notes, links, metadata); they are kept and not rendered.
 Prose is never data: a :text on an area, or a :page key other than :roadmaps, is refused.
 Titles may not hold | or a newline. Comments run from ; to the end of the line.
 The reader refuses #, ', ` + "`" + `, , and \ outside strings: the file is data, never a program.
 
 The evidence overlay, docs/roadmap-evidence/*.sexp (--evidence names another directory):
-any number of entries, one per task, applied in file-name order, each file whole or not
-at all. An entry sets the task's :state, and its :evidence when given:
+any number of entries, one after another with no list around them, applied in file-name
+order (files starting with . are skipped). An entry sets the task's :state, and its
+:evidence when given; other keys (:note) are kept and not rendered. One bad entry (an id
+that is no task, a :done without :evidence) refuses the whole run, and nothing is written.
 
+  ; docs/roadmap-evidence/protocol.sexp
   (:id "t-ipv6" :state :done :evidence ("ipv6_test.go: TestIPv6"))
+  (:id "cs-connect" :state :done :evidence ("ClientTests.cs: Connect"))
 
 The page, ROADMAP.md: everything is written by hand except what sits between each area's
 marker lines, which render writes. For the example above:
@@ -360,6 +367,10 @@ marker lines, which render writes. For the example above:
 To start: nova-roadmap example, then nova-roadmap render (which writes a starter page),
 then edit the page's text by hand. After a data change: nova-roadmap render, and commit
 both. In CI: nova-roadmap check.
+
+A page you already have: render refuses it until it holds the marker pairs. Paste one
+pair per area, each marker on a line of its own, in :page order, where each table goes;
+render's refusal prints the lines to paste. Then nova-roadmap render fills them.
 `
 
 // exampleData is the starter docs/roadmap.sexp: `example` writes it and the form

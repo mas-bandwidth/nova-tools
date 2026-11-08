@@ -108,11 +108,11 @@ func TestSpliceKeepsTheHandWrittenPage(t *testing.T) {
 
 	w, tl := StartMarker("wire")+"\n"+EndMarker("wire")+"\n", StartMarker("tools")+"\n"+EndMarker("tools")+"\n"
 	for name, c := range map[string]struct{ page, want string }{
-		"no markers":      {"# Roadmap\n", "the page carries blocks []"},
-		"one missing":     {w, `the page carries blocks ["wire"]`},
-		"wrong order":     {tl + w, `the page carries blocks ["tools" "wire"]`},
+		"no markers":      {"# Roadmap\n", "the page carries marker pairs for []"},
+		"one missing":     {w, `the page carries marker pairs for ["wire"]`},
+		"wrong order":     {tl + w, `the page carries marker pairs for ["tools" "wire"]`},
 		"end missing":     {StartMarker("wire") + "\n" + tl, `"<!-- nova-work:wire:end -->" is missing`},
-		"start twice":     {w + StartMarker("wire") + "\n" + tl, `the page carries blocks ["wire" "wire" "tools"]`},
+		"start twice":     {w + StartMarker("wire") + "\n" + tl, `the page carries marker pairs for ["wire" "wire" "tools"]`},
 		"end twice":       {w + EndMarker("wire") + "\n" + tl, "appears more than once"},
 		"shares its line": {"x " + EndMarker("wire") + "\n" + StartMarker("wire") + "\n" + EndMarker("wire") + "\n" + tl, "shares its line"},
 		"opens late":      {EndMarker("wire") + "\n" + StartMarker("wire") + "\n" + tl, "opens after it closes"},

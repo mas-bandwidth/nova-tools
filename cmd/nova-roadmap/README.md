@@ -35,7 +35,7 @@ The binary lands in `$(go env GOPATH)/bin`. Then run `nova-roadmap help`. The ma
 
 | verb | what it does |
 |---|---|
-| `nova-roadmap example [--out docs/roadmap.sexp]` | writes a starter data file (the worked example below). It never writes over an existing file. |
+| `nova-roadmap example [--out docs/roadmap.sexp] [--dry-run]` | writes a starter data file (the worked example below). It never writes over an existing file. |
 | `nova-roadmap render [--file docs/roadmap.sexp] [--out ROADMAP.md] [--evidence DIR] [--dry-run]` | renders each table between its markers. When the page does not exist, it writes a starter page with a heading and a marker pair per area. |
 | `nova-roadmap check [--file ...] [--out ...] [--evidence DIR]` | the drift gate, for CI. It writes nothing, and exits 1 when a table differs from what the data renders, or when the page is missing. |
 | `nova-roadmap help [example \| render \| check \| form]` | the manual. `help form` is the data's shape, with a worked example. |
@@ -44,7 +44,7 @@ The binary lands in `$(go env GOPATH)/bin`. Then run `nova-roadmap help`. The ma
 Exit codes:
 - 0: done (render), or up to date (check).
 - 1: drift (check).
-- 2: refused. Either the data or the page is malformed (every problem is named), or the invocation is bad.
+- 2: refused. Either the data or the page is malformed, or the invocation is bad. The first problem found is named, with what to fix, and nothing is written.
 
 ## A first run
 
@@ -56,7 +56,9 @@ nova-roadmap render     # writes a starter ROADMAP.md
 nova-roadmap check      # OK: the tables in ROADMAP.md are up to date ...
 ```
 
-Then edit the page's title, headings and prose by hand. When the data changes, run `nova-roadmap render` and commit both. In CI, run `nova-roadmap check`.
+Then edit the page's title, headings and prose by hand.
+
+**A page you already have:** render refuses it until it holds the marker pairs. Paste one pair per area, each marker on a line of its own, in `:page` order, wherever each table belongs. Render's refusal prints the exact lines to paste. Then run `nova-roadmap render` to fill them. When the data changes, run `nova-roadmap render` and commit both. In CI, run `nova-roadmap check`.
 
 A Makefile can carry both:
 
@@ -98,7 +100,7 @@ roadmap-check:
 ```
 
 The nodes:
-- **`:task`** is a piece of work. Its `:state` is `:unknown`, `:todo`, `:doing` or `:done`. A `:done` task must carry `:evidence`.
+- **`:task`** is a piece of work. Its `:state` is `:unknown`, `:todo`, `:doing` or `:done`. A `:done` task must carry `:evidence`. Only `:done` shows on the page; the other three all render ❌, and the difference is for people reading the data.
 - **`:work-set`** groups nodes under `:children`. Use one for a cell that needs several tasks: above, Go's "Send and receive" needs both of its sends.
 - **`:roadmap`** is an area, which is one table. It has:
   - `:title`, the area's heading on a starter page.
@@ -110,17 +112,23 @@ The nodes:
 
 The rules:
 - **✅:** a cell is ✅ only when every task under it is `:done` with non-blank `:evidence`.
-- **Complete row:** each column's share of ✅ cells, rounded down.
+- **Complete row:** each column's share of ✅ cells, rounded down. A `:later` row counts.
+- **Every node is checked:** a `:done` task needs `:evidence` even if no cell reaches it. Only the areas in `:page` are rendered.
 - **Other keys:** nodes may carry them (notes, links, metadata). They are kept, and not rendered.
 - **No prose in the data:** a `:text` on an area, or a `:page` key other than `:roadmaps`, is refused. Prose lives in `ROADMAP.md`.
 - **Titles:** no title may hold `|` or a newline.
+- **Comments** run from `;` to the end of the line.
 - **Data, not a program:** the reader refuses `#`, `'`, `` ` ``, `,` and `\` outside strings.
 
-**The evidence overlay** is `docs/roadmap-evidence/*.sexp`; `--evidence` names another directory. It holds one entry per task. Entries are applied in file-name order, and each file is applied whole or not at all. An entry sets a task's `:state`, and its `:evidence` when given. A test or a commit can then prove a task without rewriting the graph:
+**The evidence overlay** is `docs/roadmap-evidence/*.sexp`; `--evidence` names another directory. A file holds any number of entries, one after another with no list around them. Files are applied in name order, and a file whose name starts with `.` is skipped. An entry sets a task's `:state`, and its `:evidence` when given; other keys such as `:note` are kept and not rendered. A test or a commit can then prove a task without rewriting the graph:
 
 ```lisp
+; docs/roadmap-evidence/protocol.sexp
 (:id "t-ipv6" :state :done :evidence ("ipv6_test.go: TestIPv6"))
+(:id "cs-connect" :state :done :evidence ("ClientTests.cs: Connect"))
 ```
+
+One bad entry refuses the whole run, and nothing is written. A bad entry is an id that is not a task, or a `:done` without `:evidence`.
 
 ## Worked example
 
@@ -162,7 +170,7 @@ The rules:
 
 "Send and receive" is ❌ for Go because one of its two tasks is still `:todo`.
 
-Next, add the overlay entry above for `t-ipv6`. Then `nova-roadmap check` exits 1. Running `nova-roadmap render` turns the IPv6 cell ✅ and Protocol's complete row to 100%, and leaves every hand-written line alone.
+Next, add an overlay file holding just the `t-ipv6` entry above. Then `nova-roadmap check` exits 1 and names the area that drifted. Running `nova-roadmap render` turns the IPv6 cell ✅ and Protocol's complete row to 100%, and leaves every hand-written line alone.
 
 ## Development
 
