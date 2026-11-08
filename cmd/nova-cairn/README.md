@@ -108,7 +108,8 @@ reads stdin) and never exits 1. `--exclude <glob>` skips paths and repeats.
 `memory verify` takes one `--root` and exits 1 on a finding. `--links` is
 always required: `gate` fails on a `[[wikilink]]` that names no file or
 frontmatter `name:`, and `info` only lists them. With `--links info`, also
-give `--coverage` or `--frontmatter`. Globs match paths relative to `--root`.
+give `--coverage` or `--frontmatter`. Globs match paths relative to `--root`;
+a glob with no `/` matches a file name at any depth.
 
 ```sh
 printf '%s\n' 'A stray note about the harbor and its gulls.' > notes/stray.md
@@ -117,6 +118,8 @@ rm notes/stray.md
 ```
 
 ```text
+VERIFY CHECKED rule=coverage glob=*.md:index-*.md files=3 indexes=1
+VERIFY CHECKED rule=frontmatter glob=*.md files=2
 VERIFY FAIL coverage stray.md: stem "stray" appears in no file matching index-*.md
 VERIFY FAIL frontmatter stray.md: no name: in frontmatter
 VERIFY FAIL gating=2 shown=2 info=0 coverage=1 frontmatter=1 links=gate
@@ -127,7 +130,10 @@ exit 1
 as a whole word) or linked in a file matching B, and every Markdown link in B
 resolves. `--frontmatter <glob>`: every match has a `name:`; `--exempt
 <prefix>` excuses files by base name. `--fail-max <n>` caps lines per kind
-(default 20, `0` for all). A glob that matches nothing is refused. Findings go to stderr; a pass prints `VERIFY OK`.
+(default 20, `0` for all). A glob that matches nothing is refused. Each rule
+prints a `VERIFY CHECKED` line with the number of files it checked (for
+coverage, `files` matched A and `indexes` matched B; exempt files are not
+counted). Findings go to stderr; a pass prints `VERIFY OK`.
 
 ## Scan for self-talk
 
@@ -160,7 +166,8 @@ take a base name and repeat; `--rule-doc` adds the `RULEDOC` banner above that
 file's findings. `--skip` prints a `SELFTALK SKIP` line, and dated claims a
 `SELFTALK DATED` line. `--max` caps findings per class (default 20, `0` for
 all) and a cut list ends with a `MORE` line. A file that is not valid UTF-8
-stops the run; skip it with `--skip`.
+stops the run; skip it with `--skip`. A run whose every file is skipped scans
+nothing and is refused.
 
 ## Refusals
 
@@ -174,6 +181,8 @@ prints a FAILED line and exits 1.
 | `OPEN FAILED` (another policy or source) | Reuse the recorded settings, or use a new session id. |
 | `APPEND FAILED` (same id, other words) | Run the printed `receipt`; use a new entry id. |
 | Memory file unreadable or over 8 MiB | Run the printed command with `--exclude <file>`. |
+| `entry "<id>" is kept, but its log line is not written` | Make the log writable, then repeat the same append: it writes the missing line. |
+| `stored entry "<id>" is corrupt` | Repair or move the file the printed `cat` shows. |
 
 ## Guarantees and limits
 

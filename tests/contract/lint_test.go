@@ -32,7 +32,7 @@ var lintTools = []string{"bus", "cairn", "config", "fleet", "reserve", "sandbox"
 
 // Files that break rule 1 or 2 today and how many places each has.
 var knownDiscards = map[string]int{
-	"cmd/nova-bus/main.go": 3, "cmd/nova-bus/service.go": 3, "cmd/nova-bus/wake.go": 1, "cmd/nova-cairn/main.go": 1, "cmd/nova-cairn/memory.go": 1, "cmd/nova-cairn/store.go": 6, "cmd/nova-config/inventory.go": 2, "cmd/nova-config/rows.go": 1, "cmd/nova-config/store.go": 1,
+	"cmd/nova-bus/main.go": 3, "cmd/nova-bus/service.go": 3, "cmd/nova-bus/wake.go": 1, "cmd/nova-cairn/main.go": 1, "cmd/nova-cairn/memory.go": 1, "cmd/nova-cairn/store.go": 4, "cmd/nova-config/inventory.go": 2, "cmd/nova-config/rows.go": 1, "cmd/nova-config/store.go": 1,
 	"cmd/nova-fleet/check.go": 5, "cmd/nova-fleet/main.go": 13, "cmd/nova-fleet/up.go": 6, "cmd/nova-reserve/main.go": 3, "cmd/nova-reserve/os_windows.go": 2,
 	"cmd/nova-sandbox/probe.go": 1, "cmd/nova-sandbox/probeclient_linux.go": 1, "cmd/nova-sandbox/seccomp_linux.go": 1,
 	"cmd/nova-secrets/main.go": 14,

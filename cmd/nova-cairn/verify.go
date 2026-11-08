@@ -102,13 +102,18 @@ func verify(r *roots, links string, coverage, front, exempt multi, failMax int, 
 	glob := func(g string) []string {
 		var out []string
 		for _, f := range files {
-			if ok, _ := path.Match(g, f); ok {
+			name := f
+			if !strings.Contains(g, "/") { // a glob with no slash matches a file name at any depth
+				name = path.Base(f)
+			}
+			if ok, _ := path.Match(g, name); ok {
 				out = append(out, f)
 			}
 		}
 		return out
 	}
 	var gating, info []issue
+	var checked strings.Builder // one line per rule: how many files it checked
 	nCoverage, nFront := 0, 0
 	for _, pair := range coverage {
 		ga, gb, ok := strings.Cut(pair, ":")
@@ -119,6 +124,7 @@ func verify(r *roots, links string, coverage, front, exempt multi, failMax int, 
 		if len(as) == 0 || len(bs) == 0 {
 			return refuse(fmt.Sprintf("coverage %s:%s matched %d and %d files — an empty side is a broken check, not a pass; fix the glob", ga, gb, len(as), len(bs)))
 		}
+		line(&checked, "VERIFY CHECKED", "rule", "coverage", "glob", pair, "files", len(as), "indexes", len(bs))
 		var all strings.Builder
 		inB, linked := map[string]bool{}, map[string]bool{}
 		for _, b := range bs {
@@ -153,15 +159,18 @@ func verify(r *roots, links string, coverage, front, exempt multi, failMax int, 
 		if len(matched) == 0 {
 			return refuse(fmt.Sprintf("frontmatter glob %s matched nothing — a broken check, not a pass; fix the glob", g))
 		}
+		n := 0
 		for _, f := range matched {
 			if slices.ContainsFunc(exempt, func(e string) bool { return strings.HasPrefix(path.Base(f), e) }) {
 				continue
 			}
+			n++
 			if name, _, _ := frontmatter(texts[f]); name == "" {
 				gating = append(gating, issue{"frontmatter", f + ": no name: in frontmatter"})
 				nFront++
 			}
 		}
+		line(&checked, "VERIFY CHECKED", "rule", "frontmatter", "glob", g, "files", n)
 	}
 	// a [[stem]] resolves to a file's stem or to a frontmatter name.
 	stems := map[string]bool{}
@@ -210,6 +219,7 @@ func verify(r *roots, links string, coverage, front, exempt multi, failMax int, 
 		}
 		return total, shown
 	}
+	fmt.Fprint(stdout, checked.String())
 	nInfo, shownInfo := emit(stdout, info, "INFO", ":")
 	nGating, shownGating := emit(stderr, gating, "FAIL", "")
 	if nGating > 0 {

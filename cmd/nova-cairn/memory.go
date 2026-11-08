@@ -155,6 +155,11 @@ type roots struct {
 	root, exclude multi
 }
 
+func badGlob(g string) bool {
+	_, err := path.Match(g, "")
+	return err != nil
+}
+
 func (r *roots) excluded(p string) bool {
 	for _, e := range r.exclude {
 		if ok, _ := path.Match(e, p); ok || p == e || strings.HasPrefix(p, e+"/") {
@@ -320,12 +325,18 @@ func (r *roots) build() (*corpus, error) {
 			}
 			if e := entryRel(f); e != nil {
 				var ef entryFile
-				if json.Unmarshal([]byte(raw), &ef) != nil || ef.Session != e[1] || ef.ID != e[2] {
+				store := filepath.Join(root, filepath.FromSlash(e[0]))
+				if json.Unmarshal([]byte(raw), &ef) != nil && regular(sessionFile(store, e[1])) {
+					if _, _, err := readEntry(store, e[1], e[2]); err != nil { // an entry of a store that does not decode is corrupt
+						return nil, err
+					}
+				}
+				if ef.Session != e[1] || ef.ID != e[2] {
 					c.skipped = append(c.skipped, filepath.Join(root, filepath.FromSlash(f))) // some other .json, not a store entry
 					continue
 				}
 				c.bytes += len(raw)
-				ch.store, ch.entry = filepath.Join(root, filepath.FromSlash(e[0])), &ef
+				ch.store, ch.entry = store, &ef
 				c.entries++
 				c.add(ch, lf(ef.Text), 1)
 				continue
@@ -460,10 +471,18 @@ func runMemory(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		if fe := (*fileError)(nil); errors.As(err, &fe) {
 			return refused(stderr, path, err.Error(), shell(append([]string{"nova-cairn", "memory", verb, "--exclude", fe.rel}, args[1:]...)...))
 		}
+		if rf := (*refusal)(nil); errors.As(err, &rf) {
+			return refused(stderr, path, rf.msg, rf.remedy)
+		}
 		return refused(stderr, path, err.Error(), shell(append([]string{"ls", "-la"}, r.root...)...))
 	}
 	if (verb == "stats" || verb == "verify") && len(pos) > 0 {
 		return refuse(fmt.Sprintf("%s takes no argument outside a flag, got %q", path, pos[0]))
+	}
+	for _, e := range r.exclude {
+		if badGlob(e) {
+			return refuse(fmt.Sprintf("--exclude %q is not a valid glob; write a literal [ as \\[", e))
+		}
 	}
 	if len(r.root) == 0 {
 		return refuse("--root is required: name the directory of notes; there is no environment variable and no discovery from the working directory")
