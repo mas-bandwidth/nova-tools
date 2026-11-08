@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"maps"
@@ -12,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
 
 	config "github.com/mas-bandwidth/nova-tools/v2/config/lib"
 )
@@ -275,8 +277,51 @@ func (k *kind) merge(cur Row, raw map[string]string) (Row, error) {
 	return next, nil
 }
 
+// clockFetch is the rule of D8 (2026-11-07): two mirror-refresh --loop 60 records on every bench fetched two GitHub
+// organisations every minute through one home connection (1.08 TB sent) and nothing refused it. A service whose
+// argv names a fetcher and a loop, or a fetcher with --every above 0, is refused: fetch on an event (a push) or once
+// per job, never on a clock. This table is the whole rule, read over every word of argv (its base name, any =value
+// cut off, a shell string split into its words at white space and ; & | ( )): a fetcher; a git verb that fetches,
+// counted after a git word; a loop. Only the words listed are in scope; `for` is not one, since a for over a list of
+// repositories runs once.
+var clockFetch = map[string]string{
+	"rsync": "fetcher", "curl": "fetcher", "wget": "fetcher", "mirror-refresh": "fetcher",
+	"fetch": "git", "pull": "git", "clone": "git",
+	"--loop": "loop", "--every": "loop", "watch": "loop", "while": "loop", "until": "loop", "--interval": "loop",
+}
+
+// fetchOnClock is the first fetcher and the first loop of argv under clockFetch, each "" when there is none.
+func fetchOnClock(argv []string) (fetcher, loop string) {
+	git := false
+	for _, w := range argv {
+		for _, tok := range strings.FieldsFunc(w, func(r rune) bool { return unicode.IsSpace(r) || strings.ContainsRune(";&|()", r) }) {
+			tok, _, _ = strings.Cut(tok, "=")
+			tok = tok[strings.LastIndex(tok, "/")+1:]
+			switch clockFetch[tok] {
+			case "fetcher":
+				fetcher = cmp.Or(fetcher, tok)
+			case "git":
+				if git {
+					fetcher = cmp.Or(fetcher, "git "+tok)
+				}
+			case "loop":
+				loop = cmp.Or(loop, tok)
+			}
+			git = git || tok == "git" // once a git word is seen it stays seen for the rest of argv: a later pull is counted
+		}
+	}
+	return fetcher, loop
+}
+
 func checkService(r Row) error {
 	var p []string
+	var argv []string
+	_ = json.Unmarshal([]byte(r.F["argv"]), &argv) // ignored: canonical checked the field; a bad value has no words
+	every, _ := strconv.Atoi(r.F["every"])
+	if f, loop := fetchOnClock(argv); f != "" && (loop != "" || every > 0) {
+		how := cmp.Or(loop, "--every "+r.F["every"])
+		p = append(p, fmt.Sprintf("service %s fetches on a clock (%s with %s); fetch on an event (a push) or once per job, never on a clock: drop %s and run it from the job or the hook that needs it", r.Name, f, how, how))
+	}
 	if r.F["every"] != "0" && r.F["keepalive"] == "true" {
 		p = append(p, fmt.Sprintf("service %s has --every %s and --keepalive true; a service runs every n seconds or is kept alive, so set one: --every 0 or --keepalive false", r.Name, r.F["every"]))
 	} else if r.F["every"] == "0" && r.F["keepalive"] != "true" {

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -24,7 +25,10 @@ line that puts that directory on PATH; this node on
 the tailnet (a NOTE when not: up joins it); with --runners gh and its login; the store, key,
 seat and pins of NOVA_SECRETS_STORE, NOVA_SECRETS_KEY, NOVA_SECRETS_SEAT and NOVA_SECRETS_PINS;
 TAILSCALE_API_KEY, the one credential a human gives, read from the seat, the reason printed when
-the read fails; and NOVA_PG_DSN once a fleet exists. Tailscale and Ansible are
+the read fails; and NOVA_PG_DSN once a fleet exists. On the tailnet, one line per peer this node has
+exchanged bytes with, CHECK traffic <peer> tx=<GB> rx=<GB> from tailscale status (this node's counters
+since tailscaled started), and CHECK WARN traffic for a peer over 100 GB either way: something is
+fetching or mirroring on a clock, which no service record may do. Tailscale and Ansible are
 required here, never optional. Nothing is changed. Exit: 0 all present; 1 something missing
 (CHECK FAILED missing=<n>); 2 could not run.
 `
@@ -243,6 +247,9 @@ func (u *upRun) control(out io.Writer) int {
 			fmt.Fprintf(out, "CHECK NOTE tailnet this node is not on it; up joins it, tagged tag:control, with a key minted by TAILSCALE_API_KEY: %s\n", oneLine(why+" "+o))
 		} else {
 			fmt.Fprintln(out, "CHECK OK tailnet")
+			if st, on := u.status(); on {
+				traffic(out, st)
+			}
 		}
 	}
 	if p := u.bin["gh"]; p != "" {
@@ -320,6 +327,36 @@ func (u *upRun) control(out io.Writer) int {
 		}
 	}
 	return missing
+}
+
+// trafficWarnBytes is the tailnet traffic between this node and one peer, either way, above which check prints
+// CHECK WARN. D8 (2026-11-07): this node's tailscaled had sent 1.08 TB, nearly all of it to the benches' timed
+// mirror fetches, and no tool measured it. The fleet's own traffic with a peer is small (binaries installed, the
+// store pushed, nova-config rows and bus messages: megabytes a day), so 100 GB with one peer since tailscaled
+// started is a saturation to look at whatever the fleet's size; a share of the total would fire on any two-machine fleet.
+const trafficWarnBytes = 100e9
+
+// traffic prints one CHECK traffic line per peer this node has exchanged bytes with, sorted by name, GB to one
+// decimal, and CHECK WARN traffic for a peer over trafficWarnBytes in either direction. A peer with no bytes is no line.
+func traffic(out io.Writer, st tsStatus) {
+	gb := func(b int64) string { return fmt.Sprintf("%.1fGB", float64(b)/1e9) }
+	for _, p := range slices.SortedFunc(maps.Values(st.Peer), func(a, b tsNode) int { return strings.Compare(a.DNSName, b.DNSName) }) {
+		if p.TxBytes+p.RxBytes == 0 {
+			continue
+		}
+		name, _, _ := strings.Cut(p.DNSName, ".")
+		fmt.Fprintf(out, "CHECK traffic %s tx=%s rx=%s\n", name, gb(p.TxBytes), gb(p.RxBytes))
+		over := ""
+		if float64(p.TxBytes) > trafficWarnBytes {
+			over = "tx=" + gb(p.TxBytes)
+		} else if float64(p.RxBytes) > trafficWarnBytes {
+			over = "rx=" + gb(p.RxBytes)
+		}
+		if over != "" {
+			fmt.Fprintf(out, "CHECK WARN traffic %s %s is over %.0fGB with one peer since tailscaled started: something fetches or mirrors on a clock; find it: nova-config service list\n",
+				name, over, trafficWarnBytes/1e9)
+		}
+	}
 }
 
 func oneLine(s string) string { return strings.Join(strings.Fields(s), " ") }
