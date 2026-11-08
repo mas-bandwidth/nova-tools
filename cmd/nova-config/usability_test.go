@@ -179,7 +179,7 @@ func TestDiagnose(t *testing.T) {
 	err = diagnose(pe("23505", "duplicate key value violates unique constraint"), machine, "add", "m1", Row{}, nil, nil)
 	assert.EqualError(t, err, "machine m1 exists; use: nova-config machine set m1")
 	err = diagnose(pe("23514", "new row violates\ncheck constraint \"x\""), machine, "add", "m1", Row{}, nil, nil)
-	assert.EqualError(t, err, `machine m1: new row violates check constraint "x"`)
+	assert.EqualError(t, err, `machine m1: the store refused the row: new row violates check constraint "x"; read the constraint, then give a value it takes; run: psql "$NOVA_PG_DSN" -c '\d config.machines'`)
 	for _, e := range []error{err, diagnose(pe("23503", "x"), machine, "remove", "m1", Row{}, nil, []string{"l1"})} {
 		var r refusal
 		assert.True(t, errors.As(e, &r), "a constraint is a refusal, exit 1")
