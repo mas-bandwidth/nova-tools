@@ -332,7 +332,6 @@ func TestUpOrder(t *testing.T) {
 		"ansible-playbook -i first.ini redis.yml -e nova_seal_store=",
 		"nova-secrets exec --only NOVA_PG_PASSWORD -- /bin/ansible-playbook -i inventory join.yml -e nova_join_host=first -e nova_join_user=nova -e nova_join_address=203.0.113.7 -e nova_join_root_user=root -e nova_join_os=linux -e nova_join_arch=amd64 -e nova_join_roles=services,bench,runner -e nova_seal_store=" + f.store + " -e nova_bus_redis=first.ts.example:6379",
 		"-e nova_join_host=second -e nova_join_user=nova -e nova_join_address=203.0.113.8 -e nova_join_root_user=root -e nova_join_os=linux -e nova_join_arch=amd64 -e nova_join_roles=bench,runner -e nova_seal_store=" + f.store + " -e nova_bus_redis=first.ts.example:6379 [env TAILSCALE_AUTHKEY=" + fakeKey("auth", "SECRET2") + "]",
-		"nova-secrets exec --only NOVA_BUS_PASSWORD -- true",
 		"ssh -o BatchMode=yes nova@first.ts.example sh -c 'PATH=$HOME/.local/bin:/opt/homebrew/bin:$PATH age-keygen -y $HOME/.config/nova-secrets/first.key'",
 		"nova-secrets grant NOVA_BUS_PASSWORD --to first --pub age1fakenova@first.ts.example\n",
 		"nova-secrets grant NOVA_BUS_PASSWORD --to second --pub age1fake",
@@ -359,6 +358,9 @@ func TestUpOrder(t *testing.T) {
 	}
 	if strings.Contains(out, "UP ROLE") {
 		t.Errorf("a new row already has the runner role:\n%s", out)
+	}
+	if strings.Contains(all, "nova-secrets exec --only NOVA_BUS_PASSWORD -- true") {
+		t.Errorf("a run that grants read the granted values first, which only --check needs:\n%s", all)
 	}
 	// the key that was already there under the public address is pinned again under the tailnet names
 	kh, _ := os.ReadFile(filepath.Join(os.Getenv("HOME"), ".ssh", "known_hosts"))

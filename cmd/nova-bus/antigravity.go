@@ -231,11 +231,11 @@ func (a *agWake) run(ctx context.Context, env []string, name string, args ...str
 	return out, err
 }
 
-type server struct{ pid, bin, token string }
+type server struct{ pid, token string }
 
 // findServers is every language_server of this user (uid) in ps output that
-// carries a --csrf_token: its pid, its binary (the command up to its first
-// flag) and token. Those whose --workspace_id is one of ids come first; the
+// carries a --csrf_token: its pid and token (the binary is read from the pid,
+// never from ps). Those whose --workspace_id is one of ids come first; the
 // rest follow, because a server may name the workspace another way (its
 // symlink's other side) or not at all, and get-conversation-metadata picks
 // the one that has the conversation.
@@ -256,17 +256,10 @@ func findServers(ps, uid string, ids []string) []server {
 				}
 			}
 		}
-		cmd := strings.TrimSpace(l)
-		for _, lead := range f[:2] { // the command is what follows the pid and uid fields
-			cmd = strings.TrimSpace(strings.TrimPrefix(cmd, lead))
-		}
-		if i := strings.Index(cmd, " --"); i > 0 {
-			cmd = cmd[:i]
-		}
-		if vals["--csrf_token"] == "" || cmd == "" {
+		if vals["--csrf_token"] == "" {
 			continue
 		}
-		if sv := (server{f[0], cmd, vals["--csrf_token"]}); slices.Contains(ids, vals["--workspace_id"]) {
+		if sv := (server{f[0], vals["--csrf_token"]}); slices.Contains(ids, vals["--workspace_id"]) {
 			match = append(match, sv)
 		} else {
 			rest = append(rest, sv)

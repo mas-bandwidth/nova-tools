@@ -532,10 +532,11 @@ func (u *upRun) steps() int {
 
 	// 6. each machine's seat granted the values its services open, written encrypted to that seat's
 	// pinned key (read from the machine once, over the tailnet); the operator is never a recipient.
-	// A check reads the values here, so a value this seat lacks stops it with the read's reason.
-	if _, why, c := outCmd(u.bin["nova-secrets"], u.secrets(strings.Split(u.grant, ","), "true")[1:], os.Environ()); u.check && c != 0 {
-		fmt.Fprintf(u.stderr, "nova-fleet up: seat %s cannot read %s to grant it: %s\n", u.seat, u.grant, oneLine(why))
-		return fail("grant", c)
+	if u.check { // a check reads the values here, so a value this seat lacks stops it with the read's reason
+		if _, why, c := outCmd(u.bin["nova-secrets"], u.secrets(strings.Split(u.grant, ","), "true")[1:], os.Environ()); c != 0 {
+			fmt.Fprintf(u.stderr, "nova-fleet up: seat %s cannot read %s to grant it: %s\n", u.seat, u.grant, oneLine(why))
+			return fail("grant", c)
+		}
 	}
 	for _, m := range u.machines {
 		if m.unreachable != "" || m.later {

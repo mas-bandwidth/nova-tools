@@ -16,7 +16,7 @@ import (
 // empty. Nothing is escaped any other way, so what is printed can be pasted back.
 
 // oddRunes could hide or reorder text on a terminal: they print as \u escapes.
-const oddRunes = "  ‪‫‬‭‮⁦⁧⁨⁩"
+const oddRunes = "\u2028\u2029\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069"
 
 var oddEscapes = func() *strings.Replacer {
 	var pairs []string

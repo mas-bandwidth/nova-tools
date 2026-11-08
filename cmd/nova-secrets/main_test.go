@@ -438,8 +438,6 @@ func TestRequireIsAHiddenAliasOfOnly(t *testing.T) {
 	assert.NotContains(t, h.stdout.String(), "--require", "hidden")
 }
 
-const catchAllRules = "creation_rules:\n  - age: " + pubA + "\n"
-
 func (h *harness) rules() []map[string]string {
 	b, err := os.ReadFile(filepath.Join(h.store, ".sops.yaml"))
 	require.NoError(h.t, err)
