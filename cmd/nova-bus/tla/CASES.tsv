@@ -18,3 +18,5 @@ CodexWakeBrokenNoCheck.cfg	CodexWake.tla	invariant	SeenIdle	check
 CodexWakeBrokenNoAwait.cfg	CodexWake.tla	invariant	OneRow	check
 CodexWakeBrokenRequeue.cfg	CodexWake.tla	invariant	NoTwice	check
 CodexWakeBrokenNoCatchUp.cfg	CodexWake.tla	temporal	EveryHandled	check
+BusTrace.cfg	BusTrace.tla	pass	-	ignore-terminal
+BusTraceBrokenNewFirst.cfg	BusTrace.tla	invariant	TraceAccepted	ignore-terminal
