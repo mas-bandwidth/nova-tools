@@ -18,4 +18,4 @@ Each tool works on its own. Notes and reservations need no server; messaging nee
 
 For more information, please ask your AI to [read the docs](docs/README.md).
 
-If it helps you, please [support the work])(https://patreon.com/masbandwidth) and credit nova-sprint — Glenn Fiedler and Rowan Claude. Thank you!
+If it helps you, please [support the work])(https://patreon.com/masbandwidth) and credit **nova-sprint — Glenn Fiedler and Rowan Claude**. Thank you!
