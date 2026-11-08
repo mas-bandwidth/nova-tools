@@ -22,17 +22,27 @@ nova_netwatch_window: 21600           # seconds (6 hours) the reboot budget coun
 # true installs the ladder logging each action (NETWATCH ... DRY ...) instead of taking it.
 nova_netwatch_dry: false
 
-# Process patterns (pgrep -f, extended regular expressions) of a protected job: a match defers the reboot. Any file
-# in /run/nova-netwatch/hold.d defers it too (the manual hold).
-nova_netwatch_busy_patterns: []
+# The coordination server whose answer over the plain internet tells a local tailnet fault (reboot) from a remote
+# one (the alert only); empty is the ControlURL `tailscale debug prefs` names.
+nova_netwatch_control_url: ""
+
+# Process patterns (pgrep -f, extended regular expressions) of a protected job: a match defers the reboot (never
+# rungs 2 to 4, which run only while the LAN is down). Any file in /run/nova-netwatch/hold.d defers it too (the
+# manual hold). The default is by group: on a runner, a GitHub Actions job (its Runner.Worker process; the idle
+# Runner.Listener is no job); on a bench, a held reservation (nova-reserve run, which wraps sprint card work).
+nova_netwatch_busy_patterns_by_group:
+  runner: ['Runner\.Worker']
+  bench: ['nova-reserve( --dir [^ ]+)? run ']
+nova_netwatch_busy_patterns: >-
+  {{ group_names | map('extract', nova_netwatch_busy_patterns_by_group) | select('defined') | flatten | unique | list }}
 
 # The hang guard. A board watchdog driver to load by name at boot (sp5100_tco on AMD mini PCs, which the
 # distribution blacklists from autoload); empty loads none. When /dev/watchdog0 exists systemd drives it: a system
 # manager stalled this long resets the machine.
 nova_netwatch_watchdog_module: ""
 nova_netwatch_runtime_watchdog: 2min
-# 1 turns a soft lockup or a hung task into a panic, which kernel.panic (the health role's panic guard, applied by
-# this play too) turns into a reboot. Off: a hung task under a heavy test is not a dead machine.
+# 1 turns a soft lockup or a hung task into a panic, which kernel.panic (the health play's, which this play does not
+# set) turns into a reboot. Off: a hung task under a heavy test is not a dead machine.
 nova_netwatch_softlockup_panic: 0
 nova_netwatch_hung_task_panic: 0
 

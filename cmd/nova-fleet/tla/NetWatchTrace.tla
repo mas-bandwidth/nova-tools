@@ -10,7 +10,7 @@ CONSTANT Log
 \* busy \in BOOLEAN makes it a state predicate, which TLC checks as an invariant and reports when violated
 TraceMatches ==
     /\ busy \in BOOLEAN
-    /\ \A k \in 1..Len(Log) : Step(Log[k].pre, Log[k].healthy, Log[k].busy) = Log[k].post
+    /\ \A k \in 1..Len(Log) : Step(Log[k].pre, Log[k].lan, Log[k].tail, Log[k].busy) = Log[k].post
 
 SkipRestart ==
     [k \in 1..Len(TickLog) |->

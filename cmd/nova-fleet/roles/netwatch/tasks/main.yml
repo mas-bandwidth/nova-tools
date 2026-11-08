@@ -21,10 +21,7 @@
       NETWATCH FAIL {{ inventory_hostname }}: no default IPv4 route and no nova_netwatch_interfaces; run: nova-fleet netwatch -- -l {{ inventory_hostname }}
       -e '{"nova_netwatch_interfaces":["<interface>"]}'
 
-# ---- the hang guard ----
-- name: a panicked machine reboots itself (the health role's panic guard)
-  ansible.builtin.include_role: { name: health, tasks_from: panic }
-
+# ---- the hang guard (kernel.panic and panic_on_oops are the health play's, never this one's) ----
 - name: the lockup panics, off unless a journal has shown one
   ansible.builtin.copy:
     dest: /etc/sysctl.d/91-nova-lockup.conf
@@ -96,7 +93,7 @@
 
 # ---- the self-heal ladder ----
 - name: what the tick runs (apt)
-  ansible.builtin.apt: { name: [ethtool, iputils-ping, iproute2, python3], state: present, update_cache: true, cache_valid_time: 3600 }
+  ansible.builtin.apt: { name: [ethtool, iputils-ping, iproute2, python3, curl], state: present, update_cache: true, cache_valid_time: 3600 }
   become: true
   when: ansible_facts['os_family'] == 'Debian'
 
@@ -135,6 +132,7 @@
       Environment=NETWATCH_MAX_REBOOTS={{ nova_netwatch_max_reboots }} NETWATCH_WINDOW={{ nova_netwatch_window }}
       Environment=NETWATCH_DRY={{ nova_netwatch_dry | ternary(1, 0) }} NETWATCH_TAILNET_IF={{ netwatch_tailnet_if }}
       Environment="NETWATCH_TAILNET_PEERS={{ nova_netwatch_tailnet_peers | join(' ') }}" NETWATCH_TAILNET_TRIES={{ nova_netwatch_tailnet_tries }}
+      Environment=NETWATCH_CONTROL_URL={{ nova_netwatch_control_url }}
       ExecStart=/usr/local/sbin/nova-netwatch %i
   become: true
   register: netwatch_service
@@ -161,6 +159,29 @@
   become: true
   when: not ansible_check_mode and (netwatch_service is changed or netwatch_timer is changed)
 
+# An instance for an interface not in the list (an earlier run's, or one enabled by hand on another interface, such as
+# tailscale0) would climb the ladder on a signal nobody asked for: it is stopped and disabled.
+- name: the instances on the machine (a read)
+  ansible.builtin.shell: |
+    set -u
+    { ls /etc/systemd/system/timers.target.wants 2>/dev/null
+      systemctl list-units --all --plain --no-legend 'nova-netwatch@*' 2>/dev/null | awk '{print $1}'; } \
+      | sed -n 's/^nova-netwatch@\(.*\)\.\(timer\|service\)$/\1/p' | sort -u
+  args: { executable: /bin/bash }
+  register: netwatch_present
+  changed_when: false
+  check_mode: false
+
+- name: an instance for an interface not watched, its timer stopped and disabled
+  ansible.builtin.systemd_service: { name: "nova-netwatch@{{ item }}.timer", enabled: false, state: stopped }
+  loop: "{{ netwatch_present.stdout_lines | difference(netwatch_ifs) }}"
+  become: true
+
+- name: an instance for an interface not watched, its tick stopped
+  ansible.builtin.systemd_service: { name: "nova-netwatch@{{ item }}.service", state: stopped }
+  loop: "{{ netwatch_present.stdout_lines | difference(netwatch_ifs) }}"
+  become: true
+
 - name: the timer, enabled and started per interface
   ansible.builtin.systemd_service: { name: "nova-netwatch@{{ item }}.timer", enabled: true, state: started }
   loop: "{{ netwatch_ifs }}"
@@ -184,7 +205,7 @@
 - name: the state per interface
   ansible.builtin.shell: |
     set -u
-    echo "{{ item }} timer=$(systemctl is-active nova-netwatch@{{ item }}.timer) state=$(cat /run/nova-netwatch/{{ item }} 2>/dev/null || echo none) alert=$(test -e /var/lib/nova-netwatch/ALERT && echo yes || echo no)"
+    echo "{{ item }} timer=$(systemctl is-active nova-netwatch@{{ item }}.timer) state=$(cat /run/nova-netwatch/{{ item }} 2>/dev/null || echo none) alert=$(cut -d' ' -f1 /var/lib/nova-netwatch/ALERT.{{ item }} 2>/dev/null || echo no)"
   args: { executable: /bin/bash }
   loop: "{{ netwatch_ifs }}"
   become: true
@@ -197,4 +218,5 @@
     msg: >-
       NETWATCH {{ inventory_hostname }} {{ netwatch_show.results | map(attribute='stdout') | join(' ; ') }}
       tailnet={{ netwatch_tailnet_if }} dry={{ nova_netwatch_dry }} {{ netwatch_guard.stdout }}
+      {{- (' stopped=' ~ (netwatch_present.stdout_lines | difference(netwatch_ifs) | join(','))) if netwatch_present.stdout_lines | difference(netwatch_ifs) else '' }}
       {{- ' (check: nothing changed)' if ansible_check_mode else '' }}
