@@ -1,0 +1,16 @@
+config	module	expected	property	deadlock
+NetWatch.cfg	NetWatch.tla	pass	-	check
+NetWatchLarge.cfg	NetWatch.tla	pass	-	check
+NetWatchTail.cfg	NetWatch.tla	pass	-	check
+NetWatchBrokenNoGuard.cfg	NetWatch.tla	action	NoRebootWhileBusy	check
+NetWatchBrokenNoAlert.cfg	NetWatch.tla	temporal	RecoverOrAlert	check
+NetWatchBrokenNoRestart.cfg	NetWatch.tla	temporal	TailRecovers	check
+NetWatchBrokenTailCardRungs.cfg	NetWatch.tla	action	NoCardRungForTheTailnet	check
+NetWatchBrokenRemoteReboot.cfg	NetWatch.tla	action	NoRebootForARemoteTailnet	check
+NetWatchBrokenWindowLoop.cfg	NetWatch.tla	invariant	OutageRebootsBounded	check
+NetWatchTrace.cfg	NetWatchTrace.tla	pass	-	check
+NetWatchTraceBrokenSkipRestart.cfg	NetWatchTrace.tla	invariant	TraceMatches	check
+NetWatchBrokenOldClassify.cfg	NetWatch.tla	action	NoRebootForARemoteTailnet	check
+NetWatchTraceBrokenOldClassify.cfg	NetWatchTrace.tla	invariant	TraceMatches	check
+NetWatchBrokenAnyReply.cfg	NetWatch.tla	action	NoRebootForARemoteTailnet	check
+NetWatchTraceBrokenAnyReply.cfg	NetWatchTrace.tla	invariant	TraceMatches	check

@@ -1,0 +1,236 @@
+#!/bin/bash
+# nova-netwatch <interface>: one tick of the network self-heal ladder (cmd/nova-fleet/netwatch.yml). The model is
+# cmd/nova-fleet/tla/NetWatch.tla: the counters below are its record w, and each branch of the ladder is one branch of
+# its Step. Run by nova-netwatch@<interface>.timer.
+#
+# The signals:
+#   - the LAN misses when the default gateway does not answer one ping AND the interface received no packet since
+#     the last tick (a card that stops receiving while its link stays up; a router outage, where packets still
+#     arrive, is no miss);
+#   - the tailnet, read only on the interface NETWATCH_TAILNET_IF names and only while the LAN works, is ok, local
+#     or remote. ok: BackendState Running, the machine's own node online and one of up to NETWATCH_TAILNET_TRIES
+#     peers (NETWATCH_TAILNET_PEERS, else the peers `tailscale status` lists online) answering `tailscale ping`, or
+#     no peer online; Stopped (`tailscale down` by hand) is ok too. local, only with the coordination server
+#     (NETWATCH_CONTROL_URL, else the ControlURL of `tailscale debug prefs`) answering an HTTPS request over the
+#     plain internet: tailscale does not answer its status, its BackendState is another than Running, Stopped,
+#     NeedsLogin or NeedsMachineAuth, or the own node is offline and no peer answers. remote, everything else: the
+#     coordination server silent, NeedsLogin or NeedsMachineAuth, the own node offline while a peer answers, or no
+#     peer answering while the own node is online (a relay outage, or the peers down with a stale Online flag: a
+#     fault every machine would see at once).
+# After THRESHOLD consecutive misses: rung 1 restarts tailscaled (on the tailnet's interface; elsewhere nothing).
+# Then, while the LAN misses: 2 renegotiate (ethtool -r), 3 link bounce, 4 driver reload, then the reboot. A tailnet
+# miss with the LAN working never touches the card: local, it goes from rung 1 to the reboot; remote, it raises the
+# alert and does nothing, so a coordination outage never reboots every machine at once. BACKOFF*r ticks after rung r.
+# Rungs 2 to 4 have no busy guard: they run only while the LAN is down, when a job on the machine has lost its
+# network anyway. The reboot never runs while a protected job runs (any file in $RUN/hold.d, or a process matching a
+# line of $ETC/busy-patterns).
+# The reboot budget: at most MAX_REBOOTS reboots in WINDOW seconds ($LIB/reboots, shared by the interfaces) and at
+# most MAX_REBOOTS in one outage. When the next reboot would pass either, the alert is raised and the watch halts:
+# nothing more until a healthy tick, or until a person removes the alert file, which resumes it.
+# The alert, one file per interface ($LIB/ALERT.<interface>, its first word the kind: halt, busy or remote) and a
+# journal line at priority crit, is raised by the budget (halt), by BUSY_WAIT_LIMIT deferrals (busy; the deferral
+# goes on) and by a remote tailnet miss (remote); a healthy tick clears it and logs RECOVERED.
+# State: volatile in $RUN/<interface> (misses rung wait busywaits lastrx; lost on reboot, as in the model),
+# persistent in $LIB/<interface>.state (outage halted). A field that is not a number is reset to 0 with a journal
+# line. NETWATCH_DRY=1 logs each action instead of taking it.
+#
+# The roots, the clock and NETWATCH_TRACE are the test's seams (netwatch_functional_test.go): NETWATCH_TRACE names a
+# file that gets one line per tick, the record before, the inputs and the record after, checked against the model.
+set -u
+IF=${1:?usage: nova-netwatch <interface>}
+THRESHOLD=${NETWATCH_THRESHOLD:-4}
+BACKOFF=${NETWATCH_BACKOFF:-2}
+BUSY_BACKOFF=${NETWATCH_BUSY_BACKOFF:-4}
+BUSY_WAIT_LIMIT=${NETWATCH_BUSY_WAIT_LIMIT:-10}
+MAX_REBOOTS=${NETWATCH_MAX_REBOOTS:-2}
+WINDOW=${NETWATCH_WINDOW:-21600}
+TAILNET_IF=${NETWATCH_TAILNET_IF:-}
+TAILNET_PEERS=${NETWATCH_TAILNET_PEERS:-}
+TAILNET_TRIES=${NETWATCH_TAILNET_TRIES:-3}
+CONTROL_URL=${NETWATCH_CONTROL_URL:-}
+RUN=${NETWATCH_RUN:-/run/nova-netwatch}; LIB=${NETWATCH_LIB:-/var/lib/nova-netwatch}
+ETC=${NETWATCH_ETC:-/etc/nova-netwatch}; SYS=${NETWATCH_SYS:-/sys/class/net}
+now() { echo "${NETWATCH_NOW:-$(date +%s)}"; }
+mkdir -p "$RUN/hold.d" "$LIB"
+VOL="$RUN/$IF"; PST="$LIB/$IF.state"; REB="$LIB/reboots"; ALERT="$LIB/ALERT.$IF"
+
+log() { logger -t nova-netwatch -p "daemon.${2:-notice}" "NETWATCH $IF $1"; }
+act() { if [ "${NETWATCH_DRY:-0}" = 1 ]; then log "DRY $*"; else "$@"; fi; }
+num() { case $1 in ''|*[!0-9]*) return 1 ;; esac; }
+
+reboots_in_window() {
+  local now n=0 t; now=$(now)
+  [ -f "$REB" ] || { echo 0; return; }
+  while read -r t; do num "$t" && [ $((now - t)) -lt "$WINDOW" ] && n=$((n + 1)); done < "$REB"
+  echo "$n"
+}
+
+# ---- the state, checked ----
+misses=0; rung=0; wait=0; busywaits=0; lastrx=-1; outage=0; halted=0
+if [ -f "$VOL" ]; then
+  read -r misses rung wait busywaits lastrx < "$VOL"
+  if ! { num "$misses" && num "$rung" && num "$wait" && num "$busywaits" && { [ "$lastrx" = -1 ] || num "$lastrx"; }; }; then
+    log "STATE reset: $VOL held '$(head -c 80 "$VOL" | tr -c '[:print:]' ' ')'" warning
+    misses=0; rung=0; wait=0; busywaits=0; lastrx=-1
+  fi
+fi
+if [ -f "$PST" ]; then
+  read -r outage halted < "$PST"
+  if ! { num "$outage" && { [ "$halted" = 0 ] || [ "$halted" = 1 ]; }; }; then
+    log "STATE reset: $PST held '$(head -c 80 "$PST" | tr -c '[:print:]' ' ')'" warning
+    outage=0; halted=0
+  fi
+fi
+# a person removed the halt's alert: start the outage over
+if [ "$halted" = 1 ] && [ ! -e "$ALERT" ]; then
+  log "RESUMED: the alert was removed by hand"; outage=0; halted=0
+fi
+reboots=$(reboots_in_window); alerted=0; [ -e "$ALERT" ] && alerted=1
+pre="$misses $rung $wait $busywaits $reboots $outage $alerted $halted"
+isbusy=0
+
+rx=$(cat "$SYS/$IF/statistics/rx_packets" 2>/dev/null || echo -1)
+num "$rx" || rx=-1
+save() {
+  echo "$misses $rung $wait $busywaits $rx" > "$VOL"
+  echo "$outage $halted" > "$PST"
+  if [ -n "${NETWATCH_TRACE:-}" ]; then
+    local a=0; [ -e "$ALERT" ] && a=1
+    echo "$pre $lan $tail $ob_backend $ob_self $ob_peers $ob_control $isbusy $misses $rung $wait $busywaits $reboots $outage $a $halted" >> "$NETWATCH_TRACE"
+  fi
+}
+alert() {
+  local kind=$1 old=""; shift
+  [ -e "$ALERT" ] && read -r old _ < "$ALERT"
+  [ "$old" = "$kind" ] || log "ALERT $*" crit
+  echo "$kind $(date -u +%FT%TZ) $*" > "$ALERT"
+}
+
+# ---- the signals ----
+gw=$(ip -4 route show default dev "$IF" 2>/dev/null | awk '{print $3; exit}')
+lan=0
+if [ -n "$gw" ] && ping -c 1 -W 2 -I "$IF" "$gw" >/dev/null 2>&1; then lan=1; fi
+if [ "$rx" != -1 ] && [ "$lastrx" != -1 ] && [ "$rx" -gt "$lastrx" ]; then lan=1; fi
+
+istailnet=0; [ -n "$TAILNET_IF" ] && [ "$IF" = "$TAILNET_IF" ] && istailnet=1
+tail=skip; why=""
+# what was seen of the tailnet (the model's obs; "-" while unread): tailscale's state (running, stopped, login,
+# other, none: no status), the own node online, a peer answering, the coordination server: 1 answering (HTTP
+# 200-499), 5 a server error (5xx: a front end up over a broken control plane, so not answering), 0 no reply or unasked
+ob_backend=-; ob_self=0; ob_peers=0; ob_control=0
+# read_tailnet sets tail to ok, local or remote, why, and the ob_ variables.
+read_tailnet() {
+  local st backend="" self="" peers="" p n=0 answered=no
+  if st=$(timeout 10 tailscale status --json 2>/dev/null); then
+    st=$(printf '%s' "$st" | python3 -I -c '
+import json, sys
+try:
+    s = json.load(sys.stdin)
+except ValueError:
+    print("unparsable false"); sys.exit()
+me = s.get("Self") or {}
+peers = sorted(p["TailscaleIPs"][0] for p in (s.get("Peer") or {}).values() if p.get("Online") and p.get("TailscaleIPs"))
+print(s.get("BackendState") or "none", "true" if me.get("Online") else "false", " ".join(peers))
+' 2>/dev/null)
+    read -r backend self peers <<< "$st"
+    why="backend=${backend:-none}"
+  else
+    why="status failed"
+  fi
+  [ "$self" = true ] && ob_self=1
+  case $backend in
+    Running) ob_backend=running ;;
+    Stopped) ob_backend=stopped; tail=ok; return ;;
+    NeedsLogin|NeedsMachineAuth) ob_backend=login; tail=remote; why="$why: it needs a person to log in"; return ;;
+    "") ob_backend=none ;;
+    *) ob_backend=other ;;
+  esac
+  if [ "$backend" = Running ]; then
+    [ -n "$TAILNET_PEERS" ] && peers=$TAILNET_PEERS
+    if [ -z "$peers" ]; then answered=yes; else
+      for p in $peers; do
+        n=$((n + 1)); [ "$n" -gt "$TAILNET_TRIES" ] && break
+        if timeout 5 tailscale ping -c 1 --timeout 3s --until-direct=false "$p" >/dev/null 2>&1; then answered=yes; break; fi
+      done
+    fi
+    [ "$answered" = yes ] && ob_peers=1
+    if [ "$answered" = yes ]; then
+      [ "$self" = true ] && { tail=ok; return; }
+      tail=remote; why="own node offline, peers answer"; return
+    fi
+    # the coordination server sees this node online: the silence is a relay's or the peers', not this machine's
+    if [ "$self" = true ]; then
+      why="no peer answered, own node online (a relay or the peers)"; probe_control; tail=remote; return
+    fi
+    why="own node offline, no peer answered"
+  fi
+  probe_control
+  if [ "$ob_control" = 1 ]; then tail=local; else tail=remote; fi
+}
+# probe_control asks the coordination server over the plain internet and notes the answer in ob_control and why.
+# Only an HTTP code 200-499 is an answer: a 5xx is a front end over a control plane that is down, which every
+# node sees at once, so counting it would class a fleet-wide outage local and reboot the fleet.
+probe_control() {
+  local url=$CONTROL_URL code
+  [ -n "$url" ] || url=$(timeout 5 tailscale debug prefs 2>/dev/null | python3 -I -c 'import json, sys; print(json.load(sys.stdin).get("ControlURL") or "")' 2>/dev/null)
+  [ -n "$url" ] || url=https://controlplane.tailscale.com
+  code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$url" 2>/dev/null)
+  case $code in
+    [234][0-9][0-9]) ob_control=1; why="$why, $url answers" ;;
+    5[0-9][0-9]) ob_control=5; why="$why, $url does not answer (HTTP $code)" ;;
+    *) why="$why, $url does not answer" ;;
+  esac
+}
+[ "$istailnet" = 1 ] && [ "$lan" = 1 ] && read_tailnet
+
+# ---- Step: healthy ----
+if [ "$lan" = 1 ] && { [ "$tail" = ok ] || [ "$tail" = skip ]; }; then
+  if [ "$rung" != 0 ] || [ "$misses" -ge "$THRESHOLD" ] || [ -e "$ALERT" ]; then
+    log "RECOVERED misses=$misses rung=$rung busywaits=$busywaits outage=$outage"
+  fi
+  misses=0; rung=0; wait=0; busywaits=0; outage=0; halted=0; rm -f "$ALERT"; save; exit 0
+fi
+
+busy() {
+  [ -n "$(ls -A "$RUN/hold.d" 2>/dev/null)" ] && return 0
+  [ -f "$ETC/busy-patterns" ] || return 1
+  local p
+  while read -r p; do [ -n "$p" ] && pgrep -f -- "$p" >/dev/null && return 0; done < "$ETC/busy-patterns"
+  return 1
+}
+
+# ---- Step: a miss ----
+if [ "$halted" = 1 ]; then
+  :
+elif [ "$misses" -lt "$THRESHOLD" ]; then
+  misses=$((misses + 1))
+  [ "$misses" -eq "$THRESHOLD" ] && log "MISS threshold reached lan=$lan gw=${gw:-none} rx=$rx tailnet=$tail${why:+ ($why)}" warning
+elif [ "$wait" -gt 0 ]; then
+  wait=$((wait - 1))
+elif [ "$rung" = 0 ] || { [ "$lan" = 0 ] && [ "$rung" -lt 4 ]; }; then
+  rung=$((rung + 1)); wait=$((BACKOFF * rung))
+  drv=$(basename "$(readlink -f "$SYS/$IF/device/driver" 2>/dev/null)")
+  case $rung in
+    1) if [ "$istailnet" = 0 ]; then log "RUNG 1 restart tailscaled: not the tailnet's interface, nothing to do"
+       else log "RUNG 1 restart tailscaled${why:+ ($why)}" warning; act systemctl restart tailscaled; fi ;;
+    2) log "RUNG 2 renegotiate" warning; act ethtool -r "$IF" ;;
+    3) log "RUNG 3 link bounce" warning; act ip link set "$IF" down; sleep 2; act ip link set "$IF" up ;;
+    4) log "RUNG 4 driver reload $drv" warning; [ -n "$drv" ] && { act modprobe -r "$drv"; sleep 2; act modprobe "$drv"; } ;;
+  esac
+elif [ "$lan" = 1 ] && [ "$tail" = remote ]; then
+  alert remote "the tailnet is down and the fault is not this machine's ($why); nothing to do here"
+elif [ "$reboots" -ge "$MAX_REBOOTS" ] || [ "$outage" -ge "$MAX_REBOOTS" ]; then
+  halted=1
+  alert halt "reboot budget spent ($reboots in ${WINDOW}s, $outage in this outage, at most $MAX_REBOOTS); halted until the network is back or this file is removed"
+elif busy; then
+  isbusy=1
+  busywaits=$((busywaits + 1)); [ "$busywaits" -gt "$BUSY_WAIT_LIMIT" ] && busywaits=$BUSY_WAIT_LIMIT
+  wait=$BUSY_BACKOFF; log "DEFER reboot for a protected job ($busywaits/$BUSY_WAIT_LIMIT)" warning
+  [ "$busywaits" -ge "$BUSY_WAIT_LIMIT" ] && alert busy "reboot deferred $BUSY_WAIT_LIMIT times for a protected job"
+else
+  now >> "$REB"; misses=0; rung=0; wait=0; busywaits=0; outage=$((outage + 1)); reboots=$(reboots_in_window); save
+  log "RUNG 5 reboot ($reboots/$MAX_REBOOTS in window, $outage/$MAX_REBOOTS in this outage; lan=$lan tailnet=$tail${why:+ ($why)})" crit
+  act systemctl reboot
+  exit 0
+fi
+save

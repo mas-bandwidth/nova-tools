@@ -1,0 +1,22 @@
+# purpose: a Linux machine that loses its network or the tailnet recovers by itself, and a hung one resets (bench, runner and services groups)
+#
+# netwatch.yml: the network self-heal ladder and the hang guard (cmd/nova-fleet/README.md, "netwatch"). Every
+# nova_netwatch_tick_seconds a timer runs one tick of /usr/local/sbin/nova-netwatch per interface (default: the
+# default route's; an instance on another interface is stopped and disabled). A LAN miss (the gateway silent and no
+# packet arrived) climbs: 1 restart tailscaled, 2 ethtool -r, 3 link bounce, 4 driver reload, 5 reboot. A tailnet
+# miss with the LAN working gets rung 1, then the reboot only when the fault is this machine's (tailscale not running
+# or answering, or the machine offline to the tailnet with its peers silent, while the coordination server answers
+# with an HTTP code 200-499; a 5xx is a control plane down, not an answer), else the alert alone. The reboot waits for protected jobs
+# (nova_netwatch_busy_patterns, /run/nova-netwatch/hold.d); past nova_netwatch_max_reboots in the window or in one
+# outage the watch raises the alert and halts until the network is back. The hang guard: the lockup panics and the
+# board's hardware watchdog driven by systemd (kernel.panic is the health play's). The model is
+# cmd/nova-fleet/tla/NetWatch.tla. A darwin machine is skipped.
+#
+#   ansible-playbook -i ./inventory cmd/nova-fleet/netwatch.yml --check --diff -l bench-1
+#   ansible-playbook -i ./inventory cmd/nova-fleet/netwatch.yml -l bench-1
+- name: the network self-heal ladder and the hang guard (Linux)
+  hosts: bench:runner:services
+  gather_facts: true
+  gather_subset: [min, network]
+  roles:
+    - netwatch

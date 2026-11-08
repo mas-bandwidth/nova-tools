@@ -168,6 +168,7 @@ reached as root at the address given, as on the first run.
 | `github-runners` | GitHub Actions runners on every machine of the runner group, registered to one repository or organization | `github_runner_url`, `github_runner_scope`; `gh` on the control node logged in with admin on the repository |
 | `health` | guards that let a Linux machine get itself out of trouble, and a disk report (bench, runner and services groups) | nothing |
 | `install` | install one nova-tools release, by tag, on the machines named (bench, runner and services groups) | `nova_tools_version` (a tag `vX.Y.Z`; no default) |
+| `netwatch` | a Linux machine that loses its network or the tailnet recovers by itself, and a hung one resets (bench, runner and services groups) | nothing; `-l` the machines |
 | `join` | a new machine joins the fleet: its row, its login, the tailnet, the tools a seat needs, its seat | the machine as the argument; its row's fields; `NOVA_PG_DSN` and `NOVA_PG_PASSWORD` in the environment, and `TAILSCALE_AUTHKEY` for a machine not on the tailnet (`up` mints it) |
 | `postgres` | the PostgreSQL nova-config keeps the fleet in, on each machine of the services group | `nova_seal_*` to seal its password |
 | `redis` | the Redis nova-bus talks to, on each machine of the services group | `nova_seal_*` to seal its password |
@@ -877,6 +878,94 @@ journalctl -t nova-disk-report --since -1d        # the disk lines
 **Check.** `HEALTH <machine> journal=persistent panic=10 ssh_oom=0 slice_max=<bytes> | DISK <machine> root=<n>%
 swap=<n>%`. **Rollback.** Remove the file of the guard (named above), then `systemctl daemon-reload` and restart the
 daemon it configures (`systemd-journald`, `ssh`) or `sysctl --system`; `systemctl disable --now nova-disk-report.timer`.
+
+## netwatch
+
+A Linux machine that loses its network or the tailnet gets itself back, with no person and no power cycle; one that
+hangs is reset by its hardware watchdog. A darwin machine is skipped.
+
+Every `nova_netwatch_tick_seconds` (30) the timer `nova-netwatch@<interface>.timer` runs one tick of
+`/usr/local/sbin/nova-netwatch <interface>`, for each of `nova_netwatch_interfaces` (default: the interface of the
+default IPv4 route); an instance on any other interface is stopped and disabled. A tick is a miss when either
+signal fails:
+
+- the LAN: the default gateway does not answer one ping and the interface received no packet since the last tick (a
+  router outage, where packets still arrive, is no miss);
+- the tailnet, read on `nova_netwatch_tailnet_interface` (default: the default route's) while the LAN works. It is
+  **local** when tailscale does not answer its status or is in a state other than `Running`, or the rest of the
+  tailnet sees the machine offline and no peer answers `tailscale ping` (up to `nova_netwatch_tailnet_tries` of
+  `nova_netwatch_tailnet_peers`, else of the peers the status lists online), while the coordination server
+  (`nova_netwatch_control_url`, else the ControlURL of `tailscale debug prefs`) answers an HTTPS request over the plain
+  internet. It is **remote** when the coordination server does not answer, the machine needs a new login
+  (`NeedsLogin`, `NeedsMachineAuth`), only its own node shows offline while peers answer, or no peer answers while its
+  own node shows online (a relay outage, or the peers down: a fault every machine would see at once). `Stopped` (a
+  `tailscale down` by hand) and a tailnet with no peer online are no miss.
+
+After `nova_netwatch_threshold` misses in a row the tick climbs, waiting `nova_netwatch_backoff` times the rung's
+number of ticks after each rung:
+
+| Rung | Action | When |
+|---|---|---|
+| 1 | `systemctl restart tailscaled` (on the tailnet's interface; elsewhere nothing) | any miss |
+| 2 | `ethtool -r <interface>` | the LAN misses |
+| 3 | `ip link set <interface> down`, then up | the LAN misses |
+| 4 | the interface's driver unloaded and loaded again (`modprobe -r`, `modprobe`) | the LAN misses |
+| 5 | `systemctl reboot` | after rung 4 for a LAN miss, after rung 1 for a local tailnet miss |
+
+A tailnet miss with the LAN working never touches the card. A remote one never reboots: after rung 1 it raises the
+alert and does nothing more, so an outage of the coordination server does not reboot every machine at once; if the
+server comes back and the peers still do not answer, the miss is local and the machine reboots. Rungs 2 to 4 have no
+busy guard, because they run only while the LAN is down, when a job on the machine has lost its network anyway. The
+reboot never runs while a protected job runs: a process matching one of `nova_netwatch_busy_patterns` (by default,
+on a runner a GitHub Actions job, `Runner.Worker`; on a bench a held reservation, `nova-reserve ... run`), or any
+file in `/run/nova-netwatch/hold.d` (`touch /run/nova-netwatch/hold.d/<name>` to hold it, remove the file to
+release it).
+
+The reboot budget is `nova_netwatch_max_reboots` reboots in `nova_netwatch_window` seconds and the same number in one
+outage. When the next reboot would pass either, the watch raises the alert and halts: no rung and no reboot until a
+healthy tick, or until a person removes the alert file, which starts the outage over. A fault that never clears
+costs at most the budget, however long it lasts.
+
+The alert, `/var/lib/nova-netwatch/ALERT.<interface>` (its first word the kind: `halt`, `busy` or `remote`) and a
+journal line at priority crit, is raised by the budget, by `nova_netwatch_busy_wait_limit` deferrals (the deferral
+goes on) and by a remote tailnet miss; a healthy tick clears it and logs `RECOVERED`. A state file that is not
+numbers (a cut-short write, an older format) is reset with a `STATE reset` line.
+
+The hang guard: `kernel.softlockup_panic` and `kernel.hung_task_panic` (`/etc/sysctl.d/91-nova-lockup.conf`, off by
+default), and, when `/dev/watchdog0` exists, systemd driving the hardware watchdog
+(`/etc/systemd/system.conf.d/90-nova-watchdog.conf`), its driver loaded at boot by `nova-watchdog-module.service`
+when `nova_netwatch_watchdog_module` names one. `kernel.panic` and `kernel.panic_on_oops` are the health play's; this
+play reports them and sets neither.
+
+The model is `cmd/nova-fleet/tla/NetWatch.tla`, and `NetWatchTrace.tla` checks the ticks the script takes in its
+tests against it.
+
+```
+nova-fleet netwatch --check --diff -- -l bench-1
+nova-fleet netwatch -- -l bench-1
+journalctl -t nova-netwatch --since -1d           # the ladder's lines
+```
+
+| Variable | Default | |
+|---|---|---|
+| `nova_netwatch_interfaces` | `[]` | empty is the default route's interface |
+| `nova_netwatch_tailnet_interface`, `nova_netwatch_tailnet_peers`, `nova_netwatch_tailnet_tries` | `""`, `[]`, `3` | |
+| `nova_netwatch_control_url` | `""` | empty is the ControlURL tailscale names |
+| `nova_netwatch_tick_seconds`, `nova_netwatch_threshold`, `nova_netwatch_backoff` | `30`, `4`, `2` | |
+| `nova_netwatch_busy_patterns` | by group, from `nova_netwatch_busy_patterns_by_group` | pgrep -f extended regular expressions |
+| `nova_netwatch_busy_backoff`, `nova_netwatch_busy_wait_limit` | `4`, `10` | |
+| `nova_netwatch_max_reboots`, `nova_netwatch_window` | `2`, `21600` | |
+| `nova_netwatch_dry` | `false` | `true` logs each action (`DRY`) instead of taking it |
+| `nova_netwatch_watchdog_module`, `nova_netwatch_runtime_watchdog` | `""`, `2min` | `sp5100_tco` on AMD mini PCs |
+| `nova_netwatch_softlockup_panic`, `nova_netwatch_hung_task_panic` | `0`, `0` | |
+
+**Check.** `NETWATCH <machine> <interface> timer=active state=<misses rung wait busywaits lastrx> alert=no
+tailnet=<interface> dry=False watchdog=<interval> device=yes panic=<n> oops=<n> softlockup=0 hungtask=0`, then
+` stopped=<interfaces>` when it stopped other instances.
+**Rollback.** `systemctl disable --now nova-netwatch@<interface>.timer`, remove `nova-netwatch@.service`,
+`nova-netwatch@.timer` and `nova-watchdog-module.service` from `/etc/systemd/system`,
+`/etc/systemd/system.conf.d/90-nova-watchdog.conf` (then `systemctl daemon-reexec`) and
+`/etc/sysctl.d/91-nova-lockup.conf`.
 
 ## runner-packages
 

@@ -336,6 +336,7 @@
           - "{{ (lookup('ansible.builtin.file', nova_tools_roles_dir ~ '/health/defaults/main.yml') | from_yaml).nova_health_owns }}"
           - "{{ (lookup('ansible.builtin.file', nova_tools_roles_dir ~ '/postgres/defaults/main.yml') | from_yaml).nova_postgres_owns }}"
           - "{{ (lookup('ansible.builtin.file', nova_tools_roles_dir ~ '/opencode/defaults/main.yml') | from_yaml).nova_opencode_owns }}"
+          - "{{ (lookup('ansible.builtin.file', nova_tools_roles_dir ~ '/netwatch/defaults/main.yml') | from_yaml).nova_netwatch_owns }}"
 
     - name: the retired names and units (cmd/nova-fleet/retired-tools.txt, cmd/nova-fleet/retired-units.txt, read on the control node)
       ansible.builtin.set_fact:
