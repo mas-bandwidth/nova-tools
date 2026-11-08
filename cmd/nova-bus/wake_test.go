@@ -572,6 +572,19 @@ func TestClaudeHookRefusesStdoutOnDevNull(t *testing.T) {
 	assert.Equal(t, 0, code, "the command is the delivery: %s", errOut)
 }
 
+// A hook whose stdout is /dev/null (an --exec hook started with no reader, where stdout carries only receipts) has
+// no reader to lose: Darwin's poll(2) answers POLLNVAL for /dev/null, which must not end the hook as a gone reader.
+func TestHookOnDevNullIsNotAGoneReader(t *testing.T) {
+	t.Parallel()
+	gone := func() bool { return true }
+	code, _, errOut := callSys(t, sys{devOf: devs(3, 3, true), outGone: gone, shell: (&shellFake{}).shell}, testEnv, "hook", "--as", "beta", "--exec", "relay")
+	assert.Equal(t, 0, code, errOut)
+	assert.NotContains(t, errOut, "its reader is gone")
+	code, _, errOut = callSys(t, sys{devOf: devs(4, 3, true), outGone: gone, shell: (&shellFake{}).shell}, testEnv, "hook", "--as", "beta", "--exec", "relay")
+	assert.Equal(t, 1, code, "a stdout that is not /dev/null is still polled")
+	assert.Contains(t, errOut, "stdout closed: its reader is gone")
+}
+
 func TestHarnessFlagRefusals(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {

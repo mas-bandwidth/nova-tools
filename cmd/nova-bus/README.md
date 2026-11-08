@@ -424,7 +424,8 @@ only until it lapses).
 - After every read (at most 1 s) the hook polls stdout (poll(2) on Darwin,
   ppoll(2) on Linux): a pipe whose reader has gone (the Monitor or the
   session ended) ends it, `stdout closed: its reader is gone`, exit 1, its
-  presence released, within a second. SIGPIPE is ignored too, so a write to
+  presence released, within a second; a stdout on `/dev/null` has no reader
+  to lose and is not polled. SIGPIPE is ignored too, so a write to
   a gone reader fails with EPIPE and ends it the same way, the unprinted
   message left pending.
 - who scans `bus:presence:*` and reads each key; one that expires in between

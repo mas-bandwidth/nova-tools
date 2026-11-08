@@ -11,6 +11,14 @@
       nova_seal_store=<its clone>, which nova-fleet up runs)
   when: nova_secrets_repo | default('') | length > 0
 
+# without the control node's clone the run would push nothing and pass, which reads as a delivery
+- name: a refreshed machine needs the control node's clone (nova_seal_store)
+  ansible.builtin.fail:
+    msg: >-
+      SECRETS-REFRESH {{ inventory_hostname }} STOP: no nova_seal_store, so nothing would be pushed; give the control
+      node's clone of the store, run: nova-fleet secrets-refresh -- -e nova_seal_store=<the control node's clone>
+  when: nova_seal_store is not defined and (nova_secrets_refresh | bool)
+
 - name: the paths
   ansible.builtin.set_fact:
     sr_script: "{{ nova_bin_dir }}/nova-secrets-refresh"

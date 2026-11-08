@@ -82,3 +82,25 @@ func TestSecretsRefreshInstallsNoTimer(t *testing.T) {
 	})
 	require.NoError(t, err)
 }
+
+// TestSecretsRefreshRefusesARunThatWouldPushNothing: without nova_seal_store the role has nothing to push, so a
+// machine that is refreshed (nova_secrets_refresh true) fails, naming the variable, before any task changes
+// anything; a run that only checked the store and exited 0 would look like a delivery.
+func TestSecretsRefreshRefusesARunThatWouldPushNothing(t *testing.T) {
+	t.Parallel()
+	tasks := secretsRefreshTasks(t)
+	refusal := -1
+	for i, task := range tasks {
+		when := asText(task["when"])
+		if task["ansible.builtin.fail"] != nil && strings.Contains(when, "nova_seal_store is not defined") {
+			refusal = i
+			assert.Contains(t, when, "nova_secrets_refresh", "a machine with nova_secrets_refresh false pushes nothing by design")
+			assert.Contains(t, asText(task["ansible.builtin.fail"].(map[string]any)["msg"]), "run: nova-fleet secrets-refresh -- -e nova_seal_store=")
+			break
+		}
+	}
+	require.GreaterOrEqual(t, refusal, 0, "no task refuses a run without nova_seal_store")
+	for _, task := range tasks[:refusal] {
+		assert.Contains(t, task, "ansible.builtin.fail", "task %q runs before the refusal", asText(task["name"]))
+	}
+}
