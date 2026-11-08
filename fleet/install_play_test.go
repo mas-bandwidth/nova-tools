@@ -70,7 +70,7 @@ func TestInstallRoleEndsWithTheLeftoverInventory(t *testing.T) {
 		assert.Contains(t, dirs, want, "nova_tools_leftover_dirs")
 	}
 	// Allowed binaries: the release's, nova_tools_keep, every manifest of another repository's release, the fleet's own roles'.
-	assert.Equal(t, "{{ nova_tools_release_names + nova_tools_keep + nova_tools_hand_kept + nova_tools_other_names + nova_tools_fleet_owns.bin }}", taskVar(t, tasks[i], "nova_tools_bin_ok"))
+	assert.Equal(t, "{{ nova_tools_release_names + nova_tools_keep + nova_tools_other_names + nova_tools_fleet_owns.bin }}", taskVar(t, tasks[i], "nova_tools_bin_ok"))
 	records := taskVar(t, tasks[i], "nova_tools_records")
 	assert.Contains(t, records, "nova_services | default([])", "an inventory without nova_services (a plain hosts file) names no record")
 	assert.Contains(t, records, "map(attribute='name')")
@@ -111,10 +111,13 @@ func TestInstallRoleEndsWithTheLeftoverInventory(t *testing.T) {
 	assert.NotContains(t, asText(a["fail_msg"]), "by hand")
 	// The fix is the plays that retire them, the names filled in; only what no play retires is named on its own.
 	how := asText(tasks[taskIndex(tasks, "the leftovers, and the plays that retire them")]["ansible.builtin.set_fact"].(map[string]any)["nova_tools_retire_how"])
-	for _, want := range []string{"nova-fleet install --tag", "{'nova_tools_remove_enabled': true, 'nova_tools_remove': nova_tools_sorted.bin | sort} | to_json(separators=(',', ':'))",
+	for _, want := range []string{"nova-fleet install --tag", "{'nova_tools_remove_enabled': true, 'nova_tools_remove': nova_tools_retire_bin} | to_json(separators=(',', ':'))",
 		"nova-fleet services -- -l ", "{'nova_retire_units': nova_tools_sorted.unit_names | unique | sort} | to_json(separators=(',', ':'))", "no play retires "} {
 		assert.Contains(t, how, want)
 	}
+	// The install command names the binaries and nova-push-credential while a git helper line runs it.
+	assert.Equal(t, "{{ (nova_tools_sorted.bin + (['nova-push-credential'] if nova_tools_gitcred_left else [])) | unique | sort }}",
+		taskVar(t, tasks[taskIndex(tasks, "the leftovers, and the plays that retire them")], "nova_tools_retire_bin"))
 	// JSON extra vars: a key=value -e is a string, never the list the plays want.
 	assert.NotContains(t, how, "nova_tools_remove='")
 	assert.NotContains(t, how, "nova_retire_units='")
@@ -184,7 +187,22 @@ func TestInstallRoleLeftoverDefaults(t *testing.T) {
 	var d map[string]any
 	require.NoError(t, yaml.Unmarshal(b, &d))
 	assert.Equal(t, []any{}, d["nova_tools_keep"])
-	assert.Equal(t, []any{"nova-push-credential"}, d["nova_tools_hand_kept"], "the git credential helper on every fleet machine (D19)")
+	// No binary is kept by hand: nova-push-credential is retired (Glenn, 2026-11-08).
+	assert.NotContains(t, d, "nova_tools_hand_kept")
+	assert.Contains(t, d["nova_tools_remove"], "nova-push-credential")
+	assert.Equal(t, "^!?{{ (nova_tools_bin_dir ~ '/nova-push-credential') | regex_escape('posix_basic') }}$", d["nova_tools_gitcred_value"],
+		"the unset matches the script's own path alone, so the other helpers stay")
+	tb, err := os.ReadFile("roles/nova-tools-install/tasks/main.yml")
+	require.NoError(t, err)
+	assert.NotContains(t, string(tb), "hand_kept")
+	tasks := installRoleTasks(t)
+	u := taskIndex(tasks, "the git credential helpers that run nova-push-credential, unset")
+	require.GreaterOrEqual(t, u, 0, "retiring nova-push-credential leaves git's credential helper lines")
+	assert.Equal(t, []any{"git", "config", "--global", "--unset-all", "{{ item }}", "{{ nova_tools_gitcred_value }}"},
+		tasks[u]["ansible.builtin.command"].(map[string]any)["argv"])
+	assert.Contains(t, asText(tasks[u]["when"]), "nova_tools_remove_enabled | bool")
+	assert.Contains(t, asText(tasks[u]["when"]), "'nova-push-credential' in nova_tools_remove")
+	assert.Greater(t, taskIndex(tasks, "the git credential helpers that run nova-push-credential, as they are now"), u, "the leftover read comes after the unset")
 	assert.Equal(t, "{{ '/Library/LaunchDaemons' if nova_tools_os == 'darwin' else '/etc/systemd/system' }}", d["nova_tools_system_unit_dir"],
 		"a headless Mac's units are LaunchDaemons (services.yml, nova_launchd_domain)")
 	assert.Equal(t, "{{ nova_home }}/.local/share/nova/installed", d["nova_tools_manifest_dir"])

@@ -32,3 +32,4 @@ mirror-refresh	2026-11-07	retired (v1 swarm mirror loop; its loops saturated the
 disk-guard	2026-11-07	retired (v1 swarm disk guard)
 ci-hold-broker	2026-11-07	retired (v1 captain CI hold broker)
 nova-card-push	2026-11-07	retired (v1-era card push helper)
+nova-push-credential	2026-11-08	retired (v1-era git credential helper; its ~/.gitconfig credential helper lines go with it)

@@ -165,7 +165,7 @@ func TestInstallFromALocalBuild(t *testing.T) {
 	}
 	// What belongs: another release's binary its manifest lists, the fleet's own roles'
 	// binary and units, a friend's nova-bus hook; beside them one v1 binary.
-	allowed := []string{filepath.Join(binDir, "nova-worker"), filepath.Join(binDir, "nova-push-credential"), filepath.Join(binDir, "nova-secrets-refresh"),
+	allowed := []string{filepath.Join(binDir, "nova-worker"), filepath.Join(binDir, "nova-secrets-refresh"),
 		filepath.Join(unitDir, "nova-secrets-refresh.timer"), filepath.Join(unitDir, "com.nova.secrets-refresh.plist"),
 		filepath.Join(unitDir, "nova-bus.hook.x.plist"), filepath.Join(unitDir, "nova-bus-hook-x.service"),
 		filepath.Join(systemDir, "nova-disk-report.timer"), filepath.Join(systemDir, "nova-pg-dump.service"), filepath.Join(systemDir, "nova-redis.service")}
@@ -174,10 +174,17 @@ func TestInstallFromALocalBuild(t *testing.T) {
 	// binaries are a warning, never a refusal and never advice to remove them.
 	// A v1 binary no release ships (mirror-refresh, whose loops saturated the link on
 	// 2026-11-07) is refused whatever manifests say, with the play that retires it.
-	plant(filepath.Join(binDir, "nova-card"), filepath.Join(binDir, "mirror-refresh"))
+	// nova-push-credential is retired with git's credential helper lines that run it; the gh one stays.
+	plant(filepath.Join(binDir, "nova-card"), filepath.Join(binDir, "mirror-refresh"), filepath.Join(binDir, "nova-push-credential"))
+	gitconfig := filepath.Join(home, ".gitconfig")
+	gh := "!/opt/homebrew/bin/gh auth git-credential"
+	if err := os.WriteFile(gitconfig, []byte("[credential \"https://github.com\"]\n\thelper = !"+binDir+"/nova-push-credential\n[credential]\n\thelper = "+gh+
+		"\n\thelper = !"+binDir+"/nova-push-credential\n[user]\n\tname = x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	code, out, _ = runFleet(t, bin, svc...)
-	for _, w := range []string{"INSTALL localhost leftovers=1: mirror-refresh;",
-		`nova-fleet install --tag local -- -l localhost -e '{"nova_tools_remove_enabled":true,"nova_tools_remove":["mirror-refresh"]}'`,
+	for _, w := range []string{"INSTALL localhost leftovers=4: gitconfig credential.helper, gitconfig credential.https://github.com.helper, mirror-refresh, nova-push-credential;",
+		`nova-fleet install --tag local -- -l localhost -e '{"nova_tools_remove_enabled":true,"nova_tools_remove":["mirror-refresh","nova-push-credential"]}'`,
 		"INSTALL localhost WARNING unrecorded=2: nova-card, nova-worker; reinstall mas-bandwidth/nova-sprint to record its names (nova-card)"} {
 		if code == 0 || !strings.Contains(out, w) {
 			t.Errorf("binaries no manifest lists yet beside a v1 mirror-refresh: exit %d, want %q:\n%s", code, w, out)
@@ -190,8 +197,12 @@ func TestInstallFromALocalBuild(t *testing.T) {
 		t.Fatalf("no install command in the refusal:\n%s", out)
 	}
 	code, out, _ = runFleet(t, bin, append(svc, "-e", m[1])...)
-	if retired, _ := filepath.Glob(filepath.Join(binDir, "retired-*", "mirror-refresh")); code != 0 || len(retired) != 1 || !strings.Contains(out, "INSTALL localhost leftovers=0") {
-		t.Errorf("the printed install command: exit %d, retired %v, want mirror-refresh in retired-<date>/ and leftovers=0:\n%s", code, retired, out)
+	retired, _ := filepath.Glob(filepath.Join(binDir, "retired-*", "*"))
+	if code != 0 || len(retired) != 2 || !strings.Contains(out, "INSTALL localhost leftovers=0; unset git credential.https://github.com.helper, credential.helper (nova-push-credential)") {
+		t.Errorf("the printed install command: exit %d, retired %v, want mirror-refresh and nova-push-credential in retired-<date>/, the helpers unset, leftovers=0:\n%s", code, retired, out)
+	}
+	if got, err := os.ReadFile(gitconfig); err != nil || strings.Contains(string(got), "nova-push-credential") || !strings.Contains(string(got), "helper = "+gh) || !strings.Contains(string(got), "name = x") {
+		t.Errorf("~/.gitconfig after the retire: want no nova-push-credential and the gh helper kept (%v):\n%s", err, got)
 	}
 	if err := os.WriteFile(filepath.Join(manifests, "mas-bandwidth_nova-sprint.names"), []byte("nova-sprint\nnova-worker\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -200,7 +211,7 @@ func TestInstallFromALocalBuild(t *testing.T) {
 		t.Fatal(err)
 	}
 	if code, out, _ = runFleet(t, bin, svc...); code != 0 || !strings.Contains(out, "INSTALL localhost leftovers=0") || strings.Contains(out, "WARNING unrecorded") {
-		t.Errorf("only what belongs (nova-push-credential among it): exit %d, want leftovers=0 and no warning:\n%s", code, out)
+		t.Errorf("only what belongs: exit %d, want leftovers=0 and no warning:\n%s", code, out)
 	}
 	// nova-sprint's manifest is here and does not list nova-card: it is a leftover nova-fleet install retires.
 	if err := os.Rename(filepath.Join(home, "nova-card.x"), filepath.Join(binDir, "nova-card")); err != nil {

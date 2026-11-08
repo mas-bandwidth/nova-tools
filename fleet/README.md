@@ -297,8 +297,7 @@ plist; and the system unit directory (`/etc/systemd/system` on Linux, any `nova*
 where a headless Mac's services are, any `com.nova.*` plist; a read, no sudo). Allowed: the release's `SHA256SUMS` names
 for the platform; every name another repository's release recorded (a `--repo` install writes its names to
 `~/.local/share/nova/installed/<owner>_<name>.names`, `nova_tools_manifest_dir`); what the fleet's own roles write there
-(each role's `nova_<role>_owns` in its defaults, and `nova_redis_unit`); `nova_tools_hand_kept` (`nova-push-credential`, the
-git credential helper every machine has); a friend's nova-bus hook unit (`nova-bus.hook.<name>.plist`,
+(each role's `nova_<role>_owns` in its defaults, and `nova_redis_unit`); a friend's nova-bus hook unit (`nova-bus.hook.<name>.plist`,
 `nova-bus-hook-<name>.service`); the unit of a service record this machine has (its `nova_services`); and
 `nova_tools_keep`. An inventory with no `nova_services` (not nova-config's) has its units left unread, and the line ends
 with a NOTE saying so.
@@ -308,8 +307,10 @@ A leftover fails the host, and the refusal names the plays that retire it, names
 nova-tools retired (`retired-tools.txt`, retired or rowan-tools), or one nova-sprint retired when nova-sprint's manifest is
 on the machine and does not list it; `nova-fleet services -- -l <host> -e '{"nova_retire_units":[...]}'` for a unit of the
 services play's shapes (`nova-service-*`, `nova-loop-*`, `com.nova.service.*`, `com.nova.loop.*`); and, named on its own,
-what no play retires yet. Any other binary may belong to a release installed before manifests were written: it is a
-`WARNING unrecorded=<n>` with `reinstall <repo> to record its names`, never a refusal. The play removes nothing itself.
+what no play retires yet. A global git credential helper (`credential.helper`, `credential.<url>.helper`) whose value is the retired
+`nova-push-credential` is a leftover too: retiring the script with that command also unsets each such value (`git config
+--global --unset-all`, matched by the script's path alone; other helpers stay), and the INSTALL line says so. Any other binary may belong to a release installed before manifests were written: it is a
+`WARNING unrecorded=<n>` with `reinstall <repo> to record its names`, never a refusal. The check itself removes nothing.
 Unix machines, nova-tools' own release only (a `--repo` install prints no line); `--check` prints the line too.
 
 ## services

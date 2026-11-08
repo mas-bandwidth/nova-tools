@@ -209,6 +209,27 @@
 # Another repository's release (--repo) records the names its SHA256SUMS lists, one per
 # line, in nova_tools_manifest_dir/<owner>_<name>.names: the leftover check of a later
 # nova-tools install allows every name a manifest lists.
+# nova-push-credential (retired) is named as git's credential helper in ~/.gitconfig
+# (credential.helper, credential.<url>.helper): retiring the script unsets each such
+# value, matched by the script's own path alone, so the other helpers stay.
+- name: the git credential helpers that run nova-push-credential (a read)
+  ansible.builtin.command:
+    argv: [git, config, --global, --get-regexp, '^credential[.](.*[.])?helper$', "{{ nova_tools_gitcred_value }}"]
+  environment: { HOME: "{{ nova_home }}" }
+  register: nova_tools_gitcred
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: not nova_tools_win
+
+- name: the git credential helpers that run nova-push-credential, unset (retiring it)
+  ansible.builtin.command:
+    argv: [git, config, --global, --unset-all, "{{ item }}", "{{ nova_tools_gitcred_value }}"]
+  environment: { HOME: "{{ nova_home }}" }
+  loop: "{{ nova_tools_gitcred_keys }}"
+  register: nova_tools_gitcred_unset
+  when: nova_tools_remove_enabled | bool and not nova_tools_win and 'nova-push-credential' in nova_tools_remove
+
 - name: this release's names, recorded for the leftover check (another repository's release)
   when: not nova_tools_win and nova_tools_repo != 'mas-bandwidth/nova-tools'
   block:
@@ -273,7 +294,7 @@
       register: nova_tools_found
       vars:
         nova_tools_records: "{{ nova_services | default([]) | map(attribute='name') | map('regex_escape') | join('|') or '-' }}"
-        nova_tools_bin_ok: "{{ nova_tools_release_names + nova_tools_keep + nova_tools_hand_kept + nova_tools_other_names + nova_tools_fleet_owns.bin }}"
+        nova_tools_bin_ok: "{{ nova_tools_release_names + nova_tools_keep + nova_tools_other_names + nova_tools_fleet_owns.bin }}"
         nova_tools_leftover_dirs: >-
           {{ [{'path': nova_tools_bin_dir, 'kind': 'bin',
                'patterns': ['^(nova-.*|novadog-.*|mirror-refresh|disk-guard|ci-hold-broker)$'],
@@ -322,20 +343,35 @@
         nova_tools_sprint_retired: "{{ nova_tools_retired_rows | selectattr(2, 'match', '^sprint') | map(attribute=0) | list }}"
         nova_tools_sprint_recorded: "{{ 'mas-bandwidth_nova-sprint.names' in (nova_tools_manifests.files | default([]) | map(attribute='path') | map('basename')) }}"
 
+    # A git credential helper that runs nova-push-credential is a leftover too, retired with the script.
+    - name: the git credential helpers that run nova-push-credential, as they are now (a read)
+      ansible.builtin.command:
+        argv: [git, config, --global, --get-regexp, '^credential[.](.*[.])?helper$', "{{ nova_tools_gitcred_value }}"]
+      environment: { HOME: "{{ nova_home }}" }
+      register: nova_tools_gitcred_now
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
     - name: the leftovers, and the plays that retire them
       ansible.builtin.set_fact:
-        nova_tools_leftovers: "{{ (nova_tools_sorted.bin + nova_tools_sorted.unit + nova_tools_sorted.noplay) | sort }}"
+        nova_tools_leftovers: "{{ (nova_tools_sorted.bin + nova_tools_sorted.unit + nova_tools_sorted.noplay + nova_tools_gitcred_left) | sort }}"
         nova_tools_retire_how: >-
           {{ ([("nova-fleet install --tag " ~ nova_tools_version ~ " -- -l " ~ inventory_hostname
-                ~ " -e '" ~ ({'nova_tools_remove_enabled': true, 'nova_tools_remove': nova_tools_sorted.bin | sort} | to_json(separators=(',', ':'))) ~ "'")] if nova_tools_sorted.bin else [])
+                ~ " -e '" ~ ({'nova_tools_remove_enabled': true, 'nova_tools_remove': nova_tools_retire_bin} | to_json(separators=(',', ':'))) ~ "'")] if nova_tools_retire_bin else [])
              + ([("nova-fleet services -- -l " ~ inventory_hostname ~ " -e '" ~ ({'nova_retire_units': nova_tools_sorted.unit_names | unique | sort} | to_json(separators=(',', ':'))) ~ "'")]
                 if nova_tools_sorted.unit else [])
              + ([("no play retires " ~ (nova_tools_sorted.noplay | sort | join(', ')) ~ " yet: it is owed to a play")] if nova_tools_sorted.noplay else []) }}
+      vars:
+        nova_tools_gitcred_left: "{{ (nova_tools_gitcred_now.stdout_lines | default([]) | map('split') | map('first') | map('regex_replace', '^', 'gitconfig ') | list) if nova_tools_gitcred_now.rc | default(1) == 0 else [] }}"
+        nova_tools_retire_bin: "{{ (nova_tools_sorted.bin + (['nova-push-credential'] if nova_tools_gitcred_left else [])) | unique | sort }}"
 
     - name: the leftovers, one line per host
       ansible.builtin.debug:
         msg: >-
           INSTALL {{ inventory_hostname }} leftovers={{ nova_tools_leftovers | length }}{{ (': ' ~ (nova_tools_leftovers | join(', '))) if nova_tools_leftovers else '' }}{{
+          ('; ' ~ ('would unset' if ansible_check_mode else 'unset') ~ ' git ' ~ (nova_tools_gitcred_keys | join(', ')) ~ ' (nova-push-credential)')
+          if nova_tools_remove_enabled | bool and 'nova-push-credential' in nova_tools_remove and nova_tools_gitcred_keys else '' }}{{
           '' if nova_services is defined else
           '; NOTE: the inventory carries no nova_services (it is not nova-config\'s), so units were not read, binaries only' }}
 

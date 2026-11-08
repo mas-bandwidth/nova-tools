@@ -40,7 +40,8 @@ nova_tools_restart_commands: []
 # nova-tools shipped and ships no more. Another product's binaries are not in
 # it; an operator who wants more gone names them:
 #   -e '{"nova_tools_remove_enabled":true,"nova_tools_remove":["nova-sprint","nova-card"]}'
-# (JSON: a key=value -e is a string, never a list)
+# (JSON: a key=value -e is a string, never a list). Retiring nova-push-credential
+# also unsets every global git credential.*helper whose value is that script.
 nova_tools_remove_enabled: false
 nova_tools_remove:
   - nova-check
@@ -63,20 +64,22 @@ nova_tools_remove:
   - disk-guard
   - ci-hold-broker
   - nova-card-push
+  - nova-push-credential
 
 # Leftovers. After the install the role lists what an older install left beside the
 # new binaries and refuses the host when it finds any, naming the plays that retire
 # them (fleet/README.md, "install", Leftovers). Allowed beside the release: what another
 # repository's release (--repo) recorded in nova_tools_manifest_dir, what the fleet's
-# own roles write (their nova_<role>_owns), nova_tools_hand_kept, a friend's nova-bus
+# own roles write (their nova_<role>_owns), a friend's nova-bus
 # hook unit, a service record's unit, and the binaries named in nova_tools_keep. A
 # binary no manifest lists that nova-tools did not retire is a warning only. Unix
 # machines, nova-tools' own release only; nothing is removed.
 nova_tools_keep: []
-# Binaries every fleet machine keeps beside the release, allowed whatever nova_tools_keep says.
-nova_tools_hand_kept:
-  # the git credential helper, installed by hand before v2; owed to a role (fleet item D19)
-  - nova-push-credential
+# A git credential helper value that runs the retired nova-push-credential (git's
+# extended regex: the script's path in the bin directory, with git's leading !),
+# and the global config keys that hold one (credential.helper, credential.<url>.helper).
+nova_tools_gitcred_value: "^!?{{ (nova_tools_bin_dir ~ '/nova-push-credential') | regex_escape('posix_basic') }}$"
+nova_tools_gitcred_keys: "{{ (nova_tools_gitcred.stdout_lines | default([]) | map('split') | map('first') | unique | list) if (nova_tools_gitcred.rc | default(1)) == 0 else [] }}"
 # The system unit directory: systemd's on Linux, launchd's daemons on macOS (where
 # services.yml puts a headless Mac's units, nova_launchd_domain auto or system).
 nova_tools_system_unit_dir: "{{ '/Library/LaunchDaemons' if nova_tools_os == 'darwin' else '/etc/systemd/system' }}"
