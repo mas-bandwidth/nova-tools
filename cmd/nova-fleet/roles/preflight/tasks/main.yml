@@ -1,0 +1,39 @@
+---
+# The preflight role: the programs a play needs on the control node, found before the play changes anything
+# (cmd/nova-fleet/README.md, "Prerequisites"). preflight_control is a list of {cmd, for, v2}: cmd is a name on PATH or a path,
+# for says what needs it, and v2: true asks that a nova-tools program be the release these plays came with or newer,
+# judged by the program named (whatever it is called): its `help` has a usage line of a verb of it (`grant NAME`,
+# `schema`, `who`). A missing or older one stops the
+# run naming it. Included once per run (run_once, on the control node).
+- name: the control node's programs
+  ansible.builtin.shell: |
+    {% for p in preflight_control %}
+    if ! command -v {{ p.cmd | quote }} >/dev/null 2>&1; then
+      echo {{ (p.cmd ~ ' is missing (' ~ p.for ~ ')') | quote }}
+    {% if p.v2 | default(false) %}
+    elif ! {{ p.cmd | quote }} help 2>&1 | grep -Eq {{ preflight_v2_marker | quote }}; then
+      echo {{ (p.cmd ~ ' is older than these plays (' ~ p.for ~ '): install the nova-tools release these plays came with (nova-secrets has grant)') | quote }}
+    {% endif %}
+    fi
+    {% endfor %}
+    true
+  args: { executable: /bin/bash }
+  vars:
+    # a usage line of a verb of this release, whatever the program is called: `<prog> grant NAME`, `<prog> schema`, `<prog> who`
+    preflight_v2_marker: '^[[:space:]]*[^[:space:]]+ (grant NAME|schema|who)'
+  delegate_to: localhost
+  become: false
+  run_once: true
+  register: preflight_missing
+  changed_when: false
+  check_mode: false
+  when: preflight_control | default([]) | length > 0
+
+- name: nothing is missing or too old
+  ansible.builtin.assert:
+    that: preflight_missing is skipped or preflight_missing.stdout_lines | length == 0
+    fail_msg: >-
+      PREFLIGHT STOP: on the control node, {{ preflight_missing.stdout_lines | default([]) | join('; ') }}
+      (cmd/nova-fleet/README.md, "Prerequisites"; a variable such as nova_control_secrets points at a program off PATH)
+    quiet: true
+  run_once: true

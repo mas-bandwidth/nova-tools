@@ -1,0 +1,21 @@
+---
+# Included by main.yml for a Windows host only; needs the ansible.windows
+# collection on the control node (ansible-galaxy collection install -r cmd/nova-fleet/requirements.yml).
+
+- name: the bin directory (Windows)
+  ansible.windows.win_file:
+    path: "{{ nova_tools_win_bin_dir }}"
+    state: directory
+  register: nova_tools_win_dir
+
+# A dry run on a machine with no bin directory yet reports only the directory.
+- name: the binaries, verified against SHA256SUMS (Windows)
+  ansible.windows.win_get_url:
+    url: "{{ nova_tools_release_url }}/{{ nova_tools_version }}/{{ item.asset }}"
+    dest: "{{ nova_tools_win_bin_dir }}\\{{ item.dest }}"
+    checksum: "{{ item.sha256 }}"
+    checksum_algorithm: sha256
+  loop: "{{ nova_tools_plan }}"
+  loop_control: { label: "{{ item.dest }}" }
+  register: nova_tools_installed_win
+  when: not (ansible_check_mode and nova_tools_win_dir is changed)

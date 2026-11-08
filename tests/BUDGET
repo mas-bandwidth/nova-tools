@@ -1,9 +1,9 @@
-bus  3025
-cairn  2277
-config  1972
-reserve  1190
-sandbox  2084
-secrets  1795
-fleet  1951
+cmd/nova-bus  3025
+cmd/nova-cairn  2277
+cmd/nova-config  1972
+cmd/nova-reserve  1190
+cmd/nova-sandbox  2084
+cmd/nova-secrets  1795
+cmd/nova-fleet  1951
 tests/boundary  400
 tests/contract  50

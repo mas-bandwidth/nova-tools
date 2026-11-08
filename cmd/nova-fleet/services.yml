@@ -1,0 +1,449 @@
+# purpose: one supervised unit per service record, on the machine the record names (bench, runner and services groups)
+#
+# The records are nova-config's service rows as `nova-config inventory`
+# prints them (nova_services on each host); the units are the templates under
+# templates/: nova-service.plist.j2 on darwin (launchd), nova-service.service.j2 on
+# linux (systemd) with nova-service.timer.j2 beside it for a service that runs every
+# n seconds (a row with no `every` is kept alive; `enabled` defaults true).
+#
+# A unit runs the row's argv exactly. Only when argv[0] is one of
+# nova_tools_names is it prefixed with nova_bin_dir; every other word is passed
+# through as written. The row's `env` object is the unit's environment, on top
+# of HOME and a PATH that includes nova_bin_dir. The row's `log` (default
+# ~/.local/state/nova/services/<name>.log) is where stdout and stderr append.
+# Every other value is the host layout's (group_vars/all.yml).
+#
+#   nova-fleet services --check --diff
+#   nova-fleet services
+#
+# nova_service_only names the records a run renders and restarts (a list, or one
+# comma-separated word: -e nova_service_only=service-a,service-b); every other
+# unit on the machine is left as it is and nothing is retired. A name no
+# record of the run's machines carries is refused before anything is written.
+#
+# nova_service_restart names the records a run restarts whether or not their unit
+# file changed (a list, or one comma-separated word:
+# -e nova_service_restart=service-a,service-b), so a service hung on a dead server
+# connection is restarted through the play, never by hand. A name no record
+# of the run's machines carries is refused before anything is written.
+#
+# A unit runs as the machine's login. On darwin it is a LaunchAgent in the
+# login's GUI domain when the login has one, else a LaunchDaemon dropped to the
+# login (sudo); nova_launchd_domain (auto, gui, system) decides it per host. On
+# linux it is a systemd user unit (linger) unless nova_systemd_scope is system.
+# A record with enabled false has its unit written and not loaded (launchd's
+# Disabled, systemd's stopped and disabled).
+#
+# Every unit this play writes carries its mark. A marked unit no record on the
+# host names, and every marked unit in the other place, is retired: unloaded
+# and its file removed; so is a unit nova_retire_units names. A unit of another
+# tool's of the same shape is left as it is and named in a NOTE; a record of
+# its name takes it over. --check lists each retirement as WOULD-RETIRE with its
+# file and changes nothing. A host whose service list is empty retires nothing
+# by itself: with units to retire the play refuses, naming them, unless
+# -e nova_service_retire_all=true.
+#
+# A unit whose file (or timer) changed is restarted, named in the receipt as
+# restarted=<names> (would-restart=<names> under --check).
+- name: service units from the service records
+  hosts: bench:runner:services   # the fleet's workers, never all: a seat-only machine (roles -) runs no unit (D13, 2026-11-07)
+  gather_facts: true
+  gather_subset: [min]
+  vars:
+    # The platform is the gathered fact (ansible_facts, never the injected
+    # top-level ansible_system, which ansible-core 2.24 removes), unless the run
+    # names one with -e nova_system=<Linux|Darwin>, to render the other platform's
+    # units on one machine.
+    service_darwin: "{{ (nova_system | default(ansible_facts['system'])) == 'Darwin' }}"
+    service_user_dir: "{{ nova_home ~ ('/Library/LaunchAgents' if service_darwin else '/.config/systemd/user') }}"
+    service_system_dir: "{{ '/Library/LaunchDaemons' if service_darwin else '/etc/systemd/system' }}"
+    service_dir: "{{ service_system_dir if service_system else service_user_dir }}"
+    service_other_dir: "{{ service_user_dir if service_system else service_system_dir }}"
+    service_domain: "{{ 'system' if service_system else 'gui/' ~ ansible_facts['user_uid'] }}"
+    # The units this play writes, and the ones its earlier name (loops.yml) wrote:
+    # com.nova.loop.<name>.plist and nova-loop-<name>.service|timer, which a run
+    # retires (they carry the old mark) after it has loaded the new ones.
+    service_patterns: >-
+      {{ ['com.nova.service.*.plist', 'com.nova.loop.*.plist'] if service_darwin
+         else ['nova-service-*.service', 'nova-service-*.timer', 'nova-loop-*.service', 'nova-loop-*.timer'] }}
+    # the records this run renders and restarts: nova_service_only's, else every one
+    service_only: >-
+      {{ ((nova_service_only.split(',') if nova_service_only is string else nova_service_only) | map('trim') | reject('equalto', '') | list)
+         if nova_service_only else [] }}
+    # the records this run restarts whether or not their unit file changed:
+    # nova_service_restart's, so a hung service is restarted through the play
+    service_restart: >-
+      {%- set raw = nova_service_restart | default([]) -%}
+      {{ ((raw.split(',') if raw is string else raw) | map('trim') | reject('equalto', '') | list) if raw else [] }}
+    service_records: >-
+      {%- set all = [] -%}
+      {%- for r in nova_services -%}
+      {%- set base = {'enabled': true, 'every': 0, 'keepalive': (r.every | default(0) | int == 0), 'seat': '', 'keys': [], 'env': {},
+                'log': nova_home ~ '/.local/state/nova/services/' ~ r.name ~ '.log'} -%}
+      {%- set _ = all.append(base | combine(r)) -%}
+      {%- endfor -%}
+      {{ (all | selectattr('name', 'in', service_only) | list) if service_only else all }}
+    service_names: "{{ service_records | map(attribute='name') | list }}"
+    service_scope: "{{ 'system' if service_system else 'user' }}"
+    service_runtime: { XDG_RUNTIME_DIR: "/run/user/{{ ansible_facts['user_uid'] }}" }
+    # The mark every unit this play writes carries (its templates' first
+    # comment); find's contains matches a line from its start, hence the .*.
+    # This marker is persisted in installed units; keep recognizing it across source-directory moves.
+    service_mark: written by fleet/(services|loops)[.]yml from the (service|loop) record
+  tasks:
+    - name: the inventory carries this machine's service records
+      ansible.builtin.assert:
+        that: nova_services is defined
+        fail_msg: >-
+          {{ inventory_hostname }} has no nova_services: the inventory is not nova-config's (`nova-config inventory`
+          always emits nova_services), and an absent list is not an empty one; run: nova-config service list; an empty
+          list is valid
+        quiet: true
+
+    # -e nova_retire_units='[...]' is a string, and name in a string is a substring
+    # match ("web" in "web-old"): only a list is taken.
+    - name: nova_retire_units is a list
+      ansible.builtin.assert:
+        that: nova_retire_units is not string and nova_retire_units is not mapping and nova_retire_units is iterable
+        fail_msg: >-
+          nova_retire_units must be a list of record names, given as JSON: -e '{"nova_retire_units":["name"]}'
+          (a key=value -e is a string); got {{ nova_retire_units | string }}
+        quiet: true
+
+    - name: every record nova_service_only names is on one of this run's machines
+      ansible.builtin.assert:
+        that: service_only | reject('in', service_all) | list | length == 0
+        fail_msg: >-
+          nova_service_only names {{ service_only | reject('in', service_all) | join(',') }}, which no service record of this run's
+          machines is (their records: {{ service_all | join(',') or 'none' }}); nothing was written
+        quiet: true
+      vars:
+        service_all: "{{ ansible_play_hosts_all | map('extract', hostvars, 'nova_services') | select('defined') | flatten | map(attribute='name') | list }}"
+
+    - name: every record nova_service_restart names is on one of this run's machines
+      ansible.builtin.assert:
+        that: service_restart | reject('in', service_all) | list | length == 0
+        fail_msg: >-
+          nova_service_restart names {{ service_restart | reject('in', service_all) | join(',') }}, which no service record of this run's
+          machines is (their records: {{ service_all | join(',') or 'none' }}); nothing was restarted
+        quiet: true
+      vars:
+        service_all: "{{ ansible_play_hosts_all | map('extract', hostvars, 'nova_services') | select('defined') | flatten | map(attribute='name') | list }}"
+
+    - name: does the login have a GUI launchd domain (darwin, nova_launchd_domain auto)
+      ansible.builtin.command: "launchctl print gui/{{ ansible_facts['user_uid'] }}"
+      register: service_gui
+      changed_when: false
+      # ignored: a non-zero exit is the answer "no GUI domain", read as .rc below
+      failed_when: false
+      check_mode: false
+      when: service_darwin and nova_launchd_domain == 'auto'
+
+    - name: the place the units run in (system, or the login's own)
+      ansible.builtin.set_fact:
+        service_system: >-
+          {{ (nova_launchd_domain == 'system' or (nova_launchd_domain == 'auto' and service_gui.rc | default(0) != 0))
+             if service_darwin else (nova_systemd_scope == 'system') }}
+
+    - name: the unit directory
+      ansible.builtin.file: { path: "{{ service_dir }}", state: directory, mode: "0755" }
+      become: "{{ service_system }}"
+
+    - name: the directory of each record's log
+      ansible.builtin.file: { path: "{{ item }}", state: directory, mode: "0755" }
+      loop: "{{ service_records | map(attribute='log') | map('regex_replace', '^~/', nova_home ~ '/') | map('dirname') | unique | list }}"
+
+    # launchd does not search the unit's PATH for a program: a bare argv[0] that
+    # is not one of nova_tools_names is resolved here, with the PATH the unit
+    # gets, and the play fails if it is not found.
+    - name: where a bare program of a record is (darwin)
+      ansible.builtin.command:
+        argv: [sh, -c, 'command -v "$1"', sh, "{{ item.argv[0] }}"]
+      environment:
+        PATH: "{{ ({'PATH': nova_service_path} | combine(item.env)).PATH }}"
+      loop: "{{ service_records }}"
+      loop_control: { label: "{{ item.name }}" }
+      register: service_found
+      changed_when: false
+      # ignored: a non-zero exit is the answer "not found", asserted below
+      failed_when: false
+      check_mode: false
+      when: service_darwin and '/' not in item.argv[0] and item.argv[0] not in nova_tools_names
+
+    - name: every bare program of a record was found (darwin)
+      ansible.builtin.assert:
+        that: item.rc == 0
+        fail_msg: >-
+          {{ inventory_hostname }}: service {{ item.item.name }} runs {{ item.item.argv[0] }}, which is not on its unit PATH;
+          launchd does not search PATH, so give an absolute path or a nova-tools name as argv[0]
+        quiet: true
+      loop: "{{ service_found.results | default([]) | rejectattr('skipped', 'defined') | list }}"
+      loop_control: { label: "{{ item.item.name }}" }
+      when: service_darwin
+
+    - name: one unit per record
+      ansible.builtin.template:
+        src: "{{ 'templates/nova-service.plist.j2' if service_darwin else 'templates/nova-service.service.j2' }}"
+        dest: "{{ service_dir }}/{{ ('com.nova.service.' ~ item.name ~ '.plist') if service_darwin else ('nova-service-' ~ item.name ~ '.service') }}"
+        mode: "0644"
+      vars:
+        l: "{{ item }}"
+        # The command the unit runs: the record's argv exactly, argv[0] taking
+        # nova_bin_dir only when it is one of nova_tools_names (on darwin any
+        # other bare program is replaced by where it was found), behind
+        # nova-secrets exec when the record names keys (the seat opens them;
+        # their values never reach the unit file).
+        service_argv: >-
+          {{ ([nova_bin_dir ~ '/' ~ item.argv[0]] if item.argv[0] in nova_tools_names
+               else ([(service_found.results | selectattr('item.name', 'equalto', item.name) | first).stdout]
+                     if service_darwin and '/' not in item.argv[0] else [item.argv[0]])) + item.argv[1:] }}
+        service_secrets: >-
+          {{ ([nova_bin_dir ~ '/nova-secrets', 'exec', '--store', nova_secrets_store, '--as', item.seat,
+               '--key', nova_secrets_key_dir ~ '/' ~ item.seat ~ '.key', '--sops', nova_sops,
+               '--only', item['keys'] | join(','), '--'])
+             if item['keys'] | default([]) | length > 0 else [] }}
+        service_exec: "{{ service_secrets + service_argv }}"
+        service_log: "{{ item.log | regex_replace('^~/', nova_home ~ '/') }}"
+        service_env: "{{ {'HOME': nova_home, 'PATH': nova_service_path} | combine(item.env) }}"
+      loop: "{{ service_records }}"
+      loop_control: { label: "{{ item.name }}" }
+      become: "{{ service_system }}"
+      register: service_units
+
+    - name: one timer per record that runs every n seconds (linux)
+      ansible.builtin.template:
+        src: templates/nova-service.timer.j2
+        dest: "{{ service_dir }}/nova-service-{{ item.name }}.timer"
+        mode: "0644"
+      vars:
+        l: "{{ item }}"
+      loop: "{{ service_records | rejectattr('keepalive') | list }}"
+      loop_control: { label: "{{ item.name }}" }
+      become: "{{ service_system }}"
+      register: service_timers
+      when: not service_darwin
+
+    - name: the units in either place
+      ansible.builtin.find: { paths: "{{ item }}", patterns: "{{ service_patterns }}" }
+      loop: ["{{ service_dir }}", "{{ service_other_dir }}"]
+      register: service_present
+
+    - name: the units this play wrote (they carry its mark)
+      ansible.builtin.find: { paths: "{{ item }}", patterns: "{{ service_patterns }}", contains: "{{ '.*' ~ service_mark }}" }
+      loop: ["{{ service_dir }}", "{{ service_other_dir }}"]
+      register: service_marked
+
+    # Retired: a marked unit no record on the host names, every marked unit in
+    # the other place, and a unit nova_retire_units names. system says which
+    # domain or scope holds a unit.
+    - name: the units to retire
+      ansible.builtin.set_fact:
+        service_ours: "{{ service_marked.results | map(attribute='files') | flatten | map(attribute='path') | list }}"
+        service_retire: >-
+          {%- set out = [] -%}
+          {%- if not service_only -%}
+          {%- set ours = service_marked.results | map(attribute='files') | flatten | map(attribute='path') | list -%}
+          {%- for found in service_present.results -%}
+          {%- set here = found.item == service_dir -%}
+          {%- for f in found.files -%}
+          {%- set name = f.path | basename | regex_replace('^com[.]nova[.](?:service|loop)[.](.*)[.]plist$|^nova-(?:service|loop)-(.*)[.](service|timer)$', '\\1\\2') -%}
+          {%- if (f.path in ours and (not here or name not in service_names or (f.path | basename) is match('^(com[.]nova[.]loop[.]|nova-loop-)'))) or (name in nova_retire_units and not (here and name in service_names)) -%}
+          {%- set _ = out.append({'name': name, 'file': f.path, 'system': ((service_system | bool) if here else not (service_system | bool))}) -%}
+          {%- endif -%}
+          {%- endfor -%}
+          {%- endfor -%}
+          {%- endif -%}
+          {{ out }}
+
+    # A host with no service rows at all would retire every unit this play (or
+    # its earlier name) ever wrote: an empty list is valid, so that takes an
+    # explicit -e nova_service_retire_all=true.
+    - name: an empty service list retires nothing unless asked
+      ansible.builtin.assert:
+        that: service_records | length > 0 or service_retire_unasked | length == 0 or nova_service_retire_all | bool
+        fail_msg: >-
+          {{ inventory_hostname }} has no service rows, and this run would retire {{ service_retire_unasked | length }}
+          unit(s): {{ service_retire_unasked | map(attribute='file') | map('basename') | join(', ') }}. If the empty
+          list is intended, say so: -e nova_service_retire_all=true
+        quiet: true
+      vars:
+        service_retire_unasked: "{{ service_retire | rejectattr('name', 'in', nova_retire_units) | list }}"
+
+    - name: the units of other tools, left as they are
+      ansible.builtin.debug:
+        msg: "NOTE {{ inventory_hostname }} {{ item }}: not written by this play, named by no record and no nova_retire_units; left as it is"
+      loop: >-
+        {{ service_present.results | map(attribute='files') | flatten | map(attribute='path')
+           | reject('in', service_ours) | reject('in', service_retire | map(attribute='file') | list)
+           | reject('search', '/(com[.]nova[.]service[.]|nova-service-)(' ~ (nova_services | map(attribute='name') | join('|') or '-') ~ ')[.](plist|service|timer)$') | list }}
+
+    - name: what --check would retire
+      ansible.builtin.debug:
+        msg: "WOULD-RETIRE {{ item.name }} on {{ inventory_hostname }} ({{ item.file }})"
+      loop: "{{ service_retire }}"
+      loop_control: { label: "{{ item.file | basename }}" }
+      when: ansible_check_mode
+
+    # Retired units first, then the new ones are loaded: an old timer or a kept-alive
+    # singleton still live when its replacement starts would run the job twice.
+    - name: unload the retired (darwin; one launchd does not hold is already out)
+      ansible.builtin.command: "launchctl bootout {{ 'system' if item.system else 'gui/' ~ ansible_facts['user_uid'] }}/{{ item.file | basename | regex_replace('[.]plist$', '') }}"
+      loop: "{{ service_retire }}"
+      loop_control: { label: "{{ item.name }}" }
+      register: service_bootout
+      become: "{{ item.system }}"
+      failed_when: service_bootout.rc not in [0, 3, 113]
+      changed_when: service_bootout.rc == 0
+      when: service_darwin
+
+    - name: stop the retired (linux)
+      ansible.builtin.systemd_service:
+        name: "{{ item.file | basename }}"
+        scope: "{{ 'system' if item.system else 'user' }}"
+        enabled: false
+        state: stopped
+      loop: "{{ service_retire }}"
+      loop_control: { label: "{{ item.file | basename }}" }
+      environment: "{{ {} if item.system else service_runtime }}"
+      become: "{{ item.system }}"
+      when: not service_darwin and not ansible_check_mode
+
+    - name: remove the retired unit files
+      ansible.builtin.file: { path: "{{ item.file }}", state: absent }
+      loop: "{{ service_retire }}"
+      loop_control: { label: "{{ item.file | basename }}" }
+      become: "{{ item.system }}"
+
+    - name: systemd forgets the removed units (linux)
+      ansible.builtin.systemd_service:
+        daemon_reload: true
+        scope: "{{ 'system' if item else 'user' }}"
+      loop: "{{ service_retire | map(attribute='system') | unique | list }}"
+      environment: "{{ {} if item else service_runtime }}"
+      become: "{{ item }}"
+      when: not service_darwin and not ansible_check_mode
+
+    # darwin: launchd
+    - name: which records launchd holds (darwin)
+      ansible.builtin.command: "launchctl print {{ service_domain }}/com.nova.service.{{ item }}"
+      loop: "{{ service_names }}"
+      register: service_loaded
+      changed_when: false
+      # ignored: a non-zero exit is the answer "launchd does not hold it", read as .rc by the tasks below
+      failed_when: false
+      check_mode: false
+      become: "{{ service_system }}"
+      when: service_darwin
+
+    # Named in the receipt (restarted= or would-restart=): an enabled record whose unit file
+    # changed or that nova_service_restart names, and on darwin one launchd holds.
+    - name: the units a run restarts
+      ansible.builtin.set_fact:
+        service_restarting: >-
+          {{ service_records | selectattr('enabled') | map(attribute='name')
+             | select('in', ((service_units.results + (service_timers.results | default([]))) | selectattr('changed')
+                             | map(attribute='item.name') | list) + service_restart)
+             | select('in', (service_loaded.results | default([]) | selectattr('rc', 'defined') | selectattr('rc', 'equalto', 0)
+                             | map(attribute='item') | list) if service_darwin else (service_records | map(attribute='name') | list))
+             | list }}
+
+    - name: unload the disabled and the changed (darwin)
+      ansible.builtin.command: "launchctl bootout {{ service_domain }}/com.nova.service.{{ item.item }}"
+      changed_when: true
+      register: service_unloaded
+      loop: "{{ service_loaded.results | default([]) }}"
+      loop_control: { label: "{{ item.item }}" }
+      become: "{{ service_system }}"
+      when: >-
+        service_darwin and item.rc | default(1) == 0 and (
+          not (service_records | selectattr('name', 'equalto', item.item) | first).enabled
+          or (service_units.results | selectattr('item.name', 'equalto', item.item) | first).changed
+          or item.item in service_restart)
+
+    # bootout returns before launchd has let go of the job; a bootstrap at once fails
+    # "Bootstrap failed: 5: Input/output error" and leaves the service down.
+    - name: wait until launchd has let go of the unloaded (darwin)
+      ansible.builtin.command: "launchctl print {{ service_domain }}/com.nova.service.{{ item.item.item }}"
+      register: service_gone
+      until: service_gone.rc != 0
+      retries: 10
+      delay: 1
+      changed_when: false
+      failed_when: service_gone.rc == 0
+      loop: "{{ service_unloaded.results | default([]) }}"
+      loop_control: { label: "{{ item.item.item }}" }
+      become: "{{ service_system }}"
+      when: service_darwin and not ansible_check_mode and item is not skipped
+
+    - name: load the enabled (darwin)
+      ansible.builtin.command: "launchctl bootstrap {{ service_domain }} {{ service_dir }}/com.nova.service.{{ item.name }}.plist"
+      changed_when: true
+      loop: "{{ service_records | selectattr('enabled') | list }}"
+      loop_control: { label: "{{ item.name }}" }
+      become: "{{ service_system }}"
+      when: >-
+        service_darwin and (
+          (service_loaded.results | selectattr('item', 'equalto', item.name) | first).rc != 0
+          or (service_units.results | selectattr('item.name', 'equalto', item.name) | first).changed
+          or item.name in service_restart)
+
+    # linux: systemd. A kept-alive service is its service; a periodic service is its
+    # timer, which starts the oneshot service every n seconds.
+    # The state is built before the module call, a short named variable per
+    # branch: the module's args hold no inline conditional (ansible-core's
+    # templar rejects a parenthesised ternary chained to a second `if ... else`).
+    # service_unit_changed is the selectattr chain as a list,
+    # service_unit_wants_restart is changed-or-named, and service_unit_state has four
+    # outcomes: disabled stopped, changed or named restarted, any other enabled
+    # one started.
+    - name: start the enabled, stop the disabled (linux)
+      vars:
+        service_unit_changed: >-
+          {{ (service_units.results + (service_timers.results | default([])))
+             | selectattr('item.name', 'equalto', item.name) | selectattr('changed') | list }}
+        service_unit_wants_restart: "{{ service_unit_changed | length > 0 or item.name in service_restart }}"
+        service_unit_state: "{{ 'stopped' if not item.enabled else ('restarted' if service_unit_wants_restart else 'started') }}"
+      ansible.builtin.systemd_service:
+        name: "nova-service-{{ item.name }}.{{ 'service' if item.keepalive else 'timer' }}"
+        scope: "{{ service_scope }}"
+        daemon_reload: true
+        enabled: "{{ item.enabled }}"
+        state: "{{ service_unit_state }}"
+      loop: "{{ service_records }}"
+      loop_control: { label: "{{ item.name }}" }
+      environment: "{{ {} if service_system else service_runtime }}"
+      become: "{{ service_system }}"
+      register: service_states
+      when: not service_darwin and not ansible_check_mode
+
+    # The gate: a host whose unit file changed and whose restart did not run is
+    # a failed play, not a green one: the file on disk may be new while the host
+    # still runs the old argv. A result carries `skipped` only when it was
+    # skipped (and `failed` only when it ran), so each is defaulted to false
+    # before the test; ansible-core 2.19+ errors on a missing attribute.
+    - name: every changed unit was restarted or started (linux)
+      vars:
+        service_changed_units: >-
+          {{ ((service_units.results | default([])) + (service_timers.results | default([])))
+             | selectattr('changed') | map(attribute='item.name') | unique | list }}
+        service_restarted_units: >-
+          {{ [{'failed': false, 'skipped': false}] | product(service_states.results | default([])) | map('combine') | list
+             | rejectattr('failed', 'equalto', true) | rejectattr('skipped', 'equalto', true)
+             | map(attribute='item.name') | list }}
+        service_unrestarted: "{{ service_changed_units | reject('in', service_restarted_units) | list }}"
+      ansible.builtin.assert:
+        that: service_unrestarted | length == 0
+        fail_msg: >-
+          {{ inventory_hostname }} wrote the unit file of {{ service_unrestarted | join(', ') }} and did not
+          restart it: the host still runs the old argv. Run cmd/nova-fleet/services.yml again, or restart each by hand:
+          systemctl --user restart nova-service-<name>.service
+        quiet: true
+      when: not service_darwin and not ansible_check_mode
+
+    - name: the receipt
+      ansible.builtin.debug:
+        msg: >-
+          SERVICES host={{ inventory_hostname }} place={{ service_dir }} records={{ service_records | length }}
+          enabled={{ service_records | selectattr('enabled') | list | length }}
+          written={{ service_units.results | default([]) | selectattr('changed') | list | length }}
+          retired={{ service_retire | length }}{{ (' ' ~ ('would-restart=' if ansible_check_mode else 'restarted=') ~ (service_restarting | join(','))) if service_restarting else '' }}{{ (' only=' ~ (service_only | join(','))) if service_only else '' }}{{ ' (check: nothing changed)' if ansible_check_mode else '' }}

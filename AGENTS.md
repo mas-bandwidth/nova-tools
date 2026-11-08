@@ -70,10 +70,10 @@ and use the build and review rules below.
 
 ## Layout and boundaries
 
-- The seven binaries live in `bus`, `cairn`, `config`, `fleet`, `reserve`, `sandbox` and `secrets`. Each is one directory of `package main` files and is useful without knowing the workflow of the team that built it.
-- Beside them: `docs` (user docs and images), `tests` (checks that span tools: `tests/boundary` layout and imports, `tests/contract` the command-line contract, `tests/tla` the TLC runner and pinned jar checksum, `tests/BUDGET`) and `.github` (CI). A tool's models stay in `<tool>/tla/`.
+- Executables live in `cmd/<command>/`: `nova-bus`, `nova-cairn`, `nova-config`, `nova-fleet`, `nova-reserve`, `nova-sandbox` and `nova-secrets`. Each command is one directory of `package main` files and is useful without knowing the workflow of the team that built it. Reusable packages live in `modules/<module>/`; `modules/config` is the shared config reader.
+- Beside `cmd` and `modules`: `docs` (user docs and images), `tests` (checks that span tools: `tests/boundary` layout and imports, `tests/contract` the command-line contract, `tests/tla` the TLC runner and pinned jar checksum, `tests/BUDGET`) and `.github` (CI). Each command keeps its guide, embedded assets and models beside its Go files; models live in `cmd/<command>/tla/`.
 - Root files are exactly `README.md`, `AGENTS.md`, `LICENSE`, `go.mod`, `go.sum`, `.gitignore`, `.gitattributes` `context7.json`, `llms.txt` and `gemini-extension.json`, plus the `.claude-plugin` marketplace directory. The Context7 configuration indexes the public usage guides and excludes contributor instructions and test fixtures. An extra top-level entry fails the layout test, even when Git ignores it. No top-level or recursive symlinks (`.git` and `docs` are skipped). Build outputs live outside the checkout.
-- A tool imports no other package of this module. A few repeated lines beat a shared layer. The one exception is `config/lib` (package `config`): nova-config's reader of its own store, so a consumer reads the same rows through the same query. It imports nothing from this module, only nova-config imports it, and its lines count in config's budget (`toolLibs` in the boundary test). Another library needs the case made in the same change.
+- A tool imports no other package of this module. A few repeated lines beat a shared layer. The one exception is `modules/config` (package `config`): nova-config's reader of its own store, so a consumer reads the same rows through the same query. It imports nothing from this module, only nova-config imports it, and its lines count in config's budget (`toolLibs` in the boundary test). Another library needs the case made in the same change.
 - A tool does not call a sibling nova tool by name to do its own job. nova-fleet is the exception: it execs `nova-config` (inventory), `nova-secrets` (values a play needs) and `nova-bus` (end-to-end check) from PATH and imports none of them. Workflow policy belongs in a consumer, not here.
 - `go.mod` has no `replace` directive. The permitted tool directives are errcheck, txtar, deadcode and staticcheck (`allowedTools`). A module imported by a Go file counts as direct even if go.mod labels it indirect. Remove unused direct dependencies from the test's list.
 
@@ -87,7 +87,7 @@ and use the build and review rules below.
 | hujson | fleet's merge into the tailnet policy: a JSON Patch applied to the HuJSON text, so a human's comments and formatting survive. |
 
 - `tests/BUDGET` gives each Go directory a maximum of non-test source lines (comments and blank lines count; `_test.go` files do not). One `name integer` per line; no comments or duplicates. A directory with Go files needs an entry, including the boundary and contract packages. A change over budget first looks for work the tool no longer needs to do; a raise needs a reason in the same change. Lower the budget when code is removed.
-- To add a tool: a top-level `package main` directory with a `README.md` guide; add it to `allowedTop`, `mainTools` and `tests/BUDGET`; state the one job it does and why no existing tool covers it. A new tool's budget is its size when its design is settled, plus 50 lines.
+- To add a tool: a `cmd/<command>` directory of `package main` files with a `README.md` guide; add it to `mainTools` and `tests/BUDGET`; state the one job it does and why no existing tool covers it. A new tool's budget is its size when its design is settled, plus 50 lines.
 
 ## Command-line contract
 
@@ -118,7 +118,7 @@ Run builds and tests from the repository root, on a build machine, with the Go v
 
 ```sh
 build_dir=$(mktemp -d)
-for tool in bus config sandbox secrets reserve cairn fleet; do go build -o "$build_dir/nova-$tool" "./$tool" || exit; done
+for tool in bus config sandbox secrets reserve cairn fleet; do go build -o "$build_dir/nova-$tool" "./cmd/nova-$tool" || exit; done
 ```
 
 Call the built binary by absolute path; a bare name may find an older installed one. `go build ./...` checks compilation and leaves no executables.
@@ -136,7 +136,7 @@ go test -count=1 -p 4 -tags functional,slow ./...    # uncached: runs outside bi
 tests/tla/check.sh "$TLC_JAR"
 ```
 
-plus the fleet checks below. Unit jobs run on Linux and macOS; functional jobs run on Linux and on macOS (mini-m5, `functional-macos`), and the macOS job installs nothing: its PostgreSQL comes from `nova-fleet runner-packages` (fleet/README.md), and the job refuses, naming that play, when `initdb` is missing. `ci-ok` requires every job. Fork pull requests do not run on the self-hosted machines. `tests/boundary` runs in `go test ./...` and refuses a unit test that calls real time, a socket, the network or another program (`TestUnitTestsArePure`); `tests/contract` builds and runs programs, so it is functional (`-tags functional`). Neither needs a live store. Focus a run with a package path such as `./bus`. A successful build is no evidence that a sandbox backend or a fleet installation works on a machine.
+plus the fleet checks below. Unit jobs run on Linux and macOS; functional jobs run on Linux and on macOS (mini-m5, `functional-macos`), and the macOS job installs nothing: its PostgreSQL comes from `nova-fleet runner-packages` (cmd/nova-fleet/README.md), and the job refuses, naming that play, when `initdb` is missing. `ci-ok` requires every job. Fork pull requests do not run on the self-hosted machines. `tests/boundary` runs in `go test ./...` and refuses a unit test that calls real time, a socket, the network or another program (`TestUnitTestsArePure`); `tests/contract` builds and runs programs, so it is functional (`-tags functional`). Neither needs a live store. Focus a run with a package path such as `./cmd/nova-bus`. A successful build is no evidence that a sandbox backend or a fleet installation works on a machine.
 
 Functional prerequisites:
 
@@ -148,14 +148,14 @@ Functional prerequisites:
 | `sandbox` | Linux with Landlock for real enforcement checks |
 | `reserve` | OS file locks and child processes on the tested platform |
 
-Fleet checks (CI installs ansible-core in a fresh virtualenv and the collections in `fleet/requirements.yml`):
+Fleet checks (CI installs ansible-core in a fresh virtualenv and the collections in `cmd/nova-fleet/requirements.yml`):
 
 ```sh
-for play in fleet/*.yml; do
-    [ "$play" = fleet/requirements.yml ] && continue
-    ansible-playbook -i fleet/ci/inventory --syntax-check "$play"
+for play in cmd/nova-fleet/*.yml; do
+    [ "$play" = cmd/nova-fleet/requirements.yml ] && continue
+    ansible-playbook -i cmd/nova-fleet/ci/inventory --syntax-check "$play"
 done
-ansible-playbook -i fleet/ci/inventory fleet/services.yml --check --diff </dev/null
+ansible-playbook -i cmd/nova-fleet/ci/inventory cmd/nova-fleet/services.yml --check --diff </dev/null
 ```
 
 These cover parsing and a check-mode plan against a stub host; an installation or service adoption needs its own evidence on the real hosts.
@@ -165,16 +165,16 @@ These cover parsing and a check-mode plan against a stub host; an installation o
 `tests/contract` holds a functional-tier fault contract (build tag `functional`, rows in parallel). Each row in `faults_<tool>_test.go` provokes one real fault (Redis stopped, missing store, read-only directory, corrupt file, child killed by a signal, fake `ansible-playbook` on PATH, missing binary, bad DSN, unset variable) and holds the tool to five rules: a non-zero exit; exactly one stderr line (apart from declared receipt lines); that line holds the row's reason tokens; it ends in a pasteable remedy `run: <command>`, which is run where it has no `<placeholder>`; stdout is empty unless the row documents otherwise.
 
 - A row that fails today carries `Known: "<label>"`. It is skipped with the reason while it fails and fails the build the day it passes; the fix deletes the `Known`.
-- `lint_test.go` refuses a `_ =` on an error without an `ignored:` comment, a non-zero exit with nothing written to stderr first, and a `no_log:` task in `fleet/` with no receipt task. Known counts may not grow and are lowered the day they shrink.
+- `lint_test.go` refuses a `_ =` on an error without an `ignored:` comment, a non-zero exit with nothing written to stderr first, and a `no_log:` task in `cmd/nova-fleet/` with no receipt task. Known counts may not grow and are lowered the day they shrink.
 - Run it: `go test -tags functional -run 'Faults|Lint' -v ./tests/contract`. It needs `redis-server`, PostgreSQL `initdb` and `psql`, `sops`, `age-keygen` and `git`; a row with a missing dependency is skipped, or fails under `NOVA_CONTRACT_STRICT=1` (set in CI). A row that changes a mode skips as root.
 
 ## TLA+ models
 
-Models live in `bus/tla`, `reserve/tla`, `cairn/tla` and `secrets/tla`. Run them with Java, Bash, GNU `timeout` and `xargs`, and the jar matching `tests/tla/tla2tools.sha256`, at an absolute path (each case runs in a temporary copy of its directory):
+Models live in `cmd/nova-bus/tla`, `cmd/nova-reserve/tla`, `cmd/nova-cairn/tla` and `cmd/nova-secrets/tla`. Run them with Java, Bash, GNU `timeout` and `xargs`, and the jar matching `tests/tla/tla2tools.sha256`, at an absolute path (each case runs in a temporary copy of its directory):
 
 ```sh
 tests/tla/check.sh /opt/tla/tla2tools.jar                       # every model
-tests/tla/check.sh /opt/tla/tla2tools.jar bus/tla reserve/tla   # named directories
+tests/tla/check.sh /opt/tla/tla2tools.jar cmd/nova-bus/tla cmd/nova-reserve/tla   # named directories
 ```
 
 - `CASES.tsv` names each configuration, module, expected result, property and deadlock mode. A normal case must pass; a broken case changes the model on purpose and must fail as its row says. Without a case table a directory holds one model; configurations containing `Broken` must violate and the others must pass. A timeout (default 600 s, `TLC_TIMEOUT`) fails the run. Each output line starts with `ok` when the case came out as expected.
@@ -196,14 +196,14 @@ Models: `Presence.tla` (the key with its TTL and competing hooks: start, refresh
 
 **cairn.** `CairnStore.tla` models open, open that crashes before its log line, append, and append that crashes after its link. It checks that an entry is never overwritten, the same words twice make one entry, OK is printed only after the data is on disk, opening a session twice with the same policy changes nothing, and a session has one policy. Four broken cases must fail; `MCCairnStore.cfg` passes.
 
-**config.** Unit tests use an in-memory store; functional tests start a throwaway PostgreSQL and skip without `initdb`. They check that a row and its history are written in one transaction and that the schema upgrades an older store in place and changes nothing when applied twice (`TestFunctionalOldColumns`, `TestFunctionalOldFriends` with `testdata/old-friends.sql`); `TestFunctionalLibrary` reads what the CLI wrote through `config/lib`; `TestKindsAreTheLibraryColumns` keeps the kinds' fields and the library's row types the same columns in the same order. Config has no model: a write is one PostgreSQL transaction.
+**config.** Unit tests use an in-memory store; functional tests start a throwaway PostgreSQL and skip without `initdb`. They check that a row and its history are written in one transaction and that the schema upgrades an older store in place and changes nothing when applied twice (`TestFunctionalOldColumns`, `TestFunctionalOldFriends` with `testdata/old-friends.sql`); `TestFunctionalLibrary` reads what the CLI wrote through `modules/config`; `TestKindsAreTheLibraryColumns` keeps the kinds' fields and the library's row types the same columns in the same order. Config has no model: a write is one PostgreSQL transaction.
 
-**reserve.** Unit tests use fake locks and fake time; functional tests start processes and take real locks. The models in `reserve/tla` cover the highest number of holders, exclusive access, the life of a lock and the shared capacity; they do not cover what a platform does to a child process when its parent is killed.
+**reserve.** Unit tests use fake locks and fake time; functional tests start processes and take real locks. The models in `cmd/nova-reserve/tla` cover the highest number of holders, exclusive access, the life of a lock and the shared capacity; they do not cover what a platform does to a child process when its parent is killed.
 
-**sandbox.** Unit tests cover argument parsing, path checks, generated rules, the macOS profile text and exit codes. Linux tests run the seccomp program against synthetic system-call data; functional tests run child processes on Linux with Landlock. The macOS tests read the profile as text, so macOS enforcement needs its own check on a Mac. `nova-sandbox probe` checks the wall on any host. The behaviour is documented in the Reference section of `sandbox/README.md`; keep that section and the probe steps in step with the code.
+**sandbox.** Unit tests cover argument parsing, path checks, generated rules, the macOS profile text and exit codes. Linux tests run the seccomp program against synthetic system-call data; functional tests run child processes on Linux with Landlock. The macOS tests read the profile as text, so macOS enforcement needs its own check on a Mac. `nova-sandbox probe` checks the wall on any host. The behaviour is documented in the Reference section of `cmd/nova-sandbox/README.md`; keep that section and the probe steps in step with the code.
 
 **secrets.** Unit tests stand in for sops, age-keygen, git and the process replacement. The fake sops seals a file to the recipients it is given (the rule's keys, or the `--age` list when `--config` points elsewhere), refuses to open a file whose recipients do not include the key, and records every call, so a test shows that no value reached an argument, an environment other than the command's, or any output, and that `grant` passed sops `--config /dev/null` and exactly the two pinned keys. The fake can seal to one more key to show that `set` and `grant` refuse what sops returned before writing it. Functional tests (`-tags functional`) run the built binary on real sops, age-keygen and git in the test's own directory and skip where those are missing. `TestARealFleet` deletes the recovery private key after `init`, fills a seat by `grant`, shows that the control key cannot open the grants file, then edits the store as a pusher would (a rule with `key_groups` and a catch-all naming a stranger's key, a `.sops.yaml` anchor, a replaced rule key for `grant` and for `set`, a symlinked grants file, a name planted in a grants file), each refused.
 
-`secrets/tla/Recipients.tla` covers who can open a grants file. Its state is what any pusher can edit (each seat's rule, the rule's seat key, `recovery.pub`, which file a seat's grants path really is, the names a grants file holds), the pins and ledger on the control node, and the files written. Tamper actions change each at any time; `Pin` stands for join reading the machine's key over SSH (and can pin the control node's own key by mistake); `Set`, `Grant` and `Read` are the tool; a pusher can re-seal a grants file with other values (`TamperFile`). No action uses the recovery key. It checks that a grants file reaches only its machine's key and the recovery key, the recovery key opens every one, the control key opens none, a seat's own file reaches only its own key and the recovery key, `grant` fills only names it was asked for, no seat reads another's file, and every machine with untouched store entries and its own key pinned comes to hold the fleet value. Nine reversed witnesses each break one: the granting key added as a recipient, sealing to what the rule names (covers `key_groups`, `pgp`, anchors), trusting the rule's seat key instead of the pin, trusting the store's `recovery.pub`, reading a seat file through a symlink, keeping the names the store's grants file holds instead of the ledger's, `set` sealing to what the rule names, a grant trusting any file present instead of the one it wrote, and a grant through a pin that is the control node's own key. Not modelled, covered by unit tests: where the pins live (code refuses a pin directory in the store or in any git work tree), the write-ledger-commit sequence and a failed commit, and the order of rules in `.sops.yaml` (matters only to `set`). A pusher can re-seal any file to a seat's public key; `grant` rewrites a grants file whose bytes are not the ones it wrote, and nothing can repair a seat's own file.
+`cmd/nova-secrets/tla/Recipients.tla` covers who can open a grants file. Its state is what any pusher can edit (each seat's rule, the rule's seat key, `recovery.pub`, which file a seat's grants path really is, the names a grants file holds), the pins and ledger on the control node, and the files written. Tamper actions change each at any time; `Pin` stands for join reading the machine's key over SSH (and can pin the control node's own key by mistake); `Set`, `Grant` and `Read` are the tool; a pusher can re-seal a grants file with other values (`TamperFile`). No action uses the recovery key. It checks that a grants file reaches only its machine's key and the recovery key, the recovery key opens every one, the control key opens none, a seat's own file reaches only its own key and the recovery key, `grant` fills only names it was asked for, no seat reads another's file, and every machine with untouched store entries and its own key pinned comes to hold the fleet value. Nine reversed witnesses each break one: the granting key added as a recipient, sealing to what the rule names (covers `key_groups`, `pgp`, anchors), trusting the rule's seat key instead of the pin, trusting the store's `recovery.pub`, reading a seat file through a symlink, keeping the names the store's grants file holds instead of the ledger's, `set` sealing to what the rule names, a grant trusting any file present instead of the one it wrote, and a grant through a pin that is the control node's own key. Not modelled, covered by unit tests: where the pins live (code refuses a pin directory in the store or in any git work tree), the write-ledger-commit sequence and a failed commit, and the order of rules in `.sops.yaml` (matters only to `set`). A pusher can re-seal any file to a seat's public key; `grant` rewrites a grants file whose bytes are not the ones it wrote, and nothing can repair a seat's own file.
 
-**fleet.** The retire list (`fleet/retired-tools.txt`) is data: its rows tagged `retired` or `moved` are the install play's default `nova_tools_remove`; rows tagged `sprint` (another product's binaries) are never in it, and a name there is never a binary this repository builds.
+**fleet.** The retire list (`cmd/nova-fleet/retired-tools.txt`) is data: its rows tagged `retired` or `moved` are the install play's default `nova_tools_remove`; rows tagged `sprint` (another product's binaries) are never in it, and a name there is never a binary this repository builds.

@@ -1,0 +1,20 @@
+# purpose: the CI rules on every GitHub Actions runner a machine runs, whoever registered it (bench, runner and services groups)
+#
+# The github-runners play puts them on the runners it sets up; this one reaches every runner running on the machines
+# named, including runners registered by hand or for another repository or organization (cmd/nova-fleet/README.md, "CI rules").
+# Each runner directory gets the job hooks in .nova-ci-rules/, its .env points at them, and an idle runner is
+# restarted to read it; a busy one says restart=busy and is done on the next run.
+#
+#   nova-fleet ci-rules --check -- -l <machine>
+#   nova-fleet ci-rules -- -l <machine>[,<machine>...]
+- name: the CI rules on every runner of the machine
+  hosts: bench:runner:services   # the fleet's workers, never all: a seat-only machine (roles -) runs no runner (D13, 2026-11-07)
+  gather_facts: true
+  gather_subset: [min]
+  tasks:
+    - name: the CI rules
+      ansible.builtin.include_role:
+        name: github-runner
+        tasks_from: ci-rules.yml
+      vars:
+        ci_rules_dirs: []

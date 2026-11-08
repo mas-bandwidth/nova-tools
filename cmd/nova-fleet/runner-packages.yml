@@ -1,0 +1,16 @@
+# purpose: the packages a CI runner's tests need, from nova_runner_packages, on each machine of the runner group
+#
+# runner-packages.yml: the packages a CI runner's tests need, per OS, from nova_runner_packages (group_vars/all.yml;
+# cmd/nova-fleet/README.md, "runner-packages"): Homebrew formulae on macOS, apt packages on Debian and Ubuntu. A package already
+# installed is left as it is (never reinstalled or upgraded); only the missing ones are installed. Packages only: no
+# server is started and no service registered (the tests run their own initdb and pg_ctl). One line per machine:
+# RUNNER-PACKAGES host=<machine> wanted=<n> present=<n> installed=<n>; --check prints WOULD-INSTALL for each missing one.
+#
+#   nova-fleet runner-packages --check -- -l <machine>
+#   nova-fleet runner-packages -- -l <machine>
+- name: the packages the runners' tests need
+  hosts: runner
+  gather_facts: true
+  gather_subset: [min]
+  roles:
+    - runner-packages

@@ -33,7 +33,7 @@ type missingCase struct {
 // toolSpec is what the test knows about one tool that its banner does not give
 // in a parseable form.
 type toolSpec struct {
-	dir     string     // directory in the module; the binary is nova-<dir>
+	dir     string     // tool name; its package is cmd/nova-<dir>
 	verbs   [][]string // every verb path
 	extra   []int      // documented exit-code passthroughs beyond 0, 1, 2
 	missing []missingCase
@@ -182,8 +182,8 @@ func TestCLIContract(t *testing.T) {
 	for _, spec := range toolSpecs {
 		spec := spec
 		t.Run(spec.dir, func(t *testing.T) {
-			if fi, err := os.Stat(filepath.Join(root, spec.dir)); err != nil || !fi.IsDir() {
-				t.Skipf("tool directory %s is not on this checkout", spec.dir)
+			if fi, err := os.Stat(filepath.Join(root, "cmd", "nova-"+spec.dir)); err != nil || !fi.IsDir() {
+				t.Skipf("tool directory cmd/nova-%s is not on this checkout", spec.dir)
 			}
 			t.Parallel()
 			tmp := t.TempDir()
@@ -192,10 +192,10 @@ func TestCLIContract(t *testing.T) {
 			if runtime.GOOS == "windows" {
 				bin += ".exe"
 			}
-			build := exec.Command("go", "build", "-o", bin, "./"+spec.dir)
+			build := exec.Command("go", "build", "-o", bin, "./cmd/nova-"+spec.dir)
 			build.Dir = root
 			if out, err := build.CombinedOutput(); err != nil {
-				t.Fatalf("A0 %s: expected go build ./%s to succeed; actual %v: %s", name, spec.dir, err, trim(string(out)))
+				t.Fatalf("A0 %s: expected go build ./cmd/nova-%s to succeed; actual %v: %s", name, spec.dir, err, trim(string(out)))
 			}
 			work := filepath.Join(tmp, "work")
 			if err := os.Mkdir(work, 0o755); err != nil {

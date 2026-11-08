@@ -1,0 +1,38 @@
+{# cmd/nova-fleet/services.yml renders this for one service record l on a linux machine:
+   every value is the record's (l) or the host layout's (group_vars/all.yml);
+   the unit's environment is service_env (HOME, PATH and the record's env) and its
+   log is service_log.
+   A word of ExecStart is double-quoted, with systemd's specifiers (%) and
+   variables ($) doubled so the record's text reaches the program as written.
+   A kept-alive service is this service, restarted whenever it ends; a service that
+   runs every n seconds is a oneshot started by nova-service-<name>.timer. #}
+# {{ service_dir }}/nova-service-{{ l.name }}.service: written by fleet/services.yml from the service record {{ l.name }}
+[Unit]
+Description=nova service {{ l.name }}
+After=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+{% if l.keepalive %}
+Type=simple
+Restart=always
+RestartSec=10
+{% else %}
+Type=oneshot
+{% endif %}
+{% if service_system %}
+User={{ ansible_facts['user_id'] }}
+{% endif %}
+WorkingDirectory={{ nova_home }}
+{% for k, v in service_env | dictsort %}
+Environment="{{ k }}={{ v | string | replace('\\', '\\\\') | replace('"', '\\"') | replace('%', '%%') }}"
+{% endfor %}
+ExecStart={% for w in service_exec %}"{{ w | replace('\\', '\\\\') | replace('"', '\\"') | replace('%', '%%') | replace('$', '$$') }}"{{ ' ' if not loop.last else '' }}{% endfor %}
+
+StandardOutput=append:{{ service_log | replace('%', '%%') }}
+StandardError=append:{{ service_log | replace('%', '%%') }}
+{% if l.keepalive %}
+
+[Install]
+WantedBy={{ 'multi-user.target' if service_system else 'default.target' }}
+{% endif %}

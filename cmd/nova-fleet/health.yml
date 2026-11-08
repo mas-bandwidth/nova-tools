@@ -1,0 +1,16 @@
+# purpose: guards that let a Linux machine get itself out of trouble, and a disk report (bench, runner and services groups)
+#
+# health.yml: guards that let a Linux machine get itself out of trouble, and a disk report (cmd/nova-fleet/README.md,
+# "health"): the journal kept on disk, a kernel panic that reboots, ssh sessions the OOM killer may kill, rsyslog's
+# files rotated by size with an already flooded one cut down, a memory ceiling on the login's user slice with a user
+# manager that comes back, and a DISK line in the journal every 6 hours (DISK-WARN over nova_health_disk_warn_pct).
+# A darwin machine is skipped.
+#
+#   ansible-playbook -i ./inventory cmd/nova-fleet/health.yml --check --diff
+#   ansible-playbook -i ./inventory cmd/nova-fleet/health.yml
+- name: self-healing guards and the disk report (Linux)
+  hosts: bench:runner:services   # the fleet's workers, never all: a seat-only machine (roles -) is not ours to tune (D13, 2026-11-07)
+  gather_facts: true
+  gather_subset: [min, hardware]
+  roles:
+    - health

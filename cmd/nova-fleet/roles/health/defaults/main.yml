@@ -1,0 +1,39 @@
+---
+# health.yml's defaults (cmd/nova-fleet/README.md, "health"). Each guard has one switch;
+# set it false (or the size 0) on a machine that must not have it.
+
+# The journal is kept on disk, with room for the boots before a failure.
+nova_health_journal: true
+nova_health_journal_max_use: 4G
+
+# A kernel panic reboots the machine after this many seconds (0: off), and an
+# oops is a panic.
+nova_health_panic_reboot: 10
+
+# Sessions started over ssh run at OOM score 0, so the kernel may kill a runaway
+# command (sshd keeps its own -1000). The unit is Debian's ssh.service.
+nova_health_ssh_killable: true
+nova_health_ssh_unit: ssh
+
+# rsyslog's files rotate at this size too, and a file over nova_health_log_trim
+# bytes is cut to its first and last 32 MiB (kept beside it as .flood) and
+# emptied. 0 turns the trim off.
+nova_health_log_maxsize: 1G
+nova_health_log_trim: 4294967296
+nova_health_log_files: [/var/log/syslog, /var/log/kern.log]
+
+# The login's user slice is killed inside at this percent of RAM (0: no
+# limit), and a killed user manager comes back.
+nova_health_user_memory_max_pct: 85
+
+# The disk report: every 6 hours one DISK line in the journal for /, the home
+# filesystem and swap, DISK-WARN (priority warning) over this percent.
+nova_health_disk_report: true
+nova_health_disk_warn_pct: 80
+nova_health_disk_on_calendar: "*-*-* 00/6:00:00"
+
+# What this role writes where an install's leftover check reads (nova-tools-install,
+# cmd/nova-fleet/README.md "install", Leftovers): system is /etc/systemd/system.
+# install_play_test.go holds it to the names the tasks write.
+nova_health_owns:
+  system: [nova-disk-report.service, nova-disk-report.timer]

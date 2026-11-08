@@ -105,10 +105,10 @@ func buildTools() error {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			cmd := exec.Command("go", "build", "-o", filepath.Join(binDir, "nova-"+tool), "./"+tool)
+			cmd := exec.Command("go", "build", "-o", filepath.Join(binDir, "nova-"+tool), "./cmd/nova-"+tool)
 			cmd.Dir = "../.."
 			if out, err := cmd.CombinedOutput(); err != nil {
-				errs <- fmt.Errorf("go build ./%s: %v: %s", tool, err, out)
+				errs <- fmt.Errorf("go build ./cmd/nova-%s: %v: %s", tool, err, out)
 			}
 		}()
 	}

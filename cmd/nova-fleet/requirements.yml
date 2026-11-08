@@ -1,0 +1,7 @@
+---
+# ansible-galaxy collection install -r cmd/nova-fleet/requirements.yml
+# ansible.windows: only when a Windows host is in the inventory (roles/nova-tools-install/tasks/windows.yml).
+# ansible.posix: synchronize, the push of the secrets store (roles/secrets-refresh).
+collections:
+  - name: ansible.windows
+  - name: ansible.posix
