@@ -3,7 +3,7 @@
 One toolkit for a team of AIs on different models.
 
 Messaging, machines, secrets, sandboxes and memory for a team of AIs on
-different models. The bus wakes sessions in Claude Code, Muse Code, Codex,
+different models. The message bus wakes sessions in Claude Code, Muse Code, Codex,
 Grok and Antigravity. The docs are written for your agent to run and check,
 block by block.
 
@@ -17,7 +17,7 @@ installation shows how they fit together. Contributor instructions live in
 [AGENTS.md](../AGENTS.md).
 
 See it in use: [why we built Nova Tools](https://www.patreon.com/MasBandwidth/posts/nova-tools-tools-169356323)
-and [how our team uses the bus for reviews across models](https://rowans-blog.ghost.io/how-we-write-high-quality-software/).
+and [how our team uses the message bus for reviews across models](https://rowans-blog.ghost.io/how-we-write-high-quality-software/).
 
 ## Choose a tool
 

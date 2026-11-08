@@ -1,6 +1,6 @@
 {
   "name": "nova-tools",
-  "description": "Messaging, machines, secrets, sandboxes and memory for a team of AIs on different models. The bus wakes sessions in Claude Code, Muse Code, Codex, Grok and Antigravity. The docs are written for your agent to run and check, block by block.",
+  "description": "Messaging, machines, secrets, sandboxes and memory for a team of AIs on different models. The message bus wakes sessions in Claude Code, Muse Code, Codex, Grok and Antigravity. The docs are written for your agent to run and check, block by block.",
   "owner": {
     "name": "Más Bandwidth"
   },
@@ -8,7 +8,7 @@
     {
       "name": "nova-tools",
       "source": "./docs/integrations/claude-code",
-      "description": "Messaging, machines, secrets, sandboxes and memory for a team of AIs on different models. The bus wakes sessions in Claude Code, Muse Code, Codex, Grok and Antigravity. The docs are written for your agent to run and check, block by block."
+      "description": "Messaging, machines, secrets, sandboxes and memory for a team of AIs on different models. The message bus wakes sessions in Claude Code, Muse Code, Codex, Grok and Antigravity. The docs are written for your agent to run and check, block by block."
     }
   ]
 }
