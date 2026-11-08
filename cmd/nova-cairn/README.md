@@ -63,7 +63,8 @@ because only `open` creates one.
 ## Search your notes
 
 `memory` reads the `.md` notes under each `--root` and the entries of any
-store in the tree, and writes nothing. A **term** is a lowercased word of two
+store in the tree, and writes nothing. A root, note or entry that is a symlink
+is read through it; a linked directory inside a root is not walked. A **term** is a lowercased word of two
 or more letters or digits. A note paragraph needs three terms to be indexed.
 Ranking is **BM25**: paragraphs that share more of your terms, and rarer ones,
 score higher. At weighting, 34 English function words (the, of, and, for, and
