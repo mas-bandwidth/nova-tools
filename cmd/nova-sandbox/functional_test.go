@@ -755,3 +755,33 @@ func TestFunctionalEverySignalIsForwarded(t *testing.T) {
 	require.ErrorAs(t, err, &ee)
 	assert.Equal(t, 3, ee.ExitCode())
 }
+
+// TestFunctionalPlantedSandboxExecIsIgnored puts a fake sandbox-exec, which runs the
+// command with no profile, first on PATH. The wall must still be the real
+// /usr/bin/sandbox-exec, so the write outside the grant is refused.
+func TestFunctionalPlantedSandboxExecIsIgnored(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS != "darwin" {
+		t.Skip("checks the macOS wall; this is " + runtime.GOOS)
+	}
+	job, out := scratch(t)
+	fake := filepath.Join(filepath.Dir(job), "fake")
+	require.NoError(t, os.Mkdir(fake, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(fake, "sandbox-exec"),
+		[]byte("#!/bin/sh\nwhile [ $# -gt 0 ] && [ \"$1\" != \"--\" ]; do shift; done\n[ $# -gt 0 ] || exit 0\nshift\nexec \"$@\"\n"), 0o700))
+	run := func(args ...string) (string, error) {
+		cmd := exec.Command(bin(t), args...)
+		cmd.Env, cmd.Dir = []string{"PATH=" + fake + ":/usr/bin:/bin", "HOME=" + job}, job
+		b, err := cmd.CombinedOutput()
+		return string(b), err
+	}
+	got, err := run("check")
+	require.NoError(t, err, got)
+	assert.Contains(t, got, "(/usr/bin/sandbox-exec)")
+	got, err = run("--write", job, "--", "/bin/sh", "-c", "echo hi > "+filepath.Join(out, "bad"))
+	var ee *exec.ExitError
+	require.ErrorAs(t, err, &ee, "the walled write must fail: "+got)
+	assert.NotContains(t, got, "SANDBOX REFUSED", "the wall ran and denied the write; it did not refuse to start")
+	assert.NotContains(t, got, "run: nova-sandbox -h", "the invocation was not malformed")
+	assert.NoFileExists(t, filepath.Join(out, "bad"), "the real profile refused the write: "+got)
+}
