@@ -6,7 +6,7 @@
 # (tagOwners in cmd/nova-fleet/tailscale-acl.json).
 nova_tailscale_tags: "{{ ['tag:nova'] + (['tag:runner'] if inventory_hostname in (groups['runner'] | default([])) else []) }}"
 
-# Tailscale SSH on Linux (the macOS and Windows clients do not serve it).
+# Tailscale SSH on Linux (the macOS client does not serve it).
 nova_tailscale_ssh: true
 
 # The machine's MagicDNS name (<machine>.<tailnet>.ts.net) is written as its
@@ -25,4 +25,3 @@ nova_firewall_allow_udp: [41641]
 # The CLI per platform.
 nova_tailscale_bin: >-
   {{ '/Applications/Tailscale.app/Contents/MacOS/Tailscale' if (nova_system | default(ansible_facts['system'] | default(''))) == 'Darwin' else 'tailscale' }}
-nova_tailscale_win_bin: 'C:\Program Files\Tailscale\tailscale.exe'

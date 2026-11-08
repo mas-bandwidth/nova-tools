@@ -28,12 +28,10 @@ github_runner_sha256:
   osx-x64: "109fff505a34014a7e8d1acb850c33d404811102f572b8fb9788e2fff013cc49"
   osx-arm64: "25a065af409ffa317ab4d5a3b614dd15fc9c40f2172bc1b35a1b1258e919a388"
   win-x64: "a1f17aa987fc8158bc7521d284912267a0d01b7c2c4684b33c86783b5e8221cc"
-  win-arm64: "0790e3f586c2c5388ed8e293e7cef01bd0e8a2c5c68dd0a628f848b61da4b3a7"
 github_runner_release_url: "https://github.com/actions/runner/releases/download"
 
-# Where a host keeps them: <base>/<owner>-<repo>-<i> (or <org>-<i>). Unix: the
-# login's home; Windows: set by the role to C:\actions-runner unless given.
-github_runner_base_dir: "{{ ansible_facts['user_dir'] ~ '/actions-runner' if ansible_facts['os_family'] != 'Windows' else 'C:\\actions-runner' }}"
+# Where a host keeps them: <base>/<owner>-<repo>-<i> (or <org>-<i>), in the login's home.
+github_runner_base_dir: "{{ ansible_facts['user_dir'] ~ '/actions-runner' }}"
 
 # Extra environment for the service (Linux and macOS), name: value.
 github_runner_env: {}

@@ -5,18 +5,14 @@
 # the wanted tags is not joined again.
 - name: the platform
   ansible.builtin.set_fact:
-    ts_os: "{{ 'windows' if ansible_facts['os_family'] == 'Windows' else ('darwin' if (nova_system | default(ansible_facts['system'])) == 'Darwin' else ('debian' if ansible_facts['os_family'] == 'Debian' else 'other')) }}"
+    ts_os: "{{ 'darwin' if (nova_system | default(ansible_facts['system'])) == 'Darwin' else ('debian' if ansible_facts['os_family'] == 'Debian' else 'other') }}"
     ts_tags: "{{ nova_tailscale_tags | sort }}"
 
 - name: a platform this play installs on
   ansible.builtin.assert:
     that: ts_os != 'other'
-    fail_msg: "{{ inventory_hostname }} is {{ ansible_facts['os_family'] }}: tailscale.yml installs on Debian/Ubuntu (apt), macOS (brew) and Windows (winget)"
+    fail_msg: "{{ inventory_hostname }} is {{ ansible_facts['os_family'] }}: tailscale.yml installs on Debian/Ubuntu (apt) and macOS (brew)"
     quiet: true
-
-- name: install and join (Windows)
-  ansible.builtin.include_tasks: windows.yml
-  when: ts_os == 'windows'
 
 - name: install (Debian, Ubuntu)
   ansible.builtin.include_tasks: install-debian.yml
@@ -27,7 +23,6 @@
   when: ts_os == 'darwin'
 
 - name: join (Linux, macOS)
-  when: ts_os != 'windows'
   block:
     - name: the machine's tailnet state
       ansible.builtin.command: "{{ nova_tailscale_bin }} status --json"
