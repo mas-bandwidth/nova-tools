@@ -27,7 +27,7 @@
       failed_when: ci_rules_applied.rc != 0
     - name: the WSL machine's Windows runners
       ansible.builtin.shell: |
-        set -eu
+        set -eu -o pipefail   # the exit code is powershell's, not tr's
         [ -e /proc/sys/fs/binfmt_misc/WSLInterop ] || { echo NO-WSL; exit 0; }
         ps=/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe
         [ -x "$ps" ] || { echo NO-WSL; exit 0; }
@@ -35,7 +35,7 @@
         mkdir -p "$stage"
         cp {{ ci_rules_stage.path }}/*.ps1 "$stage/"
         "$ps" -NoProfile -ExecutionPolicy Bypass -File 'C:\ProgramData\nova-ci-rules-stage\nova-ci-rules.ps1' apply {{ github_runner_ci_limit_seconds }} {{ github_runner_ci_push_branches | join(' ') | quote }} </dev/null | tr -d '\r'
-      args: { executable: /bin/sh }
+      args: { executable: /bin/bash }
       register: ci_rules_windows
       failed_when: ci_rules_windows.rc != 0 or 'restart=failed' in ci_rules_windows.stdout or 'denied=' in ci_rules_windows.stdout
       changed_when: "'hooks=set' in ci_rules_windows.stdout or 'restart=done' in ci_rules_windows.stdout"
@@ -69,7 +69,7 @@
 - name: the CI rules' receipt
   ansible.builtin.debug:
     msg: >-
-      {% if ansible_check_mode %}CI-RULES {{ inventory_hostname }} (check: nothing changed){% else %}{{
+      {% if ansible_check_mode %}CI-RULES {{ inventory_hostname }} (check: not checked; --check does not run nova-ci-rules, a run applies the rules){% else %}{{
       ((ci_rules_applied.stdout_lines | default([])) + (ci_rules_windows.stdout_lines | default([]) | reject('equalto', 'NO-WSL') | list)
       + (ci_rules_applied_win.stdout_lines | default([]))) | map('regex_replace', '^CI-RULES ', 'CI-RULES ' ~ inventory_hostname ~ ' ') | join('\n') or
       'CI-RULES ' ~ inventory_hostname ~ ' no runners' }}{% endif %}
