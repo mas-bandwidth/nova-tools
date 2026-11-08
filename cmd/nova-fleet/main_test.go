@@ -12,11 +12,14 @@ import (
 	"testing/fstest"
 )
 
-// fake replaces the exec seam: lookPath finds only the names in found, and
-// runCmd records its call (and what the extracted directory held) and returns code.
+// fake replaces the exec seam: lookPath finds only the names in found, runCmd
+// records its call (and what the extracted directory held) and returns code, and
+// outCmd answers ansible-playbook --list-hosts with list and ansible-galaxy with
+// ansible.posix.
 type fake struct {
 	found    map[string]string
 	code     int
+	list     string
 	bin      string
 	argv     []string
 	env      []string
@@ -28,8 +31,17 @@ type fake struct {
 func (f *fake) install(t *testing.T) {
 	t.Helper()
 	t.Setenv("TMPDIR", t.TempDir())
-	oldLook, oldRun := lookPath, runCmd
-	t.Cleanup(func() { lookPath, runCmd = oldLook, oldRun })
+	oldLook, oldRun, oldOut := lookPath, runCmd, outCmd
+	t.Cleanup(func() { lookPath, runCmd, outCmd = oldLook, oldRun, oldOut })
+	outCmd = func(bin string, args, env []string) (string, string, int) {
+		switch {
+		case slices.Contains(args, "--list-hosts"):
+			return f.list, "", 0
+		case filepath.Base(bin) == "ansible-galaxy":
+			return "ansible.posix 1.5.4\n", "", 0
+		}
+		return "", bin + ": not faked", 127
+	}
 	lookPath = func(name string) (string, error) {
 		if p, ok := f.found[name]; ok {
 			return p, nil
@@ -163,6 +175,60 @@ func TestPassThrough(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Dir(play)); !os.IsNotExist(err) {
 		t.Errorf("extracted dir %s left behind after the run", filepath.Dir(play))
+	}
+}
+
+// listHosts is ansible-playbook --list-hosts' output for postgres.yml when no machine is
+// in the services group: its one machine play matched nothing; the localhost play is not counted.
+const listHosts = `
+playbook: postgres.yml
+
+  play #1 (services): nova-config's PostgreSQL	TAGS: []
+    pattern: ['services']
+    hosts (0):
+
+  play #2 (localhost): the port answers from the control node	TAGS: []
+    pattern: ['localhost']
+    hosts (1):
+      localhost
+`
+
+// A play whose host group is empty (no machine has the role, or -l names none in it) would exit 0
+// having done nothing: it is refused before it runs, naming the group and how to fill it.
+func TestEmptyHostGroupIsRefused(t *testing.T) {
+	f := &fake{found: map[string]string{"ansible-playbook": "/a/ansible-playbook", "nova-config": "/b/nova-config"}, list: listHosts}
+	f.install(t)
+	code, out, errs := runArgs("postgres", "--check")
+	want := "nova-fleet postgres: no host is in services (no machine row has that role, or -l names none in it), so the play would do nothing; " +
+		"run: nova-config machine set <machine> --roles <its roles>,services --actor <you>, then nova-fleet postgres again\n"
+	if code != 1 || out != "" || errs != want || f.argv != nil {
+		t.Errorf("empty group: code %d stdout %q stderr %q ran %q; want exit 1, nothing run and %q", code, out, errs, f.argv, want)
+	}
+	// a pattern of several groups names each; an empty inventory (all) asks for a machine row
+	f.list = "  play #1 (bench:runner:services): x\tTAGS: []\n    pattern: ['bench:runner:services']\n    hosts (0):\n"
+	if code, _, errs := runArgs("health"); code != 1 || !strings.HasPrefix(errs, "nova-fleet health: no host is in bench, runner, services (") {
+		t.Errorf("several groups: code %d stderr %q", code, errs)
+	}
+	f.list = "  play #1 (all): x\tTAGS: []\n    pattern: ['all']\n    hosts (0):\n"
+	if code, _, errs := runArgs("secrets-refresh"); code != 1 || !strings.Contains(errs, "run: nova-config machine add <machine> --user <login> --roles bench --actor <you>") {
+		t.Errorf("empty inventory: code %d stderr %q", code, errs)
+	}
+	// one machine play with a host runs (install's opencode play may match nothing); so does a
+	// play whose only empty plays are localhost or negated ("!all": no machine named)
+	for _, list := range []string{
+		"  play #1 (bench:runner:services): a\n    hosts (1):\n      m1\n  play #2 (bench): b\n    hosts (0):\n",
+		"  play #1 (localhost): a\n    hosts (1):\n      localhost\n  play #2 (!all): b\n    hosts (0):\n",
+		"",
+	} {
+		f.list, f.argv = list, nil
+		if code, _, errs := runArgs("install"); code != 0 || f.argv == nil {
+			t.Errorf("list %q: code %d stderr %q ran %q, want the play run", list, code, errs, f.argv)
+		}
+	}
+	// --syntax-check needs no host: the empty group is not asked about
+	f.list, f.argv = listHosts, nil
+	if code, _, errs := runArgs("postgres", "--", "--syntax-check"); code != 0 || f.argv == nil {
+		t.Errorf("--syntax-check: code %d stderr %q", code, errs)
 	}
 }
 
