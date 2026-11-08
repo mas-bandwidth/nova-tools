@@ -80,7 +80,13 @@ jobs:
 
   functional:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: [self-hosted, linux, x64, bench]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: linux, arch: x64, group: bench }
+          - { os: macOS, arch: ARM64, group: mini-m5 }
+    runs-on: [self-hosted, "${{ matrix.os }}", "${{ matrix.arch }}", "${{ matrix.group }}"]
     timeout-minutes: 30
     steps:
       - *clean
@@ -93,8 +99,19 @@ jobs:
           need=()
           command -v redis-server >/dev/null || need+=(redis-server)
           command -v postgres >/dev/null || ls /usr/lib/postgresql/*/bin/postgres >/dev/null 2>&1 || need+=(postgresql)
-          [ ${#need[@]} -eq 0 ] || { sudo -n apt-get update -qq && sudo -n apt-get install -y -qq "${need[@]}"; }
-          for d in /usr/lib/postgresql/*/bin; do [ -x "$d/postgres" ] && echo "$d" >> "$GITHUB_PATH"; done
+          if [ "$(uname -s)" = Darwin ]; then
+            # Homebrew's; postgresql@18 is keg-only, so its bin goes on PATH
+            export PATH="/opt/homebrew/bin:$PATH" HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1
+            echo /opt/homebrew/bin >> "$GITHUB_PATH"
+            command -v postgres >/dev/null || [ -x /opt/homebrew/opt/postgresql@18/bin/postgres ] || need+=(postgresql@18)
+            for t in sops age; do command -v "$t" >/dev/null || need+=("$t"); done
+            need=("${need[@]/#redis-server/redis}") # Homebrew calls it redis
+            [ ${#need[@]} -eq 0 ] || brew install --quiet "${need[@]}"
+            [ -x /opt/homebrew/opt/postgresql@18/bin/postgres ] && echo /opt/homebrew/opt/postgresql@18/bin >> "$GITHUB_PATH"
+          else
+            [ ${#need[@]} -eq 0 ] || { sudo -n apt-get update -qq && sudo -n apt-get install -y -qq "${need[@]}"; }
+            for d in /usr/lib/postgresql/*/bin; do [ -x "$d/postgres" ] && echo "$d" >> "$GITHUB_PATH"; done
+          fi
           true
       - name: functional tests
         env:
