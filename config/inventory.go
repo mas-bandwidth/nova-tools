@@ -145,6 +145,10 @@ func build(machines []Row, services []Row, local string) (*inventory, error) {
 		if m == local {
 			hv["ansible_connection"] = "local"
 		}
+		// a Mac: the system python has the system certificate bundle; a discovered Homebrew python may not (get_url fails)
+		if v["os"] == "darwin" {
+			hv["ansible_python_interpreter"] = "/usr/bin/python3"
+		}
 		inv.Meta.Hostvars[m] = hv
 		for _, role := range strings.Split(v["roles"], ",") {
 			if _, ok := groups[role]; ok {

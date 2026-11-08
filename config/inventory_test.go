@@ -92,3 +92,13 @@ func TestInventoryPublic(t *testing.T) {
 	_, out, _ = h.run(t, "inventory", "--host", "bench-a")
 	assert.NotContains(t, out, "nova_public", "unset is left out")
 }
+
+func TestInventoryDarwinInterpreter(t *testing.T) {
+	t.Parallel()
+	h := fleet(t)
+	h.ok(t, "machine", "add", "mac-a", "--user", "glenn", "--os", "darwin", "--arch", "arm64", "--actor", "t")
+	_, out, _ := h.run(t, "inventory", "--host", "mac-a")
+	assert.Contains(t, out, `"ansible_python_interpreter": "/usr/bin/python3"`, "a Mac names the system python, whose certificate bundle get_url needs")
+	_, out, _ = h.run(t, "inventory", "--host", "bench-b")
+	assert.NotContains(t, out, "ansible_python_interpreter", "Linux keeps ansible's discovery")
+}
