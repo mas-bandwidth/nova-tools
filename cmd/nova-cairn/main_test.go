@@ -720,3 +720,27 @@ func TestAnOlderStoresLatin1IDsStillRead(t *testing.T) {
 	assert.Equal(t, 2, code)
 	assert.True(t, strings.HasSuffix(errs, "; run: ls -l '"+missing+"'\n"), errs)
 }
+
+// TestMemoryReadsSymlinkedNotes: a note that is a symlink, and a --root that is a
+// symlink, are read through the link; a broken linked note is refused by name.
+func TestMemoryReadsSymlinkedNotes(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "real"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "notes"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "real", "lantern.md"), []byte("The brass lantern needs a clean cloth.\n"), 0o644))
+	require.NoError(t, os.Symlink(filepath.Join("..", "real", "lantern.md"), filepath.Join(dir, "notes", "lantern.md")))
+	require.NoError(t, os.Symlink("notes", filepath.Join(dir, "linkroot")))
+
+	for _, root := range []string{filepath.Join(dir, "notes"), filepath.Join(dir, "linkroot")} {
+		code, out, errs := do(t, "", "memory", "search", "--root", root, "--channels", "bm25", "--k", "1", "brass")
+		require.Equal(t, 0, code, errs)
+		assert.Contains(t, out, "SEARCH OK hits=1 k=1 channels=bm25 files=1 ", root)
+		assert.Contains(t, out, ": lantern.md:1 ", root)
+	}
+
+	require.NoError(t, os.Symlink("gone.md", filepath.Join(dir, "notes", "broken.md")))
+	code, _, errs := do(t, "", "memory", "search", "--root", filepath.Join(dir, "notes"), "--channels", "bm25", "--k", "1", "brass")
+	assert.Equal(t, 2, code)
+	assert.Contains(t, errs, "--exclude broken.md")
+}
