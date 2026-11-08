@@ -2,17 +2,11 @@
 # secrets-refresh.yml's defaults (fleet/README.md, "secrets-refresh").
 
 # false on a machine whose copy is kept by hand (the one that writes the
-# store, say): the play removes any timer there and changes nothing else.
+# store, say): the play removes any pull timer there and changes nothing else.
 nova_secrets_refresh: true
 
-# How often the store is pulled, in seconds, and where each run's line goes.
-nova_secrets_refresh_every: 600
-nova_secrets_refresh_log: "{{ nova_home }}/.local/state/nova/secrets-refresh.log"
-
-# Empty (push mode, the default): the control node puts the store's files at
-# nova_secrets_store over SSH, and the machine runs no timer; given
-# nova_seal_store (the control node's clone), this play pushes them. Set (pull
-# mode): the store's git URL, cloned where there is none and pulled on a timer.
+# Retired (D8c): pull mode, a timer pulling a git clone of the store on each
+# machine. Set, the play stops; the control node pushes the store instead.
 nova_secrets_repo: ""
 
 # What this role writes where an install's leftover check reads (nova-tools-install,

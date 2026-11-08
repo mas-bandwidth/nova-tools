@@ -1,10 +1,16 @@
----
 # The secrets-refresh role (fleet/secrets-refresh.yml): the machine's copy of the secrets store, kept current.
-# Push mode (nova_secrets_repo empty, the default): the control node puts the store's files at nova_secrets_store over
-# the SSH the play already has (rsync, no .git, 0700 directories and 0600 files); this role pushes them when it is
-# given the control node's clone (nova_seal_store), installs no timer and removes one, and fails when the store is
-# not there. Pull mode (nova_secrets_repo set): a timer pulls a git clone fast-forward only. Linux: a systemd user
-# timer (linger on), or a crontab line where the login has no user manager. darwin: a LaunchAgent in the GUI domain.
+# The control node puts the store's files at nova_secrets_store over the SSH the play already has (rsync, no .git,
+# 0700 directories and 0600 files); this role pushes them when it is given the control node's clone (nova_seal_store),
+# and fails when the store is not there. Nothing on the machine fetches the store on a clock: pull mode (a timer
+# pulling a git clone) is retired (D8c), nova_secrets_repo is refused, and a timer an earlier run left is removed.
+- name: pull mode is retired (nova_secrets_repo)
+  ansible.builtin.fail:
+    msg: >-
+      SECRETS-REFRESH {{ inventory_hostname }} STOP: pull mode (nova_secrets_repo) is retired, since nothing fetches the
+      store on a clock; unset nova_secrets_repo: the control node pushes the store (nova-fleet secrets-refresh -- -e
+      nova_seal_store=<its clone>, which nova-fleet up runs)
+  when: nova_secrets_repo | default('') | length > 0
+
 - name: the paths
   ansible.builtin.set_fact:
     sr_script: "{{ nova_bin_dir }}/nova-secrets-refresh"
@@ -12,11 +18,9 @@
     sr_darwin: "{{ (nova_system | default(ansible_facts['system'])) == 'Darwin' }}"
     sr_xdg: "/run/user/{{ ansible_facts['user_uid'] }}"
     sr_user_dir: "{{ nova_home }}/.config/systemd/user"
-    sr_mode: "{{ 'pull' if nova_secrets_repo | length > 0 else 'push' }}"
 
-# ---- no timer: a machine that must not pull, and every machine in push mode ----
-- name: the timer removed (push mode, or nova_secrets_refresh false)
-  when: not (nova_secrets_refresh | bool) or sr_mode == 'push'
+# ---- no timer on any machine: one left by the retired pull mode is removed ----
+- name: the pull timer removed (left by the retired pull mode)
   block:
     - name: the Linux units, stopped and removed
       ansible.builtin.shell: |
@@ -61,6 +65,9 @@
       check_mode: false
       when: sr_darwin
 
+    - name: the pull script removed
+      ansible.builtin.file: { path: "{{ sr_script }}", state: absent }
+
     - name: the receipt (off)
       ansible.builtin.debug: { msg: "SECRETS-REFRESH {{ inventory_hostname }} off (nova_secrets_refresh false)" }
       when: not (nova_secrets_refresh | bool)
@@ -71,7 +78,6 @@
 
 # ---- push mode: the control node's files, put here; no timer ----
 - name: push mode
-  when: sr_mode == 'push'
   block:
     # ---- the refusals, before anything changes ----
     - name: rsync on the machine
@@ -169,166 +175,6 @@
         that: sr_files.stdout != 'missing' or (ansible_check_mode and sr_push_dir is changed)
         fail_msg: >-
           SECRETS-REFRESH {{ inventory_hostname }} mode=push missing: no store at {{ nova_secrets_store }}; push it from
-          the control node (-e nova_seal_store=<its clone>), or set nova_secrets_repo for pull mode
+          the control node (-e nova_seal_store=<its clone>)
         quiet: true
 
-    - name: nothing more here (push)
-      ansible.builtin.meta: end_host
-
-# ---- git, which the pull needs ----
-- name: git (Debian, Ubuntu)
-  ansible.builtin.apt: { name: git, state: present, update_cache: true, cache_valid_time: 3600 }
-  become: true
-  when: ansible_facts['os_family'] == 'Debian'
-
-- name: git is on the machine
-  ansible.builtin.command: git --version
-  register: sr_git
-  changed_when: false
-  failed_when: false
-  check_mode: false
-
-- name: git is there (the Command Line Tools on macOS, the system's package elsewhere)
-  ansible.builtin.assert:
-    that: sr_git.rc == 0 or (ansible_check_mode and ansible_facts['os_family'] == 'Debian')
-    fail_msg: "SECRETS-REFRESH {{ inventory_hostname }} STOP: no git on the machine; install it, then run again"
-    quiet: true
-
-# ---- the store clone ----
-- name: is there a store clone here
-  ansible.builtin.stat: { path: "{{ nova_secrets_store }}/.git" }
-  register: sr_store
-
-- name: the store, cloned (pull mode, no clone yet)
-  ansible.builtin.git:
-    repo: "{{ nova_secrets_repo }}"
-    dest: "{{ nova_secrets_store }}"
-    update: false
-  environment: { GIT_TERMINAL_PROMPT: "0", GIT_SSH_COMMAND: "ssh -o BatchMode=yes -o ConnectTimeout=20" }
-  when: not sr_store.stat.exists
-
-# ---- the script ----
-- name: the directories
-  ansible.builtin.file: { path: "{{ item }}", state: directory, mode: "0755" }
-  loop: ["{{ nova_bin_dir }}", "{{ nova_secrets_refresh_log | dirname }}"]
-
-- name: the refresh script
-  ansible.builtin.copy: { src: nova-secrets-refresh, dest: "{{ sr_script }}", mode: "0755" }
-
-# ---- Linux: a systemd user timer, or cron ----
-- name: linger for the login (its timer runs with no session open)
-  ansible.builtin.command: "loginctl enable-linger {{ ansible_facts['user_id'] }}"
-  args: { creates: "/var/lib/systemd/linger/{{ ansible_facts['user_id'] }}" }
-  become: true
-  when: not sr_darwin
-
-- name: does the login have a user manager
-  ansible.builtin.command: systemctl --user show-environment
-  environment: { XDG_RUNTIME_DIR: "{{ sr_xdg }}" }
-  register: sr_userd
-  changed_when: false
-  failed_when: false
-  check_mode: false
-  when: not sr_darwin
-
-- name: a user timer, or cron
-  ansible.builtin.set_fact:
-    sr_systemd: "{{ not sr_darwin and (sr_userd.rc | default(1)) == 0 }}"
-
-- name: the user unit directory
-  ansible.builtin.file: { path: "{{ sr_user_dir }}", state: directory, mode: "0755" }
-  when: sr_systemd
-
-- name: the oneshot unit and its timer
-  ansible.builtin.template: { src: "nova-secrets-refresh.{{ item }}.j2", dest: "{{ sr_user_dir }}/nova-secrets-refresh.{{ item }}", mode: "0644" }
-  loop: [service, timer]
-  register: sr_units
-  when: sr_systemd
-
-- name: the user manager reads them
-  ansible.builtin.command: systemctl --user daemon-reload
-  environment: { XDG_RUNTIME_DIR: "{{ sr_xdg }}" }
-  when: sr_systemd and sr_units is changed and not ansible_check_mode
-
-# under --check a unit not written yet cannot be enabled: the file's own change is the drift
-- name: the timer, enabled and started
-  ansible.builtin.systemd_service: { name: nova-secrets-refresh.timer, enabled: true, state: started, scope: user }
-  environment: { XDG_RUNTIME_DIR: "{{ sr_xdg }}" }
-  when: sr_systemd and not (ansible_check_mode and sr_units is changed)
-
-- name: the cron line (Linux with no user manager)
-  ansible.builtin.cron:
-    name: nova-secrets-refresh
-    minute: "*/{{ [((nova_secrets_refresh_every | int) / 60) | int, 1] | max }}"
-    job: "{{ sr_script }} {{ nova_secrets_store }} {{ nova_secrets_refresh_log }}"
-  when: not sr_darwin and not sr_systemd
-
-- name: is there a crontab binary
-  ansible.builtin.command: sh -c 'command -v crontab'
-  register: sr_crontab
-  changed_when: false
-  failed_when: false
-  check_mode: false
-  when: sr_systemd
-
-- name: no cron line where the timer runs
-  ansible.builtin.cron: { name: nova-secrets-refresh, state: absent }
-  when: sr_systemd and sr_crontab.rc == 0
-
-# ---- darwin: a LaunchAgent ----
-- name: the login's GUI domain (darwin)
-  ansible.builtin.command: "launchctl print gui/{{ ansible_facts['user_uid'] }}"
-  register: sr_gui
-  changed_when: false
-  failed_when: false
-  check_mode: false
-  when: sr_darwin
-
-- name: a darwin login with no GUI domain is refused (a LaunchDaemon is not written here)
-  ansible.builtin.fail:
-    msg: "SECRETS-REFRESH {{ inventory_hostname }}: the login has no GUI domain (gui/{{ ansible_facts['user_uid'] }}); log it in at the console once, or run the refresh from services.yml as a system unit"
-  when: sr_darwin and sr_gui.rc != 0
-
-- name: the LaunchAgents directory
-  ansible.builtin.file: { path: "{{ nova_home }}/Library/LaunchAgents", state: directory, mode: "0755" }
-  when: sr_darwin
-
-- name: the LaunchAgent
-  ansible.builtin.template: { src: nova-secrets-refresh.plist.j2, dest: "{{ nova_home }}/Library/LaunchAgents/{{ sr_label }}.plist", mode: "0644" }
-  register: sr_plist
-  when: sr_darwin
-
-- name: is the agent loaded
-  ansible.builtin.command: "launchctl print gui/{{ ansible_facts['user_uid'] }}/{{ sr_label }}"
-  register: sr_loaded
-  changed_when: false
-  failed_when: false
-  check_mode: false
-  when: sr_darwin
-
-- name: the agent loaded (again when the plist changed)
-  ansible.builtin.shell: |
-    d=gui/{{ ansible_facts['user_uid'] }}; l={{ sr_label }}
-    launchctl bootout "$d/$l" 2>/dev/null || true
-    launchctl bootstrap "$d" {{ nova_home }}/Library/LaunchAgents/$l.plist
-  when: sr_darwin and (sr_plist is changed or sr_loaded.rc != 0) and not ansible_check_mode
-
-# ---- one run now when there is no log yet, then the receipt ----
-- name: one run now (no log yet, so the first pull does not wait for the timer)
-  ansible.builtin.command: "{{ sr_script }} {{ nova_secrets_store }} {{ nova_secrets_refresh_log }}"
-  args: { creates: "{{ nova_secrets_refresh_log }}" }
-  failed_when: false
-  when: not ansible_check_mode
-
-- name: the last log line
-  ansible.builtin.command: "tail -n 1 {{ nova_secrets_refresh_log }}"
-  register: sr_last
-  changed_when: false
-  failed_when: false
-  check_mode: false
-
-- name: the receipt
-  ansible.builtin.debug:
-    msg: >-
-      SECRETS-REFRESH {{ inventory_hostname }} mode=pull via={{ 'launchd' if sr_darwin else ('systemd-user-timer' if sr_systemd else 'cron') }}
-      every={{ nova_secrets_refresh_every }}s last: {{ (sr_last.stdout | default('') | trim) or 'no run yet' }}
