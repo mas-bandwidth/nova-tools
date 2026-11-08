@@ -1004,6 +1004,8 @@ stderr; missing prerequisites also print one diagnostic per gap on stdout:
 | `--inventory` naming nothing | the path, and to name an existing file or script |
 | ansible-playbook, its `ansible.posix` collection, or (with no `--inventory`) nova-config missing | one `CHECK MISSING <name>: <the pasteable fix line>` per gap on stdout, all at once, then `this control node lacks <n> of what the play needs ...; run: nova-fleet check` |
 
+A play whose machine groups match no host is refused with exit 1 before it runs: `no host is in <groups> ...; run:
+nova-config machine set <machine> --roles <its roles>,<group> --actor <you>, then nova-fleet <play> again`.
 Otherwise the exit is 0 when ansible-playbook passed and 1 when it did not, with `nova-fleet <play>: FAILED
 ansible-playbook exit=<n>` naming its status on stderr (2 never means a failed host here); an ansible-playbook killed
 by a signal is `killed by signal <N> (exit 128+N)`. Before running, nova-fleet prints the ansible-playbook, inventory
