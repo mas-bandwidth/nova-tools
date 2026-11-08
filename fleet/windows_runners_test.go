@@ -175,6 +175,20 @@ func TestWindowsRetireV1IsOptInAndGuarded(t *testing.T) {
 	if retire[0]["when"] != nil {
 		t.Error("the v1 retirement's guard is conditional; it must always run, under --check too")
 	}
+	// then the coverage and busy guards, unconditional, before anything that changes the machine
+	var guards []string
+	for _, task := range retire {
+		if a, ok := task["ansible.builtin.assert"].(map[string]any); ok && task["when"] == nil {
+			guards = append(guards, text(t, a["that"]))
+			continue
+		}
+		if task["ansible.builtin.include_tasks"] == "wsl-windows-retire-v1-runners.yml" || task["ansible.builtin.shell"] != nil {
+			break
+		}
+	}
+	if g := strings.Join(guards, "\n"); len(guards) != 3 || !strings.Contains(g, "github_runner_v1_uncovered | length == 0") || !strings.Contains(g, "github_runner_v1_busy | length == 0") {
+		t.Errorf("before the first change the v1 retirement asserts v2 up, v2 covering every v1 target and no v1 runner busy; it asserts %q", guards)
+	}
 	// the online and registered counts it reads are set before it, in wsl-windows.yml, under --check too
 	if !strings.Contains(text(t, tasks["wsl-windows.yml"]), "github_runner_win_online_n:") {
 		t.Error("wsl-windows.yml no longer sets github_runner_win_online_n")
@@ -190,10 +204,11 @@ func TestWindowsRetireV1Keeps(t *testing.T) {
 		t.Fatal(err)
 	}
 	var d struct {
-		Runners []struct{ Dir, URL string } `yaml:"github_runner_windows_v1_runners"`
-		Items   []string                    `yaml:"github_runner_windows_v1_items"`
-		Tasks   []string                    `yaml:"github_runner_windows_v1_tasks"`
-		Kept    []string                    `yaml:"github_runner_windows_v1_kept"`
+		Runners []struct{ Dir, Name, URL string } `yaml:"github_runner_windows_v1_runners"`
+		Labels  map[string][]string               `yaml:"github_runner_windows_v1_labels"`
+		Items   []string                          `yaml:"github_runner_windows_v1_items"`
+		Tasks   []string                          `yaml:"github_runner_windows_v1_tasks"`
+		Kept    []string                          `yaml:"github_runner_windows_v1_kept"`
 	}
 	if err := yaml.Unmarshal(b, &d); err != nil {
 		t.Fatal(err)
@@ -210,6 +225,15 @@ func TestWindowsRetireV1Keeps(t *testing.T) {
 		if strings.HasPrefix(l, `c:\tools`) || l == `c:\rowan-jobs` || l == `c:\rowan-jobs\*` || strings.HasPrefix(l, `c:\actions-runner\`) || l == `c:\actions-runner` {
 			t.Errorf("v1 items name %s: CI's tools, the job scratch and v2's runners are kept", i)
 		}
+	}
+	for _, r := range d.Runners {
+		if r.Name == "" || len(d.Labels[r.URL]) == 0 {
+			t.Errorf("v1 runner %s needs its GitHub name (the busy check) and its target's workflow labels (the coverage check)", r.Dir)
+		}
+	}
+	if !slices.Equal(d.Labels["https://github.com/mas-bandwidth/rocketnet"], []string{"rocketnet-windows"}) ||
+		!slices.Equal(d.Labels["https://github.com/robotgamedevelopers"], []string{"fleet"}) {
+		t.Errorf("v1 labels %v: rocketnet's workflows select rocketnet-windows, robotgamedevelopers' select fleet", d.Labels)
 	}
 	if !slices.Equal(d.Tasks, []string{"nova-wsl-keepalive"}) {
 		t.Errorf("v1 tasks %q: only the duplicate keepalive goes; WSL2 keepalive (Ubuntu-24.04) stays", d.Tasks)
@@ -229,6 +253,45 @@ func TestWindowsRetireV1Keeps(t *testing.T) {
 	}
 }
 
+// TestRunnerWindowsRepairs: register repairs a half registration (its .runner and credentials moved into the dir's own
+// retired-<date>, its service removed, then --replace); an interrupted unpack is moved aside and unpacked again; ensure
+// never fails on a missing service (the counts make the run fail, and the next one repairs). The functional
+// TestWindowsRunnersPlayRepairsHalfRegistrations runs which runners the play sends to register.
+func TestRunnerWindowsRepairs(t *testing.T) {
+	t.Parallel()
+	b, err := fs.ReadFile(tree, roleDir+"/files/runner-windows.ps1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(b)
+	for _, want := range []string{
+		`$to = Join-Path $Dir "retired-$(Get-Date -Format yyyyMMdd)"`,
+		`foreach ($f in '.runner', '.credentials', '.credentials_rsaparams', '.service') {`,
+		`"REPAIR $Dir -> $to"`,
+		`'--replace', '--runasservice'`,
+		`"PARTIAL $Dir -> $(Move-Aside $Dir`,
+		`if (-not $s) { "NO-SERVICE $Dir"; exit 0 }`,
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("runner-windows.ps1 lacks %q", want)
+		}
+	}
+	if strings.Contains(s, "ALREADY-REGISTERED") || strings.Contains(s, "exit 6 }\n  }\n  'retire'") {
+		t.Error("register must repair a half registration, not skip it")
+	}
+	st, err := fs.ReadFile(tree, roleDir+"/tasks/wsl-windows-state.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"selectattr('dir', 'in', github_runner_win_state.stdout_lines | select('match', '^REG ')",
+		"selectattr('dir', 'in', github_runner_win_state.stdout_lines | select('match', '^SVC ')",
+		"selectattr('name', 'in', github_runner_gh_lines"} {
+		if !strings.Contains(string(st), want) {
+			t.Errorf("a whole runner needs .runner, its service and GitHub's entry; wsl-windows-state.yml lacks %q", want)
+		}
+	}
+}
+
 // TestWindowsRunnersPlay: the play reaches only machines whose record names windows_runners, through the role's file.
 func TestWindowsRunnersPlay(t *testing.T) {
 	t.Parallel()
@@ -239,7 +302,7 @@ func TestWindowsRunnersPlay(t *testing.T) {
 	if s := string(b); !strings.Contains(s, "tasks_from: wsl-windows.yml") || !strings.Contains(s, "when: nova_windows_runners | default([]) | length > 0") {
 		t.Error("windows-runners.yml must include wsl-windows.yml only where nova_windows_runners is non-empty")
 	}
-	for _, f := range []string{"wsl-windows.yml", "wsl-windows-state.yml", "wsl-windows-register.yml", "wsl-windows-retire-v1.yml", "wsl-windows-retire-v1-runners.yml"} {
+	for _, f := range []string{"wsl-windows.yml", "wsl-windows-state.yml", "wsl-windows-github.yml", "wsl-windows-register.yml", "wsl-windows-retire-v1.yml", "wsl-windows-retire-v1-runners.yml"} {
 		if _, err := fs.Stat(tree, path.Join(roleDir, "tasks", f)); err != nil {
 			t.Errorf("%s is not embedded", f)
 		}

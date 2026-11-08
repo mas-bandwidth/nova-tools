@@ -172,7 +172,7 @@ roles put it in `bench` or `services`. A `runner` role or a positive runner
 count adds `runner`. `--host <name>` prints one host's variables:
 `ansible_host`, `ansible_user`, `runners`, `nova_services` (always a list of the
 service fields) and, when set, `nova_os`, `nova_arch`, `nova_public`, `cores` and `nova_windows_runners` (a list of
-`{url, scope, count, labels}`, scope `repo` or `org` by the url's shape).
+`{url, count, labels}`).
 `argv`, `env` values and `log` are printed as `{"__ansible_unsafe": ...}`, so
 Ansible reads them as data and never as a template. `NOVA_MACHINE` names the local host (else the first label of the hostname,
 lower-cased), which gets `ansible_connection: local`. As an Ansible script, use

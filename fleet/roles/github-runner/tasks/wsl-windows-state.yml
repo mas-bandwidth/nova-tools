@@ -1,19 +1,40 @@
 ---
-# Which wanted Windows runners are registered (their directory holds .runner): read only, so it runs under --check
-# too. The query goes to powershell.exe as -EncodedCommand, so nothing is staged for it and no quoting reaches it.
-- name: the Windows runners' directories, read
+# The wanted Windows runners as the machine has them: REG <dir> where the directory holds .runner, SVC <dir> where a
+# Windows service runs from it. Read only, so it runs under --check too. The query goes to powershell.exe as
+# -EncodedCommand, so nothing is staged for it and no quoting reaches it. Then GitHub's list (wsl-windows-github.yml),
+# and a runner is whole only with all three: .runner, its service, and its name in GitHub's list for its target.
+- name: the Windows runners' directories and services, read
   ansible.builtin.shell: >-
     "{{ github_runner_wsl_powershell }}" -NoProfile -NonInteractive -EncodedCommand {{ github_runner_wsl_query | b64encode(encoding='utf-16-le') }}
     </dev/null
   args: { executable: /bin/sh }
   vars:
     github_runner_wsl_query: >-
+      $svc = @(Get-CimInstance Win32_Service | ForEach-Object { [string]$_.PathName });
       foreach ($d in @({% for r in github_runner_win_want %}'{{ r.dir }}'{{ '' if loop.last else ',' }}{% endfor %})) {
-      if (Test-Path -LiteralPath (Join-Path $d '.runner')) { 'REG ' + $d } }
+      if (Test-Path -LiteralPath (Join-Path $d '.runner')) { 'REG ' + $d }
+      if (@($svc | Where-Object { $_ -like ('*' + $d + '\*') }).Count -gt 0) { 'SVC ' + $d } }
   register: github_runner_win_state
   changed_when: false
   check_mode: false
 
-- name: the registered ones
+- name: GitHub's list
+  ansible.builtin.include_tasks: wsl-windows-github.yml
+  vars:
+    github_runner_gh_urls: "{{ github_runner_win_want | map(attribute='url') | unique | list }}"
+    github_runner_gh_wait: "{{ github_runner_win_gh_wait | default({}) }}"
+
+- name: the whole ones, and the half ones
   ansible.builtin.set_fact:
-    github_runner_win_registered: "{{ github_runner_win_state.stdout_lines | select('match', '^REG ') | map('regex_replace', '^REG ', '') | list }}"
+    github_runner_win_unread: "{{ github_runner_gh_unread }}"
+    github_runner_win_online: "{{ github_runner_gh_lines | select('search', ' online ') | map('split') | map('first') | list }}"
+    github_runner_win_whole: >-
+      {{ github_runner_win_want
+         | selectattr('dir', 'in', github_runner_win_state.stdout_lines | select('match', '^REG ') | map('regex_replace', '^REG ', '') | list)
+         | selectattr('dir', 'in', github_runner_win_state.stdout_lines | select('match', '^SVC ') | map('regex_replace', '^SVC ', '') | list)
+         | selectattr('name', 'in', github_runner_gh_lines | map('split') | map('first') | list)
+         | map(attribute='dir') | list }}
+    github_runner_win_half: >-
+      {{ github_runner_win_want
+         | selectattr('dir', 'in', github_runner_win_state.stdout_lines | select('match', '^REG ') | map('regex_replace', '^REG ', '') | list)
+         | map(attribute='dir') | list }}

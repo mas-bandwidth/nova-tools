@@ -97,13 +97,19 @@ github_runner_windows_path:
 # the record names is registered and online. Nothing is deleted: each item is moved under <aside_root>-<yyyymmdd>\.
 nova_windows_retire_v1: false
 github_runner_windows_v1_aside_root: 'C:\nova-retired'
-# v1's runners (rowan-tools fleet/runners-windows.yml): removed from GitHub with a removal token, service gone, moved aside.
+# v1's runners (rowan-tools fleet/runners-windows.yml), by directory and by the name GitHub lists: removed from GitHub
+# with a removal token, service gone, moved aside. Refused while one is busy (a job running on it).
 github_runner_windows_v1_runners:
-  - { dir: 'C:\actions-runner-rocketnet\1', url: https://github.com/mas-bandwidth/rocketnet }
-  - { dir: 'C:\actions-runner-rocketnet\2', url: https://github.com/mas-bandwidth/rocketnet }
-  - { dir: 'C:\actions-runner-rocketnet\3', url: https://github.com/mas-bandwidth/rocketnet }
-  - { dir: 'C:\actions-runner-rgd\1', url: https://github.com/robotgamedevelopers }
-  - { dir: 'C:\actions-runner-rgd\2', url: https://github.com/robotgamedevelopers }
+  - { dir: 'C:\actions-runner-rocketnet\1', name: captain-rocketnet-1, url: https://github.com/mas-bandwidth/rocketnet }
+  - { dir: 'C:\actions-runner-rocketnet\2', name: captain-rocketnet-2, url: https://github.com/mas-bandwidth/rocketnet }
+  - { dir: 'C:\actions-runner-rocketnet\3', name: captain-rocketnet-3, url: https://github.com/mas-bandwidth/rocketnet }
+  - { dir: 'C:\actions-runner-rgd\1', name: captain-rgd-1, url: https://github.com/robotgamedevelopers }
+  - { dir: 'C:\actions-runner-rgd\2', name: captain-rgd-2, url: https://github.com/robotgamedevelopers }
+# The labels the workflows select v1's runners by, per target: retiring is refused unless the record names that target
+# and its v2 runners carry these (rocketnet ci.yml: rocketnet-windows; robotgamedevelopers' workflows: fleet).
+github_runner_windows_v1_labels:
+  https://github.com/mas-bandwidth/rocketnet: [rocketnet-windows]
+  https://github.com/robotgamedevelopers: [fleet]
 # v1's files, moved aside after its runners (a wildcard is allowed): the ci-hold hooks and the winlock state, the
 # installer script and its backups, the runner zip cache, then the emptied parent dirs, and the Windows tool installer.
 # Each runner's .env.bak goes with its runner directory.

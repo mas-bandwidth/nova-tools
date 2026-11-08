@@ -4,13 +4,18 @@
 # at a time; every line it prints starts with a word the role matches. fleet/README.md, "Windows runners of a WSL machine".
 #
 #   install   -Dir -Cache -Version -Sha [-PathList]   the pinned runner zip in -Cache (its sha256 checked before it is
-#             used), unpacked into -Dir where config.cmd is missing, and the .env lines the role owns (PATH, GOCACHE,
+#             used), unpacked into -Dir where config.cmd is missing (a dir with files but no config.cmd, an
+#             interrupted unpack, is moved aside first: PARTIAL <dir> -> <where>), and the .env lines the role owns (PATH, GOCACHE,
 #             DOTNET_INSTALL_DIR, DOTNET_CLI_TELEMETRY_OPTOUT) set in place, every other line (the CI-rules hooks) kept:
 #             DOWNLOADED, EXTRACTED, ENV-CHANGED <dir> when something moved
 #   register  -Dir -Url -Name -Labels                 stdin carries ONE registration token; it reaches config.cmd as
 #             ACTIONS_RUNNER_INPUT_TOKEN, never an argument, a file or a line of output. Registers the runner as a
-#             Windows service (config.cmd --runasservice: NT AUTHORITY\NETWORK SERVICE, automatic start): REGISTERED
-#   ensure    -Dir                                    its service starts at boot and is running: SERVICE <dir> ok|started
+#             Windows service (config.cmd --runasservice --replace: NT AUTHORITY\NETWORK SERVICE, automatic start):
+#             REGISTERED. The role calls it only for a runner that is not whole (no .runner, no service, or not in
+#             GitHub's list): a half registration (.runner there) is repaired first, its .runner and credentials moved
+#             into <dir>\retired-<yyyymmdd>\ and its service removed: REPAIR <dir>
+#   ensure    -Dir                                    its service starts at boot and is running: SERVICE <dir> ok|started,
+#             or NO-SERVICE <dir> (the role counts it as not registered, and the next run repairs it)
 #   retire    -Dir -Aside                             stdin carries ONE removal token: config.cmd remove (GitHub and the
 #             service), the service gone, the dir moved under -Aside: RETIRED <dir> -> <where>
 #   aside     -Path -Aside                            each item -Path names (a wildcard is allowed) moved under -Aside:
@@ -46,10 +51,11 @@ function Read-Token {
 function Service-Of([string]$d) {
   Get-CimInstance Win32_Service | Where-Object { $_.PathName -like "*$d\*" } | Select-Object -First 1
 }
-# Move-Aside PATH: PATH moved under $Aside, keeping its path without the drive (C:\a\b -> <aside>\a\b); never deleted.
-function Move-Aside([string]$p) {
-  if (-not $Aside) { 'BAD-ASIDE'; exit 2 }
-  $to = Join-Path $Aside ($p -replace '^[A-Za-z]:\\', '')
+# Move-Aside PATH [ROOT]: PATH moved under ROOT (default -Aside), keeping its path without the drive (C:\a\b ->
+# <root>\a\b); never deleted.
+function Move-Aside([string]$p, [string]$root = $Aside) {
+  if (-not $root) { 'BAD-ASIDE'; exit 2 }
+  $to = Join-Path $root ($p -replace '^[A-Za-z]:\\', '')
   if (Test-Path -LiteralPath $to) { $to = "$to.$([DateTime]::UtcNow.ToString('HHmmss'))" }
   New-Item -ItemType Directory -Force -Path (Split-Path $to) | Out-Null
   Move-Item -LiteralPath $p -Destination $to
@@ -85,6 +91,9 @@ switch ($Action) {
       Move-Item -Force $part $zip
       "DOWNLOADED $zip"
     }
+    if (-not (Test-Path (Join-Path $Dir 'config.cmd')) -and @(Get-ChildItem -LiteralPath $Dir -Force -ErrorAction SilentlyContinue).Count -gt 0) {
+      "PARTIAL $Dir -> $(Move-Aside $Dir (Join-Path (Split-Path $Dir) "retired-$(Get-Date -Format yyyyMMdd)"))"
+    }
     if (-not (Test-Path (Join-Path $Dir 'config.cmd'))) {
       New-Item -ItemType Directory -Force -Path $Dir | Out-Null
       Add-Type -AssemblyName System.IO.Compression.FileSystem
@@ -112,7 +121,17 @@ switch ($Action) {
   }
   'register' {
     Need-Admin
-    if (Test-Path (Join-Path $Dir '.runner')) { "ALREADY-REGISTERED $Dir"; exit 0 }
+    if (Test-Path (Join-Path $Dir '.runner')) {
+      $to = Join-Path $Dir "retired-$(Get-Date -Format yyyyMMdd)"
+      New-Item -ItemType Directory -Force -Path $to | Out-Null
+      foreach ($f in '.runner', '.credentials', '.credentials_rsaparams', '.service') {
+        $p = Join-Path $Dir $f
+        if (Test-Path -LiteralPath $p) { Move-Item -Force -LiteralPath $p -Destination (Join-Path $to $f) }
+      }
+      $s = Service-Of $Dir
+      if ($s) { Stop-Service -Name $s.Name -Force -ErrorAction SilentlyContinue; & sc.exe delete $s.Name | Out-Null }
+      "REPAIR $Dir -> $to"
+    }
     $rc = Invoke-Config @('--unattended', '--url', $Url, '--name', $Name, '--labels', $Labels, '--work', '_work', '--replace', '--runasservice')
     if ($rc -ne 0) { "REGISTER-FAILED $Dir rc=$rc"; exit $rc }
     "REGISTERED $Name $Dir"
@@ -120,7 +139,7 @@ switch ($Action) {
   'ensure' {
     Need-Admin
     $s = Service-Of $Dir
-    if (-not $s) { "NO-SERVICE $Dir"; exit 6 }
+    if (-not $s) { "NO-SERVICE $Dir"; exit 0 }
     $did = 'ok'
     if ($s.StartMode -ne 'Auto') { Set-Service -Name $s.Name -StartupType Automatic; $did = 'started' }
     if ($s.State -ne 'Running') { Start-Service -Name $s.Name; $did = 'started' }

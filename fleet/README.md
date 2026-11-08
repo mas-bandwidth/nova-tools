@@ -445,17 +445,21 @@ the play as `nova_windows_runners`. A machine without it is skipped; one with it
 refused. **The channel** is the one `ci-rules` already uses: from the WSL login, `powershell.exe` by its full path
 runs the role's `files/runner-windows.ps1`, staged to `C:\ProgramData\nova-runner-stage`. It acts as the Windows account
 that started WSL, elevated; no Windows login, password or key is involved, and no port is opened. **Each runner** is
-`<machine>-win-<slug>-<i>` in `C:\actions-runner\<slug>-<i>` (`<slug>` is `<owner>-<repo>` or `<org>`), the pinned
-release checked against its digest, a Windows service run as `NETWORK SERVICE` (`config.cmd --runasservice`) that starts
+`<machine>-win-<slug>-<i>` in `C:\actions-runner\<slug>-<i>` (`<slug>` is `<owner>-<repo>`, or `org-<org>` so an
+organization never shares a slug with a repository), the pinned release checked against its digest (a directory left
+by an interrupted unpack is moved aside and unpacked again), a Windows service run as `NETWORK SERVICE` (`config.cmd --runasservice`) that starts
 at boot. **Labels** are `fleet` and the machine's name plus the record's extras (`github_runner_wsl_labels`); GitHub adds
 `self-hosted`, `X64` and `Windows`. Unlike the Linux runners they carry no roles, os or arch, so a job that selects
 `[self-hosted, bench]` never lands on Windows. Each runner's `.env` gets the job `PATH` (`github_runner_windows_path`),
 its own `GOCACHE` and `DOTNET_INSTALL_DIR`, and then the CI rules. **The token** comes from `tasks/token.yml` as for the
 other runners (one per repository or organization) and reaches `config.cmd` on stdin, as `ACTIONS_RUNNER_INPUT_TOKEN`:
-never an argument, a file or a log line. A registered runner (its directory holds `.runner`) is left alone, so a
-second run registers nothing. Each machine prints `GITHUB-RUNNERS host=<machine> windows=<n> registered=<n> online=<n>`
+never an argument, a file or a log line. A runner is whole when its directory holds `.runner`, its Windows service
+exists and GitHub lists its name; a whole runner is left alone, so a second run registers nothing. A half registration
+(`.runner` but no service or no GitHub entry) is repaired: its `.runner` and credentials move into the runner
+directory's own `retired-<yyyymmdd>\`, its service is removed, and it registers again with `--replace`. A run that
+cannot read GitHub's list for a target refuses, rather than take a whole runner for a half one. Each machine prints `GITHUB-RUNNERS host=<machine> windows=<n> registered=<n> online=<n>`
 from its directories and GitHub's own list; a run where any is short fails. `--check` reads both, asks for the tokens it
-would need, and prints `RUNNER-PLAN <machine> windows=<n> register=<names> labels=<labels>`.
+would need, and prints `RUNNER-PLAN <machine> windows=<n> register=<names> repair=<names> labels=<labels>`.
 
 **Retiring v1's Windows side** is opt-in and comes after v2 is up, so CI keeps its Windows runners throughout:
 
@@ -464,8 +468,10 @@ nova-fleet windows-runners --check -- -l captain -e '{"nova_windows_retire_v1": 
 nova-fleet windows-runners -- -l captain -e '{"nova_windows_retire_v1": true}'
 ```
 
-It is refused (`V1-RETIRE <machine> refused: ...`) unless every v2 Windows runner the record names is registered and
-online. Then v1's runners (`C:\actions-runner-rocketnet\1..3`, `C:\actions-runner-rgd\1..2`) are removed from GitHub with
+It is refused (`V1-RETIRE <machine> refused: ...`, naming what is missing) unless every v2 Windows runner the record
+names is whole and online; every v1 target is a url of the record whose v2 runners carry the labels its workflows select
+(`github_runner_windows_v1_labels`: `rocketnet-windows` for rocketnet, `fleet` for the robotgamedevelopers org); and
+no v1 runner is busy in GitHub's list (a removal would end its job; it does not wait: run again). Then v1's runners (`C:\actions-runner-rocketnet\1..3`, `C:\actions-runner-rgd\1..2`) are removed from GitHub with
 a removal token on stdin, their services go, and their directories move under `C:\nova-retired-<yyyymmdd>\`; v1's
 ci-hold (`C:\rowan-jobs\ci-hold`), the winlock state, the installer script and its backups, the runner zip cache and
 `C:\fleet-windows-tools` move there too, and the scheduled task `\nova-wsl-keepalive` is unregistered. Nothing is

@@ -26,8 +26,8 @@ func TestWindowsRunnersRoundTrip(t *testing.T) {
 
 	_, inv, _ := h.run(t, "inventory", "--host", "bench-b")
 	assert.Contains(t, strings.Join(strings.Fields(inv), ""), `"nova_windows_runners":[`+
-		`{"url":"https://github.com/mas-bandwidth/rocketnet","scope":"repo","count":3,"labels":["rocketnet-windows"]},`+
-		`{"url":"https://github.com/robotgamedevelopers","scope":"org","count":2,"labels":["fleet"]}]`)
+		`{"url":"https://github.com/mas-bandwidth/rocketnet","count":3,"labels":["rocketnet-windows"]},`+
+		`{"url":"https://github.com/robotgamedevelopers","count":2,"labels":["fleet"]}]`)
 	_, inv, _ = h.run(t, "inventory", "--host", "bench-a")
 	assert.NotContains(t, inv, "nova_windows_runners", "an empty field is left out of the inventory")
 

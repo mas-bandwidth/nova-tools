@@ -19,6 +19,50 @@
       {{ github_runner_win_registered_n }} registered, {{ github_runner_win_online_n }} online; every one must be
       registered and online before v1 goes. Run the play without the opt-in until the GITHUB-RUNNERS line is whole.
 
+# Each v1 target must be one the record names, and its v2 runners must carry the labels its workflows select, or the
+# target's jobs would have no Windows runner left.
+- name: the v1 targets v2 does not cover
+  ansible.builtin.set_fact:
+    github_runner_v1_uncovered: >-
+      {%- set out = [] -%}
+      {%- for u in github_runner_windows_v1_runners | map(attribute='url') | unique -%}
+      {%- set have = github_runner_win_want | selectattr('url', 'equalto', u) | map(attribute='labels') | first | default('') -%}
+      {%- set missing = (github_runner_windows_v1_labels[u] | default([])) | difference(have.split(',') if have else []) -%}
+      {%- if have == '' -%}{%- set _ = out.append(u ~ ' (not in the record)') -%}
+      {%- elif missing | length > 0 -%}{%- set _ = out.append(u ~ ' (v2 lacks the labels ' ~ missing | join(',') ~ ')') -%}{%- endif -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: v1 is retired only where v2 covers its targets
+  ansible.builtin.assert:
+    quiet: true
+    that: github_runner_v1_uncovered | length == 0
+    fail_msg: >-
+      V1-RETIRE {{ inventory_hostname }} refused: v2 does not cover {{ github_runner_v1_uncovered | join('; ') }};
+      set the record: nova-config machine set {{ inventory_hostname }} --windows_runners '<url>=<count>:<label>+<label>,...'
+
+# A runner removed mid-job ends the job: refused while any v1 runner is busy, naming it. No waiting; run again.
+- name: GitHub's list of v1's targets
+  ansible.builtin.include_tasks: wsl-windows-github.yml
+  vars:
+    github_runner_gh_urls: "{{ github_runner_windows_v1_runners | map(attribute='url') | unique | list }}"
+    github_runner_gh_wait: {}
+
+- name: v1 is retired only while none of its runners runs a job
+  ansible.builtin.assert:
+    quiet: true
+    that:
+      - github_runner_gh_unread | length == 0
+      - github_runner_v1_busy | length == 0
+    fail_msg: >-
+      V1-RETIRE {{ inventory_hostname }} refused:
+      {{ ('busy ' ~ github_runner_v1_busy | join(',') ~ ' (a job is running; run again when it ends)') if github_runner_v1_busy | length > 0
+         else ('gh could not list the runners of ' ~ github_runner_gh_unread | join(', ')) }}
+  vars:
+    github_runner_v1_busy: >-
+      {{ github_runner_gh_lines | select('match', '^[^ ]+ [^ ]+ true$') | map('split') | map('first')
+         | intersect(github_runner_windows_v1_runners | map(attribute='name') | list) }}
+
 - name: where v1 goes aside
   ansible.builtin.set_fact:
     github_runner_v1_aside: "{{ github_runner_windows_v1_aside_root }}-{{ now(utc=true, fmt='%Y%m%d') }}"

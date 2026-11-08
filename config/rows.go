@@ -184,11 +184,10 @@ var (
 	winLabel  = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 )
 
-// winRunners is one target of windows_runners: count runners on url, scope repo or org by its shape, and the labels
-// added to the ones the role always gives. Its json is the inventory's nova_windows_runners entry.
+// winRunners is one target of windows_runners: count runners on url (a repository or an organization), and the
+// labels added to the ones the role always gives. Its json is the inventory's nova_windows_runners entry.
 type winRunners struct {
 	URL    string   `json:"url"`
-	Scope  string   `json:"scope"`
 	Count  int      `json:"count"`
 	Labels []string `json:"labels"`
 }
@@ -201,15 +200,12 @@ func parseWinRunners(raw string) ([]winRunners, error) {
 		rest, https := strings.CutPrefix(e, "https://")
 		target, labels, colon := strings.Cut(rest, ":")
 		u, n, eq := strings.Cut(target, "=")
-		w := winRunners{URL: "https://" + strings.TrimSuffix(u, "/"), Scope: "org", Labels: []string{}}
+		w := winRunners{URL: "https://" + strings.TrimSuffix(u, "/"), Labels: []string{}}
 		count, err := strconv.Atoi(n)
 		if !https || !eq || !winTarget.MatchString(w.URL) || err != nil || count < 1 || count > 99 {
 			return nil, fmt.Errorf("%q: want <url>=<count>[:<label>+<label>], the url https://github.com/<owner>[/<repo>], the count 1 to 99", e)
 		}
-		if w.Count = count; strings.Count(w.URL, "/") == 4 {
-			w.Scope = "repo"
-		}
-		if colon {
+		if w.Count = count; colon {
 			w.Labels = strings.Split(labels, "+")
 		}
 		for _, l := range w.Labels {
