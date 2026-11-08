@@ -13,6 +13,11 @@
 // to the contract. Every failure message starts with an assertion id (A1..A6),
 // then names the tool and verb, what was expected and what was seen.
 //
+// readme_test.go holds the user docs to the same binaries: every nova command a
+// README or a play's header quotes names a real verb and real flags, the help
+// commands run, and every quoted refusal is in docRefusals, run cold where it
+// needs nothing but a directory.
+//
 // The functional tier (build tag functional) adds the fault contract: faults_test.go
 // runs the rows of faults_<tool>_test.go against real failures, and lint_test.go
 // reads the source for silent discards, silent exits and no_log tasks with no

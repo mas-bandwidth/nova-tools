@@ -63,7 +63,7 @@ and use the build and review rules below.
 
 - Document the code, not the conversation. A comment states what the code does and the technical reason; delete a comment that is only history.
 - Docs describe the tool as it is, never its history: no "used to", "now" or "no longer", no version or round numbers, no status notes or to-do lists.
-- Every command, output line and refusal quoted in a doc must match what the binary prints. Change the doc in the same commit as the string.
+- Every command, output line and refusal quoted in a doc must match what the binary prints. Change the doc in the same commit as the string. `TestDocs` (`tests/contract/readme_test.go`) checks every command's verb and flags, runs the help commands, and holds each quoted refusal to its entry in `docRefusals`: a new one needs an entry, the command that reaches it cold or why it cannot.
 - This file holds contributor and internals instructions. User documentation is the root `README.md`, `docs/README.md`, `docs/SECURITY.md` and each tool's `README.md`. Harness entry points in `docs/integrations` and `llms.txt` link to that shared guide; they do not duplicate it.
 - No people's names in code, comments, docs or tests.
 
