@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"syscall"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -81,6 +82,15 @@ func tie(cmd *exec.Cmd) (func(), error) {
 		return nil, err
 	}
 	return untie, nil
+}
+
+// wait waits for cmd and returns how it ended.
+func wait(cmd *exec.Cmd) (syscall.WaitStatus, error) {
+	err := cmd.Wait()
+	if cmd.ProcessState == nil {
+		return syscall.WaitStatus{}, err
+	}
+	return cmd.ProcessState.Sys().(syscall.WaitStatus), nil
 }
 
 // forward does nothing: Windows has no signal to pass; a console's Ctrl+C
