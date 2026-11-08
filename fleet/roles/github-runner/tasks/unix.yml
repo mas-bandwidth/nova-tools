@@ -61,7 +61,31 @@
     dest: "{{ github_runner_base_dir }}/.cache/actions-runner-{{ github_runner_os }}-{{ github_runner_arch }}-{{ github_runner_version }}.tar.gz"
     checksum: "sha256:{{ github_runner_sha256[github_runner_os ~ '-' ~ github_runner_arch] }}"
     mode: "0644"
-  when: github_runner_want | length > 0 and not (ansible_check_mode and github_runner_cache is changed)
+  when: >-
+    ansible_facts['system'] != 'Darwin'
+    and github_runner_want | length > 0 and not (ansible_check_mode and github_runner_cache is changed)
+
+# macOS: the python ansible runs its modules with on a Mac has no CA bundle, so get_url ends in
+# CERTIFICATE_VERIFY_FAILED (studio, 2026-11-07); curl and shasum are on every Mac and trust the system keychain.
+# The digest is checked the same way, before and after the download, and a file that fails it is removed.
+- name: the pinned runner release, checked against its digest (macOS)
+  ansible.builtin.shell: |
+    set -eu
+    f='{{ github_runner_base_dir }}/.cache/actions-runner-{{ github_runner_os }}-{{ github_runner_arch }}-{{ github_runner_version }}.tar.gz'
+    want='{{ github_runner_sha256[github_runner_os ~ '-' ~ github_runner_arch] }}'
+    have() { [ -f "$f" ] && [ "$(shasum -a 256 "$f" | cut -d' ' -f1)" = "$want" ]; }
+    if have; then echo unchanged; exit 0; fi
+    curl -fsSL -o "$f.part" '{{ github_runner_release_url }}/v{{ github_runner_version }}/actions-runner-{{ github_runner_os }}-{{ github_runner_arch }}-{{ github_runner_version }}.tar.gz'
+    mv "$f.part" "$f"
+    chmod 0644 "$f"
+    if ! have; then rm -f "$f"; echo "digest mismatch on $f" >&2; exit 1; fi
+    echo downloaded
+  args: { executable: /bin/sh }
+  register: github_runner_fetched
+  changed_when: "'downloaded' in github_runner_fetched.stdout"
+  when: >-
+    ansible_facts['system'] == 'Darwin'
+    and github_runner_want | length > 0 and not (ansible_check_mode and github_runner_cache is changed)
 
 - name: each wanted runner
   ansible.builtin.include_tasks: unix-runner.yml

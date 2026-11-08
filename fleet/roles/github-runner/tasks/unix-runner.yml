@@ -33,7 +33,24 @@
     creates: "{{ github_runner_dir }}/config.sh"
   register: github_runner_unpacked
   when: >-
-    not github_runner_config.stat.exists
+    ansible_facts['system'] != 'Darwin'
+    and not github_runner_config.stat.exists
+    and not (ansible_check_mode and (github_runner_made is changed or not github_runner_cached.stat.exists))
+
+# macOS ships bsdtar, which the unarchive module has no handler for ("Failed to find handler", mini-m5, 2026-11-07);
+# the system tar unpacks the release as it is.
+- name: unpack the runner where config.sh is missing (macOS)
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/tar
+      - -xzf
+      - "{{ github_runner_base_dir }}/.cache/actions-runner-{{ github_runner_os }}-{{ github_runner_arch }}-{{ github_runner_version }}.tar.gz"
+      - -C
+      - "{{ github_runner_dir }}"
+    creates: "{{ github_runner_dir }}/config.sh"
+  when: >-
+    ansible_facts['system'] == 'Darwin'
+    and not github_runner_config.stat.exists
     and not (ansible_check_mode and (github_runner_made is changed or not github_runner_cached.stat.exists))
 
 # the runner's own installer of the system libraries it needs (libicu and the like); once per release on the host
