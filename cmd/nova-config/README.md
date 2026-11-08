@@ -41,7 +41,7 @@ nova-config schema | PGOPTIONS="-c client_min_messages=warning" psql -q "$NOVA_P
 
 Verbs: `list`, `show`, `add`, `set`,
 `remove`. A write takes `--actor <name>` (default `NOVA_ACTOR`, else login name); `--reason <line>` and `--dry-run` are
-optional (`--dry-run` prints `CONFIG DRY-RUN ... wrote=nothing` and the changes). Names use lower-case letters, digits and dashes.
+optional (`--dry-run` runs the write and rolls it back, so it refuses what the write would refuse; otherwise it prints `CONFIG DRY-RUN ... wrote=nothing` and the changes). Names use lower-case letters, digits and dashes.
 
 | Field | Meaning |
 |---|---|
@@ -197,11 +197,12 @@ connection failure. Missing or invalid flags and the store DSN are checked toget
 | `service add: service x fetches on a clock (git pull with --loop); fetch on an event (a push) or once per job, never on a clock ...` (2; `set` 1) | Drop the loop flag and `--every`; run the fetch from the job or the push hook that needs it. |
 | `friend set: friend <friend> has --width 0; ...` (1) | Give `--width 1` or more. |
 | `friend remove: friend <friend> is still named by config.sprint; ...` (1) | Change the row that names it first. |
-| `friend set: friend <friend> was changed or removed by another write since it was read; nothing written; run: nova-config friend show <friend>, then again` (1; also `remove`, any kind) | Read the row again, then repeat the write if it still applies. |
+| `friend set: friend <friend> was changed or removed by another write since it was read; nothing written; run: nova-config friend show <friend>, then repeat the set` (1; also `remove`, any kind) | Read the row again, then repeat the write if it still applies. |
 | `machine list: NOVA_PG_DSN carries a password; ...` (2) | Move the password to `NOVA_PG_PASSWORD`. |
 | `inventory: takes --list or --host <name>, not both; ...` (2) | Give one. |
-| `inventory: no machine row named nope; ...` or `NOVA_MACHINE nope names no machine row` (1) | Check the name. |
+| `inventory: no machine row named nope; ...` or `NOVA_MACHINE nope names no machine row; the machines are ...` (1) | Check the name. |
 | `inventory: service x has corrupt argv (...); run: nova-config service set x --argv <value>` (1) | Fix the corrupt field. |
+| `friend set: friend <friend>: the store refused the row: ...; run: psql "$NOVA_PG_DSN" -c '\d config.friends'` (1) | Read the store's constraint, then give a value it takes. |
 | Connection, login or missing-table error (2) | Follow the `psql`, `createdb` or `nova-config schema` command printed on the line. |
 
 ## Guarantees and limits
