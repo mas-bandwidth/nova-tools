@@ -45,7 +45,7 @@ script there that execs nova-config inventory (found on PATH; --inventory names
 your own file or script instead) and runs ansible-playbook -i <inventory> <play>.yml
 with the arguments after --. A play that takes an argument (join <machine>) names
 the variable it sets in its help. Exit: 0 done; 1 the play failed (its ansible-playbook
-exit printed); 2 could not run. cmd/nova-fleet/README.md has each play's variables.
+exit printed) or matched no host; 2 could not run. cmd/nova-fleet/README.md has each play's variables.
 `
 
 var verbHelp = map[string]string{
@@ -395,6 +395,26 @@ func installArgs(args []string) ([]string, error) {
 	return append(out, tail...), nil
 }
 
+// unmatched reads ansible-playbook --list-hosts: the groups of the plays that would run on no
+// host, when every play that targets machines matched none; nil when one matched or there is
+// none. A play on localhost, or on a negated pattern ("!all": no machine named), is not counted.
+func unmatched(list string) (groups []string) {
+	pattern := ""
+	for _, line := range strings.Split(list, "\n") {
+		if p, ok := strings.CutPrefix(strings.TrimSpace(line), "play #"); ok {
+			_, p, _ = strings.Cut(p, " (")
+			pattern, _, _ = strings.Cut(p, "): ")
+		} else if n, ok := strings.CutPrefix(strings.TrimSpace(line), "hosts ("); ok && pattern != "localhost" && !strings.HasPrefix(pattern, "!") {
+			if n != "0):" {
+				return nil
+			}
+			groups = append(groups, strings.FieldsFunc(pattern, func(r rune) bool { return r == ':' || r == ',' })...)
+		}
+	}
+	slices.Sort(groups)
+	return slices.Compact(groups)
+}
+
 func runPlay(play string, args []string, stdout, stderr io.Writer, refuse func(string, string, ...any) int) int {
 	var inventory string
 	var pass []string
@@ -477,9 +497,23 @@ func runPlay(play string, args []string, stdout, stderr io.Writer, refuse func(s
 	}
 	defer os.RemoveAll(dir)
 	ansible, _ := lookPath("ansible-playbook")
-	fmt.Fprintf(stderr, "nova-fleet: ansible-playbook=%s inventory=%s play=%s\n", ansible, inventory, filepath.Join(dir, play+".yml"))
 	argv := append([]string{"-i", inventory, filepath.Join(dir, play+".yml")}, pass...)
 	env := append(os.Environ(), "ANSIBLE_INVENTORY_UNPARSED_FAILED=true")
+	// ansible-playbook exits 0 on a play that matched no host; ask it first. A listing that fails
+	// is left to the run itself, which reports the same failure (a -l that matches nothing).
+	if !slices.ContainsFunc(pass, func(a string) bool { return a == "--syntax-check" || strings.HasPrefix(a, "--list-") }) {
+		if list, _, c := outCmd(ansible, append(argv, "--list-hosts"), env); c == 0 {
+			if groups := unmatched(list); groups != nil {
+				fix := "machine set <machine> --roles <its roles>," + groups[0] + " --actor <you>"
+				if groups[0] == "all" {
+					fix = "machine add <machine> --user <login> --roles bench --actor <you>"
+				}
+				fmt.Fprintf(stderr, "nova-fleet %s: no host is in %s (no machine row has that role, or -l names none in it), so the play would do nothing; run: nova-config %s, then nova-fleet %s again\n", play, strings.Join(groups, ", "), fix, play)
+				return 1
+			}
+		}
+	}
+	fmt.Fprintf(stderr, "nova-fleet: ansible-playbook=%s inventory=%s play=%s\n", ansible, inventory, filepath.Join(dir, play+".yml"))
 	code, err := runCmd(ansible, argv, env)
 	if err != nil {
 		fmt.Fprintf(stderr, "nova-fleet %s: run %s: %v; run: %s --version\n", play, ansible, err, ansible)

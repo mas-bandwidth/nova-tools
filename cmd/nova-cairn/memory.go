@@ -186,10 +186,15 @@ func (r *roots) load(root string) (files []string, texts map[string]string, size
 }
 
 // walk lists what memory reads under root, as sorted slash paths: the markdown notes, and the
-// entry files of any store in the tree (a store's sessions/<session>.md is not a note). It skips .git, excluded paths and symlinks.
+// entry files of any store in the tree (a store's sessions/<session>.md is not a note). It skips .git and
+// excluded paths. A root, note or entry that is a symlink is read through it; a linked directory below the root is not walked.
 func (r *roots) walk(root string) (notes, entries []string, err error) {
-	err = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
-		rel, _ := filepath.Rel(root, p)
+	dir, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return nil, nil, err
+	}
+	err = filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		rel, _ := filepath.Rel(dir, p)
 		rel = filepath.ToSlash(rel)
 		if err != nil {
 			if rel == "." {
@@ -202,7 +207,7 @@ func (r *roots) walk(root string) (notes, entries []string, err error) {
 			if d.IsDir() {
 				return filepath.SkipDir
 			}
-		case d.IsDir() || !d.Type().IsRegular():
+		case d.IsDir() || !(d.Type().IsRegular() || d.Type()&fs.ModeSymlink != 0):
 		case strings.HasSuffix(rel, ".md"):
 			if !storeRecord(root, rel) {
 				notes = append(notes, rel)
