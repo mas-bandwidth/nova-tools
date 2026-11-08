@@ -393,15 +393,19 @@ func TestKindsAreTheLibraryColumns(t *testing.T) {
 func TestSQLNamesItsColumns(t *testing.T) {
 	t.Parallel()
 	row := Row{Name: "m1", F: map[string]string{"user": "u", "address": "", "public": "", "os": "linux", "arch": "", "cores": "", "runners": "2", "roles": "bench", "windows_runners": "", "note": ""}}
-	q, args := writeSQL(kinds["machine"], "add", "m1", row)
+	q, args := writeSQL(kinds["machine"], "add", "m1", Row{}, row)
 	assert.Equal(t, `INSERT INTO config.machines (name, "address", "public", "user", "os", "arch", "cores", "roles", "runners", "windows_runners", "note") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`, q)
 	assert.Equal(t, []any{"m1", "", nil, "u", "linux", "", nil, "bench", int64(2), "", ""}, args)
-	q, args = writeSQL(kinds["machine"], "set", "m1", row)
-	assert.True(t, strings.HasPrefix(q, `UPDATE config.machines SET "address" = $2, `) && strings.HasSuffix(q, `, updated_at = now() WHERE name = $1`), q)
-	assert.Len(t, args, 11)
-	q, args = writeSQL(kinds["machine"], "remove", "m1", Row{})
-	assert.Equal(t, "DELETE FROM config.machines WHERE name = $1", q)
-	assert.Equal(t, []any{"m1"}, args)
+	old := Row{Name: "m1", F: map[string]string{"user": "u", "address": "", "public": "", "os": "", "arch": "", "cores": "4", "runners": "2", "roles": "bench", "windows_runners": "", "note": ""}}
+	same := ` AND jsonb_build_object('address', coalesce("address"::text, ''), 'public', coalesce("public"::text, ''), 'user', coalesce("user"::text, ''), 'os', coalesce("os"::text, ''), 'arch', coalesce("arch"::text, ''), 'cores', coalesce("cores"::text, ''), 'roles', coalesce("roles"::text, ''), 'runners', coalesce("runners"::text, ''), 'windows_runners', coalesce("windows_runners"::text, ''), 'note', coalesce("note"::text, '')) = `
+	oldJSON := `{"address":"","arch":"","cores":"4","note":"","os":"","public":"","roles":"bench","runners":"2","user":"u","windows_runners":""}`
+	q, args = writeSQL(kinds["machine"], "set", "m1", old, row)
+	assert.True(t, strings.HasPrefix(q, `UPDATE config.machines SET "address" = $2, `) && strings.HasSuffix(q, `, updated_at = now() WHERE name = $1`+same+`$12::jsonb`), q)
+	assert.Len(t, args, 12)
+	assert.Equal(t, oldJSON, args[11], "a set matches the row only as it was read")
+	q, args = writeSQL(kinds["machine"], "remove", "m1", old, Row{})
+	assert.Equal(t, "DELETE FROM config.machines WHERE name = $1"+same+"$2::jsonb", q)
+	assert.Equal(t, []any{"m1", oldJSON}, args, "a remove matches the row only as it was read")
 }
 
 // TestSchemaIsAdditive: schema.sql never drops a column, a table or a row.

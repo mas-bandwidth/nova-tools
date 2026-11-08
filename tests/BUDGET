@@ -1,6 +1,6 @@
 cmd/nova-bus  3025
 cmd/nova-cairn  2277
-cmd/nova-config  1972
+cmd/nova-config  1980
 cmd/nova-reserve  1190
 cmd/nova-sandbox  2084
 cmd/nova-secrets  1795

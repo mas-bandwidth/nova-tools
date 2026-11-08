@@ -197,6 +197,7 @@ connection failure. Missing or invalid flags and the store DSN are checked toget
 | `service add: service x fetches on a clock (git pull with --loop); fetch on an event (a push) or once per job, never on a clock ...` (2; `set` 1) | Drop the loop flag and `--every`; run the fetch from the job or the push hook that needs it. |
 | `friend set: friend <friend> has --width 0; ...` (1) | Give `--width 1` or more. |
 | `friend remove: friend <friend> is still named by config.sprint; ...` (1) | Change the row that names it first. |
+| `friend set: friend <friend> was changed or removed by another write since it was read; nothing written; run: nova-config friend show <friend>, then again` (1; also `remove`, any kind) | Read the row again, then repeat the write if it still applies. |
 | `machine list: NOVA_PG_DSN carries a password; ...` (2) | Move the password to `NOVA_PG_PASSWORD`. |
 | `inventory: takes --list or --host <name>, not both; ...` (2) | Give one. |
 | `inventory: no machine row named nope; ...` or `NOVA_MACHINE nope names no machine row` (1) | Check the name. |
@@ -206,6 +207,7 @@ connection failure. Missing or invalid flags and the store DSN are checked toget
 ## Guarantees and limits
 
 - A row write and its history row happen in one transaction.
+- A `set` or `remove` writes only the row as it read it: one changed or removed by another write in between is refused, and nothing is written.
 - A `set` that changes nothing writes no history.
 - Every command gives up after 30 seconds.
 
