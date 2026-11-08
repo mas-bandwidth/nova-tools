@@ -20,6 +20,7 @@ func TestPlaysTargetTheirGroups(t *testing.T) {
 	want := map[string][]string{
 		"ci-rules":        {workers},
 		"github-runners":  {"runner"},
+		"runner-packages": {"runner"},
 		"health":          {workers},
 		"install":         {workers},
 		"services":        {workers},

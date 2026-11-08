@@ -103,6 +103,34 @@ jobs:
         # -count=1: these tests run redis-server, postgres and sops, which the test cache cannot see
         run: go test -count=1 -p 4 -tags functional,slow ./...
 
+  functional-macos:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, macOS, ARM64, mini-m5]
+    timeout-minutes: 30
+    steps:
+      - *clean
+      - *checkout
+      - *go
+      - name: PostgreSQL from the fleet play, never from CI
+        # mini-m5's packages come from `nova-fleet runner-packages` (fleet/README.md); this step only finds them
+        shell: bash
+        run: |
+          [ -d "$HOME/.local/bin" ] && echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          for d in /opt/homebrew/bin /usr/local/bin; do [ -d "$d" ] && echo "$d" >> "$GITHUB_PATH"; done
+          bin=$(command -v initdb 2>/dev/null || ls /opt/homebrew/opt/postgresql@*/bin/initdb /usr/local/opt/postgresql@*/bin/initdb 2>/dev/null | sort -V | tail -1 || true)
+          if [ -z "$bin" ]; then
+            echo "initdb is not installed on $(hostname -s): the functional tier needs PostgreSQL; run: nova-fleet runner-packages -- -l mini-m5" >&2
+            exit 1
+          fi
+          dirname "$bin" >> "$GITHUB_PATH"
+          "$bin" --version
+      - name: functional tests
+        env:
+          NOVA_CONTRACT_STRICT: "1" # a missing dependency fails the fault contract rows instead of skipping them
+        # -count=1: these tests run redis-server, postgres and sops, which the test cache cannot see; LANG and LC_ALL
+        # unset: the tests' initdb and pg_ctl run with LC_ALL=C, never the login's locale
+        run: env -u LANG -u LC_ALL go test -count=1 -p 4 -tags functional,slow ./...
+
   tlc:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, linux, x64]
@@ -142,7 +170,7 @@ jobs:
 
   ci-ok:
     if: always()
-    needs: [lint, unit, functional, tlc, fleet]
+    needs: [lint, unit, functional, functional-macos, tlc, fleet]
     runs-on: [self-hosted, linux, x64]
     timeout-minutes: 5
     steps:
