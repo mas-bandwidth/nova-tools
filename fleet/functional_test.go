@@ -141,27 +141,60 @@ func TestInstallFromALocalBuild(t *testing.T) {
 		t.Errorf("a second run under --check: exit %d, want changed=0 and leftovers=0:\n%s", code, out)
 	}
 
-	// Leftovers of an older install beside the new binaries: a v1 binary the release does
-	// not list, a user unit no service record names (the inventory has no nova_services, so
-	// none), a system unit; the install still happens, then the host is refused, naming them.
+	// Leftovers of an older install beside the new binaries. svc is the run with the
+	// inventory's nova_services (none here), which the unit check needs.
+	svc := append(append([]string{}, args...), "-e", `{"nova_services":[]}`)
 	unitDir := filepath.Join(home, ".config", "systemd", "user")
 	if runtime.GOOS == "darwin" {
 		unitDir = filepath.Join(home, "Library", "LaunchAgents")
 	}
-	if err := os.MkdirAll(unitDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	for _, f := range []string{filepath.Join(binDir, "nova-card"), filepath.Join(binDir, "mirror-refresh"), filepath.Join(binDir, "nova-fleet.bak"),
-		filepath.Join(unitDir, "nova-loop-sweep.timer"), filepath.Join(unitDir, "nova-service-bus-hook.service"), filepath.Join(unitDir, "com.nova.loop.sweep.plist"),
-		filepath.Join(systemDir, "novadog-studio.service"), filepath.Join(systemDir, "other.service")} {
-		if err := os.WriteFile(f, []byte("x\n"), 0o644); err != nil {
+	manifests := filepath.Join(home, ".local", "share", "nova", "installed")
+	for _, d := range []string{unitDir, manifests} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
 			t.Fatal(err)
 		}
+	}
+	plant := func(files ...string) {
+		t.Helper()
+		for _, f := range files {
+			if err := os.WriteFile(f, []byte("x\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	// What belongs: another release's binary its manifest lists, the fleet's own roles'
+	// binary and units, a friend's nova-bus hook; beside them one v1 binary.
+	allowed := []string{filepath.Join(binDir, "nova-worker"), filepath.Join(binDir, "nova-secrets-refresh"),
+		filepath.Join(unitDir, "nova-secrets-refresh.timer"), filepath.Join(unitDir, "com.nova.secrets-refresh.plist"),
+		filepath.Join(unitDir, "nova-bus.hook.x.plist"), filepath.Join(unitDir, "nova-bus-hook-x.service"),
+		filepath.Join(systemDir, "nova-disk-report.timer"), filepath.Join(systemDir, "nova-pg-dump.service"), filepath.Join(systemDir, "nova-redis.service")}
+	plant(allowed...)
+	plant(filepath.Join(binDir, "nova-card"))
+	if err := os.WriteFile(filepath.Join(manifests, "mas-bandwidth_nova-sprint.names"), []byte("nova-sprint\nnova-worker\n"), 0o644); err != nil {
+		t.Fatal(err)
 	}
 	if err := os.Remove(filepath.Join(binDir, "nova-fleet")); err != nil {
 		t.Fatal(err)
 	}
+	code, out, _ = runFleet(t, bin, svc...)
+	if code == 0 || !strings.Contains(out, "INSTALL localhost leftovers=1: nova-card;") {
+		t.Errorf("one v1 binary beside what belongs: exit %d, want leftovers=1: nova-card:\n%s", code, out)
+	}
+	if got, err := os.ReadFile(filepath.Join(binDir, "nova-fleet")); err != nil || !bytes.Equal(got, b) {
+		t.Errorf("the install did not happen before the leftover refusal: %v", err)
+	}
+	// Without nova_services the units are not read, and the line says so.
+	plant(filepath.Join(unitDir, "nova-loop-sweep.timer"))
 	code, out, _ = runFleet(t, bin, args...)
+	if code == 0 || !strings.Contains(out, "INSTALL localhost leftovers=1: nova-card; NOTE: the inventory carries no nova_services") {
+		t.Errorf("no nova_services: exit %d, want the binary alone and the NOTE:\n%s", code, out)
+	}
+
+	// v1 binaries and units no role or record names; the install still happens, then the host is refused, naming them.
+	plant(filepath.Join(binDir, "mirror-refresh"), filepath.Join(binDir, "nova-fleet.bak"),
+		filepath.Join(unitDir, "nova-service-bus-hook.service"), filepath.Join(unitDir, "com.nova.loop.sweep.plist"),
+		filepath.Join(systemDir, "novadog-studio.service"), filepath.Join(systemDir, "other.service"))
+	code, out, _ = runFleet(t, bin, svc...)
 	want := "INSTALL localhost leftovers=6: com.nova.loop.sweep.plist, mirror-refresh, nova-card, nova-fleet.bak, nova-loop-sweep.timer, nova-service-bus-hook.service"
 	if runtime.GOOS == "linux" {
 		want = "INSTALL localhost leftovers=7: com.nova.loop.sweep.plist, mirror-refresh, nova-card, nova-fleet.bak, nova-loop-sweep.timer, nova-service-bus-hook.service, novadog-studio.service"
@@ -169,21 +202,24 @@ func TestInstallFromALocalBuild(t *testing.T) {
 	if code == 0 || !strings.Contains(out, want) || !strings.Contains(out, "remove them (nova-fleet services for units of a record; by hand for the rest), then install again") {
 		t.Errorf("leftovers beside the install: exit %d, want the refusal %q with its fix:\n%s", code, want, out)
 	}
-	if got, err := os.ReadFile(filepath.Join(binDir, "nova-fleet")); err != nil || !bytes.Equal(got, b) {
-		t.Errorf("the install did not happen before the leftover refusal: %v", err)
-	}
 	for _, f := range []string{"nova-card", "mirror-refresh", "nova-fleet.bak"} {
 		if _, err := os.Stat(filepath.Join(binDir, f)); err != nil {
 			t.Errorf("the role removed %s: it reports and refuses only", f)
 		}
 	}
 	// With nova_tools_keep naming them, the binaries are allowed; the units are not.
-	code, out, _ = runFleet(t, bin, append(args, "-e", `{"nova_tools_keep":["nova-card","mirror-refresh"]}`)...)
+	code, out, _ = runFleet(t, bin, append(svc, "-e", `{"nova_tools_keep":["nova-card","mirror-refresh"]}`)...)
 	if code == 0 || !strings.Contains(out, "INSTALL localhost leftovers=4: com.nova.loop.sweep.plist, nova-fleet.bak, nova-loop-sweep.timer, nova-service-bus-hook.service") {
 		t.Errorf("nova_tools_keep: exit %d, want the kept binaries out of the line and the units still in it:\n%s", code, out)
 	}
-	for _, f := range []string{filepath.Join(binDir, "nova-card"), filepath.Join(binDir, "mirror-refresh"), filepath.Join(binDir, "nova-fleet.bak"), filepath.Join(unitDir, "nova-loop-sweep.timer"),
-		filepath.Join(unitDir, "nova-service-bus-hook.service"), filepath.Join(unitDir, "com.nova.loop.sweep.plist"), filepath.Join(systemDir, "novadog-studio.service")} {
+	// Another repository's release records its names and prints no INSTALL line.
+	code, out, _ = runFleet(t, bin, append(svc, "-e", "nova_tools_repo=mas-bandwidth/other")...)
+	if got, err := os.ReadFile(filepath.Join(manifests, "mas-bandwidth_other.names")); code != 0 || err != nil || string(got) != "nova-fleet\n" || strings.Contains(out, "INSTALL localhost") {
+		t.Errorf("a --repo install: exit %d, manifest %q (%v), want nova-fleet and no INSTALL line:\n%s", code, got, err, out)
+	}
+	for _, f := range append(allowed, filepath.Join(binDir, "nova-card"), filepath.Join(binDir, "mirror-refresh"), filepath.Join(binDir, "nova-fleet.bak"),
+		filepath.Join(unitDir, "nova-loop-sweep.timer"), filepath.Join(unitDir, "nova-service-bus-hook.service"), filepath.Join(unitDir, "com.nova.loop.sweep.plist"),
+		filepath.Join(systemDir, "novadog-studio.service")) {
 		if err := os.Remove(f); err != nil {
 			t.Fatal(err)
 		}

@@ -14,3 +14,10 @@ nova_secrets_refresh_log: "{{ nova_home }}/.local/state/nova/secrets-refresh.log
 # nova_seal_store (the control node's clone), this play pushes them. Set (pull
 # mode): the store's git URL, cloned where there is none and pulled on a timer.
 nova_secrets_repo: ""
+
+# What this role writes where an install's leftover check reads (nova-tools-install,
+# fleet/README.md "install", Leftovers): bin is the bin directory, user the login's unit
+# directory. install_play_test.go holds it to the names the tasks write.
+nova_secrets_refresh_owns:
+  bin: [nova-secrets-refresh]
+  user: [nova-secrets-refresh.service, nova-secrets-refresh.timer, com.nova.secrets-refresh.plist]

@@ -31,3 +31,9 @@ nova_health_user_memory_max_pct: 85
 nova_health_disk_report: true
 nova_health_disk_warn_pct: 80
 nova_health_disk_on_calendar: "*-*-* 00/6:00:00"
+
+# What this role writes where an install's leftover check reads (nova-tools-install,
+# fleet/README.md "install", Leftovers): system is /etc/systemd/system.
+# install_play_test.go holds it to the names the tasks write.
+nova_health_owns:
+  system: [nova-disk-report.service, nova-disk-report.timer]

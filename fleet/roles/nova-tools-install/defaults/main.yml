@@ -65,8 +65,13 @@ nova_tools_remove:
 # ci-hold-broker the release's SHA256SUMS does not list for the platform, in the
 # login's unit directory (~/.config/systemd/user, ~/Library/LaunchAgents) a nova-* or
 # com.nova.* unit no service record of the machine names, and in the system unit
-# directory a nova* unit no record names. Another product's binaries that belong in
-# the bin directory (installed with --repo) are named in nova_tools_keep. Unix
-# machines, nova-tools' own release only; nothing is removed by the role.
+# directory a nova* unit no record names. Allowed beside those: what another
+# repository's release (--repo) recorded in nova_tools_manifest_dir, what the fleet's
+# own roles write (their nova_<role>_owns), a friend's nova-bus hook unit, and the
+# binaries named in nova_tools_keep (one a machine keeps by hand, a git credential
+# helper, say). Unix machines, nova-tools' own release only; nothing is removed.
 nova_tools_keep: []
 nova_tools_system_unit_dir: /etc/systemd/system
+# Where another repository's release (--repo) records the names it installs, one
+# <owner>_<name>.names per repository, for the leftover check to allow.
+nova_tools_manifest_dir: "{{ nova_home }}/.local/share/nova/installed"
