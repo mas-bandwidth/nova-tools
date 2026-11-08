@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -705,4 +706,52 @@ print("listening", l.getsockname()[1])`
 p = os.path.join(os.getcwd(), "srv")
 l = s.socket(s.AF_UNIX, s.SOCK_STREAM); l.bind(p); l.listen(1); print("unix listening")`)
 	assert.Equal(t, 0, code, "--net-deny --unix without --net-allow still serves a unix socket: "+out)
+}
+
+// TestFunctionalProbeReportsAStepItCannotSetUpAsUntested runs the probe under a
+// TMPDIR so deep that its unix socket path is past the kernel's limit, so the probe's
+// own listener cannot be made. The unix steps are reported untested, never dropped.
+func TestFunctionalProbeReportsAStepItCannotSetUpAsUntested(t *testing.T) {
+	t.Parallel()
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	deep := filepath.Join(root, strings.Repeat("d", 110))
+	require.NoError(t, os.Mkdir(deep, 0o700))
+	_, out, _ := sandbox(t, deep, "probe")
+	assert.Contains(t, out, "PROBE STEP name=unix_deny expect=deny got=untested note=")
+	if runtime.GOOS == "linux" {
+		assert.Contains(t, out, "PROBE STEP name=unix_allow expect=allow got=untested note=")
+	}
+}
+
+// TestFunctionalEverySignalIsForwarded sends the waiter SIGINT, then SIGTERM. The
+// command traps both and records each, so a signal the waiter swallows shows as a
+// missing line and a command that never exits 3.
+func TestFunctionalEverySignalIsForwarded(t *testing.T) {
+	t.Parallel()
+	job, _ := scratch(t)
+	got, ready := filepath.Join(job, "got"), filepath.Join(job, "ready")
+	script := "trap 'echo INT >> " + got + "' INT; trap 'echo TERM >> " + got + "; exit 3' TERM; echo > " + ready +
+		"; i=0; while [ $i -lt 100 ]; do sleep 0.1; i=$((i+1)); done"
+	cmd := exec.Command(bin(t), "--write", job, "--", "/bin/sh", "-c", script)
+	cmd.Env, cmd.Dir = []string{"PATH=/usr/bin:/bin", "HOME=" + job}, job
+	require.NoError(t, cmd.Start())
+	waitFor := func(path, want string) {
+		for i := 0; i < 100; i++ {
+			if b, err := os.ReadFile(path); err == nil && strings.Contains(string(b), want) {
+				return
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+	}
+	waitFor(ready, "")
+	require.NoError(t, cmd.Process.Signal(os.Interrupt))
+	waitFor(got, "INT")
+	require.NoError(t, cmd.Process.Signal(syscall.SIGTERM))
+	err := cmd.Wait()
+	b, _ := os.ReadFile(got)
+	assert.Equal(t, "INT\nTERM\n", string(b))
+	var ee *exec.ExitError
+	require.ErrorAs(t, err, &ee)
+	assert.Equal(t, 3, ee.ExitCode())
 }

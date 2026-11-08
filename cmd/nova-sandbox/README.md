@@ -153,6 +153,7 @@ If the command is killed by signal N, stderr gains
 | `cwd` | 125 | The working directory is outside the system roots and every grant. cd into a granted directory, or add `--read` of the working directory. Exit 2 is the tool's usage code, so this refusal is not 2. |
 | `bad_net` | 2 | Bad loopback `host:port`, or `--net-allow` without `--net-deny`. |
 | `bad_gpu` | 2 | `--gpu` on Linux. Use `--write /dev/dri`. |
+| `bad_unix` | 2 | `--unix` on macOS. A socket inside a `--write` grant is reachable without it; drop `--unix`. |
 | `bad_env` | 2 | `--env` is not a name of letters, digits and underscores, or the name is unset on a run. Set it in the environment; the value is never an argument. |
 | `not_found` | 127 | Command is on no PATH entry. Fix PATH or the path. |
 | `not_executable` | 126 | Not an executable file. Fix its permissions. |
@@ -299,5 +300,7 @@ listeners and performs a DNS lookup.
 Where TCP restrictions are unavailable, `net_deny` reports `got=wall_refused`
 with a note and does not fail the probe. Read the step results as well as the
 exit code. A failed DNS or Fast Open control makes the corresponding denial
-check `untested`, with an explanation. These checks cover their named
+check `untested`, with an explanation. So does a Unix socket or UDP listener the
+probe cannot set up for itself, such as a socket path too long under a deep
+`TMPDIR`. These checks cover their named
 operations, not every possible use.
