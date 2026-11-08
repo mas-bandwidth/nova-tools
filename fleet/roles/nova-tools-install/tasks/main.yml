@@ -364,8 +364,9 @@
                         else '^com[.]nova[.]service[.](' ~ nova_tools_records ~ ')[.]plist$'}] if nova_services is defined else []) }}
 
     # Each name found and allowed by none of the above is sorted by what can retire it.
-    # A binary fleet/retired-tools.txt retires (v1, retired or rowan-tools): nova-fleet
-    # install retires it (nova_tools_remove). A unit fleet/retired-units.txt names:
+    # A binary fleet/retired-tools.txt retires (v1, retired or rowan-tools), or a backup
+    # of one (its name before .bak, .old or .before is retired: winlock.bak-4slots):
+    # nova-fleet install retires it (nova_tools_remove). A unit fleet/retired-units.txt names:
     # nova-fleet install retires it (nova_tools_remove_units). A unit of the services
     # play's shapes: nova-fleet services retires it (nova_retire_units). Any other unit:
     # no play retires it, named on its own. Any other binary is a tool the machine uses
@@ -383,7 +384,7 @@
           {%- elif n is match(nova_tools_unit_shape) -%}
           {%- set _ = r.unit.append(n) -%}{%- set _ = r.unit_names.append(n | regex_replace(nova_tools_unit_shape, '\\1\\2')) -%}
           {%- else -%}{%- set _ = r.noplay.append(n) -%}{%- endif -%}
-          {%- elif n in nova_tools_own_retired -%}{%- set _ = r.bin.append(n) -%}
+          {%- elif n in nova_tools_own_retired or (n | regex_replace('[.](bak|old|before).*$', '')) in nova_tools_own_retired -%}{%- set _ = r.bin.append(n) -%}
           {%- else -%}{%- set _ = r.unrecorded.append(n) -%}
           {%- endif -%}
           {%- endfor -%}

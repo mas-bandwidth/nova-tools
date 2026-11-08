@@ -312,7 +312,8 @@ directory takes sudo); nothing is deleted, and nothing moves unless `nova_tools_
 (`git config --global --unset-all`, matched by its path alone; other helpers stay), and the INSTALL line says so.
 `nova-fleet services -- -l <host> -e '{"nova_retire_units":[...]}'` retires a unit of the services play's shapes
 (`nova-service-*`, `nova-loop-*`, `com.nova.service.*`, `com.nova.loop.*`); anything no play retires is named on its own.
-Only a binary in `retired-tools.txt` (every v1 tool nova-tools and rowan-tools shipped) or a unit in
+Only a binary in `retired-tools.txt` (every v1 tool nova-tools and rowan-tools shipped), a backup of one (its name
+before `.bak`, `.old` or `.before` is retired: `winlock.bak-4slots`), or a unit in
 `retired-units.txt` refuses a host. Any other binary nothing accounts for (a tool the machine uses that no release ships:
 redis-server, go, gh, ...) is a `WARNING unrecorded=<n>` naming it, never a refusal. The check itself removes nothing. Unix machines, nova-tools' own
 release only (a `--repo` install prints no line); `--check` prints the line too.

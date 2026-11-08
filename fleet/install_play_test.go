@@ -172,7 +172,7 @@ func TestInstallRoleLeftoversAreTheUnlistedFiles(t *testing.T) {
 	require.True(t, ok)
 	expr := asText(set["nova_tools_sorted"])
 	for _, want := range []string{"nova_tools_found.results | default([])", "not f.isdir", "is not match(d.item.ok)", "f.path | basename",
-		"{%- elif n in nova_tools_own_retired -%}{%- set _ = r.bin.append(n) -%} {%- else -%}{%- set _ = r.unrecorded.append(n) -%}",
+		"{%- elif n in nova_tools_own_retired or (n | regex_replace('[.](bak|old|before).*$', '')) in nova_tools_own_retired -%}{%- set _ = r.bin.append(n) -%} {%- else -%}{%- set _ = r.unrecorded.append(n) -%}",
 		"n is match(nova_tools_retired_unit_re)", "r.retired_units.append(n)",
 		"n is match(nova_tools_unit_shape)", "r.noplay.append(n)"} {
 		assert.Contains(t, expr, want)
@@ -292,6 +292,15 @@ func TestInstallRoleRetiresV1UnitsAndNames(t *testing.T) {
 		"friend-queue", "emma-wait", "johnny-wait", "zhi-turn", "nca-loop.sh", "scratch-clone", "install-github-read-ssh", "landred", "bats",
 		"nova-card-push", "mirror-refresh", "nova-push-credential", "ci-hold-wait", "stage-schema"} {
 		assert.Regexp(t, regexp.MustCompile(`(?m)^`+regexp.QuoteMeta(n)+"\t[^\t]+\tretired"), string(b), n)
+	}
+	// A backup of a retired name is retired: its name before .bak, .old or .before (the
+	// role's regex_replace, the same in Go's regexp) is a retired row; a backup of a name
+	// not retired is not.
+	backup := regexp.MustCompile(`[.](bak|old|before).*$`)
+	for name, retired := range map[string]bool{"winlock.bak-4slots": true, "bench-hygiene.sh.before-fleet-20260919": true, "scratch-clone.bak": true,
+		"tlacheck.old-2026-10-19": false, "sbcl.before-fleet-lisp-20260919": false} {
+		stem := backup.ReplaceAllString(name, "")
+		assert.Equal(t, retired, regexp.MustCompile(`(?m)^`+regexp.QuoteMeta(stem)+"\t[^\t]+\tretired").Match(b), "%s (stem %s)", name, stem)
 	}
 	u, err := os.ReadFile("retired-units.txt")
 	require.NoError(t, err)
