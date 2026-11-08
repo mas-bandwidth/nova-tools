@@ -6,7 +6,7 @@
 # key is involved. Each runner is <host>-win-<slug>-<i> in C:\actions-runner\<slug>-<i>, a Windows service run as
 # NETWORK SERVICE (config.cmd --runasservice), registered with a token from token.yml on its stdin. An existing
 # registered runner is left alone. --check reads, asks for the tokens it would need, and prints the plan.
-# With -e '{"nova_windows_retire_v1": true}' it then retires v1's Windows side (wsl-windows-retire-v1.yml).
+# With -e '{"nova_windows_retire_v1": {...}}' (the run's v1 list) it then retires v1's Windows side (wsl-windows-retire-v1.yml).
 
 - name: is this a WSL machine with interop
   ansible.builtin.stat: { path: "{{ github_runner_wsl_interop }}" }
@@ -177,4 +177,4 @@
 
 - name: retire v1's Windows side (opt-in)
   ansible.builtin.include_tasks: wsl-windows-retire-v1.yml
-  when: nova_windows_retire_v1 | bool
+  when: nova_windows_retire_v1 | length > 0

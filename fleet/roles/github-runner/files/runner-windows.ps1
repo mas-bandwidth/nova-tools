@@ -16,13 +16,14 @@
 #             into <dir>\retired-<yyyymmdd>\ and its service removed: REPAIR <dir>
 #   ensure    -Dir                                    its service starts at boot and is running: SERVICE <dir> ok|started,
 #             or NO-SERVICE <dir> (the role counts it as not registered, and the next run repairs it)
-#   retire    -Dir -Aside                             stdin carries ONE removal token: config.cmd remove (GitHub and the
-#             service), the service gone, the dir moved under -Aside: RETIRED <dir> -> <where>
-#   aside     -Path -Aside                            each item -Path names (a wildcard is allowed) moved under -Aside:
-#             MOVED <path> -> <where>, or ABSENT <path>
+#   stop      -Dir                                    the runner's service stopped, so it takes no new job: STOPPED <dir>
+#   retire    -Dir                                    stdin carries ONE removal token: config.cmd remove --unattended (GitHub
+#             and the service), the service gone, the dir deleted: RETIRED <dir>
+#   delete    -Path                                   each item -Path names (a wildcard is allowed) deleted, never moved:
+#             DELETED <path>, or ABSENT <path>
 #   untask    -Task                                   the scheduled task \<name> unregistered: UNTASKED or ABSENT
 param(
-  [Parameter(Mandatory = $true)][ValidateSet('install', 'register', 'ensure', 'retire', 'aside', 'untask')][string]$Action,
+  [Parameter(Mandatory = $true)][ValidateSet('install', 'register', 'ensure', 'stop', 'retire', 'delete', 'untask')][string]$Action,
   [string]$Dir = '',
   [string]$Cache = '',
   [string]$Version = '',
@@ -32,7 +33,6 @@ param(
   [string]$Name = '',
   [string]$Labels = '',
   [string]$Path = '',
-  [string]$Aside = '',
   [string]$Task = ''
 )
 $ErrorActionPreference = 'Stop'
@@ -51,10 +51,9 @@ function Read-Token {
 function Service-Of([string]$d) {
   Get-CimInstance Win32_Service | Where-Object { $_.PathName -like "*$d\*" } | Select-Object -First 1
 }
-# Move-Aside PATH [ROOT]: PATH moved under ROOT (default -Aside), keeping its path without the drive (C:\a\b ->
+# Move-Aside PATH ROOT: PATH moved under ROOT, keeping its path without the drive (C:\a\b ->
 # <root>\a\b); never deleted.
-function Move-Aside([string]$p, [string]$root = $Aside) {
-  if (-not $root) { 'BAD-ASIDE'; exit 2 }
+function Move-Aside([string]$p, [string]$root) {
   $to = Join-Path $root ($p -replace '^[A-Za-z]:\\', '')
   if (Test-Path -LiteralPath $to) { $to = "$to.$([DateTime]::UtcNow.ToString('HHmmss'))" }
   New-Item -ItemType Directory -Force -Path (Split-Path $to) | Out-Null
@@ -149,19 +148,26 @@ switch ($Action) {
     Need-Admin
     if (-not (Test-Path -LiteralPath $Dir)) { "ABSENT $Dir"; exit 0 }
     if (Test-Path (Join-Path $Dir '.runner')) {
-      $rc = Invoke-Config @('remove')
+      $rc = Invoke-Config @('remove', '--unattended')
       if ($rc -ne 0) { "RETIRE-FAILED $Dir rc=$rc"; exit $rc }
     }
     $s = Service-Of $Dir
     if ($s) { Stop-Service -Name $s.Name -Force -ErrorAction SilentlyContinue; & sc.exe delete $s.Name | Out-Null }
     if (Service-Of $Dir) { "SERVICE-LEFT $Dir"; exit 6 }
-    "RETIRED $Dir -> $(Move-Aside $Dir)"
+    Remove-Item -LiteralPath $Dir -Recurse -Force
+    "RETIRED $Dir"
   }
-  'aside' {
+  'stop' {
+    Need-Admin
+    $s = Service-Of $Dir
+    if ($s) { Stop-Service -Name $s.Name -Force }
+    "STOPPED $Dir"
+  }
+  'delete' {
     Need-Admin
     $items = @(Get-Item -Path $Path -Force -ErrorAction SilentlyContinue)
     if ($items.Count -eq 0) { "ABSENT $Path"; exit 0 }
-    foreach ($i in $items) { "MOVED $($i.FullName) -> $(Move-Aside $i.FullName)" }
+    foreach ($i in $items) { Remove-Item -LiteralPath $i.FullName -Recurse -Force; "DELETED $($i.FullName)" }
   }
   'untask' {
     Need-Admin

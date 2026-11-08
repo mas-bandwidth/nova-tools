@@ -93,44 +93,13 @@ github_runner_windows_path:
   - 'C:\Windows\System32\WindowsPowerShell\v1.0'
   - 'C:\Windows\System32\OpenSSH'
 
-# Retiring v1's Windows side: opt-in, -e '{"nova_windows_retire_v1": true}', and refused unless every v2 Windows runner
-# the record names is registered and online. Nothing is deleted: each item is moved under <aside_root>-<yyyymmdd>\.
-nova_windows_retire_v1: false
-github_runner_windows_v1_aside_root: 'C:\nova-retired'
-# v1's runners (rowan-tools fleet/runners-windows.yml), by directory and by the name GitHub lists: removed from GitHub
-# with a removal token, service gone, moved aside. Refused while one is busy (a job running on it).
-github_runner_windows_v1_runners:
-  - { dir: 'C:\actions-runner-rocketnet\1', name: captain-rocketnet-1, url: https://github.com/mas-bandwidth/rocketnet }
-  - { dir: 'C:\actions-runner-rocketnet\2', name: captain-rocketnet-2, url: https://github.com/mas-bandwidth/rocketnet }
-  - { dir: 'C:\actions-runner-rocketnet\3', name: captain-rocketnet-3, url: https://github.com/mas-bandwidth/rocketnet }
-  - { dir: 'C:\actions-runner-rgd\1', name: captain-rgd-1, url: https://github.com/robotgamedevelopers }
-  - { dir: 'C:\actions-runner-rgd\2', name: captain-rgd-2, url: https://github.com/robotgamedevelopers }
-# The labels the workflows select v1's runners by, per target: retiring is refused unless the record names that target
-# and its v2 runners carry these (rocketnet ci.yml: rocketnet-windows; robotgamedevelopers' workflows: fleet).
-github_runner_windows_v1_labels:
-  https://github.com/mas-bandwidth/rocketnet: [rocketnet-windows]
-  https://github.com/robotgamedevelopers: [fleet]
-# v1's files, moved aside after its runners (a wildcard is allowed): the ci-hold hooks and the winlock state, the
-# installer script and its backups, the runner zip cache, then the emptied parent dirs, and the Windows tool installer.
-# Each runner's .env.bak goes with its runner directory.
-github_runner_windows_v1_items:
-  - 'C:\rowan-jobs\ci-hold'
-  - 'C:\rowan-jobs\win.lock'
-  - 'C:\rowan-jobs\win.lock.gate'
-  - 'C:\rowan-jobs\win.lock.d'
-  - 'C:\actions-runner-rocketnet\runner-windows.ps1*'
-  - 'C:\actions-runner-rocketnet\cache'
-  - 'C:\actions-runner-rocketnet'
-  - 'C:\actions-runner-rgd\runner-windows.ps1*'
-  - 'C:\actions-runner-rgd\cache'
-  - 'C:\actions-runner-rgd'
-  - 'C:\fleet-windows-tools'
-# v1's scheduled tasks, unregistered by name (under \): the duplicate WSL keepalive. "WSL2 keepalive (Ubuntu-24.04)"
-# stays: it keeps WSL, and so this channel, up at boot.
-github_runner_windows_v1_tasks: [nova-wsl-keepalive]
-# What retiring leaves, and why: printed as "kept:" lines.
-github_runner_windows_v1_kept:
-  - 'C:\tools (CI may use goose, lobster, dxc, ccache)'
-  - 'firewall rules fleet-rocketnet-lan-proof-udp-40000 and "rocketnet load_split (rowan, 2026-10-22)" (not v1 runner state; their owner decides)'
-  - 'job-scratch dirs under C:\ (C:\rowan-jobs\* and the rest: a scratch sweep, not this play)'
-  - '\WSL2 keepalive (Ubuntu-24.04) (keeps WSL up at boot)'
+# Retiring v1's Windows side (tasks/wsl-windows-retire-v1.yml): opt-in, the run's own list of what v1 left on that
+# machine, given only as JSON extra vars, so the role ships no machine's names or paths. Empty retires nothing.
+#   runners: [{dir, name, url}]  v1's runners: stopped, checked for a job, removed from GitHub and deleted
+#   labels:  {url: [labels]}     what each v1 target's workflows select; v2's runners there must carry them
+#   delete:  [path]              files and directories deleted after the runners (a wildcard is allowed)
+#   tasks:   [name]              scheduled tasks under \ unregistered
+#   kept:    [line]              what stays and why, printed as kept: lines
+# Refused unless every v2 Windows runner the record names is whole and online, every v1 target is covered, and no v1
+# runner is busy. Nothing of v1 is moved aside: it is deleted.
+nova_windows_retire_v1: {}

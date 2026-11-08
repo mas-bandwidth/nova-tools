@@ -39,8 +39,14 @@ case "$*" in
 	case $p in */*) f=$d/gh-repos-$(printf '%s' "$p" | tr / -) ;; *) f=$d/gh-orgs-$p ;; esac
 	grep -q "^$name " "$f" 2>/dev/null || printf '%s online false\n' "$name" >>"$f"
 	printf 'REGISTERED %s\r\n' "$name"; exit 0 ;;
-*"-Action retire"*) IFS= read -r tok; printf 'RETIRE %s\n' "$(arg -Dir "$@")" >>"$log"; printf 'RETIRED x -> y\r\n'; exit 0 ;;
-*"-Action install"*|*"-Action ensure"*|*"-Action aside"*|*"-Action untask"*) printf 'OK\r\n'; exit 0 ;;
+*"-Action retire"*) IFS= read -r tok; printf 'RETIRE %s toklen=%s\n' "$(arg -Dir "$@")" "${#tok}" >>"$log"; printf 'RETIRED x\r\n'; exit 0 ;;
+*"-Action stop"*)
+	printf 'STOP %s\n' "$(arg -Dir "$@")" >>"$log"
+	[ -f "$d/busy-after-stop" ] && cat "$d/busy-after-stop" >>"$d/gh-orgs-robotgamedevelopers"
+	printf 'STOPPED x\r\n'; exit 0 ;;
+*"-Action delete"*) printf 'DELETE %s\n' "$(arg -Path "$@")" >>"$log"; printf 'DELETED x\r\n'; exit 0 ;;
+*"-Action untask"*) printf 'UNTASK %s\n' "$(arg -Task "$@")" >>"$log"; printf 'UNTASKED x\r\n'; exit 0 ;;
+*"-Action install"*|*"-Action ensure"*) printf 'OK\r\n'; exit 0 ;;
 *" apply "*) printf 'CI-RULES x hooks=ok restart=no\r\n'; exit 0 ;;
 esac
 printf 'UNKNOWN %s\n' "$*"; exit 9
@@ -179,6 +185,17 @@ func TestWindowsRunnersPlayRepairsHalfRegistrations(t *testing.T) {
 	}
 }
 
+// captainV1 is the run's v1 list, as the PR body's command for captain passes it (the role ships none of it).
+const captainV1 = `{"nova_windows_retire_v1": {
+ "runners": [
+  {"dir": "C:\\actions-runner-rocketnet\\1", "name": "captain-rocketnet-1", "url": "https://github.com/mas-bandwidth/rocketnet"},
+  {"dir": "C:\\actions-runner-rgd\\1", "name": "captain-rgd-1", "url": "https://github.com/robotgamedevelopers"},
+  {"dir": "C:\\actions-runner-rgd\\2", "name": "captain-rgd-2", "url": "https://github.com/robotgamedevelopers"}],
+ "labels": {"https://github.com/mas-bandwidth/rocketnet": ["rocketnet-windows"], "https://github.com/robotgamedevelopers": ["fleet"]},
+ "delete": ["C:\\rowan-jobs", "C:\\actions-runner-rgd"],
+ "tasks": ["nova-wsl-keepalive"],
+ "kept": ["C:\\tools (CI may use it)"]}}`
+
 func TestWindowsRunnersPlayRetireRefusals(t *testing.T) {
 	t.Parallel()
 	whole := map[string]string{"reg": lines(allDirs...), "svc": lines(allDirs...),
@@ -191,6 +208,10 @@ func TestWindowsRunnersPlayRetireRefusals(t *testing.T) {
 		busy[k] = v
 	}
 	busy["gh-orgs-robotgamedevelopers"] = ghRgd + "captain-rgd-1 online false\ncaptain-rgd-2 online true\n"
+	busyAfterStop := map[string]string{"busy-after-stop": "captain-rgd-2 online true\n"}
+	for k, v := range whole {
+		busyAfterStop[k] = v
+	}
 	for _, tc := range []struct {
 		name, record string
 		files        map[string]string
@@ -201,11 +222,12 @@ func TestWindowsRunnersPlayRetireRefusals(t *testing.T) {
 			"gh-repos-mas-bandwidth-rocketnet": ghRocketnet}, true,
 			"refused: v2 does not cover https://github.com/robotgamedevelopers (not in the record)"},
 		{"a v1 runner is busy", captainRecord, busy, false, "refused: busy captain-rgd-2"},
+		{"a v1 runner is busy after the stop", captainRecord, busyAfterStop, false, "refused: busy captain-rgd-2 after the stop"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			r := newWinRig(t, tc.record, tc.files)
-			args := []string{"-e", `{"nova_windows_retire_v1": true}`}
+			args := []string{"-e", captainV1}
 			if tc.check {
 				args = append(args, "--check")
 			}
@@ -213,9 +235,37 @@ func TestWindowsRunnersPlayRetireRefusals(t *testing.T) {
 			if err == nil || !strings.Contains(out, tc.want) {
 				t.Errorf("want a failed run saying %q, err %v:\n%s", tc.want, err, out)
 			}
-			if strings.Contains(log, "RETIRE ") {
-				t.Errorf("a v1 runner was retired despite the refusal:\n%s", log)
+			if strings.Contains(log, `RETIRE C:\actions-runner-rgd`) || strings.Contains(log, "DELETE ") {
+				t.Errorf("v1 was removed despite the refusal:\n%s", log)
 			}
 		})
+	}
+}
+
+// TestWindowsRunnersPlayRetiresV1: with v2 whole and covered, each v1 runner is stopped before it is removed (the
+// token on stdin), then each delete path and task go, and nothing is left to a move.
+func TestWindowsRunnersPlayRetiresV1(t *testing.T) {
+	t.Parallel()
+	r := newWinRig(t, captainRecord, map[string]string{"reg": lines(allDirs...), "svc": lines(allDirs...),
+		"gh-repos-mas-bandwidth-rocketnet": ghRocketnet, "gh-orgs-robotgamedevelopers": ghRgd})
+	out, log, err := r.play(t, "-e", captainV1)
+	if err != nil {
+		t.Fatalf("play failed: %v\n%s", err, out)
+	}
+	want := lines(`STOP C:\actions-runner-rocketnet\1`, `RETIRE C:\actions-runner-rocketnet\1 toklen=25`,
+		`STOP C:\actions-runner-rgd\1`, `STOP C:\actions-runner-rgd\2`,
+		`RETIRE C:\actions-runner-rgd\1 toklen=25`, `RETIRE C:\actions-runner-rgd\2 toklen=25`,
+		`DELETE C:\rowan-jobs`, `DELETE C:\actions-runner-rgd`, "UNTASK nova-wsl-keepalive")
+	var got []string
+	for _, l := range strings.Split(log, "\n") {
+		if strings.HasPrefix(l, "STOP ") || strings.HasPrefix(l, "RETIRE ") || strings.HasPrefix(l, "DELETE ") || strings.HasPrefix(l, "UNTASK ") {
+			got = append(got, l)
+		}
+	}
+	if lines(got...) != want {
+		t.Errorf("v1's retirement:\n got %q\nwant %q", lines(got...), want)
+	}
+	if strings.Contains(log, "TOKENTOKEN") || !strings.Contains(out, "V1-RETIRE captain kept: C:\\\\tools") {
+		t.Errorf("token in an argument, or no kept line:\n%s", out)
 	}
 }

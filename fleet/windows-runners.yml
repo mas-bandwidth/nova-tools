@@ -6,7 +6,8 @@
 #
 #   nova-fleet windows-runners --check -- -l <machine>
 #   nova-fleet windows-runners -- -l <machine>
-#   nova-fleet windows-runners -- -l <machine> -e '{"nova_windows_retire_v1": true}'   # then retire v1's Windows side
+#   nova-fleet windows-runners -- -l <machine> -e @v1.json   # then retire v1's Windows side: v1.json names what
+#                                                            # v1 left there (fleet/README.md has its shape)
 #
 # gh on the control node, logged in with admin on each repository or organization, asks GitHub for the tokens.
 - name: the Windows-side runners of WSL machines

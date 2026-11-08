@@ -3,7 +3,6 @@ package main
 import (
 	"io/fs"
 	"path"
-	"slices"
 	"strings"
 	"testing"
 
@@ -135,8 +134,8 @@ func TestWindowsRetireV1IsOptInAndGuarded(t *testing.T) {
 	if err := yaml.Unmarshal(b, &defaults); err != nil {
 		t.Fatal(err)
 	}
-	if defaults["nova_windows_retire_v1"] != false {
-		t.Errorf("nova_windows_retire_v1 defaults to %v, want false", defaults["nova_windows_retire_v1"])
+	if v, ok := defaults["nova_windows_retire_v1"].(map[string]any); !ok || len(v) != 0 {
+		t.Errorf("nova_windows_retire_v1 defaults to %v, want {} (the v1 list comes only in the run's extra vars)", defaults["nova_windows_retire_v1"])
 	}
 	tasks := roleTasks(t)
 	includes := 0
@@ -144,8 +143,8 @@ func TestWindowsRetireV1IsOptInAndGuarded(t *testing.T) {
 		for _, task := range ts {
 			if strings.Contains(text(t, task["ansible.builtin.include_tasks"]), "wsl-windows-retire-v1.yml") {
 				includes++
-				if file != "wsl-windows.yml" || task["when"] != "nova_windows_retire_v1 | bool" {
-					t.Errorf("%s includes the v1 retirement with when %v; only wsl-windows.yml may, when nova_windows_retire_v1 | bool", file, task["when"])
+				if file != "wsl-windows.yml" || task["when"] != "nova_windows_retire_v1 | length > 0" {
+					t.Errorf("%s includes the v1 retirement with when %v; only wsl-windows.yml may, when nova_windows_retire_v1 | length > 0", file, task["when"])
 				}
 			}
 		}
@@ -186,8 +185,8 @@ func TestWindowsRetireV1IsOptInAndGuarded(t *testing.T) {
 			break
 		}
 	}
-	if g := strings.Join(guards, "\n"); len(guards) != 3 || !strings.Contains(g, "github_runner_v1_uncovered | length == 0") || !strings.Contains(g, "github_runner_v1_busy | length == 0") {
-		t.Errorf("before the first change the v1 retirement asserts v2 up, v2 covering every v1 target and no v1 runner busy; it asserts %q", guards)
+	if g := strings.Join(guards, "\n"); len(guards) != 4 || !strings.Contains(g, "nova_windows_retire_v1.runners is sequence") || !strings.Contains(g, "github_runner_v1_uncovered | length == 0") || !strings.Contains(g, "github_runner_v1_busy | length == 0") {
+		t.Errorf("before the first change the v1 retirement asserts v2 up, the v1 list's shape, v2 covering every v1 target and no v1 runner busy; it asserts %q", guards)
 	}
 	// the online and registered counts it reads are set before it, in wsl-windows.yml, under --check too
 	if !strings.Contains(text(t, tasks["wsl-windows.yml"]), "github_runner_win_online_n:") {
@@ -195,61 +194,59 @@ func TestWindowsRetireV1IsOptInAndGuarded(t *testing.T) {
 	}
 }
 
-// TestWindowsRetireV1Keeps: what v1's retirement moves aside never includes what CI or WSL still needs, and every item
-// is moved aside, never deleted.
-func TestWindowsRetireV1Keeps(t *testing.T) {
+// TestWindowsRetireV1ShipsNothingOfCaptain: the role ships no machine's v1 names or paths (they come in the run's
+// extra vars); each v1 runner is stopped, checked for a job against GitHub again, then removed with --unattended; and
+// v1 is deleted, never moved aside, so no credential, .env or ci-hold of it stays on disk.
+func TestWindowsRetireV1ShipsNothingOfCaptain(t *testing.T) {
 	t.Parallel()
-	b, err := fs.ReadFile(tree, roleDir+"/defaults/main.yml")
+	for _, f := range []string{"defaults/main.yml", "tasks/wsl-windows-retire-v1.yml", "tasks/wsl-windows-retire-v1-runners.yml", "files/runner-windows.ps1"} {
+		b, err := fs.ReadFile(tree, roleDir+"/"+f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, v1 := range []string{"captain", "actions-runner-r", "rowan-jobs", "ci-hold", "nova-wsl-keepalive", "robotgamedevelopers", "mas-bandwidth/rocketnet", "nova-retired"} {
+			if strings.Contains(string(b), v1) {
+				t.Errorf("%s names %s: the v1 list is the run's extra vars, nothing of it ships", f, v1)
+			}
+		}
+	}
+	tasks := roleTasks(t)["wsl-windows-retire-v1-runners.yml"]
+	var order []string
+	for _, task := range tasks {
+		name, _ := task["name"].(string)
+		switch {
+		case strings.Contains(text(t, task["ansible.builtin.shell"]), "-Action stop"):
+			order = append(order, "stop")
+		case strings.Contains(text(t, task["ansible.builtin.include_tasks"]), "wsl-windows-github.yml"):
+			order = append(order, "github")
+		case strings.Contains(name, "busy"):
+			order = append(order, "busy")
+		case strings.Contains(text(t, task["ansible.builtin.shell"]), "-Action retire"):
+			order = append(order, "retire")
+		}
+	}
+	if strings.Join(order, ",") != "stop,github,busy,retire" {
+		t.Errorf("per target the v1 runners are stopped, GitHub read, busy refused, then removed; the order is %q", order)
+	}
+	b, err := fs.ReadFile(tree, roleDir+"/files/runner-windows.ps1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	var d struct {
-		Runners []struct{ Dir, Name, URL string } `yaml:"github_runner_windows_v1_runners"`
-		Labels  map[string][]string               `yaml:"github_runner_windows_v1_labels"`
-		Items   []string                          `yaml:"github_runner_windows_v1_items"`
-		Tasks   []string                          `yaml:"github_runner_windows_v1_tasks"`
-		Kept    []string                          `yaml:"github_runner_windows_v1_kept"`
-	}
-	if err := yaml.Unmarshal(b, &d); err != nil {
-		t.Fatal(err)
-	}
-	var dirs []string
-	for _, r := range d.Runners {
-		dirs = append(dirs, r.Dir)
-	}
-	if want := []string{`C:\actions-runner-rocketnet\1`, `C:\actions-runner-rocketnet\2`, `C:\actions-runner-rocketnet\3`, `C:\actions-runner-rgd\1`, `C:\actions-runner-rgd\2`}; !slices.Equal(dirs, want) {
-		t.Errorf("v1 runners %q, want %q", dirs, want)
-	}
-	for _, i := range d.Items {
-		l := strings.ToLower(i)
-		if strings.HasPrefix(l, `c:\tools`) || l == `c:\rowan-jobs` || l == `c:\rowan-jobs\*` || strings.HasPrefix(l, `c:\actions-runner\`) || l == `c:\actions-runner` {
-			t.Errorf("v1 items name %s: CI's tools, the job scratch and v2's runners are kept", i)
+	ps := string(b)
+	retire := ps[strings.Index(ps, "  'retire' {"):]
+	retire = retire[:strings.Index(retire, "\n  }\n")]
+	for _, want := range []string{"Invoke-Config @('remove', '--unattended')", "Remove-Item -LiteralPath $Dir -Recurse -Force"} {
+		if !strings.Contains(retire, want) {
+			t.Errorf("retire lacks %q", want)
 		}
 	}
-	for _, r := range d.Runners {
-		if r.Name == "" || len(d.Labels[r.URL]) == 0 {
-			t.Errorf("v1 runner %s needs its GitHub name (the busy check) and its target's workflow labels (the coverage check)", r.Dir)
-		}
+	del := ps[strings.Index(ps, "  'delete' {"):]
+	del = del[:strings.Index(del, "\n  }\n")]
+	if !strings.Contains(del, "Remove-Item -LiteralPath $i.FullName -Recurse -Force") || strings.Contains(retire+del, "Move-Aside") {
+		t.Error("v1 is deleted, never moved aside")
 	}
-	if !slices.Equal(d.Labels["https://github.com/mas-bandwidth/rocketnet"], []string{"rocketnet-windows"}) ||
-		!slices.Equal(d.Labels["https://github.com/robotgamedevelopers"], []string{"fleet"}) {
-		t.Errorf("v1 labels %v: rocketnet's workflows select rocketnet-windows, robotgamedevelopers' select fleet", d.Labels)
-	}
-	if !slices.Equal(d.Tasks, []string{"nova-wsl-keepalive"}) {
-		t.Errorf("v1 tasks %q: only the duplicate keepalive goes; WSL2 keepalive (Ubuntu-24.04) stays", d.Tasks)
-	}
-	kept := strings.Join(d.Kept, "\n")
-	for _, k := range []string{`C:\tools`, "fleet-rocketnet-lan-proof-udp-40000", "rocketnet load_split", "job-scratch", "WSL2 keepalive (Ubuntu-24.04)"} {
-		if !strings.Contains(kept, k) {
-			t.Errorf("the kept lines do not name %s", k)
-		}
-	}
-	ps, err := fs.ReadFile(tree, roleDir+"/files/runner-windows.ps1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(ps), "Remove-Item -Recurse") || strings.Contains(strings.ToLower(string(ps)), "netfirewallrule") {
-		t.Error("runner-windows.ps1 deletes a tree or touches a firewall rule; v1 is moved aside, and the firewall is kept")
+	if strings.Contains(strings.ToLower(ps), "netfirewallrule") {
+		t.Error("runner-windows.ps1 touches a firewall rule; the firewall is kept")
 	}
 }
 

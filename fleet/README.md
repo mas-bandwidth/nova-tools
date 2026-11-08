@@ -461,24 +461,31 @@ cannot read GitHub's list for a target refuses, rather than take a whole runner 
 from its directories and GitHub's own list; a run where any is short fails. `--check` reads both, asks for the tokens it
 would need, and prints `RUNNER-PLAN <machine> windows=<n> register=<names> repair=<names> labels=<labels>`.
 
-**Retiring v1's Windows side** is opt-in and comes after v2 is up, so CI keeps its Windows runners throughout:
+**Retiring v1's Windows side** is opt-in and comes after v2 is up, so CI keeps its Windows runners throughout. The
+run names what v1 left on that machine, as JSON extra vars; the role ships no machine's names or paths:
 
 ```
-nova-fleet windows-runners --check -- -l captain -e '{"nova_windows_retire_v1": true}'
-nova-fleet windows-runners -- -l captain -e '{"nova_windows_retire_v1": true}'
+nova-fleet windows-runners --check -- -l <machine> -e @v1.json
+nova-fleet windows-runners -- -l <machine> -e @v1.json
+```
+
+```json
+{"nova_windows_retire_v1": {
+  "runners": [{"dir": "C:\\actions-runner-x\\1", "name": "<machine>-x-1", "url": "https://github.com/<owner>/<repo>"}],
+  "labels": {"https://github.com/<owner>/<repo>": ["<label the workflows select>"]},
+  "delete": ["C:\\actions-runner-x", "C:\\old-tools"],
+  "tasks": ["<scheduled task under \\>"],
+  "kept": ["C:\\tools (CI may use it)"]}}
 ```
 
 It is refused (`V1-RETIRE <machine> refused: ...`, naming what is missing) unless every v2 Windows runner the record
-names is whole and online; every v1 target is a url of the record whose v2 runners carry the labels its workflows select
-(`github_runner_windows_v1_labels`: `rocketnet-windows` for rocketnet, `fleet` for the robotgamedevelopers org); and
-no v1 runner is busy in GitHub's list (a removal would end its job; it does not wait: run again). Then v1's runners (`C:\actions-runner-rocketnet\1..3`, `C:\actions-runner-rgd\1..2`) are removed from GitHub with
-a removal token on stdin, their services go, and their directories move under `C:\nova-retired-<yyyymmdd>\`; v1's
-ci-hold (`C:\rowan-jobs\ci-hold`), the winlock state, the installer script and its backups, the runner zip cache and
-`C:\fleet-windows-tools` move there too, and the scheduled task `\nova-wsl-keepalive` is unregistered. Nothing is
-deleted. One line per item: `V1-RETIRE <machine> RETIRED|MOVED|ABSENT|UNTASKED ...`, then `kept:` lines for what stays
-and why: `C:\tools` (CI may use goose, lobster, dxc, ccache), the two hand-made firewall rules, the job-scratch
-directories, and `\WSL2 keepalive (Ubuntu-24.04)`, which keeps WSL up at boot. The lists are the role's defaults
-(`github_runner_windows_v1_*`).
+names is whole and online; every v1 target is a url of the record whose v2 runners carry that target's `labels`; and no
+v1 runner is busy in GitHub's list. Then, per target, each v1 runner is stopped (it takes no new job), GitHub's list is
+read again and the run refused while one is still busy, naming it (it does not wait: run again), and each is removed
+from GitHub with `config.cmd remove --unattended` and a removal token on stdin, its service goes and its directory is
+deleted. Then each `delete` path is deleted and each task unregistered. v1 is deleted, never moved aside: no
+credential, `.env` or hook of it stays on disk. One line per item: `V1-RETIRE <machine> RETIRED|DELETED|ABSENT|UNTASKED
+...`, then a `kept:` line for each `kept` entry.
 
 ## CI rules
 
