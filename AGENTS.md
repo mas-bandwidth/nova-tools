@@ -1,6 +1,32 @@
 # AGENTS.md
 
-Rules for AI contributors to nova-tools. `README.md` and `docs/README.md` say what the tools do; each tool's `README.md` is its guide. The sections below are how to change them.
+nova-tools provides command-line tools for AI messaging, shared machines,
+encrypted secrets, sandboxes and session notes. Each tool can be used on its own.
+
+## Start here
+
+Read [the detailed guide](docs/README.md) to decide whether a tool fits the task,
+install it and try it. That is the shared guide for humans and AIs; the root
+[README](README.md) is the short human introduction. Each tool's README is its
+reference, linked from the guide. [llms.txt](llms.txt) is a compact index with
+plain Markdown links.
+
+Choose the tool that solves the current problem. Check its prerequisites,
+effects and limits before running it, use a disposable example first, and
+compare the result with the documented output. A successful installation or
+service startup does not establish that a workflow completed; for messaging,
+verify the receiving AI's reply as well as transport delivery.
+
+The sections below are rules for contributors changing nova-tools.
+
+## Contributing
+
+Read the [Contributor Assignment Agreement](https://github.com/mas-bandwidth/.github/blob/main/CAA.md)
+before submitting a contribution. It assigns copyright in the contribution to
+Más Bandwidth LLC and grants you a license to use your own contribution.
+The agreement itself gives the full terms; the pull request's CAA check must
+pass before merge. Report a reproducible problem or propose a focused change,
+and use the build and review rules below.
 
 ## Tests
 
@@ -39,14 +65,14 @@ Rules for AI contributors to nova-tools. `README.md` and `docs/README.md` say wh
 - Document the code, not the conversation. A comment states what the code does and the technical reason; delete a comment that is only history.
 - Docs describe the tool as it is, never its history: no "used to", "now" or "no longer", no version or round numbers, no status notes or to-do lists.
 - Every command, output line and refusal quoted in a doc must match what the binary prints. Change the doc in the same commit as the string.
-- This file is the only agent and internals markdown. User documentation is the root `README.md`, `docs/README.md`, `docs/SECURITY.md` and each tool's `README.md`.
+- This file holds contributor and internals instructions. User documentation is the root `README.md`, `docs/README.md`, `docs/SECURITY.md` and each tool's `README.md`. Harness entry points in `docs/integrations` and `llms.txt` link to that shared guide; they do not duplicate it.
 - No people's names in code, comments, docs or tests.
 
 ## Layout and boundaries
 
 - The seven binaries live in `bus`, `cairn`, `config`, `fleet`, `reserve`, `sandbox` and `secrets`. Each is one directory of `package main` files and is useful without knowing the workflow of the team that built it.
 - Beside them: `docs` (user docs and images), `tests` (checks that span tools: `tests/boundary` layout and imports, `tests/contract` the command-line contract, `tests/tla` the TLC runner and pinned jar checksum, `tests/BUDGET`) and `.github` (CI). A tool's models stay in `<tool>/tla/`.
-- Root files are exactly `README.md`, `AGENTS.md`, `LICENSE`, `go.mod`, `go.sum`, `.gitignore` and `.gitattributes`. An extra top-level entry fails the layout test, even when Git ignores it. No top-level or recursive symlinks (`.git` and `docs` are skipped). Build outputs live outside the checkout.
+- Root files are exactly `README.md`, `AGENTS.md`, `LICENSE`, `go.mod`, `go.sum`, `.gitignore`, `.gitattributes` `context7.json`, `llms.txt` and `gemini-extension.json`, plus the `.claude-plugin` marketplace directory. The Context7 configuration indexes the public usage guides and excludes contributor instructions and test fixtures. An extra top-level entry fails the layout test, even when Git ignores it. No top-level or recursive symlinks (`.git` and `docs` are skipped). Build outputs live outside the checkout.
 - A tool imports no other package of this module. A few repeated lines beat a shared layer. The one exception is `config/lib` (package `config`): nova-config's reader of its own store, so a consumer reads the same rows through the same query. It imports nothing from this module, only nova-config imports it, and its lines count in config's budget (`toolLibs` in the boundary test). Another library needs the case made in the same change.
 - A tool does not call a sibling nova tool by name to do its own job. nova-fleet is the exception: it execs `nova-config` (inventory), `nova-secrets` (values a play needs) and `nova-bus` (end-to-end check) from PATH and imports none of them. Workflow policy belongs in a consumer, not here.
 - `go.mod` has no `replace` directive. The permitted tool directives are errcheck, txtar, deadcode and staticcheck (`allowedTools`). A module imported by a Go file counts as direct even if go.mod labels it indirect. Remove unused direct dependencies from the test's list.
@@ -67,8 +93,8 @@ Rules for AI contributors to nova-tools. `README.md` and `docs/README.md` say wh
 
 `tests/contract` (functional tier) builds every tool and holds it to these rules; a new verb goes into `toolSpecs`.
 
-- `<tool> help` prints the banner; `<tool> help <verb>`, `<tool> <verb> -h` and `--help` print one operation. Help goes to stdout, exits 0, changes nothing. `help` itself takes no flags (`help -h` is exit 2 on bus, sandbox, secrets and reserve).
-- Exit 0: the operation succeeded. Exit 1: the tool ran and refused, found a conflict, or a check found a problem. Exit 2: the invocation was wrong or the operation could not run (unreachable store, schema not loaded, missing binary, failed login). A caller that retries on 2 and reads 1 as an answer is then correct.
+- `<tool> help` prints the banner; `<tool> help <verb>`, `<tool> <verb> -h` and `--help` print one operation. Help goes to stdout, exits 0, changes nothing. `help` itself takes no flags (`help -h` is exit 2 on bus, secrets and reserve).
+- Exit 0: the operation succeeded. Exit 1: the tool ran and refused, found a conflict, or a check found a problem. Exit 2: the invocation was wrong or a setup failure prevented it from running (such as schema not loaded, missing binary or failed login). nova-bus also uses exit 1 when Redis cannot be reached. Read the tool's documented refusal and remedy before deciding whether to retry; an exit code alone does not establish that a retry can succeed.
 - Sandbox and secrets `exec` also use 125 (refused to start, could not launch), 126 (found but not executable) and 127 (not found; reserve names the PATH it searched). A wrapper returns its command's status after launch.
 - An unknown verb or flag, a missing argument or a malformed value is exit 2; the error names the problem and points to help. A flag belonging to another operation is refused, not ignored. Required inputs are reported together where they can be found before reading a store.
 - Argument order follows the tool's examples: bus and cairn take flags before positionals; config accepts a row name before its flags; secrets accepts `set NAME` or `seat add SEAT KEY` before flags. Sandbox, secrets `exec` and reserve use `--` before the command. Bus takes `-` as its body to read stdin; secrets `set` reads its value from stdin.
@@ -76,6 +102,15 @@ Rules for AI contributors to nova-tools. `README.md` and `docs/README.md` say wh
 - An OK line may be followed by one last line `next: <command>`: a real, shell-quoted command with a real example value, built with the tool's command helper. Never a `next=` field, never `\x20` for blanks, nothing after it.
 - Config writes accept `--dry-run`; fleet plays accept Ansible's `--check`. Read stderr as well as the status: a successful item can precede a later failure.
 - Cairn prints its version with `version`; the other tools are identified by release tag or source commit.
+
+## Release communication
+
+For each published release, prepare a Patreon update with the exact tag,
+user-visible changes, a link to the release and this guide, and a brief support
+invitation. Check the creator dashboard for an existing post before publishing
+through the authorized account. Describe only shipped work and observed results;
+a prepared draft is not a published post. Keep the README credit and support
+links and `.github/FUNDING.yml` pointed at the same verified account.
 
 ## Build and CI checks
 

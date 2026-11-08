@@ -1,8 +1,8 @@
 # nova-sandbox
 
 Run one command inside a kernel-enforced wall. You name the directories the
-command may read and write, and you can close its network; everything else is
-out of reach. Linux uses Landlock and seccomp. macOS uses `sandbox-exec`.
+command may read and write, in addition to the system roots listed below, and
+you can close its network. Linux uses Landlock and seccomp. macOS uses `sandbox-exec`.
 Other systems are refused. Cd into a directory you grant, and set `TMPDIR`
 inside a `--write`, before you run; pass it with `--env TMPDIR`.
 
@@ -18,11 +18,12 @@ command. A **grant** is a directory you name with `--read` or `--write`. The
 
 ## Install
 
-```sh
-git clone -q https://github.com/mas-bandwidth/nova-tools
-go build -C nova-tools -o "$PWD/bin/nova-sandbox" ./sandbox
-export PATH="$PWD/bin:$PATH"
-```
+[Install one tool](../docs/README.md#install-one-tool), choosing `tool=sandbox`.
+The [shared guide](../docs/README.md) covers choosing tools and trying them together.
+Use Linux with Landlock or macOS. Before running work you do not trust, run
+[`check`](#check-the-host-check) and [`probe`](#test-the-wall-probe) on that host;
+read the individual probe results, including any untested checks. CPU, memory,
+process counts and disk use are not limited by this tool.
 
 ## Run a command
 
@@ -35,7 +36,7 @@ nova-sandbox [--read <dir>]... [--write <dir>]... [--net-deny [--net-allow <host
 | `--read <dir>` | Read, list and run files beneath the directory. |
 | `--write <dir>` | Also create, change, rename and delete beneath it. |
 | `--net-deny` | Close the network, or refuse to start if the host cannot. |
-| `--net-allow <host:port>` | Under `--net-deny`, allow connections to one loopback port. |
+| `--net-allow <host:port>` | Under `--net-deny`, allow a port named with a loopback host. Linux permits TCP to that port on every destination address; macOS permits TCP and UDP to localhost on it. |
 | `--gpu` | macOS only: allow Metal and video services. On Linux, use `--write /dev/dri`. |
 | `--unix` | Linux only: leave Unix-domain sockets open. |
 | `--keep-fds` | Keep inherited descriptors above stderr open (they are closed by default). |
@@ -64,8 +65,11 @@ cat result.txt
 ```
 
 `cat` prints `hello`. The exit status is the command's own. A Go toolchain outside the system roots
-needs `--read "$(go env GOROOT)"`. A Go build also needs `--env TMPDIR --env GOCACHE --env GOMODCACHE --env GOPROXY`,
-each set to a path inside a `--write` (`GOMODCACHE` inside a `--read`). `HOME` is kept.
+needs `--read "$(go env GOROOT)"`. A Go build also needs
+`--env TMPDIR --env GOCACHE --env GOMODCACHE --env GOPROXY`. Put `TMPDIR` and
+`GOCACHE` inside a `--write`, and a populated `GOMODCACHE` inside a `--read`.
+Set `GOPROXY=off` for a build from that cache with `--net-deny`; `GOPROXY` is
+a module-download setting, not a filesystem path. `HOME` is kept.
 
 ## Preview the wall: `show`
 
@@ -100,8 +104,10 @@ Exit 1 prints `CHECK FAILED ... reason=...`. `net=unavailable` means
 ## Test the wall: `probe`
 
 ```sh
-nova-sandbox probe | tail -3
+nova-sandbox probe
 ```
+
+The final three lines on Linux can be:
 
 ```text
 PROBE STEP name=dns_control expect=allow got=allow
@@ -177,8 +183,9 @@ variable by name; the value is never an argument. A name that is not letters,
 digits and underscores, or that is unset on a run, is `bad_env` (exit 2), and
 it is reported together with every other problem. `show` checks the name and
 does not require it to be set. A Go build passes `TMPDIR`, `GOCACHE`,
-`GOMODCACHE` and `GOPROXY` with `--env`. `TMPDIR`, `GOCACHE` and `GOPROXY` point
-inside a `--write`; `GOMODCACHE` points inside a `--read`. `HOME` is kept.
+`GOMODCACHE` and `GOPROXY` with `--env`. `TMPDIR` and `GOCACHE` point inside a
+`--write`; a populated `GOMODCACHE` points inside a `--read`. `GOPROXY=off`
+prevents module downloads for a cache-only build under `--net-deny`. `HOME` is kept.
 
 ### What a run prints
 

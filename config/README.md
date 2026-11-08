@@ -7,11 +7,12 @@ that plays can use, and Go programs read the same rows through its library.
 
 ## Install
 
-```sh
-git clone -q https://github.com/mas-bandwidth/nova-tools
-go build -C nova-tools -o "$PWD/bin/nova-config" ./config
-export PATH="$PWD/bin:$PATH"
-```
+[Install one tool](../docs/README.md#install-one-tool), choosing `tool=config`.
+The [shared guide](../docs/README.md) covers choosing tools and trying them together.
+
+Reading or writing rows needs PostgreSQL and a loaded schema. `nova-config help`
+and `nova-config schema` work without a database. Config records machines and
+services; it does not provision machines or start programs.
 
 ## Set up a database
 
@@ -23,7 +24,9 @@ database owner: the SQL creates schema `config`, so a role that owns only that s
 fleet) is refused with `permission denied for database`.
 
 This block starts a throwaway server on port 54329 (it needs `initdb`,
-`pg_ctl` and `createdb` on PATH). Run all the blocks in one shell.
+`pg_ctl`, `createdb` and `psql` on PATH, and an ordinary user rather than root).
+Use a free port; change the port in each command below if `54329` is occupied.
+Run all the blocks in one shell.
 
 ```sh
 work=$(mktemp -d)

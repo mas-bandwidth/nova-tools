@@ -1,0 +1,14 @@
+{
+  "name": "nova-tools",
+  "description": "Documentation integrations for nova-tools command-line tools.",
+  "owner": {
+    "name": "Más Bandwidth"
+  },
+  "plugins": [
+    {
+      "name": "nova-tools",
+      "source": "./docs/integrations/claude-code",
+      "description": "Choose, install and use nova-tools with the maintained guides."
+    }
+  ]
+}

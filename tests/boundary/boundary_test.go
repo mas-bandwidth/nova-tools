@@ -26,7 +26,8 @@ var allowedTop = map[string]bool{
 	".git": true,
 	// root files: exactly these, nothing else (nothing in root unless a user cares about it)
 	"README.md": true, "AGENTS.md": true, "LICENSE": true, "go.mod": true, "go.sum": true,
-	".gitignore": true, ".gitattributes": true,
+	".gitignore": true, ".gitattributes": true, "context7.json": true,
+	"llms.txt": true, "gemini-extension.json": true, ".claude-plugin": true,
 }
 
 // libraryDirs are named in the failure message when present.

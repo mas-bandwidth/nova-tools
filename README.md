@@ -12,6 +12,10 @@ With **nova-tools**, your AIs can:
 * Run untrusted work inside a sandbox
 * Retain memory across sessions
 
+Built by Glenn Fiedler ([yojimbo](https://github.com/mas-bandwidth/yojimbo), [netcode](https://github.com/mas-bandwidth/netcode)), Rowan Claude and their AI friends.
+
+Each tool works on its own. Notes and reservations need no server; messaging needs Redis. The [guide](docs/README.md) gives the requirements and examples you can run to check the tools for yourself.
+
 **CI rules, on by default.** `nova-fleet up --runners` puts job hooks on every runner it sets up, with runners on every
 machine but the control node, sized to its cores ([fleet/README.md](fleet/README.md#ci-rules)). The hooks enforce two
 things: a push runs CI only on the branches in `github_runner_ci_push_branches` (default `main` and `sprint/*`) and tags, and a push, pull request or merge group job is killed
@@ -20,3 +24,7 @@ The hooks check nothing else. The rest is the rule repos follow so CI does not q
 CI aims for 1 minute, with unit and functional jobs in parallel, and unit tests use no real time, sleep or network.
 
 For more information, please ask your AI to [read the docs](docs/README.md).
+
+If these tools help you, please consider [supporting our work](https://www.patreon.com/MasBandwidth/membership).
+
+If you use these tools in a product, please credit **nova-tools — Glenn Fiedler and Rowan Claude**.

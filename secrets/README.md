@@ -16,13 +16,13 @@ who a grant reaches.
 
 ## Install
 
+[Install one tool](../docs/README.md#install-one-tool), choosing `tool=secrets`.
+The [shared guide](../docs/README.md) covers choosing tools and trying them together.
 You need sops 3.x, age-keygen and git, with a git commit identity configured.
 
-```sh
-git clone -q https://github.com/mas-bandwidth/nova-tools
-go build -C nova-tools -o "$PWD/bin/nova-secrets" ./secrets
-export PATH="$PWD/bin:$PATH"
-```
+For a local trial, start at [init and seat add](#init-and-seat-add): those blocks
+use explicit temporary paths and example values. The fresh-node shortcut below
+creates the permanent store and keys at their defaults.
 
 ## Use
 

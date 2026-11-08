@@ -3,6 +3,21 @@
 nova-bus sends short messages between named inboxes kept as Redis streams. A process hooks in to its inbox and reads
 every message as one line on stdout, so anything that can watch a process's output can receive them.
 
+## Start here
+
+Use nova-bus when AI sessions in different harnesses need to exchange messages.
+It needs Redis 6.2 or later, a shared Redis address, and a different inbox name
+for each receiver. It does not start another AI session for you.
+
+[Install one tool](../docs/README.md#install-one-tool), choosing `bus`, then
+run `nova-bus help hook` and `nova-bus help send`. Help needs no Redis and
+changes nothing. For a live session, follow
+[the recipe for its harness](#how-your-session-gets-woken), hook in both
+receivers, and exchange a message and a reply with `--re <id>`.
+The reply proves the recipient read the message; a send receipt or a running
+hook alone does not. The [terminal walkthrough](../docs/README.md#talk-to-each-other-across-models-and-harnesses)
+shows transport delivery using a throwaway Redis.
+
 ## The verbs
 
 ```
@@ -58,7 +73,7 @@ Monitor: NOVA_BUS_REDIS=<host:port> nova-bus hook --as <name>
 
 Its first lines are the start, on stderr: `HOOK HARNESS OK ...` (another harness only), `HOOK WAIT name=<name>
 held_since=... ttl=30s budget=40s` while a dead hook's key lapses, then `HOOK OK name=<name> waiting=<n>` once it holds the name, then
-`next: nova-bus send --as <name> --to <name> <subject> <body>`: the line that names how to
+`next: NOVA_BUS_REDIS=<host:port> nova-bus send --as <name> --to <name> <subject> <body>`: the line that names how to
 answer. From then each message is one line on stdout, `<id><TAB><from><TAB><re or ->
 <TAB><subject><TAB><body>`, for example `1762400000000-0	alpha	-	hi	are you there?`, and each line becomes a
 notification in the session, into a running turn or waking an idle one; that is the wake. A line starting `HOOK `
@@ -218,8 +233,10 @@ reconnects by itself when the connection drops; a plain kill at any moment is sa
 While a hook runs it holds the key `bus:presence:<name>` (TTL 30 s, set again every 10 s, value its start time and a
 token of its own) and deletes it, only if it still holds its token, on SIGINT, SIGTERM or a failed stdout. One hook
 per name: a hook that finds another hook's token present waits up to 40 s for it to lapse (a restart after a
-crash), then claims the name, or exits 1 if the other hook is still refreshing it. **who** prints `WHO OK present=<n>`, then `<name><TAB><uptime>` for each present name, sorted; a crashed hook
-drops out within 30 s. **pending** prints `PENDING OK waiting=<n>` for `<name>`'s unacked messages, and with `--list` their
+crash), then claims the name, or exits 1 if the other hook is still refreshing it. **who** prints `WHO OK present=<n>`, then
+`<name><TAB><uptime><TAB><session>` for each running hook, sorted by name. The session is a 16-byte hex id,
+kept across reconnects and changed on restart; a crashed hook drops out within 30 s. **pending** prints
+`PENDING OK waiting=<n>` for `<name>`'s unacked messages, and with `--list` their
 `<id><TAB><from><TAB><subject>` (the subject only, never the body), consuming nothing. To read one waiting
 message whole without a hook, use **recv**, which acks nothing. Once recv has printed a message it holds the name
 naming it (`who` shows `<name><TAB><uptime><TAB>recv holding <id>`) for 15 minutes, or until `ack` or the next
@@ -435,42 +452,30 @@ only until it lapses).
 
 ## An example session
 
-Two names, alpha and beta, with `NOVA_BUS_REDIS` set in both shells. Ids and
-uptimes vary.
+Hook in both names, alpha and beta, using the recipe for each session's
+harness above, with the same `NOVA_BUS_REDIS`. Each hook must print
+`HOOK OK` before either name sends. Keep the hooks running while the
+sessions exchange messages. The ids below are examples; the reply's `--re`
+uses the id of the message actually received.
 
 ```
-beta$  nova-bus hook --as beta
-alpha$ nova-bus who
-WHO OK present=1
-beta	4s
 alpha$ nova-bus send --as alpha --to beta "build" "main is green"
 beta 1730800000000-0
 beta:  1730800000000-0	alpha	-	build	main is green
 beta$  nova-bus send --as beta --to alpha --re 1730800000000-0 "re: build" "thanks"
 alpha 1730800005000-0
-alpha$ nova-bus pending --as alpha --list
-PENDING OK waiting=1
-1730800005000-0	beta	re: build
-alpha$ nova-bus hook --as alpha
-1730800005000-0	beta	1730800000000-0	re: build	thanks
+alpha: 1730800005000-0	beta	1730800000000-0	re: build	thanks
 ```
 
-The line marked `beta:` is what beta's hook prints. alpha had no hook running,
-so beta's answer waited in alpha's inbox, and pending showed it without
-consuming it; alpha's hook printed it as soon as it started.
+The lines marked `beta:` and `alpha:` are the messages their hooks deliver.
+The `send` output names the recipient and the message id. If a name is not
+hooked in, its send is refused; follow that refusal's hook recipe before
+retrying. When the receiving AI sends the reply itself, that reply establishes
+that it read the first message.
 
 ## Build and test
 
-```
-go build -o nova-bus .
-go test .                           # unit tests, an in-memory store
-go test -tags functional .          # against a real redis-server on a free local port (skipped without one)
-```
-
-`tla/Presence.tla` models the presence key and hooks that compete for it;
-`tla/CASES.tsv` names every case and what TLC must find (`tests/tla/check.sh JAR bus/tla` runs them). `tla/Bus.tla` models the inbox, the sender and a hook that crashes between print and ack: no message is acked before
-it is printed, no acked message is printed again, every sent message is printed. `tla/BusBroken*.cfg` are reversed witnesses (ack before print; a restarted hook that skips its pending
-messages; a failed wake that acks; a failed wake that does not end the hook, so the message is never delivered)
-that TLC must fail. `tla/BusWake.cfg` adds wakes that fail: every message is still delivered, because the failure
-ends the hook and the next one starts from the pending list. `tla/PresenceBrokenSlowBatch.cfg` shows the key lapsing
-under a hook whose delivery is not bounded.
+For contributor builds, tests and the delivery/presence models, follow
+[the build checks](../AGENTS.md#build-and-ci-checks),
+[TLA+ checks](../AGENTS.md#tla-models) and
+[bus test requirements](../AGENTS.md#per-tool-tests-and-models).

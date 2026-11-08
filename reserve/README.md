@@ -4,13 +4,16 @@ nova-reserve limits how many jobs run at once on a machine. Each job holds a
 **slot**; when every slot is taken, the next job waits its turn. The number of
 slots is the machine's **capacity**.
 
-Build it with Go:
+## Install and try
 
-```sh
-git clone -q https://github.com/mas-bandwidth/nova-tools
-go build -C nova-tools -o "$PWD/bin/nova-reserve" ./reserve
-export PATH="$PWD/bin:$PATH"
-```
+[Install one tool](../docs/README.md#install-one-tool), choosing `reserve`.
+It needs no server or database. Use it to limit cooperating build or test
+jobs on one machine; it does not limit CPU or memory use, and jobs that do
+not reserve a slot are unaffected. `nova-reserve help run` prints the command
+syntax and changes nothing.
+
+The examples use a POSIX shell on Linux or macOS. Set a capacity, run
+one command through nova-reserve, then use `status` to see the freed slot.
 
 The examples below use a new temporary directory,
 set once with `NOVA_RESERVE_DIR`. Everything that should share the limit must

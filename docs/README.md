@@ -1,73 +1,189 @@
-# nova-tools: a guide for AIs
+# nova-tools: the guide
 
-You are an AI with a shell on one of your human's machines, and you have been
-asked whether these tools are useful. This page lets you find out by running
-them. The shell walkthrough blocks run in order in one bash session on
-Linux or macOS; the bus section gives a separate setup for a live Codex chat.
-Where the two systems print different lines, both are shown and
-labelled. The last block removes the terminal walkthrough's files, except the Go, pip and Ansible
-caches in your home directory (`~/.cache/go-build`, `~/go/pkg/mod`,
-`~/.cache/pip` and `~/.ansible`). Each section says what the first try prints,
-the refusal you are most likely to meet, and where the full guide for that
-tool is. Many `OK` lines are followed by a `next: <command>` line: that is the
-tool proposing the command you would usually run next, not an error, and you
-need not run it.
+nova-tools is a set of command-line tools for people and AIs working across
+models, harnesses and machines. Choose the tool for the job you have, install
+that one, and use its guide. Each tool works on its own; you do not need a
+fleet to exchange messages, save notes or limit jobs on one machine.
 
-## The tools
+This is the detailed starting point for both humans and AIs. The table below
+links to each tool's commands, examples and limits. The walkthrough after
+installation shows how they fit together. Contributor instructions live in
+[AGENTS.md](../AGENTS.md).
 
-- `nova-bus` sends short messages between named inboxes in Redis, so AIs in
-  different harnesses can reach each other. It needs Redis 6.2 or later.
-- `nova-config` keeps your machines, the programs each one runs, and the
-  friends (the AIs that work on the fleet) as rows in PostgreSQL, and prints
-  the machines and programs as Ansible inventory. It needs PostgreSQL.
-- `nova-secrets` keeps encrypted values in a git repository and gives a
-  command only the values it names. It needs sops, age and git.
-- `nova-reserve` limits how many jobs run at once on one machine, using file
-  locks. It needs nothing else.
-- `nova-sandbox` runs one command that can touch only the directories you
-  grant it. It needs Linux 5.13 or later (for the kernel's Landlock rules), or
-  macOS.
-- `nova-cairn` saves what a session wants to keep, as plain files, and
-  searches it alongside Markdown notes. It needs nothing else.
-- `nova-fleet` runs the fleet's Ansible plays from one binary: Tailscale,
-  PostgreSQL, Redis, the tools, the services and GitHub Actions runners on
-  every machine. It needs Ansible, Tailscale, and ssh to the machines.
+## Choose a tool
 
-Each tool runs on its own, and this walkthrough starts and stops a throwaway
-Redis and PostgreSQL on this one machine. A fleet of machines is different: it
-needs Tailscale, Redis, PostgreSQL and Ansible, and none of the four is
-optional.
+| You want to | Tool and guide | Needs and limits |
+|---|---|---|
+| Let AI sessions on different models or harnesses exchange messages | [nova-bus](../bus/README.md) | Redis 6.2+. A receiving harness needs its documented hook to wake a session; storing a message is not proof an AI read it. |
+| Keep and search notes across sessions | [nova-cairn](../cairn/README.md) | Local files; no server. Search matches keywords, not semantic similarity. It publishes nothing. |
+| Share a machine without running too many jobs at once | [nova-reserve](../reserve/README.md) | Local file locks; no server. Only jobs using the same reservation directory share the limit. |
+| Restrict the files and network a command can access | [nova-sandbox](../sandbox/README.md) | Linux with Landlock (5.13+) or macOS. Run `probe` on the host; CPU, memory, process count and disk use are not limited. |
+| Give a command only the secrets it needs | [nova-secrets](../secrets/README.md) | sops, age and git, with a key and encrypted store. Secret values go through stdin or the command's environment. |
+| Keep machines, services and AI friends as rows, with change history | [nova-config](../config/README.md) | PostgreSQL. Rows and Ansible inventory describe machines; writing a row starts no service. |
+| Set up machines, services and GitHub Actions runners together | [nova-fleet](../fleet/README.md) | Ansible, Tailscale, PostgreSQL, Redis and SSH access to the machines. Applying plays changes those machines. |
 
-## Get the binaries and check they run
+Start with `nova-bus` for messaging. If you want a local trial with no server,
+choose `nova-cairn` or `nova-reserve`. The individual guides are independent
+of the full walkthrough below.
 
-Build them with Go from a clone of one release tag, set once in
-`NOVA_TOOLS_VERSION`; the fleet section installs that same tag on the
-machines. The pin is the release this guide was cut with: `release.yml`
-refuses to publish a tag whose guide pins a different one. The blocks below
-use a throwaway directory, `$work`, and put the tools on PATH from there.
+## Install one tool
+
+Use one release for the binaries and their documentation. The pin below is
+also used by the fleet walkthrough; release publishing checks that it matches
+the tag. In a Bash shell, choose a tool and make a temporary installation:
 
 ```sh
 NOVA_TOOLS_VERSION=v2.0.11
-work=$(mktemp -d) && cd "$work"
-git clone -q --depth 1 --branch "$NOVA_TOOLS_VERSION" https://github.com/mas-bandwidth/nova-tools
-for t in bus cairn config fleet reserve sandbox secrets; do
-  go build -C nova-tools -o "$work/bin/nova-$t" "./$t"
-done
-export PATH="$work/bin:$PATH"
-for t in bus cairn config fleet reserve sandbox secrets; do nova-$t -h > /dev/null && echo "nova-$t ok"; done
+tool=bus  # bus, cairn, config, fleet, reserve, sandbox or secrets
+work=$(mktemp -d)
+mkdir -p "$work/bin"
 ```
 
-Each tool prints `nova-<tool> ok`: `-h` prints its usage and exits 0. A GitHub
-release from v2.0.0-rc1 on ships the same seven binaries, built for Linux amd64
-and arm64, macOS arm64 and Windows amd64. Each file is named
-`nova-<tool>_<tag>_<os>_<arch>`, with `.exe` on Windows, beside one
-`SHA256SUMS` file to check them against.
+Choose **one** of the two installation methods below. Both put
+`nova-$tool` in `$work/bin` and leave your installed tools untouched.
+
+### Download a release binary
+
+This needs `curl` and either `sha256sum` or `shasum`. The block selects a
+published Linux or macOS binary, checks it against the release's
+`SHA256SUMS`, then prints its help. A failed download or checksum stops the
+block before installation.
+
+```sh
+(
+  set -eu
+  cd "$work"
+  case "$(uname -s)/$(uname -m)" in
+    Linux/x86_64) platform=linux_amd64 ;;
+    Linux/aarch64|Linux/arm64) platform=linux_arm64 ;;
+    Darwin/arm64) platform=darwin_arm64 ;;
+    *) printf '%s\n' 'No release binary for this host; use the source build below.' >&2; exit 1 ;;
+  esac
+  asset="nova-${tool}_${NOVA_TOOLS_VERSION}_${platform}"
+  release_url="https://github.com/mas-bandwidth/nova-tools/releases/download/$NOVA_TOOLS_VERSION"
+  curl --fail --location --output "$asset" "$release_url/$asset"
+  curl --fail --location --output SHA256SUMS "$release_url/SHA256SUMS"
+  awk -v asset="$asset" '$2 == asset { print; found = 1 } END { if (!found) exit 1 }' SHA256SUMS > "$asset.sha256"
+  if command -v sha256sum > /dev/null 2>&1; then
+    sha256sum --check "$asset.sha256"
+  else
+    shasum -a 256 --check "$asset.sha256"
+  fi
+  install -m 755 "$asset" "$work/bin/nova-$tool"
+  "$work/bin/nova-$tool" -h
+)
+```
+
+The [releases](https://github.com/mas-bandwidth/nova-tools/releases) also
+carry Windows amd64 files named `nova-<tool>_<tag>_windows_amd64.exe` and the
+same checksum manifest. Check the chosen tool's platform limits: a published
+binary does not mean every operation is supported on Windows. The walkthrough
+on this page uses Bash on Linux or macOS.
+
+### Or build one tool from source
+
+This needs git and the Go version in [go.mod](../go.mod), or a compatible
+newer version. It builds only your chosen tool from the same release tag:
+
+```sh
+(
+  set -eu
+  cd "$work"
+  git clone -q --depth 1 --branch "$NOVA_TOOLS_VERSION" https://github.com/mas-bandwidth/nova-tools
+  go build -C nova-tools -o "$work/bin/nova-$tool" "./$tool"
+  "$work/bin/nova-$tool" -h
+)
+```
+
+After either method succeeds, add this temporary installation to the current
+shell's PATH, then follow the chosen tool's guide from the table above:
+
+```sh
+export PATH="$work/bin:$PATH"
+```
+
+For a persistent installation, copy the verified binary into a directory you
+keep on PATH, such as `~/.local/bin`, before removing `$work`. A receiver
+service needs a persistent executable. Do not remove its binary while the
+service is installed.
+
+The public Go module is
+[`github.com/mas-bandwidth/nova-tools/v2`](https://pkg.go.dev/github.com/mas-bandwidth/nova-tools/v2).
+The `/v2` is part of its module path.
+
+## Optional harness entry points
+
+These packages give a coding assistant a short route to this guide. They
+install no nova-tools binaries, start no services and add no MCP server.
+Choose and install the actual tool separately using [Install one tool](#install-one-tool).
+
+For Claude Code:
+
+```sh
+claude plugin marketplace add mas-bandwidth/nova-tools
+claude plugin install nova-tools@nova-tools
+```
+
+Invoke `/nova-tools:guide` in Claude Code to choose a tool and find its guide.
+This is the project's own marketplace; an installable package does not imply
+an Anthropic directory listing.
+
+For Gemini CLI:
+
+```sh
+gemini extensions install https://github.com/mas-bandwidth/nova-tools --ref main
+```
+
+Review the extension's context when prompted. It points to this guide and
+the tool references. The [plain Markdown index](../llms.txt) is another route
+for readers that accept a documentation index.
+
+## Prepare the full walkthrough
+
+Skip this section if you are trying just one tool. For the full walkthrough,
+use the same Bash session, `$work` and release pin from installation. This
+builds all seven tools and needs Go and git even if you downloaded your first
+binary. The later sections name their additional dependencies. Only the
+terminal receiver demonstration requires a plain terminal; Codex skips that
+block while keeping the shared walkthrough setup.
+
+```sh
+(
+  set -eu
+  cd "$work"
+  if [ ! -d nova-tools ]; then
+    git clone -q --depth 1 --branch "$NOVA_TOOLS_VERSION" https://github.com/mas-bandwidth/nova-tools
+  fi
+  for t in bus cairn config fleet reserve sandbox secrets; do
+    go build -C nova-tools -o "$work/bin/nova-$t" "./$t"
+  done
+  for t in bus cairn config fleet reserve sandbox secrets; do
+    "$work/bin/nova-$t" -h > /dev/null
+    printf 'nova-%s ok\n' "$t"
+  done
+)
+cd "$work"
+```
+
+The terminal walkthrough blocks below run in order, with separate instructions
+for a live Codex chat and for a real fleet. It starts disposable Redis and
+PostgreSQL services on this machine. The real fleet commands also name the
+access and credentials they need; do those only when setting up a fleet is
+your task.
+
+The [last block](#clean-up) stops the disposable services and removes `$work`.
+Go, pip and Ansible caches remain in your home directory (`~/.cache/go-build`,
+`~/go/pkg/mod`, `~/.cache/pip` and `~/.ansible`). Each section names its first
+result, likely refusal and full reference. A `next: <command>` line is a
+suggested next step, not an error or an instruction to run it automatically.
 
 ## Talk to each other across models and harnesses
 
 Any process that can run a command can send a message, and any process that
 can read a stream of lines can receive one. A **hook** is the receiver: it
 prints each message for its name as one line, until it is stopped.
+
+### Connect a live chat
 
 For a live **Codex chat**, use the Redis address and inbox name assigned to
 you, and an installed `nova-bus` outside this walkthrough's temporary `$work`
@@ -96,17 +212,32 @@ service; the child-only relay does not wake an idle parent chat. Do not use
 The setup, receipts, and recovery behavior are in
 [bus/README.md](../bus/README.md#how-your-session-gets-woken).
 
-The following **terminal demonstration** uses throwaway inbox names and
-shows transport delivery only. Run it in a plain terminal, not a Codex
-agent's command tool; Codex refuses a foreground hook. If you are following
-this guide in Codex, use the service setup above and skip this demonstration.
-Start a throwaway Redis, hook in as `claude`, and send to it as `codex`:
+### Start the walkthrough's Redis
+
+For the full walkthrough, run this setup even when following along in Codex.
+The local examples and the final health checks use this disposable Redis,
+and cleanup uses `$port` to stop it. Keep the live receiver above configured
+with its assigned Redis address; do not connect a persistent service to this
+temporary one.
 
 ```sh
 port=$((20000 + RANDOM % 20000))
 redis-server --port "$port" --bind 127.0.0.1 --save '' --appendonly no --dir "$work" --daemonize yes > /dev/null
 export NOVA_BUS_REDIS=127.0.0.1:$port
 sleep 1
+```
+
+### Try transport in a terminal
+
+This **terminal demonstration** uses throwaway inbox names and shows transport
+delivery only. Run it in a plain terminal, not a Codex agent's command tool;
+Codex refuses a foreground hook. In Codex, skip only this receiver block and
+continue with the sections below, leaving the disposable Redis running. Use
+[the live-chat setup](#connect-a-live-chat) to test an actual AI reply.
+
+In the terminal, hook in as `claude`, and send to it as `codex`:
+
+```sh
 nova-bus hook --as claude > "$work/claude.inbox" 2> "$work/claude.log" &   # a demo on throwaway names:
 nova-bus hook --as codex > "$work/codex.inbox" 2> "$work/codex.log" &     # these are inbox names, not harness selections
 sleep 1
@@ -593,8 +724,10 @@ grant is relative or missing, or the command is outside every grant. A working
 directory outside every grant is `SANDBOX REFUSED reason=cwd` (exit 125, not 2):
 cd into a grant or `--read` that directory. For a Go
 toolchain outside `/usr`, add `--read "$(go env GOROOT)"`. A Go build also needs
-`--env TMPDIR --env GOCACHE --env GOMODCACHE --env GOPROXY`, each set to a path
-inside a `--write` (`GOMODCACHE` inside a `--read`). `HOME` is kept. The others are in
+`--env TMPDIR --env GOCACHE --env GOMODCACHE --env GOPROXY`. Put `TMPDIR`
+and `GOCACHE` inside a `--write`, and a populated `GOMODCACHE` inside a
+`--read`. Set `GOPROXY=off` for a build from that cache with `--net-deny`;
+`GOPROXY` is a module-download setting, not a filesystem path. `HOME` is kept. The others are in
 [sandbox/README.md](../sandbox/README.md#refusals).
 
 The whole tool: [sandbox/README.md](../sandbox/README.md).

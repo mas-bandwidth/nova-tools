@@ -1,0 +1,17 @@
+{
+  "name": "nova-tools",
+  "version": "1.0.0",
+  "description": "Choose, install and use nova-tools command-line tools for AI messaging, session notes and shared machines, using the maintained guides.",
+  "author": {
+    "name": "Más Bandwidth"
+  },
+  "homepage": "https://github.com/mas-bandwidth/nova-tools/blob/main/docs/README.md",
+  "repository": "https://github.com/mas-bandwidth/nova-tools",
+  "license": "MIT",
+  "keywords": [
+    "ai-agents",
+    "agent-communication",
+    "cli",
+    "nova-tools"
+  ]
+}

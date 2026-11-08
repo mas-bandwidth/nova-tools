@@ -5,11 +5,14 @@ plays, roles, templates and defaults are embedded, a run extracts them to a priv
 `ansible-playbook` at your inventory (`nova-config inventory` unless you name another) and exits 0 when it passed,
 1 when it failed (ansible-playbook's own status named on stderr), 2 when it could not run.
 
-```
+Use the release selected in the [installation guide](../docs/README.md#install-one-tool)
+as `NOVA_TOOLS_VERSION`; replace `<machine>` with a name from your inventory.
+
+```sh
 nova-fleet plays                                  # what is in the binary
 nova-fleet show install                           # read a play before you run it
-nova-fleet install --check --diff -- -e nova_tools_version=v1.0.0 -l <machine>
-nova-fleet install -- -e nova_tools_version=v1.0.0 -l <machine>
+nova-fleet install --check --diff -- -e nova_tools_version="$NOVA_TOOLS_VERSION" -l <machine>
+nova-fleet install -- -e nova_tools_version="$NOVA_TOOLS_VERSION" -l <machine>
 ```
 
 `--check` and `--diff` may come before `--`; everything after `--` goes to `ansible-playbook` as written (`-e`, `-l`,
@@ -17,15 +20,12 @@ nova-fleet install -- -e nova_tools_version=v1.0.0 -l <machine>
 
 ## Install
 
-Take `nova-fleet` from a release like the other tools (`nova-fleet_<tag>_<os>_<arch>[.exe]` for linux/amd64,
-linux/arm64, darwin/arm64 and windows/amd64, in the release's `SHA256SUMS`; `install` puts it on every machine), or
-build it. On Windows `plays`, `show` and `help` work, and running a play is refused with the reason: ansible-core has
+[Install one tool](../docs/README.md#install-one-tool), choosing `tool=fleet`.
+The [shared guide](../docs/README.md) covers choosing tools and trying them together.
+This installs the command on your control node; the `install` play deploys tools to the inventory machines.
+On Windows `plays`, `show` and `help` work, and running a play is refused with the reason: ansible-core has
 no native Windows controller, so a Windows machine is a host the plays reach, never the one running them (use a
 Linux, macOS or WSL control node).
-
-```
-git clone --depth 1 https://github.com/mas-bandwidth/nova-tools && cd nova-tools && go build -o ~/.local/bin/nova-fleet ./fleet
-```
 
 The control machine needs ansible-core 2.15 or later on PATH; a Windows host in the inventory also needs the `ansible.windows`
 collection. On macOS `brew install ansible`; on Linux a venv (Debian and Ubuntu ship python3 without it, so there the
@@ -34,6 +34,7 @@ python3 has no venv module):
 
 ```
 python3 -m venv ~/.local/ansible && ~/.local/ansible/bin/pip install ansible-core
+export PATH="$HOME/.local/ansible/bin:$PATH"
 nova-fleet show requirements > requirements.yml && ansible-galaxy collection install -r requirements.yml
 ```
 
@@ -61,8 +62,8 @@ The whole path, in order. Each step's output says what to do next.
 
 ```
 nova-fleet check
-nova-fleet up --check --tools v2.0.0 store-1=203.0.113.7 web-1=203.0.113.8
-nova-fleet up --tools v2.0.0 store-1=203.0.113.7 web-1=203.0.113.8
+nova-fleet up --check --tools "$NOVA_TOOLS_VERSION" store-1=203.0.113.7 web-1=203.0.113.8
+nova-fleet up --tools "$NOVA_TOOLS_VERSION" store-1=203.0.113.7 web-1=203.0.113.8
 ```
 
 The addresses here are placeholders (RFC 5737 documentation addresses, which answer nothing): put your own machines'
@@ -77,9 +78,9 @@ services and nova-bus open). After `--`, `-e name=value` pairs reach every play 
 that would skip Tailscale, PostgreSQL, Redis or Ansible, is refused).
 
 ```
-nova-fleet up --check --tools v2.0.0 store-1=203.0.113.7 web-1=203.0.113.8 mac-1=mac-1.local/darwin/arm64
-nova-fleet up --tools v2.0.0 --runners https://github.com/OWNER/REPO store-1=203.0.113.7 web-1=203.0.113.8
-nova-fleet up --tools v2.0.0 store-1=203.0.113.7 -- -e nova_pg_version=17
+nova-fleet up --check --tools "$NOVA_TOOLS_VERSION" store-1=203.0.113.7 web-1=203.0.113.8 mac-1=mac-1.local/darwin/arm64
+nova-fleet up --tools "$NOVA_TOOLS_VERSION" --runners https://github.com/OWNER/REPO store-1=203.0.113.7 web-1=203.0.113.8
+nova-fleet up --tools "$NOVA_TOOLS_VERSION" store-1=203.0.113.7 -- -e nova_pg_version=17
 ```
 
 (203.0.113.x are placeholder addresses; use your own.)
@@ -140,7 +141,7 @@ WOULD-GRANT <names>`; a value it cannot read stops it with the read's reason. No
 sent under `--check`; the one thing it writes on this node is a host key pin.
 
 A machine's seat holds no values until they are granted to it: join's bus check on a new machine is a `NOTE` until
-step 5 has granted `NOVA_BUS_PASSWORD` and step 7 has pushed it.
+step 6 has granted `NOVA_BUS_PASSWORD` and step 8 has pushed it.
 
 **Adding a machine.** A fleet that exists is read from nova-config, never guessed from the command line: export
 `NOVA_PG_DSN` (the line `up` printed, `postgres://nova_config@<store machine>:5432/nova`; `check` notes it once your
@@ -150,8 +151,8 @@ rows are read from there.
 
 ```
 export NOVA_PG_DSN=postgres://nova_config@store-1.<tailnet>.ts.net:5432/nova
-nova-fleet up --check --tools v2.0.0 web-2=203.0.113.9
-nova-fleet up --tools v2.0.0 web-2=203.0.113.9
+nova-fleet up --check --tools "$NOVA_TOOLS_VERSION" web-2=203.0.113.9
+nova-fleet up --tools "$NOVA_TOOLS_VERSION" web-2=203.0.113.9
 ```
 
 The store machine is the row with the role `services`; no machine named becomes "first", and PostgreSQL and Redis are
@@ -178,7 +179,7 @@ reached as root at the address given, as on the first run.
 | `tailscale` | each machine on the tailnet, its address the MagicDNS name, its firewall closed to all but the tailnet | `TAILSCALE_AUTHKEY` in the environment for a machine not on the tailnet (`up` mints it) |
 
 ```
-nova-fleet install -- -e nova_tools_version=v1.0.0 -l bench
+nova-fleet install -- -e nova_tools_version="$NOVA_TOOLS_VERSION" -l bench
 nova-fleet services --check --diff
 nova-fleet github-runners -- -e github_runner_url=https://github.com/OWNER/REPO -e github_runner_scope=repo
 ```
@@ -202,7 +203,7 @@ To use your own inventory instead, name a file or script:
 
 ```
 nova-fleet services --inventory ./hosts.ini --check
-nova-fleet install --inventory ./my-inventory.py -- -e nova_tools_version=v1.0.0
+nova-fleet install --inventory ./my-inventory.py -- -e nova_tools_version="$NOVA_TOOLS_VERSION"
 ```
 
 Any inventory works if each host that runs `services` carries `nova_services`, a list of rows: `name`, `argv` (a
@@ -888,7 +889,8 @@ nova-fleet runner-packages -- -l mini-m5
 
 ## Refusals
 
-Each is one line on stderr, exit 2, and nothing is run:
+Each refusal exits 2 before running a play. Invocation errors are one line on
+stderr; missing prerequisites also print one diagnostic per gap on stdout:
 
 | You ran | It says |
 |---|---|
@@ -905,8 +907,9 @@ exit, a refusal included.
 
 ## Build and test
 
-```
-go build -o nova-fleet ./fleet
+```sh
+build_dir=$(mktemp -d)
+go build -o "$build_dir/nova-fleet" ./fleet
 go test ./fleet                       # unit: the embedded tree, purposes, arguments, refusals (no ansible)
 go test -tags functional ./fleet      # ansible-core on PATH: the plays run through the binary and templar
 ```
