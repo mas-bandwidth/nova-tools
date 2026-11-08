@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"errors"
-	"net"
 	"strings"
 	"testing"
 	"time"
@@ -34,7 +33,7 @@ func TestVerbHelp(t *testing.T) {
 		}
 	}
 	_, out, _ := h.run(t, "machine", "add", "--help")
-	assert.Contains(t, out, "machine fields: name, address, public, user, os, arch, cores, roles, runners, note")
+	assert.Contains(t, out, "machine fields: name, address, public, user, os, arch, cores, roles, runners, windows_runners, note")
 	assert.Contains(t, out, "--user <text>")
 	for _, p := range paths[6:] { // the banner names each verb path
 		assert.Contains(t, usage, "nova-config "+strings.Join(p, " "))
@@ -190,18 +189,6 @@ func TestDiagnose(t *testing.T) {
 func TestOneLine(t *testing.T) {
 	t.Parallel()
 	assert.Equal(t, "a b c", oneLine("a\n  b\tc\n"))
-}
-
-func TestOpenPGConnectFailure(t *testing.T) {
-	t.Parallel()
-	l, err := net.Listen("tcp", "127.0.0.1:0") // a port nothing answers on, once closed
-	require.NoError(t, err)
-	addr := l.Addr().String()
-	require.NoError(t, l.Close())
-	_, err = openPG(t.Context(), "postgres://u@"+addr+"/x?sslmode=disable&connect_timeout=2", "")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "cannot reach postgres at "+addr+" (NOVA_PG_DSN): ")
-	assert.NotContains(t, err.Error(), "\n")
 }
 
 // A set that changes nothing writes nothing: no history row, and it says so.

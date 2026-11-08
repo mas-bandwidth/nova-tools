@@ -142,8 +142,19 @@ func build(machines []Row, services []Row, local string) (*inventory, error) {
 				hv[k] = val
 			}
 		}
+		if v["windows_runners"] != "" {
+			ws, err := parseWinRunners(v["windows_runners"])
+			if err != nil {
+				return nil, refused("machine %s has corrupt windows_runners (%v); run: nova-config machine set %s --windows_runners <value>", m, err, m)
+			}
+			hv["nova_windows_runners"] = ws
+		}
 		if m == local {
 			hv["ansible_connection"] = "local"
+		}
+		// a Mac: the system python has the system certificate bundle; a discovered Homebrew python may not (get_url fails)
+		if v["os"] == "darwin" {
+			hv["ansible_python_interpreter"] = "/usr/bin/python3"
 		}
 		inv.Meta.Hostvars[m] = hv
 		for _, role := range strings.Split(v["roles"], ",") {

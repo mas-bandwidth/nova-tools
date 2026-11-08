@@ -91,10 +91,24 @@ tree() {
 		}'
 }
 
+# hook_gone PATH: a hook that names a retired place (v1's ci-hold under C:\rowan-jobs\, retired 2026-11-07) or a file that is
+# not there is never chained: it would fail, or run v1, before every job.
+hook_gone() {
+	case $1 in [Cc]:'\rowan-jobs\'* | /mnt/[Cc]/rowan-jobs/*) return 0 ;; esac
+	[ ! -f "$1" ]
+}
+
 # env-edit HOOKDIR: the .env on stdin with the two hooks pointing into HOOKDIR. A hook that pointed elsewhere moves to
-# NOVA_CI_CHAIN_JOB_STARTED / _COMPLETED (unless one is already there), so it still runs, from ours.
+# NOVA_CI_CHAIN_JOB_STARTED / _COMPLETED (unless one is already there), so it still runs, from ours; a chain (or a hook
+# about to be chained) that hook_gone names is dropped first: the unchain rule.
 env_edit() {
-	awk -v dir="$1" '
+	while IFS= read -r l || [ -n "$l" ]; do
+		case $l in
+		ACTIONS_RUNNER_HOOK_JOB_STARTED="$1/job-started.sh" | ACTIONS_RUNNER_HOOK_JOB_COMPLETED="$1/job-completed.sh") ;;
+		ACTIONS_RUNNER_HOOK_JOB_*=* | NOVA_CI_CHAIN_JOB_*=*) hook_gone "${l#*=}" && continue ;;
+		esac
+		printf '%s\n' "$l"
+	done | awk -v dir="$1" '
 		function val(line) { return substr(line, index(line, "=") + 1) }
 		/^ACTIONS_RUNNER_HOOK_JOB_STARTED=/ { old["STARTED"] = val($0); next }
 		/^ACTIONS_RUNNER_HOOK_JOB_COMPLETED=/ { old["COMPLETED"] = val($0); next }

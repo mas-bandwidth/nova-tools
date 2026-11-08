@@ -66,7 +66,7 @@ Output (paths vary):
 SECRETS INIT OK store=/tmp/tmp.k3Jd9x/store
 next: age-keygen -o /home/you/.config/nova-secrets/web.key
 SECRETS SEAT ADD OK seat=web committed
-next: nova-secrets set DB_PASSWORD --as web --store /tmp/tmp.k3Jd9x/store --key /home/you/.config/nova-secrets/web.key --pins /home/you/.config/nova-secrets/pins
+next: nova-secrets set DB_PASSWORD --as web --store /tmp/tmp.k3Jd9x/store --pins /home/you/.config/nova-secrets/pins
 ```
 
 Each OK line is followed by `next: <command>`, the command to run next,
@@ -74,7 +74,11 @@ shell-quoted. After `init` it is this
 node's `seat add` (the seat `$NOVA_SECRETS_SEAT`, else the short hostname, with
 the public half of `$NOVA_SECRETS_KEY` or `~/.config/nova-secrets/<seat>.key`),
 or the `age-keygen -o` that makes that key while there is none. After `seat add`
-it is the `set` this node runs as its own seat with its own key, or the `age-keygen -o` while there is no key.
+it is the `set` as the seat just added, on the `--store` given, with `--pins`
+from `$NOVA_SECRETS_PINS` or `~/.config/nova-secrets/pins`. It carries `--key`
+only when that seat's key file (`~/.config/nova-secrets/<seat>.key`, or
+`$NOVA_SECRETS_KEY` for this node's own seat) is on this machine and is the key
+just added; otherwise it has no `--key`, and `set` reads `$NOVA_SECRETS_KEY`.
 
 `init` takes an absent or empty directory whose parent exists, and
 writes `.sops.yaml`, `recovery.pub` and one commit. `--pins` also writes the
@@ -185,7 +189,7 @@ nova-secrets exec --only NOVA_BUS_PASSWORD --store "$secrets_dir" --key "$key_di
 ```text
 SECRETS SET OK as=web name=NOVA_BUS_PASSWORD file=web.yaml committed; run: git -C /tmp/tmp.k3Jd9x/store push
 SECRETS SEAT ADD OK seat=db committed
-next: nova-secrets set DB_PASSWORD --as here --store /tmp/tmp.k3Jd9x/store --key /tmp/tmp.k3Jd9x/keys/here.key --pins /home/you/.config/nova-secrets/pins
+next: nova-secrets set DB_PASSWORD --as db --store /tmp/tmp.k3Jd9x/store --pins /tmp/tmp.k3Jd9x/pins
 SECRETS GRANT OK from=web to=db names=1 changed=1 committed; run: git -C /tmp/tmp.k3Jd9x/store push
 SECRETS GRANT OK from=web to=db names=1 changed=0 unchanged
 SECRETS EXEC STARTING as=db keys=1 cmd=sh

@@ -74,14 +74,34 @@ function Get-Tree([long]$root, [string]$exclude, $rows) {
     } while ($more)
     return @($rows | Where-Object { [long]$_.Id -ne $root -and $keep.ContainsKey([long]$_.Id) } | ForEach-Object { [long]$_.Id })
 }
+# The places a chained hook may no longer point: v1's ci-hold under C:\rowan-jobs\ (retired 2026-11-07).
+$unchain = @('C:\rowan-jobs\')
+# Test-Gone PATH: a hook that names a retired place or a file that is not there is never chained (it would fail, or
+# run v1, before every job).
+function Test-Gone([string]$p) {
+    if (@($unchain | Where-Object { $p.StartsWith($_, [StringComparison]::OrdinalIgnoreCase) }).Count -gt 0) { return $true }
+    return -not ($p -and (Test-Path -LiteralPath $p -PathType Leaf))
+}
+
+# env-edit HOOKDIR: the .env with the two hooks pointing into HOOKDIR. A hook that pointed elsewhere moves to
+# NOVA_CI_CHAIN_JOB_STARTED / _COMPLETED (unless one is already there), so it still runs, from ours; a chain (or a hook
+# about to be chained) that Test-Gone names is dropped: the unchain rule.
 function Edit-Env([string]$dir, [string[]]$lines) {
     $old = @{}; $chain = @{}; $out = New-Object System.Collections.Generic.List[string]
+    $ours = [ordered]@{ STARTED = "$dir\job-started.ps1"; COMPLETED = "$dir\job-completed.ps1" }
     foreach ($l in $lines) {
-        if ($l -match '^ACTIONS_RUNNER_HOOK_JOB_(STARTED|COMPLETED)=(.*)$') { $old[$Matches[1]] = $Matches[2]; continue }
-        if ($l -match '^NOVA_CI_CHAIN_JOB_(STARTED|COMPLETED)=') { $chain[$Matches[1]] = $true }
+        if ($l -match '^ACTIONS_RUNNER_HOOK_JOB_(STARTED|COMPLETED)=(.*)$') {
+            $k, $v = $Matches[1], $Matches[2]
+            if ($v -eq $ours[$k] -or -not (Test-Gone $v)) { $old[$k] = $v }
+            continue
+        }
+        if ($l -match '^NOVA_CI_CHAIN_JOB_(STARTED|COMPLETED)=(.*)$') {
+            $k, $v = $Matches[1], $Matches[2]
+            if (Test-Gone $v) { continue }
+            $chain[$k] = $true
+        }
         $out.Add($l)
     }
-    $ours = [ordered]@{ STARTED = "$dir\job-started.ps1"; COMPLETED = "$dir\job-completed.ps1" }
     foreach ($k in $ours.Keys) {
         if ($old[$k] -and $old[$k] -ne $ours[$k] -and -not $chain[$k]) { $out.Add("NOVA_CI_CHAIN_JOB_$k=$($old[$k])") }
     }

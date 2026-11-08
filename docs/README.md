@@ -9,7 +9,9 @@ labelled. The last block removes the terminal walkthrough's files, except the Go
 caches in your home directory (`~/.cache/go-build`, `~/go/pkg/mod`,
 `~/.cache/pip` and `~/.ansible`). Each section says what the first try prints,
 the refusal you are most likely to meet, and where the full guide for that
-tool is.
+tool is. Many `OK` lines are followed by a `next: <command>` line: that is the
+tool proposing the command you would usually run next, not an error, and you
+need not run it.
 
 ## The tools
 
@@ -40,11 +42,12 @@ optional.
 
 Build them with Go from a clone of one release tag, set once in
 `NOVA_TOOLS_VERSION`; the fleet section installs that same tag on the
-machines. The blocks below use a throwaway directory, `$work`, and put the
-tools on PATH from there.
+machines. The pin is the release this guide was cut with: `release.yml`
+refuses to publish a tag whose guide pins a different one. The blocks below
+use a throwaway directory, `$work`, and put the tools on PATH from there.
 
 ```sh
-NOVA_TOOLS_VERSION=v2.0.5
+NOVA_TOOLS_VERSION=v2.0.11
 work=$(mktemp -d) && cd "$work"
 git clone -q --depth 1 --branch "$NOVA_TOOLS_VERSION" https://github.com/mas-bandwidth/nova-tools
 for t in bus cairn config fleet reserve sandbox secrets; do
@@ -135,8 +138,7 @@ The refusal you will meet first is
 (exit 1): the address is wrong or Redis is down. The others are in
 [bus/README.md](../bus/README.md#exit-codes-and-refusals).
 
-The whole tool: [bus/README.md](../bus/README.md); how it is tested:
-[bus/SPEC.md](../bus/SPEC.md).
+The whole tool: [bus/README.md](../bus/README.md).
 
 ## Set up and run a fleet of machines connected by tailscale
 
@@ -166,18 +168,27 @@ Ansible are all required: `check` wants Tailscale and Ansible on this machine,
 path is `nova-fleet check`, then your human's token (made in the console, pasted once),
 then `nova-fleet up --check`, then `nova-fleet up`.
 
-`check` needs Ansible on PATH. On Debian and Ubuntu `python3 -m venv` fails
-until `python3-venv` is installed, because those systems ship Python's venv
-support as a separate package, so the first line installs it when the venv
-cannot be made. Without sudo, use `python3 -m venv --without-pip "$work/venv"`
-and then `pip --python "$work/venv/bin/python" install ansible-core` with any
-pip you already have.
+`check` needs Ansible on PATH, and the Ansible collections the plays use. On
+Debian and Ubuntu `python3 -m venv` fails until `python3-venv` is installed,
+because those systems ship Python's venv support as a separate package, so
+the first line installs it when the venv cannot be made. Without sudo, use
+`python3 -m venv --without-pip "$work/venv"` and then
+`pip --python "$work/venv/bin/python" install ansible-core` with any pip you
+already have. The last line installs the collections `nova-fleet show
+requirements` names (into `~/.ansible/collections`), in the form `check`'s own
+`CHECK MISSING ansible.posix` line gives; until they are installed, `check`
+lists each one missing, and `up`, `services` and `github-runners` refuse with
+`this control node lacks ...; run: nova-fleet check` (exit 2).
 
 ```sh
 python3 -m venv "$work/venv" || { rm -rf "$work/venv"; sudo apt-get update -qq && sudo apt-get install -y python3-venv && python3 -m venv "$work/venv"; }
 "$work/venv/bin/pip" install -q ansible-core
 export PATH="$work/venv/bin:$PATH"
+nova-fleet show requirements > "$work/requirements.yml" && "$work/venv/bin/ansible-galaxy" collection install -r "$work/requirements.yml"
 ```
+
+`ansible-galaxy` prints `<collection> was installed successfully` for each, or
+`Nothing to do. All requested collections are already installed.`
 
 `check` also needs this machine's **control seat**: a nova-secrets store, the
 seat's age key, and a **pins** directory, the public keys the control node keeps
@@ -193,10 +204,12 @@ nova-fleet check || echo "exit $?"
 
 `check` prints one line per prerequisite, `CHECK OK <name> <version>` or
 `CHECK MISSING <name>: <the command that fixes it>`; run each fix line that is
-a command for you (installs, builds) and check again. Then the tailnet (a
-`CHECK NOTE` if this machine is not on it: `up` joins it). On a fresh machine
-that has the helpers, exactly one line is left, and the run ends
-`CHECK FAILED missing=1`, exit 1:
+a command for you (installs, builds) and check again. The list covers the
+helper programs and each Ansible collection from `nova-fleet show
+requirements`. Then the tailnet (a `CHECK NOTE` if this machine is not on it:
+`up` joins it). On a fresh machine that has the helpers and the collections
+(the venv block above installs the collections), exactly one `CHECK MISSING`
+line is left, and the run ends `CHECK FAILED missing=1` on stderr, exit 1:
 
 ```text
 CHECK MISSING TAILSCALE_API_KEY: nova-secrets set TAILSCALE_API_KEY  # paste the token when it asks: one line tskey-api-..., from the Tailscale admin console > Settings > Keys > Generate API access token; on this fresh node it makes the secrets store, the keys and the seat first
@@ -285,21 +298,30 @@ running), and let `nova-fleet services --check` plan it. `--actor` names who
 made a change, and the history keeps it. The row's `os` and `arch` come from
 `uname`. On Debian and Ubuntu, apt puts `initdb` and `pg_ctl` in
 `/usr/lib/postgresql/<version>/bin`, outside PATH, so the first line adds the
-newest one; on macOS Homebrew's are already on PATH. `--inventory` names a
+newest one; on macOS Homebrew's are already on PATH. `initdb` and `pg_ctl` run
+with `LC_ALL=C` because a shell may have no locale (`LANG` and `LC_ALL` both
+unset, as in many agent shells and launchd jobs), and without one PostgreSQL
+on macOS stops at start with `postmaster became multithreaded during startup`
+in `pg.log` while `pg_ctl` prints `could not start server`. `C` is valid on
+every system and fine for a throwaway store. It is set on those two commands
+only, not exported: Ansible refuses a locale that is not UTF-8
+(`Ansible requires the locale encoding to be UTF-8`). `--inventory` names a
 script that prints `nova-config inventory`, and `ansible_connection=local`
-stands in for ssh:
+stands in for ssh. The last line's `grep` also passes `CHECK` and `lacks`
+lines, so a play that refuses shows the `CHECK MISSING` lines its refusal
+points at instead of only the refusal:
 
 ```sh
 pg_bin=$(ls -d /usr/lib/postgresql/*/bin 2> /dev/null | tail -1); [ -n "$pg_bin" ] && export PATH="$pg_bin:$PATH"
-initdb -D "$work/pg" -U nova -A trust > /dev/null
-pg_ctl -D "$work/pg" -o "-p 54330 -k $work -c listen_addresses=127.0.0.1" -l "$work/pg.log" -w start > /dev/null
+LC_ALL=C initdb -D "$work/pg" -U nova -A trust > /dev/null
+LC_ALL=C pg_ctl -D "$work/pg" -o "-p 54330 -k $work -c listen_addresses=127.0.0.1" -l "$work/pg.log" -w start > /dev/null
 createdb -h 127.0.0.1 -p 54330 -U nova nova
 export NOVA_PG_DSN=postgres://nova@127.0.0.1:54330/nova
 nova-config schema | PGOPTIONS="-c client_min_messages=warning" psql -q "$NOVA_PG_DSN"
 nova-config machine add here --address localhost --user "$(id -un)" --os "$(uname -s | tr '[:upper:]' '[:lower:]')" --arch "$(uname -m | sed 's/x86_64/amd64/; s/aarch64/arm64/')" --runners 1 --actor you
 nova-config service add hello --machine here --argv '["sh","-c","echo hello; sleep 60"]' --keepalive true --actor you
 printf '#!/bin/sh\nexec nova-config inventory "$@"\n' > "$work/inventory" && chmod +x "$work/inventory"
-nova-fleet services --check --inventory "$work/inventory" -- -e ansible_connection=local -e nova_service_only=hello | grep -E 'SERVICES|RESTART'
+nova-fleet services --check --inventory "$work/inventory" -- -e ansible_connection=local -e nova_service_only=hello | grep -E 'SERVICES|RESTART|CHECK|lacks'
 ```
 
 The two writes print `CONFIG ADD kind=machine name=here rev=1` and
@@ -345,8 +367,7 @@ the password goes in `NOVA_PG_PASSWORD`, never in the DSN. The others are in
 [fleet/README.md](../fleet/README.md#refusals).
 
 The whole tool: [fleet/README.md](../fleet/README.md), with
-[config/README.md](../config/README.md) and [config/SPEC.md](../config/SPEC.md)
-for the rows.
+[config/README.md](../config/README.md) for the rows.
 
 ## No fleet yet? Mock one with VMs
 
@@ -367,10 +388,23 @@ organization, and runs each as a service that starts at boot; `nova-fleet up
 needs to the list:
 
 ```sh
-nova-fleet check --runners https://github.com/OWNER/REPO | grep -E 'gh'
+nova-fleet check --runners https://github.com/OWNER/REPO | grep -E 'CHECK (OK|MISSING) gh'
 ```
 
+The summary line, `CHECK FAILED missing=<n>` here because the throwaway
+store has no `TAILSCALE_API_KEY`, goes to stderr, so it shows past the `grep`,
+first. Logged in to gh:
+
 ```text
+CHECK FAILED missing=1
+CHECK OK gh <version>
+CHECK OK gh-login
+```
+
+Not logged in:
+
+```text
+CHECK FAILED missing=2
 CHECK OK gh <version>
 CHECK MISSING gh-login: gh auth login  # a browser login, not a paste: the runners register with a token gh asks GitHub for; ...
 ```
@@ -394,7 +428,7 @@ one), and skip the check of GitHub's own list of runners. The plan prints one
 
 ```sh
 printf '#!/bin/sh\necho example-token\n' > "$work/gh-stub" && chmod +x "$work/gh-stub"
-nova-fleet github-runners --check --inventory "$work/inventory" -- -e ansible_connection=local -e github_runner_url=https://github.com/OWNER/REPO -e github_runner_scope=repo -e github_runner_gh="$work/gh-stub" -e github_runner_verify=false | grep -E 'RUNNER'
+nova-fleet github-runners --check --inventory "$work/inventory" -- -e ansible_connection=local -e github_runner_url=https://github.com/OWNER/REPO -e github_runner_scope=repo -e github_runner_gh="$work/gh-stub" -e github_runner_verify=false | grep -E 'RUNNER|CHECK|lacks'
 ```
 
 On Linux amd64:
@@ -450,7 +484,7 @@ nova-secrets exec --only NOVA_BUS_PASSWORD --as db -- true || echo "exit $?"
 ```text
 SECRETS SET OK as=here name=NOVA_BUS_PASSWORD file=here.yaml committed; run: git -C <store> push
 SECRETS SEAT ADD OK seat=db committed
-next: nova-secrets set DB_PASSWORD --as here --store /tmp/tmp.k3Jd9x/store --key /tmp/tmp.k3Jd9x/keys/here.key --pins /tmp/tmp.k3Jd9x/pins
+next: nova-secrets set DB_PASSWORD --as db --store /tmp/tmp.k3Jd9x/store --pins /tmp/tmp.k3Jd9x/pins
 SECRETS GRANT OK from=here to=db names=1 changed=1 committed; run: git -C <store> push
 SECRETS GRANT OK from=here to=db names=1 changed=0 unchanged
 SECRETS EXEC STARTING as=db keys=1 cmd=sh
@@ -471,10 +505,11 @@ program when its unit starts and is in no file Ansible writes:
 ```sh
 nova-config service add api --machine here --argv '["sh","-c","test -n \"$NOVA_BUS_PASSWORD\" && echo password present; sleep 60"]' --seat db --keys NOVA_BUS_PASSWORD --keepalive true --actor you
 nova-fleet services --check --diff --inventory "$work/inventory" -- -e ansible_connection=local -e nova_service_only=api \
-  -e nova_secrets_store="$work/store" -e nova_secrets_key_dir="$work/keys" | grep -E 'ExecStart|<string>(.*/nova-secrets|--only|NOVA_BUS_PASSWORD)</string>'
+  -e nova_secrets_store="$work/store" -e nova_secrets_key_dir="$work/keys" | grep -E 'ExecStart|<string>(.*/nova-secrets|--only|NOVA_BUS_PASSWORD)</string>|CHECK|lacks'
 ```
 
-The diff shows the unit starting `nova-secrets exec` with
+The `grep` passes `CHECK` and `lacks` lines too, so a refusal shows instead of
+an empty result. The diff shows the unit starting `nova-secrets exec` with
 `--only NOVA_BUS_PASSWORD` in front of the program: on Linux one `ExecStart=`
 line, on macOS three `<string>` lines of the plist's `ProgramArguments`. The
 two `-e` values point the unit at this session's store and key directory;
@@ -512,8 +547,7 @@ The refusal you will meet first is `no slot within <d>: ...` (exit 1): every
 slot stayed taken for the whole `--wait`. Wait longer, or look at `status`. The
 others are in [reserve/README.md](../reserve/README.md#refusals-and-what-to-do-next).
 
-The whole tool: [reserve/README.md](../reserve/README.md) and
-[reserve/SPEC.md](../reserve/SPEC.md).
+The whole tool: [reserve/README.md](../reserve/README.md).
 
 ## Run untrusted work inside a sandbox
 
@@ -532,7 +566,9 @@ cd "$work"
 The block starts inside the grant, because a shell started outside it cannot
 read its own working directory. The first command writes `ok` inside the
 grant. The second is denied by the kernel, and the run exits with the
-command's own status. On Linux:
+command's own status. Before each command runs, `nova-sandbox` prints the wall
+it applies on stderr, `WALL write=<the grant> net=denied` (or `net=open`
+without `--net-deny`). After those lines, on Linux:
 
 ```text
 sh: 1: cannot create /home/<you>/sandbox-escape.txt: Permission denied
@@ -561,8 +597,7 @@ toolchain outside `/usr`, add `--read "$(go env GOROOT)"`. A Go build also needs
 inside a `--write` (`GOMODCACHE` inside a `--read`). `HOME` is kept. The others are in
 [sandbox/README.md](../sandbox/README.md#refusals).
 
-The whole tool: [sandbox/README.md](../sandbox/README.md) and
-[sandbox/SPEC.md](../sandbox/SPEC.md).
+The whole tool: [sandbox/README.md](../sandbox/README.md).
 
 ## Retain memory across sessions
 
@@ -606,8 +641,7 @@ store that exists but has no such session opens the session itself
 (`opened=true`). The others are in
 [cairn/README.md](../cairn/README.md#refusals).
 
-The whole tool: [cairn/README.md](../cairn/README.md) and
-[cairn/SPEC.md](../cairn/SPEC.md).
+The whole tool: [cairn/README.md](../cairn/README.md).
 
 ## Is it working?
 
@@ -626,11 +660,16 @@ first nova-secrets -h       # nova-secrets: sops-encrypted secrets in a git stor
 first nova-reserve status   # capacity=<n> set_by_pid=<pid> set_at=<time>
 first nova-sandbox check    # CHECK OK backend=landlock ... (Linux) or backend=sandbox-exec ... (macOS)
 first nova-cairn version    # nova-cairn <version> (dev when built from a clone)
-first nova-bus who          # WHO OK present=<n>
+first nova-bus who          # WHO OK present=0 once the demo hooks are stopped
 first nova-config machine list                                   # MACHINE name=here address=localhost public=- user=<you> ...
-nova-secrets seat list --store "${NOVA_SECRETS_STORE:-$work/store}"  # db file=no rule=yes, then here file=yes rule=yes
-first nova-fleet check                                           # CHECK OK ansible-playbook <version>
+nova-secrets seat list --store "${NOVA_SECRETS_STORE:-$work/store}"  # db file=no rule=yes, here file=yes rule=yes, SECRETS SEAT LIST OK seats=2
+first nova-fleet check                                           # CHECK FAILED missing=1 (stderr), then CHECK OK ansible-playbook <version>
 ```
+
+`nova-fleet check` fails here, exit 1, and that is expected: its summary,
+`CHECK FAILED missing=1`, goes to stderr and so prints before the first line
+of stdout, because the throwaway store holds no `TAILSCALE_API_KEY`. With your
+human's token set it is `CHECK OK ansible-playbook <version>` alone.
 
 ## Clean up
 
@@ -643,5 +682,5 @@ redis-cli -p "$port" shutdown nosave 2> /dev/null || echo "redis was not running
 rm -rf "$work"
 ```
 
-Command-line rules shared by every tool: [CLI-STYLE.md](CLI-STYLE.md).
+Command-line rules shared by every tool: [AGENTS.md](../AGENTS.md#command-line-contract).
 Security boundaries and how to report a problem: [SECURITY.md](SECURITY.md).

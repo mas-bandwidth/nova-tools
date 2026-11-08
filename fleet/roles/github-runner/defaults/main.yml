@@ -60,3 +60,46 @@ github_runner_ci_limit_seconds: 120
 # The branches a push may run CI on, as globs (tags always may): * and ? stop at a /, so sprint/* is one segment. Any
 # other branch gets CI through its pull request. One list for the fleet, like the limit.
 github_runner_ci_push_branches: [main, sprint/*]
+
+# ---- The Windows side of a WSL machine (tasks/wsl-windows.yml, the windows-runners play; fleet/README.md, "Windows
+# runners of a WSL machine"). Its runners are the machine record's windows_runners (the inventory's
+# nova_windows_runners); these are how they are reached and laid out.
+github_runner_wsl_interop: /proc/sys/fs/binfmt_misc/WSLInterop
+github_runner_wsl_powershell: /mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe
+github_runner_wsl_stage_unix: /mnt/c/ProgramData/nova-runner-stage
+github_runner_wsl_script: 'C:\ProgramData\nova-runner-stage\runner-windows.ps1'
+github_runner_wsl_ci_stage_unix: /mnt/c/ProgramData/nova-ci-rules-stage
+github_runner_wsl_ci_script: 'C:\ProgramData\nova-ci-rules-stage\nova-ci-rules.ps1'
+github_runner_wsl_base_dir: 'C:\actions-runner'
+github_runner_wsl_cache: 'C:\actions-runner\.cache'
+# The labels every Windows-side runner gets, before the record's extras (GitHub adds self-hosted, X64 and Windows).
+# Not the machine's roles, os and arch as on Linux: a job that selects [self-hosted, bench] or [self-hosted, amd64]
+# must never land on Windows.
+github_runner_wsl_labels: "{{ ['fleet', inventory_hostname] }}"
+# The job PATH each Windows runner's .env and .path carry, so a job sees these and nothing of the machine PATH (console
+# SDKs, a second Visual Studio, WSL's System32\bash.exe ahead of Git's). Empty leaves PATH to the service.
+github_runner_windows_path:
+  - 'C:\Program Files\Git\bin'
+  - 'C:\Program Files\Git\cmd'
+  - 'C:\Program Files\Python39'
+  - 'C:\Program Files\Python39\Scripts'
+  - 'C:\Program Files\CMake\bin'
+  - 'C:\Program Files\PowerShell\7'
+  - 'C:\Program Files\dotnet'
+  - 'C:\Program Files\Go\bin'
+  - 'C:\Windows\System32'
+  - 'C:\Windows'
+  - 'C:\Windows\System32\Wbem'
+  - 'C:\Windows\System32\WindowsPowerShell\v1.0'
+  - 'C:\Windows\System32\OpenSSH'
+
+# Retiring v1's Windows side (tasks/wsl-windows-retire-v1.yml): opt-in, the run's own list of what v1 left on that
+# machine, given only as JSON extra vars, so the role ships no machine's names or paths. Empty retires nothing.
+#   runners: [{dir, name, url}]  v1's runners: stopped, checked for a job, removed from GitHub and deleted
+#   labels:  {url: [labels]}     what each v1 target's workflows select; v2's runners there must carry them
+#   delete:  [path]              files and directories deleted after the runners (a wildcard is allowed)
+#   tasks:   [name]              scheduled tasks under \ unregistered
+#   kept:    [line]              what stays and why, printed as kept: lines
+# Refused unless every v2 Windows runner the record names is whole and online, every v1 target is covered, and no v1
+# runner is busy. Nothing of v1 is moved aside: it is deleted.
+nova_windows_retire_v1: {}

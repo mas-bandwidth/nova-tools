@@ -133,8 +133,8 @@ func TestListAndShowLines(t *testing.T) {
 	h := fleet(t)
 	h.ok(t, "machine", "set", "bench-b", "--note", strings.Repeat("ab ", 30)+"=", "--cores", "4", "--actor", "t")
 	out := h.ok(t, "machine", "list")
-	assert.Equal(t, "MACHINE name=bench-a address=- public=- user=nova os=- arch=- cores=- roles=bench,services runners=0 note=-\n"+
-		"MACHINE name=bench-b address=bench-b.tail public=- user=nova os=linux arch=amd64 cores=4 roles=bench runners=2 note="+
+	assert.Equal(t, "MACHINE name=bench-a address=- public=- user=nova os=- arch=- cores=- roles=bench,services runners=0 windows_runners=- note=-\n"+
+		"MACHINE name=bench-b address=bench-b.tail public=- user=nova os=linux arch=amd64 cores=4 roles=bench runners=2 windows_runners=- note="+
 		`"`+strings.Repeat("ab ", 20)+`..."`+"\n"+
 		"CONFIG LIST kind=machine rows=2\n", out)
 	out = h.ok(t, "machine", "show", "bench-b")
@@ -197,7 +197,7 @@ func TestDryRunWritesNothing(t *testing.T) {
 	assert.Equal(t, "CONFIG DRY-RUN op=set kind=service name=member-b actor=a1 wrote=nothing\n  every: 0 -> 5\n  keepalive: true -> false\n  reason: \"a b\"\n",
 		h.ok(t, "service", "set", "member-b", "--every", "5", "--keepalive", "false", "--actor", "a1", "--reason", "a b", "--dry-run"))
 	out := h.ok(t, "machine", "remove", "bench-b", "--actor", "a1", "--dry-run")
-	assert.Equal(t, "CONFIG DRY-RUN op=remove kind=machine name=bench-b actor=a1 wrote=nothing\n  address: \"bench-b.tail\"\n  public: \"\"\n  user: \"nova\"\n  os: \"linux\"\n  arch: \"amd64\"\n  cores: 12\n  roles: \"bench\"\n  runners: 2\n  note: \"\"\n", out)
+	assert.Equal(t, "CONFIG DRY-RUN op=remove kind=machine name=bench-b actor=a1 wrote=nothing\n  address: \"bench-b.tail\"\n  public: \"\"\n  user: \"nova\"\n  os: \"linux\"\n  arch: \"amd64\"\n  cores: 12\n  roles: \"bench\"\n  runners: 2\n  windows_runners: \"\"\n  note: \"\"\n", out)
 	assert.Equal(t, "CONFIG DRY-RUN op=set kind=machine name=bench-a actor=a1 wrote=nothing\n  note: \"\" -> \"the first\"\n",
 		h.ok(t, "machine", "set", "bench-a", "--note", "the first", "--actor", "a1", "--dry-run"))
 	assert.Len(t, h.st.history, n)
@@ -215,10 +215,10 @@ func TestRefusals(t *testing.T) {
 		{1, []string{"service", "set", "nope", "--every", "5", "--actor", "a"}, "service nope not found"},
 		{1, []string{"machine", "add", "bench-a", "--user", "u", "--actor", "a"}, "machine bench-a exists"},
 		{2, []string{"machine", "add", "Bad_Name", "--user", "u", "--actor", "a"}, "want lower-case letters"},
-		{2, []string{"machine", "add", "m9", "--actor", "a"}, "missing required flag --user; machine fields: name, address, public, user, os, arch, cores, roles, runners, note; run: nova-config machine add -h"},
+		{2, []string{"machine", "add", "m9", "--actor", "a"}, "missing required flag --user; machine fields: name, address, public, user, os, arch, cores, roles, runners, windows_runners, note; run: nova-config machine add -h"},
 		{2, []string{"service", "add", "l9"}, "missing required flag --machine, --argv, --actor"},
 		{2, []string{"machine", "set", "bench-a", "--roles", "coordination", "--actor", "a"}, `--roles "coordination"`},
-		{2, []string{"machine", "set", "bench-a", "--slots", "4", "--actor", "a"}, "unknown flag --slots; machine fields: name, address, public, user, os, arch, cores, roles, runners, note; run: nova-config machine set -h"},
+		{2, []string{"machine", "set", "bench-a", "--slots", "4", "--actor", "a"}, "unknown flag --slots; machine fields: name, address, public, user, os, arch, cores, roles, runners, windows_runners, note; run: nova-config machine set -h"},
 		{2, []string{"version"}, `unknown verb "version"`},
 		{2, []string{"machine", "set", "bench-a", "--roles", "bench,chef", "--actor", "a"}, `--roles "chef"`},
 		{2, []string{"service", "set", "member-b", "--argv", "prog", "--actor", "a"}, "want the command as a JSON array"},
@@ -234,6 +234,22 @@ func TestRefusals(t *testing.T) {
 		{2, []string{"machine", "list", "--pg", "postgres://u:hunter2@h/x"}, "--pg carries a password"},
 		{2, []string{"machine", "show"}, "nova-config machine show: wants a name"},
 		{2, []string{"machine", "show", "a", "b"}, "unexpected words"},
+		// D8 (2026-11-07): a fetcher on a loop or a timer is refused, whatever the words around it.
+		{2, []string{"service", "add", "mirror", "--machine", "bench-a", "--argv", `["mirror-refresh","--loop","60"]`, "--keepalive", "true", "--actor", "a"},
+			"service mirror fetches on a clock (mirror-refresh with --loop); fetch on an event (a push) or once per job, never on a clock"},
+		{2, []string{"service", "add", "sync", "--machine", "bench-a", "--argv", `["/usr/bin/rsync","-a","h:/src","/dst"]`, "--every", "300", "--actor", "a"},
+			"service sync fetches on a clock (rsync with --every 300); fetch on an event"},
+		{2, []string{"service", "add", "shloop", "--machine", "bench-a", "--argv", `["sh","-c","while true; do git -C /r fetch --all; sleep 60; done"]`, "--keepalive", "true", "--actor", "a"},
+			"service shloop fetches on a clock (git fetch with while)"},
+		// The D8 shape with the shell's punctuation against the words: ; & | ( ) split a word as white space does.
+		{2, []string{"service", "add", "pull-loop", "--machine", "bench-a", "--argv", `["sh","-c","while true; do git pull; sleep 60; done"]`, "--keepalive", "true", "--actor", "a"},
+			"service pull-loop fetches on a clock (git pull with while)"},
+		{2, []string{"service", "add", "amp", "--machine", "bench-a", "--argv", `["sh","-c","until false; do git fetch&&sleep 60; done"]`, "--keepalive", "true", "--actor", "a"},
+			"service amp fetches on a clock (git fetch with until)"},
+		{1, []string{"service", "set", "member-b", "--argv", `["(curl","https://x/y)|tee","/l","--interval","60"]`, "--actor", "a"}, "(curl with --interval)"},
+		{1, []string{"service", "set", "member-b", "--argv", `["git","pull","--loop=60"]`, "--actor", "a"}, "service member-b fetches on a clock (git pull with --loop)"},
+		{1, []string{"service", "set", "member-b", "--every", "60", "--keepalive", "false", "--argv", `["curl","-fsSL","https://x/y"]`, "--actor", "a"}, "(curl with --every 60)"},
+		{1, []string{"service", "set", "member-b", "--argv", `["watch","-n","60","wget","https://x/y"]`, "--actor", "a"}, "(wget with watch)"},
 	} {
 		code, out, errs := h.run(t, c.args...)
 		assert.Equal(t, c.code, code, "%v: %s", c.args, errs)
@@ -241,6 +257,9 @@ func TestRefusals(t *testing.T) {
 		assert.Contains(t, errs, c.want, "%v", c.args)
 		assert.NotContains(t, errs, "hunter2", "%v: a refusal never echoes a password", c.args)
 	}
+	// A fetch once, at the start of a kept-alive program, is not on a clock; nor is a program that only sounds like one.
+	h.ok(t, "service", "set", "member-b", "--argv", `["sh","-c","git pull --ff-only && exec /srv/prog --loops 3"]`, "--actor", "a")
+	h.ok(t, "service", "set", "member-b", "--argv", `["/srv/prog","--every","60","--wget-compatible"]`, "--actor", "a")
 	h.env = map[string]string{}
 	code, _, errs := h.run(t, "machine", "list")
 	assert.Equal(t, 2, code)
@@ -373,13 +392,13 @@ func TestKindsAreTheLibraryColumns(t *testing.T) {
 // that still has old columns is written as is.
 func TestSQLNamesItsColumns(t *testing.T) {
 	t.Parallel()
-	row := Row{Name: "m1", F: map[string]string{"user": "u", "address": "", "public": "", "os": "linux", "arch": "", "cores": "", "runners": "2", "roles": "bench", "note": ""}}
+	row := Row{Name: "m1", F: map[string]string{"user": "u", "address": "", "public": "", "os": "linux", "arch": "", "cores": "", "runners": "2", "roles": "bench", "windows_runners": "", "note": ""}}
 	q, args := writeSQL(kinds["machine"], "add", "m1", row)
-	assert.Equal(t, `INSERT INTO config.machines (name, "address", "public", "user", "os", "arch", "cores", "roles", "runners", "note") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`, q)
-	assert.Equal(t, []any{"m1", "", nil, "u", "linux", "", nil, "bench", int64(2), ""}, args)
+	assert.Equal(t, `INSERT INTO config.machines (name, "address", "public", "user", "os", "arch", "cores", "roles", "runners", "windows_runners", "note") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`, q)
+	assert.Equal(t, []any{"m1", "", nil, "u", "linux", "", nil, "bench", int64(2), "", ""}, args)
 	q, args = writeSQL(kinds["machine"], "set", "m1", row)
 	assert.True(t, strings.HasPrefix(q, `UPDATE config.machines SET "address" = $2, `) && strings.HasSuffix(q, `, updated_at = now() WHERE name = $1`), q)
-	assert.Len(t, args, 10)
+	assert.Len(t, args, 11)
 	q, args = writeSQL(kinds["machine"], "remove", "m1", Row{})
 	assert.Equal(t, "DELETE FROM config.machines WHERE name = $1", q)
 	assert.Equal(t, []any{"m1"}, args)

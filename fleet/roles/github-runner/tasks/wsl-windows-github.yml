@@ -1,0 +1,32 @@
+---
+# GitHub's own list of runners for each url in github_runner_gh_urls, read on the control node with gh (as main.yml
+# does), one line per runner: "<name> <status> <busy>". With github_runner_gh_wait ({url: [names]}), each url's read is
+# retried for a minute until its names are online. Sets github_runner_gh_lines (every line) and github_runner_gh_unread (urls gh could
+# not read). Read only: it runs under --check too.
+- name: the runners as GitHub lists them
+  ansible.builtin.command:
+    argv:
+      - "{{ github_runner_gh }}"
+      - api
+      - "{{ 'repos' if (item | regex_replace('^https://[^/]+/', '')) is search('/') else 'orgs' }}/{{ item | regex_replace('^https://[^/]+/', '') }}/actions/runners"
+      - --paginate
+      - -q
+      - '.runners[] | "\(.name) \(.status) \(.busy)"'
+  delegate_to: localhost
+  become: false
+  loop: "{{ github_runner_gh_urls }}"
+  register: github_runner_gh_listed
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  until: >-
+    ansible_check_mode or github_runner_gh_listed.rc != 0
+    or ((github_runner_gh_wait | default({}))[item] | default([]) | difference(github_runner_gh_listed.stdout_lines | select('search', ' online ')
+        | map('split') | map('first') | list) | length == 0)
+  retries: "{{ 12 if github_runner_gh_wait | default({}) | length > 0 else 0 }}"
+  delay: 5
+
+- name: GitHub's lines
+  ansible.builtin.set_fact:
+    github_runner_gh_lines: "{{ github_runner_gh_listed.results | selectattr('rc', 'defined') | selectattr('rc', 'equalto', 0) | map(attribute='stdout_lines') | flatten }}"
+    github_runner_gh_unread: "{{ github_runner_gh_listed.results | rejectattr('rc', 'equalto', 0) | map(attribute='item') | list }}"

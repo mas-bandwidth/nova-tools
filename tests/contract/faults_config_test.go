@@ -43,8 +43,13 @@ func startPG() {
 		{ctl, "-D", pg.data, "-w", "-l", filepath.Join(rootDir, "pg.log"), "-o", fmt.Sprintf("-p %s -k %s -c listen_addresses=127.0.0.1 -c fsync=off", pg.port, rootDir), "start"},
 	}
 	for _, s := range steps {
-		if out, err := exec.Command(s[0], s[1:]...).CombinedOutput(); err != nil {
-			pg.err = fmt.Sprintf("%v: %s", err, out)
+		cmd := exec.Command(s[0], s[1:]...)
+		if os.Getenv("LC_ALL") == "" && os.Getenv("LANG") == "" {
+			cmd.Env = append(os.Environ(), "LC_ALL=C") // Homebrew postgres on macOS will not start without a locale
+		}
+		if out, err := cmd.CombinedOutput(); err != nil {
+			log, _ := os.ReadFile(filepath.Join(rootDir, "pg.log")) // ignored: the log is a diagnostic
+			pg.err = fmt.Sprintf("%v: %s%s", err, out, log)
 			return
 		}
 	}

@@ -47,6 +47,7 @@ optional (`--dry-run` prints `CONFIG DRY-RUN ... wrote=nothing` and the changes)
 | `public` | Public address for services that face the internet: an IP literal or a DNS name of lower-case labels. A tailnet (100.64.0.0/10), private, loopback or link-local address is refused; `--public ''` unsets it. |
 | `os`, `arch`, `cores` | Facts you set; `--cores default` unsets it. |
 | `runners`, `note` | CI runner count (default 0); one line of notes. |
+| `windows_runners` | A WSL machine's Windows-side runners: `<url>=<count>[:<label>+<label>]`, comma-separated, the url `https://github.com/<owner>/<repo>` or `https://github.com/<org>`, the count 1 to 99. Stored sorted by url with labels sorted; `''` is none. nova-fleet's `windows-runners` play converges them. |
 | `roles` | Comma-separated `bench`, `runner`, `services`; default `bench`. |
 
 ```sh
@@ -61,7 +62,7 @@ CONFIG ADD kind=machine name=bench-a rev=1
 next: nova-fleet join bench-a
 CONFIG SET kind=machine name=bench-a rev=2 changed=note
 CONFIG SET kind=machine name=bench-a changed=none rev=unchanged
-MACHINE name=bench-a address=- public=- user=nova os=linux arch=amd64 cores=16 roles=bench,services runners=0 note="Example host" created=2026-11-05T23:51:58Z updated=2026-11-05T23:51:58Z services=-
+MACHINE name=bench-a address=- public=- user=nova os=linux arch=amd64 cores=16 roles=bench,services runners=0 windows_runners=- note="Example host" created=2026-11-05T23:51:58Z updated=2026-11-05T23:51:58Z services=-
 ```
 
 `rev` is the history ID; `changed=` lists only the fields whose value differs.
@@ -72,6 +73,9 @@ The repeated `set` changed nothing, so it wrote nothing. Empty values print as
 
 A service is a program on a machine, run every N seconds or kept running. Set
 `--every <seconds>` or `--keepalive true`, one of them. Same verbs as machines.
+A service never fetches on a clock: an argv that names a fetcher (`git fetch|pull|clone`,
+`rsync`, `curl`, `wget`, `mirror-refresh`) with a loop (`--loop`, `--every`, `watch`, `while`),
+or with `--every` above 0, is refused. Fetch on an event (a push) or once per job.
 
 | Field | Meaning |
 |---|---|
@@ -167,7 +171,8 @@ nova-config inventory --host bench-a
 roles put it in `bench` or `services`. A `runner` role or a positive runner
 count adds `runner`. `--host <name>` prints one host's variables:
 `ansible_host`, `ansible_user`, `runners`, `nova_services` (always a list of the
-service fields) and, when set, `nova_os`, `nova_arch`, `nova_public` and `cores`.
+service fields) and, when set, `nova_os`, `nova_arch`, `nova_public`, `cores` and `nova_windows_runners` (a list of
+`{url, count, labels}`).
 `argv`, `env` values and `log` are printed as `{"__ansible_unsafe": ...}`, so
 Ansible reads them as data and never as a template. `NOVA_MACHINE` names the local host (else the first label of the hostname,
 lower-cased), which gets `ansible_connection: local`. As an Ansible script, use
@@ -184,6 +189,7 @@ connection failure. Missing or invalid flags and the store DSN are checked toget
 | `machine remove: machine bench-a still runs services hello; ...` (1) | Remove or move its services first. |
 | `service add: service x has neither --every nor --keepalive; ...` (2) | Give exactly one of them. |
 | `service add: service x names secrets (--keys A) and no --seat ...` (2) | Add `--seat` or drop `--keys`. |
+| `service add: service x fetches on a clock (git pull with --loop); fetch on an event (a push) or once per job, never on a clock ...` (2; `set` 1) | Drop the loop flag and `--every`; run the fetch from the job or the push hook that needs it. |
 | `friend set: friend <friend> has --width 0; ...` (1) | Give `--width 1` or more. |
 | `friend remove: friend <friend> is still named by config.sprint; ...` (1) | Change the row that names it first. |
 | `machine list: NOVA_PG_DSN carries a password; ...` (2) | Move the password to `NOVA_PG_PASSWORD`. |

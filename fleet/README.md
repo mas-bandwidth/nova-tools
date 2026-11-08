@@ -43,7 +43,7 @@ The whole path, in order. Each step's output says what to do next.
 
 1. `nova-fleet check` on the control node: one line per prerequisite, `CHECK OK sops 3.13.3` or `CHECK MISSING
    age-keygen: sudo apt-get update -qq && sudo apt-get install -y age` (the fix for this OS, a command pasteable as it
-   stands with any reason after `#`, in paste order: `git` and `go` before the `nova-*` build lines), then the tailnet (a `CHECK NOTE` when this node is not on it: `up` joins it), the secrets store, key, seat and pins,
+   stands with any reason after `#`, in paste order: `git` and `go` before the `nova-*` build lines), then the tailnet (a `CHECK NOTE` when this node is not on it: `up` joins it; on it, one `CHECK traffic <peer> tx=<GB> rx=<GB>` per peer this node has exchanged bytes with, from `tailscale status`, and `CHECK WARN traffic` for a peer over 100 GB either way: something fetches or mirrors on a clock), the secrets store, key, seat and pins,
    `TAILSCALE_API_KEY` (`--runners URL` adds `gh` and its login, `gh auth login`), and `NOVA_PG_DSN` once a fleet
    exists. Run each fix line, then `nova-fleet check` again until it ends `CHECK OK missing=0` (exit 0; 1 while
    anything is missing; the collections of `requirements.yml` count, `ansible.posix` for the push of the store). A
@@ -118,8 +118,8 @@ machine is the one nova-config's rows say ("Adding a machine" below). Nothing he
 | 6 | grant | `nova-secrets grant <--grant names> --to <machine> --pub <its seat key>` for each machine: the values written to that seat's grants file, encrypted to the seat's key (read from the machine over the tailnet with `age-keygen -y`, found in `nova_bin_dir` when `-- -e nova_bin_dir=...` sets it, then `~/.local/bin`; public half only, and pinned in `NOVA_SECRETS_PINS`) and the recovery key; your seat is never a recipient ([secrets guide](../secrets/README.md)) | the seats exist now |
 | 7 | store | `git push` of your secrets store to its upstream, if it has one (else a NOTE): a copy off this node; the machines never read it. When the upstream refuses the push (`[remote rejected]`: a protected branch that takes changes only through a pull request), the commits are pushed to the branch `nova-fleet-up/<short commit>` instead, `UP STORE PUSH REFUSED: <upstream> is protected (...); pushed branch <name>; open a PR from it` is printed, the run goes on, and it exits 1 (`UP STORE FAILED`) at the end; open and merge that PR. Any other push failure stops the run here | |
 | 8 | refresh | `secrets-refresh` with `nova_seal_store` set to your clone: the encrypted store pushed over the tailnet with rsync to `~/.local/share/nova/secrets/` on each machine (no `.git`, stale files deleted, 0700/0600) | each seat opens what step 6 granted; a rerun of `up`, or `nova-fleet secrets-refresh -- -e nova_seal_store=S`, pushes again |
-| 9 | health | `health` on every machine (Linux; a Mac is skipped) | the guards are in place before anything long-running starts |
-| 10 | tools | `install` on every machine, from the release `--tools vX.Y.Z` or a local build `--tools DIR` | the services run these binaries |
+| 9 | health | `health` on every machine of the bench, runner and services groups (Linux; a Mac is skipped) | the guards are in place before anything long-running starts |
+| 10 | tools | `install` on every machine of the bench, runner and services groups, from the release `--tools vX.Y.Z` or a local build `--tools DIR`; a machine with no role (a seat only) gets no software | the services run these binaries |
 | 11 | services | `services` | each seat holds its granted values now |
 | 12 | runners | `github-runners` on every machine named except this control node, `--runner-count` per machine (default `cores`: one per `github_runner_cores_per_runner`, 4, cores, at least 1) (only with `--runners`); the play asks GitHub for its token with this node's `gh` login | |
 | 13 | bus | `nova-bus who` over the store machine's Redis with the fleet's `NOVA_BUS_PASSWORD`; it names no inbox and sends nothing as a person (receipt `UP BUS OK <redis> present=<n>`) | the fleet is reached end to end |
@@ -163,16 +163,18 @@ reached as root at the address given, as on the first run.
 
 | Play | Purpose | Needs |
 |---|---|---|
-| `ci-rules` | the CI rules on every GitHub Actions runner a machine runs, whoever registered it | nothing; `-l` the machines |
+| `ci-rules` | the CI rules on every GitHub Actions runner a machine runs, whoever registered it (bench, runner and services groups) | nothing; `-l` the machines |
 | `github-runners` | GitHub Actions runners on every machine of the runner group, registered to one repository or organization | `github_runner_url`, `github_runner_scope`; `gh` on the control node logged in with admin on the repository |
-| `health` | guards that let a Linux machine get itself out of trouble, and a disk report | nothing |
-| `install` | install one nova-tools release, by tag, on the machines named | `nova_tools_version` (a tag `vX.Y.Z`; no default) |
+| `health` | guards that let a Linux machine get itself out of trouble, and a disk report (bench, runner and services groups) | nothing |
+| `install` | install one nova-tools release, by tag, on the machines named (bench, runner and services groups) | `nova_tools_version` (a tag `vX.Y.Z`; no default) |
 | `join` | a new machine joins the fleet: its row, its login, the tailnet, the tools a seat needs, its seat | the machine as the argument; its row's fields; `NOVA_PG_DSN` and `NOVA_PG_PASSWORD` in the environment, and `TAILSCALE_AUTHKEY` for a machine not on the tailnet (`up` mints it) |
 | `postgres` | the PostgreSQL nova-config keeps the fleet in, on each machine of the services group | `nova_seal_*` to seal its password |
 | `redis` | the Redis nova-bus talks to, on each machine of the services group | `nova_seal_*` to seal its password |
+| `runner-packages` | the packages a CI runner's tests need, from `nova_runner_packages`, on each machine of the runner group; packages only, nothing started | nothing; `-l` the machines |
 | `seat` | each machine's seat in the secrets store | `nova_seal_store` |
-| `secrets-refresh` | the control node's encrypted store pushed to every machine with `ansible.posix.synchronize` (`verify_host: true`, no `.git`, stale files deleted, 0700/0600); with `nova_secrets_repo` set, a timer pulls a clone fast-forward instead | `nova_seal_store` (the control node's clone) to push; `nova_secrets_repo` for pull |
-| `services` | one supervised unit per service record, on the machine the record names | the inventory's `nova_services` |
+| `secrets-refresh` | the control node's encrypted store pushed to every machine with `ansible.posix.synchronize` (`verify_host: true`, no `.git`, stale files deleted, 0700/0600); no machine runs a timer (pull mode is retired; one left is removed) | `nova_seal_store` (the control node's clone) to push |
+| `services` | one supervised unit per service record, on the machine the record names (bench, runner and services groups) | the inventory's `nova_services` |
+| `windows-runners` | a WSL machine's Windows-side GitHub Actions runners, from its record's `windows_runners`, through WSL interop | the record's `windows_runners`; `gh` on the control node logged in with admin on each repository or organization |
 | `tailscale` | each machine on the tailnet, its address the MagicDNS name, its firewall closed to all but the tailnet | `TAILSCALE_AUTHKEY` in the environment for a machine not on the tailnet (`up` mints it) |
 
 ```
@@ -250,6 +252,8 @@ refused before anything is written.
 | `nova_tools_restart`, `nova_tools_restart_commands` | false, empty | argv lists run once, only if a binary changed |
 | `nova_tools_remove_enabled` | false | retire the binaries below |
 | `nova_tools_remove` | the retired list | names to retire |
+| `nova_tools_manifest_dir` | `~/.local/share/nova/installed` | where a `--repo` install records its names (see Leftovers) |
+| `nova_tools_system_unit_dir` | `/etc/systemd/system` (Linux), `/Library/LaunchDaemons` (macOS) | where Leftovers reads system units |
 
 **Another repository's release.** A dependent tool whose release is laid out the same way (assets
 `<name>_<tag>_<os>_<arch>[.exe]` and one `SHA256SUMS`) installs with `--repo` and `--tag`, getting every binary its
@@ -283,7 +287,37 @@ nova-fleet install -- -e nova_tools_version=local -e nova_tools_local_dir=$PWD/d
 found in the bin directory is moved to `<nova_bin_dir>/retired-<date>/`, never deleted; a name not there is skipped.
 A name also being installed is refused. The default list is the rows of `retired-tools.txt` that say `retired` or
 `moved`; another product's binaries are never in it. To retire more, name the whole list:
-`-e nova_tools_remove_enabled=true -e nova_tools_remove='["nova-sprint","nova-card"]'`. Unix machines only.
+`-e '{"nova_tools_remove_enabled":true,"nova_tools_remove":["nova-sprint","nova-card"]}'` (JSON: a `key=value` `-e` is a
+string, never a list). Unix machines only.
+
+**Leftovers.** Last, after the install has happened, the play reads what an older install left beside the new binaries
+and prints one line per host, `INSTALL <host> leftovers=<n>: <names>` (or `leftovers=0`). v2 only: nothing of v1 is
+allowed by name. It reads every file in the bin directory (dotted names and `.bak` copies too); the login's unit directory
+(`~/.config/systemd/user` on Linux, `~/Library/LaunchAgents` on macOS) for any `nova-*` or `com.nova.*` unit, timer or
+plist; the system unit directory (`/etc/systemd/system` on Linux, any `nova*` unit; `/Library/LaunchDaemons` on macOS,
+where a headless Mac's services are, any `com.nova.*` plist; a read, no sudo); both unit directories for every glob in
+`retired-units.txt` (the v1 units and plists); and `~/.gitconfig` for a credential helper that runs the retired
+`nova-push-credential`. Allowed: the release's `SHA256SUMS` names for the platform; every name another repository's release
+recorded (a `--repo` install writes its names to `~/.local/share/nova/installed/<owner>_<name>.names`,
+`nova_tools_manifest_dir`); what the fleet's own plays and roles write there (`nova_join_owns` for join.yml's age,
+age-keygen and sops; each role's `nova_<role>_owns`; `nova_redis_unit`); a friend's nova-bus hook unit
+(`nova-bus.hook.<name>.plist`, `nova-bus-hook-<name>.service`); the unit of a service record this machine has (its
+`nova_services`). An inventory with no `nova_services` (not nova-config's) has its units left
+unread, and the line ends with a NOTE saying so.
+
+A leftover fails the host, and the refusal names the plays that retire it, names filled in. `nova-fleet install --tag <tag>
+-- -l <host> -e '{"nova_tools_remove_enabled":true,"nova_tools_remove":[...],"nova_tools_remove_units":[...]}'` moves the
+binaries into `<bin dir>/retired-<date>/` and stops the units and moves them into `retired-<date>/` beside them (the system
+directory takes sudo); nothing is deleted, and nothing moves unless `nova_tools_remove_enabled` is true. Retiring
+`nova-push-credential` also unsets each global `credential.helper` / `credential.<url>.helper` whose value is that script
+(`git config --global --unset-all`, matched by its path alone; other helpers stay), and the INSTALL line says so.
+`nova-fleet services -- -l <host> -e '{"nova_retire_units":[...]}'` retires a unit of the services play's shapes
+(`nova-service-*`, `nova-loop-*`, `com.nova.service.*`, `com.nova.loop.*`); anything no play retires is named on its own.
+Only a binary in `retired-tools.txt` (every v1 tool nova-tools and rowan-tools shipped), a backup of one (its name
+before `.bak`, `.old` or `.before` is retired: `winlock.bak-4slots`), or a unit in
+`retired-units.txt` refuses a host. Any other binary nothing accounts for (a tool the machine uses that no release ships:
+redis-server, go, gh, ...) is a `WARNING unrecorded=<n>` naming it, never a refusal. The check itself removes nothing. Unix machines, nova-tools' own
+release only (a `--repo` install prints no line); `--check` prints the line too.
 
 ## services
 
@@ -395,6 +429,64 @@ That stops and removes the services, removes the runners from GitHub and deletes
 github_runner_deregister=false` no token is read and the GitHub entries stay for you to delete. A removal token also
 expires in an hour.
 
+## Windows runners of a WSL machine
+
+A WSL machine's Windows side runs its own runners (captain: rocketnet's and robotgamedevelopers' Windows CI). They are
+a field of the machine's record and a play, like everything else on the fleet:
+
+```
+nova-config machine set captain --windows_runners 'https://github.com/mas-bandwidth/rocketnet=3:rocketnet-windows,https://github.com/robotgamedevelopers=2:fleet' --actor rowan
+nova-fleet windows-runners --check -- -l captain
+nova-fleet windows-runners -- -l captain
+```
+
+`windows_runners` is `<url>=<count>[:<label>+<label>]`, comma-separated (config/README.md); the inventory hands it to
+the play as `nova_windows_runners`. A machine without it is skipped; one with it that is not WSL with interop is
+refused. **The channel** is the one `ci-rules` already uses: from the WSL login, `powershell.exe` by its full path
+runs the role's `files/runner-windows.ps1`, staged to `C:\ProgramData\nova-runner-stage`. It acts as the Windows account
+that started WSL, elevated; no Windows login, password or key is involved, and no port is opened. **Each runner** is
+`<machine>-win-<slug>-<i>` in `C:\actions-runner\<slug>-<i>` (`<slug>` is `<owner>-<repo>`, or `org-<org>` so an
+organization never shares a slug with a repository), the pinned release checked against its digest (a directory left
+by an interrupted unpack is moved aside and unpacked again), a Windows service run as `NETWORK SERVICE` (`config.cmd --runasservice`) that starts
+at boot. **Labels** are `fleet` and the machine's name plus the record's extras (`github_runner_wsl_labels`); GitHub adds
+`self-hosted`, `X64` and `Windows`. Unlike the Linux runners they carry no roles, os or arch, so a job that selects
+`[self-hosted, bench]` never lands on Windows. Each runner's `.env` gets the job `PATH` (`github_runner_windows_path`),
+its own `GOCACHE` and `DOTNET_INSTALL_DIR`, and then the CI rules. **The token** comes from `tasks/token.yml` as for the
+other runners (one per repository or organization) and reaches `config.cmd` on stdin, as `ACTIONS_RUNNER_INPUT_TOKEN`:
+never an argument, a file or a log line. A runner is whole when its directory holds `.runner`, its Windows service
+exists and GitHub lists its name; a whole runner is left alone, so a second run registers nothing. A half registration
+(`.runner` but no service or no GitHub entry) is repaired: its `.runner` and credentials move into the runner
+directory's own `retired-<yyyymmdd>\`, its service is removed, and it registers again with `--replace`. A run that
+cannot read GitHub's list for a target refuses, rather than take a whole runner for a half one. Each machine prints `GITHUB-RUNNERS host=<machine> windows=<n> registered=<n> online=<n>`
+from its directories and GitHub's own list; a run where any is short fails. `--check` reads both, asks for the tokens it
+would need, and prints `RUNNER-PLAN <machine> windows=<n> register=<names> repair=<names> labels=<labels>`.
+
+**Retiring v1's Windows side** is opt-in and comes after v2 is up, so CI keeps its Windows runners throughout. The
+run names what v1 left on that machine, as JSON extra vars; the role ships no machine's names or paths:
+
+```
+nova-fleet windows-runners --check -- -l <machine> -e @v1.json
+nova-fleet windows-runners -- -l <machine> -e @v1.json
+```
+
+```json
+{"nova_windows_retire_v1": {
+  "runners": [{"dir": "C:\\actions-runner-x\\1", "name": "<machine>-x-1", "url": "https://github.com/<owner>/<repo>"}],
+  "labels": {"https://github.com/<owner>/<repo>": ["<label the workflows select>"]},
+  "delete": ["C:\\actions-runner-x", "C:\\old-tools"],
+  "tasks": ["<scheduled task under \\>"],
+  "kept": ["C:\\tools (CI may use it)"]}}
+```
+
+It is refused (`V1-RETIRE <machine> refused: ...`, naming what is missing) unless every v2 Windows runner the record
+names is whole and online; every v1 target is a url of the record whose v2 runners carry that target's `labels`; and no
+v1 runner is busy in GitHub's list. Then, per target, each v1 runner is stopped (it takes no new job), GitHub's list is
+read again and the run refused while one is still busy, naming it (it does not wait: run again), and each is removed
+from GitHub with `config.cmd remove --unattended` and a removal token on stdin, its service goes and its directory is
+deleted. Then each `delete` path is deleted and each task unregistered. v1 is deleted, never moved aside: no
+credential, `.env` or hook of it stays on disk. One line per item: `V1-RETIRE <machine> RETIRED|DELETED|ABSENT|UNTASKED
+...`, then a `kept:` line for each `kept` entry.
+
 ## CI rules
 
 Every runner nova-fleet sets up enforces the fleet's CI rules itself, so a repository cannot opt out by forgetting a
@@ -417,7 +509,8 @@ started hook arms a watchdog, a detached process that the completed hook stops; 
 nothing behind. A hook the `.env` held before is kept as `NOVA_CI_CHAIN_JOB_STARTED` / `_COMPLETED` and run from ours, in its
 own process by its extension (after the push check, before the watchdog is armed, so waiting for a lock is not job
 time). Each started hook first stops any watchdog and verdict an earlier job left, so a runner that died mid-job
-never fails the next one. The limit and the push branches are one value
+never fails the next one. A chained hook under `C:\rowan-jobs\` (v1's ci-hold) or naming a file that is not there is
+dropped from the `.env`, never chained (the unchain rule), so applying the rules again takes v1's chain off a runner. The limit and the push branches are one value
 each for the fleet (`group_vars` or `-e`), never per repository.
 
 **Applying.** `nova-ci-rules apply` writes the hooks and the `.env`, and restarts a runner whose `.env` changed (the
@@ -710,34 +803,29 @@ roles and the dumps are left.
 
 ## secrets-refresh
 
-The usual way a machine's copy of the store stays fresh is a push from the control node (rsync over the ssh the
-play has, the machine's host key verified as everywhere else; rsync on the machine comes from join): `nova-fleet up` step 6
-copies the encrypted store over the ssh it already has (rsync: no `.git`, stale files deleted, 0700/0600) to each
-machine's `nova_secrets_store`, and running `up` again pushes again. No machine needs read access to the store's
-repository. The pull timer below is the optional form, for an adopter who gives `nova_secrets_repo` and lets each
-machine read that repository.
+A machine's copy of the store stays fresh by a push from the control node (rsync over the ssh the play has, the
+machine's host key verified as everywhere else; rsync on the machine comes from join): `nova-fleet up` step 8 copies
+the encrypted store (no `.git`, stale files deleted, 0700/0600) to each machine's `nova_secrets_store`, and running
+`up` again, or `nova-fleet secrets-refresh -- -e nova_seal_store=S`, pushes again. No machine needs read access to the
+store's repository, and nothing on a machine fetches the store on a clock.
 
-The optional pull form: each machine's clone of the secrets store (`nova_secrets_store`) pulled fast-forward only every
-`nova_secrets_refresh_every` seconds, so a seat never opens a stale store. The pull reads no value, prints no
-credential and logs one line per run (time, commit, `ok` or `FAIL rc=<n>`) to `nova_secrets_refresh_log`. Linux: a
-systemd user timer (linger on), or a crontab line where the login has no user manager; macOS: a LaunchAgent in the
-login's GUI domain. With `nova_secrets_repo`, a machine with no clone gets one; without it, such a machine is skipped
-and named. The machine that writes the store sets `nova_secrets_refresh: false`, which removes its timer.
+Pull mode (`nova_secrets_repo`: a timer on each machine pulling a git clone) is retired: with it set the play stops
+before changing anything. On every machine the play removes what pull mode installed (the systemd user timer and
+unit, the crontab line or the LaunchAgent, and the `nova-secrets-refresh` script). The machine that writes the store
+sets `nova_secrets_refresh: false`, which removes those and changes nothing else.
 
 ```
-nova-fleet secrets-refresh --check --diff
-nova-fleet secrets-refresh
+nova-fleet secrets-refresh --check --diff -- -e nova_seal_store=S
+nova-fleet secrets-refresh -- -e nova_seal_store=S
 ```
 
 | Variable | Default | |
 |---|---|---|
-| `nova_secrets_refresh` | `true` | `false` removes the timer |
-| `nova_secrets_refresh_every` | `600` | seconds |
-| `nova_secrets_refresh_log` | `~/.local/state/nova/secrets-refresh.log` | |
-| `nova_secrets_repo` | empty | the store's git URL, to clone where there is none |
+| `nova_seal_store` | unset | the control node's clone of the store, to push |
+| `nova_secrets_refresh` | `true` | `false` removes the pull timer and skips the push |
 
-**Check.** `SECRETS-REFRESH <machine> via=systemd-user-timer every=600s last: <time> head=<commit> ok`. **Rollback.**
-`-e nova_secrets_refresh=false`.
+**Check.** `SECRETS-REFRESH <machine> mode=push files=<n> pushed` (or `same`). **Rollback.** Push the previous
+commit of the store: check it out in the clone and run again.
 
 ## health
 
@@ -775,6 +863,28 @@ journalctl -t nova-disk-report --since -1d        # the disk lines
 **Check.** `HEALTH <machine> journal=persistent panic=10 ssh_oom=0 slice_max=<bytes> | DISK <machine> root=<n>%
 swap=<n>%`. **Rollback.** Remove the file of the guard (named above), then `systemctl daemon-reload` and restart the
 daemon it configures (`systemd-journald`, `ssh`) or `sysctl --system`; `systemctl disable --now nova-disk-report.timer`.
+
+## runner-packages
+
+The packages a CI runner's tests need, on each machine of the `runner` group, from `nova_runner_packages`
+(`group_vars/all.yml`): a list per OS, Homebrew formulae on `darwin` (as the login; brew refuses root) and apt
+packages on `debian`. Today that is `postgresql@18` on macOS, for the functional tier on mini-m5, and nothing on
+Linux. A package already installed is adopted as it is: never reinstalled, upgraded or auto-updated, so a run over it
+reports `changed=0`. Only packages: no server is started, no `brew services`, no unit; the tests run their own
+`initdb` and `pg_ctl` (with `LC_ALL=C`). CI never installs: the macOS functional job refuses when `initdb` is missing
+and names this play.
+
+```
+nova-fleet runner-packages --check -- -l mini-m5    # WOULD-INSTALL brew install --formula <name>, per missing one
+nova-fleet runner-packages -- -l mini-m5
+```
+
+| Variable | Default | |
+|---|---|---|
+| `nova_runner_packages` | `{darwin: ["postgresql@18"], debian: []}` | another OS with a non-empty list is refused |
+
+**Check.** `RUNNER-PACKAGES host=<machine> wanted=<n> present=<n> installed=<n>`, one line per machine.
+**Rollback.** The play never removes a package: one taken out of the list stays installed until a play removes it.
 
 ## Refusals
 

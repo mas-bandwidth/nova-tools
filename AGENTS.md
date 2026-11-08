@@ -65,7 +65,7 @@ Rules for AI contributors to nova-tools. `README.md` and `docs/README.md` say wh
 
 ## Command-line contract
 
-`tests/contract` builds every tool and holds it to these rules; a new verb goes into `toolSpecs`.
+`tests/contract` (functional tier) builds every tool and holds it to these rules; a new verb goes into `toolSpecs`.
 
 - `<tool> help` prints the banner; `<tool> help <verb>`, `<tool> <verb> -h` and `--help` print one operation. Help goes to stdout, exits 0, changes nothing. `help` itself takes no flags (`help -h` is exit 2 on bus, sandbox, secrets and reserve).
 - Exit 0: the operation succeeded. Exit 1: the tool ran and refused, found a conflict, or a check found a problem. Exit 2: the invocation was wrong or the operation could not run (unreachable store, schema not loaded, missing binary, failed login). A caller that retries on 2 and reads 1 as an answer is then correct.
@@ -96,12 +96,12 @@ go build ./...
 go vet ./...
 go vet -tags functional,slow ./...
 GOOS=windows go vet ./...                   # compilation only
-go test -p 4 ./...
-go test -p 4 -tags functional,slow ./...
+go test -p 4 -exec "env PATH=/nonexistent HOME=/nonexistent" ./...
+go test -count=1 -p 4 -tags functional,slow ./...    # uncached: runs outside binaries
 tests/tla/check.sh "$TLC_JAR"
 ```
 
-plus the fleet checks below. Unit jobs run on Linux and macOS; the functional job runs on Linux; `ci-ok` requires every job. Fork pull requests do not run on the self-hosted machines. `tests/boundary` and `tests/contract` run in `go test ./...` and need no live store. Focus a run with a package path such as `./bus`. A successful build is no evidence that a sandbox backend or a fleet installation works on a machine.
+plus the fleet checks below. Unit jobs run on Linux and macOS; functional jobs run on Linux and on macOS (mini-m5, `functional-macos`), and the macOS job installs nothing: its PostgreSQL comes from `nova-fleet runner-packages` (fleet/README.md), and the job refuses, naming that play, when `initdb` is missing. `ci-ok` requires every job. Fork pull requests do not run on the self-hosted machines. `tests/boundary` runs in `go test ./...` and refuses a unit test that calls real time, a socket, the network or another program (`TestUnitTestsArePure`); `tests/contract` builds and runs programs, so it is functional (`-tags functional`). Neither needs a live store. Focus a run with a package path such as `./bus`. A successful build is no evidence that a sandbox backend or a fleet installation works on a machine.
 
 Functional prerequisites:
 

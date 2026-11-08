@@ -42,20 +42,55 @@ func pgBin(t *testing.T) string {
 	return ""
 }
 
+// pgEnv is the environment for initdb and postgres: the test's own, with
+// LC_ALL=C added when no locale is set, since Homebrew postgres on macOS
+// refuses to start without one ("postmaster became multithreaded").
+func pgEnv() []string {
+	if os.Getenv("LC_ALL") == "" && os.Getenv("LANG") == "" {
+		return append(os.Environ(), "LC_ALL=C")
+	}
+	return os.Environ()
+}
+
+// stopPostgres asks the server for a fast shutdown, so it removes its System V
+// shared memory segment: a SIGKILLed postmaster leaks it, and macOS allows only
+// 32 (kern.sysv.shmmni) before every initdb fails. It kills after 10 seconds.
+func stopPostgres(cmd *exec.Cmd) {
+	done := make(chan struct{})
+	go func() { _ = cmd.Wait(); close(done) }() // ignored: the server is ours and disposable
+	_ = cmd.Process.Signal(os.Interrupt)        // ignored: it may have exited already
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		_ = cmd.Process.Kill() // ignored: the server is ours and disposable
+		<-done
+	}
+}
+
 // startPG starts a PostgreSQL of this test's own on a free local port, makes
 // the tables with schema.sql and returns its password-free DSN.
 func startPG(t *testing.T, schemas ...string) string {
 	t.Helper()
 	bin, dir := pgBin(t), t.TempDir()
-	out, err := exec.Command(filepath.Join(bin, "initdb"), "-D", filepath.Join(dir, "data"), "-U", "nova", "--auth=trust", "-E", "UTF8").CombinedOutput()
+	initdb := exec.Command(filepath.Join(bin, "initdb"), "-D", filepath.Join(dir, "data"), "-U", "nova", "--auth=trust", "-E", "UTF8")
+	initdb.Env = pgEnv()
+	out, err := initdb.CombinedOutput()
 	require.NoError(t, err, "%s", out)
 	port := freePort(t)
 	cmd := exec.Command(filepath.Join(bin, "postgres"), "-D", filepath.Join(dir, "data"), "-p", port, "-k", dir, "-c", "listen_addresses=127.0.0.1", "-c", "fsync=off")
+	cmd.Env = pgEnv()
+	logs, err := os.Create(filepath.Join(dir, "postgres.log"))
+	require.NoError(t, err)
+	defer func() { _ = logs.Close() }() // ignored: the child holds its own descriptor
+	cmd.Stdout, cmd.Stderr = logs, logs
 	require.NoError(t, cmd.Start())
-	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() }) // ignored: the server is ours and disposable
+	t.Cleanup(func() { stopPostgres(cmd) })
 	dsn := "postgres://nova@127.0.0.1:" + port + "/postgres?sslmode=disable"
 	var c *pgx.Conn
-	require.Eventually(t, func() bool { c, err = pgx.Connect(context.Background(), dsn); return err == nil }, wait, 50*time.Millisecond)
+	if !assert.Eventually(t, func() bool { c, err = pgx.Connect(context.Background(), dsn); return err == nil }, wait, 50*time.Millisecond) {
+		log, _ := os.ReadFile(logs.Name()) // ignored: the log is a diagnostic
+		t.Fatalf("postgres never answered: %v\npostgres said:\n%s", err, log)
+	}
 	defer func() { _ = c.Close(context.Background()) }() // ignored: closing the setup connection
 	if len(schemas) == 0 {
 		schemas = []string{"schema.sql"}
@@ -95,7 +130,7 @@ func TestFunctionalStore(t *testing.T) {
 	assert.Equal(t, "CONFIG SET kind=machine name=m1 changed=none rev=unchanged\n", ok("machine", "set", "m1", "--user", "nova", "--actor", "a1"), "a no-op set")
 	assert.Equal(t, "CONFIG SET kind=service name=r-m1 rev=3 changed=enabled\nnext: nova-fleet services --check\n", ok("service", "set", "r-m1", "--enabled", "false", "--actor", "a1", "--reason", "why"))
 	assert.Equal(t, `SERVICE name=r-m1 machine=m1 argv=["prog","a b"] seat=- keys=- every=0 keepalive=true enabled=false env={} log=-`+"\nCONFIG LIST kind=service rows=1\n", ok("service", "list"))
-	assert.Equal(t, "MACHINE name=m1 address=- public=- user=nova os=- arch=- cores=- roles=bench runners=0 note=-\nCONFIG LIST kind=machine rows=1\n", ok("machine", "list"))
+	assert.Equal(t, "MACHINE name=m1 address=- public=- user=nova os=- arch=- cores=- roles=bench runners=0 windows_runners=- note=-\nCONFIG LIST kind=machine rows=1\n", ok("machine", "list"))
 	show := ok("machine", "show", "m1")
 	assert.Regexp(t, `created=20\d\d-\d\d-\d\dT\d\d:\d\d:\d\dZ updated=20\d\d-.*Z services=r-m1\n$`, show)
 	ok("machine", "set", "m1", "--cores", "4", "--note", "a note", "--actor", "a1")
@@ -255,4 +290,16 @@ func TestFunctionalUnreachable(t *testing.T) {
 	assert.Empty(t, out)
 	assert.Equal(t, `nova-config machine list: cannot reach postgres at 127.0.0.1:`+port+` (NOVA_PG_DSN): connection refused; check NOVA_PG_DSN or run: psql "$NOVA_PG_DSN" -c 'select 1'`+"\n", errs)
 	assert.Equal(t, 1, strings.Count(errs, "\n"), errs)
+}
+
+func TestOpenPGConnectFailure(t *testing.T) {
+	t.Parallel()
+	l, err := net.Listen("tcp", "127.0.0.1:0") // a port nothing answers on, once closed
+	require.NoError(t, err)
+	addr := l.Addr().String()
+	require.NoError(t, l.Close())
+	_, err = openPG(t.Context(), "postgres://u@"+addr+"/x?sslmode=disable&connect_timeout=2", "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot reach postgres at "+addr+" (NOVA_PG_DSN): ")
+	assert.NotContains(t, err.Error(), "\n")
 }

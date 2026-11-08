@@ -1,4 +1,4 @@
-# purpose: one supervised unit per service record, on the machine the record names
+# purpose: one supervised unit per service record, on the machine the record names (bench, runner and services groups)
 #
 # The records are nova-config's service rows as `nova-config inventory`
 # prints them (nova_services on each host); the units are the templates under
@@ -46,7 +46,7 @@
 # A unit whose file (or timer) changed is restarted, named in the receipt as
 # restarted=<names> (would-restart=<names> under --check).
 - name: service units from the service records
-  hosts: all
+  hosts: bench:runner:services   # the fleet's workers, never all: a seat-only machine (roles -) runs no unit (D13, 2026-11-07)
   gather_facts: true
   gather_subset: [min]
   vars:
@@ -97,6 +97,16 @@
           {{ inventory_hostname }} has no nova_services: the inventory is not nova-config's (`nova-config inventory`
           always emits nova_services), and an absent list is not an empty one; run: nova-config service list; an empty
           list is valid
+        quiet: true
+
+    # -e nova_retire_units='[...]' is a string, and name in a string is a substring
+    # match ("web" in "web-old"): only a list is taken.
+    - name: nova_retire_units is a list
+      ansible.builtin.assert:
+        that: nova_retire_units is not string and nova_retire_units is not mapping and nova_retire_units is iterable
+        fail_msg: >-
+          nova_retire_units must be a list of record names, given as JSON: -e '{"nova_retire_units":["name"]}'
+          (a key=value -e is a string); got {{ nova_retire_units | string }}
         quiet: true
 
     - name: every record nova_service_only names is on one of this run's machines

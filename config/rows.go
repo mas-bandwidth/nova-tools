@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"maps"
@@ -12,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
 
 	config "github.com/mas-bandwidth/nova-tools/v2/config/lib"
 )
@@ -19,8 +21,9 @@ import (
 // field is one column of a kind's table. typ is text, int, bool, list (a
 // sorted comma list of words matching word), argv (a JSON array of strings),
 // env (a JSON object of NAME to value), path (an absolute or ~/ path), ref
-// (the name of a machine row, NULL when empty) or public (a public IP literal
-// or a DNS name).
+// (the name of a machine row, NULL when empty), public (a public IP literal
+// or a DNS name) or winrunners (the Windows side's runners of a WSL machine,
+// see canonicalWinRunners).
 type field struct {
 	name, typ string
 	required  bool
@@ -59,6 +62,7 @@ var kinds = map[string]*kind{
 			{name: "cores", typ: "int", null: true},
 			{name: "roles", typ: "list", def: "bench", word: roleWord},
 			{name: "runners", typ: "int"},
+			{name: "windows_runners", typ: "winrunners"},
 			{name: "note", typ: "text", cut: true, free: true},
 		}},
 	"service": {name: "service", table: "services", check: checkService,
@@ -143,6 +147,8 @@ func (f field) canonical(raw string) (string, error) {
 		if raw != "" {
 			return canonicalPublic(f, raw)
 		}
+	case "winrunners":
+		return canonicalWinRunners(f, raw)
 	}
 	if strings.ContainsAny(raw, "\r\n") {
 		return "", fmt.Errorf("--%s: want one line", f.name)
@@ -170,6 +176,65 @@ func canonicalEnv(f field, raw string) (string, error) {
 		}
 	}
 	return marshal(m), nil
+}
+
+// winTarget is where a Windows runner registers (a repository or an organization on github.com); winLabel one label.
+var (
+	winTarget = regexp.MustCompile(`^https://github\.com/[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)?$`)
+	winLabel  = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
+)
+
+// winRunners is one target of windows_runners: count runners on url (a repository or an organization), and the
+// labels added to the ones the role always gives. Its json is the inventory's nova_windows_runners entry.
+type winRunners struct {
+	URL    string   `json:"url"`
+	Count  int      `json:"count"`
+	Labels []string `json:"labels"`
+}
+
+// parseWinRunners reads `<url>=<count>[:<label>+<label>...]`, comma-separated: the targets sorted by url, each url
+// once, labels sorted and unique; empty is none.
+func parseWinRunners(raw string) ([]winRunners, error) {
+	out := []winRunners{}
+	for _, e := range strings.FieldsFunc(raw, func(r rune) bool { return r == ',' || unicode.IsSpace(r) }) {
+		rest, https := strings.CutPrefix(e, "https://")
+		target, labels, colon := strings.Cut(rest, ":")
+		u, n, eq := strings.Cut(target, "=")
+		w := winRunners{URL: "https://" + strings.TrimSuffix(u, "/"), Labels: []string{}}
+		count, err := strconv.Atoi(n)
+		if !https || !eq || !winTarget.MatchString(w.URL) || err != nil || count < 1 || count > 99 {
+			return nil, fmt.Errorf("%q: want <url>=<count>[:<label>+<label>], the url https://github.com/<owner>[/<repo>], the count 1 to 99", e)
+		}
+		if w.Count = count; colon {
+			w.Labels = strings.Split(labels, "+")
+		}
+		for _, l := range w.Labels {
+			if !winLabel.MatchString(l) {
+				return nil, fmt.Errorf("%q: label %q: want letters, digits, dot, dash and underscore", e, l)
+			}
+		}
+		slices.Sort(w.Labels)
+		w.Labels = slices.Compact(w.Labels)
+		if slices.ContainsFunc(out, func(o winRunners) bool { return strings.EqualFold(o.URL, w.URL) }) {
+			return nil, fmt.Errorf("%s is named twice; give each url once", w.URL)
+		}
+		out = append(out, w)
+	}
+	slices.SortFunc(out, func(a, b winRunners) int { return strings.Compare(a.URL, b.URL) })
+	return out, nil
+}
+
+// canonicalWinRunners is a windows_runners value as it is stored: parseWinRunners' targets, written back.
+func canonicalWinRunners(f field, raw string) (string, error) {
+	ws, err := parseWinRunners(raw)
+	parts := []string{}
+	for _, w := range ws {
+		parts = append(parts, w.URL+"="+strconv.Itoa(w.Count)+strings.TrimSuffix(":"+strings.Join(w.Labels, "+"), ":"))
+	}
+	if err != nil {
+		return "", fmt.Errorf("--%s %v", f.name, err)
+	}
+	return strings.Join(parts, ","), nil
 }
 
 // dnsLabel is one lower-case label of a DNS name (RFC 1123).
@@ -275,8 +340,51 @@ func (k *kind) merge(cur Row, raw map[string]string) (Row, error) {
 	return next, nil
 }
 
+// clockFetch is the rule of D8 (2026-11-07): two mirror-refresh --loop 60 records on every bench fetched two GitHub
+// organisations every minute through one home connection (1.08 TB sent) and nothing refused it. A service whose
+// argv names a fetcher and a loop, or a fetcher with --every above 0, is refused: fetch on an event (a push) or once
+// per job, never on a clock. This table is the whole rule, read over every word of argv (its base name, any =value
+// cut off, a shell string split into its words at white space and ; & | ( )): a fetcher; a git verb that fetches,
+// counted after a git word; a loop. Only the words listed are in scope; `for` is not one, since a for over a list of
+// repositories runs once.
+var clockFetch = map[string]string{
+	"rsync": "fetcher", "curl": "fetcher", "wget": "fetcher", "mirror-refresh": "fetcher",
+	"fetch": "git", "pull": "git", "clone": "git",
+	"--loop": "loop", "--every": "loop", "watch": "loop", "while": "loop", "until": "loop", "--interval": "loop",
+}
+
+// fetchOnClock is the first fetcher and the first loop of argv under clockFetch, each "" when there is none.
+func fetchOnClock(argv []string) (fetcher, loop string) {
+	git := false
+	for _, w := range argv {
+		for _, tok := range strings.FieldsFunc(w, func(r rune) bool { return unicode.IsSpace(r) || strings.ContainsRune(";&|()", r) }) {
+			tok, _, _ = strings.Cut(tok, "=")
+			tok = tok[strings.LastIndex(tok, "/")+1:]
+			switch clockFetch[tok] {
+			case "fetcher":
+				fetcher = cmp.Or(fetcher, tok)
+			case "git":
+				if git {
+					fetcher = cmp.Or(fetcher, "git "+tok)
+				}
+			case "loop":
+				loop = cmp.Or(loop, tok)
+			}
+			git = git || tok == "git" // once a git word is seen it stays seen for the rest of argv: a later pull is counted
+		}
+	}
+	return fetcher, loop
+}
+
 func checkService(r Row) error {
 	var p []string
+	var argv []string
+	_ = json.Unmarshal([]byte(r.F["argv"]), &argv) // ignored: canonical checked the field; a bad value has no words
+	every, _ := strconv.Atoi(r.F["every"])
+	if f, loop := fetchOnClock(argv); f != "" && (loop != "" || every > 0) {
+		how := cmp.Or(loop, "--every "+r.F["every"])
+		p = append(p, fmt.Sprintf("service %s fetches on a clock (%s with %s); fetch on an event (a push) or once per job, never on a clock: drop %s and run it from the job or the hook that needs it", r.Name, f, how, how))
+	}
 	if r.F["every"] != "0" && r.F["keepalive"] == "true" {
 		p = append(p, fmt.Sprintf("service %s has --every %s and --keepalive true; a service runs every n seconds or is kept alive, so set one: --every 0 or --keepalive false", r.Name, r.F["every"]))
 	} else if r.F["every"] == "0" && r.F["keepalive"] != "true" {

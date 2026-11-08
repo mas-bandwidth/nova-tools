@@ -198,6 +198,7 @@ func mintKey(api tsAPI, tags []string) (string, error) {
 type tsNode struct {
 	ID, HostName, DNSName            string
 	Tags, TailscaleIPs, SSH_HostKeys []string
+	TxBytes, RxBytes                 int64 // this node's bytes to and from the peer since tailscaled started
 }
 
 type tsStatus struct {

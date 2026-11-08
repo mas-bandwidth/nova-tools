@@ -1,4 +1,4 @@
-# purpose: guards that let a Linux machine get itself out of trouble, and a disk report
+# purpose: guards that let a Linux machine get itself out of trouble, and a disk report (bench, runner and services groups)
 #
 # health.yml: guards that let a Linux machine get itself out of trouble, and a disk report (fleet/README.md,
 # "health"): the journal kept on disk, a kernel panic that reboots, ssh sessions the OOM killer may kill, rsyslog's
@@ -9,7 +9,7 @@
 #   ansible-playbook -i ./inventory fleet/health.yml --check --diff
 #   ansible-playbook -i ./inventory fleet/health.yml
 - name: self-healing guards and the disk report (Linux)
-  hosts: all
+  hosts: bench:runner:services   # the fleet's workers, never all: a seat-only machine (roles -) is not ours to tune (D13, 2026-11-07)
   gather_facts: true
   gather_subset: [min, hardware]
   roles:

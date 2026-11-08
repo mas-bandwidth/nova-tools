@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -98,6 +99,15 @@ func scratch(t *testing.T) (job, out string) {
 	return
 }
 
+// linuxOnly skips a test or step that checks the Landlock and seccomp wall: the
+// macOS sandbox-exec profile fences other things (README.md, Reference).
+func linuxOnly(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS != "linux" {
+		t.Skip("checks the Linux wall; this is " + runtime.GOOS)
+	}
+}
+
 func TestCheckAndProbe(t *testing.T) {
 	t.Parallel()
 	code, out, _ := sandbox(t, os.TempDir(), "check")
@@ -110,10 +120,13 @@ func TestCheckAndProbe(t *testing.T) {
 	assert.Contains(t, out, "name=write_outside expect=deny got=deny")
 	assert.Contains(t, out, "name=read_named expect=allow got=allow")
 	assert.Contains(t, out, "name=unix_deny expect=deny got=deny")
-	assert.Contains(t, out, "name=unix_allow expect=allow got=allow")
-	for _, step := range []string{"net_deny expect=deny got=deny", "tcp_allow expect=allow got=allow",
+	steps := []string{"net_deny expect=deny got=deny", "tcp_allow expect=allow got=allow",
 		"udp_control expect=allow got=allow", "udp_deny expect=deny got=deny", "tcp_other_deny expect=deny got=deny",
-		"udp_deny_allowmode expect=deny got=deny", "listen_control expect=allow got=allow", "listen_deny expect=deny got=deny"} {
+		"udp_deny_allowmode expect=deny got=deny"}
+	if runtime.GOOS == "linux" { // the macOS probe has no unix_allow or listen steps
+		steps = append(steps, "unix_allow expect=allow got=allow", "listen_control expect=allow got=allow", "listen_deny expect=deny got=deny")
+	}
+	for _, step := range steps {
 		assert.Contains(t, out, "name="+step+"\n")
 	}
 	if !strings.Contains(out, "name=dns_deny expect=deny got=untested") {
@@ -163,20 +176,22 @@ func TestExitStatusPassesThrough(t *testing.T) {
 func TestWallLineCwdAndMkdir(t *testing.T) {
 	t.Parallel()
 	job, out := scratch(t)
+	dir, err := filepath.EvalSymlinks(filepath.Dir(child)) // the wall line names resolved paths (macOS: /var is /private/var)
+	require.NoError(t, err)
 	code, _, stderr := sandbox(t, "/usr", withChild()...)
 	require.Equal(t, 0, code, stderr)
-	assert.Contains(t, stderr, "WALL read="+filepath.Dir(child)+" net=open\n")
+	assert.Contains(t, stderr, "WALL read="+dir+" net=open\n")
 
 	code, _, stderr = sandbox(t, out, withChild("--write", job)...)
 	assert.Equal(t, 125, code, stderr)
-	assert.Contains(t, stderr, "WALL read="+filepath.Dir(child)+" write="+job+" net=open\n")
+	assert.Contains(t, stderr, "WALL read="+dir+" write="+job+" net=open\n")
 	assert.Contains(t, stderr, "SANDBOX REFUSED reason=cwd")
 	assert.Contains(t, stderr, "cd "+job+" or add --read "+out)
 	assert.NotContains(t, stderr, "; run:")
 
 	code, _, stderr = sandbox(t, job, withChild("--write", job, "--net-deny")...)
 	require.Equal(t, 0, code, stderr)
-	assert.Contains(t, stderr, "WALL read="+filepath.Dir(child)+" write="+job+" net=denied\n")
+	assert.Contains(t, stderr, "WALL read="+dir+" write="+job+" net=denied\n")
 
 	missing := filepath.Join(job, "missing")
 	code, _, stderr = sandbox(t, job, withChild("--write", missing)...)
@@ -274,6 +289,7 @@ func TestUnixFenceCost(t *testing.T) {
 		assert.Contains(t, out, "7")
 	})
 	t.Run("socketpair types", func(t *testing.T) {
+		linuxOnly(t)
 		code, out := run(t, "python3", "-c", `import socket
 for k in ("SOCK_STREAM", "SOCK_SEQPACKET", "SOCK_DGRAM"):
     try:
@@ -289,11 +305,13 @@ except PermissionError: print("socket eperm")`)
 		assert.Contains(t, out, "socket eperm")
 	})
 	t.Run("logger", func(t *testing.T) {
+		linuxOnly(t)
 		code, out := run(t, "logger", "--socket-errors=on", "-u", "/dev/log", "walled")
 		assert.NotEqual(t, 0, code, out)
 		assert.Contains(t, out, "Operation not permitted")
 	})
 	t.Run("gpg-connect-agent", func(t *testing.T) {
+		linuxOnly(t)
 		code, out := run(t, "gpg-connect-agent", "--no-autostart", "/bye")
 		assert.Contains(t, out, "Operation not permitted", "rc=%d", code)
 	})
@@ -301,6 +319,7 @@ except PermissionError: print("socket eperm")`)
 
 func TestUnixSocketIsFencedByDefault(t *testing.T) {
 	t.Parallel()
+	linuxOnly(t)
 	if _, out, _ := sandbox(t, os.TempDir(), "check"); strings.Contains(out, "seccomp UNAVAILABLE") {
 		t.Skip("no seccomp on this kernel")
 	}
@@ -436,6 +455,9 @@ func TestNetDenyClosesUDP(t *testing.T) {
 	code, _, stderr = sandbox(t, job, args("--net-deny")...)
 	assert.Equal(t, 1, code, "socket(AF_INET, SOCK_DGRAM) is refused: "+stderr)
 	assert.False(t, got(500*time.Millisecond))
+	if runtime.GOOS != "linux" {
+		return // macOS --net-allow opens UDP to localhost on the port too (README)
+	}
 	code, _, stderr = sandbox(t, job, args("--net-deny", "--net-allow", addr)...)
 	assert.Equal(t, 1, code, "--net-allow reopens TCP only, even on the datagram's own port: "+stderr)
 	assert.False(t, got(500*time.Millisecond))
@@ -446,6 +468,7 @@ func TestNetDenyClosesUDP(t *testing.T) {
 // under --net-allow TCP comes back and nothing else does.
 func TestNetDenyClosesEverySocketKind(t *testing.T) {
 	t.Parallel()
+	linuxOnly(t)
 	if _, err := exec.LookPath("python3"); err != nil {
 		t.Skip("python3 is not installed here")
 	}
@@ -511,6 +534,9 @@ func TestShowSnapshot(t *testing.T) {
 	_, chk, _ := sandbox(t, os.TempDir(), "check")
 	if !strings.Contains(chk, "net=enforceable") {
 		t.Skip("--net-deny is not enforceable here: " + chk)
+	}
+	if !strings.Contains(chk, "backend=landlock") {
+		t.Skip("the expected block is Landlock's: " + chk)
 	}
 	abi := regexp.MustCompile(`abi=(\d+)`).FindStringSubmatch(chk)[1]
 	job, out := scratch(t)
