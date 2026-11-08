@@ -3,7 +3,7 @@
 nova-fleet puts the same software on every machine you own. It is the fleet's Ansible plays in one binary: the
 plays, roles, templates and defaults are embedded, a run extracts them to a private temporary directory, points
 `ansible-playbook` at your inventory (`nova-config inventory` unless you name another) and exits 0 when it passed,
-1 when it failed (ansible-playbook's own status named on stderr), 2 when it could not run.
+1 when it failed (ansible-playbook's own status named on stderr) or matched no host, 2 when it could not run.
 
 Use the release selected in the [installation guide](../../docs/README.md#install-one-tool)
 as `NOVA_TOOLS_VERSION`; replace `<machine>` with a name from your inventory.
@@ -187,7 +187,10 @@ nova-fleet github-runners -- -e github_runner_url=https://github.com/OWNER/REPO 
 
 `nova-fleet plays` is the list in the binary you hold; `nova-fleet show <play>` prints one, and `nova-fleet show
 tailscale-acl` what `up` merges into the tailnet policy. Every play is idempotent and prints one receipt line per machine; under
-`--check` the receipt ends `(check: nothing changed)`. A secret is never a variable: it reaches a run as an
+`--check` the receipt ends `(check: nothing changed)`. A play whose machine groups match no host (no row has the
+role, or `-l` names none in them) is refused before it runs, exit 1: `nova-fleet github-runners: no host is in runner
+(no machine row has that role, or -l names none in it), so the play would do nothing; run: nova-config machine set
+<machine> --roles <its roles>,runner --actor <you>, then nova-fleet github-runners again`. A secret is never a variable: it reaches a run as an
 environment variable from `nova-secrets exec` on the control node, and a machine only on a command's stdin, so a
 play that needs one runs as `nova-secrets exec --only NAME -- nova-fleet <play> ...` (`nova-fleet up` does this
 itself).
