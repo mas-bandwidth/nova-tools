@@ -76,7 +76,8 @@ jobs:
       - *checkout
       - *go
       - name: unit tests
-        run: go test -p 4 ./...
+        # PATH and HOME point nowhere: a unit test that reaches a real program or the home directory fails
+        run: go test -p 4 -exec "env PATH=/nonexistent HOME=/nonexistent" ./...
 
   functional:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository

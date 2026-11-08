@@ -1,3 +1,5 @@
+//go:build functional
+
 package main
 
 // Unit tests of the CI-rules hooks every runner carries (roles/github-runner/files/ci-rules, README "CI rules").

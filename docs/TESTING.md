@@ -46,7 +46,7 @@ go build ./...
 go vet ./...
 go vet -tags functional,slow ./...
 GOOS=windows go vet ./...
-go test -p 4 ./...
+go test -p 4 -exec "env PATH=/nonexistent HOME=/nonexistent" ./...
 go test -count=1 -p 4 -tags functional,slow ./...    # uncached: runs outside binaries
 ```
 
@@ -57,8 +57,10 @@ Top-level `ci-ok` requires every job to succeed. Fork pull requests do not run
 on the repository's self-hosted machines.
 
 `tests/boundary` checks layout, imports, dependencies and the line budgets in
-`tests/BUDGET`. `tests/contract` builds each tool and checks help, unknown verbs and
-flags, missing inputs and allowed exits. Both run as part of `go test ./...`.
+`tests/BUDGET`, and refuses a unit test that calls real time, a socket, the network or another
+program (`TestUnitTestsArePure`); it runs as part of `go test ./...`. `tests/contract` builds
+each tool and checks help, unknown verbs and flags, missing inputs and allowed exits; it builds
+and runs programs, so it is a functional test (`-tags functional`).
 Neither needs a live store. These tests cover the named rules, not every
 claim in a guide.
 
