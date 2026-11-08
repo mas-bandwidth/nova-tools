@@ -129,7 +129,10 @@ func TestInstallFromALocalBuild(t *testing.T) {
 	binDir := filepath.Join(t.TempDir(), "bin")
 	args := []string{"install", "--inventory", inv, "--", "-e", "nova_tools_version=local", "-e", "nova_tools_local_dir=" + dist, "-e", "nova_tools_unit_manager=false",
 		"-e", "nova_bin_dir=" + binDir, "-e", "nova_home=" + home, "-e", "nova_tools_system_unit_dir=" + systemDir,
-		"-e", `{"nova_tools_names":["nova-fleet"]}`}
+		"-e", `{"nova_tools_names":["nova-fleet"]}`,
+		// the bench play's opencode from a release this test writes (opencode_play_functional_test.go), never the network;
+		// its opencode and opencode.bin then sit in the bin directory, which the leftover check allows (nova_opencode_owns)
+		"-e", opencodeRelease(t, false)}
 	if code, out, errs := runFleet(t, bin, args...); code != 0 {
 		t.Fatalf("install from %s: exit %d\n%s\n%s", dist, code, out, errs)
 	}

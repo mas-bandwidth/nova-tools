@@ -359,6 +359,21 @@
           or (service_units.results | selectattr('item.name', 'equalto', item.item) | first).changed
           or item.item in service_restart)
 
+    # bootout returns before launchd has let go of the job; a bootstrap at once fails
+    # "Bootstrap failed: 5: Input/output error" and leaves the service down.
+    - name: wait until launchd has let go of the unloaded (darwin)
+      ansible.builtin.command: "launchctl print {{ service_domain }}/com.nova.service.{{ item.item.item }}"
+      register: service_gone
+      until: service_gone.rc != 0
+      retries: 10
+      delay: 1
+      changed_when: false
+      failed_when: service_gone.rc == 0
+      loop: "{{ service_unloaded.results | default([]) }}"
+      loop_control: { label: "{{ item.item.item }}" }
+      become: "{{ service_system }}"
+      when: service_darwin and not ansible_check_mode and item is not skipped
+
     - name: load the enabled (darwin)
       ansible.builtin.command: "launchctl bootstrap {{ service_domain }} {{ service_dir }}/com.nova.service.{{ item.name }}.plist"
       changed_when: true

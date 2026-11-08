@@ -7,13 +7,17 @@ Wants=network-online.target
 [Service]
 User={{ ansible_facts['user_id'] }}
 WorkingDirectory={{ github_runner_dir }}
-{% for k, v in github_runner_env.items() | sort %}
+Environment=PATH={{ github_runner_env.get('PATH', github_runner_default_path_linux) }}
+{% for k, v in github_runner_env.items() | sort if k != 'PATH' %}
 Environment={{ k }}={{ v }}
 {% endfor %}
+# A stop ends the whole runner: run.sh turns SIGTERM into SIGINT to run-helper.sh and the listener and waits for them
+# (RUNNER_MANUALLY_TRAP_SIG), and whatever is left once run.sh exits, or at TimeoutStopSec, is killed (KillMode=mixed).
+Environment=RUNNER_MANUALLY_TRAP_SIG=1
 ExecStart={{ github_runner_dir }}/run.sh
 Restart=always
 RestartSec=10
-KillMode=process
+KillMode=mixed
 KillSignal=SIGTERM
 TimeoutStopSec=5min
 
