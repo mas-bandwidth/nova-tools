@@ -91,6 +91,7 @@ func TestBuildRefusals(t *testing.T) {
 		{"net-allow port 0", "linux", spec{netDeny: true, netAllow: []string{"localhost:0"}}, "bad_net"},
 		{"net-allow without net-deny", "linux", spec{netAllow: []string{"localhost:1"}}, "bad_net"},
 		{"gpu off macOS", "linux", spec{gpu: true}, "bad_gpu"},
+		{"unix on macOS", "darwin", spec{unix: true}, "bad_unix"},
 		{"command not found", "linux", spec{argv: []string{"no-such-command-here"}}, "not_found"},
 		{"command not executable", "linux", spec{argv: []string{file}}, "not_executable"},
 		{"command outside every grant", "linux", spec{argv: []string{script}}, "bad_read"},
