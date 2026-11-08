@@ -60,22 +60,21 @@ nova_tools_remove:
   - nova-version
 
 # Leftovers. After the install the role lists what an older install left beside the
-# new binaries and refuses the host when it finds any (fleet/README.md, "install",
-# Leftovers): in the bin directory a nova-*, novadog-*, mirror-refresh, disk-guard or
-# ci-hold-broker the release's SHA256SUMS does not list for the platform, in the
-# login's unit directory (~/.config/systemd/user, ~/Library/LaunchAgents) a nova-* or
-# com.nova.* unit no service record of the machine names, and in the system unit
-# directory a nova* unit no record names. Allowed beside those: what another
+# new binaries and refuses the host when it finds any, naming the plays that retire
+# them (fleet/README.md, "install", Leftovers). Allowed beside the release: what another
 # repository's release (--repo) recorded in nova_tools_manifest_dir, what the fleet's
-# own roles write (their nova_<role>_owns), a friend's nova-bus hook unit, and the
-# binaries named in nova_tools_keep (one a machine keeps by hand, a git credential
-# helper, say). Unix machines, nova-tools' own release only; nothing is removed.
+# own roles write (their nova_<role>_owns), nova_tools_hand_kept, a friend's nova-bus
+# hook unit, a service record's unit, and the binaries named in nova_tools_keep. A
+# binary no manifest lists that nova-tools did not retire is a warning only. Unix
+# machines, nova-tools' own release only; nothing is removed.
 nova_tools_keep: []
 # Binaries every fleet machine keeps beside the release, allowed whatever nova_tools_keep says.
 nova_tools_hand_kept:
   # the git credential helper, installed by hand before v2; owed to a role (fleet item D19)
   - nova-push-credential
-nova_tools_system_unit_dir: /etc/systemd/system
+# The system unit directory: systemd's on Linux, launchd's daemons on macOS (where
+# services.yml puts a headless Mac's units, nova_launchd_domain auto or system).
+nova_tools_system_unit_dir: "{{ '/Library/LaunchDaemons' if nova_tools_os == 'darwin' else '/etc/systemd/system' }}"
 # Where another repository's release (--repo) records the names it installs, one
 # <owner>_<name>.names per repository, for the leftover check to allow.
 nova_tools_manifest_dir: "{{ nova_home }}/.local/share/nova/installed"

@@ -252,7 +252,7 @@ refused before anything is written.
 | `nova_tools_remove` | the retired list | names to retire |
 | `nova_tools_keep` | empty | binaries a machine keeps by hand in the bin directory (see Leftovers) |
 | `nova_tools_manifest_dir` | `~/.local/share/nova/installed` | where a `--repo` install records its names (see Leftovers) |
-| `nova_tools_system_unit_dir` | `/etc/systemd/system` | where Leftovers reads system units |
+| `nova_tools_system_unit_dir` | `/etc/systemd/system` (Linux), `/Library/LaunchDaemons` (macOS) | where Leftovers reads system units |
 
 **Another repository's release.** A dependent tool whose release is laid out the same way (assets
 `<name>_<tag>_<os>_<arch>[.exe]` and one `SHA256SUMS`) installs with `--repo` and `--tag`, getting every binary its
@@ -289,19 +289,27 @@ A name also being installed is refused. The default list is the rows of `retired
 `-e nova_tools_remove_enabled=true -e nova_tools_remove='["nova-sprint","nova-card"]'`. Unix machines only.
 
 **Leftovers.** Last, after the install has happened, the play reads what an older install left beside the new binaries
-and prints one line per host, `INSTALL <host> leftovers=<n>: <names>` (or `leftovers=0`): in the bin directory, any
-`nova-*`, `novadog-*`, `mirror-refresh`, `disk-guard` or `ci-hold-broker` no release names; in the login's unit directory
-(`~/.config/systemd/user` on Linux, `~/Library/LaunchAgents` on macOS), any `nova-*` or `com.nova.*` unit, timer or plist;
-and in `/etc/systemd/system` (Linux; a read, no sudo), any `nova*` unit. Allowed: the release's `SHA256SUMS` names for
-the platform; every name another repository's release recorded (a `--repo` install writes its names to
+and prints one line per host, `INSTALL <host> leftovers=<n>: <names>` (or `leftovers=0`). It reads the bin directory for
+any `nova-*`, `novadog-*`, `mirror-refresh`, `disk-guard` or `ci-hold-broker`; the login's unit directory
+(`~/.config/systemd/user` on Linux, `~/Library/LaunchAgents` on macOS) for any `nova-*` or `com.nova.*` unit, timer or
+plist; and the system unit directory (`/etc/systemd/system` on Linux, any `nova*` unit; `/Library/LaunchDaemons` on macOS,
+where a headless Mac's services are, any `com.nova.*` plist; a read, no sudo). Allowed: the release's `SHA256SUMS` names
+for the platform; every name another repository's release recorded (a `--repo` install writes its names to
 `~/.local/share/nova/installed/<owner>_<name>.names`, `nova_tools_manifest_dir`); what the fleet's own roles write there
-(each role's `nova_<role>_owns` in its defaults, and `nova_redis_unit`); a friend's nova-bus hook unit
-(`nova-bus.hook.<name>.plist`, `nova-bus-hook-<name>.service`); the `nova-service-<record>` unit of a service record this
-machine has (its `nova_services`); `nova_tools_hand_kept` (`nova-push-credential`, the git credential helper every machine has); and `nova_tools_keep` (a binary the machine keeps by hand). An inventory with no
-`nova_services` (not nova-config's) has its units left unread, and the line ends with a NOTE saying so. A host with any
-leftover is failed with the fix: remove them (`nova-fleet services` for units of a record; by hand for the rest), then
-install again. The play removes nothing itself. Unix machines, nova-tools' own release only (a `--repo` install prints no
-line); `--check` prints the line too.
+(each role's `nova_<role>_owns` in its defaults, and `nova_redis_unit`); `nova_tools_hand_kept` (`nova-push-credential`, the
+git credential helper every machine has); a friend's nova-bus hook unit (`nova-bus.hook.<name>.plist`,
+`nova-bus-hook-<name>.service`); the unit of a service record this machine has (its `nova_services`); and
+`nova_tools_keep`. An inventory with no `nova_services` (not nova-config's) has its units left unread, and the line ends
+with a NOTE saying so.
+
+A leftover fails the host, and the refusal names the plays that retire it, names filled in:
+`nova-fleet install --tag <tag> -- -l <host> -e nova_tools_remove_enabled=true -e nova_tools_remove='[...]'` for a binary
+nova-tools retired (`retired-tools.txt`, retired or rowan-tools), or one nova-sprint retired when nova-sprint's manifest is
+on the machine and does not list it; `nova-fleet services -- -l <host> -e nova_retire_units='[...]'` for a unit of the
+services play's shapes (`nova-service-*`, `nova-loop-*`, `com.nova.service.*`, `com.nova.loop.*`); and, named on its own,
+what no play retires yet. Any other binary may belong to a release installed before manifests were written: it is a
+`WARNING unrecorded=<n>` with `reinstall <repo> to record its names`, never a refusal. The play removes nothing itself.
+Unix machines, nova-tools' own release only (a `--repo` install prints no line); `--check` prints the line too.
 
 ## services
 

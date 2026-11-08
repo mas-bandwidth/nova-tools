@@ -275,29 +275,62 @@
         nova_tools_records: "{{ nova_services | default([]) | map(attribute='name') | map('regex_escape') | join('|') or '-' }}"
         nova_tools_bin_ok: "{{ nova_tools_release_names + nova_tools_keep + nova_tools_hand_kept + nova_tools_other_names + nova_tools_fleet_owns.bin }}"
         nova_tools_leftover_dirs: >-
-          {{ [{'path': nova_tools_bin_dir,
+          {{ [{'path': nova_tools_bin_dir, 'kind': 'bin',
                'patterns': ['^(nova-.*|novadog-.*|mirror-refresh|disk-guard|ci-hold-broker)$'],
                'ok': '^(' ~ (nova_tools_bin_ok | map('regex_escape') | join('|')) ~ ')$'}]
-             + ([{'path': nova_home ~ ('/.config/systemd/user' if nova_tools_os == 'linux' else '/Library/LaunchAgents'),
+             + ([{'path': nova_home ~ ('/.config/systemd/user' if nova_tools_os == 'linux' else '/Library/LaunchAgents'), 'kind': 'unit',
                   'patterns': ['^(nova-.*|com[.]nova[.].*)$'],
                   'ok': '^(nova-service-(' ~ nova_tools_records ~ ')[.](service|timer)|com[.]nova[.]service[.](' ~ nova_tools_records ~ ')[.]plist'
                         ~ '|nova-bus[.]hook[.].+[.]plist|nova-bus-hook-.+[.]service|'
                         ~ (nova_tools_fleet_owns.user | map('regex_escape') | join('|')) ~ ')$'}] if nova_services is defined else [])
-             + ([{'path': nova_tools_system_unit_dir,
-                  'patterns': ['^nova.*$'],
-                  'ok': '^(nova-service-(' ~ nova_tools_records ~ ')[.](service|timer)|'
-                        ~ (nova_tools_fleet_owns.system | map('regex_escape') | join('|')) ~ ')$'}] if nova_tools_os == 'linux' and nova_services is defined else []) }}
+             + ([{'path': nova_tools_system_unit_dir, 'kind': 'unit',
+                  'patterns': ['^nova.*$' if nova_tools_os == 'linux' else '^com[.]nova[.].*$'],
+                  'ok': ('^(nova-service-(' ~ nova_tools_records ~ ')[.](service|timer)|'
+                         ~ (nova_tools_fleet_owns.system | map('regex_escape') | join('|')) ~ ')$') if nova_tools_os == 'linux'
+                        else '^com[.]nova[.]service[.](' ~ nova_tools_records ~ ')[.]plist$'}] if nova_services is defined else []) }}
 
+    # Each name found and allowed by none of the above is sorted by what can retire it.
+    # A binary nova-tools retired (fleet/retired-tools.txt, retired or rowan-tools), or
+    # one nova-sprint retired when nova-sprint's manifest is here and does not list it:
+    # nova-fleet install retires it (nova_tools_remove). A unit of the services play's
+    # shapes: nova-fleet services retires it (nova_retire_units). Any other binary may be
+    # a release whose manifest is missing (installed before manifests were written): a
+    # WARNING, never a refusal, never advice to remove it. Anything else: no play
+    # retires it, named on its own.
     - name: "the leftovers: binaries no release lists, units no role or record names"
       ansible.builtin.set_fact:
-        nova_tools_leftovers: >-
-          {%- set out = [] -%}
-          {%- for r in nova_tools_found.results | default([]) -%}
-          {%- for f in r.files | default([]) if not f.isdir and (f.path | basename) is not match(r.item.ok) -%}
-          {%- set _ = out.append(f.path | basename) -%}
+        nova_tools_sorted: >-
+          {%- set r = {'bin': [], 'unit': [], 'unit_names': [], 'noplay': [], 'unrecorded': [], 'sprint': []} -%}
+          {%- for d in nova_tools_found.results | default([]) -%}
+          {%- for f in d.files | default([]) if not f.isdir and (f.path | basename) is not match(d.item.ok) -%}
+          {%- set n = f.path | basename -%}
+          {%- if d.item.kind == 'unit' -%}
+          {%- if n is match(nova_tools_unit_shape) -%}
+          {%- set _ = r.unit.append(n) -%}{%- set _ = r.unit_names.append(n | regex_replace(nova_tools_unit_shape, '\\1\\2')) -%}
+          {%- else -%}{%- set _ = r.noplay.append(n) -%}{%- endif -%}
+          {%- elif n is not match('^[a-z0-9][a-z0-9-]*$') -%}{%- set _ = r.noplay.append(n) -%}
+          {%- elif n in nova_tools_own_retired or (n in nova_tools_sprint_retired and nova_tools_sprint_recorded) -%}{%- set _ = r.bin.append(n) -%}
+          {%- else -%}{%- set _ = r.unrecorded.append(n) -%}{%- if n in nova_tools_sprint_retired -%}{%- set _ = r.sprint.append(n) -%}{%- endif -%}
+          {%- endif -%}
           {%- endfor -%}
           {%- endfor -%}
-          {{ out | sort }}
+          {{ r }}
+      vars:
+        nova_tools_unit_shape: '^com[.]nova[.](?:service|loop)[.](.+)[.]plist$|^nova-(?:service|loop)-(.+)[.](?:service|timer)$'
+        nova_tools_retired_rows: "{{ lookup('ansible.builtin.file', role_path ~ '/../../retired-tools.txt').splitlines() | reject('match', '^#') | select | map('split', '\t') | list }}"
+        nova_tools_own_retired: "{{ nova_tools_retired_rows | selectattr(2, 'match', '^(retired|rowan-tools)') | map(attribute=0) | list }}"
+        nova_tools_sprint_retired: "{{ nova_tools_retired_rows | selectattr(2, 'match', '^sprint') | map(attribute=0) | list }}"
+        nova_tools_sprint_recorded: "{{ 'mas-bandwidth_nova-sprint.names' in (nova_tools_manifests.files | default([]) | map(attribute='path') | map('basename')) }}"
+
+    - name: the leftovers, and the plays that retire them
+      ansible.builtin.set_fact:
+        nova_tools_leftovers: "{{ (nova_tools_sorted.bin + nova_tools_sorted.unit + nova_tools_sorted.noplay) | sort }}"
+        nova_tools_retire_how: >-
+          {{ ([("nova-fleet install --tag " ~ nova_tools_version ~ " -- -l " ~ inventory_hostname
+                ~ " -e nova_tools_remove_enabled=true -e nova_tools_remove='" ~ (nova_tools_sorted.bin | sort | to_json) ~ "'")] if nova_tools_sorted.bin else [])
+             + ([("nova-fleet services -- -l " ~ inventory_hostname ~ " -e nova_retire_units='" ~ (nova_tools_sorted.unit_names | unique | sort | to_json) ~ "'")]
+                if nova_tools_sorted.unit else [])
+             + ([("no play retires " ~ (nova_tools_sorted.noplay | sort | join(', ')) ~ " yet: it is owed to a play")] if nova_tools_sorted.noplay else []) }}
 
     - name: the leftovers, one line per host
       ansible.builtin.debug:
@@ -306,10 +339,18 @@
           '' if nova_services is defined else
           '; NOTE: the inventory carries no nova_services (it is not nova-config\'s), so units were not read, binaries only' }}
 
+    - name: binaries no release's manifest lists yet (a warning; their release may predate manifests)
+      ansible.builtin.debug:
+        msg: >-
+          INSTALL {{ inventory_hostname }} WARNING unrecorded={{ nova_tools_sorted.unrecorded | length }}: {{ nova_tools_sorted.unrecorded | sort | join(', ') }};
+          {{ ('reinstall mas-bandwidth/nova-sprint to record its names (' ~ (nova_tools_sorted.sprint | sort | join(', ')) ~ '); ') if nova_tools_sorted.sprint else '' -}}
+          reinstall the release that ships each (nova-fleet install --repo OWNER/NAME --tag TAG) to record its names
+      when: nova_tools_sorted.unrecorded | length > 0
+
     - name: nothing an older install left behind
       ansible.builtin.assert:
         quiet: true
         that: nova_tools_leftovers | length == 0
         fail_msg: >-
           INSTALL {{ inventory_hostname }} leftovers={{ nova_tools_leftovers | length }}: {{ nova_tools_leftovers | join(', ') }};
-          remove them (nova-fleet services for units of a record; by hand for the rest), then install again
+          retire them, then install again: {{ nova_tools_retire_how | join('; ') }}

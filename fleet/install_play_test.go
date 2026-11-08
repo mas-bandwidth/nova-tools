@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -60,6 +61,8 @@ func TestInstallRoleEndsWithTheLeftoverInventory(t *testing.T) {
 		"nova_tools_bin_ok | map('regex_escape')",
 		"nova-bus[.]hook[.].+[.]plist|nova-bus-hook-.+[.]service",
 		"nova_tools_fleet_owns.user", "nova_tools_fleet_owns.system",
+		// a headless Mac's units: /Library/LaunchDaemons, com.nova.* plists, a record's allowed
+		"'^nova.*$' if nova_tools_os == 'linux' else '^com[.]nova[.].*$'", "else '^com[.]nova[.]service[.](' ~ nova_tools_records ~ ')[.]plist$'",
 		"if nova_services is defined else []",
 		"nova-service-(' ~ nova_tools_records ~ ')[.](service|timer)",
 		"com[.]nova[.]service[.](' ~ nova_tools_records ~ ')[.]plist",
@@ -104,7 +107,19 @@ func TestInstallRoleEndsWithTheLeftoverInventory(t *testing.T) {
 	a, ok := tasks[k]["ansible.builtin.assert"].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, "nova_tools_leftovers | length == 0", asText(a["that"]))
-	assert.Contains(t, asText(a["fail_msg"]), "remove them (nova-fleet services for units of a record; by hand for the rest), then install again")
+	assert.Contains(t, asText(a["fail_msg"]), "retire them, then install again: {{ nova_tools_retire_how | join('; ') }}")
+	assert.NotContains(t, asText(a["fail_msg"]), "by hand")
+	// The fix is the plays that retire them, the names filled in; only what no play retires is named on its own.
+	how := asText(tasks[taskIndex(tasks, "the leftovers, and the plays that retire them")]["ansible.builtin.set_fact"].(map[string]any)["nova_tools_retire_how"])
+	for _, want := range []string{"nova-fleet install --tag", "-e nova_tools_remove_enabled=true -e nova_tools_remove='", "nova_tools_sorted.bin | sort | to_json",
+		"nova-fleet services -- -l ", "-e nova_retire_units='", "nova_tools_sorted.unit_names | unique | sort | to_json", "no play retires "} {
+		assert.Contains(t, how, want)
+	}
+	// A binary no manifest lists yet is a warning (its release may predate manifests), never a refusal.
+	w := taskIndex(tasks, "binaries no release's manifest lists yet")
+	require.Greater(t, w, j)
+	assert.Contains(t, asText(tasks[w]["ansible.builtin.debug"].(map[string]any)["msg"]), "reinstall the release that ships each")
+	assert.NotContains(t, asText(tasks[w]["ansible.builtin.debug"].(map[string]any)["msg"]), "remove")
 	assert.Equal(t, len(tasks)-1, k, "the refusal is not the role's last task")
 
 	// A --repo install records its release's names for this check, after its binaries are in place.
@@ -133,7 +148,9 @@ func TestInstallRoleEndsWithTheLeftoverInventory(t *testing.T) {
 }
 
 // The leftover list is built from the find results: every file (never a directory)
-// whose name the entry's ok pattern does not match.
+// whose name the entry's ok pattern does not match, sorted by what retires it. A binary
+// is a leftover only when nova-tools (or nova-sprint, with its manifest here) retired
+// it; any other is unrecorded, a warning.
 func TestInstallRoleLeftoversAreTheUnlistedFiles(t *testing.T) {
 	t.Parallel()
 	tasks := installRoleTasks(t)
@@ -141,11 +158,19 @@ func TestInstallRoleLeftoversAreTheUnlistedFiles(t *testing.T) {
 	require.GreaterOrEqual(t, i, 0)
 	set, ok := tasks[i]["ansible.builtin.set_fact"].(map[string]any)
 	require.True(t, ok)
-	expr := asText(set["nova_tools_leftovers"])
-	for _, want := range []string{"nova_tools_found.results | default([])", "not f.isdir", "is not match(r.item.ok)", "f.path | basename"} {
+	expr := asText(set["nova_tools_sorted"])
+	for _, want := range []string{"nova_tools_found.results | default([])", "not f.isdir", "is not match(d.item.ok)", "f.path | basename",
+		"n in nova_tools_own_retired or (n in nova_tools_sprint_retired and nova_tools_sprint_recorded)", "r.unrecorded.append(n)",
+		"n is match(nova_tools_unit_shape)", "r.noplay.append(n)"} {
 		assert.Contains(t, expr, want)
 	}
-	assert.Regexp(t, regexp.MustCompile(`\| sort`), expr, "the names are sorted, so two runs print the same line")
+	assert.Equal(t, `^com[.]nova[.](?:service|loop)[.](.+)[.]plist$|^nova-(?:service|loop)-(.+)[.](?:service|timer)$`, taskVar(t, tasks[i], "nova_tools_unit_shape"),
+		"the shapes services.yml retires by nova_retire_units")
+	assert.Contains(t, taskVar(t, tasks[i], "nova_tools_retired_rows"), "retired-tools.txt")
+	assert.Contains(t, taskVar(t, tasks[i], "nova_tools_sprint_recorded"), "mas-bandwidth_nova-sprint.names")
+	left := asText(tasks[taskIndex(tasks, "the leftovers, and the plays that retire them")]["ansible.builtin.set_fact"].(map[string]any)["nova_tools_leftovers"])
+	assert.Regexp(t, regexp.MustCompile(`\| sort`), left, "the names are sorted, so two runs print the same line")
+	assert.NotContains(t, left, "unrecorded", "an unrecorded binary is never a leftover")
 }
 
 // The defaults the inventory reads: nothing kept beside the release unless asked, and the system unit directory.
@@ -157,7 +182,8 @@ func TestInstallRoleLeftoverDefaults(t *testing.T) {
 	require.NoError(t, yaml.Unmarshal(b, &d))
 	assert.Equal(t, []any{}, d["nova_tools_keep"])
 	assert.Equal(t, []any{"nova-push-credential"}, d["nova_tools_hand_kept"], "the git credential helper on every fleet machine (D19)")
-	assert.Equal(t, "/etc/systemd/system", d["nova_tools_system_unit_dir"])
+	assert.Equal(t, "{{ '/Library/LaunchDaemons' if nova_tools_os == 'darwin' else '/etc/systemd/system' }}", d["nova_tools_system_unit_dir"],
+		"a headless Mac's units are LaunchDaemons (services.yml, nova_launchd_domain)")
 	assert.Equal(t, "{{ nova_home }}/.local/share/nova/installed", d["nova_tools_manifest_dir"])
 }
 
@@ -187,6 +213,22 @@ func TestInstallRoleLeftoverOwnsAreTheRolesNames(t *testing.T) {
 		}
 		for _, m := range stem.FindAllStringSubmatch(string(tb), -1) {
 			assert.Contains(t, strings.Join(owns["system"], " "), m[1]+".", "%s writes %s under /etc/systemd/system and its %s does not name it", role, m[1], key)
+		}
+	}
+	// A role that writes a nova unit or plist and declares nothing is caught: every role's
+	// tasks are read, and only the roles above (and redis, by nova_redis_unit) may name one.
+	dirs, err := os.ReadDir("roles")
+	require.NoError(t, err)
+	plist := regexp.MustCompile(`com[.]nova[.][a-z0-9.-]+[.]plist|\bsr_label\b`)
+	declared := map[string]bool{"secrets-refresh": true, "health": true, "postgres": true, "redis": true, "nova-tools-install": true}
+	for _, d := range dirs {
+		files, _ := filepath.Glob("roles/" + d.Name() + "/tasks/*.yml")
+		for _, f := range files {
+			tb, err := os.ReadFile(f)
+			require.NoError(t, err)
+			if unit.Match(tb) || stem.Match(tb) || plist.Match(tb) {
+				assert.True(t, declared[d.Name()], "%s writes a nova unit or plist (%s) and declares no nova_<role>_owns for the leftover check", d.Name(), f)
+			}
 		}
 	}
 	tb, err := os.ReadFile("roles/secrets-refresh/tasks/main.yml")
