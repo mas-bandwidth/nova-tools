@@ -6,8 +6,11 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"os/signal"
 	"runtime"
 	"syscall"
+
+	"golang.org/x/sys/unix"
 )
 
 // systemDir is the reservation directory when NOVA_RESERVE_DIR names none.
@@ -43,22 +46,76 @@ func osLock(path string, exclusive bool) (func(), bool, error) {
 	return func() { _ = f.Close() }, true, nil
 }
 
-// tie starts cmd with this OS's tie to nova-reserve (sysAttr, watchdog). On Linux
-// that is Pdeathsig, which fires when the starting thread ends, so the thread
-// stays locked to this goroutine, which waits for the command.
+// tie starts cmd with this OS's tie to nova-reserve (sysAttr, watchdog). Linux's
+// Pdeathsig fires when the starting thread ends, so the thread stays locked to
+// this goroutine, which waits for the command. A command in a
+// group of its own gets the terminal when nova-reserve is its foreground, else
+// reading it stops the command (SIGTTIN) with its slot held; untie gives it back.
 func tie(cmd *exec.Cmd) (func(), error) {
 	runtime.LockOSThread()
 	cmd.SysProcAttr = sysAttr()
+	cmd.SysProcAttr.Foreground = cmd.SysProcAttr.Setpgid && terminalGroup() == syscall.Getpgrp() // Ctty 0: stdin
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
-	untie, err := watchdog(cmd.Process.Pid)
+	pid := cmd.Process.Pid
+	untie, err := watchdog(pid)
 	if err != nil {
 		// ignored: a command with no watchdog is not left running
 		_ = cmd.Process.Kill()
+		passTerminal(pid, syscall.Getpgrp())
 		return nil, err
 	}
-	return untie, nil
+	return func() { untie(); passTerminal(pid, syscall.Getpgrp()) }, nil
+}
+
+// terminalGroup is the foreground group of the terminal on stdin; -1 if none.
+func terminalGroup() int {
+	if pgrp, err := unix.IoctlGetInt(0, unix.TIOCGPGRP); err == nil {
+		return pgrp
+	}
+	return -1
+}
+
+// passTerminal hands the terminal from group from to group to, if from has it.
+// A background group may only with SIGTTOU ignored, or the kernel stops it.
+func passTerminal(from, to int) {
+	if terminalGroup() != from {
+		return
+	}
+	signal.Ignore(syscall.SIGTTOU)
+	defer signal.Reset(syscall.SIGTTOU)
+	// ignored: a terminal that is gone has no foreground to hand over
+	_ = unix.IoctlSetPointerInt(0, unix.TIOCSPGRP, to)
+}
+
+// wait waits for cmd. On its controlling terminal, foreground or not (a run
+// can be put in the background while it waits for a slot), it relays job
+// control: when the command stops (Ctrl-Z; SIGTTIN after bg), nova-reserve
+// takes back the terminal it had and stops its own group, so the shell sees
+// the job stop; continued, it passes on the terminal if the shell gave it one
+// (fg), and continues the command. tla/JobControl.tla is the model.
+func wait(cmd *exec.Cmd) (ws syscall.WaitStatus, err error) {
+	if !cmd.SysProcAttr.Setpgid || terminalGroup() < 0 {
+		if err = cmd.Wait(); cmd.ProcessState != nil {
+			return cmd.ProcessState.Sys().(syscall.WaitStatus), nil
+		}
+		return ws, err
+	}
+	pid, self := cmd.Process.Pid, syscall.Getpgrp()
+	for {
+		if _, err = syscall.Wait4(pid, &ws, syscall.WUNTRACED, nil); err != syscall.EINTR && (err != nil || !ws.Stopped()) {
+			return ws, err
+		}
+		if err == nil {
+			passTerminal(pid, self)
+			// ignored: stopping this process's own group cannot fail
+			_ = syscall.Kill(0, syscall.SIGSTOP)
+			passTerminal(self, pid)
+			// ignored: a group that has already ended needs no SIGCONT
+			_ = syscall.Kill(-pid, syscall.SIGCONT)
+		}
+	}
 }
 
 // forward passes an interrupt to the command, or to its process group.
@@ -72,6 +129,9 @@ func forward(cmd *exec.Cmd, s os.Signal) {
 		_ = syscall.Kill(pid, sig)
 	}
 }
+
+// signalName is the signal's name, such as SIGKILL.
+func signalName(s syscall.Signal) string { return unix.SignalName(s) }
 
 // running says pid is a process: EPERM is another user's live process.
 func running(pid int) bool {

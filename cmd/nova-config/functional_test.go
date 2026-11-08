@@ -281,14 +281,16 @@ func TestFunctionalNoSchema(t *testing.T) {
 	}
 }
 
-// A store nothing listens at is "cannot reach", with the host and port.
+// A store nothing listens at is "cannot reach", with the host and port. The
+// cause is not pinned: a parallel test can take the freed port and hang up
+// ("connect failed" instead of "connection refused"); TestCause holds the causes.
 func TestFunctionalUnreachable(t *testing.T) {
 	t.Parallel()
 	port := freePort(t)
 	code, out, errs := realRun(t, map[string]string{"NOVA_PG_DSN": "postgres://nova@127.0.0.1:" + port + "/postgres?sslmode=disable"}, "machine", "list")
 	assert.Equal(t, 2, code)
 	assert.Empty(t, out)
-	assert.Equal(t, `nova-config machine list: cannot reach postgres at 127.0.0.1:`+port+` (NOVA_PG_DSN): connection refused; check NOVA_PG_DSN or run: psql "$NOVA_PG_DSN" -c 'select 1'`+"\n", errs)
+	assert.Regexp(t, `^nova-config machine list: cannot reach postgres at 127\.0\.0\.1:`+port+` \(NOVA_PG_DSN\): (connection refused|connect failed|timed out); check NOVA_PG_DSN or run: psql "\$NOVA_PG_DSN" -c 'select 1'\n$`, errs)
 	assert.Equal(t, 1, strings.Count(errs, "\n"), errs)
 }
 

@@ -15,3 +15,10 @@ CapacityBrokenSetWhileHeld.cfg	Capacity.tla	invariant	OneCapacity	check
 CapacityTwoFirst.cfg	Capacity.tla	pass	-	check
 CapacityBrokenNoSeen.cfg	Capacity.tla	temporal	EveryTakerEnds	check
 CapacityBrokenLockProbe.cfg	Capacity.tla	temporal	EveryTakerEnds	check
+JobControl.cfg	JobControl.tla	pass	-	check
+JobControlBrokenNoRelay.cfg	JobControl.tla	temporal	NoHungShell	check
+JobControlBrokenNoReclaim.cfg	JobControl.tla	invariant	TerminalBackAtExit	check
+JobControlBrokenNoWatchdog.cfg	JobControl.tla	temporal	WholeGroupDies	check
+JobControlBrokenFgOnly.cfg	JobControl.tla	temporal	NoHungShell	check
+JobControlGapCtrlZAtStart.cfg	JobControl.tla	invariant	PromptOwnsTerminal	check
+JobControlGapKillAtStart.cfg	JobControl.tla	temporal	WholeGroupDies	check
