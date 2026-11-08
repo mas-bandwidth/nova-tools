@@ -1,9 +1,9 @@
-cmd/nova-bus  2801
-cmd/nova-cairn  2343
-cmd/nova-config  1979
-cmd/nova-reserve  1174
-cmd/nova-sandbox  2087
-cmd/nova-secrets  1743
-cmd/nova-fleet  2022
+cmd/nova-bus  2785
+cmd/nova-cairn  2335
+cmd/nova-config  1969
+cmd/nova-reserve  1102
+cmd/nova-sandbox  1874
+cmd/nova-secrets  1727
+cmd/nova-fleet  2021
 tests/boundary  400
 tests/contract  50

@@ -23,9 +23,3 @@ nova_tools_local_dir: ""
 
 # The bin directory: nova_bin_dir, default the login's ~/.local/bin.
 nova_tools_bin_dir: "{{ nova_bin_dir | default(ansible_facts['env']['HOME'] ~ '/.local/bin') }}"
-
-# Nothing is restarted unless asked: set nova_tools_restart true and list the
-# commands in nova_tools_restart_commands (each an argv list); they run once,
-# only when a binary changed.
-nova_tools_restart: false
-nova_tools_restart_commands: []

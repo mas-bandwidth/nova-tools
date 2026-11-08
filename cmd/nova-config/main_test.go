@@ -47,6 +47,9 @@ func (f *fake) List(_ context.Context, k *kind) ([]Row, error) {
 }
 
 func (f *fake) Write(_ context.Context, k *kind, op string, before, after Row, actor, reason string, dry bool) (int64, error) {
+	if _, taken := f.rows[k.name][after.Name]; op == "add" && taken { // the primary key, as PostgreSQL refuses it
+		return 0, diagnose(pe("23505", "duplicate key value violates unique constraint"), k, op, after.Name, after, nil, nil)
+	}
 	if dry {
 		return 0, nil
 	}

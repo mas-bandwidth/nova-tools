@@ -4,7 +4,6 @@ package main
 
 import (
 	"fmt"
-	"os"
 	"runtime"
 	"strconv"
 	"syscall"
@@ -72,17 +71,6 @@ func wallCheck() (abi string, netOK bool, note string, err error) {
 	return strconv.Itoa(h.abi), h.abi >= 4 && h.seccomp, note, nil
 }
 
-// describeWall is show's text: the plan execWall would apply here.
-func describeWall(w *wall) (string, []refusal) {
-	p, bad := planLinux(w, host())
-	if len(bad) > 0 {
-		return "", bad
-	}
-	return formatLinux(w, p, exists), nil
-}
-
-func exists(p string) bool { _, err := os.Stat(p); return err == nil }
-
 // execWall applies the wall and execs the command. It returns only on failure.
 func execWall(w *wall, env []string) []refusal {
 	fail := func(reason, format string, a ...any) []refusal { return []refusal{refuse(reason, format, a...)} }
@@ -108,10 +96,8 @@ func execWall(w *wall, env []string) []refusal {
 			return fail("sandbox_failed", "--net-allow port %d could not be added: %v", port, errno)
 		}
 	}
-	if !w.keepFDs {
-		if err := closeInheritedFDs(fdDir()); err != nil {
-			return fail("sandbox_failed", "inherited descriptors could not be closed: %v", err)
-		}
+	if err := closeInheritedFDs(fdDir()); err != nil {
+		return fail("sandbox_failed", "inherited descriptors could not be closed: %v", err)
 	}
 	// Restriction is per thread and Go moves goroutines between threads: pin this one
 	// to the thread that is restricted, so the exec happens on it. It is never

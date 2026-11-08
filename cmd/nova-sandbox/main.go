@@ -28,16 +28,12 @@ const runFlags = `  --read <dir>          readable and executable, recursively. 
   --unix                Linux: leave AF_UNIX sockets open, which reopens the same-uid
                         escape (any local socket reachable by path). Without it /dev/log,
                         NSS sockets, agents and local daemons fail.
-  --keep-fds            do not close inherited descriptors above stderr before exec.
-                        Without it every fd > 2 is closed, so an inherited open socket
-                        or file cannot be used inside the wall.
   --env <name>          pass NAME from the environment, never as an argument. Repeatable. PATH, HOME, LANG, TERM pass without it; unset is refused.
 `
 
 const usage = `nova-sandbox: run one command inside a kernel-enforced wall.
 
-  nova-sandbox [--read <dir>]... [--write <dir>]... [--net-deny [--net-allow <host:port>]...] [--gpu] [--unix] [--keep-fds] [--env <name>]... -- <cmd> <args...>
-  nova-sandbox show [the same flags] [-- <cmd> <args...>]
+  nova-sandbox [--read <dir>]... [--write <dir>]... [--net-deny [--net-allow <host:port>]...] [--gpu] [--unix] [--env <name>]... -- <cmd> <args...>
   nova-sandbox check
   nova-sandbox probe
   nova-sandbox help [<verb>]
@@ -54,7 +50,6 @@ If a signal kills the command, nova-sandbox prints command killed by signal N an
 Point HOME and TMPDIR inside a --write. Pass TMPDIR with --env; PATH, HOME, LANG and TERM
 are kept, and an unset --env name is refused.
 
-show    prints the wall a flag set would apply here, without running anything.
 check   says which backend this machine has and whether it works.
 probe   proves the wall on this machine by running it.
 Run nova-sandbox <verb> -h for a verb's own usage.
@@ -62,21 +57,6 @@ Run nova-sandbox <verb> -h for a verb's own usage.
 Exit: the command's own status; 2 the invocation is malformed (one line on stderr);
 125 the wall refused to start on this machine (SANDBOX REFUSED lines on stderr say
 why); 126 the command is not executable; 127 it is on no PATH entry.
-`
-
-const showUsage = `nova-sandbox show: print the wall a flag set would apply here, without running anything.
-
-  nova-sandbox show [--read <dir>]... [--write <dir>]... [--net-deny [--net-allow <host:port>]...] [--gpu] [--unix] [--keep-fds] [--env <name>]... [-- <cmd> <args...>]
-
-The flags are the run flags (nova-sandbox -h), checked the same way (--env need not be
-set). The command is optional; given, its resolved path and argv are shown too.
-
-Output: one block on stdout, one rule per line in the order applied: paths, net,
-seccomp rules by name, scope, descriptors; on macOS the generated profile, verbatim.
-
-Exit: 0 the wall would start here; 1 it would refuse here (SANDBOX REFUSED lines on
-stderr say why, stdout is empty); 2 the invocation is malformed; 126 and 127 the
-command is not executable or on no PATH entry, as for a run.
 `
 
 const checkUsage = `nova-sandbox check: say which backend this machine has and whether it works.
@@ -101,7 +81,7 @@ PROBE FAILED. The steps are listed in the Reference section of cmd/nova-sandbox/
 Exit: 0 PROBE OK; 1 PROBE FAILED; 2 the invocation is malformed.
 `
 
-var verbUsage = map[string]string{"show": showUsage, "check": checkUsage, "probe": probeUsage}
+var verbUsage = map[string]string{"check": checkUsage, "probe": probeUsage}
 
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, os.Environ()))
@@ -133,7 +113,7 @@ func run(args []string, stdout, stderr io.Writer, env []string) int {
 		case len(args) == 2 && verbUsage[args[1]] != "":
 			fmt.Fprint(stdout, verbUsage[args[1]])
 		default:
-			return malformed(stderr, "help", fmt.Sprintf("no help for %q; the verbs are show check probe", strings.Join(args[1:], " ")))
+			return malformed(stderr, "help", fmt.Sprintf("no help for %q; the verbs are check probe", strings.Join(args[1:], " ")))
 		}
 		return 0
 	case "-h", "--help":
@@ -151,19 +131,13 @@ func run(args []string, stdout, stderr io.Writer, env []string) int {
 			return check(stdout)
 		}
 		return probe(stdout, passedEnv(env, nil))
-	case "show":
-		if slices.ContainsFunc(beforeDashes(args[1:]), isHelp) {
-			fmt.Fprint(stdout, showUsage)
-			return 0
-		}
-		return show(args[1:], stdout, stderr)
 	case clientVerb: // hidden: the probe's act inside the wall
 		return probeClient(args[1:])
 	case applyVerb: // hidden child: exec in place. The parent waits so a signal can be reported.
 		return launch(args[1:], stderr, env, false)
 	}
 	if !strings.HasPrefix(args[0], "-") {
-		return malformed(stderr, "", fmt.Sprintf("unknown verb %s; the verbs are show check probe help (see nova-sandbox help), or flags then -- <cmd>", args[0]))
+		return malformed(stderr, "", fmt.Sprintf("unknown verb %s; the verbs are check probe help (see nova-sandbox help), or flags then -- <cmd>", args[0]))
 	}
 	if slices.ContainsFunc(beforeDashes(args), isHelp) {
 		fmt.Fprint(stdout, usage)
@@ -180,7 +154,7 @@ const applyVerb = "wall-apply"
 // command. The child applies the wall and execs. A malformed invocation stays one line
 // and does not get a WALL line; a cwd refusal does, so a silent open network is visible.
 func launch(args []string, stderr io.Writer, env []string, wait bool) int {
-	w, pass, bad := parseAndBuild(args, true)
+	w, pass, bad := parseAndBuild(args)
 	bad = append(bad, missingEnv(env, pass)...)
 	if w != nil {
 		bad = append(bad, cwdRefusal(w)...)
@@ -261,8 +235,8 @@ func report(stderr io.Writer, verb string, bad []refusal) int {
 
 // parseAndBuild parses and checks the flags, and reports every problem in both at
 // once: a bad path is named beside a missing --.
-func parseAndBuild(args []string, needCommand bool) (*wall, []string, []refusal) {
-	s, bad := parseArgs(args, needCommand)
+func parseAndBuild(args []string) (*wall, []string, []refusal) {
+	s, bad := parseArgs(args)
 	if len(bad) == 1 && bad[0].reason == "bad_value" {
 		return nil, nil, bad // a swallowed value: nothing else is reported
 	}
@@ -280,9 +254,8 @@ func texts(bad []refusal) []string {
 }
 
 // parseArgs reads the flags before --, by hand because list flags repeat and the split at
-// -- must be exact: everything after it is the command, verbatim. needCommand is false
-// for show, where the command is optional.
-func parseArgs(args []string, needCommand bool) (s spec, bad []refusal) {
+// -- must be exact: everything after it is the command, verbatim.
+func parseArgs(args []string) (s spec, bad []refusal) {
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		if a == "--" {
@@ -302,14 +275,11 @@ func parseArgs(args []string, needCommand bool) (s spec, bad []refusal) {
 		case "--unix":
 			s.unix = true
 			continue
-		case "--keep-fds":
-			s.keepFDs = true
-			continue
 		}
 		dst := map[string]*[]string{"--read": &s.reads, "--write": &s.writes, "--net-allow": &s.netAllow, "--env": &s.passEnv}[a]
 		switch {
 		case dst == nil:
-			bad = append(bad, refuse("bad_flag", "unknown flag %s; the flags are --read --write --net-deny --net-allow --gpu --unix --keep-fds --env", a))
+			bad = append(bad, refuse("bad_flag", "unknown flag %s; the flags are --read --write --net-deny --net-allow --gpu --unix --env", a))
 		case i+1 >= len(args):
 			bad = append(bad, refuse("bad_flag", "%s wants a value", a))
 		case strings.HasPrefix(args[i+1], "--"):
@@ -325,10 +295,7 @@ func parseArgs(args []string, needCommand bool) (s spec, bad []refusal) {
 			*dst = append(*dst, args[i])
 		}
 	}
-	if needCommand {
-		bad = append(bad, refuse("no_command", "no --; the command comes after it: nova-sandbox --write <dir> -- <cmd> <args...>"))
-	}
-	return s, bad
+	return s, append(bad, refuse("no_command", "no --; the command comes after it: nova-sandbox --write <dir> -- <cmd> <args...>"))
 }
 
 // check says which backend is here and whether it works. Exit 0 if it does.
@@ -343,20 +310,5 @@ func check(stdout io.Writer) int {
 		net = "unavailable"
 	}
 	fmt.Fprintf(stdout, "CHECK OK backend=%s abi=%s net=%s note=%s\nnext: nova-sandbox probe\n", backendName, abi, net, note)
-	return 0
-}
-
-// show prints the wall the flags would apply here and runs nothing.
-func show(args []string, stdout, stderr io.Writer) int {
-	w, _, bad := parseAndBuild(args, false)
-	if len(bad) > 0 { // the same codes as a run: 2 malformed, 126/127 the command alone
-		return report(stderr, "show", bad)
-	}
-	text, bad := describeWall(w)
-	if len(bad) > 0 {
-		report(stderr, "show", bad)
-		return 1
-	}
-	fmt.Fprint(stdout, text)
 	return 0
 }

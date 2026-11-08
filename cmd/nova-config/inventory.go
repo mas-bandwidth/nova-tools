@@ -77,15 +77,8 @@ func runInventory(ctx context.Context, args []string, d deps, stdout io.Writer) 
 			return err
 		}
 	}
-	local := d.getenv("NOVA_MACHINE")
-	if local != "" && !slices.ContainsFunc(rows["machine"], func(r Row) bool { return r.Name == local }) {
-		var names []string
-		for _, r := range rows["machine"] {
-			names = append(names, r.Name)
-		}
-		return refused("NOVA_MACHINE %s names no machine row; the machines are %s; set NOVA_MACHINE to one of them, or run: nova-config machine add %s --user <user>", local, cmp.Or(strings.Join(names, ","), "(none)"), local)
-	}
-	if h, err := d.hostname(); local == "" && err == nil {
+	local := ""
+	if h, err := d.hostname(); err == nil {
 		local = strings.ToLower(strings.Split(h, ".")[0])
 	}
 	inv, err := build(rows["machine"], rows["service"], local)

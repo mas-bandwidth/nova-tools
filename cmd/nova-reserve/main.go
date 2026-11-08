@@ -1,5 +1,5 @@
 // Command nova-reserve takes a reservation on a machine's shared resources for the
-// duration of a command or a hold. A machine has one capacity, N slots, stored in
+// duration of a command. A machine has one capacity, N slots, stored in
 // DIR/capacity; a reservation is one of them. The slots are OS file locks, so the
 // kernel frees a dead holder's slot.
 package main
@@ -27,13 +27,12 @@ import (
 const banner = `nova-reserve: reservations on a machine's shared resources so people and AIs can coordinate
 
 A machine has one capacity, N slots, kept in DIR/capacity. A reservation holds one
-slot, or with --exclusive every slot, while a command runs or a hold lasts.
+slot, or with --exclusive every slot, while a command runs.
 
   nova-reserve [run] [--slots N | --exclusive] [--wait D] [--why TEXT] [--dir DIR] -- <cmd> [args...]
-  nova-reserve hold [--for D] [--slots N | --exclusive] [--wait D] [--why TEXT] [--dir DIR]
   nova-reserve status [--dir DIR]
   nova-reserve set --slots N [--dir DIR]
-  nova-reserve help [run|hold|status|set]
+  nova-reserve help [run|status|set]
 
 DIR: --dir, else $NOVA_RESERVE_DIR, else /var/tmp/nova-reserve; one per machine, on a
 local disk. Exit: 0 done; 1 refused (no slot within --wait, capacity in use); 2 could not
@@ -53,13 +52,6 @@ Wait for a slot, run the command, free the slot; exit with the command's status.
 The command is found before a slot is taken (127, 126). It dies with nova-reserve, even on SIGKILL (a watchdog
 process kills its group within about a second).
 `,
-	"hold": `nova-reserve hold [--for D] [--slots N | --exclusive] [--wait D] [--why TEXT] [--dir DIR]
-
-Take a reservation, print HELD, keep it until SIGTERM, SIGINT or SIGHUP, or for D.
-Stdin is never read. With no --for it also ends when its parent exits, and is refused
-if its parent is pid 1; give --for to outlive the shell that started it. On exit it prints
-RELEASED reason=signal|for|parent_exit held_for=D.
-`,
 	"status": `nova-reserve status [--dir DIR]
 
 The capacity; each slot, free or held (pid= since= why= cmd=); gate and all; free=n/N.
@@ -76,7 +68,6 @@ Refused (exit 1) while any slot is held.
 // verbFlags is what each verb takes; any other flag is a refusal.
 var verbFlags = map[string][]string{
 	"run":    {"slots", "exclusive", "wait", "why", "dir"},
-	"hold":   {"for", "slots", "exclusive", "wait", "why", "dir"},
 	"status": {"dir"},
 	"set":    {"slots", "dir"},
 }
@@ -85,7 +76,6 @@ var verbFlags = map[string][]string{
 var wants = map[string]string{
 	"slots": "1..1024",
 	"wait":  "a duration above 0, like 90s or 15m",
-	"for":   "a duration above 0, like 30m",
 	"why":   "text",
 	"dir":   "a directory",
 }
@@ -109,7 +99,6 @@ type options struct {
 	slots     int // 0: no --slots
 	exclusive bool
 	wait      time.Duration // 0: no bound
-	hold      time.Duration // hold --for; 0: until a signal or the parent's exit
 	why       string
 	dir       string
 	dirSet    bool
@@ -171,10 +160,10 @@ func parse(args []string, env func(string) string) (options, error) {
 	}
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		switch args[0] {
-		case "run", "hold", "status", "set", "help":
+		case "run", "status", "set", "help":
 			o.verb, args = args[0], args[1:]
 		default:
-			return o, refuse(2, "unknown verb %q; verbs: run, hold, status, set, help; a command goes after --: nova-reserve -- %s; run: nova-reserve help",
+			return o, refuse(2, "unknown verb %q; verbs: run, status, set, help; a command goes after --: nova-reserve -- %s; run: nova-reserve help",
 				args[0], shellQuote(args[0]))
 		}
 	}
@@ -185,7 +174,7 @@ func parse(args []string, env func(string) string) (options, error) {
 		case len(args) == 1 && verbHelp[args[0]] != "":
 			o.help, o.verb = true, args[0]
 		default:
-			return o, refuse(2, "help takes one of run, hold, status, set, not %q; run: nova-reserve -h", strings.Join(args, " "))
+			return o, refuse(2, "help takes one of run, status, set, not %q; run: nova-reserve -h", strings.Join(args, " "))
 		}
 		return o, nil
 	}
@@ -257,13 +246,9 @@ func (o *options) set(name, val string) bool {
 		n, err := strconv.Atoi(val)
 		o.slots = n
 		return err == nil && n >= 1 && n <= 1024
-	case "wait", "for":
+	case "wait":
 		d, err := time.ParseDuration(val)
-		if name == "wait" {
-			o.wait = d
-		} else {
-			o.hold = d
-		}
+		o.wait = d
 		return err == nil && d > 0
 	case "why":
 		o.why = val
@@ -285,8 +270,6 @@ type world struct {
 	sleep          func(d time.Duration)
 	resolve        func(name string) (string, error) // exec.LookPath
 	exec           func(path string, argv []string) int
-	hold           func(d time.Duration, ppid int) (reason string) // blocks: "for", "parent_exit", "signal signal=SIGTERM"
-	ppid           func() int
 	running        func(pid int) bool
 	pid            int
 	cpus           int
@@ -299,7 +282,7 @@ const poll = time.Second
 
 func main() {
 	os.Exit(run(os.Args[1:], world{os.Getenv, osLock, time.Now, time.Sleep,
-		exec.LookPath, runCommand, waitHold, os.Getppid, running, os.Getpid(), runtime.NumCPU(), os.Stdout, os.Stderr}))
+		exec.LookPath, runCommand, running, os.Getpid(), runtime.NumCPU(), os.Stdout, os.Stderr}))
 }
 
 func run(args []string, w world) int {
@@ -352,12 +335,6 @@ func do(o options, w world) error {
 		}
 		return status(o, w)
 	}
-	ppid := w.ppid()
-	if o.verb == "hold" && o.hold == 0 && ppid == 1 {
-		// started by init (launchd, systemd, a container's first process), or
-		// orphaned before it began: no parent whose exit could end the hold
-		return refuse(2, "no parent to watch (parent pid 1); run: nova-reserve hold --for <duration> ...")
-	}
 	// the one directory is the create target; its parent must exist
 	if err := os.Mkdir(o.dir, 0o777); err != nil && !errors.Is(err, fs.ErrExist) {
 		parent := filepath.Dir(o.dir)
@@ -386,23 +363,13 @@ func do(o options, w world) error {
 	if err := t.mark(t.name()); err != nil {
 		return err
 	}
-	out, lead := w.stderr, "nova-reserve: "
-	if o.verb == "hold" {
-		out, lead = w.stdout, ""
-	}
 	if t.capSet > 0 {
-		fmt.Fprintf(out, "%sCAPACITY SET slots=%d\n", lead, t.capSet)
+		fmt.Fprintf(w.stderr, "nova-reserve: CAPACITY SET slots=%d\n", t.capSet)
 	}
-	fmt.Fprintf(out, "%sHELD %s\n", lead, t.describe())
-	if o.verb == "run" {
-		if code := w.exec(path, o.argv); code != 0 {
-			return &exitError{code: code}
-		}
-		return nil
+	fmt.Fprintf(w.stderr, "nova-reserve: HELD %s\n", t.describe())
+	if code := w.exec(path, o.argv); code != 0 {
+		return &exitError{code: code}
 	}
-	since := w.now()
-	reason := w.hold(o.hold, ppid)
-	fmt.Fprintf(out, "RELEASED reason=%s held_for=%s\n", reason, w.now().Sub(since).Round(time.Millisecond))
 	return nil
 }
 
@@ -861,45 +828,6 @@ func esc(s string) string {
 		}
 	}
 	return b.String()
-}
-
-var signalNames = map[os.Signal]string{os.Interrupt: "SIGINT", syscall.SIGTERM: "SIGTERM", syscall.SIGHUP: "SIGHUP"}
-
-// waitHold blocks until SIGINT, SIGTERM or SIGHUP, or until d has passed;
-// with no d, until its parent (ppid, read before the slot was taken) exits,
-// which it polls: a changed parent pid (reparented; not on Windows) or a
-// parent no longer running (pid liveness, all Windows has). Parent pid 0 (a
-// parent outside this pid namespace) cannot be watched.
-func waitHold(d time.Duration, ppid int) string {
-	sigs := make(chan os.Signal, 1)
-	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
-	defer signal.Stop(sigs)
-	var timeout, tick <-chan time.Time
-	gone := func() bool { return ppid != 0 && (os.Getppid() != ppid || !running(ppid)) }
-	if d > 0 {
-		timer := time.NewTimer(d)
-		defer timer.Stop()
-		timeout = timer.C
-	} else {
-		if gone() {
-			return "parent_exit"
-		}
-		ticker := time.NewTicker(poll)
-		defer ticker.Stop()
-		tick = ticker.C
-	}
-	for {
-		select {
-		case s := <-sigs:
-			return "signal signal=" + signalNames[s]
-		case <-timeout:
-			return "for"
-		case <-tick:
-			if gone() {
-				return "parent_exit"
-			}
-		}
-	}
 }
 
 // runCommand runs the resolved path with argv and this process's stdio, tied

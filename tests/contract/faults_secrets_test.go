@@ -65,7 +65,7 @@ func init() {
 	set := []string{"set", "A", "--as", "web", "--store", "{store}", "--key", "{key}"}
 	register(
 		Fault{Tool: "secrets", Name: "names: no store", Argv: []string{"names"}, Want: Want{Reason: []string{"--store"}}},
-		Fault{Tool: "secrets", Name: "exec: nothing given", Argv: []string{"exec"}, Want: Want{Reason: []string{"--only", "--key"}}},
+		Fault{Tool: "secrets", Name: "exec: nothing given", Argv: []string{"exec"}, Want: Want{Reason: []string{"--only", "command"}}},
 		Fault{Tool: "secrets", Name: "names: store absent", Argv: []string{"names", "--store", "{dir}/nostore"},
 			Want: Want{Exit: []int{2}, Reason: []string{"does not exist"}}},
 		Fault{Tool: "secrets", Name: "init: recovery is not a public key", Argv: []string{"init", "--store", "{dir}/st", "--recovery", "bogus"},

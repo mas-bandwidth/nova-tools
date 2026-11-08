@@ -54,12 +54,12 @@ var toolSpecs = []toolSpec{
 		missing: []missingCase{{[]string{"machine", "list"}, []string{"--pg"}}}},
 	{dir: "fleet", verbs: [][]string{{"plays"}, {"show"}, {"check"}, {"up"}, {"help"}},
 		missing: []missingCase{{[]string{"show"}, []string{"play or file name"}}, {[]string{"up"}, []string{"<name>=<address>", "--tools"}}}},
-	{dir: "reserve", verbs: [][]string{{"set"}, {"hold"}, {"status"}}, extra: []int{126, 127},
+	{dir: "reserve", verbs: [][]string{{"set"}, {"status"}}, extra: []int{126, 127},
 		missing: []missingCase{{[]string{"status", "--dir", "@tmp/no-such-dir"}, []string{"--dir"}}}},
-	{dir: "sandbox", verbs: [][]string{{"check"}, {"probe"}, {"show"}}, extra: []int{125, 126, 127},
+	{dir: "sandbox", verbs: [][]string{{"check"}, {"probe"}}, extra: []int{125, 126, 127},
 		missing: []missingCase{{[]string{"--read", "@tmp/no-such-dir"}, []string{"--read|command"}}}},
 	{dir: "secrets", verbs: [][]string{{"exec"}, {"set"}, {"seat", "add"}, {"seat", "remove"}, {"init"}, {"names"}, {"grant"}}, extra: []int{125},
-		missing: []missingCase{{[]string{"exec"}, []string{"--only", "--key"}}}},
+		missing: []missingCase{{[]string{"exec"}, []string{"--only", "command"}}}},
 }
 
 var goFlagNoise = []string{"flag provided but not defined", "Usage of", "invalid value", "parse error", "flag needs an argument"}

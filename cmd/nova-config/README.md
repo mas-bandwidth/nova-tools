@@ -17,8 +17,7 @@ services; it does not provision machines or start programs.
 ## Set up a database
 
 Pass the connection string (DSN) with `--pg <dsn>` or `NOVA_PG_DSN`. Put the
-password in `NOVA_PG_PASSWORD`, or in the variable `NOVA_PG_PASSWORD_ENV` names,
-never in the DSN. `nova-config schema` prints the SQL to apply with psql
+password in `NOVA_PG_PASSWORD`, never in the DSN. `nova-config schema` prints the SQL to apply with psql
 (`nova-config schema | PGPASSWORD="$NOVA_PG_PASSWORD" psql "$NOVA_PG_DSN"`), connected as the
 database owner: the SQL creates schema `config`, so a role that owns only that schema (`nova_config` in a
 fleet) is refused with `permission denied for database`.
@@ -175,8 +174,8 @@ count adds `runner`. `--host <name>` prints one host's variables:
 service fields) and, when set, `nova_os`, `nova_arch`, `nova_public`, `cores` and `nova_windows_runners` (a list of
 `{url, count, labels}`).
 `argv`, `env` values and `log` are printed as `{"__ansible_unsafe": ...}`, so
-Ansible reads them as data and never as a template. `NOVA_MACHINE` names the local host (else the first label of the hostname,
-lower-cased), which gets `ansible_connection: local`. As an Ansible script, use
+Ansible reads them as data and never as a template. The local host (the first label of the hostname,
+lower-cased) gets `ansible_connection: local`. As an Ansible script, use
 a file containing `exec nova-config inventory "$@"`.
 
 ## Refusals
@@ -196,7 +195,7 @@ connection failure. Missing or invalid flags and the store DSN are checked toget
 | `friend set: friend <friend> was changed or removed by another write since it was read; nothing written; run: nova-config friend show <friend>, then repeat the set` (1; also `remove`, any kind) | Read the row again, then repeat the write if it still applies. |
 | `machine list: NOVA_PG_DSN carries a password; ...` (2) | Move the password to `NOVA_PG_PASSWORD`. |
 | `inventory: takes --list or --host <name>, not both; ...` (2) | Give one. |
-| `inventory: no machine row named nope; ...` or `NOVA_MACHINE nope names no machine row; the machines are ...` (1) | Check the name. |
+| `inventory: no machine row named nope; ...` (1) | Check the name. |
 | `inventory: service x has corrupt argv (...); run: nova-config service set x --argv <value>` (1) | Fix the corrupt field. |
 | `friend set: friend <friend>: the store refused the row: ...; run: psql "$NOVA_PG_DSN" -c '\d config.friends'` (1) | Read the store's constraint, then give a value it takes. |
 | Connection, login or missing-table error (2) | Follow the `psql`, `createdb` or `nova-config schema` command printed on the line. |

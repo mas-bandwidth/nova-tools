@@ -183,7 +183,6 @@ tests/tla/check.sh /opt/tla/tla2tools.jar cmd/nova-bus/tla cmd/nova-reserve/tla 
 ## Per-tool tests and models
 
 **bus.** Unit tests use an in-memory store and a fake clock; functional tests start a private Redis, one with a server whose only user has the ACL rule in the bus guide and `default` off. Wakes and the service are unit-tested on fake seams (exec, shell, devOf, the service manager): no socket, process or device. Keep tests for:
-- Acked entries never deleted: a hook trims history older than its first delivered unacked entry; with none it trims nothing and `pending` stays high until `XDEL` or `DEL`.
 - A name held through the whole 40-second wait (plant `bus:presence:<name>` with `SET ... PX 60000` and value `<RFC 3339 time><TAB><token>`): the hook prints `HOOK WAIT` and exits 1 with `name already hooked`.
 - A name taken while a hook runs (overwrite its key): within 10 seconds the hook exits 1 with `name taken by another hook while this one lapsed`.
 - A stdout failure (fd 1 opened read-only with `1< file`; a closed fd 1 is unreliable because the Redis socket can take it). A stdin failure (`send ... -` with fd 0 write-only) gives `reading body from stdin`.

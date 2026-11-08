@@ -231,7 +231,7 @@ func TestGrantRefusals(t *testing.T) {
 			assert.NoFileExists(t, filepath.Join(f.pins, "dd.pub"), "a refused --pub is never written")
 			want := strings.NewReplacer("@store", f.store, "@pins", f.pins).Replace(c.want)
 			if name == "no --pins" {
-				want = "missing --pins <dir> (or NOVA_SECRETS_PINS)"
+				want = "SECRETS GRANT REFUSED reason=no-pin: pin directory /home/ada/.config/nova-secrets/pins"
 			}
 			assert.Contains(t, f.stderr.String(), want)
 			assert.Equal(t, 1, strings.Count(f.stderr.String(), "\n"), "one line")

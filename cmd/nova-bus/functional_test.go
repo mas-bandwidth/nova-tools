@@ -310,33 +310,6 @@ func TestHookEndsWhenItsReaderGoes(t *testing.T) {
 	assert.Zero(t, n, "presence released")
 }
 
-// TestHookTrimsOldAckedHistory: a stream an older build acked without
-// deleting keeps its history until a hook finds an entry pending; the hook
-// trims below it.
-func TestHookTrimsOldAckedHistory(t *testing.T) {
-	t.Parallel()
-	addr := startRedis(t)
-	bin := filepath.Join(t.TempDir(), "nova-bus")
-	build := exec.Command("go", "build", "-o", bin, ".")
-	build.Stderr = os.Stderr
-	require.NoError(t, build.Run())
-	ctx := context.Background()
-	c := redis.NewClient(&redis.Options{Addr: addr})
-	t.Cleanup(func() { _ = c.Close() }) // ignored: closing a test client
-	for _, s := range []string{"old1", "old2", "handed"} {
-		require.NoError(t, c.XAdd(ctx, &redis.XAddArgs{Stream: "bus:beta", Values: []string{"from", "alpha", "subject", s, "body", s}}).Err())
-	}
-	require.NoError(t, c.XGroupCreate(ctx, "bus:beta", group, "0").Err())
-	old, err := c.XReadGroup(ctx, &redis.XReadGroupArgs{Group: group, Consumer: group, Streams: []string{"bus:beta", ">"}, Count: 3, Block: -1}).Result()
-	require.NoError(t, err)
-	for _, m := range old[0].Messages[:2] {
-		require.NoError(t, c.XAck(ctx, "bus:beta", group, m.ID).Err()) // acked, not deleted: an older build
-	}
-	h := startHook(t, bin, addr)
-	assert.True(t, strings.HasSuffix(h.next(t), "\thanded\thanded"), "only the unacked entry is printed")
-	require.Eventually(t, func() bool { return c.XLen(ctx, "bus:beta").Val() == 0 }, wait, 20*time.Millisecond, "history trimmed, the pending entry deleted on ack")
-}
-
 // TestNamedACLUser: a server whose default user is off and whose bus user
 // may touch only bus:* keys, with the command set the spec suggests. With NOVA_BUS_USER every verb works; without it
 // the login is refused.

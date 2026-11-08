@@ -3,8 +3,6 @@ package main
 import (
 	"path/filepath"
 	"slices"
-	"strconv"
-	"strings"
 )
 
 // The Landlock access bits of uapi/linux/landlock.h, in ABI order.
@@ -162,15 +160,6 @@ func planLinux(w *wall, h linuxHost) (*linuxPlan, []refusal) {
 	// and io_uring stay refused. Without seccomp only --unix without --net-deny gets
 	// here, and nothing is installed: the caller accepted a wall without those fences.
 	return &linuxPlan{abi: used, rs: buildRuleset(w, used, h.resolverDir), seccomp: h.seccomp, filter: filterOptsOf(w)}, nil
-}
-
-// portList is the --net-allow ports, comma-separated.
-func portList(ports []uint16) string {
-	var s []string
-	for _, p := range ports {
-		s = append(s, strconv.Itoa(int(p)))
-	}
-	return strings.Join(s, ",")
 }
 
 // resolverDirOf is the directory the resolver config at conf resolves to, or "": some
