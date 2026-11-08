@@ -275,7 +275,10 @@ func (u *upRun) config(args ...string) ([]map[string]any, string, int) {
 // peer is the machine as the control node's tailscale sees it: its MagicDNS name, its address, and
 // its Tailscale SSH host keys, which are pinned in this node's known_hosts (never trusted on first use).
 func (u *upRun) peer(m *machine) bool {
-	st, _ := u.status()
+	st, on := u.status()
+	if !on && !u.check {
+		fmt.Fprintf(u.stderr, "nova-fleet up: %s cannot be looked up on the tailnet: %s; run: %s status\n", m.name, u.tsWhy(), u.bin["tailscale"])
+	}
 	p, self, ok, err := st.node(m.name)
 	if err != nil {
 		fmt.Fprintf(u.stderr, "nova-fleet up: %s on the tailnet: %v\n", m.name, err)
@@ -302,15 +305,26 @@ func (u *upRun) peer(m *machine) bool {
 			}
 		}
 		if len(add) > 0 && !u.check {
-			_ = os.MkdirAll(filepath.Dir(path), 0o700)
-			if f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600); err == nil {
-				fmt.Fprintln(f, strings.Join(add, "\n"))
-				f.Close()
+			_ = os.MkdirAll(filepath.Dir(path), 0o700) // ignored: the open below fails with the reason
+			f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+			if err == nil {
+				_, err = fmt.Fprintln(f, strings.Join(add, "\n"))
+				err = cmp.Or(err, f.Close())
+			}
+			if err != nil {
+				fmt.Fprintf(u.stderr, "nova-fleet up: %s's Tailscale SSH host keys are not pinned in %s: %v; run: ls -ld %s %s\n", m.name, path, err, filepath.Dir(path), path)
+			} else {
 				u.say("UP HOSTKEY %s OK pinned=%d %s", m.name, len(add), path)
 			}
 		}
 	}
 	return ok
+}
+
+// tsWhy is why this node's tailscale status is not Running, in tailscale's words.
+func (u *upRun) tsWhy() string {
+	o, e, c := outCmd(u.bin["tailscale"], []string{"status"}, os.Environ())
+	return fmt.Sprintf("tailscale status exit %d: %s", c, oneLine(e+" "+o))
 }
 
 // reach finds how a machine answers: its login over the tailnet once it has a row (join closed
@@ -368,7 +382,11 @@ func (u *upRun) steps() int {
 		return 1
 	}
 	pg := []string{"NOVA_PG_PASSWORD"}
-	names, _, _ := outCmd(u.bin["nova-secrets"], []string{"names", "--as", u.seat}, os.Environ())
+	names, why, c := outCmd(u.bin["nova-secrets"], []string{"names", "--as", u.seat}, os.Environ())
+	if c != 0 {
+		fmt.Fprintf(u.stderr, "nova-fleet up: seat %s's names cannot be read (exit %d: %s), so whether a fleet exists is unknown; run: %s names --as %s\n", u.seat, c, oneLine(why), u.bin["nova-secrets"], u.seat)
+		return 2
+	}
 	haveStore := slices.Contains(strings.Fields(names), "NOVA_PG_PASSWORD")
 
 	// The fleet that exists, if one does: NOVA_PG_DSN names its store. Without it, a seat that holds
@@ -377,6 +395,10 @@ func (u *upRun) steps() int {
 	var first, store *machine
 	if u.dsn = os.Getenv("NOVA_PG_DSN"); u.dsn == "" && haveStore {
 		first = u.machines[0]
+		if _, on := u.status(); !on {
+			fmt.Fprintf(u.stderr, "nova-fleet up: seat %s holds NOVA_PG_PASSWORD, so a fleet exists, and this control node cannot look its store up on the tailnet (%s); run: export NOVA_PG_DSN=postgres://nova_config@<the store machine's tailnet name>:5432/nova\n", u.seat, u.tsWhy())
+			return 2
+		}
 		if !u.peer(first) {
 			fmt.Fprintf(u.stderr, "nova-fleet up: seat %s holds NOVA_PG_PASSWORD, so a fleet exists, and %s is not on the tailnet, so it is not its store; run: export NOVA_PG_DSN=postgres://nova_config@<the store machine's tailnet name>:5432/nova\n", u.seat, first.name)
 			return 2
@@ -438,6 +460,7 @@ func (u *upRun) steps() int {
 	if first != nil {
 		hand := fmt.Sprintf("[services]\n%s ansible_host=%s ansible_user=%s nova_os=%s nova_arch=%s\n", first.name, first.host, first.sshUser, first.os, first.arch)
 		if err := os.WriteFile(filepath.Join(u.dir, "first.ini"), []byte(hand), 0o600); err != nil {
+			fmt.Fprintf(u.stderr, "nova-fleet up: write the first machine's inventory: %v; run: the same nova-fleet up with TMPDIR set to a writable directory\n", err)
 			return fail("first", 2)
 		}
 		switch {
@@ -553,6 +576,9 @@ func (u *upRun) steps() int {
 			return fail("grant "+m.name, 1)
 		default:
 			if c, err := runCmd(u.bin["nova-secrets"], []string{"grant", u.grant, "--to", m.name, "--pub", pub}, os.Environ()); err != nil || c != 0 {
+				if err != nil {
+					fmt.Fprintf(u.stderr, "nova-fleet up: run nova-secrets grant: %v\n", err)
+				}
 				return fail("grant "+m.name, max(c, 1))
 			}
 			u.say("UP GRANT %s OK %s", m.name, u.grant)
@@ -631,8 +657,12 @@ func (u *upRun) steps() int {
 	mark("services", u.machines...)
 	u.say("UP SERVICES %s", u.would("RUN"))
 	if u.runners != "" {
-		on := u.ready(true) // the machines whose row has the runner role, so the play finds them in its group
-		if len(on) == 0 {
+		on := u.ready(true)           // the machines whose row has the runner role, so the play finds them in its group
+		if len(on) == 0 && !u.check { // only this control node is named (one machine), and it never gets runners
+			fmt.Fprintf(u.stderr, "nova-fleet up: no runner was registered: --runners puts runners on the machines named but this control node (%s), and no other machine is named; run: nova-fleet up --tools %s --runners %s <name>=<address>\n",
+				u.machines[0].name, u.tools, u.runners)
+			return fail("runners", 1)
+		} else if len(on) == 0 {
 			wouldRun("RUNNERS", "once the runner role is on the rows")
 		} else if c := u.play("github-runners", false, pg, "-e", "github_runner_url="+u.runners, "-e", "github_runner_scope="+runnerScope(u.runners),
 			"-e", "runner_count="+u.runnerCount, "-l", strings.Join(on, ",")); c != 0 {
@@ -650,10 +680,11 @@ func (u *upRun) steps() int {
 	if u.check {
 		u.say("UP BUS WOULD-ASK who is present via %s (check: nothing changed)", u.bus)
 	} else {
-		out, _, c := outCmd(u.bin["nova-secrets"], u.secrets([]string{"NOVA_BUS_PASSWORD"}, u.bin["nova-bus"], "who")[1:], busEnv)
+		out, why, c := outCmd(u.bin["nova-secrets"], u.secrets([]string{"NOVA_BUS_PASSWORD"}, u.bin["nova-bus"], "who")[1:], busEnv)
 		first, _, _ := strings.Cut(out, "\n")
 		if c != 0 || !strings.HasPrefix(first, "WHO OK present=") {
-			fmt.Fprintf(u.stderr, "nova-fleet up: nova-bus who did not answer at %s (exit %d)\n", u.bus, c)
+			fmt.Fprintf(u.stderr, "nova-fleet up: nova-bus who did not answer at %s (exit %d): %s; run: NOVA_BUS_REDIS=%s NOVA_BUS_USER=bus %s\n", u.bus, c, oneLine(why+" "+first), u.bus,
+				strings.Join(u.secrets([]string{"NOVA_BUS_PASSWORD"}, u.bin["nova-bus"], "who"), " "))
 			return fail("bus", 1)
 		}
 		mark("bus", u.machines...)

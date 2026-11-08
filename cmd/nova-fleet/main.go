@@ -233,7 +233,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	isHelp := func(a string) bool { return a == "-h" || a == "--help" }
 	all := plays(tree)
 	if len(args) == 0 {
-		fmt.Fprint(stderr, banner)
+		fmt.Fprintln(stderr, "nova-fleet: want a verb or a play; run: nova-fleet help")
 		return 2
 	}
 	verb, rest := args[0], args[1:]
@@ -319,9 +319,10 @@ func gate(play string, need []string, stdout, stderr io.Writer) bool {
 			continue
 		}
 		if galaxy := filepath.Join(filepath.Dir(p), "ansible-galaxy"); b == "ansible-playbook" {
-			if o, _, c := outCmd(galaxy, []string{"collection", "list"}, os.Environ()); c != 127 && !strings.Contains(o, "ansible.posix") {
+			if o, why, c := outCmd(galaxy, []string{"collection", "list"}, os.Environ()); !strings.Contains(o, "ansible.posix") {
 				missing++
-				fmt.Fprintf(stdout, "CHECK MISSING ansible.posix: nova-fleet show requirements > requirements.yml && %s collection install -r requirements.yml\n", galaxy)
+				fmt.Fprintf(stdout, "CHECK MISSING ansible.posix: nova-fleet show requirements > requirements.yml && %s collection install -r requirements.yml%s\n", galaxy,
+					map[bool]string{true: "  # " + galaxy + " could not run, so the collections are unchecked: " + oneLine(why)}[c == 127])
 			}
 		}
 	}

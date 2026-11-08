@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -26,10 +27,13 @@ type upFake struct {
 	fail        string              // a call containing this word exits 4
 	store       string
 	key         string
-	offnet      bool // tailscale status fails
-	noVenv      bool // python3 -c 'import ensurepip, venv' fails
-	untagged    bool // the control node lacks tag:control
-	noPosix     bool // ansible.posix is not installed
+	offnet      bool   // tailscale status fails
+	noVenv      bool   // python3 -c 'import ensurepip, venv' fails
+	untagged    bool   // the control node lacks tag:control
+	noPosix     bool   // ansible.posix is not installed
+	noGalaxy    bool   // ansible-galaxy cannot run (exit 127)
+	namesErr    string // nova-secrets names exits 2 with this stderr
+	busErr      string // nova-bus who exits 1 with this stderr
 	api         *fakeAPI
 	self        string // this control node's own MagicDNS label (tailscale status Self), when it has one
 	pushErr     string // the store's plain git push exits 1 with this stderr
@@ -153,10 +157,14 @@ func (f *upFake) install(t *testing.T) {
 			return "", f.readErr, 125
 		case strings.HasSuffix(line, `printf %s "$TAILSCALE_API_KEY"`):
 			return fakeKey("api", "kSECRET") + "\n", "", 0
+		case strings.Contains(line, "nova-secrets names") && f.namesErr != "":
+			return "", f.namesErr, 2
 		case strings.Contains(line, "nova-secrets names"):
 			return f.names, "", 0
 		case strings.Contains(line, "machine list --json"):
 			return f.rows, "", 0
+		case strings.HasSuffix(line, "collection list") && f.noGalaxy:
+			return "", "exec: \"/bin/ansible-galaxy\": file does not exist", 127
 		case strings.HasSuffix(line, "collection list") && !f.noPosix:
 			return "ansible.posix   2.2.2\nansible.windows 2.0.0\n", "", 0
 		case strings.HasPrefix(line, "go version"):
@@ -197,6 +205,8 @@ func (f *upFake) install(t *testing.T) {
 			return "", f.pushErr, 1
 		case strings.Contains(line, " push --quiet origin HEAD:refs/heads/") && f.branchErr != "":
 			return "", f.branchErr, 1
+		case strings.Contains(line, "nova-bus who") && f.busErr != "":
+			return "", f.busErr, 1
 		case strings.Contains(line, "nova-bus who"):
 			return "WHO OK present=2\nclaude\t1m0s\ncodex\t2m0s\n", "", 0
 		}
@@ -933,5 +943,125 @@ func TestUpControlNodeInTheInventory(t *testing.T) {
 	if code != 1 || !strings.Contains(errs, "nova-fleet up: control is this control node (tailscale status Self), so join skips it, and it has no row; run: nova-config machine add control --user nova --actor control") ||
 		!strings.Contains(errs, "UP join control FAILED exit=2;") || strings.Contains(strings.Join(f.calls, "\n"), "join.yml") {
 		t.Errorf("no row: code %d\n%s\n%s", code, out, errs)
+	}
+}
+
+// With --runners and only this control node named, no machine can take a runner: a real run says so and
+// fails the step, never a check-mode WOULD-RUN line and UP DONE.
+func TestUpRunnersOnlyOnTheControlNodeFails(t *testing.T) {
+	f := &upFake{self: "control"}
+	existing(t, f, `,{"kind":"machine","fields":{"name":"control","address":"control.ts.example","user":"ops","os":"linux","arch":"amd64","roles":"bench"}}`)
+	code, out, errs := runArgs("up", "--tools", "v2.0.0", "--runners", "https://github.com/o/r", "control=203.0.113.5")
+	if code != 1 || strings.Contains(out, "WOULD-RUN") || strings.Contains(out, "UP MACHINE") ||
+		!strings.Contains(errs, "nova-fleet up: no runner was registered: --runners puts runners on the machines named but this control node (control), and no other machine is named; run: nova-fleet up --tools v2.0.0 --runners https://github.com/o/r <name>=<address>\n") ||
+		!strings.Contains(errs, "UP runners FAILED exit=1;") {
+		t.Errorf("code %d\n%s\n%s", code, out, errs)
+	}
+}
+
+// A seat whose names cannot be read is that failure, never "no NOVA_PG_PASSWORD" (a new fleet).
+func TestSeatNamesFailureIsSaid(t *testing.T) {
+	f := &upFake{namesErr: "nova-secrets names: seat control: grants file is corrupt"}
+	f.install(t)
+	code, out, errs := runArgs("check")
+	if code != 1 || strings.Contains(out, "NOVA_PG_DSN none yet") ||
+		!strings.Contains(out, "CHECK MISSING NOVA_PG_DSN: /bin/nova-secrets names --as control  # the seat's names cannot be read, so whether a fleet exists is unknown: nova-secrets names: seat control: grants file is corrupt\n") {
+		t.Errorf("check: code %d\n%s\n%s", code, out, errs)
+	}
+	// up's own read, after the control step's read passed
+	f = &upFake{}
+	f.install(t)
+	reads, out0 := 0, outCmd
+	outCmd = func(bin string, args, env []string) (string, string, int) {
+		if filepath.Base(bin) == "nova-secrets" && len(args) > 0 && args[0] == "names" {
+			if reads++; reads > 1 {
+				return "", "nova-secrets names: seat control: grants file is corrupt", 2
+			}
+		}
+		return out0(bin, args, env)
+	}
+	code, out, errs = runArgs("up", "--tools", "v2.0.0", "first=1.1.1.1")
+	if code != 2 || len(f.plays()) != 0 ||
+		!strings.HasSuffix(errs, "nova-fleet up: seat control's names cannot be read (exit 2: nova-secrets names: seat control: grants file is corrupt), so whether a fleet exists is unknown; run: /bin/nova-secrets names --as control\n") {
+		t.Errorf("up: code %d plays %v\n%s\n%s", code, f.plays(), out, errs)
+	}
+}
+
+// An ansible-galaxy that cannot run leaves ansible.posix unchecked: missing, with the reason, never OK.
+func TestGalaxyThatCannotRunIsNotPosix(t *testing.T) {
+	f := &upFake{noGalaxy: true}
+	f.install(t)
+	code, out, _ := runArgs("check")
+	if code != 1 || strings.Contains(out, "CHECK OK ansible.posix") ||
+		!strings.Contains(out, "CHECK MISSING ansible.posix: nova-fleet show requirements > requirements.yml && /bin/ansible-galaxy collection install -r requirements.yml  # /bin/ansible-galaxy could not run, so the collections are unchecked: exec: \"/bin/ansible-galaxy\": file does not exist\n") {
+		t.Errorf("check: code %d\n%s", code, out)
+	}
+}
+
+// tailscale status failing on this control node is said as that, not as the store being off the tailnet.
+func TestUpTailscaleStatusFailureIsSaid(t *testing.T) {
+	f := &upFake{names: "NOVA_PG_PASSWORD", offnet: true}
+	f.install(t)
+	code, out, errs := runArgs("up", "--tools", "v2.0.0", "first=1.1.1.1")
+	if code != 2 || strings.Contains(errs, "is not on the tailnet") ||
+		errs != "nova-fleet up: seat control holds NOVA_PG_PASSWORD, so a fleet exists, and this control node cannot look its store up on the tailnet (tailscale status exit 1: Logged out.); run: export NOVA_PG_DSN=postgres://nova_config@<the store machine's tailnet name>:5432/nova\n" {
+		t.Errorf("code %d\n%s\n%s", code, out, errs)
+	}
+}
+
+// A known_hosts that cannot be written leaves the host keys unpinned, and up says so.
+func TestUpUnpinnedHostKeyIsSaid(t *testing.T) {
+	f := &upFake{}
+	existing(t, f, "")
+	ssh := filepath.Join(os.Getenv("HOME"), ".ssh")
+	if err := os.WriteFile(ssh, nil, 0o600); err != nil { // a file where the directory goes
+		t.Fatal(err)
+	}
+	_, out, errs := runArgs("up", "--tools", "v2.0.0", "second=203.0.113.8")
+	if strings.Contains(out, "UP HOSTKEY") || !strings.Contains(errs, "nova-fleet up: second's Tailscale SSH host keys are not pinned in "+filepath.Join(ssh, "known_hosts")+": ") ||
+		!strings.Contains(errs, "; run: ls -ld "+ssh+" "+filepath.Join(ssh, "known_hosts")+"\n") {
+		t.Errorf("%s\n%s", out, errs)
+	}
+}
+
+// The failures of the bus check, the first machine's inventory and a grant that cannot start each say why.
+func TestUpFailuresSayWhy(t *testing.T) {
+	f := &upFake{busErr: "nova-bus who: WRONGPASS invalid username-password pair"}
+	existing(t, f, "")
+	code, _, errs := runArgs("up", "--tools", "v2.0.0", "second=203.0.113.8")
+	if code != 1 || !strings.Contains(errs, "nova-fleet up: nova-bus who did not answer at store-1.ts.example:6379 (exit 1): nova-bus who: WRONGPASS invalid username-password pair; run: NOVA_BUS_REDIS=store-1.ts.example:6379 NOVA_BUS_USER=bus /bin/nova-secrets exec --only NOVA_BUS_PASSWORD -- /bin/nova-bus who\n") {
+		t.Errorf("bus: code %d\n%s", code, errs)
+	}
+
+	f = &upFake{}
+	existing(t, f, "")
+	run := runCmd
+	runCmd = func(bin string, args, env []string) (int, error) {
+		if len(args) > 0 && args[0] == "grant" {
+			return 0, errors.New("fork/exec /bin/nova-secrets: permission denied")
+		}
+		return run(bin, args, env)
+	}
+	code, _, errs = runArgs("up", "--tools", "v2.0.0", "second=203.0.113.8")
+	if code != 1 || !strings.Contains(errs, "nova-fleet up: run nova-secrets grant: fork/exec /bin/nova-secrets: permission denied\nUP grant second FAILED exit=1;") {
+		t.Errorf("grant: code %d\n%s", code, errs)
+	}
+
+	f = &upFake{}
+	f.install(t)
+	out := outCmd
+	outCmd = func(bin string, args, env []string) (string, string, int) {
+		if filepath.Base(bin) == "ssh" { // the extracted directory exists by now: put a directory where first.ini goes
+			dirs, _ := filepath.Glob(filepath.Join(os.Getenv("TMPDIR"), "nova-fleet-*"))
+			for _, d := range dirs {
+				_ = os.Mkdir(filepath.Join(d, "first.ini"), 0o700) // ignored: a second call finds it there
+			}
+		}
+		return out(bin, args, env)
+	}
+	code, _, errs = runArgs("up", "--tools", "v2.0.0", "first=1.1.1.1")
+	if code != 1 || !strings.Contains(errs, "nova-fleet up: write the first machine's inventory: open ") ||
+		!strings.Contains(errs, "first.ini: is a directory; run: the same nova-fleet up with TMPDIR set to a writable directory\nUP first FAILED exit=2;") {
+		t.Errorf("first.ini: code %d\n%s", code, errs)
 	}
 }

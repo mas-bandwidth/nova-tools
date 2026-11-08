@@ -223,14 +223,16 @@ func (u *upRun) control(out io.Writer) int {
 	if dir := localBin(); len(local) > 0 && !onPath(dir, os.Getenv("PATH")) {
 		miss("PATH", `export PATH="$HOME/.local/bin:$PATH"`, strings.Join(local, " ")+" found only in "+dir+", which is not on PATH; append the line to ~/.profile to keep it")
 	}
-	galaxy, posix := "ansible-galaxy", true      // without ansible, the line is printed for after its fix line has run
-	if p := u.bin["ansible-playbook"]; p != "" { // the collections the plays use (requirements.yml)
+	galaxy, posix, why := "ansible-galaxy", true, []string(nil) // without ansible, the line is printed for after its fix line has run
+	if p := u.bin["ansible-playbook"]; p != "" {                // the collections the plays use (requirements.yml)
 		galaxy = filepath.Join(filepath.Dir(p), "ansible-galaxy")
-		o, _, c := outCmd(galaxy, []string{"collection", "list"}, os.Environ())
-		posix = c == 127 || strings.Contains(o, "ansible.posix")
+		o, e, c := outCmd(galaxy, []string{"collection", "list"}, os.Environ())
+		if posix = strings.Contains(o, "ansible.posix"); c == 127 {
+			why = []string{galaxy + " could not run, so the collections are unchecked:", e}
+		}
 	}
 	if !posix || u.bin["ansible-playbook"] == "" {
-		miss("ansible.posix", "nova-fleet show requirements > requirements.yml && "+galaxy+" collection install -r requirements.yml")
+		miss("ansible.posix", "nova-fleet show requirements > requirements.yml && "+galaxy+" collection install -r requirements.yml", why...)
 	} else {
 		fmt.Fprintln(out, "CHECK OK ansible.posix")
 	}
@@ -316,10 +318,12 @@ func (u *upRun) control(out io.Writer) int {
 	}
 	// A fleet that exists (its store's password is in this seat) is read from NOVA_PG_DSN.
 	if ready && u.bin["nova-secrets"] != "" {
-		names, _, _ := outCmd(u.bin["nova-secrets"], []string{"names", "--as", u.seat}, os.Environ())
+		names, why, c := outCmd(u.bin["nova-secrets"], []string{"names", "--as", u.seat}, os.Environ())
 		switch dsn := os.Getenv("NOVA_PG_DSN"); {
 		case dsn != "":
 			fmt.Fprintf(out, "CHECK OK NOVA_PG_DSN %s\n", dsn)
+		case c != 0:
+			miss("NOVA_PG_DSN", u.bin["nova-secrets"]+" names --as "+u.seat, "the seat's names cannot be read, so whether a fleet exists is unknown:", why)
 		case slices.Contains(strings.Fields(names), "NOVA_PG_PASSWORD"):
 			fmt.Fprintf(out, "CHECK NOTE NOVA_PG_DSN unset, and seat %s holds NOVA_PG_PASSWORD: up takes the first machine named for the store it made; for nova-config, and to add machines: export NOVA_PG_DSN=postgres://nova_config@<the store machine's tailnet name>:5432/nova\n", u.seat)
 		default:
