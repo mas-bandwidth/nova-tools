@@ -49,9 +49,11 @@ type harness struct {
 	sopsMissing bool
 	noAgeKeygen bool
 	failGit     bool
-	keyPub      string // what the fake age-keygen -y prints
-	notRepo     bool   // git rev-parse fails
-	top         string // what git rev-parse --show-toplevel prints; the directory asked about when ""
+	keyPub      string          // what the fake age-keygen -y prints
+	notRepo     bool            // git rev-parse fails
+	top         string          // what git rev-parse --show-toplevel prints; the directory asked about when ""
+	noIdent     bool            // git has no commit identity: git commit and git var GIT_COMMITTER_IDENT exit 128
+	heads       map[string]bool // the directories a git commit succeeded in: git rev-parse --verify HEAD
 }
 
 const pubA = "age1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqa"
@@ -62,7 +64,7 @@ const pubRec = "age1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqr"
 func newHarness(t *testing.T) *harness {
 	t.Helper()
 	dir := t.TempDir()
-	h := &harness{t: t, keyPub: pubA, store: filepath.Join(dir, "store"), key: filepath.Join(dir, "keys", "ada.key"), pins: filepath.Join(dir, "pins")}
+	h := &harness{t: t, keyPub: pubA, heads: map[string]bool{}, store: filepath.Join(dir, "store"), key: filepath.Join(dir, "keys", "ada.key"), pins: filepath.Join(dir, "pins")}
 	require.NoError(t, os.MkdirAll(h.pins, 0o700))
 	require.NoError(t, os.WriteFile(filepath.Join(h.pins, "recovery.pub"), []byte(pubRec+"\n"), 0o600))
 	require.NoError(t, os.MkdirAll(h.store, 0o700))
@@ -177,6 +179,13 @@ func (h *harness) run(stdin io.Reader, env []string, dir, name string, args ...s
 		return []byte(pubRec + "\n"), nil
 	case name == "age-keygen" && args[0] == "-y":
 		return []byte(h.keyPub + "\n"), nil
+	case name == "git" && args[0] == "rev-parse" && slices.Contains(args, "--verify"):
+		if !h.heads[dir] {
+			return nil, exitErr(128)
+		}
+		return []byte("0123abcd\n"), nil
+	case name == "git" && (args[0] == "commit" || args[0] == "var") && h.noIdent:
+		return nil, exitErr(128)
 	case name == "git" && args[0] == "rev-parse": // the store is a repository, so is a directory with a .git; nothing else is
 		if h.notRepo {
 			return nil, exitErr(128)
@@ -198,6 +207,7 @@ func (h *harness) run(stdin io.Reader, env []string, dir, name string, args ...s
 	case name == "git" && h.failGit:
 		return nil, exitErr(1)
 	case name == "git":
+		h.heads[dir] = h.heads[dir] || args[0] == "commit"
 		return nil, nil
 	}
 	return nil, errors.New("unexpected program " + name)
@@ -1067,4 +1077,70 @@ func TestSetRefusesAPartialNode(t *testing.T) {
 	assert.Equal(t, 2, h.main("set", "X", "--store", filepath.Join(t.TempDir(), "elsewhere"), "--sops", "sops"))
 	assert.Contains(t, h.stderr.String(), "reason=no-store")
 	assert.Empty(t, h.calls)
+}
+
+// A commit git refuses for want of an author names that, and the commands that finish it, on every verb that commits.
+func TestAFailedCommitNamesTheMissingIdentity(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.noIdent = true
+	h.stdin = "v\n"
+	assert.Equal(t, 2, h.main(h.set("NEW")...))
+	assert.Equal(t, "SECRETS SET REFUSED reason=git: git commit in "+h.store+" failed (exit status 128): git has no commit identity; the file is written: run: git -C "+h.store+
+		" config user.name 'Your Name' && git -C "+h.store+" config user.email you@example.com && git -C "+h.store+" commit -q -m 'set NEW in ada.yaml' -- ada.yaml\n", h.stderr.String())
+	assert.Equal(t, 2, h.main("seat", "add", "bo", pubB, "--store", h.store))
+	assert.Contains(t, h.stderr.String(), "git has no commit identity; .sops.yaml is written: run: git -C "+h.store+" config user.name 'Your Name' && git -C "+h.store+
+		" config user.email you@example.com && git -C "+h.store+" commit -q -m 'seat bo' -- .sops.yaml\n")
+}
+
+// An init whose commit failed is finished by running it again: recovery.pub is committed with .sops.yaml, once.
+func TestInitFinishesAfterAFailedCommit(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.noIdent = true
+	store := filepath.Join(t.TempDir(), "new")
+	init := []string{"init", "--store", store, "--recovery", pubRec}
+	assert.Equal(t, 2, h.main(init...))
+	assert.Contains(t, h.stderr.String(), "git has no commit identity; the store is written: run: git -C "+store+" config user.name 'Your Name' && git -C "+store+
+		" config user.email you@example.com && git -C "+store+" commit -q -m 'init secrets store' -- .sops.yaml recovery.pub\n")
+	assert.Empty(t, h.stdout.String())
+	require.NoError(t, os.Mkdir(filepath.Join(store, ".git"), 0o755)) // what the first run's git init made
+	h.noIdent, h.calls = false, nil
+	require.Equal(t, 0, h.main(init...), h.stderr.String())
+	assert.Contains(t, h.stdout.String(), "SECRETS INIT OK store="+store+"\n")
+	files := []string{".sops.yaml", "recovery.pub"}
+	assert.Equal(t, [][]string{append([]string{"add", "--"}, files...), append([]string{"commit", "-q", "-m", "init secrets store", "--"}, files...)}, h.gitCalls())
+	assert.Equal(t, 2, h.main(init...), "a committed store is not made again")
+	assert.Contains(t, h.stderr.String(), "store "+store+" exists")
+	other := filepath.Join(t.TempDir(), "other")
+	h.noIdent = true
+	assert.Equal(t, 2, h.main("init", "--store", other, "--recovery", pubRec))
+	h.noIdent = false
+	assert.Equal(t, 2, h.main("init", "--store", other, "--recovery", pubB), "another recovery key is no rerun")
+	assert.Contains(t, h.stderr.String(), "store "+other+" exists")
+}
+
+// A fresh node's set that stops at a failed commit still says to back up the recovery key it made, and set again finishes
+// the store with those keys, whether the init commit was finished by hand or not.
+func TestSetBootstrapFinishesAfterAFailedCommit(t *testing.T) {
+	t.Parallel()
+	for _, byHand := range []bool{false, true} {
+		h, dir := fresh(t)
+		h.noIdent = true
+		assert.Equal(t, 2, h.main("set", "TAILSCALE_API_KEY", "--sops", "sops"))
+		rk := filepath.Join(dir, "recovery.key")
+		assert.Equal(t, "SECRETS SET NEW store="+h.store+" seat=ada key="+h.key+": back up "+rk+", the recovery key, off this machine now: it opens every seat if a key is lost\n", h.stdout.String())
+		assert.Contains(t, h.stderr.String(), "git has no commit identity; the store is written: run: ")
+		assert.Contains(t, h.stderr.String(), "-- .sops.yaml recovery.pub, then run the same nova-secrets set again\n")
+		h.noIdent, h.calls = false, nil
+		h.heads[h.store] = byHand
+		require.Equal(t, 0, h.main("set", "TAILSCALE_API_KEY", "--sops", "sops"), h.stderr.String())
+		assert.Contains(t, h.stdout.String(), "SECRETS SET OK as=ada name=TAILSCALE_API_KEY file=ada.yaml committed")
+		assert.Equal(t, []string{pubA, pubRec}, h.ruleKeys(h.store, "ada.yaml"))
+		assert.Equal(t, map[string]string{"TAILSCALE_API_KEY": fakeKey("api", "FRESH")}, h.open("ada"))
+		assert.Equal(t, !byHand, slices.ContainsFunc(h.gitCalls(), func(g []string) bool { return slices.Contains(g, "init secrets store") }), "init is committed once")
+		for _, c := range h.calls {
+			assert.NotEqual(t, []string{"-o"}, c.args[:1], "no key is made again")
+		}
+	}
 }

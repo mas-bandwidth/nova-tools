@@ -33,7 +33,8 @@ On a node with nothing at the defaults (no `~/.config/nova-secrets/store`, no
 `NOVA_SECRETS_STORE`), the first `set` makes them before it sets: a recovery
 key at `~/.config/nova-secrets/recovery.key` (0600) with its public half pinned
 in `pins/recovery.pub`, the store (as `init`), this node's key (0600) and its
-seat (as `seat add`). It prints one line first:
+seat (as `seat add`). It prints one line first, and prints it even when a later
+step is refused, since the recovery key exists from then on:
 
 ```text
 SECRETS SET NEW store=/home/you/.config/nova-secrets/store seat=studio key=/home/you/.config/nova-secrets/studio.key: back up /home/you/.config/nova-secrets/recovery.key, the recovery key, off this machine now: it opens every seat if a key is lost
@@ -42,7 +43,9 @@ SECRETS SET NEW store=/home/you/.config/nova-secrets/store seat=studio key=/home
 On a terminal `set` asks for the value and does not show it:
 `nova-secrets set TAILSCALE_API_KEY`, paste, enter. With no store but any of
 the others there it refuses, `reason=partial`, and writes nothing: a store made
-then would not match them, and nothing that exists is overwritten.
+then would not match them, and nothing that exists is overwritten. A `set` that
+stopped at a failed commit is finished by the same `set` again, with the keys it
+made.
 
 The blocks below share one shell session. This one makes a temporary store and key
 directory; for real use choose permanent places, keys outside the store. Seat
@@ -81,7 +84,8 @@ only when that seat's key file (`~/.config/nova-secrets/<seat>.key`, or
 just added; otherwise it has no `--key`, and `set` reads `$NOVA_SECRETS_KEY`.
 
 `init` takes an absent or empty directory whose parent exists, and
-writes `.sops.yaml`, `recovery.pub` and one commit. `--pins` also writes the
+writes `.sops.yaml`, `recovery.pub` and one commit; when that commit fails
+(git has no commit identity, for one), the same `init` again commits them. `--pins` also writes the
 recovery key to `<dir>/recovery.pub` outside the store: the **pin** that `set`
 and `grant` seal to, whatever the store's copy says. Every machine that writes
 the store has a pin directory; `set --recovery <key>` writes the pin on one that
