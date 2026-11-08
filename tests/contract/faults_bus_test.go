@@ -32,6 +32,8 @@ func init() {
 		Fault{Tool: "bus", Name: "send: redis wants a password", Setup: busAuth, Argv: busSend, Want: auth, Known: "bus-redis-refusal"},
 		Fault{Tool: "bus", Name: "who: wrong password", Setup: busWrongUser, Argv: []string{"who"}, Want: auth, Known: "bus-redis-refusal"},
 		Fault{Tool: "bus", Name: "send: wrong password", Setup: busWrongUser, Argv: busSend, Want: auth, Known: "bus-redis-refusal"},
+		Fault{Tool: "bus", Name: "hook: wrong password", Setup: busWrongUser, Argv: []string{"hook", "--as", "a"},
+			Want: Want{Reason: []string{"refused the login", "NOVA_BUS_PASSWORD"}, Remedy: Runs}},
 		Fault{Tool: "bus", Name: "send: sender never hooked in", Setup: busUp, Argv: busSend,
 			Want: Want{Reason: []string{"hook"}}},
 		Fault{Tool: "bus", Name: "pending: name never hooked in", Setup: busUp, Argv: []string{"pending", "--as", "ghost"},

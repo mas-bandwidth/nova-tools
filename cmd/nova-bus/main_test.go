@@ -862,3 +862,50 @@ func TestMalformedEntryIsSaidAndAckedNotDelivered(t *testing.T) {
 	assert.Equal(t, 0, code)
 	assert.Equal(t, "2-0\talpha\t-\treal\tz\n", out, "the next recv reads on")
 }
+
+// refusing answers every Claim with err; after stop Claims it ends the
+// context, so a hook that retries anyway comes to an end in the test.
+type refusing struct {
+	*fake
+	err      error
+	stop     func()
+	tries    int
+	released int
+}
+
+func (r *refusing) Claim(context.Context, string, string, time.Duration) (string, error) {
+	if r.tries++; r.tries >= 3 {
+		r.stop()
+	}
+	return "", r.err
+}
+
+func (r *refusing) Release(context.Context, string, string) error {
+	r.released++
+	return r.err
+}
+
+// A login Redis refuses, a missing permission, or an address that is not
+// Redis is never cleared by reconnecting: the hook refuses at once, exit 1,
+// with the remedy, and says nothing about presence it never held.
+func TestHookRefusesAPermanentRedisError(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ err, want string }{
+		{"WRONGPASS invalid username-password pair or user is disabled.", "redis at 127.0.0.1:1 refused the login: check NOVA_BUS_USER and NOVA_BUS_PASSWORD"},
+		{"NOAUTH Authentication required.", "redis at 127.0.0.1:1 wants a login: set NOVA_BUS_USER and NOVA_BUS_PASSWORD"},
+		{"NOPERM User lim has no permissions to run the 'set' command", "the login lacks permission on this stream at 127.0.0.1:1: ask whoever runs Redis for the bus ACL (see the README)"},
+		{"ERR Protocol error: expected '$', got 'H'", "127.0.0.1:1 is not talking Redis protocol: check that NOVA_BUS_REDIS=127.0.0.1:1 is the fleet's Redis"},
+	} {
+		ctx, cancel := context.WithCancel(context.Background())
+		f := newFake()
+		r := &refusing{fake: f, err: errors.New(tc.err), stop: cancel}
+		var out, errOut bytes.Buffer
+		code := runHook(ctx, r, "beta", testAddr, f, &out, &errOut, nil, "nova-bus hook --as beta", nil)
+		cancel()
+		assert.Equal(t, 1, code, tc.err)
+		assert.Empty(t, out.String(), tc.err)
+		assert.Equal(t, "nova-bus hook: "+tc.want+"; once that is fixed, run: nova-bus hook --as beta\n", errOut.String(), tc.err)
+		assert.Equal(t, 1, r.tries, "never retried: %s", tc.err)
+		assert.Zero(t, r.released, "nothing was claimed: %s", tc.err)
+	}
+}

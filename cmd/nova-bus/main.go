@@ -95,7 +95,9 @@ var verbUsage = map[string]string{
       in its environment, logging to ~/.local/state/nova-bus/<name>.log; it
       waits for the unit's HOOK OK and prints HOOK SERVICE OK name=<name>
       unit=<unit> log=<log> changed=<bool>. Run again with the same flags, it
-      changes nothing; with new ones, it rewrites and restarts the unit.
+      changes nothing, and is OK only while the unit's hook holds the name
+      (else HOOK SERVICE FAILED with the log's last line); with new ones, it
+      rewrites and restarts the unit.
       --service stop stops and removes the unit. Not for claude without
       --codex-thread: its wake is the Monitor of the session itself.
       One hook per name: a hook that finds the name held waits up to 40 s for
@@ -478,7 +480,7 @@ func run(ctx context.Context, args []string, env func(string) string, stdin io.R
 					unitArgs = append(unitArgs, "--"+k, *hflags[k])
 				}
 			}
-			return installService(ctx, s, clk, *as, unitArgs, env, stdout, stderr)
+			return installService(ctx, s, clk, *as, unitArgs, env, dial, stdout, stderr)
 		}
 	}
 	addr := env("NOVA_BUS_REDIS")
@@ -583,6 +585,12 @@ func describe(err error, addr string) string {
 	return fmt.Sprintf("redis at %s (NOVA_BUS_REDIS) answered with an error; redis: %s", addr, msg)
 }
 
+// permanent is a Redis error describe names that no reconnect clears: a
+// login missing, wrong or short of permission, or an address not Redis.
+func permanent(err error) bool {
+	return slices.ContainsFunc([]string{"NOAUTH", "unauthenticated", "WRONGPASS", "NOPERM", "Protocol error", "parse"}, func(w string) bool { return strings.Contains(err.Error(), w) })
+}
+
 // missingFields names the fields an inbox entry must carry to be a message
 // (send writes them all): one without them was not written by send.
 func missingFields(m Msg) string {
@@ -633,6 +641,10 @@ func runHook(ctx context.Context, store Store, name, addr string, clk Clock, std
 			return fail(stderr, "hook", "name taken by another hook while this one lapsed: %s; run: nova-bus who", name)
 		}
 		if ctx.Err() == nil && !errors.As(err, &we) && !errors.As(err, &wf) {
+			// No reconnect clears these; a key this hook may hold lapses by its TTL (tla/Presence.tla Crash).
+			if permanent(err) {
+				return fail(stderr, "hook", "%s; once that is fixed, run: %s", describe(err, addr), again)
+			}
 			if t := clk.Now(); logged.IsZero() || t.Sub(logged) >= time.Minute {
 				fmt.Fprintf(stderr, "nova-bus hook: %s; reconnecting\n", describe(err, addr))
 				logged = t
