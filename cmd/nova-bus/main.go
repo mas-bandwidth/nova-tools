@@ -504,6 +504,9 @@ func run(ctx context.Context, args []string, env func(string) string, stdin io.R
 	}
 	switch verb {
 	case "hook":
+		if stdoutIsNull(s) { // no reader to lose; Darwin's poll(2) reports POLLNVAL for /dev/null
+			s.outGone = nil
+		}
 		return runHook(ctx, store, *as, addr, clk, stdout, stderr, w, again, s.outGone)
 	case "recv":
 		return recv(ctx, store, *as, addr, *timeout, clk, stdout, stderr)
