@@ -113,7 +113,7 @@ you report a problem.
 
 ## Checks for contributors
 
-The `contract` package builds the tools and checks root and verb help, bad
+The `contract` package (functional tier) builds the tools and checks root and verb help, bad
 invocations, missing inputs, exit codes and selected output rules in temporary
 directories. Tool tests cover the rest of their behavior. See
 [TESTING.md](TESTING.md) for commands and prerequisites.
