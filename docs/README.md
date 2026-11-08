@@ -47,7 +47,7 @@ refuses to publish a tag whose guide pins a different one. The blocks below
 use a throwaway directory, `$work`, and put the tools on PATH from there.
 
 ```sh
-NOVA_TOOLS_VERSION=v2.0.12
+NOVA_TOOLS_VERSION=v2.0.13
 work=$(mktemp -d) && cd "$work"
 git clone -q --depth 1 --branch "$NOVA_TOOLS_VERSION" https://github.com/mas-bandwidth/nova-tools
 for t in bus cairn config fleet reserve sandbox secrets; do
