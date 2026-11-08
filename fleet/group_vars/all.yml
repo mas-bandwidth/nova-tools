@@ -55,6 +55,13 @@ nova_sops: "{{ '/opt/homebrew/bin/sops' if (nova_system | default(ansible_facts[
 nova_seat: "{{ inventory_hostname }}"
 nova_age_keygen: "{{ '/opt/homebrew/bin/age-keygen' if (nova_system | default(ansible_facts['system'] | default(''))) == 'Darwin' else nova_bin_dir ~ '/age-keygen' }}"
 
+# The packages a CI runner's tests need, per OS (runner-packages.yml; fleet/README.md, "runner-packages"): Homebrew
+# formulae on darwin, apt packages on debian. Installed when missing, never upgraded, never started: the functional
+# tier runs its own initdb and pg_ctl.
+nova_runner_packages:
+  darwin: ["postgresql@18"]
+  debian: []
+
 # The age and sops a Linux machine gets from join.yml, pinned by the digest
 # GitHub publishes for each release asset. A darwin machine takes Homebrew's.
 nova_age_version: "1.3.2"

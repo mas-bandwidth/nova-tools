@@ -170,6 +170,7 @@ reached as root at the address given, as on the first run.
 | `join` | a new machine joins the fleet: its row, its login, the tailnet, the tools a seat needs, its seat | the machine as the argument; its row's fields; `NOVA_PG_DSN` and `NOVA_PG_PASSWORD` in the environment, and `TAILSCALE_AUTHKEY` for a machine not on the tailnet (`up` mints it) |
 | `postgres` | the PostgreSQL nova-config keeps the fleet in, on each machine of the services group | `nova_seal_*` to seal its password |
 | `redis` | the Redis nova-bus talks to, on each machine of the services group | `nova_seal_*` to seal its password |
+| `runner-packages` | the packages a CI runner's tests need, from `nova_runner_packages`, on each machine of the runner group; packages only, nothing started | nothing; `-l` the machines |
 | `seat` | each machine's seat in the secrets store | `nova_seal_store` |
 | `secrets-refresh` | the control node's encrypted store pushed to every machine with `ansible.posix.synchronize` (`verify_host: true`, no `.git`, stale files deleted, 0700/0600); no machine runs a timer (pull mode is retired; one left is removed) | `nova_seal_store` (the control node's clone) to push |
 | `services` | one supervised unit per service record, on the machine the record names (bench, runner and services groups) | the inventory's `nova_services` |
@@ -770,6 +771,28 @@ journalctl -t nova-disk-report --since -1d        # the disk lines
 **Check.** `HEALTH <machine> journal=persistent panic=10 ssh_oom=0 slice_max=<bytes> | DISK <machine> root=<n>%
 swap=<n>%`. **Rollback.** Remove the file of the guard (named above), then `systemctl daemon-reload` and restart the
 daemon it configures (`systemd-journald`, `ssh`) or `sysctl --system`; `systemctl disable --now nova-disk-report.timer`.
+
+## runner-packages
+
+The packages a CI runner's tests need, on each machine of the `runner` group, from `nova_runner_packages`
+(`group_vars/all.yml`): a list per OS, Homebrew formulae on `darwin` (as the login; brew refuses root) and apt
+packages on `debian`. Today that is `postgresql@18` on macOS, for the functional tier on mini-m5, and nothing on
+Linux. A package already installed is adopted as it is: never reinstalled, upgraded or auto-updated, so a run over it
+reports `changed=0`. Only packages: no server is started, no `brew services`, no unit; the tests run their own
+`initdb` and `pg_ctl` (with `LC_ALL=C`). CI never installs: the macOS functional job refuses when `initdb` is missing
+and names this play.
+
+```
+nova-fleet runner-packages --check -- -l mini-m5    # WOULD-INSTALL brew install --formula <name>, per missing one
+nova-fleet runner-packages -- -l mini-m5
+```
+
+| Variable | Default | |
+|---|---|---|
+| `nova_runner_packages` | `{darwin: ["postgresql@18"], debian: []}` | another OS with a non-empty list is refused |
+
+**Check.** `RUNNER-PACKAGES host=<machine> wanted=<n> present=<n> installed=<n>`, one line per machine.
+**Rollback.** The play never removes a package: one taken out of the list stays installed until a play removes it.
 
 ## Refusals
 
