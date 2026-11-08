@@ -77,7 +77,7 @@ jobs:
       - *go
       - name: unit tests
         # PATH and HOME point nowhere: a unit test that reaches a real program or the home directory fails
-        run: go test -p 4 -exec "env PATH=/nonexistent HOME=/nonexistent" ./...
+        run: go test -race -p 4 -exec "env PATH=/nonexistent HOME=/nonexistent" ./...
 
   functional:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
@@ -87,7 +87,8 @@ jobs:
       - *clean
       - *checkout
       - *go
-      - name: redis-server, postgres, sops and age on PATH
+      - &functional-path
+        name: redis-server, postgres, sops and age on PATH
         shell: bash
         run: |
           [ -d "$HOME/.local/bin" ] && echo "$HOME/.local/bin" >> "$GITHUB_PATH"
@@ -102,6 +103,35 @@ jobs:
           NOVA_CONTRACT_STRICT: "1" # a missing dependency fails the fault contract rows instead of skipping them
         # -count=1: these tests run redis-server, postgres and sops, which the test cache cannot see
         run: go test -count=1 -p 4 -tags functional,slow ./...
+
+  # The functional tier again under the race detector. GOFLAGS reaches the go build each test
+  # runs, so the tools it executes are race-built too, and a race in one fails its test. The
+  # packages are split three ways so each job stays inside 2 minutes (in one job they took 123 s on a bench).
+  functional-race:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [contract, bus, rest]
+    runs-on: [self-hosted, linux, x64, bench]
+    timeout-minutes: 30
+    env:
+      GOFLAGS: -race
+      NOVA_CONTRACT_STRICT: "1"
+    steps:
+      - *clean
+      - *checkout
+      - *go
+      - *functional-path
+      - name: functional tests under the race detector
+        # -count=1: these tests run redis-server, postgres and sops, which the test cache cannot see
+        run: |
+          case ${{ matrix.part }} in
+            contract) pkgs=./tests/contract ;;
+            bus) pkgs=./cmd/nova-bus ;;
+            rest) pkgs=$(go list ./... | grep -v -e '/tests/contract$' -e '/cmd/nova-bus$') ;;
+          esac
+          go test -count=1 -p 4 -tags functional,slow $pkgs
 
   functional-macos:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
@@ -170,7 +200,7 @@ jobs:
 
   ci-ok:
     if: always()
-    needs: [lint, unit, functional, functional-macos, tlc, fleet]
+    needs: [lint, unit, functional, functional-race, functional-macos, tlc, fleet]
     runs-on: [self-hosted, linux, x64]
     timeout-minutes: 5
     steps:
