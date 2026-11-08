@@ -60,12 +60,10 @@
     service_dir: "{{ service_system_dir if service_system else service_user_dir }}"
     service_other_dir: "{{ service_user_dir if service_system else service_system_dir }}"
     service_domain: "{{ 'system' if service_system else 'gui/' ~ ansible_facts['user_uid'] }}"
-    # The units this play writes, and the ones its earlier name (loops.yml) wrote:
-    # com.nova.loop.<name>.plist and nova-loop-<name>.service|timer, which a run
-    # retires (they carry the old mark) after it has loaded the new ones.
+    # The units this play writes.
     service_patterns: >-
-      {{ ['com.nova.service.*.plist', 'com.nova.loop.*.plist'] if service_darwin
-         else ['nova-service-*.service', 'nova-service-*.timer', 'nova-loop-*.service', 'nova-loop-*.timer'] }}
+      {{ ['com.nova.service.*.plist'] if service_darwin
+         else ['nova-service-*.service', 'nova-service-*.timer'] }}
     # the records this run renders and restarts: nova_service_only's, else every one
     service_only: >-
       {{ ((nova_service_only.split(',') if nova_service_only is string else nova_service_only) | map('trim') | reject('equalto', '') | list)
@@ -89,7 +87,7 @@
     # The mark every unit this play writes carries (its templates' first
     # comment); find's contains matches a line from its start, hence the .*.
     # This marker is persisted in installed units; keep recognizing it across source-directory moves.
-    service_mark: written by fleet/(services|loops)[.]yml from the (service|loop) record
+    service_mark: written by fleet/services[.]yml from the service record
   tasks:
     - name: the inventory carries this machine's service records
       ansible.builtin.assert:
@@ -246,8 +244,8 @@
           {%- for found in service_present.results -%}
           {%- set here = found.item == service_dir -%}
           {%- for f in found.files -%}
-          {%- set name = f.path | basename | regex_replace('^com[.]nova[.](?:service|loop)[.](.*)[.]plist$|^nova-(?:service|loop)-(.*)[.](service|timer)$', '\\1\\2') -%}
-          {%- if (f.path in ours and (not here or name not in service_names or (f.path | basename) is match('^(com[.]nova[.]loop[.]|nova-loop-)'))) or (name in nova_retire_units and not (here and name in service_names)) -%}
+          {%- set name = f.path | basename | regex_replace('^com[.]nova[.]service[.](.*)[.]plist$|^nova-service-(.*)[.](service|timer)$', '\\1\\2') -%}
+          {%- if (f.path in ours and (not here or name not in service_names)) or (name in nova_retire_units and not (here and name in service_names)) -%}
           {%- set _ = out.append({'name': name, 'file': f.path, 'system': ((service_system | bool) if here else not (service_system | bool))}) -%}
           {%- endif -%}
           {%- endfor -%}
@@ -255,8 +253,8 @@
           {%- endif -%}
           {{ out }}
 
-    # A host with no service rows at all would retire every unit this play (or
-    # its earlier name) ever wrote: an empty list is valid, so that takes an
+    # A host with no service rows at all would retire every unit this play
+    # ever wrote: an empty list is valid, so that takes an
     # explicit -e nova_service_retire_all=true.
     - name: an empty service list retires nothing unless asked
       ansible.builtin.assert:

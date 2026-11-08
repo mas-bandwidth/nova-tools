@@ -2,11 +2,7 @@
 #
 # It downloads each tool's release asset,
 # checks it against the release's SHA256SUMS and puts it in the bin directory;
-# a second run changes nothing, and nothing is restarted unless asked. With
-# -e nova_tools_remove_enabled=true it then moves the retired binaries aside.
-# Last it lists what an older install left beside the new binaries (binaries the
-# release does not list, units no service record names), one INSTALL line per
-# host, and refuses a host with any; it removes nothing itself.
+# a second run changes nothing, and nothing is restarted unless asked.
 # Then the bench group gets the opencode its workers run, at the version and digest
 # roles/opencode/defaults/main.yml pins, into the same bin directory.
 #

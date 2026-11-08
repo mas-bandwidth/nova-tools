@@ -91,10 +91,8 @@ tree() {
 		}'
 }
 
-# hook_gone PATH: a hook that names a retired place (v1's ci-hold under C:\rowan-jobs\, retired 2026-11-07) or a file that is
-# not there is never chained: it would fail, or run v1, before every job.
+# hook_gone PATH: a hook that names a file that is not there is never chained: it would fail before every job.
 hook_gone() {
-	case $1 in [Cc]:'\rowan-jobs\'* | /mnt/[Cc]/rowan-jobs/*) return 0 ;; esac
 	[ ! -f "$1" ]
 }
 

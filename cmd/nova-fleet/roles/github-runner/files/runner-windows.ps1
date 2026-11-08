@@ -16,14 +16,10 @@
 #             into <dir>\retired-<yyyymmdd>\ and its service removed: REPAIR <dir>
 #   ensure    -Dir                                    its service starts at boot and is running: SERVICE <dir> ok|started,
 #             or NO-SERVICE <dir> (the role counts it as not registered, and the next run repairs it)
-#   stop      -Dir                                    the runner's service stopped, so it takes no new job: STOPPED <dir>
 #   retire    -Dir                                    stdin carries ONE removal token: config.cmd remove --unattended (GitHub
 #             and the service), the service gone, the dir deleted: RETIRED <dir>
-#   delete    -Path                                   each item -Path names (a wildcard is allowed) deleted, never moved:
-#             DELETED <path>, or ABSENT <path>
-#   untask    -Task                                   the scheduled task \<name> unregistered: UNTASKED or ABSENT
 param(
-  [Parameter(Mandatory = $true)][ValidateSet('install', 'register', 'ensure', 'stop', 'retire', 'delete', 'untask')][string]$Action,
+  [Parameter(Mandatory = $true)][ValidateSet('install', 'register', 'ensure', 'retire')][string]$Action,
   [string]$Dir = '',
   [string]$Cache = '',
   [string]$Version = '',
@@ -31,9 +27,7 @@ param(
   [string]$PathList = '',
   [string]$Url = '',
   [string]$Name = '',
-  [string]$Labels = '',
-  [string]$Path = '',
-  [string]$Task = ''
+  [string]$Labels = ''
 )
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
@@ -161,28 +155,5 @@ switch ($Action) {
     if (Service-Of $Dir) { "SERVICE-LEFT $Dir"; exit 6 }
     Remove-Item -LiteralPath $Dir -Recurse -Force
     "RETIRED $Dir"
-  }
-  'stop' {
-    Need-Admin
-    $s = Service-Of $Dir
-    if ($s) { Stop-Service -Name $s.Name -Force }
-    "STOPPED $Dir"
-  }
-  'delete' {
-    Need-Admin
-    # One literal path, never a pattern, and never a drive root or a system folder: a v1 leftover is a folder below one.
-    if ($Path -notmatch '^[A-Za-z]:\\[^\\*?]+(\\[^\\*?]+)*$' -or $Path -match '^[A-Za-z]:\\(Windows|Program Files|Program Files \(x86\)|ProgramData|Users)(\\|$)') {
-      "REFUSED $Path (a literal path below a drive root, outside the system folders)"; exit 5
-    }
-    $i = Get-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
-    if (-not $i) { "ABSENT $Path"; exit 0 }
-    Remove-Item -LiteralPath $i.FullName -Recurse -Force; "DELETED $($i.FullName)"
-  }
-  'untask' {
-    Need-Admin
-    $t = Get-ScheduledTask -TaskPath '\' -TaskName $Task -ErrorAction SilentlyContinue
-    if (-not $t) { "ABSENT \$Task"; exit 0 }
-    Unregister-ScheduledTask -TaskPath '\' -TaskName $Task -Confirm:$false
-    "UNTASKED \$Task"
   }
 }

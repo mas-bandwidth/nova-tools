@@ -1,15 +1,7 @@
 # The secrets-refresh role (cmd/nova-fleet/secrets-refresh.yml): the machine's copy of the secrets store, kept current.
 # The control node puts the store's files at nova_secrets_store over the SSH the play already has (rsync, no .git,
 # 0700 directories and 0600 files); this role pushes them when it is given the control node's clone (nova_seal_store),
-# and fails when the store is not there. Nothing on the machine fetches the store on a clock: pull mode (a timer
-# pulling a git clone) is retired (D8c), nova_secrets_repo is refused, and a timer an earlier run left is removed.
-- name: pull mode is retired (nova_secrets_repo)
-  ansible.builtin.fail:
-    msg: >-
-      SECRETS-REFRESH {{ inventory_hostname }} STOP: pull mode (nova_secrets_repo) is retired, since nothing fetches the
-      store on a clock; unset nova_secrets_repo: the control node pushes the store (nova-fleet secrets-refresh -- -e
-      nova_seal_store=<its clone>, which nova-fleet up runs)
-  when: nova_secrets_repo | default('') | length > 0
+# and fails when the store is not there. Nothing on the machine fetches the store on a clock.
 
 # without the control node's clone the run would push nothing and pass, which reads as a delivery
 - name: a refreshed machine needs the control node's clone (nova_seal_store)
@@ -19,63 +11,8 @@
       node's clone of the store, run: nova-fleet secrets-refresh -- -e nova_seal_store=<the control node's clone>
   when: nova_seal_store is not defined and (nova_secrets_refresh | bool)
 
-- name: the paths
-  ansible.builtin.set_fact:
-    sr_script: "{{ nova_bin_dir }}/nova-secrets-refresh"
-    sr_label: com.nova.secrets-refresh
-    sr_darwin: "{{ (nova_system | default(ansible_facts['system'])) == 'Darwin' }}"
-    sr_xdg: "/run/user/{{ ansible_facts['user_uid'] }}"
-    sr_user_dir: "{{ nova_home }}/.config/systemd/user"
-
-# ---- no timer on any machine: one left by the retired pull mode is removed ----
-- name: the pull timer removed (left by the retired pull mode)
+- name: a machine whose copy is kept by hand (nova_secrets_refresh false)
   block:
-    - name: the Linux units, stopped and removed
-      ansible.builtin.shell: |
-        u={{ sr_user_dir }}
-        [ -f "$u/nova-secrets-refresh.timer" ] || [ -f "$u/nova-secrets-refresh.service" ] || { echo none; exit 0; }
-        {% if not ansible_check_mode %}
-        systemctl --user disable --now nova-secrets-refresh.timer >/dev/null 2>&1 || true
-        rm -f "$u/nova-secrets-refresh.timer" "$u/nova-secrets-refresh.service"
-        systemctl --user daemon-reload >/dev/null 2>&1 || true
-        {% endif %}
-        echo removed
-      args: { executable: /bin/bash }
-      environment: { XDG_RUNTIME_DIR: "{{ sr_xdg }}" }
-      register: sr_off_linux
-      changed_when: sr_off_linux.stdout == 'removed'
-      check_mode: false
-      when: not sr_darwin
-
-    - name: is there a crontab binary (off)
-      ansible.builtin.command: sh -c 'command -v crontab'
-      register: sr_off_crontab
-      changed_when: false
-      failed_when: false
-      check_mode: false
-      when: not sr_darwin
-
-    - name: the cron line removed
-      ansible.builtin.cron: { name: nova-secrets-refresh, state: absent }
-      when: not sr_darwin and sr_off_crontab.rc == 0
-
-    - name: the LaunchAgent, unloaded and removed
-      ansible.builtin.shell: |
-        p={{ nova_home }}/Library/LaunchAgents/{{ sr_label }}.plist
-        [ -f "$p" ] || { echo none; exit 0; }
-        {% if not ansible_check_mode %}
-        launchctl bootout gui/{{ ansible_facts['user_uid'] }}/{{ sr_label }} 2>/dev/null || true
-        rm -f "$p"
-        {% endif %}
-        echo removed
-      register: sr_off_darwin
-      changed_when: sr_off_darwin.stdout == 'removed'
-      check_mode: false
-      when: sr_darwin
-
-    - name: the pull script removed
-      ansible.builtin.file: { path: "{{ sr_script }}", state: absent }
-
     - name: the receipt (off)
       ansible.builtin.debug: { msg: "SECRETS-REFRESH {{ inventory_hostname }} off (nova_secrets_refresh false)" }
       when: not (nova_secrets_refresh | bool)
@@ -157,7 +94,7 @@
       when: nova_seal_store is defined
       register: sr_push_dir
 
-    # the same settings nova-fleet up uses: no .git (one left from pull mode is removed), deletes what the control
+    # the same settings nova-fleet up uses: no .git (one on the machine is removed), deletes what the control
     # node's copy lacks, 0700/0600; symlinks are never copied. verify_host keeps ssh's host key check on (synchronize
     # turns it off by default, which no play here ever does). Changed only for a file sent, removed or re-moded, read
     # from rsync's itemized lines (stdout_lines): a directory whose only difference is its time is not a change.

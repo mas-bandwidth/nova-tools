@@ -59,7 +59,7 @@
       ansible.builtin.include_role: { name: preflight }
       vars:
         preflight_control: >-
-          {{ [{'cmd': nova_control_config, 'for': 'the machine row', 'v2': true}, {'cmd': nova_control_secrets, 'for': 'the seat', 'v2': true},
+          {{ [{'cmd': nova_control_config, 'for': 'the machine row'}, {'cmd': nova_control_secrets, 'for': 'the seat'},
               {'cmd': 'git', 'for': 'the seat: nova-secrets commits the store'}]
              + [{'cmd': 'rsync', 'for': 'the push of the store to the machine'}, {'cmd': 'ssh-keyscan', 'for': 'pinning the host key'},
                 {'cmd': 'tailscale', 'for': 'the check: the control node sees the peer'}] }}

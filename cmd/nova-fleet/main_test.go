@@ -75,7 +75,7 @@ func TestEmbeddedTree(t *testing.T) {
 	got := files(tree)
 	for _, want := range []string{"install.yml", "services.yml", "requirements.yml", "group_vars/all.yml",
 		"roles/nova-tools-install/tasks/main.yml", "roles/nova-tools-install/defaults/main.yml",
-		"templates/nova-service.service.j2", "retired-tools.txt", "README.md"} {
+		"templates/nova-service.service.j2", "README.md"} {
 		if !slices.Contains(got, want) {
 			t.Errorf("embedded tree has no %s; got %v", want, got)
 		}

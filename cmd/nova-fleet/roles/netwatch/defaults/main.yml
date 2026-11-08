@@ -46,9 +46,3 @@ nova_netwatch_runtime_watchdog: 2min
 # set) turns into a reboot. Off: a hung task under a heavy test is not a dead machine.
 nova_netwatch_softlockup_panic: 0
 nova_netwatch_hung_task_panic: 0
-
-# What this role writes where an install's leftover check reads (nova-tools-install,
-# cmd/nova-fleet/README.md "install", Leftovers): system is /etc/systemd/system.
-# install_play_test.go holds it to the names the tasks write.
-nova_netwatch_owns:
-  system: [nova-netwatch@.service, nova-netwatch@.timer, nova-watchdog-module.service]
