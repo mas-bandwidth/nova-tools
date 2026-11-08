@@ -176,19 +176,18 @@ func newCodex(thread, name, addr string, env func(string) string, s sys, clk Clo
 	}
 	slices.Sort(found) // the start stamp leads the name: the newest last
 	c := &codexWake{thread: thread, rollout: found[len(found)-1], bin: "codex", name: name, addr: addr, s: s, clk: clk, dir: codexDir(s, name, thread), limit: codexTries}
-	program := "missing"
-	if s.look != nil {
-		if p, err := s.look("codex"); err == nil {
-			c.bin, program = p, p
-		}
+	p, err := s.look("codex")
+	if err != nil {
+		return nil, badInput("codex is not on PATH, so the chat could never be woken: install the Codex CLI, or run the hook where codex is on PATH")
 	}
+	c.bin = p
 	if err := dirShape("the codex events directory", c.dir); err != nil {
 		return nil, err
 	}
 	if err := ownDir(c.dir, s.uid, 0o077); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, badInput("the codex events directory %s: %v: run chmod 700 %s", c.dir, err, c.dir)
 	}
-	fmt.Fprintf(stderr, "HOOK HARNESS OK harness=codex thread=%s rollout=%s program=%s events=%s\n", thread, escaper.Replace(c.rollout), escaper.Replace(program), c.dir)
+	fmt.Fprintf(stderr, "HOOK HARNESS OK harness=codex thread=%s rollout=%s program=%s events=%s\n", thread, escaper.Replace(c.rollout), escaper.Replace(c.bin), c.dir)
 	return c, nil
 }
 
