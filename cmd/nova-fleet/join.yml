@@ -470,4 +470,4 @@
 
     - name: the check's receipt
       ansible.builtin.debug:
-        msg: "JOIN CHECK {{ inventory_hostname }} peer={{ 'online' if check_peer.Online | default(false) else ('WOULD-CHECK' if ansible_check_mode else 'missing') }} seat=present"
+        msg: "JOIN CHECK {{ inventory_hostname }} peer={{ 'online' if check_peer.Online | default(false) else ('WOULD-CHECK' if ansible_check_mode else 'missing') }} seat={{ {'present': 'present', 'add': ('WOULD-ADD' if ansible_check_mode else 'added'), 'no-key': 'WOULD-MAKE'}.get(seat_state | default(''), 'none') }}"
