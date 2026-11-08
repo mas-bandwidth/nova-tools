@@ -1,0 +1,34 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      # The installed toolchain, found as nova-tools' ci.yml finds it: the job shell
+      # starts with no profile, so ~/sdk and ~/go/bin are not on PATH. go.mod's floor
+      # (1.24) is all this needs, so any installed Go at or above it will do.
+      - name: use the installed Go toolchain
+        shell: bash
+        run: |
+          newest=$(ls -d "$HOME"/sdk/go*/bin 2>/dev/null | sort -V | tail -1 || true)
+          onpath=$(dirname "$(command -v go 2>/dev/null || echo /none/go)")
+          for d in "$newest" "$HOME/go/bin" /usr/local/go/bin /opt/homebrew/bin "$onpath"; do
+            [ -n "$d" ] && [ -x "$d/go" ] && { echo "$d" >> "$GITHUB_PATH"; "$d/go" version; exit 0; }
+          done
+          echo "no Go toolchain on this runner" >&2; exit 1
+      - name: go vet
+        run: go vet ./...
+      - name: gofmt
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+      - name: go test
+        run: go test -count=1 ./...
