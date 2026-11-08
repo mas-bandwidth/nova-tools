@@ -38,9 +38,10 @@
 \*                              overwrite; persisted=true before success is
 \*                              reported 
 \*   AppendCrash                the entry file is synced and linked, then the
-\*                              crash precedes its ENTRY line and its log record;
-\*                              a retry of the same words is a duplicate that
-\*                              heals the pointer (store.go appendEntry)
+\*                              crash (or a failed log write) precedes its ENTRY
+\*                              line and its log record; a retry of the same
+\*                              words is a duplicate that heals the pointer and
+\*                              the log record (store.go appendEntry)
 \*   IndexCoverage              bounded read over the store entries; builds the
 \*                              entry index and the coverage counts
 \*                              
@@ -59,6 +60,8 @@
 \*   OpenIdempotent: a second open changes nothing (store.go).
 \*   OneOpenPolicy: a session is opened with one publish policy; a re-open
 \*     naming another is refused .
+\*   LoggedBeforeReported: success is reported only once the entry's log record
+\*     is in log.jsonl, also for a duplicate that heals an interrupted append.
 \*
 \* REVERSED WITNESSES.
 \*   BrokenOverwrite: same id with different prose replaces existing entry
@@ -70,6 +73,8 @@
 \*   BrokenCrashBeforeFsync: the entry is linked before its file is synced, the
 \*     crash comes between, and the retry reports it persisted
 \*     (DurableBeforeReported fails).
+\*   BrokenDuplicateNoLog: a duplicate reports success without writing the log
+\*     record an interrupted append left out (LoggedBeforeReported fails).
 
 EXTENDS Naturals, FiniteSets
 
@@ -180,8 +185,12 @@ Append(s, e, text) ==
                  THEN /\ persisted' = [persisted EXCEPT ![s, e] = TRUE]
                       /\ reported' = [reported EXCEPT ![s, e] = TRUE]
                       /\ sessions' = [sessions EXCEPT ![s].pointers = sessions[s].pointers \cup {e}]
-                      /\ UNCHANGED <<flatFiles, entries, log, index, coverage,
-                                     written, fsynced, logged, indexed, writtenText>>
+                      /\ IF logged[s, e] \/ Broken = "BrokenDuplicateNoLog"
+                         THEN UNCHANGED <<log, logged>>
+                         ELSE /\ log' = Seq!Append(log, [event |-> "append", session |-> s, entry |-> e, text |-> text])
+                              /\ logged' = [logged EXCEPT ![s, e] = TRUE]
+                      /\ UNCHANGED <<flatFiles, entries, index, coverage,
+                                     written, fsynced, indexed, writtenText>>
                  ELSE IF Broken = "BrokenOverwrite"
                       THEN /\ entries' = [entries EXCEPT ![s, e] = text]
                            /\ UNCHANGED <<sessions, flatFiles, log, index, coverage,
@@ -268,5 +277,10 @@ OneOpenPolicy ==
         ((log[i].event = "open" /\ log[i].session = s)
          /\ (log[j].event = "open" /\ log[j].session = s))
         => log[i].publish = log[j].publish
+
+\* LoggedBeforeReported: success is reported only once the entry's log record is written.
+LoggedBeforeReported ==
+    \A s \in Sessions, e \in EntryIDs :
+        reported[s, e] => logged[s, e]
 
 =============================================================================

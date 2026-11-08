@@ -742,8 +742,10 @@ func TestCodexServicePreflightWritesNoWakeState(t *testing.T) {
 	require.NoError(t, os.MkdirAll(c.dir, 0o700))
 	codexState(t, c)
 	before := snapshot(t, c.dir)
+	f := newFake()
+	hookedIn(t, f, "beta") // the unit's hook holds the name
 	for range 2 {
-		code, _, errOut := callSys(t, s, serviceEnv, "hook", "--as", "beta", "--codex-thread", testThread, "--service")
+		code, _, errOut := callStore(t, f, s, serviceEnv, "hook", "--as", "beta", "--codex-thread", testThread, "--service")
 		require.Equal(t, 0, code, errOut)
 		assert.Equal(t, before, snapshot(t, c.dir))
 	}
@@ -772,4 +774,21 @@ func TestCodexUnrecordedQueueEndsTheHook(t *testing.T) {
 	require.True(t, ok, "the intent is kept")
 	assert.Equal(t, "7-0", in.last)
 	assert.NotContains(t, out.String(), "HOOK WAKE OK")
+}
+
+// A Codex hook with no codex on PATH could never wake the chat: it is
+// refused at start, exit 2, before the name is claimed.
+func TestCodexWithoutTheProgramIsRefused(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	dir := filepath.Join(home, ".codex", "sessions", "2026", "11", "05")
+	require.NoError(t, os.MkdirAll(dir, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "rollout-2026-11-05T11-00-00-"+testThread+".jsonl"), []byte(rolloutMeta), 0o600))
+	s := sys{uid: os.Getuid(), home: home, look: func(string) (string, error) { return "", exec.ErrNotFound }}
+	f := newFake()
+	code, out, errOut := callStore(t, f, s, testEnv, "hook", "--as", "beta", "--codex-thread", testThread)
+	assert.Equal(t, 2, code)
+	assert.Empty(t, out)
+	assert.Equal(t, "nova-bus hook: codex is not on PATH, so the chat could never be woken: install the Codex CLI, or run the hook where codex is on PATH; run: nova-bus hook -h\n", errOut)
+	assert.Empty(t, f.claims, "the name is never claimed")
 }

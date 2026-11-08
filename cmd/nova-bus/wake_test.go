@@ -546,8 +546,13 @@ func devs(out, null uint64, outChar bool) func(string) (uint64, bool, error) {
 
 func callSys(t *testing.T, s sys, env map[string]string, args ...string) (int, string, string) {
 	t.Helper()
+	return callStore(t, newFake(), s, env, args...)
+}
+
+// callStore is callSys on a store the test has set up.
+func callStore(t *testing.T, f *fake, s sys, env map[string]string, args ...string) (int, string, string) {
+	t.Helper()
 	var out, errOut bytes.Buffer
-	f := newFake()
 	ctx, cancel := context.WithCancel(context.Background())
 	f.idle = cancel
 	defer cancel()
@@ -772,7 +777,9 @@ func TestServiceInstallsALaunchdAgentAfterThePreflight(t *testing.T) {
 	assert.Equal(t, [][]string{{"launchctl", "bootout", "gui/" + uid + "/nova-bus.hook.beta"}, {"launchctl", "bootstrap", "gui/" + uid, plist}}, m.calls, "a changed unit is written and started without asking")
 
 	m.calls = nil
-	code, out, _ = callSys(t, s, serviceEnv, args...)
+	f := newFake()
+	hookedIn(t, f, "beta") // the unit's hook holds the name
+	code, out, _ = callStore(t, f, s, serviceEnv, args...)
 	require.Equal(t, 0, code)
 	assert.Equal(t, "HOOK SERVICE OK name=beta unit=nova-bus.hook.beta log="+m.log+" changed=false\n", out)
 	assert.Len(t, m.calls, 1, "the same unit, running: nothing restarted")
@@ -853,4 +860,36 @@ func TestServiceRefusalsAndTimeout(t *testing.T) {
 	assert.Equal(t, 1, code)
 	assert.Equal(t, "HOOK HARNESS OK harness=grok wake="+grok+"/nova-hook.wake events="+grok+"/nova-bus\n"+
 		"nova-bus hook: HOOK SERVICE FAILED name=beta unit=nova-bus.hook.beta reason=no HOOK OK in 45s; run: tail -n 20 "+m.log+"\n", errOut)
+}
+
+// A unit that is loaded but whose hook does not hold the name (it retries a
+// login Redis refuses, say) is not OK when the same unit is installed again:
+// the refusal names the log's last line.
+func TestServiceRerunIsOKOnlyWhileTheNameIsHooked(t *testing.T) {
+	t.Parallel()
+	m := &mgr{}
+	s, home := serviceSys(t, "darwin", m)
+	grok := filepath.Join(home, "grok")
+	require.NoError(t, os.Mkdir(grok, 0o700))
+	args := []string{"hook", "--as", "beta", "--harness", "grok", "--grok-home", grok, "--service"}
+	code, _, errOut := callSys(t, s, serviceEnv, args...)
+	require.Equal(t, 0, code, errOut)
+	f, err := os.OpenFile(m.log, os.O_APPEND|os.O_WRONLY, 0o600)
+	require.NoError(t, err)
+	_, err = f.WriteString("nova-bus hook: redis at 127.0.0.1:1 refused the login: check NOVA_BUS_USER and NOVA_BUS_PASSWORD; reconnecting\n")
+	require.NoError(t, err)
+	require.NoError(t, f.Close())
+
+	code, out, errOut := callSys(t, s, serviceEnv, args...)
+	assert.Equal(t, 1, code)
+	assert.Empty(t, out)
+	assert.Equal(t, "HOOK HARNESS OK harness=grok wake="+grok+"/nova-hook.wake events="+grok+"/nova-bus\n"+
+		"nova-bus hook: HOOK SERVICE FAILED name=beta unit=nova-bus.hook.beta reason=the unit is loaded but beta is not hooked in; its log ends: "+
+		"nova-bus hook: redis at 127.0.0.1:1 refused the login: check NOVA_BUS_USER and NOVA_BUS_PASSWORD; reconnecting; run: tail -n 20 "+m.log+"\n", errOut)
+
+	down := newFake()
+	down.down = 1
+	code, _, errOut = callStore(t, down, s, serviceEnv, args...)
+	assert.Equal(t, 1, code)
+	assert.Contains(t, errOut, "reason=cannot see whether beta is hooked in: cannot reach redis at 127.0.0.1:1")
 }

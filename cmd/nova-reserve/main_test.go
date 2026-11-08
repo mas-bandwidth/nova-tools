@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -121,7 +122,7 @@ func (h *harness) take(t *testing.T, o options) *taker {
 	t.Helper()
 	tk, err := acquire(h.w, o)
 	require.NoError(t, err)
-	tk.mark(tk.name())
+	require.NoError(t, tk.mark(tk.name()))
 	return tk
 }
 
@@ -733,6 +734,55 @@ func TestUnwritableDirParentIsRefused(t *testing.T) {
 	t.Cleanup(func() { _ = os.Chmod(ro, 0o700) })
 	assert.Equal(t, 2, run([]string{"hold", "--for", "1m", "--dir", filepath.Join(ro, "r")}, h.w))
 	assert.Equal(t, "nova-reserve hold: --dir "+filepath.Join(ro, "r")+": parent "+ro+" is not writable by this user; run: ls -ld "+shellQuote(ro)+"\n", h.err.String())
+}
+
+// TestUnwritableHolderFileIsRefused: a holder file this run can neither remove
+// nor write (another user's in the sticky directory; here a directory in its
+// place) would leave status naming no holder, or a stale one, while this run
+// holds the slot; the run is refused instead, and gives the slot back.
+func TestUnwritableHolderFileIsRefused(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.setCap(t, 1)
+	p := filepath.Join(h.dir, "slot1.holder")
+	require.NoError(t, os.MkdirAll(filepath.Join(p, "x"), 0o755))
+	assert.Equal(t, 2, run([]string{"--", "make"}, h.w))
+	assert.Nil(t, h.ran, "the command never ran")
+	assert.True(t, h.f.idle(), "the slot was given back")
+	assert.Regexp(t, "^nova-reserve: open "+regexp.QuoteMeta(p)+": .*; status could not show this hold; run: sudo rm -f "+
+		regexp.QuoteMeta(shellQuote(p))+" && nova-reserve -- make\n$", h.err.String())
+}
+
+// TestUnwritableCapacityIsRefusedWithARemedy: set on a capacity file this user
+// cannot write says how to clear it.
+func TestUnwritableCapacityIsRefusedWithARemedy(t *testing.T) {
+	t.Parallel()
+	if os.Geteuid() == 0 || runtime.GOOS == "windows" {
+		t.Skip("needs a file this user cannot write")
+	}
+	h := newHarness(t)
+	h.setCap(t, 2)
+	p := filepath.Join(h.dir, "capacity")
+	require.NoError(t, os.Chmod(p, 0o444))
+	assert.Equal(t, 2, run([]string{"set", "--slots", "3"}, h.w))
+	assert.Equal(t, "nova-reserve set: open "+p+": permission denied; run: sudo rm -f "+shellQuote(p)+
+		" && nova-reserve set --slots 3\n", h.err.String())
+}
+
+// TestDirThroughAFileIsRefused: a --dir that is a file, or under one, is one
+// line with a remedy, not a raw system error.
+func TestDirThroughAFileIsRefused(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	file := filepath.Join(h.dir, "f")
+	require.NoError(t, os.WriteFile(file, nil, 0o644))
+	assert.Equal(t, 2, run([]string{"--dir", file, "--", "make"}, h.w))
+	assert.Equal(t, "nova-reserve: --dir "+file+" is a file, not a directory; run: ls -ld "+shellQuote(file)+"\n", h.err.String())
+	h.err.Reset()
+	under := filepath.Join(file, "r")
+	assert.Equal(t, 2, run([]string{"--dir", under, "--", "make"}, h.w))
+	assert.Equal(t, "nova-reserve: --dir "+under+": not a directory; run: ls -ld "+shellQuote(file)+"\n", h.err.String())
+	assert.Nil(t, h.ran)
 }
 
 func TestRunPassesTheStatusAndFrees(t *testing.T) {

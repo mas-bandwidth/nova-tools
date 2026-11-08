@@ -49,9 +49,11 @@ type harness struct {
 	sopsMissing bool
 	noAgeKeygen bool
 	failGit     bool
-	keyPub      string // what the fake age-keygen -y prints
-	notRepo     bool   // git rev-parse fails
-	top         string // what git rev-parse --show-toplevel prints; the directory asked about when ""
+	keyPub      string          // what the fake age-keygen -y prints
+	notRepo     bool            // git rev-parse fails
+	top         string          // what git rev-parse --show-toplevel prints; the directory asked about when ""
+	noIdent     bool            // git has no commit identity: git commit and git var GIT_COMMITTER_IDENT exit 128
+	heads       map[string]bool // the directories a git commit succeeded in: git rev-parse --verify HEAD
 }
 
 const pubA = "age1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqa"
@@ -62,7 +64,7 @@ const pubRec = "age1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqr"
 func newHarness(t *testing.T) *harness {
 	t.Helper()
 	dir := t.TempDir()
-	h := &harness{t: t, keyPub: pubA, store: filepath.Join(dir, "store"), key: filepath.Join(dir, "keys", "ada.key"), pins: filepath.Join(dir, "pins")}
+	h := &harness{t: t, keyPub: pubA, heads: map[string]bool{}, store: filepath.Join(dir, "store"), key: filepath.Join(dir, "keys", "ada.key"), pins: filepath.Join(dir, "pins")}
 	require.NoError(t, os.MkdirAll(h.pins, 0o700))
 	require.NoError(t, os.WriteFile(filepath.Join(h.pins, "recovery.pub"), []byte(pubRec+"\n"), 0o600))
 	require.NoError(t, os.MkdirAll(h.store, 0o700))
@@ -177,6 +179,13 @@ func (h *harness) run(stdin io.Reader, env []string, dir, name string, args ...s
 		return []byte(pubRec + "\n"), nil
 	case name == "age-keygen" && args[0] == "-y":
 		return []byte(h.keyPub + "\n"), nil
+	case name == "git" && args[0] == "rev-parse" && slices.Contains(args, "--verify"):
+		if !h.heads[dir] {
+			return nil, exitErr(128)
+		}
+		return []byte("0123abcd\n"), nil
+	case name == "git" && (args[0] == "commit" || args[0] == "var") && h.noIdent:
+		return nil, exitErr(128)
 	case name == "git" && args[0] == "rev-parse": // the store is a repository, so is a directory with a .git; nothing else is
 		if h.notRepo {
 			return nil, exitErr(128)
@@ -198,6 +207,7 @@ func (h *harness) run(stdin io.Reader, env []string, dir, name string, args ...s
 	case name == "git" && h.failGit:
 		return nil, exitErr(1)
 	case name == "git":
+		h.heads[dir] = h.heads[dir] || args[0] == "commit"
 		return nil, nil
 	}
 	return nil, errors.New("unexpected program " + name)
@@ -570,11 +580,73 @@ func TestDecryptRefusesWhatIsNoEnvironmentVariable(t *testing.T) {
 	assert.Equal(t, 125, h.main(h.seat("exec", "--only", "GOOD", "--", "true")...))
 	assert.Contains(t, h.stderr.String(), "\"nested\" is not a single value")
 	h.noLeak("secret-nested")
-	plain = `{"N":12,"T":true,"E":null}`
+	plain = `{"N":12,"T":true,"E":null,"S":""}`
 	require.NoError(t, os.WriteFile(filepath.Join(h.store, "ada.yaml"), []byte("#fake "+hex.EncodeToString([]byte(plain))+"\n"), 0o600))
-	require.Equal(t, 0, h.main(h.seat("exec", "--only", "N,T,E", "--", "true")...), h.stderr.String())
+	require.Equal(t, 0, h.main(h.seat("exec", "--only", "N,T", "--", "true")...), h.stderr.String())
 	env := envMap(h.env)
-	assert.Equal(t, []string{"12", "true", ""}, []string{env["N"], env["T"], env["E"]})
+	assert.Equal(t, []string{"12", "true"}, []string{env["N"], env["T"]})
+}
+
+// A null or "" value is refused at exec, by name, as set refuses to write one: a command never gets an empty secret.
+func TestExecRefusesAnEmptyValue(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	plain := `{"N":"v","E":null,"S":""}`
+	require.NoError(t, os.WriteFile(filepath.Join(h.store, "ada.yaml"), []byte("#fake "+hex.EncodeToString([]byte(plain))+"\n"), 0o600))
+	for _, only := range []string{"N,E", "S", "E,S"} {
+		h.became = nil
+		assert.Equal(t, 125, h.main(h.seat("exec", "--only", only, "--", "true")...), only)
+		assert.Contains(t, h.stderr.String(), "SECRETS EXEC REFUSED reason=other: "+strings.TrimPrefix(strings.ReplaceAll(only, ",", ", "), "N, ")+" is empty (null or \"\") in ada's files", only)
+		assert.Contains(t, h.stderr.String(), "; set it: run: nova-secrets set "+strings.TrimPrefix(only, "N,")[:1]+" --store "+h.store+" --key "+h.key+" --as ada\n", only)
+		assert.Nil(t, h.became, "the command never runs")
+	}
+}
+
+// A flag that belongs to another verb is refused, never ignored, and nothing runs.
+func TestEveryVerbRefusesAFlagItDoesNotTake(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		flag string
+		args []string
+	}{
+		{"only", []string{"names", "--only", "NOPE"}},
+		{"key", []string{"names", "--key", "/nonexistent", "--sops", "/nope"}},
+		{"sops", []string{"names", "--sops", "/nope"}},
+		{"only", []string{"set", "OTHER", "--only", "TOKEN"}},
+		{"require", []string{"set", "OTHER", "--require", "X"}},
+		{"key", []string{"seat", "list", "--key", "/x", "--only", "Y"}},
+		{"sops", []string{"seat", "add", "bo", pubB, "--sops", "sops"}},
+		{"key", []string{"seat", "remove", "bo", "--key", "/x"}},
+		{"key", []string{"init", "--recovery", pubRec, "--key", "/x"}},
+		{"pins", []string{"exec", "--only", "A", "--pins", "/p", "--", "true"}},
+		{"pub", []string{"set", "OTHER", "--pub", pubB}},
+		{"only", []string{"grant", "A", "--to", "bo", "--only", "A"}},
+		{"as", []string{"seat", "list", "--as", "ada"}},
+		{"to", []string{"names", "--to", "bo"}},
+	} {
+		h := newHarness(t)
+		h.stdin = "v\n"
+		args := append(c.args[:len(c.args):len(c.args)], "--store", h.store)
+		if c.args[0] == "exec" {
+			args = append(c.args[:len(c.args)-2:len(c.args)-2], "--store", h.store, "--", "true")
+		}
+		assert.Equal(t, 2, h.main(args...), "%v", c.args)
+		assert.Contains(t, h.stderr.String(), ": unknown flag --"+c.flag+"; run: nova-secrets ", "%v", c.args)
+		assert.Empty(t, h.calls, "%v", c.args)
+	}
+}
+
+// --only with only commas names nothing: refused as missing, not run with no values.
+func TestExecOnlyCommasNamesNothing(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.seed("ada", map[string]string{"A": "a-sealed"})
+	for _, only := range []string{",", " , ", ",,"} {
+		h.became = nil
+		assert.Equal(t, 2, h.main(h.seat("exec", "--only", only, "--", "true")...), only)
+		assert.Contains(t, h.stderr.String(), "missing --only NAME[,NAME]", only)
+		assert.Nil(t, h.became, only)
+	}
 }
 
 func TestVerbs(t *testing.T) {
@@ -635,7 +707,15 @@ func TestNextNamesTheGivenStoreAndSeat(t *testing.T) {
 	h.stdout.Reset()
 	require.Equal(t, 0, h.main("seat", "add", "here", pubB, "--store", store), h.stderr.String())
 	assert.Equal(t, "SECRETS SEAT ADD OK seat=here committed\nnext: nova-secrets set DB_PASSWORD --as here --store "+store+
-		" --pins /home/ada/.config/nova-secrets/pins\n", h.stdout.String(), "here's key is not known here: no --key")
+		" --pins "+pins+"\n", h.stdout.String(), "here's key is not known here: no --key; the pins are the ones init --pins wrote")
+	h.stdout.Reset()
+	other := filepath.Join(t.TempDir(), "store")
+	require.Equal(t, 0, h.main("init", "--store", other, "--recovery", pubB), h.stderr.String())
+	require.NoError(t, os.MkdirAll(filepath.Join(filepath.Dir(other), "pins"), 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(filepath.Dir(other), "pins", "recovery.pub"), []byte(pubRec+"\n"), 0o600))
+	h.stdout.Reset()
+	require.Equal(t, 0, h.main("seat", "add", "here", pubC, "--store", other), h.stderr.String())
+	assert.Contains(t, h.stdout.String(), " --pins /home/ada/.config/nova-secrets/pins\n", "pins beside the store holding another recovery key are not this store's")
 	h.stdout.Reset()
 	h.environ = append(h.environ, "NOVA_SECRETS_PINS="+pins)
 	require.Equal(t, 0, h.main("seat", "add", "ada", pubA, "--store", store), h.stderr.String())
@@ -863,7 +943,7 @@ func TestSeatAddWritesABlockListAndCommits(t *testing.T) {
 	assert.Equal(t, "creation_rules:\n  - path_regex: ^bo\\.yaml$\n    age: "+pubB+","+pubRec+"\n", string(b))
 	// bo's key is not on this machine: no --key, set reads NOVA_SECRETS_KEY
 	assert.Equal(t, "SECRETS SEAT ADD OK seat=bo committed\nnext: nova-secrets set DB_PASSWORD --as bo --store "+h.store+
-		" --pins /home/ada/.config/nova-secrets/pins\n", h.stdout.String())
+		" --pins "+h.pins+"\n", h.stdout.String(), "the pins beside the store hold its recovery pin")
 	h.failGit = true
 	assert.Equal(t, 2, h.main("seat", "add", "cy", pub3, "--store", h.store))
 	assert.Contains(t, h.stderr.String(), ".sops.yaml is written: run: git -C "+h.store+" status")
@@ -1067,4 +1147,111 @@ func TestSetRefusesAPartialNode(t *testing.T) {
 	assert.Equal(t, 2, h.main("set", "X", "--store", filepath.Join(t.TempDir(), "elsewhere"), "--sops", "sops"))
 	assert.Contains(t, h.stderr.String(), "reason=no-store")
 	assert.Empty(t, h.calls)
+}
+
+// A commit git refuses for want of an author names that, and the commands that finish it, on every verb that commits.
+func TestAFailedCommitNamesTheMissingIdentity(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.noIdent = true
+	h.stdin = "v\n"
+	assert.Equal(t, 2, h.main(h.set("NEW")...))
+	assert.Equal(t, "SECRETS SET REFUSED reason=git: git commit in "+h.store+" failed (exit status 128): git has no commit identity; the file is written: run: git -C "+h.store+
+		" config user.name 'Your Name' && git -C "+h.store+" config user.email you@example.com && git -C "+h.store+" commit -q -m 'set NEW in ada.yaml' -- ada.yaml\n", h.stderr.String())
+	assert.Equal(t, 2, h.main("seat", "add", "bo", pubB, "--store", h.store))
+	assert.Contains(t, h.stderr.String(), "git has no commit identity; .sops.yaml is written: run: git -C "+h.store+" config user.name 'Your Name' && git -C "+h.store+
+		" config user.email you@example.com && git -C "+h.store+" commit -q -m 'seat bo' -- .sops.yaml\n")
+}
+
+// An init whose commit failed is finished by running it again: recovery.pub is committed with .sops.yaml, once.
+func TestInitFinishesAfterAFailedCommit(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.noIdent = true
+	store := filepath.Join(t.TempDir(), "new")
+	init := []string{"init", "--store", store, "--recovery", pubRec}
+	assert.Equal(t, 2, h.main(init...))
+	assert.Contains(t, h.stderr.String(), "git has no commit identity; the store is written: run: git -C "+store+" config user.name 'Your Name' && git -C "+store+
+		" config user.email you@example.com && git -C "+store+" commit -q -m 'init secrets store' -- .sops.yaml recovery.pub\n")
+	assert.Empty(t, h.stdout.String())
+	require.NoError(t, os.Mkdir(filepath.Join(store, ".git"), 0o755)) // what the first run's git init made
+	h.noIdent, h.calls = false, nil
+	require.Equal(t, 0, h.main(init...), h.stderr.String())
+	assert.Contains(t, h.stdout.String(), "SECRETS INIT OK store="+store+"\n")
+	files := []string{".sops.yaml", "recovery.pub"}
+	assert.Equal(t, [][]string{append([]string{"add", "--"}, files...), append([]string{"commit", "-q", "-m", "init secrets store", "--"}, files...)}, h.gitCalls())
+	assert.Equal(t, 2, h.main(init...), "a committed store is not made again")
+	assert.Contains(t, h.stderr.String(), "store "+store+" exists")
+	other := filepath.Join(t.TempDir(), "other")
+	h.noIdent = true
+	assert.Equal(t, 2, h.main("init", "--store", other, "--recovery", pubRec))
+	h.noIdent = false
+	assert.Equal(t, 2, h.main("init", "--store", other, "--recovery", pubB), "another recovery key is no rerun")
+	assert.Contains(t, h.stderr.String(), "store "+other+" exists")
+}
+
+// A fresh node's set that stops at a failed commit still says to back up the recovery key it made, and set again finishes
+// the store with those keys, whether the init commit was finished by hand or not.
+func TestSetBootstrapFinishesAfterAFailedCommit(t *testing.T) {
+	t.Parallel()
+	for _, byHand := range []bool{false, true} {
+		h, dir := fresh(t)
+		h.noIdent = true
+		assert.Equal(t, 2, h.main("set", "TAILSCALE_API_KEY", "--sops", "sops"))
+		rk := filepath.Join(dir, "recovery.key")
+		assert.Equal(t, "SECRETS SET NEW store="+h.store+" seat=ada key="+h.key+": back up "+rk+", the recovery key, off this machine now: it opens every seat if a key is lost\n", h.stdout.String())
+		assert.Contains(t, h.stderr.String(), "git has no commit identity; the store is written: run: ")
+		assert.Contains(t, h.stderr.String(), "-- .sops.yaml recovery.pub, then run the same nova-secrets set again\n")
+		h.noIdent, h.calls = false, nil
+		h.heads[h.store] = byHand
+		require.Equal(t, 0, h.main("set", "TAILSCALE_API_KEY", "--sops", "sops"), h.stderr.String())
+		assert.Contains(t, h.stdout.String(), "SECRETS SET OK as=ada name=TAILSCALE_API_KEY file=ada.yaml committed")
+		assert.Equal(t, []string{pubA, pubRec}, h.ruleKeys(h.store, "ada.yaml"))
+		assert.Equal(t, map[string]string{"TAILSCALE_API_KEY": fakeKey("api", "FRESH")}, h.open("ada"))
+		assert.Equal(t, !byHand, slices.ContainsFunc(h.gitCalls(), func(g []string) bool { return slices.Contains(g, "init secrets store") }), "init is committed once")
+		for _, c := range h.calls {
+			assert.NotEqual(t, []string{"-o"}, c.args[:1], "no key is made again")
+		}
+	}
+}
+
+// Each refusal ends in the command to run next.
+func TestRefusalsSayWhatToRunNext(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.notRepo, h.failGit = true, true
+	store := filepath.Join(t.TempDir(), "n")
+	assert.Equal(t, 2, h.main("init", "--store", store, "--recovery", pubRec))
+	assert.Contains(t, h.stderr.String(), "git init in "+store+" failed (exit status 1); git says why: run: git init "+store+", then init again\n")
+
+	h = newHarness(t)
+	h.environ = append(h.environ, "NOVA_SECRETS_SEAT=ada")
+	assert.Equal(t, 2, h.main("seat", "add", "ada", pubB, "--store", h.store))
+	assert.Contains(t, h.stderr.String(), ".sops.yaml already has a rule for ada (a new key for it: seat remove it first); run: nova-secrets seat list --store "+h.store+"\n")
+	assert.Equal(t, 2, h.main("seat", "add", "bo", pubA, "--store", h.store))
+	assert.Contains(t, h.stderr.String(), ".sops.yaml already has a seat with that key; run: nova-secrets seat list --store "+h.store+"\n")
+	assert.Equal(t, 2, h.main("seat", "add", "bo", pubRec, "--store", h.store))
+	assert.Contains(t, h.stderr.String(), "that key is the recovery key, not a seat's; make the seat a key of its own: run: age-keygen -o /home/ada/.config/nova-secrets/bo.key\n")
+}
+
+// A seat file that cannot be read says so, with the read error, not that it does not parse.
+func TestUnreadableSeatFileSaysSo(t *testing.T) {
+	t.Parallel()
+	if os.Getuid() == 0 {
+		t.Skip("root reads a mode 000 file")
+	}
+	h := newHarness(t)
+	h.seed("ada", map[string]string{"A": "a-sealed"})
+	p := filepath.Join(h.store, "ada.yaml")
+	require.NoError(t, os.Chmod(p, 0))
+	assert.Equal(t, 2, h.main("names", "--store", h.store, "--as", "ada"))
+	assert.Contains(t, h.stderr.String(), "SECRETS NAMES REFUSED reason=other: reading "+p+": ")
+	assert.Contains(t, h.stderr.String(), "permission denied; run: ls -l "+p+"\n")
+	require.NoError(t, os.WriteFile(filepath.Join(h.store, "ada.grants.yaml"), []byte("A: ENC[x]\n"), 0o600))
+	require.NoError(t, os.Chmod(filepath.Join(h.store, "ada.grants.yaml"), 0))
+	require.NoError(t, os.Chmod(p, 0o600))
+	h.stdin = "v\n"
+	assert.Equal(t, 2, h.main(h.set("B")...))
+	assert.Contains(t, h.stderr.String(), "reading "+filepath.Join(h.store, "ada.grants.yaml")+": ", "set reads the grants file's names")
+	assert.NotContains(t, h.stderr.String(), "does not parse")
 }

@@ -453,6 +453,12 @@ func appendEntry(store, session, id, text, source string, now time.Time, publish
 	}
 	first = len(entries) == 0
 	final := entryPath(store, session, id)
+	kept := func(err error) error {
+		if err == nil {
+			return nil
+		}
+		return refuse(shell("ls", "-l", logFile(store)), "entry %q is kept, but its log line is not written: %v; make the log writable, then append the same words again to write it", id, err)
+	}
 	for try := 0; ; try++ {
 		if _, err := os.Stat(final); err == nil {
 			prev, t, err := readEntry(store, session, id)
@@ -467,7 +473,10 @@ func appendEntry(store, session, id, text, source string, now time.Time, publish
 				return r, false, created, false, conflict(command("receipt", "--store", store, "--session", session, "--entry", id),
 					"entry %q already holds these words with source=%s; --source %s names another", id, cmp.Or(prev.Source, "-"), named)
 			}
-			return prev.row(t), true, created, false, ensurePointer(store, session, id, t)
+			if err := ensurePointer(store, session, id, t); err != nil {
+				return r, false, created, false, err
+			}
+			return prev.row(t), true, created, false, kept(ensureLogged(store, session, id, prev))
 		} else if !os.IsNotExist(err) {
 			return r, false, created, false, err
 		}
@@ -482,7 +491,22 @@ func appendEntry(store, session, id, text, source string, now time.Time, publish
 	if err := ensurePointer(store, session, id, now); err != nil {
 		return r, false, created, false, err
 	}
-	return row{session, id, source, publish, now, len(text)}, false, created, first, appendLog(store, "append", session, id, stamp(now), publish, source)
+	return row{session, id, source, publish, now, len(text)}, false, created, first, kept(appendLog(store, "append", session, id, stamp(now), publish, source))
+}
+
+// ensureLogged lands the entry's append line in the log, once (it heals an append whose log write failed).
+func ensureLogged(store, session, id string, ef entryFile) error {
+	raw, err := os.ReadFile(logFile(store))
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		var rec map[string]string
+		if json.Unmarshal([]byte(line), &rec) == nil && rec["event"] == "append" && rec["session"] == session && rec["entry"] == id {
+			return nil
+		}
+	}
+	return appendLog(store, "append", session, id, ef.Stamp, ef.Publish, ef.Source)
 }
 
 // ensurePointer lands the ENTRY line in the readable record, once (it heals an interrupted append).
@@ -562,7 +586,10 @@ func index(store, session string) ([]row, []string, error) {
 	names, flat := map[string]bool{}, map[string]bool{}
 	var rows []row
 	for _, dir := range []string{filepath.Join(store, "sessions"), store} {
-		files, _ := os.ReadDir(dir)
+		files, err := os.ReadDir(dir)
+		if err != nil && !os.IsNotExist(err) {
+			return nil, nil, refuse(shell("ls", "-ld", dir), "cannot read %s: %v; make it readable", dir, err)
+		}
 		for _, f := range files {
 			id, ok := strings.CutSuffix(f.Name(), ".md")
 			if !ok || f.IsDir() || !validID(id) || (session != "" && id != session) {
@@ -765,13 +792,19 @@ func runStore(verb string, args []string, stdin io.Reader, stdout, stderr io.Wri
 		for _, r := range rows {
 			per[r.session]++
 		}
+		opens := make([]openRec, len(names))
+		for i, s := range names[:min(len(names), cmp.Or(*maxN, len(names)))] {
+			if opens[i], err = readOpen(*store, s); err != nil {
+				return fail(err) // as append refuses it: corrupt provenance never reads as unknown
+			}
+		}
 		line(stdout, "INDEX OK", "sessions", len(names), "entries", len(rows))
 		for i, s := range names {
 			if *maxN > 0 && i >= *maxN {
 				more(stdout, "INDEX", "session", *maxN, len(names), "--max")
 				break
 			}
-			o, _ := readOpen(*store, s)
+			o := opens[i]
 			policy, opened := "unknown", "-"
 			if o.found && slices.Contains(policies, o.publish) {
 				policy = o.publish
