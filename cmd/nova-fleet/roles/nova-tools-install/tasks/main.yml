@@ -18,7 +18,7 @@
       - nova_tools_remove | reject('match', '^[a-z0-9_][a-z0-9_-]*([.][a-z0-9_-]+)*$') | list | length == 0
       - nova_tools_remove_units | reject('match', '^[A-Za-z0-9_@-]+([.][A-Za-z0-9_@-]+)+$') | list | length == 0
     fail_msg: >-
-      nova-tools-install: name the release (-e nova_tools_version=vX.Y.Z, or with nova_tools_local_dir the version its file names carry), name its
+      nova-tools-install: name the release (--tag vX.Y.Z, or with nova_tools_local_dir the version its file names carry), name its
       repository as OWNER/NAME, and keep nova_tools_names, nova_tools_remove and nova_tools_remove_units to plain file names
 
 # Only a unit cmd/nova-fleet/retired-units.txt names is ever stopped: nova_tools_remove_units
@@ -256,11 +256,13 @@
 
 - name: the retired units, stopped and moved aside
   ansible.builtin.shell: |
+    set -e   # a unit that did not stop stays where it is
     {% if nova_tools_unit_manager | bool %}
     {% if nova_tools_os == 'linux' %}
-    systemctl {{ '' if system else '--user' }} disable --now {{ name | quote }} >/dev/null 2>&1 || true
+    systemctl {{ '' if system else '--user' }} disable --now {{ name | quote }}
     {% else %}
-    launchctl bootout {{ 'system' if system else 'gui/' ~ ansible_facts['user_uid'] }} {{ path | quote }} >/dev/null 2>&1 || true
+    d={{ 'system' if system else 'gui/' ~ ansible_facts['user_uid'] }}; l={{ name | regex_replace('[.]plist$', '') | quote }}
+    launchctl bootout "$d" {{ path | quote }} || if launchctl print "$d/$l" >/dev/null 2>&1; then echo "$d/$l is still loaded" >&2; exit 1; fi
     {% endif %}
     {% endif %}
     mkdir -p {{ aside | quote }} && mv {{ path | quote }} {{ aside | quote }}/
@@ -279,8 +281,12 @@
 
 - name: systemd reads the unit directories again
   ansible.builtin.shell: |
-    systemctl --user daemon-reload >/dev/null 2>&1 || true
-    {% if nova_tools_unit_manager | bool %}sudo -n systemctl daemon-reload >/dev/null 2>&1 || true{% endif %}
+    set -e
+    {% set dirs = nova_tools_units_retired.results | select('changed') | map(attribute='item.item.0') | list %}
+    {% if nova_tools_user_unit_dir in dirs %}systemctl --user daemon-reload{% endif %}
+
+    {% if nova_tools_system_unit_dir in dirs %}sudo -n systemctl daemon-reload{% endif %}
+
   environment: { XDG_RUNTIME_DIR: "/run/user/{{ ansible_facts['user_uid'] | default('') }}" }
   when: nova_tools_unit_manager | bool and nova_tools_os == 'linux' and nova_tools_units_retired is changed
 

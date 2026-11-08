@@ -14,8 +14,8 @@
 #      Pushing the commit, and setting the seat's values with nova-secrets set, are the operator's; join.yml grants
 #      the fleet values into the seat and pushes the store to the machine.
 #
-#   ansible-playbook -i ./inventory cmd/nova-fleet/seat.yml -l <machine> -e nova_seal_store=<store clone> --check --diff
-#   ansible-playbook -i ./inventory cmd/nova-fleet/seat.yml -l <machine> -e nova_seal_store=<store clone>
+#   nova-fleet seat --check --diff -- -l <machine> -e nova_seal_store=<store clone>
+#   nova-fleet seat -- -l <machine> -e nova_seal_store=<store clone>
 - name: the seat key, made on the machine, and its rule in the store
   hosts: "{{ nova_join_host | default('all') }}"
   gather_facts: true

@@ -435,7 +435,7 @@
         that: service_unrestarted | length == 0
         fail_msg: >-
           {{ inventory_hostname }} wrote the unit file of {{ service_unrestarted | join(', ') }} and did not
-          restart it: the host still runs the old argv. Run cmd/nova-fleet/services.yml again, or restart each by hand:
+          restart it: the host still runs the old argv. Run nova-fleet services again, or restart each by hand:
           systemctl --user restart nova-service-<name>.service
         quiet: true
       when: not service_darwin and not ansible_check_mode

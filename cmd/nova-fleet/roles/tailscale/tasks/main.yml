@@ -115,6 +115,7 @@
       ansible.builtin.command:
         argv: "{{ [nova_tailscale_bin, 'set', '--hostname=' ~ inventory_hostname] + (['--ssh=' ~ ((nova_tailscale_ssh | bool) | string | lower)] if ts_os == 'debian' else []) }}"
       become: "{{ ts_os == 'debian' }}"
+      register: ts_set
       when: >-
         not ts_join and (ts_self.HostName | default('') != inventory_hostname
         or (ts_os == 'debian' and ((ts_prefs.stdout | default('{}') | from_json).RunSSH | default(false)) != (nova_tailscale_ssh | bool)))
@@ -124,12 +125,12 @@
       register: ts_after
       changed_when: false
       check_mode: false
-      when: ts_up is not skipped
+      when: ts_up is not skipped or ts_set is changed   # a rename changes the MagicDNS name recorded below
 
     - name: the node, as it is now
       ansible.builtin.set_fact:
         ts_self: "{{ (ts_after.stdout | from_json).Self }}"
-      when: ts_up is not skipped
+      when: ts_up is not skipped or ts_set is changed
 
 # ---- the MagicDNS name, recorded as the machine's address ----
 - name: the machine's MagicDNS name
