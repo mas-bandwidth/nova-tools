@@ -70,7 +70,7 @@ func TestFleetBinaryAgainstAnsible(t *testing.T) {
 	}
 
 	inv := filepath.Join(t.TempDir(), "hosts.ini")
-	if err := os.WriteFile(inv, []byte("localhost ansible_connection=local ansible_python_interpreter=auto_silent\n"), 0o600); err != nil {
+	if err := os.WriteFile(inv, []byte("[bench]\nlocalhost ansible_connection=local ansible_python_interpreter=auto_silent\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	code, out, errs = runFleet(t, bin, "install", "--check", "--inventory", inv, "--", "-e", "nova_tools_version=v0", "-l", "localhost")
@@ -119,7 +119,7 @@ func TestInstallFromALocalBuild(t *testing.T) {
 		t.Fatal(err)
 	}
 	inv := filepath.Join(t.TempDir(), "hosts.ini")
-	if err := os.WriteFile(inv, []byte("localhost ansible_connection=local ansible_python_interpreter=auto_silent\n"), 0o600); err != nil {
+	if err := os.WriteFile(inv, []byte("[bench]\nlocalhost ansible_connection=local ansible_python_interpreter=auto_silent\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	// home and systemDir stand in for the login's home and /etc/systemd/system: the
@@ -280,7 +280,8 @@ func TestCheckOnThisMachine(t *testing.T) {
 		t.Fatalf("check with no store: %v, stderr %q", err, e.String())
 	}
 	for _, line := range strings.Split(strings.TrimSpace(o.String()), "\n") {
-		if !strings.HasPrefix(line, "CHECK OK ") && !strings.HasPrefix(line, "CHECK NOTE ") && !(strings.HasPrefix(line, "CHECK MISSING ") && strings.Contains(line, ": ")) {
+		// CHECK traffic and CHECK WARN traffic appear on a runner that is on the tailnet (D8); they never count as missing.
+		if !strings.HasPrefix(line, "CHECK OK ") && !strings.HasPrefix(line, "CHECK NOTE ") && !strings.HasPrefix(line, "CHECK traffic ") && !strings.HasPrefix(line, "CHECK WARN traffic ") && !(strings.HasPrefix(line, "CHECK MISSING ") && strings.Contains(line, ": ")) {
 			t.Errorf("not a CHECK line: %q", line)
 		}
 	}

@@ -1,4 +1,4 @@
-# purpose: the CI rules on every GitHub Actions runner a machine runs, whoever registered it
+# purpose: the CI rules on every GitHub Actions runner a machine runs, whoever registered it (bench, runner and services groups)
 #
 # The github-runners play puts them on the runners it sets up; this one reaches every runner running on the machines
 # named, including runners registered by hand or for another repository or organization (fleet/README.md, "CI rules").
@@ -8,7 +8,7 @@
 #   nova-fleet ci-rules --check -- -l <machine>
 #   nova-fleet ci-rules -- -l <machine>[,<machine>...]
 - name: the CI rules on every runner of the machine
-  hosts: all
+  hosts: bench:runner:services   # the fleet's workers, never all: a seat-only machine (roles -) runs no runner (D13, 2026-11-07)
   gather_facts: true
   gather_subset: [min]
   tasks:

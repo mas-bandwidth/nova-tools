@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -16,12 +17,13 @@ import (
 // the real one would; under --check nothing joins.
 type upFake struct {
 	calls       []string
-	names       string            // nova-secrets names
-	readErr     string            // a nova-secrets exec -- true refusal
-	rows        string            // nova-config machine list --json
-	peers       map[string]string // tailnet peers: name -> ip
-	unreachable map[string]bool   // addresses that answer no ssh at all
-	fail        string            // a call containing this word exits 4
+	names       string              // nova-secrets names
+	readErr     string              // a nova-secrets exec -- true refusal
+	rows        string              // nova-config machine list --json
+	peers       map[string]string   // tailnet peers: name -> ip
+	bytes       map[string][2]int64 // a peer's TxBytes and RxBytes in tailscale status, 0 0 when unnamed
+	unreachable map[string]bool     // addresses that answer no ssh at all
+	fail        string              // a call containing this word exits 4
 	store       string
 	key         string
 	offnet      bool // tailscale status fails
@@ -166,7 +168,7 @@ func (f *upFake) install(t *testing.T) {
 		case strings.HasPrefix(line, "tailscale status --json"):
 			var peers []string
 			for name, ip := range f.peers {
-				peers = append(peers, `"k-`+name+`":{"ID":"n-`+name+`","HostName":"`+name+`","Tags":["tag:nova"],"DNSName":"`+name+`.ts.example.","TailscaleIPs":["`+ip+`"],"SSH_HostKeys":["ssh-ed25519 KEY-`+name+`"]}`)
+				peers = append(peers, `"k-`+name+`":{"ID":"n-`+name+`","HostName":"`+name+`","Tags":["tag:nova"],"DNSName":"`+name+`.ts.example.","TailscaleIPs":["`+ip+`"],"SSH_HostKeys":["ssh-ed25519 KEY-`+name+`"],"TxBytes":`+strconv.FormatInt(f.bytes[name][0], 10)+`,"RxBytes":`+strconv.FormatInt(f.bytes[name][1], 10)+`}`)
 			}
 			tags := `["tag:control"]`
 			if f.untagged {
@@ -580,6 +582,18 @@ func TestCheck(t *testing.T) {
 	if strings.Contains(out, "gh-login") || strings.Contains(out, " gh ") || strings.Count(out, "CHECK MISSING") != 0 {
 		t.Errorf("runner prerequisites checked without --runners:\n%s", out)
 	}
+	if strings.Contains(out, "traffic") {
+		t.Errorf("traffic lines with no peer bytes:\n%s", out)
+	}
+	// Each peer's traffic with this node follows the tailnet line (D8, 2026-11-07); a peer with no bytes is no line.
+	f.peers, f.bytes = map[string]string{"bench-a": "100.64.0.11", "studio": "100.64.0.12", "idle": "100.64.0.13"}, map[string][2]int64{"bench-a": {2_500_000_000, 700_000_000}, "studio": {1_080_000_000_000, 12_345_678_901}}
+	code, out, errs = runArgs("check")
+	want := "CHECK OK tailnet\nCHECK traffic bench-a tx=2.5GB rx=0.7GB\nCHECK traffic studio tx=1080.0GB rx=12.3GB\n" +
+		"CHECK WARN traffic studio tx=1080.0GB is over 100GB with one peer since tailscaled started: something fetches or mirrors on a clock; find it: nova-config service list\nCHECK OK seat"
+	if code != 0 || errs != "" || !strings.Contains(out, want) {
+		t.Errorf("traffic: code %d stderr %q, stdout lacks %q:\n%s", code, errs, want, out)
+	}
+	f.peers, f.bytes = map[string]string{}, nil
 	f.offnet = true
 	lookPath = func(name string) (string, error) {
 		if name == "age-keygen" || name == "nova-bus" || name == "gh" {
@@ -633,6 +647,29 @@ func TestCheck(t *testing.T) {
 		if code, _, errs := runArgs(append([]string{"check"}, tc...)...); code != 2 || !strings.HasPrefix(errs, "nova-fleet check: ") || !strings.HasSuffix(errs, "; run: nova-fleet check -h\n") {
 			t.Errorf("check %q: code %d stderr %q", tc, code, errs)
 		}
+	}
+}
+
+// TestCheckTraffic reads a canned tailscale status: the lines are sorted by peer name, GB to one decimal, and a
+// peer over trafficWarnBytes in either direction warns once.
+func TestCheckTraffic(t *testing.T) {
+	t.Parallel()
+	var st tsStatus
+	canned := `{"BackendState":"Running","Self":{"ID":"n0","DNSName":"control.ts.example.","TxBytes":0,"RxBytes":0},"Peer":{
+	  "k1":{"ID":"n1","DNSName":"studio.ts.example.","Tags":["tag:nova"],"TxBytes":1080000000000,"RxBytes":12345678901},
+	  "k2":{"ID":"n2","DNSName":"bench-a.ts.example.","Tags":["tag:nova"],"TxBytes":2500000000,"RxBytes":700000000},
+	  "k3":{"ID":"n3","DNSName":"phone.ts.example.","TxBytes":0,"RxBytes":0},
+	  "k4":{"ID":"n4","DNSName":"puller.ts.example.","TxBytes":40000000,"RxBytes":250000000000}}}`
+	if err := json.Unmarshal([]byte(canned), &st); err != nil {
+		t.Fatal(err)
+	}
+	var out strings.Builder
+	traffic(&out, st)
+	want := "CHECK traffic bench-a tx=2.5GB rx=0.7GB\n" +
+		"CHECK traffic puller tx=0.0GB rx=250.0GB\nCHECK WARN traffic puller rx=250.0GB is over 100GB with one peer since tailscaled started: something fetches or mirrors on a clock; find it: nova-config service list\n" +
+		"CHECK traffic studio tx=1080.0GB rx=12.3GB\nCHECK WARN traffic studio tx=1080.0GB is over 100GB with one peer since tailscaled started: something fetches or mirrors on a clock; find it: nova-config service list\n"
+	if out.String() != want {
+		t.Errorf("traffic lines:\n%s\nwant:\n%s", out.String(), want)
 	}
 }
 

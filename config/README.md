@@ -72,6 +72,9 @@ The repeated `set` changed nothing, so it wrote nothing. Empty values print as
 
 A service is a program on a machine, run every N seconds or kept running. Set
 `--every <seconds>` or `--keepalive true`, one of them. Same verbs as machines.
+A service never fetches on a clock: an argv that names a fetcher (`git fetch|pull|clone`,
+`rsync`, `curl`, `wget`, `mirror-refresh`) with a loop (`--loop`, `--every`, `watch`, `while`),
+or with `--every` above 0, is refused. Fetch on an event (a push) or once per job.
 
 | Field | Meaning |
 |---|---|
@@ -184,6 +187,7 @@ connection failure. Missing or invalid flags and the store DSN are checked toget
 | `machine remove: machine bench-a still runs services hello; ...` (1) | Remove or move its services first. |
 | `service add: service x has neither --every nor --keepalive; ...` (2) | Give exactly one of them. |
 | `service add: service x names secrets (--keys A) and no --seat ...` (2) | Add `--seat` or drop `--keys`. |
+| `service add: service x fetches on a clock (git pull with --loop); fetch on an event (a push) or once per job, never on a clock ...` (2; `set` 1) | Drop the loop flag and `--every`; run the fetch from the job or the push hook that needs it. |
 | `friend set: friend <friend> has --width 0; ...` (1) | Give `--width 1` or more. |
 | `friend remove: friend <friend> is still named by config.sprint; ...` (1) | Change the row that names it first. |
 | `machine list: NOVA_PG_DSN carries a password; ...` (2) | Move the password to `NOVA_PG_PASSWORD`. |

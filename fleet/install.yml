@@ -1,4 +1,4 @@
-# purpose: install one nova-tools release, by tag, on the machines named
+# purpose: install one nova-tools release, by tag, on the machines named (bench, runner and services groups)
 #
 # It downloads each tool's release asset,
 # checks it against the release's SHA256SUMS and puts it in the bin directory;
@@ -19,7 +19,7 @@
 # Variables: roles/nova-tools-install/defaults/main.yml. A Windows host
 # needs the ansible.windows collection on the control node (requirements.yml).
 - name: nova-tools release on the machine
-  hosts: all
+  hosts: bench:runner:services   # the fleet's workers, never all: a seat-only machine (roles -) gets no software (D13, 2026-11-07)
   gather_facts: true
   gather_subset: [min]
   roles:
