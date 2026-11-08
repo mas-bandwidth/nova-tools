@@ -255,8 +255,8 @@ func TestSetRefusedWhileHeldOnRealLocks(t *testing.T) {
 }
 
 // TestKilledHolderTakesItsCommandWith SIGKILLs nova-reserve itself: its command
-// must not run on without the slot (Linux: Pdeathsig; macOS and the BSDs: the
-// watchdog, which polls each second; Windows: the job), and the slot frees.
+// must not run on without the slot (Linux, macOS and the BSDs: the watchdog,
+// which polls each second, and Pdeathsig on Linux; Windows: the job), and the slot frees.
 func TestKilledHolderTakesItsCommandWith(t *testing.T) {
 	t.Parallel()
 	bin, dir := build(t), t.TempDir()

@@ -122,7 +122,7 @@ func (h *harness) take(t *testing.T, o options) *taker {
 	t.Helper()
 	tk, err := acquire(h.w, o)
 	require.NoError(t, err)
-	tk.mark(tk.name())
+	require.NoError(t, tk.mark(tk.name()))
 	return tk
 }
 

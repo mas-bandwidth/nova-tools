@@ -46,9 +46,9 @@ func osLock(path string, exclusive bool) (func(), bool, error) {
 	return func() { _ = f.Close() }, true, nil
 }
 
-// tie starts cmd with this OS's tie to nova-reserve (sysAttr, watchdog). On Linux
-// that is Pdeathsig, which fires when the starting thread ends, so the thread
-// stays locked to this goroutine, which waits for the command. A command in a
+// tie starts cmd with this OS's tie to nova-reserve (sysAttr, watchdog). Linux's
+// Pdeathsig fires when the starting thread ends, so the thread stays locked to
+// this goroutine, which waits for the command. A command in a
 // group of its own gets the terminal when nova-reserve is its foreground, else
 // reading it stops the command (SIGTTIN) with its slot held; untie gives it back.
 func tie(cmd *exec.Cmd) (func(), error) {
@@ -127,6 +127,9 @@ func forward(cmd *exec.Cmd, s os.Signal) {
 		_ = syscall.Kill(pid, sig)
 	}
 }
+
+// signalName is the signal's name, such as SIGKILL.
+func signalName(s syscall.Signal) string { return unix.SignalName(s) }
 
 // running says pid is a process: EPERM is another user's live process.
 func running(pid int) bool {

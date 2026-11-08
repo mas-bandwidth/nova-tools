@@ -97,6 +97,9 @@ func wait(cmd *exec.Cmd) (syscall.WaitStatus, error) {
 // reaches the command directly.
 func forward(*exec.Cmd, os.Signal) {}
 
+// signalName is never called: no signal ends a Windows process.
+func signalName(s syscall.Signal) string { return s.String() }
+
 // running says pid is a process that has not exited.
 func running(pid int) bool {
 	h, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(pid))
