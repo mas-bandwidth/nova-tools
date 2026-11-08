@@ -228,7 +228,7 @@ func beforeDashes(args []string) []string {
 }
 
 // usageReasons are the refusals that mean the invocation itself is malformed.
-var usageReasons = []string{"bad_flag", "bad_value", "no_command", "bad_read", "bad_write", "bad_net", "bad_gpu", "bad_env"}
+var usageReasons = []string{"bad_flag", "bad_value", "no_command", "bad_read", "bad_write", "bad_net", "bad_gpu", "bad_unix", "bad_env"}
 
 // report prints the refusals and returns the exit status. A malformed invocation is one
 // refusal line naming every problem at once, exit 2. Otherwise each refusal is a

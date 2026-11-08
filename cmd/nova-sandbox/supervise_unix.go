@@ -28,19 +28,25 @@ func supervise(args []string, env []string, stderr io.Writer) int {
 	}
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGQUIT)
-	done := make(chan struct{})
+	done, stopped := make(chan struct{}), make(chan struct{})
 	go func() {
-		select {
-		case s := <-sigs:
-			if sig, ok := s.(syscall.Signal); ok {
-				syscall.Kill(cmd.Process.Pid, sig)
+		defer close(stopped)
+		for {
+			select {
+			case s := <-sigs:
+				// ESRCH is a command that exited before the signal reached it.
+				if err := syscall.Kill(cmd.Process.Pid, s.(syscall.Signal)); err != nil && err != syscall.ESRCH {
+					fmt.Fprintf(stderr, "nova-sandbox: %v could not be forwarded to the command: %v\n", s, err)
+				}
+			case <-done:
+				return
 			}
-		case <-done:
 		}
 	}()
 	err = cmd.Wait()
-	close(done)
 	signal.Stop(sigs)
+	close(done)
+	<-stopped
 	if ee, ok := err.(*exec.ExitError); ok {
 		if ws, ok := ee.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
 			n := int(ws.Signal())

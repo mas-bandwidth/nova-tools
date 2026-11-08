@@ -110,7 +110,7 @@ func TestFriendRefusals(t *testing.T) {
 func TestFriendUnstatedPronounsWriteNull(t *testing.T) {
 	t.Parallel()
 	row := Row{Name: "f1", F: map[string]string{"harness": "claude", "model": "", "width": "1", "tiers": "pro", "pronouns": "", "note": "", "enabled": "true"}}
-	q, args := writeSQL(kinds["friend"], "add", "f1", row)
+	q, args := writeSQL(kinds["friend"], "add", "f1", Row{}, row)
 	assert.Equal(t, `INSERT INTO config.friends (name, "harness", "model", "width", "tiers", "pronouns", "note", "enabled") VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`, q)
 	assert.Equal(t, []any{"f1", "claude", "", int64(1), "pro", nil, "", true}, args)
 }
