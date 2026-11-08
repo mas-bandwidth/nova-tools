@@ -14,9 +14,9 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
+      # The fleet runners carry Go on PATH; go.mod's floor (1.24) is all this needs.
+      - name: go version
+        run: go version
       - name: go vet
         run: go vet ./...
       - name: gofmt
