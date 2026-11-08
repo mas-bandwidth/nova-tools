@@ -185,7 +185,7 @@ func TestInstallFromALocalBuild(t *testing.T) {
 	code, out, _ = runFleet(t, bin, svc...)
 	for _, w := range []string{"INSTALL localhost leftovers=4: gitconfig credential.helper, gitconfig credential.https://github.com.helper, mirror-refresh, nova-push-credential;",
 		`nova-fleet install --tag local -- -l localhost -e '{"nova_tools_remove_enabled":true,"nova_tools_remove":["mirror-refresh","nova-push-credential"]}'`,
-		"INSTALL localhost WARNING unrecorded=2: nova-card, nova-worker; reinstall mas-bandwidth/nova-sprint to record its names"} {
+		"INSTALL localhost WARNING unrecorded=2: nova-card, nova-worker; no release or manifest lists them"} {
 		if code == 0 || !strings.Contains(out, w) {
 			t.Errorf("binaries no manifest lists yet beside a v1 mirror-refresh: exit %d, want %q:\n%s", code, w, out)
 		}
@@ -213,7 +213,8 @@ func TestInstallFromALocalBuild(t *testing.T) {
 	if code, out, _ = runFleet(t, bin, svc...); code != 0 || !strings.Contains(out, "INSTALL localhost leftovers=0") || strings.Contains(out, "WARNING unrecorded") {
 		t.Errorf("only what belongs: exit %d, want leftovers=0 and no warning:\n%s", code, out)
 	}
-	// nova-sprint's manifest is here and does not list nova-card: it is a leftover nova-fleet install retires.
+	// A binary no release, manifest or retired row accounts for (nova-card from v1 sprint, or a
+	// tool the machine uses) is a warning naming it, never a refusal, manifest or not.
 	if err := os.Rename(filepath.Join(home, "nova-card.x"), filepath.Join(binDir, "nova-card")); err != nil {
 		t.Fatal(err)
 	}
@@ -221,44 +222,44 @@ func TestInstallFromALocalBuild(t *testing.T) {
 		t.Fatal(err)
 	}
 	code, out, _ = runFleet(t, bin, svc...)
-	if code == 0 || !strings.Contains(out, "INSTALL localhost leftovers=1: nova-card;") || !strings.Contains(out, `-e '{"nova_tools_remove_enabled":true,"nova_tools_remove":["nova-card"]}'`) {
-		t.Errorf("one v1 binary beside what belongs: exit %d, want leftovers=1: nova-card:\n%s", code, out)
+	if code != 0 || !strings.Contains(out, "INSTALL localhost leftovers=0") || !strings.Contains(out, "INSTALL localhost WARNING unrecorded=1: nova-card;") {
+		t.Errorf("a binary nothing accounts for: exit %d, want leftovers=0 and the warning naming it:\n%s", code, out)
 	}
 	if got, err := os.ReadFile(filepath.Join(binDir, "nova-fleet")); err != nil || !bytes.Equal(got, b) {
-		t.Errorf("the install did not happen before the leftover refusal: %v", err)
+		t.Errorf("the install did not happen: %v", err)
 	}
 	// Without nova_services the units are not read, and the line says so.
 	plant(filepath.Join(unitDir, "nova-loop-sweep.timer"))
 	code, out, _ = runFleet(t, bin, args...)
-	if code == 0 || !strings.Contains(out, "INSTALL localhost leftovers=1: nova-card; NOTE: the inventory carries no nova_services") {
-		t.Errorf("no nova_services: exit %d, want the binary alone and the NOTE:\n%s", code, out)
+	if code != 0 || !strings.Contains(out, "INSTALL localhost leftovers=0; NOTE: the inventory carries no nova_services") {
+		t.Errorf("no nova_services: exit %d, want leftovers=0 and the NOTE:\n%s", code, out)
 	}
 
-	// v1 binaries and units no role or record names; the install still happens, then the
-	// host is refused, naming them and the plays that retire them. With nova-sprint's
-	// manifest here every unlisted binary (nova-fleet.bak too) is a leftover; a v1 unit
-	// fleet/retired-units.txt names (nova-swarm-*, novadog-*) is retired by the install
-	// command too. On macOS a headless Mac's units are in /Library/LaunchDaemons
+	// v1 binaries and units; the install still happens, then the host is refused, naming
+	// them and the plays that retire them. Only retired names and units refuse: muse,
+	// nova-fleet.bak and winlock.bak-4slots are warnings; age-keygen is join.yml's. A v1
+	// unit fleet/retired-units.txt names (nova-swarm-*, novadog-*) is retired by the
+	// install command. On macOS a headless Mac's units are in /Library/LaunchDaemons
 	// (systemDir stands in).
 	plant(filepath.Join(binDir, "mirror-refresh"), filepath.Join(binDir, "nova-fleet.bak"), filepath.Join(binDir, "winlock.bak-4slots"),
 		filepath.Join(binDir, "muse"), filepath.Join(binDir, "age-keygen"),
 		filepath.Join(unitDir, "nova-service-bus-hook.service"), filepath.Join(unitDir, "com.nova.loop.sweep.plist"), filepath.Join(unitDir, "nova-swarm-mirror-refresh.service"),
 		filepath.Join(systemDir, "novadog-studio.service"), filepath.Join(systemDir, "com.nova.loop.old.plist"), filepath.Join(systemDir, "other.service"))
 	code, out, _ = runFleet(t, bin, svc...)
-	want := []string{"INSTALL localhost leftovers=11: com.nova.loop.old.plist, com.nova.loop.sweep.plist, mirror-refresh, muse, nova-card, nova-fleet.bak, nova-loop-sweep.timer, nova-service-bus-hook.service, nova-swarm-mirror-refresh.service, novadog-studio.service, winlock.bak-4slots",
-		`nova-fleet services -- -l localhost -e '{"nova_retire_units":["bus-hook","old","sweep"]}'`,
-		`nova-fleet install --tag local -- -l localhost -e '{"nova_tools_remove_enabled":true,"nova_tools_remove":["mirror-refresh","muse","nova-card","nova-fleet.bak","winlock.bak-4slots"],"nova_tools_remove_units":["nova-swarm-mirror-refresh.service","novadog-studio.service"]}'`}
+	want := []string{"INSTALL localhost leftovers=7: com.nova.loop.old.plist, com.nova.loop.sweep.plist, mirror-refresh, nova-loop-sweep.timer, nova-service-bus-hook.service, nova-swarm-mirror-refresh.service, novadog-studio.service",
+		`nova-fleet services -- -l localhost -e '{"nova_retire_units":["bus-hook","old","sweep"]}'`}
 	if runtime.GOOS == "linux" {
-		want = []string{"INSTALL localhost leftovers=10: com.nova.loop.sweep.plist, mirror-refresh, muse, nova-card, nova-fleet.bak, nova-loop-sweep.timer, nova-service-bus-hook.service, nova-swarm-mirror-refresh.service, novadog-studio.service, winlock.bak-4slots",
-			`nova-fleet services -- -l localhost -e '{"nova_retire_units":["bus-hook","sweep"]}'`,
-			`nova-fleet install --tag local -- -l localhost -e '{"nova_tools_remove_enabled":true,"nova_tools_remove":["mirror-refresh","muse","nova-card","nova-fleet.bak","winlock.bak-4slots"],"nova_tools_remove_units":["nova-swarm-mirror-refresh.service","novadog-studio.service"]}'`}
+		want = []string{"INSTALL localhost leftovers=6: com.nova.loop.sweep.plist, mirror-refresh, nova-loop-sweep.timer, nova-service-bus-hook.service, nova-swarm-mirror-refresh.service, novadog-studio.service",
+			`nova-fleet services -- -l localhost -e '{"nova_retire_units":["bus-hook","sweep"]}'`}
 	}
+	want = append(want, "INSTALL localhost WARNING unrecorded=4: muse, nova-card, nova-fleet.bak, winlock.bak-4slots;",
+		`nova-fleet install --tag local -- -l localhost -e '{"nova_tools_remove_enabled":true,"nova_tools_remove":["mirror-refresh"],"nova_tools_remove_units":["nova-swarm-mirror-refresh.service","novadog-studio.service"]}'`)
 	for _, w := range want {
 		if code == 0 || !strings.Contains(out, w) {
 			t.Errorf("leftovers beside the install: exit %d, want %q:\n%s", code, w, out)
 		}
 	}
-	if strings.Contains(out, "by hand") || strings.Contains(out, "WARNING unrecorded") || strings.Contains(out, "no play retires") {
+	if strings.Contains(out, "by hand") || strings.Contains(out, "no play retires") {
 		t.Errorf("the refusal names something no play retires, or sends the operator to do it by hand:\n%s", out)
 	}
 	for _, f := range []string{"nova-card", "mirror-refresh", "nova-fleet.bak"} {
@@ -266,30 +267,27 @@ func TestInstallFromALocalBuild(t *testing.T) {
 			t.Errorf("the role removed %s: it reports and refuses only", f)
 		}
 	}
-	// With nova_tools_keep naming them, the binaries are allowed; the units are not.
-	code, out, _ = runFleet(t, bin, append(svc, "-e", `{"nova_tools_keep":["nova-card","mirror-refresh"]}`)...)
-	keep := "INSTALL localhost leftovers=9: com.nova.loop.old.plist, com.nova.loop.sweep.plist, muse, nova-fleet.bak, nova-loop-sweep.timer, nova-service-bus-hook.service, nova-swarm-mirror-refresh.service, novadog-studio.service, winlock.bak-4slots"
-	if runtime.GOOS == "linux" {
-		keep = "INSTALL localhost leftovers=8: com.nova.loop.sweep.plist, muse, nova-fleet.bak, nova-loop-sweep.timer, nova-service-bus-hook.service, nova-swarm-mirror-refresh.service, novadog-studio.service, winlock.bak-4slots"
-	}
-	if code == 0 || !strings.Contains(out, keep) {
-		t.Errorf("nova_tools_keep: exit %d, want %q:\n%s", code, keep, out)
-	}
-	// The printed install command runs: the binaries and the v1 units move into
-	// retired-<date>/ beside them; what is left is the services play's to retire.
+	// The printed install command runs: mirror-refresh and the v1 units move into
+	// retired-<date>/ beside them; what is left is the services play's to retire, and the
+	// warned binaries stay where they are.
 	m = regexp.MustCompile(`nova-fleet install --tag local -- -l localhost -e '(\{[^']*\})'`).FindStringSubmatch(want[len(want)-1])
 	code, out, _ = runFleet(t, bin, append(svc, "-e", m[1])...)
 	left := "INSTALL localhost leftovers=4: com.nova.loop.old.plist, com.nova.loop.sweep.plist, nova-loop-sweep.timer, nova-service-bus-hook.service;"
-	asideUnits := []string{filepath.Join(unitDir, "retired-*", "nova-swarm-mirror-refresh.service"), filepath.Join(systemDir, "retired-*", "novadog-studio.service")}
 	if runtime.GOOS == "linux" {
 		left = "INSTALL localhost leftovers=3: com.nova.loop.sweep.plist, nova-loop-sweep.timer, nova-service-bus-hook.service;"
 	}
 	if code == 0 || !strings.Contains(out, left) {
 		t.Errorf("the printed install command with v1 units: exit %d, want %q:\n%s", code, left, out)
 	}
-	for _, g := range append(asideUnits, filepath.Join(binDir, "retired-*", "mirror-refresh"), filepath.Join(binDir, "retired-*", "nova-card"), filepath.Join(binDir, "retired-*", "nova-fleet.bak"), filepath.Join(binDir, "retired-*", "winlock.bak-4slots"), filepath.Join(binDir, "retired-*", "muse")) {
+	for _, g := range []string{filepath.Join(unitDir, "retired-*", "nova-swarm-mirror-refresh.service"), filepath.Join(systemDir, "retired-*", "novadog-studio.service"),
+		filepath.Join(binDir, "retired-*", "mirror-refresh")} {
 		if got, _ := filepath.Glob(g); len(got) != 1 {
 			t.Errorf("not moved aside: %s (%v)", g, got)
+		}
+	}
+	for _, f := range []string{"nova-card", "muse", "nova-fleet.bak", "winlock.bak-4slots", "age-keygen"} {
+		if _, err := os.Stat(filepath.Join(binDir, f)); err != nil {
+			t.Errorf("%s moved: only retired names are retired", f)
 		}
 	}
 	// Another repository's release records its names and prints no INSTALL line.
@@ -299,7 +297,8 @@ func TestInstallFromALocalBuild(t *testing.T) {
 	}
 	for _, f := range append(allowed, filepath.Join(binDir, "nova-card"), filepath.Join(binDir, "mirror-refresh"), filepath.Join(binDir, "nova-fleet.bak"),
 		filepath.Join(unitDir, "nova-loop-sweep.timer"), filepath.Join(unitDir, "nova-service-bus-hook.service"), filepath.Join(unitDir, "com.nova.loop.sweep.plist"),
-		filepath.Join(systemDir, "novadog-studio.service"), filepath.Join(systemDir, "com.nova.loop.old.plist"), filepath.Join(unitDir, "nova-swarm-mirror-refresh.service"), filepath.Join(binDir, "age-keygen")) {
+		filepath.Join(systemDir, "novadog-studio.service"), filepath.Join(systemDir, "com.nova.loop.old.plist"), filepath.Join(unitDir, "nova-swarm-mirror-refresh.service"), filepath.Join(binDir, "age-keygen"),
+		filepath.Join(binDir, "muse"), filepath.Join(binDir, "winlock.bak-4slots")) {
 		if err := os.Remove(f); err != nil && !os.IsNotExist(err) {
 			t.Fatal(err)
 		}

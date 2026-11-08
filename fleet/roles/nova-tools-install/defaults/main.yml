@@ -207,13 +207,10 @@ nova_tools_remove:
 # them (fleet/README.md, "install", Leftovers). Allowed beside the release: what another
 # repository's release (--repo) recorded in nova_tools_manifest_dir, what the fleet's
 # own roles write (their nova_<role>_owns), a friend's nova-bus
-# hook unit, a service record's unit, and the binaries named in nova_tools_keep. A
-# binary no manifest lists that nova-tools did not retire is a warning only. Unix
-# machines, nova-tools' own release only; nothing is removed.
-nova_tools_keep: []
-# The --repo releases the fleet installs: once each has its manifest on a machine, a
-# binary no manifest lists is a leftover (before, a warning).
-nova_tools_fleet_repos: [mas-bandwidth/nova-sprint]
+# hook unit and a service record's unit. Only a retired name (fleet/retired-tools.txt)
+# or a retired unit (fleet/retired-units.txt) refuses a host; any other binary nothing
+# accounts for is a warning naming it. Unix machines, nova-tools' own release only;
+# the check removes nothing.
 # Retired units to stop and move aside (into retired-<date>/ beside them) when
 # nova_tools_remove_enabled is true: file names, as the leftover refusal prints them
 # (fleet/retired-units.txt). nova_tools_unit_manager false asks nothing of systemd or

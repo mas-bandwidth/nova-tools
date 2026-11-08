@@ -18,9 +18,6 @@ com.nova.converge-check.plist	2026-11-08	v1 rowan-tools converge check
 com.nova.scratch-sweep.plist	2026-11-08	v1 rowan-tools scratch sweep
 nova-scratch-sweep.*	2026-11-08	v1 rowan-tools scratch sweep
 nova-netwatch@.*	2026-11-08	v1 rowan-tools netwatch
-nova-xdp-provision.service	2026-11-08	v1 rowan-tools XDP provisioning
-nova-xdp-irq-keeper.service	2026-11-08	v1 rowan-tools XDP IRQ keeper
-nova-watchdog-module.service	2026-11-08	v1 rowan-tools watchdog module
 ci-hold-broker.service	2026-11-08	v1 rowan-tools CI hold broker
 novadog-*	2026-11-08	v1 novadog watchdogs
 nova-dashboard-pull.*	2026-11-08	v1 dashboard pull

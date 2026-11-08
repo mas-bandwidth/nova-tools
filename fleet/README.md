@@ -251,7 +251,6 @@ refused before anything is written.
 | `nova_tools_restart`, `nova_tools_restart_commands` | false, empty | argv lists run once, only if a binary changed |
 | `nova_tools_remove_enabled` | false | retire the binaries below |
 | `nova_tools_remove` | the retired list | names to retire |
-| `nova_tools_keep` | empty | binaries a machine keeps by hand in the bin directory (see Leftovers) |
 | `nova_tools_manifest_dir` | `~/.local/share/nova/installed` | where a `--repo` install records its names (see Leftovers) |
 | `nova_tools_system_unit_dir` | `/etc/systemd/system` (Linux), `/Library/LaunchDaemons` (macOS) | where Leftovers reads system units |
 
@@ -302,7 +301,7 @@ recorded (a `--repo` install writes its names to `~/.local/share/nova/installed/
 `nova_tools_manifest_dir`); what the fleet's own plays and roles write there (`nova_join_owns` for join.yml's age,
 age-keygen and sops; each role's `nova_<role>_owns`; `nova_redis_unit`); a friend's nova-bus hook unit
 (`nova-bus.hook.<name>.plist`, `nova-bus-hook-<name>.service`); the unit of a service record this machine has (its
-`nova_services`); and `nova_tools_keep`. An inventory with no `nova_services` (not nova-config's) has its units left
+`nova_services`). An inventory with no `nova_services` (not nova-config's) has its units left
 unread, and the line ends with a NOTE saying so.
 
 A leftover fails the host, and the refusal names the plays that retire it, names filled in. `nova-fleet install --tag <tag>
@@ -313,10 +312,9 @@ directory takes sudo); nothing is deleted, and nothing moves unless `nova_tools_
 (`git config --global --unset-all`, matched by its path alone; other helpers stay), and the INSTALL line says so.
 `nova-fleet services -- -l <host> -e '{"nova_retire_units":[...]}'` retires a unit of the services play's shapes
 (`nova-service-*`, `nova-loop-*`, `com.nova.service.*`, `com.nova.loop.*`); anything no play retires is named on its own.
-A binary in `retired-tools.txt` (every v1 tool nova-tools and rowan-tools shipped) is a leftover at once; any other binary
-nothing accounts for is a leftover once every `--repo` the fleet installs (`nova_tools_fleet_repos`: nova-sprint) has its
-manifest on the machine, and until then a `WARNING unrecorded=<n>` with `reinstall <repo> to record its names`, never a
-refusal (the first rollout, before manifests existed). The check itself removes nothing. Unix machines, nova-tools' own
+Only a binary in `retired-tools.txt` (every v1 tool nova-tools and rowan-tools shipped) or a unit in
+`retired-units.txt` refuses a host. Any other binary nothing accounts for (a tool the machine uses that no release ships:
+redis-server, go, gh, ...) is a `WARNING unrecorded=<n>` naming it, never a refusal. The check itself removes nothing. Unix machines, nova-tools' own
 release only (a `--repo` install prints no line); `--check` prints the line too.
 
 ## services
