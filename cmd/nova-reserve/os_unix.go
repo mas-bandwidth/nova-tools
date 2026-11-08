@@ -89,12 +89,14 @@ func passTerminal(from, to int) {
 	_ = unix.IoctlSetPointerInt(0, unix.TIOCSPGRP, to)
 }
 
-// wait waits for cmd. With the terminal (tie) it relays job control: when the
-// command stops (Ctrl-Z; SIGTTIN after bg), nova-reserve takes back the terminal
-// it had and stops its own group, so the shell sees the job stop; continued, it
-// passes on the terminal if the shell gave it one (fg), and continues the command.
+// wait waits for cmd. On its controlling terminal, foreground or not (a run
+// can be put in the background while it waits for a slot), it relays job
+// control: when the command stops (Ctrl-Z; SIGTTIN after bg), nova-reserve
+// takes back the terminal it had and stops its own group, so the shell sees
+// the job stop; continued, it passes on the terminal if the shell gave it one
+// (fg), and continues the command. tla/JobControl.tla is the model.
 func wait(cmd *exec.Cmd) (ws syscall.WaitStatus, err error) {
-	if !cmd.SysProcAttr.Foreground {
+	if !cmd.SysProcAttr.Setpgid || terminalGroup() < 0 {
 		if err = cmd.Wait(); cmd.ProcessState != nil {
 			return cmd.ProcessState.Sys().(syscall.WaitStatus), nil
 		}
