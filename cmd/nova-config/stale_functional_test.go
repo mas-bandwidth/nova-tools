@@ -26,10 +26,10 @@ func (r racingStore) List(ctx context.Context, k *kind) ([]Row, error) {
 	return rows, err
 }
 
-// TestFunctionalSetAndRemoveRefuseAStaleRead: a set or remove whose row another
+// TestFunctionalStaleWrite (short: macOS caps the socket path under TMPDIR at 103 bytes): a set or remove whose row another
 // session deleted or changed since the tool read it writes nothing, records no
 // history and refuses, naming the row and the command to read it again.
-func TestFunctionalSetAndRemoveRefuseAStaleRead(t *testing.T) {
+func TestFunctionalStaleWrite(t *testing.T) {
 	t.Parallel()
 	dsn := startPG(t)
 	env := map[string]string{"NOVA_PG_DSN": dsn}
