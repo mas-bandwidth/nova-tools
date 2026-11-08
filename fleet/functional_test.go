@@ -340,3 +340,13 @@ func TestCheckOnThisMachine(t *testing.T) {
 	}
 	t.Logf("\n%s%s", o.String(), e.String())
 }
+
+// A child killed by a signal is reported as such, with exit 128+N, never as a plain 1.
+func TestSignalReported(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("no signals")
+	}
+	if code, err := runCmd("sh", []string{"-c", "kill -9 $$"}, os.Environ()); err != nil || code != 137 {
+		t.Errorf("killed child: code %d err %v, want 137", code, err)
+	}
+}

@@ -6,7 +6,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -335,15 +334,5 @@ func TestNoWindowsController(t *testing.T) {
 	}
 	if code, _, errs := runArgs("install", "--bogus"); code != 2 || !strings.Contains(errs, "unknown flag --bogus") {
 		t.Errorf("a malformed run on windows is refused as malformed first: %q", errs)
-	}
-}
-
-// A child killed by a signal is reported as such, with exit 128+N, never as a plain 1.
-func TestSignalReported(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("no signals")
-	}
-	if code, err := runCmd("sh", []string{"-c", "kill -9 $$"}, os.Environ()); err != nil || code != 137 {
-		t.Errorf("killed child: code %d err %v, want 137", code, err)
 	}
 }
