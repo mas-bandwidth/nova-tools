@@ -297,7 +297,7 @@ the platform; every name another repository's release recorded (a `--repo` insta
 `~/.local/share/nova/installed/<owner>_<name>.names`, `nova_tools_manifest_dir`); what the fleet's own roles write there
 (each role's `nova_<role>_owns` in its defaults, and `nova_redis_unit`); a friend's nova-bus hook unit
 (`nova-bus.hook.<name>.plist`, `nova-bus-hook-<name>.service`); the `nova-service-<record>` unit of a service record this
-machine has (its `nova_services`); and `nova_tools_keep` (a binary the machine keeps by hand). An inventory with no
+machine has (its `nova_services`); `nova_tools_hand_kept` (`nova-push-credential`, the git credential helper every machine has); and `nova_tools_keep` (a binary the machine keeps by hand). An inventory with no
 `nova_services` (not nova-config's) has its units left unread, and the line ends with a NOTE saying so. A host with any
 leftover is failed with the fix: remove them (`nova-fleet services` for units of a record; by hand for the rest), then
 install again. The play removes nothing itself. Unix machines, nova-tools' own release only (a `--repo` install prints no

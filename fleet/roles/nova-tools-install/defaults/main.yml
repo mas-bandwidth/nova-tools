@@ -71,6 +71,10 @@ nova_tools_remove:
 # binaries named in nova_tools_keep (one a machine keeps by hand, a git credential
 # helper, say). Unix machines, nova-tools' own release only; nothing is removed.
 nova_tools_keep: []
+# Binaries every fleet machine keeps beside the release, allowed whatever nova_tools_keep says.
+nova_tools_hand_kept:
+  # the git credential helper, installed by hand before v2; owed to a role (fleet item D19)
+  - nova-push-credential
 nova_tools_system_unit_dir: /etc/systemd/system
 # Where another repository's release (--repo) records the names it installs, one
 # <owner>_<name>.names per repository, for the leftover check to allow.

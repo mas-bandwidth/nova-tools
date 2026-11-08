@@ -273,7 +273,7 @@
       register: nova_tools_found
       vars:
         nova_tools_records: "{{ nova_services | default([]) | map(attribute='name') | map('regex_escape') | join('|') or '-' }}"
-        nova_tools_bin_ok: "{{ nova_tools_release_names + nova_tools_keep + nova_tools_other_names + nova_tools_fleet_owns.bin }}"
+        nova_tools_bin_ok: "{{ nova_tools_release_names + nova_tools_keep + nova_tools_hand_kept + nova_tools_other_names + nova_tools_fleet_owns.bin }}"
         nova_tools_leftover_dirs: >-
           {{ [{'path': nova_tools_bin_dir,
                'patterns': ['^(nova-.*|novadog-.*|mirror-refresh|disk-guard|ci-hold-broker)$'],

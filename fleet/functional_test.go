@@ -164,15 +164,18 @@ func TestInstallFromALocalBuild(t *testing.T) {
 	}
 	// What belongs: another release's binary its manifest lists, the fleet's own roles'
 	// binary and units, a friend's nova-bus hook; beside them one v1 binary.
-	allowed := []string{filepath.Join(binDir, "nova-worker"), filepath.Join(binDir, "nova-secrets-refresh"),
+	allowed := []string{filepath.Join(binDir, "nova-worker"), filepath.Join(binDir, "nova-push-credential"), filepath.Join(binDir, "nova-secrets-refresh"),
 		filepath.Join(unitDir, "nova-secrets-refresh.timer"), filepath.Join(unitDir, "com.nova.secrets-refresh.plist"),
 		filepath.Join(unitDir, "nova-bus.hook.x.plist"), filepath.Join(unitDir, "nova-bus-hook-x.service"),
 		filepath.Join(systemDir, "nova-disk-report.timer"), filepath.Join(systemDir, "nova-pg-dump.service"), filepath.Join(systemDir, "nova-redis.service")}
 	plant(allowed...)
-	plant(filepath.Join(binDir, "nova-card"))
 	if err := os.WriteFile(filepath.Join(manifests, "mas-bandwidth_nova-sprint.names"), []byte("nova-sprint\nnova-worker\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if code, out, _ = runFleet(t, bin, svc...); code != 0 || !strings.Contains(out, "INSTALL localhost leftovers=0") {
+		t.Errorf("only what belongs (nova-push-credential among it): exit %d, want leftovers=0:\n%s", code, out)
+	}
+	plant(filepath.Join(binDir, "nova-card"))
 	if err := os.Remove(filepath.Join(binDir, "nova-fleet")); err != nil {
 		t.Fatal(err)
 	}

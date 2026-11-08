@@ -67,7 +67,7 @@ func TestInstallRoleEndsWithTheLeftoverInventory(t *testing.T) {
 		assert.Contains(t, dirs, want, "nova_tools_leftover_dirs")
 	}
 	// Allowed binaries: the release's, nova_tools_keep, every manifest of another repository's release, the fleet's own roles'.
-	assert.Equal(t, "{{ nova_tools_release_names + nova_tools_keep + nova_tools_other_names + nova_tools_fleet_owns.bin }}", taskVar(t, tasks[i], "nova_tools_bin_ok"))
+	assert.Equal(t, "{{ nova_tools_release_names + nova_tools_keep + nova_tools_hand_kept + nova_tools_other_names + nova_tools_fleet_owns.bin }}", taskVar(t, tasks[i], "nova_tools_bin_ok"))
 	records := taskVar(t, tasks[i], "nova_tools_records")
 	assert.Contains(t, records, "nova_services | default([])", "an inventory without nova_services (a plain hosts file) names no record")
 	assert.Contains(t, records, "map(attribute='name')")
@@ -156,6 +156,7 @@ func TestInstallRoleLeftoverDefaults(t *testing.T) {
 	var d map[string]any
 	require.NoError(t, yaml.Unmarshal(b, &d))
 	assert.Equal(t, []any{}, d["nova_tools_keep"])
+	assert.Equal(t, []any{"nova-push-credential"}, d["nova_tools_hand_kept"], "the git credential helper on every fleet machine (D19)")
 	assert.Equal(t, "/etc/systemd/system", d["nova_tools_system_unit_dir"])
 	assert.Equal(t, "{{ nova_home }}/.local/share/nova/installed", d["nova_tools_manifest_dir"])
 }
