@@ -46,9 +46,9 @@ func osLock(path string, exclusive bool) (func(), bool, error) {
 	return func() { _ = f.Close() }, true, nil
 }
 
-// tie starts cmd with this OS's tie to nova-reserve (sysAttr, watchdog). On Linux
-// that is Pdeathsig, which fires when the starting thread ends, so the thread
-// stays locked to this goroutine, which waits for the command. A command in a
+// tie starts cmd with this OS's tie to nova-reserve (sysAttr, watchdog). Linux's
+// Pdeathsig fires when the starting thread ends, so the thread stays locked to
+// this goroutine, which waits for the command. A command in a
 // group of its own gets the terminal when nova-reserve is its foreground, else
 // reading it stops the command (SIGTTIN) with its slot held; untie gives it back.
 func tie(cmd *exec.Cmd) (func(), error) {
@@ -89,12 +89,14 @@ func passTerminal(from, to int) {
 	_ = unix.IoctlSetPointerInt(0, unix.TIOCSPGRP, to)
 }
 
-// wait waits for cmd. With the terminal (tie) it relays job control: when the
-// command stops (Ctrl-Z; SIGTTIN after bg), nova-reserve takes back the terminal
-// it had and stops its own group, so the shell sees the job stop; continued, it
-// passes on the terminal if the shell gave it one (fg), and continues the command.
+// wait waits for cmd. On its controlling terminal, foreground or not (a run
+// can be put in the background while it waits for a slot), it relays job
+// control: when the command stops (Ctrl-Z; SIGTTIN after bg), nova-reserve
+// takes back the terminal it had and stops its own group, so the shell sees
+// the job stop; continued, it passes on the terminal if the shell gave it one
+// (fg), and continues the command. tla/JobControl.tla is the model.
 func wait(cmd *exec.Cmd) (ws syscall.WaitStatus, err error) {
-	if !cmd.SysProcAttr.Foreground {
+	if !cmd.SysProcAttr.Setpgid || terminalGroup() < 0 {
 		if err = cmd.Wait(); cmd.ProcessState != nil {
 			return cmd.ProcessState.Sys().(syscall.WaitStatus), nil
 		}
@@ -127,6 +129,9 @@ func forward(cmd *exec.Cmd, s os.Signal) {
 		_ = syscall.Kill(pid, sig)
 	}
 }
+
+// signalName is the signal's name, such as SIGKILL.
+func signalName(s syscall.Signal) string { return unix.SignalName(s) }
 
 // running says pid is a process: EPERM is another user's live process.
 func running(pid int) bool {

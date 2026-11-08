@@ -111,3 +111,45 @@ func TestFunctionalCtrlZStopsTheJob(t *testing.T) {
 		t.Fatal("the shell never exited")
 	}
 }
+
+// TestFunctionalBackgroundedWhileWaitingStillRelays: a run put in the
+// background (Ctrl-Z, bg) while it waits for a slot starts its command without
+// the terminal; fg later, the command's first read stops it, and nova-reserve
+// must still hand it the terminal instead of leaving the shell waiting.
+func TestFunctionalBackgroundedWhileWaitingStillRelays(t *testing.T) {
+	t.Parallel()
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("no bash to drive job control")
+	}
+	bin, dir := build(t), t.TempDir()
+	holder := exec.Command(bin, "hold", "--slots", "1", "--for", "1h", "--dir", dir)
+	out, err := holder.StdoutPipe()
+	require.NoError(t, err)
+	require.NoError(t, holder.Start())
+	t.Cleanup(func() { _ = holder.Process.Kill(); _ = holder.Wait() })
+	_, err = out.Read(make([]byte, 64)) // CAPACITY SET: the slot is held
+	require.NoError(t, err)
+	master, seen, done := onTerminal(t, bash, "--norc", "--noprofile", "-i")
+	typed := func(s string) {
+		_, err := master.Write([]byte(s))
+		require.NoError(t, err)
+	}
+	typed(shellQuote(bin) + " --dir " + shellQuote(dir) + " --slots 1 -- sh -c 'echo re\"\"ady; read x; echo got:$x'\n")
+	time.Sleep(500 * time.Millisecond) // a guess: nova-reserve is waiting for the slot
+	typed("\x1a")
+	require.Eventually(t, seen("Stopped"), 10*time.Second, 20*time.Millisecond)
+	typed("bg\n")
+	require.NoError(t, holder.Process.Signal(syscall.SIGTERM))
+	require.Eventually(t, seen("ready"), patience, 20*time.Millisecond, "the backgrounded run never started its command")
+	typed("fg\n")
+	time.Sleep(500 * time.Millisecond) // a guess: the shell continues the job before the line is typed
+	typed("hi\n")
+	require.Eventually(t, seen("got:hi"), 10*time.Second, 20*time.Millisecond, "fg never gave the command the terminal")
+	typed("exit\n")
+	select {
+	case <-done:
+	case <-time.After(patience):
+		t.Fatal("the shell never exited")
+	}
+}

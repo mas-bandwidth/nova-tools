@@ -26,13 +26,13 @@
 \*   "nogate"  an exclusive taker skips the gate: ExclusiveBarsShared fails
 \*   "leak"    a crashed holder's locks are never let go (a PID file, a
 \*             daemon's table): a waiter never runs (EveryWaiterRuns)
-\*   "orphan"  a crashed holder's command runs on (no Pdeathsig, no job
-\*             object: macOS and the BSDs on SIGKILL): CommandHasSlot fails
+\*   "orphan"  a crashed holder's command runs on (no watchdog, no job
+\*             object): CommandHasSlot fails
 \*
 \* cmd is the set of processes whose command runs. The command starts once
 \* the hold is complete and ends before the locks are let go (runCommand
 \* returns, then release), so a finish is one step; a crash takes the
-\* command with it (proc_linux.go Pdeathsig, os_windows.go job object).
+\* command with it (proc_unix.go watchdog, os_windows.go job object).
 EXTENDS Naturals, FiniteSets
 
 CONSTANTS Procs, N, Rounds, MaxCrash, Broken
