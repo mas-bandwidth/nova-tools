@@ -291,3 +291,15 @@ func TestFunctionalUnreachable(t *testing.T) {
 	assert.Equal(t, `nova-config machine list: cannot reach postgres at 127.0.0.1:`+port+` (NOVA_PG_DSN): connection refused; check NOVA_PG_DSN or run: psql "$NOVA_PG_DSN" -c 'select 1'`+"\n", errs)
 	assert.Equal(t, 1, strings.Count(errs, "\n"), errs)
 }
+
+func TestOpenPGConnectFailure(t *testing.T) {
+	t.Parallel()
+	l, err := net.Listen("tcp", "127.0.0.1:0") // a port nothing answers on, once closed
+	require.NoError(t, err)
+	addr := l.Addr().String()
+	require.NoError(t, l.Close())
+	_, err = openPG(t.Context(), "postgres://u@"+addr+"/x?sslmode=disable&connect_timeout=2", "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot reach postgres at "+addr+" (NOVA_PG_DSN): ")
+	assert.NotContains(t, err.Error(), "\n")
+}
