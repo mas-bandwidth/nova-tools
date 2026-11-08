@@ -327,8 +327,8 @@
         nova_tools_leftovers: "{{ (nova_tools_sorted.bin + nova_tools_sorted.unit + nova_tools_sorted.noplay) | sort }}"
         nova_tools_retire_how: >-
           {{ ([("nova-fleet install --tag " ~ nova_tools_version ~ " -- -l " ~ inventory_hostname
-                ~ " -e nova_tools_remove_enabled=true -e nova_tools_remove='" ~ (nova_tools_sorted.bin | sort | to_json) ~ "'")] if nova_tools_sorted.bin else [])
-             + ([("nova-fleet services -- -l " ~ inventory_hostname ~ " -e nova_retire_units='" ~ (nova_tools_sorted.unit_names | unique | sort | to_json) ~ "'")]
+                ~ " -e '" ~ ({'nova_tools_remove_enabled': true, 'nova_tools_remove': nova_tools_sorted.bin | sort} | to_json(separators=(',', ':'))) ~ "'")] if nova_tools_sorted.bin else [])
+             + ([("nova-fleet services -- -l " ~ inventory_hostname ~ " -e '" ~ ({'nova_retire_units': nova_tools_sorted.unit_names | unique | sort} | to_json(separators=(',', ':'))) ~ "'")]
                 if nova_tools_sorted.unit else [])
              + ([("no play retires " ~ (nova_tools_sorted.noplay | sort | join(', ')) ~ " yet: it is owed to a play")] if nova_tools_sorted.noplay else []) }}
 

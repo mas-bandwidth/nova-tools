@@ -111,10 +111,13 @@ func TestInstallRoleEndsWithTheLeftoverInventory(t *testing.T) {
 	assert.NotContains(t, asText(a["fail_msg"]), "by hand")
 	// The fix is the plays that retire them, the names filled in; only what no play retires is named on its own.
 	how := asText(tasks[taskIndex(tasks, "the leftovers, and the plays that retire them")]["ansible.builtin.set_fact"].(map[string]any)["nova_tools_retire_how"])
-	for _, want := range []string{"nova-fleet install --tag", "-e nova_tools_remove_enabled=true -e nova_tools_remove='", "nova_tools_sorted.bin | sort | to_json",
-		"nova-fleet services -- -l ", "-e nova_retire_units='", "nova_tools_sorted.unit_names | unique | sort | to_json", "no play retires "} {
+	for _, want := range []string{"nova-fleet install --tag", "{'nova_tools_remove_enabled': true, 'nova_tools_remove': nova_tools_sorted.bin | sort} | to_json(separators=(',', ':'))",
+		"nova-fleet services -- -l ", "{'nova_retire_units': nova_tools_sorted.unit_names | unique | sort} | to_json(separators=(',', ':'))", "no play retires "} {
 		assert.Contains(t, how, want)
 	}
+	// JSON extra vars: a key=value -e is a string, never the list the plays want.
+	assert.NotContains(t, how, "nova_tools_remove='")
+	assert.NotContains(t, how, "nova_retire_units='")
 	// A binary no manifest lists yet is a warning (its release may predate manifests), never a refusal.
 	w := taskIndex(tasks, "binaries no release's manifest lists yet")
 	require.Greater(t, w, j)

@@ -257,3 +257,21 @@ func TestOldLoopUnitsAreRetired(t *testing.T) {
 		assert.True(t, mark.Match(tmpl), f)
 	}
 }
+
+// -e nova_retire_units='[...]' reaches the play as a string, and `name in` a string is a
+// substring match ("web" in "web-old"): the play refuses anything but a list first.
+func TestRetireUnitsMustBeAList(t *testing.T) {
+	t.Parallel()
+	b, err := os.ReadFile("services.yml")
+	require.NoError(t, err)
+	var plays []map[string]any
+	require.NoError(t, yaml.Unmarshal(b, &plays))
+	tasks := flattenTasks(t, tasksOf(t, plays[0]))
+	i := taskIndex(tasks, "nova_retire_units is a list")
+	require.GreaterOrEqual(t, i, 0, "services.yml takes nova_retire_units without checking it is a list")
+	a, ok := tasks[i]["ansible.builtin.assert"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "nova_retire_units is not string and nova_retire_units is not mapping and nova_retire_units is iterable", asText(a["that"]))
+	assert.Contains(t, asText(a["fail_msg"]), `-e '{"nova_retire_units":["name"]}'`)
+	assert.Less(t, i, taskIndex(tasks, "the units to retire"))
+}

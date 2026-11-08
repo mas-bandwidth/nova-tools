@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -176,14 +177,21 @@ func TestInstallFromALocalBuild(t *testing.T) {
 	plant(filepath.Join(binDir, "nova-card"), filepath.Join(binDir, "mirror-refresh"))
 	code, out, _ = runFleet(t, bin, svc...)
 	for _, w := range []string{"INSTALL localhost leftovers=1: mirror-refresh;",
-		`nova-fleet install --tag local -- -l localhost -e nova_tools_remove_enabled=true -e nova_tools_remove='["mirror-refresh"]'`,
+		`nova-fleet install --tag local -- -l localhost -e '{"nova_tools_remove_enabled":true,"nova_tools_remove":["mirror-refresh"]}'`,
 		"INSTALL localhost WARNING unrecorded=2: nova-card, nova-worker; reinstall mas-bandwidth/nova-sprint to record its names (nova-card)"} {
 		if code == 0 || !strings.Contains(out, w) {
 			t.Errorf("binaries no manifest lists yet beside a v1 mirror-refresh: exit %d, want %q:\n%s", code, w, out)
 		}
 	}
-	if err := os.Remove(filepath.Join(binDir, "mirror-refresh")); err != nil {
-		t.Fatal(err)
+	// The printed command runs: its extra vars (this run's own, the local build's among
+	// them, added) move mirror-refresh into <bin>/retired-<date>/ and the host passes.
+	m := regexp.MustCompile(`nova-fleet install --tag local -- -l localhost -e '(\{[^']*\})'`).FindStringSubmatch(out)
+	if m == nil {
+		t.Fatalf("no install command in the refusal:\n%s", out)
+	}
+	code, out, _ = runFleet(t, bin, append(svc, "-e", m[1])...)
+	if retired, _ := filepath.Glob(filepath.Join(binDir, "retired-*", "mirror-refresh")); code != 0 || len(retired) != 1 || !strings.Contains(out, "INSTALL localhost leftovers=0") {
+		t.Errorf("the printed install command: exit %d, retired %v, want mirror-refresh in retired-<date>/ and leftovers=0:\n%s", code, retired, out)
 	}
 	if err := os.WriteFile(filepath.Join(manifests, "mas-bandwidth_nova-sprint.names"), []byte("nova-sprint\nnova-worker\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -202,7 +210,7 @@ func TestInstallFromALocalBuild(t *testing.T) {
 		t.Fatal(err)
 	}
 	code, out, _ = runFleet(t, bin, svc...)
-	if code == 0 || !strings.Contains(out, "INSTALL localhost leftovers=1: nova-card;") || !strings.Contains(out, `nova_tools_remove_enabled=true -e nova_tools_remove='["nova-card"]'`) {
+	if code == 0 || !strings.Contains(out, "INSTALL localhost leftovers=1: nova-card;") || !strings.Contains(out, `-e '{"nova_tools_remove_enabled":true,"nova_tools_remove":["nova-card"]}'`) {
 		t.Errorf("one v1 binary beside what belongs: exit %d, want leftovers=1: nova-card:\n%s", code, out)
 	}
 	if got, err := os.ReadFile(filepath.Join(binDir, "nova-fleet")); err != nil || !bytes.Equal(got, b) {
@@ -224,12 +232,12 @@ func TestInstallFromALocalBuild(t *testing.T) {
 		filepath.Join(systemDir, "novadog-studio.service"), filepath.Join(systemDir, "com.nova.loop.old.plist"), filepath.Join(systemDir, "other.service"))
 	code, out, _ = runFleet(t, bin, svc...)
 	want := []string{"INSTALL localhost leftovers=7: com.nova.loop.old.plist, com.nova.loop.sweep.plist, mirror-refresh, nova-card, nova-fleet.bak, nova-loop-sweep.timer, nova-service-bus-hook.service",
-		`nova-fleet services -- -l localhost -e nova_retire_units='["bus-hook", "old", "sweep"]'`, "no play retires nova-fleet.bak yet"}
+		`nova-fleet services -- -l localhost -e '{"nova_retire_units":["bus-hook","old","sweep"]}'`, "no play retires nova-fleet.bak yet"}
 	if runtime.GOOS == "linux" {
 		want = []string{"INSTALL localhost leftovers=7: com.nova.loop.sweep.plist, mirror-refresh, nova-card, nova-fleet.bak, nova-loop-sweep.timer, nova-service-bus-hook.service, novadog-studio.service",
-			`nova-fleet services -- -l localhost -e nova_retire_units='["bus-hook", "sweep"]'`, "no play retires nova-fleet.bak, novadog-studio.service yet"}
+			`nova-fleet services -- -l localhost -e '{"nova_retire_units":["bus-hook","sweep"]}'`, "no play retires nova-fleet.bak, novadog-studio.service yet"}
 	}
-	want = append(want, `nova-fleet install --tag local -- -l localhost -e nova_tools_remove_enabled=true -e nova_tools_remove='["mirror-refresh", "nova-card"]'`)
+	want = append(want, `nova-fleet install --tag local -- -l localhost -e '{"nova_tools_remove_enabled":true,"nova_tools_remove":["mirror-refresh","nova-card"]}'`)
 	for _, w := range want {
 		if code == 0 || !strings.Contains(out, w) {
 			t.Errorf("leftovers beside the install: exit %d, want %q:\n%s", code, w, out)

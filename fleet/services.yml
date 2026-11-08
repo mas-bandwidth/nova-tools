@@ -99,6 +99,16 @@
           list is valid
         quiet: true
 
+    # -e nova_retire_units='[...]' is a string, and name in a string is a substring
+    # match ("web" in "web-old"): only a list is taken.
+    - name: nova_retire_units is a list
+      ansible.builtin.assert:
+        that: nova_retire_units is not string and nova_retire_units is not mapping and nova_retire_units is iterable
+        fail_msg: >-
+          nova_retire_units must be a list of record names, given as JSON: -e '{"nova_retire_units":["name"]}'
+          (a key=value -e is a string); got {{ nova_retire_units | string }}
+        quiet: true
+
     - name: every record nova_service_only names is on one of this run's machines
       ansible.builtin.assert:
         that: service_only | reject('in', service_all) | list | length == 0

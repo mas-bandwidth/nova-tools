@@ -286,7 +286,8 @@ nova-fleet install -- -e nova_tools_version=local -e nova_tools_local_dir=$PWD/d
 found in the bin directory is moved to `<nova_bin_dir>/retired-<date>/`, never deleted; a name not there is skipped.
 A name also being installed is refused. The default list is the rows of `retired-tools.txt` that say `retired` or
 `rowan-tools`; another product's binaries are never in it. To retire more, name the whole list:
-`-e nova_tools_remove_enabled=true -e nova_tools_remove='["nova-sprint","nova-card"]'`. Unix machines only.
+`-e '{"nova_tools_remove_enabled":true,"nova_tools_remove":["nova-sprint","nova-card"]}'` (JSON: a `key=value` `-e` is a
+string, never a list). Unix machines only.
 
 **Leftovers.** Last, after the install has happened, the play reads what an older install left beside the new binaries
 and prints one line per host, `INSTALL <host> leftovers=<n>: <names>` (or `leftovers=0`). It reads the bin directory for
@@ -303,9 +304,9 @@ git credential helper every machine has); a friend's nova-bus hook unit (`nova-b
 with a NOTE saying so.
 
 A leftover fails the host, and the refusal names the plays that retire it, names filled in:
-`nova-fleet install --tag <tag> -- -l <host> -e nova_tools_remove_enabled=true -e nova_tools_remove='[...]'` for a binary
+`nova-fleet install --tag <tag> -- -l <host> -e '{"nova_tools_remove_enabled":true,"nova_tools_remove":[...]}'` for a binary
 nova-tools retired (`retired-tools.txt`, retired or rowan-tools), or one nova-sprint retired when nova-sprint's manifest is
-on the machine and does not list it; `nova-fleet services -- -l <host> -e nova_retire_units='[...]'` for a unit of the
+on the machine and does not list it; `nova-fleet services -- -l <host> -e '{"nova_retire_units":[...]}'` for a unit of the
 services play's shapes (`nova-service-*`, `nova-loop-*`, `com.nova.service.*`, `com.nova.loop.*`); and, named on its own,
 what no play retires yet. Any other binary may belong to a release installed before manifests were written: it is a
 `WARNING unrecorded=<n>` with `reinstall <repo> to record its names`, never a refusal. The play removes nothing itself.
