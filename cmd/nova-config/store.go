@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"maps"
 	"strconv"
 	"strings"
@@ -153,22 +154,25 @@ func arg(f field, v string) any {
 }
 
 // writeSQL is the statement of a write and its arguments: the fields are
-// named, so a column this tool does not know keeps its default.
-func writeSQL(k *kind, op, name string, after Row) (string, []any) {
+// named, so a column this tool does not know keeps its default. A set or a
+// remove touches the row only while its fields read as before, as List reads them.
+func writeSQL(k *kind, op, name string, before, after Row) (string, []any) {
 	args := []any{name}
-	var cols, marks, sets []string
+	var cols, marks, sets, olds []string
 	for _, f := range k.fields {
 		args = append(args, arg(f, after.F[f.name]))
 		n := "$" + strconv.Itoa(len(args))
 		cols, marks, sets = append(cols, ident(f.name)), append(marks, n), append(sets, ident(f.name)+" = "+n)
+		olds = append(olds, "'"+f.name+"', coalesce("+ident(f.name)+"::text, '')")
 	}
+	same := " AND jsonb_build_object(" + strings.Join(olds, ", ") + ") = $%d::jsonb"
 	switch op {
 	case "add":
 		return "INSERT INTO config." + k.table + " (name, " + strings.Join(cols, ", ") + ") VALUES ($1, " + strings.Join(marks, ", ") + ")", args
 	case "set":
-		return "UPDATE config." + k.table + " SET " + strings.Join(sets, ", ") + ", updated_at = now() WHERE name = $1", args
+		return "UPDATE config." + k.table + " SET " + strings.Join(sets, ", ") + ", updated_at = now() WHERE name = $1" + fmt.Sprintf(same, len(args)+1), append(args, jsonb(before.F))
 	}
-	return "DELETE FROM config." + k.table + " WHERE name = $1", args[:1]
+	return "DELETE FROM config." + k.table + " WHERE name = $1" + fmt.Sprintf(same, 2), []any{name, jsonb(before.F)}
 }
 
 func (p pgStore) Write(ctx context.Context, k *kind, op string, before, after Row, actor, reason string) (int64, error) {
@@ -181,8 +185,9 @@ func (p pgStore) Write(ctx context.Context, k *kind, op string, before, after Ro
 	if name == "" {
 		name = before.Name
 	}
-	q, args := writeSQL(k, op, name, after)
-	if _, err := tx.Exec(ctx, q, args...); err != nil {
+	q, args := writeSQL(k, op, name, before, after)
+	tag, err := tx.Exec(ctx, q, args...)
+	if err != nil {
 		var pe *pgconn.PgError
 		if errors.As(err, &pe) && strings.HasPrefix(pe.Code, "23") { // integrity: unique, foreign key, check
 			_ = tx.Rollback(ctx) // ignored: the failed statement aborted it; the lists below need the connection
@@ -191,6 +196,9 @@ func (p pgStore) Write(ctx context.Context, k *kind, op string, before, after Ro
 			return 0, diagnose(pe, k, op, name, after, machines, services)
 		}
 		return 0, p.Err(err, op)
+	}
+	if tag.RowsAffected() == 0 {
+		return 0, refused("%s %s was changed or removed by another write since it was read; nothing written; run: nova-config %s show %s, then again", k.name, name, k.name, name)
 	}
 	b, a := before.F, after.F
 	if reason != "" && a != nil {
