@@ -188,31 +188,12 @@ func (f *fake) Claim(ctx context.Context, name, value string, ttl time.Duration)
 	return "", nil
 }
 
-func (f *fake) Hold(ctx context.Context, name, value string, ttl time.Duration) (string, error) {
-	if ctx.Err() != nil {
-		return "", ctx.Err()
-	}
-	if f.live(name) && !strings.Contains(f.presence[name], "\trecv") {
-		return f.presence[name], nil
-	}
-	f.presence[name], f.deadline[name] = value, f.clock.Add(ttl)
-	f.claims = append(f.claims, f.clock)
-	return "", nil
-}
-
 // claim is Claim for a test's setup: it must succeed.
 func (f *fake) claim(t *testing.T, name, value string, ttl time.Duration) {
 	t.Helper()
 	held, err := f.Claim(context.Background(), name, value, ttl)
 	require.NoError(t, err)
 	require.Empty(t, held)
-}
-
-func (f *fake) Left(_ context.Context, name string) (time.Duration, error) {
-	if !f.live(name) {
-		return 0, nil
-	}
-	return f.deadline[name].Sub(f.clock), nil
 }
 
 func (f *fake) Release(ctx context.Context, name, value string) error {
@@ -396,7 +377,7 @@ func TestRefusals(t *testing.T) {
 		{"send with three arguments", testEnv, []string{"send", "--as", "a", "--to", "beta", "s", "b", "c"}, "not 3 arguments"},
 		{"send without --to", testEnv, []string{"send", "--as", "a", "s", "b"}, "missing --to <name>;"},
 		{"empty name", testEnv, []string{"send", "--as", "a", "--to", "a,,b", "s", "b"}, "empty name"},
-		{"unknown verb", testEnv, []string{"peek"}, "nova-bus: unknown verb \"peek\"; verbs: send, hook, recv, ack, who, pending, show, help; run: nova-bus help\n"},
+		{"unknown verb", testEnv, []string{"peek"}, "nova-bus: unknown verb \"peek\"; verbs: send, hook, who, pending, show, help; run: nova-bus help\n"},
 		{"delete is not a verb", testEnv, []string{"delete", "--as", "beta"}, "unknown verb \"delete\""},
 		{"help for an unknown verb", testEnv, []string{"help", "delete"}, "unknown verb \"delete\""},
 		{"unknown flag", testEnv, []string{"hook", "--as", "beta", "--nope"}, "nova-bus hook: unknown flag --nope; run: nova-bus hook -h\n"},
@@ -463,7 +444,7 @@ func TestHelp(t *testing.T) {
 			assert.Contains(t, out, "  nova-bus "+v, args)
 		}
 	}
-	for _, v := range []string{"send", "hook", "recv", "ack", "who", "pending", "show"} {
+	for _, v := range []string{"send", "hook", "who", "pending", "show"} {
 		for _, args := range [][]string{{v, "-h"}, {v, "--help"}, {"help", v}} {
 			code, out, errOut := call(t, newFake(), nil, "", args...)
 			assert.Equal(t, 0, code, args)
@@ -861,7 +842,7 @@ func TestReconnectIsLoggedOnceAMinute(t *testing.T) {
 }
 
 // An entry send did not write (no from or subject) is not mail: the hook
-// says so on stdout and acks it; recv says so on stderr, acks it, exits 1.
+// says so on stdout and acks it.
 func TestMalformedEntryIsSaidAndAckedNotDelivered(t *testing.T) {
 	t.Parallel()
 	f := newFake()
@@ -871,17 +852,6 @@ func TestMalformedEntryIsSaidAndAckedNotDelivered(t *testing.T) {
 	assert.Equal(t, "HOOK BAD id=1-0 missing=from,subject\nHOOK BAD id=2-0 missing=subject\n3-0\talpha\t-\treal\tz\n", out)
 	assert.Empty(t, f.pending["bus:beta"], "acked away")
 	assert.Equal(t, []string{"print HOOK BAD id=1-0 missing=from,subject\n", "ack 1-0", "print HOOK BAD id=2-0 missing=subject\n", "ack 2-0", "print 3-0", "ack 3-0"}, f.log)
-
-	f = newFake()
-	f.entries["bus:beta"] = append(f.entries["bus:beta"], Msg{ID: "1-0", Fields: map[string]string{"body": "x"}})
-	send(t, f, "real", "z")
-	code, out, errOut := call(t, f, testEnv, "", "recv", "--as", "beta")
-	assert.Equal(t, 1, code)
-	assert.Empty(t, out)
-	assert.Equal(t, "RECV BAD id=1-0 missing=from,subject\n", errOut)
-	code, out, _ = call(t, f, testEnv, "", "recv", "--as", "beta")
-	assert.Equal(t, 0, code)
-	assert.Equal(t, "2-0\talpha\t-\treal\tz\n", out, "the next recv reads on")
 }
 
 // refusing answers every Claim with err; after stop Claims it ends the
