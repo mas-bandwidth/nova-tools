@@ -245,6 +245,9 @@ func TestWindowsRetireV1ShipsNothingOfCaptain(t *testing.T) {
 	if !strings.Contains(del, "Remove-Item -LiteralPath $i.FullName -Recurse -Force") || strings.Contains(retire+del, "Move-Aside") {
 		t.Error("v1 is deleted, never moved aside")
 	}
+	if !strings.Contains(del, "Get-Item -LiteralPath $Path") || strings.Contains(del, "Get-Item -Path") || !strings.Contains(del, "REFUSED $Path") {
+		t.Error("delete takes one literal path and refuses a pattern, a drive root or a system folder")
+	}
 	if strings.Contains(strings.ToLower(ps), "netfirewallrule") {
 		t.Error("runner-windows.ps1 touches a firewall rule; the firewall is kept")
 	}

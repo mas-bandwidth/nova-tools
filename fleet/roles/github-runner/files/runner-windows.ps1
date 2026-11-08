@@ -165,9 +165,13 @@ switch ($Action) {
   }
   'delete' {
     Need-Admin
-    $items = @(Get-Item -Path $Path -Force -ErrorAction SilentlyContinue)
-    if ($items.Count -eq 0) { "ABSENT $Path"; exit 0 }
-    foreach ($i in $items) { Remove-Item -LiteralPath $i.FullName -Recurse -Force; "DELETED $($i.FullName)" }
+    # One literal path, never a pattern, and never a drive root or a system folder: a v1 leftover is a folder below one.
+    if ($Path -notmatch '^[A-Za-z]:\\[^\\*?]+(\\[^\\*?]+)*$' -or $Path -match '^[A-Za-z]:\\(Windows|Program Files|Program Files \(x86\)|ProgramData|Users)(\\|$)') {
+      "REFUSED $Path (a literal path below a drive root, outside the system folders)"; exit 5
+    }
+    $i = Get-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
+    if (-not $i) { "ABSENT $Path"; exit 0 }
+    Remove-Item -LiteralPath $i.FullName -Recurse -Force; "DELETED $($i.FullName)"
   }
   'untask' {
     Need-Admin
