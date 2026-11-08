@@ -3,7 +3,9 @@
 # The install play's default retire list (nova_tools_remove) is the rows that say
 # rowan-tools or retired, and nothing else: another product's binaries (the
 # sprint rows) are never in it. A name here is never also a binary this
-# repository builds.
+# repository builds. The v1-era binaries the fleet carried beside the v1 tools
+# (mirror-refresh, disk-guard, ci-hold-broker, nova-card-push) are rows too, so the
+# install's leftover check refuses a host that still has one.
 nova-card	2026-11-05	sprint
 nova-work	2026-11-05	sprint
 nova-sprint	2026-11-05	sprint
@@ -26,3 +28,7 @@ nova-version	2026-11-05	retired
 nova-slot	2026-11-05	retired (renamed nova-reserve)
 nova-memory	2026-11-05	retired (verbs of nova-cairn: nova-cairn memory)
 nova-self-talk	2026-11-05	retired (verbs of nova-cairn: nova-cairn self-talk)
+mirror-refresh	2026-11-07	retired (v1 swarm mirror loop; its loops saturated the link 2026-11-07)
+disk-guard	2026-11-07	retired (v1 swarm disk guard)
+ci-hold-broker	2026-11-07	retired (v1 captain CI hold broker)
+nova-card-push	2026-11-07	retired (v1-era card push helper)

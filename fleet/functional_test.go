@@ -171,10 +171,19 @@ func TestInstallFromALocalBuild(t *testing.T) {
 	plant(allowed...)
 	// Before nova-sprint's manifest is written (a release installed before this check), its
 	// binaries are a warning, never a refusal and never advice to remove them.
-	plant(filepath.Join(binDir, "nova-card"))
-	if code, out, _ = runFleet(t, bin, svc...); code != 0 || !strings.Contains(out, "INSTALL localhost leftovers=0") ||
-		!strings.Contains(out, "INSTALL localhost WARNING unrecorded=2: nova-card, nova-worker; reinstall mas-bandwidth/nova-sprint to record its names (nova-card)") {
-		t.Errorf("binaries no manifest lists yet: exit %d, want leftovers=0 and the warning:\n%s", code, out)
+	// A v1 binary no release ships (mirror-refresh, whose loops saturated the link on
+	// 2026-11-07) is refused whatever manifests say, with the play that retires it.
+	plant(filepath.Join(binDir, "nova-card"), filepath.Join(binDir, "mirror-refresh"))
+	code, out, _ = runFleet(t, bin, svc...)
+	for _, w := range []string{"INSTALL localhost leftovers=1: mirror-refresh;",
+		`nova-fleet install --tag local -- -l localhost -e nova_tools_remove_enabled=true -e nova_tools_remove='["mirror-refresh"]'`,
+		"INSTALL localhost WARNING unrecorded=2: nova-card, nova-worker; reinstall mas-bandwidth/nova-sprint to record its names (nova-card)"} {
+		if code == 0 || !strings.Contains(out, w) {
+			t.Errorf("binaries no manifest lists yet beside a v1 mirror-refresh: exit %d, want %q:\n%s", code, w, out)
+		}
+	}
+	if err := os.Remove(filepath.Join(binDir, "mirror-refresh")); err != nil {
+		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(manifests, "mas-bandwidth_nova-sprint.names"), []byte("nova-sprint\nnova-worker\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -207,27 +216,26 @@ func TestInstallFromALocalBuild(t *testing.T) {
 	}
 
 	// v1 binaries and units no role or record names; the install still happens, then the
-	// host is refused, naming them and the plays that retire them. mirror-refresh no
-	// manifest lists is a warning; nova-fleet.bak no play can retire. On macOS a headless
+	// host is refused, naming them and the plays that retire them; nova-fleet.bak no play
+	// can retire. On macOS a headless
 	// Mac's units are in /Library/LaunchDaemons (systemDir stands in).
 	plant(filepath.Join(binDir, "mirror-refresh"), filepath.Join(binDir, "nova-fleet.bak"),
 		filepath.Join(unitDir, "nova-service-bus-hook.service"), filepath.Join(unitDir, "com.nova.loop.sweep.plist"),
 		filepath.Join(systemDir, "novadog-studio.service"), filepath.Join(systemDir, "com.nova.loop.old.plist"), filepath.Join(systemDir, "other.service"))
 	code, out, _ = runFleet(t, bin, svc...)
-	want := []string{"INSTALL localhost leftovers=6: com.nova.loop.old.plist, com.nova.loop.sweep.plist, nova-card, nova-fleet.bak, nova-loop-sweep.timer, nova-service-bus-hook.service",
+	want := []string{"INSTALL localhost leftovers=7: com.nova.loop.old.plist, com.nova.loop.sweep.plist, mirror-refresh, nova-card, nova-fleet.bak, nova-loop-sweep.timer, nova-service-bus-hook.service",
 		`nova-fleet services -- -l localhost -e nova_retire_units='["bus-hook", "old", "sweep"]'`, "no play retires nova-fleet.bak yet"}
 	if runtime.GOOS == "linux" {
-		want = []string{"INSTALL localhost leftovers=6: com.nova.loop.sweep.plist, nova-card, nova-fleet.bak, nova-loop-sweep.timer, nova-service-bus-hook.service, novadog-studio.service",
+		want = []string{"INSTALL localhost leftovers=7: com.nova.loop.sweep.plist, mirror-refresh, nova-card, nova-fleet.bak, nova-loop-sweep.timer, nova-service-bus-hook.service, novadog-studio.service",
 			`nova-fleet services -- -l localhost -e nova_retire_units='["bus-hook", "sweep"]'`, "no play retires nova-fleet.bak, novadog-studio.service yet"}
 	}
-	want = append(want, `nova-fleet install --tag local -- -l localhost -e nova_tools_remove_enabled=true -e nova_tools_remove='["nova-card"]'`,
-		"INSTALL localhost WARNING unrecorded=1: mirror-refresh;")
+	want = append(want, `nova-fleet install --tag local -- -l localhost -e nova_tools_remove_enabled=true -e nova_tools_remove='["mirror-refresh", "nova-card"]'`)
 	for _, w := range want {
 		if code == 0 || !strings.Contains(out, w) {
 			t.Errorf("leftovers beside the install: exit %d, want %q:\n%s", code, w, out)
 		}
 	}
-	if strings.Contains(out, "by hand") {
+	if strings.Contains(out, "by hand") || strings.Contains(out, "WARNING unrecorded") {
 		t.Errorf("the refusal sends the operator to do it by hand:\n%s", out)
 	}
 	for _, f := range []string{"nova-card", "mirror-refresh", "nova-fleet.bak"} {

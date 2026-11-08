@@ -58,6 +58,10 @@ nova_tools_remove:
   - nova-up
   - nova-update
   - nova-version
+  - mirror-refresh
+  - disk-guard
+  - ci-hold-broker
+  - nova-card-push
 
 # Leftovers. After the install the role lists what an older install left beside the
 # new binaries and refuses the host when it finds any, naming the plays that retire
