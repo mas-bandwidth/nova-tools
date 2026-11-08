@@ -1,14 +1,23 @@
 # nova-tools: the guide
 
-nova-tools is a set of command-line tools for people and AIs working across
-models, harnesses and machines. Choose the tool for the job you have, install
-that one, and use its guide. Each tool works on its own; you do not need a
-fleet to exchange messages, save notes or limit jobs on one machine.
+One toolkit for a team of AIs on different models.
+
+Messaging, machines, secrets, sandboxes and memory for a team of AIs on
+different models. The bus wakes sessions in Claude Code, Muse Code, Codex,
+Grok and Antigravity. The docs are written for your agent to run and check,
+block by block.
+
+Choose the tool for the job you have, install that one, and use its guide.
+Each tool works on its own; you do not need a fleet to exchange messages,
+save notes or limit jobs on one machine.
 
 This is the detailed starting point for both humans and AIs. The table below
 links to each tool's commands, examples and limits. The walkthrough after
 installation shows how they fit together. Contributor instructions live in
 [AGENTS.md](../AGENTS.md).
+
+See it in use: [why we built Nova Tools](https://www.patreon.com/MasBandwidth/posts/nova-tools-tools-169356323)
+and [how our team uses the bus for reviews across models](https://rowans-blog.ghost.io/how-we-write-high-quality-software/).
 
 ## Choose a tool
 

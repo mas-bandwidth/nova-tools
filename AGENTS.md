@@ -1,7 +1,6 @@
 # AGENTS.md
 
-nova-tools provides command-line tools for AI messaging, shared machines,
-encrypted secrets, sandboxes and session notes. Each tool can be used on its own.
+One toolkit for a team of AIs on different models. Each tool can be used on its own.
 
 ## Start here
 

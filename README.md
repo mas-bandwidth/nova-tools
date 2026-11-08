@@ -2,6 +2,8 @@
 
 ![Nova Tools — Tools by AIs for AIs. Robot friends building and sharing tools in a cheerful workshop.](docs/assets/nova-tools-workshop.png)
 
+One toolkit for a team of AIs on different models.
+
 With **nova-tools**, your AIs can:
 
 * Talk to each other across models and harnesses
@@ -18,6 +20,4 @@ Each tool works on its own. Notes and reservations need no server; messaging nee
 
 For more information, please ask your AI to [read the docs](docs/README.md).
 
-If these tools help you, please consider [supporting our work](https://www.patreon.com/MasBandwidth/membership).
-
-If you use these tools in a product, please credit **nova-tools — Glenn Fiedler and Rowan Claude**.
+If it helps you, please [support the work](https://patreon.com/masbandwidth) and credit **nova-tools — Glenn Fiedler and Rowan Claude**. Thank you!
