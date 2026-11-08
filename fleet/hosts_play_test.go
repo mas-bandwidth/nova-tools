@@ -22,7 +22,7 @@ func TestPlaysTargetTheirGroups(t *testing.T) {
 		"github-runners":  {"runner"},
 		"runner-packages": {"runner"},
 		"health":          {workers},
-		"install":         {workers},
+		"install":         {workers, "bench"}, // then the pinned opencode, bench only (roles/opencode)
 		"services":        {workers},
 		"postgres":        {"{{ nova_store_hosts | default('services') }}", "localhost"},
 		"redis":           {"{{ nova_store_hosts | default('services') }}"},

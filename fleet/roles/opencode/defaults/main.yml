@@ -1,0 +1,38 @@
+---
+# The opencode a bench worker runs (nova-sprint's opencode harness), installed by install.yml for the bench group
+# (fleet/README.md, "install", opencode). Pinned to 1.x: opencode 2.x starts a managed background service on a fixed
+# port unless given --standalone, which 1.x rejects, and the adapter speaks 1.x.
+nova_opencode_version: "1.18.20"
+
+# The official release of sst/opencode: one archive per platform, each pinned by the sha256 GitHub publishes for the
+# asset (gh release view v1.18.20 --repo sst/opencode --json assets). The Linux archive holds the binary the benches
+# ran by hand before this role (sha256 5dce99ea...41b16 on linux-amd64, measured 2026-11-08).
+nova_opencode_release_url: "https://github.com/sst/opencode/releases/download/v{{ nova_opencode_version }}"
+nova_opencode_assets:
+  linux-amd64: opencode-linux-x64.tar.gz
+  linux-arm64: opencode-linux-arm64.tar.gz
+  darwin-arm64: opencode-darwin-arm64.zip
+  darwin-amd64: opencode-darwin-x64.zip
+nova_opencode_sha256:
+  linux-amd64: 8603214aa1e2e18f9312360c9360dfae6174f5cff6dc4f72b6045c80608af4d4
+  linux-arm64: 4c85612e92e8bca95628cadf7dcd92d4150105954004758b2910f868d97ba741
+  darwin-arm64: b483e547c029b4f0ba381f0d0c5b420bec48c24c2bbec1fb7f22252bae83da46
+  darwin-amd64: abff81c995a137273526044b528ae0dc66b1aafdebd47198a875e7700a571340
+
+# Where it goes: the tools' directory, which every service unit's PATH starts with (nova_service_path), so a worker
+# finds it ahead of Homebrew's or /usr/local/bin's. The binary is opencode.bin; opencode is a wrapper beside it that
+# sets nova_opencode_env and execs it (the wall grants read on the directory opencode is found in, so both live there).
+nova_opencode_bin_dir: "{{ nova_bin_dir }}"
+# The fetched archive is kept here, out of the bin directory, so a second run downloads nothing.
+nova_opencode_cache_dir: "{{ nova_home }}/.cache/nova/opencode"
+
+# The environment the wrapper sets (the hand-made bench wrapper's since 2026-10-13; nova-sprint's wall passes no
+# OPENCODE_* variable through, so it cannot come from the unit).
+nova_opencode_env:
+  OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER: "1"
+  OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX: "128000"
+
+# What this role writes where an install's leftover check reads (nova-tools-install, fleet/README.md "install",
+# Leftovers): bin is the bin directory. opencode_play_test.go holds it to the names the tasks write.
+nova_opencode_owns:
+  bin: [opencode, opencode.bin]

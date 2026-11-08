@@ -1,0 +1,107 @@
+---
+# The opencode role (install.yml, the bench group): nova_opencode_version from the release archive at its pinned
+# digest, unpacked as <bin dir>/opencode.bin, with the wrapper <bin dir>/opencode beside it. Nothing else is touched:
+# another opencode on the machine (Homebrew's, /usr/local/bin's) stays where it is, behind nova_bin_dir on the units'
+# PATH. A second run downloads and changes nothing. One line per machine: OPENCODE <host> version=<v> path=<wrapper>.
+- name: the platform
+  ansible.builtin.set_fact:
+    nova_opencode_platform: >-
+      {{ 'windows-amd64' if ansible_facts['os_family'] == 'Windows' else
+         ((nova_system | default(ansible_facts['system'])) | lower) ~ '-' ~
+         ({'x86_64': 'amd64', 'amd64': 'amd64', 'aarch64': 'arm64', 'arm64': 'arm64'}[ansible_facts['architecture']] | default(ansible_facts['architecture'])) }}
+
+- name: no pinned opencode for this platform (Windows' runs in WSL, outside the plays)
+  ansible.builtin.debug:
+    msg: "OPENCODE {{ inventory_hostname }} skipped: no pinned archive for {{ nova_opencode_platform }}"
+  when: nova_opencode_platform not in nova_opencode_sha256
+
+- name: the pinned opencode
+  when: nova_opencode_platform in nova_opencode_sha256
+  vars:
+    nova_opencode_archive_path: "{{ nova_opencode_cache_dir }}/v{{ nova_opencode_version }}-{{ nova_opencode_assets[nova_opencode_platform] }}"
+  block:
+    - name: what opencode.bin answers now (a read; none is stale)
+      ansible.builtin.command:
+        argv: ["{{ nova_opencode_bin_dir }}/opencode.bin", --version]
+      register: nova_opencode_now
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: the cache and bin directories
+      ansible.builtin.file: { path: "{{ item }}", state: directory }   # an existing directory keeps its mode
+      loop: ["{{ nova_opencode_cache_dir }}", "{{ nova_opencode_bin_dir }}"]
+      register: nova_opencode_dirs
+
+    - name: the release archive, at its pinned digest
+      ansible.builtin.get_url:
+        url: "{{ nova_opencode_release_url }}/{{ nova_opencode_assets[nova_opencode_platform] }}"
+        dest: "{{ nova_opencode_archive_path }}"
+        checksum: "sha256:{{ nova_opencode_sha256[nova_opencode_platform] }}"
+        mode: "0644"
+      when: not (ansible_check_mode and nova_opencode_dirs is changed)
+
+    # Unpacked only when opencode.bin is missing or answers another version: into a scratch directory, then copied in
+    # under its own name (the archive's one member is opencode, the wrapper's name).
+    - name: the binary, unpacked as opencode.bin
+      when: (nova_opencode_now.stdout | default('') | trim) != nova_opencode_version and not ansible_check_mode
+      block:
+        - name: a scratch directory
+          ansible.builtin.tempfile: { state: directory, prefix: nova-opencode. }
+          register: nova_opencode_tmp
+
+        - name: the archive, unpacked
+          ansible.builtin.unarchive:
+            src: "{{ nova_opencode_archive_path }}"
+            dest: "{{ nova_opencode_tmp.path }}"
+            remote_src: true
+
+        - name: opencode.bin in the bin directory
+          ansible.builtin.copy:
+            src: "{{ nova_opencode_tmp.path }}/opencode"
+            dest: "{{ nova_opencode_bin_dir }}/opencode.bin"
+            remote_src: true
+            mode: "0755"
+
+        - name: the scratch directory, removed
+          ansible.builtin.file: { path: "{{ nova_opencode_tmp.path }}", state: absent }
+
+    - name: would install opencode.bin
+      ansible.builtin.debug:
+        msg: "WOULD-INSTALL opencode {{ nova_opencode_version }} into {{ nova_opencode_bin_dir }}/opencode.bin (it answers {{ (nova_opencode_now.stdout | default('') | trim) or 'nothing' }})"
+      changed_when: true
+      when: (nova_opencode_now.stdout | default('') | trim) != nova_opencode_version and ansible_check_mode
+
+    - name: the wrapper, opencode
+      ansible.builtin.copy:
+        dest: "{{ nova_opencode_bin_dir }}/opencode"
+        mode: "0755"
+        content: |
+          #!/bin/sh
+          # opencode {{ nova_opencode_version }}, from nova-tools fleet/roles/opencode: the binary is opencode.bin beside it
+          {% for k, v in nova_opencode_env | dictsort %}
+          export {{ k }}={{ v | quote }}
+          {% endfor %}
+          exec "$(dirname "$0")/opencode.bin" "$@"
+      when: not (ansible_check_mode and nova_opencode_dirs is changed)
+
+    - name: what opencode answers (a read)
+      ansible.builtin.command:
+        argv: ["{{ nova_opencode_bin_dir }}/opencode", --version]
+      register: nova_opencode_answer
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: the receipt
+      ansible.builtin.debug:
+        msg: "OPENCODE {{ inventory_hostname }} version={{ (nova_opencode_answer.stdout | default('') | trim) or 'none' }} path={{ nova_opencode_bin_dir }}/opencode"
+
+    - name: opencode answers the pinned version
+      ansible.builtin.assert:
+        quiet: true
+        that: (nova_opencode_answer.stdout | default('') | trim) == nova_opencode_version
+        fail_msg: >-
+          OPENCODE {{ inventory_hostname }}: {{ nova_opencode_bin_dir }}/opencode answers
+          {{ (nova_opencode_answer.stdout | default('') | trim) or (nova_opencode_answer.msg | default('nothing')) }}, not {{ nova_opencode_version }}
+      when: not ansible_check_mode

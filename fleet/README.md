@@ -283,6 +283,15 @@ nova-fleet install -- -e nova_tools_version=local -e nova_tools_local_dir=$PWD/d
 
 `nova-fleet up --tools $PWD/dist` does the same for every machine.
 
+**opencode.** After the tools, the bench group gets the opencode nova-sprint's workers run (`roles/opencode`):
+`nova_opencode_version` (1.18.20; 1.x, since 2.x starts a background service on a fixed port) from sst/opencode's
+release archive for the platform, checked against `nova_opencode_sha256` (the digests GitHub publishes for each asset),
+unpacked as `<nova_bin_dir>/opencode.bin`, with `<nova_bin_dir>/opencode` a wrapper that sets `nova_opencode_env` and
+execs it. The archive is kept in `~/.cache/nova/opencode`, so a second run downloads and changes nothing. Every service
+unit's PATH starts with `nova_bin_dir` (`nova_service_path`), so a worker finds this one ahead of Homebrew's or
+`/usr/local/bin`'s, which are left alone. One line per machine: `OPENCODE <host> version=<v> path=<wrapper>`; a Windows
+machine is skipped.
+
 **Retiring.** With `-e nova_tools_remove_enabled=true`, after a successful install each name in `nova_tools_remove`
 found in the bin directory is moved to `<nova_bin_dir>/retired-<date>/`, never deleted; a name not there is skipped.
 A name also being installed is refused. The default list is the rows of `retired-tools.txt` that say `retired` or

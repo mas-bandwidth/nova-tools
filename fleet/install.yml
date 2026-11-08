@@ -7,6 +7,8 @@
 # Last it lists what an older install left beside the new binaries (binaries the
 # release does not list, units no service record names), one INSTALL line per
 # host, and refuses a host with any; it removes nothing itself.
+# Then the bench group gets the opencode its workers run, at the version and digest
+# roles/opencode/defaults/main.yml pins, into the same bin directory.
 #
 #   nova-fleet install --check --diff -- -e nova_tools_version=v1.0.0 -l <machine>
 #   nova-fleet install -- -e nova_tools_version=v1.0.0 -l <machine>
@@ -24,3 +26,10 @@
   gather_subset: [min]
   roles:
     - nova-tools-install
+
+- name: the pinned opencode a bench worker runs
+  hosts: bench
+  gather_facts: true
+  gather_subset: [min]
+  roles:
+    - opencode
