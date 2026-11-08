@@ -560,13 +560,15 @@ func (t tool) seatAdd(args []string) error {
 	}
 	home, _ := os.UserHomeDir()
 	pins := cmp.Or(envValue(t.environ, "NOVA_SECRETS_PINS"), filepath.Join(cmp.Or(envValue(t.environ, "HOME"), home), ".config", "nova-secrets", "pins"))
-	// next runs from this machine: set needs this node's own seat and key (a new seat's key is on its own machine)
-	own := t.ownSeat()
-	then := next("age-keygen", "-o", t.keyFile(own))
-	if _, err := os.Stat(t.keyFile(own)); err == nil {
-		then = next("nova-secrets", "set", "DB_PASSWORD", "--as", own, "--store", o.store, "--key", t.keyFile(own), "--pins", pins)
+	// next: set as the seat just added, on this store; --key only when this machine holds that seat's key, else set reads NOVA_SECRETS_KEY
+	then := []string{"nova-secrets", "set", "DB_PASSWORD", "--as", seat, "--store", o.store}
+	key := t.keyFile(seat)
+	if _, err := os.Stat(key); err == nil {
+		if k, err := t.publicOf(opts{store: o.store, key: key}); err == nil && k == pub {
+			then = append(then, "--key", key)
+		}
 	}
-	fmt.Fprintf(t.stdout, "SECRETS SEAT ADD OK seat=%s committed\nnext: %s\n", seat, then)
+	fmt.Fprintf(t.stdout, "SECRETS SEAT ADD OK seat=%s committed\nnext: %s\n", seat, next(append(then, "--pins", pins)...))
 	return nil
 }
 
