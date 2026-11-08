@@ -1,12 +1,16 @@
 ---
 # The postgres role (cmd/nova-fleet/postgres.yml): nova-config's PostgreSQL. The Debian cluster <version>/<cluster> is adopted
-# as it is: this role owns its conf.d/nova.conf, its pg_hba.conf, the database, nova-config's three roles and their
-# grants, and the nightly dump, and nothing else under /etc/postgresql. It never drops a role or a database.
+# as it is: this role owns its conf.d/nova.conf, its pg_hba.conf, the database, the roles of nova_pg_roles and the
+# schemas they own, nova-config's grants, and the nightly dump, and nothing else under /etc/postgresql. It never drops
+# a role, a schema or a database.
 - name: a Debian-family machine
   ansible.builtin.assert:
     that: ansible_facts['os_family'] == 'Debian'
     fail_msg: "{{ inventory_hostname }} is {{ ansible_facts['os_family'] }}: postgres.yml installs PostgreSQL with apt"
     quiet: true
+
+- name: the roles, checked before anything changes (pg_roles)
+  ansible.builtin.include_tasks: roles.yml
 
 - name: the tailnet address (when nova_pg_listen is empty)
   ansible.builtin.command: tailscale ip -4
@@ -22,7 +26,8 @@
     pg_unit: "postgresql@{{ nova_pg_version }}-{{ nova_pg_cluster }}"
     pg_conf_dir: "/etc/postgresql/{{ nova_pg_version }}/{{ nova_pg_cluster }}"
     pg_psql: "sudo -n -u postgres psql -X -qAt -v ON_ERROR_STOP=1"   # the unix socket, peer (pg_hba: local postgres peer)
-    pg_role_names_sql: "'{{ nova_pg_roles | map(attribute='name') | join(\"','\") }}'"
+    pg_role_names_sql: "'{{ pg_roles | map(attribute='name') | join(\"','\") }}'"
+    pg_schemas: "{{ pg_roles | selectattr('schema') | list }}"
 
 - name: an address to listen on
   ansible.builtin.assert:
@@ -81,7 +86,7 @@
 - name: a password per role, made once on this machine (it leaves only through nova-secrets)
   ansible.builtin.shell: "umask 077; openssl rand -hex 32 > {{ nova_pg_dir }}/{{ item.name }}.pass"
   args: { creates: "{{ nova_pg_dir }}/{{ item.name }}.pass" }
-  loop: "{{ nova_pg_roles }}"
+  loop: "{{ pg_roles }}"
   loop_control: { label: "{{ item.name }}" }
   no_log: true
   failed_when: false
@@ -152,12 +157,12 @@
     pg_role_plan: "{{ pg_role_plan | default({}) | combine({item.name: ('create' if line | length == 0 else ('alter' if line[0] != item.name ~ '|' ~ item.want else 'current'))}) }}"
   vars:
     line: "{{ pg_roles_read.stdout_lines | select('match', '^' ~ item.name ~ '\\|') | list }}"
-  loop: "{{ nova_pg_roles }}"
+  loop: "{{ pg_roles }}"
   loop_control: { label: "{{ item.name }}" }
 
 - name: create or alter the roles whose attributes differ
   ansible.builtin.command: "{{ pg_psql }} -d postgres -c \"{{ 'CREATE' if pg_role_plan[item.name] == 'create' else 'ALTER' }} ROLE {{ item.name }} WITH {{ item.flags }}\""
-  loop: "{{ nova_pg_roles }}"
+  loop: "{{ pg_roles }}"
   loop_control: { label: "{{ item.name }}: {{ pg_role_plan[item.name] }}" }
   when: pg_role_plan[item.name] != 'current'
 
@@ -178,23 +183,30 @@
   ansible.builtin.command: "{{ pg_psql }} -d postgres -c \"{{ 'CREATE DATABASE ' ~ nova_pg_db ~ ' OWNER nova_admin' if pg_db_plan == 'create' else 'ALTER DATABASE ' ~ nova_pg_db ~ ' OWNER TO nova_admin' }}\""
   when: pg_db_plan != 'current'
 
-- name: the schema config (name|owner)
+- name: the schemas of the roles (name|owner)
   ansible.builtin.shell: |
     {{ pg_psql }} -d {{ nova_pg_db }} <<'SQL'
-    select nspname || '|' || pg_get_userbyid(nspowner) from pg_namespace where nspname = 'config';
+    select nspname || '|' || pg_get_userbyid(nspowner) from pg_namespace
+      where nspname in ('{{ pg_schemas | map(attribute='schema') | join("','") }}') order by 1;
     SQL
   register: pg_schema_read
   changed_when: false
   check_mode: false
-  when: pg_db_plan != 'create' or not ansible_check_mode
+  when: pg_schemas | length > 0 and (pg_db_plan != 'create' or not ansible_check_mode)
 
-- name: plan the schema
+- name: plan the schemas (create, owner, current)
   ansible.builtin.set_fact:
-    pg_schema_plan: "{{ 'create' if (pg_schema_read is skipped or pg_schema_read.stdout | length == 0) else ('owner' if pg_schema_read.stdout != 'config|nova_config' else 'current') }}"
+    pg_schema_plan: "{{ pg_schema_plan | default({}) | combine({item.schema: ('create' if line | length == 0 else ('owner' if line[0] != item.schema ~ '|' ~ item.name else 'current'))}) }}"
+  vars:
+    line: "{{ [] if pg_schema_read is skipped else pg_schema_read.stdout_lines | select('match', '^' ~ item.schema ~ '\\|') | list }}"
+  loop: "{{ pg_schemas }}"
+  loop_control: { label: "{{ item.schema }}" }
 
-- name: the schema config, owned by nova_config (nova-config schema fills it)
-  ansible.builtin.command: "{{ pg_psql }} -d {{ nova_pg_db }} -c \"{{ 'CREATE SCHEMA config AUTHORIZATION nova_config' if pg_schema_plan == 'create' else 'ALTER SCHEMA config OWNER TO nova_config' }}\""
-  when: pg_schema_plan != 'current'
+- name: each schema, owned by its role (nova-config schema fills config)
+  ansible.builtin.command: "{{ pg_psql }} -d {{ nova_pg_db }} -c \"{{ ('CREATE SCHEMA ' ~ item.schema ~ ' AUTHORIZATION ' ~ item.name) if pg_schema_plan[item.schema] == 'create' else ('ALTER SCHEMA ' ~ item.schema ~ ' OWNER TO ' ~ item.name) }}\""
+  loop: "{{ pg_schemas }}"
+  loop_control: { label: "{{ item.schema }}: {{ pg_schema_plan[item.schema] }}" }
+  when: pg_schema_plan[item.schema] != 'current'
 
 # (a boolean is cast to char: 't' or 'f'; boolean || text would read 'true')
 # four facts: nova_admin may CREATE in config, nova_read has USAGE on it, and the four default privileges that make
@@ -213,7 +225,7 @@
   register: pg_grants_read
   changed_when: false
   check_mode: false
-  when: pg_schema_plan != 'create' or not ansible_check_mode
+  when: (pg_schema_plan | default({}))['config'] | default('create') != 'create' or not ansible_check_mode
 
 - name: plan the grants
   ansible.builtin.set_fact:
@@ -238,7 +250,7 @@
 # set; neither is logged.
 - name: each role answers with its file's password over the listen address (scram-sha-256)
   ansible.builtin.shell: "PGPASSWORD=\"$(tr -d '\\n' < {{ nova_pg_dir }}/{{ item.name }}.pass)\" PGCONNECT_TIMEOUT=5 psql -X -w -qAt -h {{ pg_listen[0] }} -p {{ nova_pg_port }} -U {{ item.name }} -d {{ nova_pg_db }} -c 'select 1'"
-  loop: "{{ nova_pg_roles }}"
+  loop: "{{ pg_roles }}"
   loop_control: { label: "{{ item.name }}" }
   register: pg_pw_test
   changed_when: false
@@ -257,7 +269,7 @@
     set -o pipefail
     printf "ALTER ROLE %s WITH PASSWORD '%s';\n" "{{ item.name }}" "$(tr -d '\n' < {{ nova_pg_dir }}/{{ item.name }}.pass)" | {{ pg_psql }} -d postgres
   args: { executable: /bin/bash }
-  loop: "{{ nova_pg_roles }}"
+  loop: "{{ pg_roles }}"
   loop_control: { label: "{{ item.name }}" }
   when: pg_pw_plan[item.name] != 'current'
   no_log: true
@@ -279,7 +291,7 @@
 
 - name: every role answers now
   ansible.builtin.shell: "PGPASSWORD=\"$(tr -d '\\n' < {{ nova_pg_dir }}/{{ item.name }}.pass)\" PGCONNECT_TIMEOUT=5 psql -X -w -qAt -h {{ pg_listen[0] }} -p {{ nova_pg_port }} -U {{ item.name }} -d {{ nova_pg_db }} -c 'select 1'"
-  loop: "{{ nova_pg_roles }}"
+  loop: "{{ pg_roles }}"
   loop_control: { label: "{{ item.name }}" }
   register: pg_pw_ok
   changed_when: false
@@ -386,14 +398,14 @@
        + (['passwords'] if pg_pass is changed else [])
        + (['nova.conf'] if pg_conf is changed else []) + (['pg_hba.conf'] if pg_hba is changed else [])
        + (['roles:' ~ (pg_role_plan | dict2items | rejectattr('value', 'equalto', 'current') | map(attribute='key') | join(','))] if (pg_role_plan.values() | reject('equalto', 'current') | list | length > 0) else [])
-       + (['db:' ~ pg_db_plan] if pg_db_plan != 'current' else []) + (['schema:' ~ pg_schema_plan] if pg_schema_plan != 'current' else [])
+       + (['db:' ~ pg_db_plan] if pg_db_plan != 'current' else []) + (['schemas:' ~ (pg_schema_plan | default({}) | dict2items | rejectattr('value', 'equalto', 'current') | map(attribute='key') | join(','))] if ((pg_schema_plan | default({})).values() | reject('equalto', 'current') | list | length > 0) else [])
        + (['grants'] if pg_grants_plan != 'current' else [])
        + (['schema-sql'] if (pg_schema_load | default(false) | bool) else [])
        + (['password-set:' ~ (pg_pw_plan | dict2items | rejectattr('value', 'equalto', 'current') | map(attribute='key') | join(','))] if (pg_pw_plan.values() | reject('equalto', 'current') | list | length > 0) else [])
        + (['dump-unit'] if pg_dump_unit is changed else []) + (['dump-timer'] if (pg_dump_timer is changed or pg_timer_state is changed) else []) }}
     pg_gaps: >-
       {{ ([] if pg_ready.rc == 0 else ['pg_isready rc=' ~ pg_ready.rc ~ ' on ' ~ pg_listen[0] ~ ':' ~ nova_pg_port])
-       + ([] if (pg_du.stdout_lines | length) == (nova_pg_roles | length) else ['roles: ' ~ (pg_du.stdout_lines | join(','))])
+       + ([] if (pg_du.stdout_lines | length) == (pg_roles | length) else ['roles: ' ~ (pg_du.stdout_lines | join(','))])
        + ([] if pg_l.stdout == nova_pg_db ~ '|nova_admin' else ['database: ' ~ (pg_l.stdout | default('absent', true))])
        + ([] if (pg_pw_ok is skipped or (pg_pw_ok.results | rejectattr('rc', 'equalto', 0) | list | length == 0)) else ['password proof failed: ' ~ (pg_pw_ok.results | rejectattr('rc', 'equalto', 0) | map(attribute='item.name') | join(','))])
        + ([] if pg_timer_enabled == 'enabled' else ['timer ' ~ pg_timer_enabled]) }}

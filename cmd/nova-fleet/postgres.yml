@@ -3,11 +3,13 @@
 # postgres.yml: the PostgreSQL nova-config keeps the fleet in, on each machine of the `services` group (cmd/nova-fleet/README.md,
 # "postgres"): postgresql-<nova_pg_version> from the release's main or the PostgreSQL project's repository (its key
 # pinned by fingerprint), listening on the tailnet address only, scram-sha-256 from nova_pg_allow_cidr and nothing
-# else; the database, nova-config's roles nova_admin, nova_config and nova_read with a password each made once on the
-# machine (<nova_pg_dir>/<role>.pass, root 0600) and proven over the network, the grants on schema config, and a
-# nightly pg_dump kept nova_pg_dump_keep_days. With nova_seal_store, nova_seal_seat and nova_seal_key given, the
-# nova_config password is set into that seat as NOVA_PG_PASSWORD (the seal role). The tables of `nova-config schema`
-# are loaded on the machine (again when the SQL changes). Then the control node proves the port.
+# else; the database, the roles of nova_pg_roles (by default nova-config's nova_admin, nova_config and nova_read) with
+# a password each made once on the machine (<nova_pg_dir>/<role>.pass, root 0600) and proven over the network, the
+# schema each owns, the grants on schema config, and a nightly pg_dump kept nova_pg_dump_keep_days. With
+# nova_seal_store, nova_seal_seat and nova_seal_key given, each role's password that names a secret is set into that
+# seat under that name (the seal role; by default nova_config's, as NOVA_PG_PASSWORD) and granted to the role's seats
+# (nova-secrets grant). The tables of `nova-config schema` are loaded on the machine (again when the SQL changes). Then
+# the control node proves the port.
 #
 # The machines are the `services` group, or the hosts -e nova_store_hosts names: the first store, before nova-config
 # has a row, is run from a one-machine inventory (cmd/nova-fleet/README.md, "The first machine").
@@ -33,12 +35,46 @@
   roles:
     - postgres
   tasks:
-    - name: the nova_config password, sealed into a seat
+    - name: each role's password that names a secret, sealed into the seat
       ansible.builtin.include_role:
         name: seal
       vars:
-        seal_file: "{{ nova_pg_dir }}/{{ nova_pg_seal_role }}.pass"
-        seal_name: "{{ nova_pg_seal_name }}"
+        seal_file: "{{ nova_pg_dir }}/{{ pg_seal.name }}.pass"
+        seal_name: "{{ pg_seal.secret }}"
+      loop: "{{ pg_roles | selectattr('secret') | list }}"
+      loop_control: { loop_var: pg_seal, label: "{{ pg_seal.name }}: {{ pg_seal.secret }}" }
+
+    # grant reads the value from the seal's seat and rewrites each seat's grants file, keeping the names granted there
+    # before; a second run changes nothing. No value is an argument or an output.
+    - name: each sealed name granted to its role's seats (control node, nova-secrets grant)
+      ansible.builtin.command:
+        argv: [ "{{ nova_control_secrets }}", 'grant', "{{ item.0.secret }}", --to, "{{ item.1 }}", --pins, "{{ nova_seal_pins }}",
+                --store, "{{ nova_seal_store }}", --key, "{{ nova_seal_key }}", --as, "{{ nova_seal_seat }}", --sops, "{{ nova_control_sops }}" ]
+      loop: "{{ pg_roles | subelements('seats') }}"
+      loop_control: { label: "{{ item.0.secret }} to {{ item.1 }}" }
+      delegate_to: localhost
+      become: false
+      register: pg_grant
+      changed_when: "'committed' in pg_grant.stdout"
+      failed_when: false
+      when: seal_asked and not ansible_check_mode
+
+    - name: the grants' receipt
+      ansible.builtin.debug:
+        msg: >-
+          PG GRANT {{ item.item.0.secret }} to={{ item.item.1 }}
+          {%- if not seal_asked %} not asked (give nova_seal_store, nova_seal_seat and nova_seal_key to grant it)
+          {%- elif ansible_check_mode %} WOULD-GRANT (check: nothing written; grant decides what changes)
+          {%- elif item.rc == 0 %} {{ item.stdout_lines | last | default('OK') }}
+          {%- else %} FAILED rc={{ item.rc }}: {{ item.stderr_lines | last | default('') }}{% endif %}
+      loop: "{{ pg_grant.results | default([]) }}"
+      loop_control: { label: "{{ item.item.0.secret }} to {{ item.item.1 }}" }
+
+    - name: every grant landed
+      ansible.builtin.assert:
+        that: pg_grant.results | default([]) | rejectattr('skipped', 'defined') | rejectattr('rc', 'equalto', 0) | list | length == 0
+        fail_msg: "PG FAIL {{ inventory_hostname }}: a grant failed (above)"
+        quiet: true
 
 - name: the port answers from the control node
   hosts: localhost

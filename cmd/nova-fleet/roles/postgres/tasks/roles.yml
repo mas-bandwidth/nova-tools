@@ -1,0 +1,52 @@
+---
+# nova_pg_roles, checked before anything changes, and pg_roles, the list the role loops over: each entry's name,
+# schema, secret and seats, with flags and want filled in. Every name is pasted into SQL or a command line unquoted,
+# so each must be a plain identifier: role and schema [a-z_][a-z0-9_]*, secret [A-Z_][A-Z0-9_]*, a seat
+# [A-Za-z0-9][A-Za-z0-9._-]*; seats need a secret to grant.
+- name: nova_pg_roles is a list of entries
+  ansible.builtin.assert:
+    that:
+      - nova_pg_roles is sequence and nova_pg_roles is not string and nova_pg_roles is not mapping
+      - nova_pg_roles | length > 0
+      - nova_pg_roles | reject('mapping') | list | length == 0
+    fail_msg: "PG STOP nova_pg_roles is a list of {role, schema, secret, seats}, as -e '{\"nova_pg_roles\": [{\"role\": \"nova_admin\", ...}]}'"
+    quiet: true
+
+- name: each entry is a role with plain names
+  ansible.builtin.assert:
+    that:
+      - item.role | default('') is string and item.role | default('') is match('^[a-z_][a-z0-9_]{0,62}$')
+      - item.schema | default('') is string and item.schema | default('') is match('^([a-z_][a-z0-9_]{0,62})?$')
+      - item.secret | default('') is string and item.secret | default('') is match('^([A-Z_][A-Z0-9_]*)?$')
+      - item.seats | default([]) is sequence and item.seats | default([]) is not string and item.seats | default([]) is not mapping
+      - item.seats | default([]) | reject('string') | list | length == 0
+      - item.seats | default([]) | reject('match', '^[A-Za-z0-9][A-Za-z0-9._-]*$') | list | length == 0
+      - item.seats | default([]) | length == 0 or item.secret | default('') | length > 0
+      - item.flags | default('') is string and item.flags | default('') is match('^[A-Z ]*$')
+      - item.want | default('t|f|f') is match('^[tf]\|[tf]\|[tf]$')
+    fail_msg: >-
+      PG STOP nova_pg_roles entry {{ idx + 1 }} ({{ item | to_json | truncate(200) }}): role and schema are [a-z_][a-z0-9_]*
+      (schema may be ""), secret [A-Z_][A-Z0-9_]* or "", seats a list of seat names, given only with a secret
+    quiet: true
+  loop: "{{ nova_pg_roles }}"
+  loop_control: { index_var: idx, label: "{{ item.role | default('?') }}" }
+
+- name: the list the role loops over
+  ansible.builtin.set_fact:
+    pg_roles: >-
+      {%- set out = [] -%}
+      {%- for r in nova_pg_roles -%}
+      {%- set _ = out.append({'name': r.role, 'schema': r.schema | default(''), 'secret': r.secret | default(''),
+            'seats': r.seats | default([]), 'flags': r.flags | default('LOGIN NOCREATEDB NOCREATEROLE', true),
+            'want': r.want | default('t|f|f', true)}) -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: no role, schema or secret is named twice
+  ansible.builtin.assert:
+    that:
+      - pg_roles | map(attribute='name') | unique | length == pg_roles | length
+      - pg_roles | map(attribute='schema') | select | unique | length == pg_roles | map(attribute='schema') | select | length
+      - pg_roles | map(attribute='secret') | select | unique | length == pg_roles | map(attribute='secret') | select | length
+    fail_msg: "PG STOP nova_pg_roles names a role, a schema or a secret twice: {{ pg_roles | map(attribute='name') | join(',') }}"
+    quiet: true

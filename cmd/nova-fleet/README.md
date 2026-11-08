@@ -785,17 +785,30 @@ The PostgreSQL nova-config keeps the fleet in, on each machine of the `services`
 the release's main or the PostgreSQL project's repository (its key refused unless its fingerprint is the pinned one),
 listening on the tailnet address only; `scram-sha-256` from `nova_pg_allow_cidr` for the one database and everything
 else rejected. The Debian cluster is adopted as it is: the play owns `conf.d/nova.conf`, `pg_hba.conf`, the database,
-nova-config's roles `nova_admin` (owns the database), `nova_config` (owns schema `config`) and `nova_read`, their
-grants and default privileges, and a nightly `pg_dump -Fc` kept `nova_pg_dump_keep_days`. It never drops a role or a
-database. Each role's password is made once on the machine (`<nova_pg_dir>/<role>.pass`, root 0600) and proven by a
-login over the tailnet address; only a role whose proof fails has its password set. With the three `nova_seal_*`
-variables, the `nova_config` password is set into that seat as `NOVA_PG_PASSWORD`, the name nova-config reads.
+the roles of `nova_pg_roles` and the schema each owns (by default nova-config's: `nova_admin` owns the database,
+`nova_config` owns schema `config`, `nova_read` reads it), nova-config's grants and default privileges on `config`,
+and a nightly `pg_dump -Fc` kept `nova_pg_dump_keep_days`. It never drops a role, a schema or a database. Each role's
+password is made once on the machine (`<nova_pg_dir>/<role>.pass`, root 0600) and proven by a login over the tailnet
+address; only a role whose proof fails has its password set. With the three `nova_seal_*` variables, each role's
+password that names a `secret` is set into that seat under that name (by default `nova_config`'s, as
+`NOVA_PG_PASSWORD`, the name nova-config reads), then granted to the role's `seats` with `nova-secrets grant`.
 
 ```
 nova-fleet postgres --check --diff
 nova-fleet postgres -- -e nova_seal_store=$HOME/secrets -e nova_seal_seat=<seat> \
   -e nova_seal_key=$HOME/.config/nova-secrets/<seat>.key
 nova-config schema | psql "postgres://nova_admin@<store>:5432/nova"      # the tables, once and after an upgrade
+```
+
+Another tool's role is one more entry. A list given with `-e` replaces the default, so it keeps nova-config's three:
+
+```
+nova-fleet postgres -- -e nova_seal_store=$HOME/secrets -e nova_seal_seat=<seat> \
+  -e nova_seal_key=$HOME/.config/nova-secrets/<seat>.key -e '{"nova_pg_roles": [
+    {"role": "nova_admin", "flags": "LOGIN CREATEDB CREATEROLE", "want": "t|t|t"},
+    {"role": "nova_config", "schema": "config", "secret": "NOVA_PG_PASSWORD"},
+    {"role": "nova_read"},
+    {"role": "nova_sprint", "schema": "sprint", "secret": "NOVA_SPRINT_PG_PASSWORD", "seats": ["<seat>"]}]}'
 ```
 
 The schema is applied as the database owner (`nova_admin`), never as `nova_config`: it starts with `CREATE SCHEMA IF
@@ -812,7 +825,7 @@ database nova` and rolls back. Upgrading a store made by v1 to the v2 tables is 
 | `nova_pg_allow_cidr` | `100.64.0.0/10` | the range tailscale assigns |
 | `nova_pg_dir` | `/var/lib/nova-pg` | passwords and dumps |
 | `nova_pg_dump_on_calendar`, `nova_pg_dump_keep_days` | `*-*-* 03:15:00 UTC`, `14` | |
-| `nova_pg_seal_role`, `nova_pg_seal_name` | `nova_config`, `NOVA_PG_PASSWORD` | |
+| `nova_pg_roles` | nova-config's three | each `{role, schema, secret, seats}`: the role, the schema it owns (`""` none), the nova-secrets name its password is sealed as (`""` none), the seats that name is granted to; optional `flags`, `want` (default `LOGIN NOCREATEDB NOCREATEROLE`, `t\|f\|f`). A name that is not a plain identifier, or one given twice, stops the run first |
 
 **Check.** `PG OK <machine> version=18 db=nova listen=<100.x>:5432 roles=3 timer=enabled changed=nothing` and `PG
 REACH from=control`; a run with a gap ends `PG FAIL` with what is wrong. **Rollback.** `systemctl disable --now
