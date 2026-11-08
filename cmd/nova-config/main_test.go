@@ -46,7 +46,10 @@ func (f *fake) List(_ context.Context, k *kind) ([]Row, error) {
 	return out, nil
 }
 
-func (f *fake) Write(_ context.Context, k *kind, op string, before, after Row, actor, reason string) (int64, error) {
+func (f *fake) Write(_ context.Context, k *kind, op string, before, after Row, actor, reason string, dry bool) (int64, error) {
+	if dry {
+		return 0, nil
+	}
 	b, a := before.F, after.F
 	if reason != "" && a != nil {
 		a = maps.Clone(a)
@@ -196,8 +199,8 @@ func TestDryRunWritesNothing(t *testing.T) {
 	n := len(h.st.history)
 	assert.Equal(t, "CONFIG DRY-RUN op=set kind=service name=member-b actor=a1 wrote=nothing\n  every: 0 -> 5\n  keepalive: true -> false\n  reason: \"a b\"\n",
 		h.ok(t, "service", "set", "member-b", "--every", "5", "--keepalive", "false", "--actor", "a1", "--reason", "a b", "--dry-run"))
-	out := h.ok(t, "machine", "remove", "bench-b", "--actor", "a1", "--dry-run")
-	assert.Equal(t, "CONFIG DRY-RUN op=remove kind=machine name=bench-b actor=a1 wrote=nothing\n  address: \"bench-b.tail\"\n  public: \"\"\n  user: \"nova\"\n  os: \"linux\"\n  arch: \"amd64\"\n  cores: 12\n  roles: \"bench\"\n  runners: 2\n  windows_runners: \"\"\n  note: \"\"\n", out)
+	out := h.ok(t, "machine", "remove", "bench-a", "--actor", "a1", "--dry-run") // bench-b runs member-b: its dry-run is refused (TestFunctionalDryRunReal)
+	assert.Equal(t, "CONFIG DRY-RUN op=remove kind=machine name=bench-a actor=a1 wrote=nothing\n  address: \"\"\n  public: \"\"\n  user: \"nova\"\n  os: \"\"\n  arch: \"\"\n  cores: null\n  roles: \"bench,services\"\n  runners: 0\n  windows_runners: \"\"\n  note: \"\"\n", out)
 	assert.Equal(t, "CONFIG DRY-RUN op=set kind=machine name=bench-a actor=a1 wrote=nothing\n  note: \"\" -> \"the first\"\n",
 		h.ok(t, "machine", "set", "bench-a", "--note", "the first", "--actor", "a1", "--dry-run"))
 	assert.Len(t, h.st.history, n)
