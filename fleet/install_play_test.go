@@ -54,9 +54,11 @@ func TestInstallRoleEndsWithTheLeftoverInventory(t *testing.T) {
 	dirs := taskVar(t, tasks[i], "nova_tools_leftover_dirs")
 	for _, want := range []string{
 		"nova_tools_bin_dir",
-		"'/.config/systemd/user' if nova_tools_os == 'linux' else '/Library/LaunchAgents'",
+		"nova_tools_user_unit_dir",
 		"nova_tools_system_unit_dir",
-		"nova-.*", "novadog-.*", "mirror-refresh", "disk-guard", "ci-hold-broker", "com[.]nova[.]",
+		"nova-.*", "com[.]nova[.]",
+		// every file in the bin directory is read (dotted names and .bak copies too), and every retired unit
+		"'patterns': ['^.*$']", "nova_tools_retired_unit_re",
 		// the allowed names: the release's binaries (plus nova_tools_keep) and the units of this machine's service records
 		"nova_tools_bin_ok | map('regex_escape')",
 		"nova-bus[.]hook[.].+[.]plist|nova-bus-hook-.+[.]service",
@@ -70,7 +72,7 @@ func TestInstallRoleEndsWithTheLeftoverInventory(t *testing.T) {
 		assert.Contains(t, dirs, want, "nova_tools_leftover_dirs")
 	}
 	// Allowed binaries: the release's, nova_tools_keep, every manifest of another repository's release, the fleet's own roles'.
-	assert.Equal(t, "{{ nova_tools_release_names + nova_tools_keep + nova_tools_other_names + nova_tools_fleet_owns.bin }}", taskVar(t, tasks[i], "nova_tools_bin_ok"))
+	assert.Equal(t, "{{ nova_tools_release_names + nova_tools_keep + nova_tools_other_names + nova_tools_fleet_owns.bin + ((nova_join_owns | default({})).bin | default([])) }}", taskVar(t, tasks[i], "nova_tools_bin_ok"))
 	records := taskVar(t, tasks[i], "nova_tools_records")
 	assert.Contains(t, records, "nova_services | default([])", "an inventory without nova_services (a plain hosts file) names no record")
 	assert.Contains(t, records, "map(attribute='name')")
@@ -111,20 +113,23 @@ func TestInstallRoleEndsWithTheLeftoverInventory(t *testing.T) {
 	assert.NotContains(t, asText(a["fail_msg"]), "by hand")
 	// The fix is the plays that retire them, the names filled in; only what no play retires is named on its own.
 	how := asText(tasks[taskIndex(tasks, "the leftovers, and the plays that retire them")]["ansible.builtin.set_fact"].(map[string]any)["nova_tools_retire_how"])
-	for _, want := range []string{"nova-fleet install --tag", "{'nova_tools_remove_enabled': true, 'nova_tools_remove': nova_tools_retire_bin} | to_json(separators=(',', ':'))",
+	for _, want := range []string{"nova-fleet install --tag", "nova_tools_retire_vars | to_json(separators=(',', ':'))",
 		"nova-fleet services -- -l ", "{'nova_retire_units': nova_tools_sorted.unit_names | unique | sort} | to_json(separators=(',', ':'))", "no play retires "} {
 		assert.Contains(t, how, want)
 	}
 	// The install command names the binaries and nova-push-credential while a git helper line runs it.
 	assert.Equal(t, "{{ (nova_tools_sorted.bin + (['nova-push-credential'] if nova_tools_gitcred_left else [])) | unique | sort }}",
 		taskVar(t, tasks[taskIndex(tasks, "the leftovers, and the plays that retire them")], "nova_tools_retire_bin"))
+	rv := taskVar(t, tasks[taskIndex(tasks, "the leftovers, and the plays that retire them")], "nova_tools_retire_vars")
+	assert.Contains(t, rv, "{'nova_tools_remove': nova_tools_retire_bin}")
+	assert.Contains(t, rv, "{'nova_tools_remove_units': nova_tools_sorted.retired_units | unique | sort}")
 	// JSON extra vars: a key=value -e is a string, never the list the plays want.
 	assert.NotContains(t, how, "nova_tools_remove='")
 	assert.NotContains(t, how, "nova_retire_units='")
 	// A binary no manifest lists yet is a warning (its release may predate manifests), never a refusal.
 	w := taskIndex(tasks, "binaries no release's manifest lists yet")
 	require.Greater(t, w, j)
-	assert.Contains(t, asText(tasks[w]["ansible.builtin.debug"].(map[string]any)["msg"]), "reinstall the release that ships each")
+	assert.Contains(t, asText(tasks[w]["ansible.builtin.debug"].(map[string]any)["msg"]), "reinstall {{ nova_tools_unrecorded_repos | join(', ') }} to record its names")
 	assert.NotContains(t, asText(tasks[w]["ansible.builtin.debug"].(map[string]any)["msg"]), "remove")
 	assert.Equal(t, len(tasks)-1, k, "the refusal is not the role's last task")
 
@@ -166,14 +171,20 @@ func TestInstallRoleLeftoversAreTheUnlistedFiles(t *testing.T) {
 	require.True(t, ok)
 	expr := asText(set["nova_tools_sorted"])
 	for _, want := range []string{"nova_tools_found.results | default([])", "not f.isdir", "is not match(d.item.ok)", "f.path | basename",
-		"n in nova_tools_own_retired or (n in nova_tools_sprint_retired and nova_tools_sprint_recorded)", "r.unrecorded.append(n)",
+		"n in nova_tools_own_retired or nova_tools_fleet_recorded", "r.unrecorded.append(n)",
+		"n is match(nova_tools_retired_unit_re)", "r.retired_units.append(n)",
 		"n is match(nova_tools_unit_shape)", "r.noplay.append(n)"} {
 		assert.Contains(t, expr, want)
 	}
 	assert.Equal(t, `^com[.]nova[.](?:service|loop)[.](.+)[.]plist$|^nova-(?:service|loop)-(.+)[.](?:service|timer)$`, taskVar(t, tasks[i], "nova_tools_unit_shape"),
 		"the shapes services.yml retires by nova_retire_units")
-	assert.Contains(t, taskVar(t, tasks[i], "nova_tools_retired_rows"), "retired-tools.txt")
-	assert.Contains(t, taskVar(t, tasks[i], "nova_tools_sprint_recorded"), "mas-bandwidth_nova-sprint.names")
+	rn := taskIndex(tasks, "the retired names and units")
+	require.GreaterOrEqual(t, rn, 0)
+	assert.Contains(t, taskVar(t, tasks[rn], "nova_tools_retired_rows"), "retired-tools.txt")
+	assert.Contains(t, taskVar(t, tasks[rn], "nova_tools_unit_globs"), "retired-units.txt")
+	rf := tasks[rn]["ansible.builtin.set_fact"].(map[string]any)
+	assert.Contains(t, asText(rf["nova_tools_fleet_recorded"]), "nova_tools_fleet_repos")
+	assert.Contains(t, asText(rf["nova_tools_retired_unit_re"]), "map('regex_replace', '[.]', '[.]') | map('regex_replace', '[*]', '.*')")
 	left := asText(tasks[taskIndex(tasks, "the leftovers, and the plays that retire them")]["ansible.builtin.set_fact"].(map[string]any)["nova_tools_leftovers"])
 	assert.Regexp(t, regexp.MustCompile(`\| sort`), left, "the names are sorted, so two runs print the same line")
 	assert.NotContains(t, left, "unrecorded", "an unrecorded binary is never a leftover")
@@ -189,6 +200,9 @@ func TestInstallRoleLeftoverDefaults(t *testing.T) {
 	assert.Equal(t, []any{}, d["nova_tools_keep"])
 	// No binary is kept by hand: nova-push-credential is retired (Glenn, 2026-11-08).
 	assert.NotContains(t, d, "nova_tools_hand_kept")
+	assert.Equal(t, []any{"mas-bandwidth/nova-sprint"}, d["nova_tools_fleet_repos"], "every --repo the fleet installs")
+	assert.Equal(t, []any{}, d["nova_tools_remove_units"])
+	assert.Equal(t, true, d["nova_tools_unit_manager"])
 	assert.Contains(t, d["nova_tools_remove"], "nova-push-credential")
 	assert.Equal(t, "^!?{{ (nova_tools_bin_dir ~ '/nova-push-credential') | regex_escape('posix_basic') }}$", d["nova_tools_gitcred_value"],
 		"the unset matches the script's own path alone, so the other helpers stay")
@@ -256,4 +270,49 @@ func TestInstallRoleLeftoverOwnsAreTheRolesNames(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(tb), `sr_script: "{{ nova_bin_dir }}/nova-secrets-refresh"`, "nova_secrets_refresh_owns.bin names this script")
 	assert.Contains(t, string(tb), "sr_label: com.nova.secrets-refresh\n", "nova_secrets_refresh_owns.user names this label's plist")
+}
+
+// Retired units are stopped and moved aside, never deleted, only when asked; the
+// system directory takes sudo. Every v1 name rowan-tools shipped is a retired row.
+func TestInstallRoleRetiresV1UnitsAndNames(t *testing.T) {
+	t.Parallel()
+	tasks := installRoleTasks(t)
+	k := taskIndex(tasks, "the retired units, stopped and moved aside")
+	require.GreaterOrEqual(t, k, 0)
+	assert.Contains(t, asText(tasks[k]["when"]), "nova_tools_remove_enabled | bool")
+	sh := asText(tasks[k]["ansible.builtin.shell"])
+	assert.Contains(t, sh, "mv {{ path | quote }} {{ aside | quote }}/")
+	assert.NotContains(t, sh, "rm ")
+	assert.Equal(t, "{{ item.item.0 }}/retired-{{ now(fmt='%Y-%m-%d') }}", taskVar(t, tasks[k], "aside"))
+	assert.Equal(t, "{{ system and nova_tools_unit_manager | bool }}", asText(tasks[k]["become"]))
+	b, err := os.ReadFile("retired-tools.txt")
+	require.NoError(t, err)
+	for _, n := range []string{"winlock", "captain-reap", "rowan-row", "rowan-inbox", "bench-row", "sprint-table-redis", "tools-aside", "friend-autotake",
+		"friend-queue", "emma-wait", "johnny-wait", "zhi-turn", "nca-loop.sh", "scratch-clone", "install-github-read-ssh", "landred", "bats",
+		"nova-card-push", "mirror-refresh", "nova-push-credential", "ci-hold-wait", "stage-schema"} {
+		assert.Regexp(t, regexp.MustCompile(`(?m)^`+regexp.QuoteMeta(n)+"\t[^\t]+\tretired"), string(b), n)
+	}
+	u, err := os.ReadFile("retired-units.txt")
+	require.NoError(t, err)
+	for _, g := range []string{"nova-swarm-*.service", "com.nova.runner.*.plist", "novadog-*", "nova-dashboard-pull.*", "ci-hold-broker.service"} {
+		assert.Contains(t, string(u), g+"\t")
+	}
+}
+
+// join.yml's binaries in the bin directory are the fleet's own, allowed by name from
+// group_vars (nova_join_owns), held to what join.yml unpacks and downloads.
+func TestJoinOwnsAreJoinsBinaries(t *testing.T) {
+	t.Parallel()
+	b, err := os.ReadFile("group_vars/all.yml")
+	require.NoError(t, err)
+	var g map[string]any
+	require.NoError(t, yaml.Unmarshal(b, &g))
+	owns, ok := g["nova_join_owns"].(map[string]any)
+	require.True(t, ok, "group_vars has no nova_join_owns")
+	assert.ElementsMatch(t, []any{"age", "age-keygen", "sops"}, owns["bin"])
+	assert.Contains(t, asText(g["nova_sops"]), "nova_bin_dir ~ '/sops'")
+	assert.Contains(t, asText(g["nova_age_keygen"]), "nova_bin_dir ~ '/age-keygen'")
+	j, err := os.ReadFile("join.yml")
+	require.NoError(t, err)
+	assert.Contains(t, string(j), "include: [age/age, age/age-keygen]")
 }

@@ -44,6 +44,83 @@ nova_tools_restart_commands: []
 # also unsets every global git credential.*helper whose value is that script.
 nova_tools_remove_enabled: false
 nova_tools_remove:
+  - _rowan-bifrost
+  - adopt.sh
+  - backpressure
+  - bats
+  - bench-conform
+  - bench-hygiene.sh
+  - bench-queue-control
+  - bench-reset
+  - bench-row
+  - bench-sweep
+  - benchslot
+  - bin-prune
+  - blocked-pass.bash
+  - blocked-resolve
+  - build-ledger.sh
+  - captain-reap
+  - card-dealer
+  - card-end-backfill
+  - card-end-event
+  - card-release
+  - card-report
+  - child-check
+  - ci-hold-broker
+  - ci-hold-start.sh
+  - ci-hold-stop.sh
+  - ci-hold-wait
+  - disk-guard
+  - emma-wait
+  - fill-loop.sh
+  - fill-loops-up
+  - fleet-converge-check
+  - fleet-fn
+  - fleet-install-tools.sh
+  - fleet-live
+  - fleet-state
+  - friend-autotake
+  - friend-bus-keeper
+  - friend-bus-keeper-control
+  - friend-harness
+  - friend-queue
+  - friend-queue-control
+  - friend-row
+  - friend-row-control
+  - friends-line
+  - gate-on
+  - github-read-key-register
+  - harvest-bench.sh
+  - harvest-priority
+  - harvest.sh
+  - hold-to-fix
+  - hold-to-fix-control
+  - idle-watch
+  - install-github-read-ssh
+  - jev-eval
+  - jev-eval-control
+  - jev-lander-control
+  - jev-loop
+  - johnny-wait
+  - land-lane
+  - land-lane-capdrop-control
+  - land-lane-ciredjq-control
+  - land-lane-close-control
+  - land-lane-holdpin-control
+  - land-lane-holds-control
+  - land-lane-ownsession-control
+  - land-lane-whorule-control
+  - land-loop-schema
+  - land-loop-schema-control
+  - land-loop-tools
+  - land-loop-tools-control
+  - landred
+  - live-drift
+  - migrate-friend-dependencies
+  - mirror-refresh
+  - mk-read-card.sh
+  - nca-loop.sh
+  - nova-card-push
   - nova-check
   - nova-ci
   - nova-decide
@@ -52,19 +129,78 @@ nova_tools_remove:
   - nova-local
   - nova-loop
   - nova-memory
+  - nova-push-credential
   - nova-redis
+  - nova-scratch-sweep
   - nova-self-talk
   - nova-slot
+  - nova-space-runner.sh
   - nova-table
   - nova-tokens
   - nova-up
   - nova-update
   - nova-version
-  - mirror-refresh
-  - disk-guard
-  - ci-hold-broker
-  - nova-card-push
-  - nova-push-credential
+  - ok-to-friend
+  - ok-to-friend-control
+  - pitstop
+  - port-chain
+  - post-reads
+  - post-reports
+  - pr-facts
+  - pr-to-read
+  - pr-to-read-control
+  - progress.sh
+  - provision-mac-bench.sh
+  - redis-acl-gen
+  - redis-pipe
+  - redis-pipe.bash
+  - refill.sh
+  - release-sums
+  - report-to-read
+  - route-health
+  - route-health-control
+  - rowan-anchors
+  - rowan-inbox
+  - rowan-local
+  - rowan-local-eval
+  - rowan-model-lock
+  - rowan-no-code
+  - rowan-row
+  - rowan-self-talk
+  - rowan-tcc-guard
+  - rowan-voice-gate
+  - rowan-workset-graph
+  - rr-run.sh
+  - rrpro-inner.sh
+  - safe-rm.sh
+  - scratch-clone
+  - search-reaper
+  - self-ssh
+  - space-build
+  - sprint-canary
+  - sprint-lineup
+  - sprint-models
+  - sprint-requeue
+  - sprint-stage
+  - sprint-table
+  - sprint-table-control
+  - sprint-table-friends-control
+  - sprint-table-redis
+  - sprint-xy
+  - stage-schema
+  - status.sh
+  - stuck-done
+  - tools-aside
+  - wait-for
+  - waiting-pass.bash
+  - waiting-resolve
+  - wake-emma.sh
+  - wake-johnny.sh
+  - wake-rowan.sh
+  - wake-watch.sh
+  - winlock
+  - with-secrets.sh
+  - zhi-turn
 
 # Leftovers. After the install the role lists what an older install left beside the
 # new binaries and refuses the host when it finds any, naming the plays that retire
@@ -75,6 +211,16 @@ nova_tools_remove:
 # binary no manifest lists that nova-tools did not retire is a warning only. Unix
 # machines, nova-tools' own release only; nothing is removed.
 nova_tools_keep: []
+# The --repo releases the fleet installs: once each has its manifest on a machine, a
+# binary no manifest lists is a leftover (before, a warning).
+nova_tools_fleet_repos: [mas-bandwidth/nova-sprint]
+# Retired units to stop and move aside (into retired-<date>/ beside them) when
+# nova_tools_remove_enabled is true: file names, as the leftover refusal prints them
+# (fleet/retired-units.txt). nova_tools_unit_manager false asks nothing of systemd or
+# launchd and takes no sudo (a test's directories).
+nova_tools_remove_units: []
+nova_tools_unit_manager: true
+nova_tools_user_unit_dir: "{{ nova_home ~ ('/.config/systemd/user' if nova_tools_os == 'linux' else '/Library/LaunchAgents') }}"
 # A git credential helper value that runs the retired nova-push-credential (git's
 # extended regex: the script's path in the bin directory, with git's leading !),
 # and the global config keys that hold one (credential.helper, credential.<url>.helper).

@@ -290,28 +290,33 @@ A name also being installed is refused. The default list is the rows of `retired
 string, never a list). Unix machines only.
 
 **Leftovers.** Last, after the install has happened, the play reads what an older install left beside the new binaries
-and prints one line per host, `INSTALL <host> leftovers=<n>: <names>` (or `leftovers=0`). It reads the bin directory for
-any `nova-*`, `novadog-*`, `mirror-refresh`, `disk-guard` or `ci-hold-broker`; the login's unit directory
+and prints one line per host, `INSTALL <host> leftovers=<n>: <names>` (or `leftovers=0`). v2 only: nothing of v1 is
+allowed by name. It reads every file in the bin directory (dotted names and `.bak` copies too); the login's unit directory
 (`~/.config/systemd/user` on Linux, `~/Library/LaunchAgents` on macOS) for any `nova-*` or `com.nova.*` unit, timer or
-plist; and the system unit directory (`/etc/systemd/system` on Linux, any `nova*` unit; `/Library/LaunchDaemons` on macOS,
-where a headless Mac's services are, any `com.nova.*` plist; a read, no sudo). Allowed: the release's `SHA256SUMS` names
-for the platform; every name another repository's release recorded (a `--repo` install writes its names to
-`~/.local/share/nova/installed/<owner>_<name>.names`, `nova_tools_manifest_dir`); what the fleet's own roles write there
-(each role's `nova_<role>_owns` in its defaults, and `nova_redis_unit`); a friend's nova-bus hook unit (`nova-bus.hook.<name>.plist`,
-`nova-bus-hook-<name>.service`); the unit of a service record this machine has (its `nova_services`); and
-`nova_tools_keep`. An inventory with no `nova_services` (not nova-config's) has its units left unread, and the line ends
-with a NOTE saying so.
+plist; the system unit directory (`/etc/systemd/system` on Linux, any `nova*` unit; `/Library/LaunchDaemons` on macOS,
+where a headless Mac's services are, any `com.nova.*` plist; a read, no sudo); both unit directories for every glob in
+`retired-units.txt` (the v1 units and plists); and `~/.gitconfig` for a credential helper that runs the retired
+`nova-push-credential`. Allowed: the release's `SHA256SUMS` names for the platform; every name another repository's release
+recorded (a `--repo` install writes its names to `~/.local/share/nova/installed/<owner>_<name>.names`,
+`nova_tools_manifest_dir`); what the fleet's own plays and roles write there (`nova_join_owns` for join.yml's age,
+age-keygen and sops; each role's `nova_<role>_owns`; `nova_redis_unit`); a friend's nova-bus hook unit
+(`nova-bus.hook.<name>.plist`, `nova-bus-hook-<name>.service`); the unit of a service record this machine has (its
+`nova_services`); and `nova_tools_keep`. An inventory with no `nova_services` (not nova-config's) has its units left
+unread, and the line ends with a NOTE saying so.
 
-A leftover fails the host, and the refusal names the plays that retire it, names filled in:
-`nova-fleet install --tag <tag> -- -l <host> -e '{"nova_tools_remove_enabled":true,"nova_tools_remove":[...]}'` for a binary
-nova-tools retired (`retired-tools.txt`, retired or rowan-tools), or one nova-sprint retired when nova-sprint's manifest is
-on the machine and does not list it; `nova-fleet services -- -l <host> -e '{"nova_retire_units":[...]}'` for a unit of the
-services play's shapes (`nova-service-*`, `nova-loop-*`, `com.nova.service.*`, `com.nova.loop.*`); and, named on its own,
-what no play retires yet. A global git credential helper (`credential.helper`, `credential.<url>.helper`) whose value is the retired
-`nova-push-credential` is a leftover too: retiring the script with that command also unsets each such value (`git config
---global --unset-all`, matched by the script's path alone; other helpers stay), and the INSTALL line says so. Any other binary may belong to a release installed before manifests were written: it is a
-`WARNING unrecorded=<n>` with `reinstall <repo> to record its names`, never a refusal. The check itself removes nothing.
-Unix machines, nova-tools' own release only (a `--repo` install prints no line); `--check` prints the line too.
+A leftover fails the host, and the refusal names the plays that retire it, names filled in. `nova-fleet install --tag <tag>
+-- -l <host> -e '{"nova_tools_remove_enabled":true,"nova_tools_remove":[...],"nova_tools_remove_units":[...]}'` moves the
+binaries into `<bin dir>/retired-<date>/` and stops the units and moves them into `retired-<date>/` beside them (the system
+directory takes sudo); nothing is deleted, and nothing moves unless `nova_tools_remove_enabled` is true. Retiring
+`nova-push-credential` also unsets each global `credential.helper` / `credential.<url>.helper` whose value is that script
+(`git config --global --unset-all`, matched by its path alone; other helpers stay), and the INSTALL line says so.
+`nova-fleet services -- -l <host> -e '{"nova_retire_units":[...]}'` retires a unit of the services play's shapes
+(`nova-service-*`, `nova-loop-*`, `com.nova.service.*`, `com.nova.loop.*`); anything no play retires is named on its own.
+A binary in `retired-tools.txt` (every v1 tool nova-tools and rowan-tools shipped) is a leftover at once; any other binary
+nothing accounts for is a leftover once every `--repo` the fleet installs (`nova_tools_fleet_repos`: nova-sprint) has its
+manifest on the machine, and until then a `WARNING unrecorded=<n>` with `reinstall <repo> to record its names`, never a
+refusal (the first rollout, before manifests existed). The check itself removes nothing. Unix machines, nova-tools' own
+release only (a `--repo` install prints no line); `--check` prints the line too.
 
 ## services
 
