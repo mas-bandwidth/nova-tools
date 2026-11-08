@@ -892,12 +892,14 @@ signal fails:
 - the LAN: the default gateway does not answer one ping and the interface received no packet since the last tick (a
   router outage, where packets still arrive, is no miss);
 - the tailnet, read on `nova_netwatch_tailnet_interface` (default: the default route's) while the LAN works. It is
-  **local** when no peer answers `tailscale ping` (up to `nova_netwatch_tailnet_tries` of `nova_netwatch_tailnet_peers`,
-  else of the peers the status lists online) or tailscale does not run or answer, while the coordination server
+  **local** when tailscale does not answer its status or is in a state other than `Running`, or the rest of the
+  tailnet sees the machine offline and no peer answers `tailscale ping` (up to `nova_netwatch_tailnet_tries` of
+  `nova_netwatch_tailnet_peers`, else of the peers the status lists online), while the coordination server
   (`nova_netwatch_control_url`, else the ControlURL of `tailscale debug prefs`) answers an HTTPS request over the plain
   internet. It is **remote** when the coordination server does not answer, the machine needs a new login
-  (`NeedsLogin`, `NeedsMachineAuth`), or only its own node shows offline while peers answer. `Stopped` (a `tailscale
-  down` by hand) and a tailnet with no peer online are no miss.
+  (`NeedsLogin`, `NeedsMachineAuth`), only its own node shows offline while peers answer, or no peer answers while its
+  own node shows online (a relay outage, or the peers down: a fault every machine would see at once). `Stopped` (a
+  `tailscale down` by hand) and a tailnet with no peer online are no miss.
 
 After `nova_netwatch_threshold` misses in a row the tick climbs, waiting `nova_netwatch_backoff` times the rung's
 number of ticks after each rung:

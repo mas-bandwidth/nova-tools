@@ -10,3 +10,5 @@ NetWatchBrokenRemoteReboot.cfg	NetWatch.tla	action	NoRebootForARemoteTailnet	che
 NetWatchBrokenWindowLoop.cfg	NetWatch.tla	invariant	OutageRebootsBounded	check
 NetWatchTrace.cfg	NetWatchTrace.tla	pass	-	check
 NetWatchTraceBrokenSkipRestart.cfg	NetWatchTrace.tla	invariant	TraceMatches	check
+NetWatchBrokenOldClassify.cfg	NetWatch.tla	action	NoRebootForARemoteTailnet	check
+NetWatchTraceBrokenOldClassify.cfg	NetWatchTrace.tla	invariant	TraceMatches	check

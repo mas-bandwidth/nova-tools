@@ -68,6 +68,9 @@ func nwStatus(backend string, selfOnline bool, peers map[string]bool) string {
 
 var nwHealthyStatus = nwStatus("Running", true, map[string]bool{"100.64.0.2": true, "100.64.0.3": false})
 
+// nwSelfOffline is a machine the rest of the tailnet sees offline, with its peers listed online.
+var nwSelfOffline = nwStatus("Running", false, map[string]bool{"100.64.0.2": true, "100.64.0.3": false})
+
 var nwStubs = map[string]string{
 	"ethtool":   `echo "ethtool $*" >> "$CALLS"`,
 	"modprobe":  `echo "modprobe $*" >> "$CALLS"`,
@@ -460,43 +463,45 @@ var nwCases = []struct {
 	{"a local tailnet miss restarts tailscaled, and recovers if that clears it", func(t *testing.T, n *nw) {
 		n.write("ping_ok", "")
 		n.write("ts/answer", "")
+		n.write("ts/status", nwSelfOffline)
 		n.ticks(2)
-		if !n.logHas("MISS threshold reached lan=1 gw=192.168.1.1 rx=1000 tailnet=local (no peer answered, https://control.example answers)") || len(n.calls()) != 0 {
+		if !n.logHas("MISS threshold reached lan=1 gw=192.168.1.1 rx=1000 tailnet=local (own node offline, no peer answered, https://control.example answers)") || len(n.calls()) != 0 {
 			t.Fatalf("log %q calls %q", n.read("log"), n.calls())
 		}
 		n.tick()
-		if !n.logHas("warning NETWATCH eno1 RUNG 1 restart tailscaled (no peer answered, https://control.example answers)") || strings.Join(n.calls(), ";") != "systemctl restart tailscaled" {
+		if !n.logHas("warning NETWATCH eno1 RUNG 1 restart tailscaled (own node offline, no peer answered, https://control.example answers)") || strings.Join(n.calls(), ";") != "systemctl restart tailscaled" {
 			t.Fatalf("log %q calls %q", n.read("log"), n.calls())
 		}
+		n.write("ts/status", nwHealthyStatus)
 		n.write("ts/answer", "100.64.0.2\n")
 		n.tick()
 		if !n.logHas("RECOVERED misses=2 rung=1") || n.state() != "0 0 0 0 1000" {
 			t.Fatalf("log %q state %q", n.read("log"), n.state())
 		}
 	}},
-	{"a local tailnet miss the restart does not clear reboots, and never touches the card", func(t *testing.T, n *nw) {
+	{"a machine the tailnet sees offline, with the LAN and the coordination server up, restarts tailscaled, then reboots, and never touches the card", func(t *testing.T, n *nw) {
 		n.write("ping_ok", "")
 		n.write("ts/answer", "")
+		n.write("ts/status", nwSelfOffline)
 		n.ticks(5) // the threshold, rung 1, its backoff, the reboot
 		if got := strings.Join(n.calls(), ";"); got != "systemctl restart tailscaled;systemctl reboot" {
 			t.Fatalf("calls %q", got)
 		}
-		if !n.logHas("RUNG 5 reboot (1/2 in window, 1/2 in this outage; lan=1 tailnet=local (no peer answered, https://control.example answers))") {
+		if !n.logHas("RUNG 5 reboot (1/2 in window, 1/2 in this outage; lan=1 tailnet=local (own node offline, no peer answered, https://control.example answers))") {
 			t.Fatalf("log %q", n.read("log"))
 		}
 	}},
-	{"a remote tailnet miss restarts tailscaled once, then only the alert, and never reboots", func(t *testing.T, n *nw) {
+	{"silent peers while the own node is online (a relay outage, or the peers down) restart tailscaled once, then only the alert, never a reboot", func(t *testing.T, n *nw) {
 		n.write("ping_ok", "")
 		n.write("ts/answer", "")
-		n.remove("ts/control_ok")
 		n.ticks(40)
 		if got := strings.Join(n.calls(), ";"); got != "systemctl restart tailscaled" || n.alertKind() != "remote" {
 			t.Fatalf("calls %q alert %q", got, n.alertKind())
 		}
-		if strings.Count(n.read("log"), "ALERT") != 1 || !n.logHas("crit NETWATCH eno1 ALERT the tailnet is down and the fault is not this machine's (no peer answered, https://control.example does not answer); nothing to do here") {
+		if strings.Count(n.read("log"), "ALERT") != 1 || !n.logHas("crit NETWATCH eno1 ALERT the tailnet is down and the fault is not this machine's (no peer answered, own node online (a relay or the peers), https://control.example answers); nothing to do here") {
 			t.Fatalf("log %q", n.read("log"))
 		}
-		n.write("ts/control_ok", "") // the coordination server is back and the peers still do not answer: the fault is local
+		n.write("ts/status", nwSelfOffline) // the tailnet now sees this machine offline while the coordination server answers: local
 		n.tick()
 		if n.last() != "systemctl reboot" {
 			t.Fatalf("calls %q", n.calls())
@@ -512,8 +517,10 @@ var nwCases = []struct {
 			{nwStatus("NeedsLogin", false, nil), "", true, "tailnet=remote (backend=NeedsLogin: it needs a person to log in)"},
 			{nwStatus("NeedsMachineAuth", false, nil), "", true, "tailnet=remote (backend=NeedsMachineAuth: it needs a person to log in)"},
 			{nwStatus("Running", false, map[string]bool{"100.64.0.2": true}), "100.64.0.2", true, "tailnet=remote (own node offline, peers answer)"},
-			{nwStatus("Running", false, map[string]bool{"100.64.0.2": true}), "", true, "tailnet=local (no peer answered, https://control.example answers)"},
-			{nwStatus("Running", true, map[string]bool{"100.64.0.2": true}), "", false, "tailnet=remote (no peer answered, https://control.example does not answer)"},
+			{nwStatus("Running", false, map[string]bool{"100.64.0.2": true}), "", true, "tailnet=local (own node offline, no peer answered, https://control.example answers)"},
+			{nwStatus("Running", false, map[string]bool{"100.64.0.2": true}), "", false, "tailnet=remote (own node offline, no peer answered, https://control.example does not answer)"},
+			{nwStatus("Running", true, map[string]bool{"100.64.0.2": true}), "", true, "tailnet=remote (no peer answered, own node online (a relay or the peers), https://control.example answers)"},
+			{nwStatus("Running", true, map[string]bool{"100.64.0.2": true}), "", false, "tailnet=remote (no peer answered, own node online (a relay or the peers), https://control.example does not answer)"},
 			{nwStatus("Starting", true, nil), "", true, "tailnet=local (backend=Starting, https://control.example answers)"},
 			{nwStatus("Starting", true, nil), "", false, "tailnet=remote (backend=Starting, https://control.example does not answer)"},
 			{"not json", "", true, "tailnet=local (backend=unparsable, https://control.example answers)"},
@@ -545,6 +552,7 @@ var nwCases = []struct {
 	{"the control URL is the one tailscale names, or the one configured", func(t *testing.T, n *nw) {
 		n.write("ping_ok", "")
 		n.write("ts/answer", "")
+		n.write("ts/status", nwSelfOffline)
 		n.tick()
 		n.setenv("NETWATCH_CONTROL_URL=https://headscale.example")
 		n.tick()
@@ -658,10 +666,11 @@ func nwLog(traces []string) string {
 	for _, tr := range traces {
 		for _, l := range nwLines(tr) {
 			f := strings.Fields(l)
-			if len(f) != 19 {
+			if len(f) != 23 {
 				return fmt.Sprintf("malformed trace line %q", l)
 			}
-			row := fmt.Sprintf("T(%s, %s, %q, %s, %s)", rec(f[0:8]), b(f[8]), f[9], b(f[10]), rec(f[11:19]))
+			o := fmt.Sprintf("O(%q, %s, %s, %s)", f[10], b(f[11]), b(f[12]), b(f[13]))
+			row := fmt.Sprintf("T(%s, %s, %q, %s, %s, %s)", rec(f[0:8]), b(f[8]), f[9], o, b(f[14]), rec(f[15:23]))
 			if !seen[row] {
 				seen[row] = true
 				rows = append(rows, row)
@@ -671,11 +680,13 @@ func nwLog(traces []string) string {
 	return `------------------------------ MODULE NetWatchLog ------------------------------
 (* The ticks roles/netwatch/files/nova-netwatch took in netwatch_functional_test.go, distinct and in the order *)
 (* the cases first took them: the record before (misses, rung, wait, busyWaits, reboots, outage, alerted,      *)
-(* halted), the LAN signal, the tailnet signal, whether a protected job ran, and the record after. Written by  *)
-(* the test (NETWATCH_UPDATE_LOG=1); NetWatchTrace.tla checks each is a Step of NetWatch.tla.                  *)
+(* halted), the LAN signal, the tailnet signal, what was seen of the tailnet ("-" unread; a boolean not asked  *)
+(* is FALSE), whether a protected job ran, and the record after. Written by the test (NETWATCH_UPDATE_LOG=1);   *)
+(* NetWatchTrace.tla checks each is a Step of NetWatch.tla and its tailnet signal is Classify of what was seen. *)
 R(m, r, wt, bw, rb, o, a, h) == [misses |-> m, rung |-> r, wait |-> wt, busyWaits |-> bw, reboots |-> rb,
                                  outage |-> o, alerted |-> a, halted |-> h]
-T(pre, lan, tail, b, post) == [pre |-> pre, lan |-> lan, tail |-> tail, busy |-> b, post |-> post]
+O(be, self, peers, control) == [backend |-> be, self |-> self, peers |-> peers, control |-> control]
+T(pre, lan, tail, o, b, post) == [pre |-> pre, lan |-> lan, tail |-> tail, obs |-> o, busy |-> b, post |-> post]
 TickLog == <<
     ` + strings.Join(rows, ",\n    ") + `
 >>

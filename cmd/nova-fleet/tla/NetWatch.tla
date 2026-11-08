@@ -1,10 +1,10 @@
 ------------------------------ MODULE NetWatch ------------------------------
 (* The network self-heal ladder of cmd/nova-fleet/netwatch.yml (roles/netwatch/files/nova-netwatch), one     *)
 (* interface's instance. Once per tick the watch reads its inputs: the LAN (the gateway answers, or packets   *)
-(* still arrive) and, on the tailnet's interface while the LAN works, the tailnet: "ok", "local" (the fault   *)
-(* is this machine's: no peer answers, or tailscale is not running, while the coordination server answers    *)
-(* over the plain internet) or "remote" (the coordination server cannot be reached, the machine needs a new  *)
-(* login, or only its own node shows offline while peers answer). A tick with either down is a miss. After    *)
+(* still arrive) and, on the tailnet's interface while the LAN works, the tailnet, which the script cannot see *)
+(* directly: it sees an observation (obs: tailscale's state, its own node online, a peer answering, the       *)
+(* coordination server answering) and Classify turns that into "ok", "local" or "remote", as the script does. *)
+(* A tick with either down is a miss. After                                                                   *)
 (* Threshold consecutive misses, waiting Backoff(r) ticks after rung r:                                       *)
 (*   1 restart tailscaled, for any miss                                                                      *)
 (*   2 renegotiate   3 link bounce   4 driver reload: only while the LAN misses                               *)
@@ -24,23 +24,29 @@
 (* The environment: the LAN breaks with a depth in Depths (2..6), the lowest rung that clears it (6: nothing  *)
 (* on the machine does), and rung r clears it iff r >= depth. The tailnet breaks locally with a depth in      *)
 (* TailDepths: 1 is a wedged tailscaled (its restart or the reboot clears it), 5 needs the reboot, 6 nothing  *)
-(* clears; or, when RemoteFaults, remotely, which nothing on the machine clears. At most MaxFaults faults;     *)
+(* clears; or, when RemoteFaults, remotely, which nothing on the machine clears. Each fault shows one of the  *)
+(* observations it can produce (LocalObs, RemoteObs), and may change to another while it lasts. A local fault  *)
+(* is assumed to leave the coordination server reachable and to show either tailscale not answering or not   *)
+(* Running, or the own node offline with the peers silent (a machine the tailnet has lost); a local fault that *)
+(* looks like a remote one (own node online, peers silent) is not modelled: it gets the alert, not a reboot.  *)
+(* At most MaxFaults faults;                                                                                  *)
 (* each may clear by itself; protected jobs start and stop (when BusyJobs); reboots age out of the window.    *)
 (* None of these is fair. The watch's Tick is weakly fair (a systemd timer).                                  *)
 (*                                                                                                            *)
 (* Reversed witnesses: GuardBusy FALSE, AlertOnBusy FALSE, RestartTailscaled FALSE, TailLikeLan TRUE (the      *)
 (* tailnet miss climbs the card's rungs and reboots like a LAN miss), Latch FALSE (the budget counts only the  *)
-(* window and is tried again after it, so a fault that never clears reboots the machine forever).             *)
+(* window and is tried again after it, so a fault that never clears reboots the machine forever), OldClassify  *)
+(* TRUE (silent peers with the own node online taken as local: a relay outage reboots every machine).          *)
 EXTENDS Naturals
 
 CONSTANTS Threshold, BackoffStep, BusyBackoff, MaxFaults, MaxReboots, BusyWaitLimit,
           Depths, TailDepths, RemoteFaults, BusyJobs,
-          GuardBusy, AlertOnBusy, RestartTailscaled, TailLikeLan, Latch
+          GuardBusy, AlertOnBusy, RestartTailscaled, TailLikeLan, Latch, OldClassify
 
 ASSUME Threshold \in Nat \ {0} /\ BackoffStep \in Nat \ {0} /\ BusyBackoff \in Nat \ {0}
 ASSUME MaxFaults \in Nat /\ MaxReboots \in Nat /\ BusyWaitLimit \in Nat \ {0}
 ASSUME Depths \subseteq 2..6 /\ TailDepths \subseteq {1, 5, 6}
-ASSUME \A c \in {RemoteFaults, BusyJobs, GuardBusy, AlertOnBusy, RestartTailscaled, TailLikeLan, Latch} : c \in BOOLEAN
+ASSUME \A c \in {RemoteFaults, BusyJobs, GuardBusy, AlertOnBusy, RestartTailscaled, TailLikeLan, Latch, OldClassify} : c \in BOOLEAN
 
 Rungs == 4               \* the rungs before the reboot
 RebootRung == Rungs + 1
@@ -54,15 +60,47 @@ VARIABLES
     tdepth,     \* a local tailnet fault's depth (0 otherwise)
     faults,     \* faults so far (bounds the model)
     busy,       \* a protected job runs on the machine
+    obs,        \* what the script can see of the tailnet
     w           \* the watch: [misses, rung, wait, busyWaits, reboots, outage, alerted, halted]
 
-vars == <<depth, tkind, tdepth, faults, busy, w>>
+vars == <<depth, tkind, tdepth, faults, busy, obs, w>>
 
 Down == depth > 0 \/ tkind # "none"
 
+\* An observation of the tailnet: backend is "running", "stopped" (tailscale down by hand), "login" (NeedsLogin or NeedsMachineAuth), "other" (another
+\* state) or "none" (the status does not answer); self, the own node online; peers, a peer answering tailscale ping
+\* (read only while running); control, the coordination server answering over the plain internet.
+Obs == [backend: {"running", "stopped", "login", "other", "none"}, self: BOOLEAN, peers: BOOLEAN, control: BOOLEAN]
+Healthy == [backend |-> "running", self |-> TRUE, peers |-> TRUE, control |-> TRUE]
+
+\* the script's read_tailnet
+Classify(o) ==
+    IF o.backend = "stopped" THEN "ok"
+    ELSE IF o.backend = "login" THEN "remote"
+    ELSE IF o.backend = "running" /\ o.peers THEN (IF o.self THEN "ok" ELSE "remote")
+    ELSE IF o.backend = "running" /\ o.self /\ ~OldClassify THEN "remote"
+    ELSE IF o.control THEN "local"
+    ELSE "remote"
+
+\* what a fault can look like: a local one leaves the coordination server reachable (see above); a remote one is
+\* anything else that is not healthy: the coordination server silent, a new login, the own node offline while
+\* peers answer, or silent peers while the own node is online (a relay outage, the peers down)
+LocalObs ==
+    {[backend |-> b, self |-> FALSE, peers |-> FALSE, control |-> TRUE] : b \in {"none", "other"}}
+    \cup {[backend |-> "running", self |-> FALSE, peers |-> FALSE, control |-> TRUE]}
+RemoteObs ==
+    {o \in Obs : /\ o.backend # "stopped"
+                 /\ o.backend \in {"none", "other"} => (~o.self /\ ~o.peers)
+                 /\ o.backend = "login" => (~o.self /\ ~o.peers)
+                 /\ \/ o.backend = "login"
+                    \/ ~o.control /\ ~(o.backend = "running" /\ o.self /\ o.peers)
+                    \/ o.backend = "running" /\ ~o.self /\ o.peers
+                    \/ o.backend = "running" /\ o.self /\ ~o.peers}
+ObsOf(k) == IF k = "local" THEN LocalObs ELSE IF k = "remote" THEN RemoteObs ELSE {Healthy}
+
 \* the inputs of a tick, as the script reads them
 LanIn == depth = 0
-TailIn == IF ~LanIn THEN "skip" ELSE IF tkind = "none" THEN "ok" ELSE tkind
+TailIn == IF ~LanIn THEN "skip" ELSE Classify(obs)
 
 W == [misses: 0..Threshold, rung: 0..Rungs, wait: 0..Max(Backoff(Rungs), BusyBackoff),
       busyWaits: 0..BusyWaitLimit, reboots: 0..MaxReboots, outage: 0..MaxReboots,
@@ -74,6 +112,7 @@ TypeOK ==
     /\ tdepth \in {0} \cup TailDepths
     /\ faults \in 0..MaxFaults
     /\ busy \in BOOLEAN
+    /\ obs \in ObsOf(tkind)
     /\ w \in W
 
 \* One tick of the watch: the record after, from the record before, the LAN signal (lan), the tailnet signal
@@ -109,6 +148,7 @@ TailClears(r) ==
 Init ==
     /\ depth = 0 /\ tkind = "none" /\ tdepth = 0 /\ faults = 0
     /\ busy \in IF BusyJobs THEN BOOLEAN ELSE {FALSE}
+    /\ obs = Healthy
     /\ w = [misses |-> 0, rung |-> 0, wait |-> 0, busyWaits |-> 0, reboots |-> 0, outage |-> 0,
             alerted |-> FALSE, halted |-> FALSE]
 
@@ -116,30 +156,36 @@ Init ==
 Fault ==
     /\ depth = 0 /\ faults < MaxFaults
     /\ depth' \in Depths /\ faults' = faults + 1
-    /\ UNCHANGED <<tkind, tdepth, busy, w>>
+    /\ UNCHANGED <<tkind, tdepth, busy, obs, w>>
 
 TailFault ==
     /\ tkind = "none" /\ faults < MaxFaults /\ faults' = faults + 1
     /\ \/ \E d \in TailDepths : tkind' = "local" /\ tdepth' = d
        \/ RemoteFaults /\ tkind' = "remote" /\ tdepth' = 0
+    /\ obs' \in ObsOf(tkind')
     /\ UNCHANGED <<depth, busy, w>>
 
 SelfHeal ==
     /\ depth > 0 /\ depth' = 0
-    /\ UNCHANGED <<tkind, tdepth, faults, busy, w>>
+    /\ UNCHANGED <<tkind, tdepth, faults, busy, obs, w>>
 
 TailSelfHeal ==
-    /\ tkind # "none" /\ tkind' = "none" /\ tdepth' = 0
+    /\ tkind # "none" /\ tkind' = "none" /\ tdepth' = 0 /\ obs' = Healthy
     /\ UNCHANGED <<depth, faults, busy, w>>
+
+\* a tailnet fault shows another of its observations
+Observe ==
+    /\ obs' \in ObsOf(tkind) /\ obs' # obs
+    /\ UNCHANGED <<depth, tkind, tdepth, faults, busy, w>>
 
 Busy ==
     /\ BusyJobs /\ busy' = ~busy
-    /\ UNCHANGED <<depth, tkind, tdepth, faults, w>>
+    /\ UNCHANGED <<depth, tkind, tdepth, faults, obs, w>>
 
 \* a reboot leaves the window (the script counts the reboot times younger than the window)
 Age ==
     /\ w.reboots > 0 /\ w' = [w EXCEPT !.reboots = w.reboots - 1]
-    /\ UNCHANGED <<depth, tkind, tdepth, faults, busy>>
+    /\ UNCHANGED <<depth, tkind, tdepth, faults, busy, obs>>
 
 \* ---- the watch: one tick of the timer ----
 Tick ==
@@ -151,10 +197,10 @@ Tick ==
        IN /\ w' = s
           /\ depth' = IF r > 0 /\ depth > 0 /\ LanClears(r) THEN 0 ELSE depth
           /\ IF r > 0 /\ TailClears(r)
-             THEN tkind' = "none" /\ tdepth' = 0
-             ELSE UNCHANGED <<tkind, tdepth>>
+             THEN tkind' = "none" /\ tdepth' = 0 /\ obs' = Healthy
+             ELSE UNCHANGED <<tkind, tdepth, obs>>
 
-Next == Fault \/ TailFault \/ SelfHeal \/ TailSelfHeal \/ Busy \/ Age \/ Tick
+Next == Fault \/ TailFault \/ SelfHeal \/ TailSelfHeal \/ Observe \/ Busy \/ Age \/ Tick
 
 Spec == Init /\ [][Next]_vars /\ WF_vars(Tick)
 
