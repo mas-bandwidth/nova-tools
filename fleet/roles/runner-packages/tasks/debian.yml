@@ -1,0 +1,29 @@
+---
+# Debian, Ubuntu: apt packages. A package dpkg already has is left as it is (no upgrade); only the missing are installed.
+- name: the packages already installed
+  ansible.builtin.package_facts: { manager: auto }
+  check_mode: false
+
+- name: what is present and what is missing
+  ansible.builtin.set_fact:
+    rp_present: "{{ rp_wanted | select('in', ansible_facts.packages) | list }}"
+    rp_missing: "{{ rp_wanted | reject('in', ansible_facts.packages) | list }}"
+
+- name: apt install the missing packages
+  ansible.builtin.apt:
+    name: "{{ rp_missing }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  become: true
+  when: not ansible_check_mode and rp_missing | length > 0
+
+- name: would install the missing packages
+  ansible.builtin.debug: { msg: "WOULD-INSTALL apt-get install {{ item }}" }
+  loop: "{{ rp_missing }}"
+  changed_when: true
+  when: ansible_check_mode
+
+- name: the count installed
+  ansible.builtin.set_fact:
+    rp_installed: "{{ 0 if ansible_check_mode else rp_missing | length }}"

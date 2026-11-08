@@ -1,0 +1,38 @@
+---
+# macOS: Homebrew formulae, as the login (brew refuses root). A formula `brew list --formula` already names is adopted
+# as it is: no reinstall, no upgrade, no auto-update, so a run over it reports changed=0.
+- name: Homebrew
+  ansible.builtin.shell: "command -v brew || ls /opt/homebrew/bin/brew /usr/local/bin/brew 2>/dev/null | head -1"
+  register: rp_brew
+  changed_when: false
+  failed_when: rp_brew.stdout | trim | length == 0
+  check_mode: false
+
+- name: the formulae already installed
+  ansible.builtin.command: "{{ rp_brew.stdout_lines | first }} list --formula -1"
+  environment: { HOMEBREW_NO_AUTO_UPDATE: "1", HOMEBREW_NO_ANALYTICS: "1" }
+  register: rp_brew_list
+  changed_when: false
+  check_mode: false
+
+- name: what is present and what is missing
+  ansible.builtin.set_fact:
+    rp_present: "{{ rp_wanted | intersect(rp_brew_list.stdout_lines) }}"
+    rp_missing: "{{ rp_wanted | difference(rp_brew_list.stdout_lines) }}"
+
+- name: brew install the missing formulae
+  ansible.builtin.command: "{{ rp_brew.stdout_lines | first }} install --formula {{ item }}"
+  environment: { HOMEBREW_NO_AUTO_UPDATE: "1", HOMEBREW_NO_ANALYTICS: "1", HOMEBREW_NO_INSTALL_CLEANUP: "1", HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK: "1" }
+  loop: "{{ rp_missing }}"
+  when: not ansible_check_mode
+  changed_when: true
+
+- name: would install the missing formulae
+  ansible.builtin.debug: { msg: "WOULD-INSTALL brew install --formula {{ item }}" }
+  loop: "{{ rp_missing }}"
+  changed_when: true
+  when: ansible_check_mode
+
+- name: the count installed
+  ansible.builtin.set_fact:
+    rp_installed: "{{ 0 if ansible_check_mode else rp_missing | length }}"

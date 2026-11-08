@@ -52,7 +52,7 @@ go test -count=1 -p 4 -tags functional,slow ./...    # uncached: runs outside bi
 
 Set `NOVA_TEST_NO_HOST=1` in your environment when running these checks by hand.
 The Windows vet command checks compilation; it does not run Windows tests.
-The unit jobs run on Linux and macOS, and the functional job runs on Linux.
+The unit jobs run on Linux and macOS, and the functional jobs run on Linux and on macOS (mini-m5, `functional-macos`). The macOS job installs nothing: its PostgreSQL comes from `nova-fleet runner-packages` (fleet/README.md), and the job refuses, naming that play, when `initdb` is missing.
 Top-level `ci-ok` requires every job to succeed. Fork pull requests do not run
 on the repository's self-hosted machines.
 
