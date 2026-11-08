@@ -836,7 +836,7 @@ nova-fleet secrets-refresh -- -e nova_seal_store=S
 
 | Variable | Default | |
 |---|---|---|
-| `nova_seal_store` | none, required | the control node's clone of the store, to push; without it a machine with `nova_secrets_refresh: true` stops before anything changes |
+| `nova_seal_store` | none, required | the control node's clone of the store, to push; without it a machine with `nova_secrets_refresh: true` stops before anything changes, and a directory without `.sops.yaml` and `recovery.pub` is refused before the push |
 | `nova_secrets_refresh` | `true` | `false` removes the pull timer and skips the push |
 
 **Check.** `SECRETS-REFRESH <machine> mode=push files=<n> pushed` (or `same`). **Rollback.** Push the previous

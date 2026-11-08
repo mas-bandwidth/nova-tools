@@ -133,6 +133,25 @@
         fail_msg: "SECRETS-REFRESH STOP: the store clone {{ nova_seal_store | default('') }} holds symlinks, which are never pushed: {{ sr_links.stdout_lines | default([]) | join(', ') }}; remove them, then run again"
         quiet: true
 
+    # the push deletes what the clone lacks: a directory that is not a store would empty every machine's store
+    - name: the clone is a secrets store (nova-secrets init writes .sops.yaml and recovery.pub)
+      ansible.builtin.stat: { path: "{{ nova_seal_store | regex_replace('/*$', '') }}/{{ item }}" }
+      loop: [.sops.yaml, recovery.pub]
+      delegate_to: localhost
+      become: false
+      register: sr_store_files
+      when: nova_seal_store is defined
+
+    - name: the clone holds what a store has
+      ansible.builtin.assert:
+        that: sr_store_files is skipped or sr_store_files.results | rejectattr('stat.exists') | list | length == 0
+        fail_msg: >-
+          SECRETS-REFRESH STOP: {{ nova_seal_store | default('') }} is not a secrets store (no
+          {{ sr_store_files.results | default([]) | rejectattr('stat.exists') | map(attribute='item') | join(', ') }}), and
+          pushing it would delete every machine's store; run: nova-fleet secrets-refresh -- -e nova_seal_store=<the
+          control node's clone of the store>
+        quiet: true
+
     - name: the store directory (0700)
       ansible.builtin.file: { path: "{{ nova_secrets_store }}", state: directory, mode: "0700" }
       when: nova_seal_store is defined
@@ -180,9 +199,9 @@
 
     - name: the store is here (pushed by the control node; -e nova_seal_store=<its clone> pushes it from this play)
       ansible.builtin.assert:
-        that: sr_files.stdout != 'missing' or (ansible_check_mode and sr_push_dir is changed)
+        that: sr_files.stdout not in ['missing', '0'] or (ansible_check_mode and (sr_push_dir is changed or sr_push is changed))
         fail_msg: >-
-          SECRETS-REFRESH {{ inventory_hostname }} mode=push missing: no store at {{ nova_secrets_store }}; push it from
-          the control node (-e nova_seal_store=<its clone>)
+          SECRETS-REFRESH {{ inventory_hostname }} mode=push {{ 'missing' if sr_files.stdout == 'missing' else 'empty' }}: no
+          store files at {{ nova_secrets_store }}; push them from the control node (-e nova_seal_store=<its clone>)
         quiet: true
 
