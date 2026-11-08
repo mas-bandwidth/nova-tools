@@ -133,8 +133,10 @@ func needManager(s sys, u unit, stderr io.Writer) int {
 }
 
 // installService writes the unit for cmd (unless it already says exactly
-// that), starts it, and waits for its HOOK OK in the log.
-func installService(ctx context.Context, s sys, clk Clock, name string, cmd []string, env func(string) string, stdout, stderr io.Writer) int {
+// that), starts it, and waits for its HOOK OK in the log. An unchanged unit
+// is OK only while its hook holds the name on the bus: a loaded unit may be
+// one retrying a login Redis refuses.
+func installService(ctx context.Context, s sys, clk Clock, name string, cmd []string, env func(string) string, dial func(addr, user, password string) Store, stdout, stderr io.Writer) int {
 	u := unitFor(s, name)
 	if code := needManager(s, u, stderr); code != 0 {
 		return code
@@ -162,8 +164,18 @@ func installService(ctx context.Context, s sys, clk Clock, name string, cmd []st
 		from = fi.Size()
 	}
 	if !changed && u.running(ctx, s) {
-		fmt.Fprintf(stdout, "HOOK SERVICE OK name=%s unit=%s log=%s changed=false\n", name, u.label, u.log)
-		return 0
+		p, err := dial(env("NOVA_BUS_REDIS"), env("NOVA_BUS_USER"), env("NOVA_BUS_PASSWORD")).Presence(ctx)
+		if v, ok := p[name]; err == nil && ok && !strings.Contains(v, "\trecv") {
+			fmt.Fprintf(stdout, "HOOK SERVICE OK name=%s unit=%s log=%s changed=false\n", name, u.label, u.log)
+			return 0
+		}
+		why := "the unit is loaded but " + name + " is not hooked in"
+		if err != nil {
+			why = "cannot see whether " + name + " is hooked in: " + describe(err, env("NOVA_BUS_REDIS"))
+		}
+		b, _ := os.ReadFile(u.log) // ignored: absent, its last line is empty
+		lines := strings.Split(strings.TrimSpace(string(b)), "\n")
+		return fail(stderr, "hook", "HOOK SERVICE FAILED name=%s unit=%s reason=%s; its log ends: %s; run: tail -n 20 %s", name, u.label, why, escaper.Replace(lines[len(lines)-1]), shellQuote(u.log))
 	}
 	// 0600: the unit holds the Redis password in its environment.
 	err := os.WriteFile(u.path, []byte(text), 0o600)
