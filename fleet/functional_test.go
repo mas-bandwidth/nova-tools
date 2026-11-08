@@ -142,6 +142,12 @@ func TestInstallFromALocalBuild(t *testing.T) {
 		t.Errorf("a second run under --check: exit %d, want changed=0 and leftovers=0:\n%s", code, out)
 	}
 
+	// A unit fleet/retired-units.txt does not retire is never stopped: refused, named.
+	code, out, _ = runFleet(t, bin, append(args, "-e", `{"nova_tools_remove_enabled":true,"nova_tools_remove_units":["tailscaled.service"]}`)...)
+	if code == 0 || !strings.Contains(out, "nova_tools_remove_units names tailscaled.service, which fleet/retired-units.txt does not retire") {
+		t.Errorf("a unit to retire that is not a retired one: exit %d, want the refusal:\n%s", code, out)
+	}
+
 	// Leftovers of an older install beside the new binaries. svc is the run with the
 	// inventory's nova_services (none here), which the unit check needs.
 	svc := append(append([]string{}, args...), "-e", `{"nova_services":[]}`)

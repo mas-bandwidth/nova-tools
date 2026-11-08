@@ -216,12 +216,17 @@ nova_tools_remove:
 # (fleet/retired-units.txt). nova_tools_unit_manager false asks nothing of systemd or
 # launchd and takes no sudo (a test's directories).
 nova_tools_remove_units: []
+# The globs of fleet/retired-units.txt, as one regex: the leftover check reads for
+# them, and nova_tools_remove_units may name nothing else.
+nova_tools_unit_globs: "{{ lookup('ansible.builtin.file', role_path ~ '/../../retired-units.txt').splitlines() | reject('match', '^#') | select | map('split', '\t') | map('first') | list }}"
+nova_tools_retired_unit_re: "{{ '^(' ~ (nova_tools_unit_globs | map('regex_replace', '[.]', '[.]') | map('regex_replace', '[*]', '.*') | join('|')) ~ ')$' }}"
 nova_tools_unit_manager: true
 nova_tools_user_unit_dir: "{{ nova_home ~ ('/.config/systemd/user' if nova_tools_os == 'linux' else '/Library/LaunchAgents') }}"
 # A git credential helper value that runs the retired nova-push-credential (git's
-# extended regex: the script's path in the bin directory, with git's leading !),
+# extended regex: the script's path in the bin directory or ~/.local/bin, with git's
+# leading !),
 # and the global config keys that hold one (credential.helper, credential.<url>.helper).
-nova_tools_gitcred_value: "^!?{{ (nova_tools_bin_dir ~ '/nova-push-credential') | regex_escape('posix_basic') }}$"
+nova_tools_gitcred_value: "^!?({{ [nova_tools_bin_dir, ansible_facts['env']['HOME'] ~ '/.local/bin'] | unique | map('regex_escape', 'posix_basic') | map('regex_replace', '$', '/nova-push-credential') | join('|') }})$"
 nova_tools_gitcred_keys: "{{ (nova_tools_gitcred.stdout_lines | default([]) | map('split') | map('first') | unique | list) if (nova_tools_gitcred.rc | default(1)) == 0 else [] }}"
 # The system unit directory: systemd's on Linux, launchd's daemons on macOS (where
 # services.yml puts a headless Mac's units, nova_launchd_domain auto or system).

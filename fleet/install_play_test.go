@@ -182,10 +182,8 @@ func TestInstallRoleLeftoversAreTheUnlistedFiles(t *testing.T) {
 	rn := taskIndex(tasks, "the retired names and units")
 	require.GreaterOrEqual(t, rn, 0)
 	assert.Contains(t, taskVar(t, tasks[rn], "nova_tools_retired_rows"), "retired-tools.txt")
-	assert.Contains(t, taskVar(t, tasks[rn], "nova_tools_unit_globs"), "retired-units.txt")
 	rf := tasks[rn]["ansible.builtin.set_fact"].(map[string]any)
 	assert.NotContains(t, rf, "nova_tools_fleet_recorded", "a manifest never turns a binary that is not retired into a refusal")
-	assert.Contains(t, asText(rf["nova_tools_retired_unit_re"]), "map('regex_replace', '[.]', '[.]') | map('regex_replace', '[*]', '.*')")
 	left := asText(tasks[taskIndex(tasks, "the leftovers, and the plays that retire them")]["ansible.builtin.set_fact"].(map[string]any)["nova_tools_leftovers"])
 	assert.Regexp(t, regexp.MustCompile(`\| sort`), left, "the names are sorted, so two runs print the same line")
 	assert.NotContains(t, left, "unrecorded", "an unrecorded binary is never a leftover")
@@ -205,7 +203,7 @@ func TestInstallRoleLeftoverDefaults(t *testing.T) {
 	assert.Equal(t, []any{}, d["nova_tools_remove_units"])
 	assert.Equal(t, true, d["nova_tools_unit_manager"])
 	assert.Contains(t, d["nova_tools_remove"], "nova-push-credential")
-	assert.Equal(t, "^!?{{ (nova_tools_bin_dir ~ '/nova-push-credential') | regex_escape('posix_basic') }}$", d["nova_tools_gitcred_value"],
+	assert.Equal(t, "^!?({{ [nova_tools_bin_dir, ansible_facts['env']['HOME'] ~ '/.local/bin'] | unique | map('regex_escape', 'posix_basic') | map('regex_replace', '$', '/nova-push-credential') | join('|') }})$", d["nova_tools_gitcred_value"],
 		"the unset matches the script's own path alone, so the other helpers stay")
 	tb, err := os.ReadFile("roles/nova-tools-install/tasks/main.yml")
 	require.NoError(t, err)
@@ -328,4 +326,29 @@ func TestJoinOwnsAreJoinsBinaries(t *testing.T) {
 	j, err := os.ReadFile("join.yml")
 	require.NoError(t, err)
 	assert.Contains(t, string(j), "include: [age/age, age/age-keygen]")
+}
+
+// nova_tools_remove_units stops units: it may name only what fleet/retired-units.txt
+// retires, refused first otherwise (tailscaled.service would stop tailscale). The
+// globs are read from the file, and Glenn's node exporter on the studio is not in it.
+func TestInstallRoleStopsOnlyRetiredUnits(t *testing.T) {
+	t.Parallel()
+	tasks := installRoleTasks(t)
+	i := taskIndex(tasks, "every unit to retire is a retired one")
+	require.GreaterOrEqual(t, i, 0, "nova_tools_remove_units is not checked against fleet/retired-units.txt")
+	a := tasks[i]["ansible.builtin.assert"].(map[string]any)
+	assert.Equal(t, "nova_tools_remove_units | reject('match', nova_tools_retired_unit_re) | list | length == 0", asText(a["that"]))
+	assert.Contains(t, asText(a["fail_msg"]), "nova_tools_remove_units names {{ nova_tools_remove_units | reject('match', nova_tools_retired_unit_re) | join(', ') }}")
+	assert.Less(t, i, taskIndex(tasks, "which retired units are on the machine"), "the refusal comes before any unit is touched")
+	assert.Less(t, i, taskIndex(tasks, "the platform"), "the refusal comes before anything changes")
+	b, err := os.ReadFile("roles/nova-tools-install/defaults/main.yml")
+	require.NoError(t, err)
+	var d map[string]any
+	require.NoError(t, yaml.Unmarshal(b, &d))
+	assert.Contains(t, asText(d["nova_tools_unit_globs"]), "/../../retired-units.txt")
+	assert.Equal(t, "{{ '^(' ~ (nova_tools_unit_globs | map('regex_replace', '[.]', '[.]') | map('regex_replace', '[*]', '.*') | join('|')) ~ ')$' }}", d["nova_tools_retired_unit_re"])
+	u, err := os.ReadFile("retired-units.txt")
+	require.NoError(t, err)
+	assert.NotContains(t, string(u), "node-exporter", "com.nova.node-exporter.plist is Glenn's node exporter, live on the studio")
+	assert.NotContains(t, string(u), "tailscale")
 }

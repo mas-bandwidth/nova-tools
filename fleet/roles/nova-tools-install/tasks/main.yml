@@ -21,6 +21,16 @@
       nova-tools-install: name the release (-e nova_tools_version=vX.Y.Z, or with nova_tools_local_dir the version its file names carry), name its
       repository as OWNER/NAME, and keep nova_tools_names, nova_tools_remove and nova_tools_remove_units to plain file names
 
+# Only a unit fleet/retired-units.txt names is ever stopped: nova_tools_remove_units
+# naming any other (tailscaled.service, say) is refused before anything changes.
+- name: every unit to retire is a retired one (fleet/retired-units.txt)
+  ansible.builtin.assert:
+    quiet: true
+    that: nova_tools_remove_units | reject('match', nova_tools_retired_unit_re) | list | length == 0
+    fail_msg: >-
+      nova-tools-install: nova_tools_remove_units names {{ nova_tools_remove_units | reject('match', nova_tools_retired_unit_re) | join(', ') }},
+      which fleet/retired-units.txt does not retire; only a retired unit is stopped and moved aside
+
 - name: the platform
   ansible.builtin.set_fact:
     nova_tools_win: "{{ ansible_facts['os_family'] == 'Windows' }}"
@@ -329,11 +339,8 @@
     - name: the retired names and units (fleet/retired-tools.txt, fleet/retired-units.txt, read on the control node)
       ansible.builtin.set_fact:
         nova_tools_own_retired: "{{ nova_tools_retired_rows | selectattr(2, 'match', '^(retired|rowan-tools)') | map(attribute=0) | list }}"
-        nova_tools_retired_unit_re: >-
-          {{ '^(' ~ (nova_tools_unit_globs | map('regex_replace', '[.]', '[.]') | map('regex_replace', '[*]', '.*') | join('|')) ~ ')$' }}
       vars:
         nova_tools_retired_rows: "{{ lookup('ansible.builtin.file', role_path ~ '/../../retired-tools.txt').splitlines() | reject('match', '^#') | select | map('split', '\t') | list }}"
-        nova_tools_unit_globs: "{{ lookup('ansible.builtin.file', role_path ~ '/../../retired-units.txt').splitlines() | reject('match', '^#') | select | map('split', '\t') | map('first') | list }}"
 
     - name: what else is on the machine (a read; the leftovers of an older install)
       ansible.builtin.find:

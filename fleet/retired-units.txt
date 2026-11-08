@@ -13,7 +13,6 @@ nova-runner*.service	2026-11-08	v1 rowan-tools runners (github-runner-* now)
 com.nova.runner.*.plist	2026-11-08	v1 rowan-tools runners (github-runner.* now)
 com.nova.lima.*.plist	2026-11-08	v1 rowan-tools lima VMs
 com.nova.limit.maxfiles.plist	2026-11-08	v1 rowan-tools maxfiles
-com.nova.node-exporter.plist	2026-11-08	v1 rowan-tools node exporter
 com.nova.converge-check.plist	2026-11-08	v1 rowan-tools converge check
 com.nova.scratch-sweep.plist	2026-11-08	v1 rowan-tools scratch sweep
 nova-scratch-sweep.*	2026-11-08	v1 rowan-tools scratch sweep
