@@ -251,6 +251,8 @@ refused before anything is written.
 | `nova_tools_restart`, `nova_tools_restart_commands` | false, empty | argv lists run once, only if a binary changed |
 | `nova_tools_remove_enabled` | false | retire the binaries below |
 | `nova_tools_remove` | the retired list | names to retire |
+| `nova_tools_manifest_dir` | `~/.local/share/nova/installed` | where a `--repo` install records its names (see Leftovers) |
+| `nova_tools_system_unit_dir` | `/etc/systemd/system` (Linux), `/Library/LaunchDaemons` (macOS) | where Leftovers reads system units |
 
 **Another repository's release.** A dependent tool whose release is laid out the same way (assets
 `<name>_<tag>_<os>_<arch>[.exe]` and one `SHA256SUMS`) installs with `--repo` and `--tag`, getting every binary its
@@ -284,7 +286,37 @@ nova-fleet install -- -e nova_tools_version=local -e nova_tools_local_dir=$PWD/d
 found in the bin directory is moved to `<nova_bin_dir>/retired-<date>/`, never deleted; a name not there is skipped.
 A name also being installed is refused. The default list is the rows of `retired-tools.txt` that say `retired` or
 `rowan-tools`; another product's binaries are never in it. To retire more, name the whole list:
-`-e nova_tools_remove_enabled=true -e nova_tools_remove='["nova-sprint","nova-card"]'`. Unix machines only.
+`-e '{"nova_tools_remove_enabled":true,"nova_tools_remove":["nova-sprint","nova-card"]}'` (JSON: a `key=value` `-e` is a
+string, never a list). Unix machines only.
+
+**Leftovers.** Last, after the install has happened, the play reads what an older install left beside the new binaries
+and prints one line per host, `INSTALL <host> leftovers=<n>: <names>` (or `leftovers=0`). v2 only: nothing of v1 is
+allowed by name. It reads every file in the bin directory (dotted names and `.bak` copies too); the login's unit directory
+(`~/.config/systemd/user` on Linux, `~/Library/LaunchAgents` on macOS) for any `nova-*` or `com.nova.*` unit, timer or
+plist; the system unit directory (`/etc/systemd/system` on Linux, any `nova*` unit; `/Library/LaunchDaemons` on macOS,
+where a headless Mac's services are, any `com.nova.*` plist; a read, no sudo); both unit directories for every glob in
+`retired-units.txt` (the v1 units and plists); and `~/.gitconfig` for a credential helper that runs the retired
+`nova-push-credential`. Allowed: the release's `SHA256SUMS` names for the platform; every name another repository's release
+recorded (a `--repo` install writes its names to `~/.local/share/nova/installed/<owner>_<name>.names`,
+`nova_tools_manifest_dir`); what the fleet's own plays and roles write there (`nova_join_owns` for join.yml's age,
+age-keygen and sops; each role's `nova_<role>_owns`; `nova_redis_unit`); a friend's nova-bus hook unit
+(`nova-bus.hook.<name>.plist`, `nova-bus-hook-<name>.service`); the unit of a service record this machine has (its
+`nova_services`). An inventory with no `nova_services` (not nova-config's) has its units left
+unread, and the line ends with a NOTE saying so.
+
+A leftover fails the host, and the refusal names the plays that retire it, names filled in. `nova-fleet install --tag <tag>
+-- -l <host> -e '{"nova_tools_remove_enabled":true,"nova_tools_remove":[...],"nova_tools_remove_units":[...]}'` moves the
+binaries into `<bin dir>/retired-<date>/` and stops the units and moves them into `retired-<date>/` beside them (the system
+directory takes sudo); nothing is deleted, and nothing moves unless `nova_tools_remove_enabled` is true. Retiring
+`nova-push-credential` also unsets each global `credential.helper` / `credential.<url>.helper` whose value is that script
+(`git config --global --unset-all`, matched by its path alone; other helpers stay), and the INSTALL line says so.
+`nova-fleet services -- -l <host> -e '{"nova_retire_units":[...]}'` retires a unit of the services play's shapes
+(`nova-service-*`, `nova-loop-*`, `com.nova.service.*`, `com.nova.loop.*`); anything no play retires is named on its own.
+Only a binary in `retired-tools.txt` (every v1 tool nova-tools and rowan-tools shipped), a backup of one (its name
+before `.bak`, `.old` or `.before` is retired: `winlock.bak-4slots`), or a unit in
+`retired-units.txt` refuses a host. Any other binary nothing accounts for (a tool the machine uses that no release ships:
+redis-server, go, gh, ...) is a `WARNING unrecorded=<n>` naming it, never a refusal. The check itself removes nothing. Unix machines, nova-tools' own
+release only (a `--repo` install prints no line); `--check` prints the line too.
 
 ## services
 

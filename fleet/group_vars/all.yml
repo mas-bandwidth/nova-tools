@@ -53,6 +53,10 @@ nova_sops: "{{ '/opt/homebrew/bin/sops' if (nova_system | default(ansible_facts[
 # The seat a machine opens its secrets as (nova-secrets --as, services.yml's
 # <seat>.key): its inventory name, the short hostname nova-secrets defaults to.
 nova_seat: "{{ inventory_hostname }}"
+# What join.yml puts in the bin directory on Linux (age, age-keygen, sops): the
+# install's leftover check allows them (fleet/README.md, "install", Leftovers).
+nova_join_owns:
+  bin: [age, age-keygen, sops]
 nova_age_keygen: "{{ '/opt/homebrew/bin/age-keygen' if (nova_system | default(ansible_facts['system'] | default(''))) == 'Darwin' else nova_bin_dir ~ '/age-keygen' }}"
 
 # The packages a CI runner's tests need, per OS (runner-packages.yml; fleet/README.md, "runner-packages"): Homebrew

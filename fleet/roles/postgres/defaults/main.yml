@@ -47,3 +47,9 @@ nova_pg_schema: true
 # names another).
 nova_pg_seal_role: nova_config
 nova_pg_seal_name: NOVA_PG_PASSWORD
+
+# What this role writes where an install's leftover check reads (nova-tools-install,
+# fleet/README.md "install", Leftovers): system is /etc/systemd/system.
+# install_play_test.go holds it to the names the tasks write.
+nova_postgres_owns:
+  system: [nova-pg-dump.service, nova-pg-dump.timer]
