@@ -898,14 +898,14 @@ func runCommand(path string, argv []string) int {
 			forward(cmd, s)
 		}
 	}()
-	err = cmd.Wait()
+	ws, err := wait(cmd)
 	signal.Stop(sigs)
-	if cmd.ProcessState == nil {
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "nova-reserve:", err)
 		return 126
 	}
-	if ws, ok := cmd.ProcessState.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
+	if ws.Signaled() {
 		return 128 + int(ws.Signal())
 	}
-	return cmd.ProcessState.ExitCode()
+	return ws.ExitStatus()
 }
