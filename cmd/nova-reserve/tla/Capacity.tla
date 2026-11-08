@@ -8,15 +8,19 @@
 \* capFile is the file: 0 when absent, else the slot count it holds. Each
 \* process takes once, as one of:
 \*   shared     gate shared; read capFile. Absent: let go of the gate and
-\*              claim (gate exclusive, then all exclusive, both without
-\*              waiting, polled until taken, until the file appears: then
-\*              back to the gate); holding both, write --slots (or Default)
-\*              if the file is still absent; let go; take again. Present: a --slots that
+\*              claim, polled: read the file (there: back to the gate),
+\*              then gate exclusive and all exclusive, both without
+\*              waiting; the read and the locks are separate steps, so the
+\*              file may appear between them; holding both, write --slots
+\*              (or Default) if the file is still absent; let go; take again. Present: a --slots that
 \*              differs is refused (exit 2); else scan slot1..slot<capFile>
 \*              and take all shared, as in SlotFiles.tla.
 \*   exclusive  gate exclusive, then all exclusive; capFile is not read.
-\*   set        gate exclusive, then all exclusive, both without waiting;
-\*              holding both, write the new value; else refused (exit 1).
+\*   set        read capFile: the value asked for is there, done with
+\*              nothing taken; else gate exclusive, then all exclusive, both
+\*              without waiting; holding both, write the new value; else
+\*              refused (exit 1). The read is a step of its own, so the
+\*              locks may be taken for a value stored meanwhile.
 \* want[p] is a shared taker's --slots (0: none given); ask[p] is set's value.
 \* A process dies anywhere and the kernel lets go of its locks. The file is
 \* written under the locks, as a renamed complete file or one write at offset
@@ -47,7 +51,7 @@ EXTENDS Naturals, FiniteSets
 CONSTANTS Procs, MaxSlots, Default, InitCaps, MaxCrash, Broken, Mode
 
 None == "none"
-Waiting == {"sgate", "sread", "swrite", "sclaim", "sclaim2", "sscan", "sall",
+Waiting == {"sgate", "sread", "swrite", "sclaim", "sclock", "sclaim2", "sscan", "sall",
             "xgate", "xall", "tgate", "tall"}
 Run == {"srun", "xrun"}
 
@@ -121,14 +125,25 @@ SWrite(p) ==
 
 ClaimFree == gateEx = None /\ gateSh = {}
 
+\* The claim's read finds no file (under "noseen" the claimer never reads).
+SClaimRead(p) ==
+  /\ pc[p] = "sclaim" /\ (capFile = 0 \/ Broken = "noseen")
+  /\ pc' = [pc EXCEPT ![p] = "sclock"]
+  /\ UNCHANGED <<capFile, Locks, scan, mine, adm, want, ask, crashes>>
+
+\* gate exclusive, without waiting; the file may have appeared since the read.
 SClaimOK(p) ==
-  /\ pc[p] = "sclaim" /\ ClaimFree /\ (capFile = 0 \/ Broken = "noseen")
+  /\ pc[p] = "sclock" /\ ClaimFree
   /\ gateEx' = p /\ pc' = [pc EXCEPT ![p] = "sclaim2"]
   /\ UNCHANGED <<capFile, slotEx, gateSh, allEx, allSh, scan, mine, adm, want, ask, crashes>>
 
-\* A busy gate leaves the claimer at sclaim: it polls the claim again, never
-\* the gate shared (taker.claiming). Going back to sgate instead lets two
-\* first takers keep each other's claim out forever; TLC found that loop.
+\* A busy gate sends the claimer back to sclaim: it polls the claim again,
+\* never the gate shared (taker.claiming). Going back to sgate instead lets
+\* two first takers keep each other's claim out forever; TLC found that loop.
+SClaimBusy(p) ==
+  /\ pc[p] = "sclock" /\ ~ClaimFree
+  /\ pc' = [pc EXCEPT ![p] = "sclaim"]
+  /\ UNCHANGED <<capFile, Locks, scan, mine, adm, want, ask, crashes>>
 
 \* The file is there now (another first taker wrote it): back to the gate,
 \* never waiting on all, which that taker's hold keeps (taker.claiming).
@@ -201,12 +216,11 @@ XFinish(p) ==
 
 TGate(p) ==
   /\ pc[p] = "tgate"
-  /\ CASE Broken = "setwhileheld" ->
-            capFile' = ask[p] /\ pc' = [pc EXCEPT ![p] = "done"] /\ UNCHANGED gateEx
-       [] ClaimFree ->
-            gateEx' = p /\ pc' = [pc EXCEPT ![p] = "tall"] /\ UNCHANGED capFile
-       [] OTHER -> \* refused: capacity in use, exit 1
-            pc' = [pc EXCEPT ![p] = "done"] /\ UNCHANGED <<capFile, gateEx>>
+  /\ IF Broken = "setwhileheld"
+     THEN capFile' = ask[p] /\ pc' = [pc EXCEPT ![p] = "done"] /\ UNCHANGED gateEx
+     ELSE \/ capFile = ask[p] /\ pc' = [pc EXCEPT ![p] = "done"] /\ UNCHANGED <<capFile, gateEx>> \* unchanged
+          \/ ClaimFree /\ gateEx' = p /\ pc' = [pc EXCEPT ![p] = "tall"] /\ UNCHANGED capFile
+          \/ ~ClaimFree /\ pc' = [pc EXCEPT ![p] = "done"] /\ UNCHANGED <<capFile, gateEx>> \* refused: capacity in use, exit 1
   /\ UNCHANGED <<slotEx, gateSh, allEx, allSh, scan, mine, adm, want, ask, crashes>>
 
 TAll(p) ==
@@ -240,7 +254,7 @@ Q(A) == A /\ UNCHANGED probeEx
 
 Next ==
   \/ \E p \in Procs : Q(
-       \/ Start(p) \/ SGate(p) \/ SRead(p) \/ SWrite(p) \/ SClaimOK(p) \/ SClaimSeen(p)
+       \/ Start(p) \/ SGate(p) \/ SRead(p) \/ SWrite(p) \/ SClaimRead(p) \/ SClaimOK(p) \/ SClaimBusy(p) \/ SClaimSeen(p)
        \/ SClaim2(p) \/ SScan(p) \/ SAll(p) \/ SFinish(p)
        \/ XGate(p) \/ XAll(p) \/ XFinish(p) \/ TGate(p) \/ TAll(p) \/ Crash(p))
   \/ \E k \in 1..MaxSlots : ProbeTake(k)
@@ -252,6 +266,7 @@ Next ==
 Fairness == \A p \in Procs :
   /\ SF_vars(Q(SGate(p))) /\ SF_vars(Q(SClaimOK(p))) /\ SF_vars(Q(XGate(p))) /\ SF_vars(Q(XAll(p)))
   /\ WF_vars(Q(SRead(p))) /\ WF_vars(Q(SWrite(p))) /\ WF_vars(Q(SClaim2(p))) /\ WF_vars(Q(SClaimSeen(p)))
+  /\ WF_vars(Q(SClaimRead(p))) /\ WF_vars(Q(SClaimBusy(p)))
   /\ WF_vars(Q(SScan(p))) /\ WF_vars(Q(SAll(p)))
   /\ WF_vars(Q(TGate(p))) /\ WF_vars(Q(TAll(p)))
   /\ Mode = "full" => WF_vars(Q(SFinish(p))) /\ WF_vars(Q(XFinish(p)))
