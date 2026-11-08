@@ -1,0 +1,54 @@
+---
+# netwatch.yml's defaults (cmd/nova-fleet/README.md, "netwatch"). The ladder's numbers are the unit's environment,
+# read by roles/netwatch/files/nova-netwatch; the model is cmd/nova-fleet/tla/NetWatch.tla.
+
+# The interfaces watched, one timer each; empty is the interface of the machine's default IPv4 route.
+nova_netwatch_interfaces: []
+# The interface whose instance also watches the tailnet and restarts tailscaled (rung 1); empty is the default
+# route's interface. An interface not in nova_netwatch_interfaces watches no tailnet.
+nova_netwatch_tailnet_interface: ""
+# The tailnet addresses or names pinged to hear from the tailnet, at most nova_netwatch_tailnet_tries of them per
+# tick; empty is the peers `tailscale status` lists online.
+nova_netwatch_tailnet_peers: []
+nova_netwatch_tailnet_tries: 3
+
+nova_netwatch_tick_seconds: 30
+nova_netwatch_threshold: 4            # misses before rung 1: 2 minutes; link drops that recover took 4 to 21 s
+nova_netwatch_backoff: 2              # ticks after rung r: 2r (1, 2, 3 and 4 minutes after rungs 1 to 4)
+nova_netwatch_busy_backoff: 4         # ticks between checks while a protected job defers the reboot
+nova_netwatch_busy_wait_limit: 10     # deferrals (20 minutes) before the alert; the deferral goes on
+nova_netwatch_max_reboots: 2
+nova_netwatch_window: 21600           # seconds (6 hours) the reboot budget counts over
+# true installs the ladder logging each action (NETWATCH ... DRY ...) instead of taking it.
+nova_netwatch_dry: false
+
+# The coordination server whose answer over the plain internet tells a local tailnet fault (reboot) from a remote
+# one (the alert only); only an HTTP code 200-499 is an answer (a 5xx is a control plane down, which every node sees
+# at once). Empty is the ControlURL `tailscale debug prefs` names.
+nova_netwatch_control_url: ""
+
+# Process patterns (pgrep -f, extended regular expressions) of a protected job: a match defers the reboot (never
+# rungs 2 to 4, which run only while the LAN is down). Any file in /run/nova-netwatch/hold.d defers it too (the
+# manual hold). The default is by group: on a runner, a GitHub Actions job (its Runner.Worker process; the idle
+# Runner.Listener is no job); on a bench, a held reservation (nova-reserve run, which wraps sprint card work).
+nova_netwatch_busy_patterns_by_group:
+  runner: ['Runner\.Worker']
+  bench: ['nova-reserve( --dir [^ ]+)? run ']
+nova_netwatch_busy_patterns: >-
+  {{ group_names | map('extract', nova_netwatch_busy_patterns_by_group) | select('defined') | flatten | unique | list }}
+
+# The hang guard. A board watchdog driver to load by name at boot (sp5100_tco on AMD mini PCs, which the
+# distribution blacklists from autoload); empty loads none. When /dev/watchdog0 exists systemd drives it: a system
+# manager stalled this long resets the machine.
+nova_netwatch_watchdog_module: ""
+nova_netwatch_runtime_watchdog: 2min
+# 1 turns a soft lockup or a hung task into a panic, which kernel.panic (the health play's, which this play does not
+# set) turns into a reboot. Off: a hung task under a heavy test is not a dead machine.
+nova_netwatch_softlockup_panic: 0
+nova_netwatch_hung_task_panic: 0
+
+# What this role writes where an install's leftover check reads (nova-tools-install,
+# cmd/nova-fleet/README.md "install", Leftovers): system is /etc/systemd/system.
+# install_play_test.go holds it to the names the tasks write.
+nova_netwatch_owns:
+  system: [nova-netwatch@.service, nova-netwatch@.timer, nova-watchdog-module.service]
