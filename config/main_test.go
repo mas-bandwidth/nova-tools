@@ -234,6 +234,16 @@ func TestRefusals(t *testing.T) {
 		{2, []string{"machine", "list", "--pg", "postgres://u:hunter2@h/x"}, "--pg carries a password"},
 		{2, []string{"machine", "show"}, "nova-config machine show: wants a name"},
 		{2, []string{"machine", "show", "a", "b"}, "unexpected words"},
+		// D8 (2026-11-07): a fetcher on a loop or a timer is refused, whatever the words around it.
+		{2, []string{"service", "add", "mirror", "--machine", "bench-a", "--argv", `["mirror-refresh","--loop","60"]`, "--keepalive", "true", "--actor", "a"},
+			"service mirror fetches on a clock (mirror-refresh with --loop); fetch on an event (a push) or once per job, never on a clock"},
+		{2, []string{"service", "add", "sync", "--machine", "bench-a", "--argv", `["/usr/bin/rsync","-a","h:/src","/dst"]`, "--every", "300", "--actor", "a"},
+			"service sync fetches on a clock (rsync with --every 300); fetch on an event"},
+		{2, []string{"service", "add", "shloop", "--machine", "bench-a", "--argv", `["sh","-c","while true; do git -C /r fetch --all; sleep 60; done"]`, "--keepalive", "true", "--actor", "a"},
+			"service shloop fetches on a clock (git fetch with while)"},
+		{1, []string{"service", "set", "member-b", "--argv", `["git","pull","--loop=60"]`, "--actor", "a"}, "service member-b fetches on a clock (git pull with --loop)"},
+		{1, []string{"service", "set", "member-b", "--every", "60", "--keepalive", "false", "--argv", `["curl","-fsSL","https://x/y"]`, "--actor", "a"}, "(curl with --every 60)"},
+		{1, []string{"service", "set", "member-b", "--argv", `["watch","-n","60","wget","https://x/y"]`, "--actor", "a"}, "(wget with watch)"},
 	} {
 		code, out, errs := h.run(t, c.args...)
 		assert.Equal(t, c.code, code, "%v: %s", c.args, errs)
@@ -241,6 +251,9 @@ func TestRefusals(t *testing.T) {
 		assert.Contains(t, errs, c.want, "%v", c.args)
 		assert.NotContains(t, errs, "hunter2", "%v: a refusal never echoes a password", c.args)
 	}
+	// A fetch once, at the start of a kept-alive program, is not on a clock; nor is a program that only sounds like one.
+	h.ok(t, "service", "set", "member-b", "--argv", `["sh","-c","git pull --ff-only && exec /srv/prog --loops 3"]`, "--actor", "a")
+	h.ok(t, "service", "set", "member-b", "--argv", `["/srv/prog","--every","60","--wget-compatible"]`, "--actor", "a")
 	h.env = map[string]string{}
 	code, _, errs := h.run(t, "machine", "list")
 	assert.Equal(t, 2, code)

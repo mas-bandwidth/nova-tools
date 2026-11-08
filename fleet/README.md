@@ -43,7 +43,7 @@ The whole path, in order. Each step's output says what to do next.
 
 1. `nova-fleet check` on the control node: one line per prerequisite, `CHECK OK sops 3.13.3` or `CHECK MISSING
    age-keygen: sudo apt-get update -qq && sudo apt-get install -y age` (the fix for this OS, a command pasteable as it
-   stands with any reason after `#`, in paste order: `git` and `go` before the `nova-*` build lines), then the tailnet (a `CHECK NOTE` when this node is not on it: `up` joins it), the secrets store, key, seat and pins,
+   stands with any reason after `#`, in paste order: `git` and `go` before the `nova-*` build lines), then the tailnet (a `CHECK NOTE` when this node is not on it: `up` joins it; on it, one `CHECK traffic <peer> tx=<GB> rx=<GB>` per peer this node has exchanged bytes with, from `tailscale status`, and `CHECK WARN traffic` for a peer over 100 GB either way: something fetches or mirrors on a clock), the secrets store, key, seat and pins,
    `TAILSCALE_API_KEY` (`--runners URL` adds `gh` and its login, `gh auth login`), and `NOVA_PG_DSN` once a fleet
    exists. Run each fix line, then `nova-fleet check` again until it ends `CHECK OK missing=0` (exit 0; 1 while
    anything is missing; the collections of `requirements.yml` count, `ansible.posix` for the push of the store). A
@@ -118,8 +118,8 @@ machine is the one nova-config's rows say ("Adding a machine" below). Nothing he
 | 6 | grant | `nova-secrets grant <--grant names> --to <machine> --pub <its seat key>` for each machine: the values written to that seat's grants file, encrypted to the seat's key (read from the machine over the tailnet with `age-keygen -y`, found in `nova_bin_dir` when `-- -e nova_bin_dir=...` sets it, then `~/.local/bin`; public half only, and pinned in `NOVA_SECRETS_PINS`) and the recovery key; your seat is never a recipient ([secrets/SPEC.md](../secrets/SPEC.md)) | the seats exist now |
 | 7 | store | `git push` of your secrets store to its upstream, if it has one (else a NOTE): a copy off this node; the machines never read it. When the upstream refuses the push (`[remote rejected]`: a protected branch that takes changes only through a pull request), the commits are pushed to the branch `nova-fleet-up/<short commit>` instead, `UP STORE PUSH REFUSED: <upstream> is protected (...); pushed branch <name>; open a PR from it` is printed, the run goes on, and it exits 1 (`UP STORE FAILED`) at the end; open and merge that PR. Any other push failure stops the run here | |
 | 8 | refresh | `secrets-refresh` with `nova_seal_store` set to your clone: the encrypted store pushed over the tailnet with rsync to `~/.local/share/nova/secrets/` on each machine (no `.git`, stale files deleted, 0700/0600) | each seat opens what step 6 granted; a rerun of `up`, or `nova-fleet secrets-refresh -- -e nova_seal_store=S`, pushes again |
-| 9 | health | `health` on every machine (Linux; a Mac is skipped) | the guards are in place before anything long-running starts |
-| 10 | tools | `install` on every machine, from the release `--tools vX.Y.Z` or a local build `--tools DIR` | the services run these binaries |
+| 9 | health | `health` on every machine of the bench, runner and services groups (Linux; a Mac is skipped) | the guards are in place before anything long-running starts |
+| 10 | tools | `install` on every machine of the bench, runner and services groups, from the release `--tools vX.Y.Z` or a local build `--tools DIR`; a machine with no role (a seat only) gets no software | the services run these binaries |
 | 11 | services | `services` | each seat holds its granted values now |
 | 12 | runners | `github-runners` on every machine named except this control node, `--runner-count` per machine (default `cores`: one per `github_runner_cores_per_runner`, 4, cores, at least 1) (only with `--runners`); the play asks GitHub for its token with this node's `gh` login | |
 | 13 | bus | `nova-bus who` over the store machine's Redis with the fleet's `NOVA_BUS_PASSWORD`; it names no inbox and sends nothing as a person (receipt `UP BUS OK <redis> present=<n>`) | the fleet is reached end to end |
@@ -163,16 +163,16 @@ reached as root at the address given, as on the first run.
 
 | Play | Purpose | Needs |
 |---|---|---|
-| `ci-rules` | the CI rules on every GitHub Actions runner a machine runs, whoever registered it | nothing; `-l` the machines |
+| `ci-rules` | the CI rules on every GitHub Actions runner a machine runs, whoever registered it (bench, runner and services groups) | nothing; `-l` the machines |
 | `github-runners` | GitHub Actions runners on every machine of the runner group, registered to one repository or organization | `github_runner_url`, `github_runner_scope`; `gh` on the control node logged in with admin on the repository |
-| `health` | guards that let a Linux machine get itself out of trouble, and a disk report | nothing |
-| `install` | install one nova-tools release, by tag, on the machines named | `nova_tools_version` (a tag `vX.Y.Z`; no default) |
+| `health` | guards that let a Linux machine get itself out of trouble, and a disk report (bench, runner and services groups) | nothing |
+| `install` | install one nova-tools release, by tag, on the machines named (bench, runner and services groups) | `nova_tools_version` (a tag `vX.Y.Z`; no default) |
 | `join` | a new machine joins the fleet: its row, its login, the tailnet, the tools a seat needs, its seat | the machine as the argument; its row's fields; `NOVA_PG_DSN` and `NOVA_PG_PASSWORD` in the environment, and `TAILSCALE_AUTHKEY` for a machine not on the tailnet (`up` mints it) |
 | `postgres` | the PostgreSQL nova-config keeps the fleet in, on each machine of the services group | `nova_seal_*` to seal its password |
 | `redis` | the Redis nova-bus talks to, on each machine of the services group | `nova_seal_*` to seal its password |
 | `seat` | each machine's seat in the secrets store | `nova_seal_store` |
 | `secrets-refresh` | the control node's encrypted store pushed to every machine with `ansible.posix.synchronize` (`verify_host: true`, no `.git`, stale files deleted, 0700/0600); with `nova_secrets_repo` set, a timer pulls a clone fast-forward instead | `nova_seal_store` (the control node's clone) to push; `nova_secrets_repo` for pull |
-| `services` | one supervised unit per service record, on the machine the record names | the inventory's `nova_services` |
+| `services` | one supervised unit per service record, on the machine the record names (bench, runner and services groups) | the inventory's `nova_services` |
 | `tailscale` | each machine on the tailnet, its address the MagicDNS name, its firewall closed to all but the tailnet | `TAILSCALE_AUTHKEY` in the environment for a machine not on the tailnet (`up` mints it) |
 
 ```
