@@ -61,11 +61,23 @@
     - name: the seat's public half (age-keygen -y; public only)
       ansible.builtin.shell: |
         k="{{ nova_secrets_key_dir }}/{{ nova_seat }}.key"
-        [ -f "$k" ] && "{{ nova_age_keygen }}" -y "$k" || true
+        [ -e "$k" ] || exit 0   # only in --check, where the key is not made yet; the next task refuses it otherwise
+        "{{ nova_age_keygen }}" -y "$k"
       args: { executable: /bin/bash }
       register: seat_pub_read
       changed_when: false
+      failed_when: false
       check_mode: false
+
+    - name: the seat key is an age key age-keygen can read
+      ansible.builtin.fail:
+        msg: >-
+          SEAT STOP {{ inventory_hostname }}: `{{ nova_age_keygen }} -y {{ nova_secrets_key_dir }}/{{ nova_seat }}.key` gave no
+          public key{{ (': ' ~ (seat_pub_read.stderr_lines | first)) if seat_pub_read.stderr_lines else ' (no key file)' }}.
+          An empty or cut-off key file is never replaced by the play; check it on the machine, move it aside if it is not
+          a seat key, and run again (a new key is made where none is).
+      when: >-
+        seat_pub_read.rc != 0 or (not (seat_pub_read.stdout | trim) is match('^age1') and not ansible_check_mode)
 
     - name: the public half
       ansible.builtin.set_fact:
