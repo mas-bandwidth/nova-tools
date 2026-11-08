@@ -4,7 +4,8 @@
 (* numbers, and its tailnet signal is Classify of what the script saw. Reversed witnesses: SkipRestart, the    *)
 (* same ticks with a ladder that goes from no rung straight to the renegotiation; and the same ticks checked  *)
 (* with OldClassify TRUE (NetWatchTraceBrokenOldClassify.cfg), where silent peers with the own node online   *)
-(* would be local: both must be refused.                                                                      *)
+(* would be local, or with AnyReply TRUE (NetWatchTraceBrokenAnyReply.cfg), where a coordination server       *)
+(* giving a 5xx would be answering: all must be refused.                                                      *)
 EXTENDS NetWatch, NetWatchLog, Sequences
 
 CONSTANT Log

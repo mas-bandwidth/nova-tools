@@ -84,7 +84,9 @@ echo "$pri $*" >> "$LOGF"`,
 	"pgrep":   `[ "$1" = -f ] && shift; [ "$1" = -- ] && shift; grep -Eq -- "$1" "$PROCS"`,
 	"sleep":   `exit 0`,
 	"timeout": `shift; exec "$@"`,
-	"curl":    `for a; do last=$a; done; echo "curl $last" >> "$TSCALLS"; [ -e "$TS/control_ok" ]`,
+	"curl": `for a; do last=$a; done; echo "curl $last" >> "$TSCALLS"
+[ -e "$TS/control_ok" ] || { printf 000; exit 28; }
+c=$(cat "$TS/control_ok"); printf '%s' "${c:-200}"`,
 	"tailscale": `echo "tailscale $*" >> "$TSCALLS"
 case "$1" in
 status) [ -e "$TS/hang" ] && exit 124; [ -e "$TS/status" ] || exit 1; cat "$TS/status" ;;
@@ -507,25 +509,47 @@ var nwCases = []struct {
 			t.Fatalf("calls %q", n.calls())
 		}
 	}},
+	{"a coordination server answering 5xx (a partial control-plane outage) is not answering: the own node offline and silent peers give the alert, never a reboot", func(t *testing.T, n *nw) {
+		n.write("ping_ok", "")
+		n.write("ts/answer", "")
+		n.write("ts/status", nwSelfOffline)
+		n.write("ts/control_ok", "503")
+		n.ticks(40)
+		if got := strings.Join(n.calls(), ";"); got != "systemctl restart tailscaled" || n.alertKind() != "remote" {
+			t.Fatalf("calls %q alert %q", got, n.alertKind())
+		}
+		if strings.Count(n.read("log"), "ALERT") != 1 || !n.logHas("own node offline, no peer answered, https://control.example does not answer (HTTP 503)") {
+			t.Fatalf("log %q", n.read("log"))
+		}
+		n.write("ts/control_ok", "200") // the front end recovers and still sees this machine offline: local
+		n.tick()
+		if n.last() != "systemctl reboot" {
+			t.Fatalf("calls %q", n.calls())
+		}
+	}},
 	{"the tailnet's classes: what is local and what is remote", func(t *testing.T, n *nw) {
 		n.write("ping_ok", "")
 		for _, c := range []struct {
 			status, answer string
-			control        bool
+			control        string // the coordination server's HTTP code, "" for no reply
 			want           string
 		}{
-			{nwStatus("NeedsLogin", false, nil), "", true, "tailnet=remote (backend=NeedsLogin: it needs a person to log in)"},
-			{nwStatus("NeedsMachineAuth", false, nil), "", true, "tailnet=remote (backend=NeedsMachineAuth: it needs a person to log in)"},
-			{nwStatus("Running", false, map[string]bool{"100.64.0.2": true}), "100.64.0.2", true, "tailnet=remote (own node offline, peers answer)"},
-			{nwStatus("Running", false, map[string]bool{"100.64.0.2": true}), "", true, "tailnet=local (own node offline, no peer answered, https://control.example answers)"},
-			{nwStatus("Running", false, map[string]bool{"100.64.0.2": true}), "", false, "tailnet=remote (own node offline, no peer answered, https://control.example does not answer)"},
-			{nwStatus("Running", true, map[string]bool{"100.64.0.2": true}), "", true, "tailnet=remote (no peer answered, own node online (a relay or the peers), https://control.example answers)"},
-			{nwStatus("Running", true, map[string]bool{"100.64.0.2": true}), "", false, "tailnet=remote (no peer answered, own node online (a relay or the peers), https://control.example does not answer)"},
-			{nwStatus("Starting", true, nil), "", true, "tailnet=local (backend=Starting, https://control.example answers)"},
-			{nwStatus("Starting", true, nil), "", false, "tailnet=remote (backend=Starting, https://control.example does not answer)"},
-			{"not json", "", true, "tailnet=local (backend=unparsable, https://control.example answers)"},
-			{"", "", true, "tailnet=local (status failed, https://control.example answers)"},
-			{"hang", "", true, "tailnet=local (status failed, https://control.example answers)"},
+			{nwStatus("NeedsLogin", false, nil), "", "200", "tailnet=remote (backend=NeedsLogin: it needs a person to log in)"},
+			{nwStatus("NeedsMachineAuth", false, nil), "", "200", "tailnet=remote (backend=NeedsMachineAuth: it needs a person to log in)"},
+			{nwStatus("Running", false, map[string]bool{"100.64.0.2": true}), "100.64.0.2", "200", "tailnet=remote (own node offline, peers answer)"},
+			{nwStatus("Running", false, map[string]bool{"100.64.0.2": true}), "", "200", "tailnet=local (own node offline, no peer answered, https://control.example answers)"},
+			{nwStatus("Running", false, map[string]bool{"100.64.0.2": true}), "", "", "tailnet=remote (own node offline, no peer answered, https://control.example does not answer)"},
+			{nwStatus("Running", true, map[string]bool{"100.64.0.2": true}), "", "200", "tailnet=remote (no peer answered, own node online (a relay or the peers), https://control.example answers)"},
+			{nwStatus("Running", true, map[string]bool{"100.64.0.2": true}), "", "", "tailnet=remote (no peer answered, own node online (a relay or the peers), https://control.example does not answer)"},
+			{nwStatus("Starting", true, nil), "", "200", "tailnet=local (backend=Starting, https://control.example answers)"},
+			{nwStatus("Starting", true, nil), "", "", "tailnet=remote (backend=Starting, https://control.example does not answer)"},
+			{nwStatus("Running", false, map[string]bool{"100.64.0.2": true}), "", "404", "tailnet=local (own node offline, no peer answered, https://control.example answers)"},
+			{nwStatus("Running", false, map[string]bool{"100.64.0.2": true}), "", "503", "tailnet=remote (own node offline, no peer answered, https://control.example does not answer (HTTP 503))"},
+			{nwStatus("Starting", true, nil), "", "502", "tailnet=remote (backend=Starting, https://control.example does not answer (HTTP 502))"},
+			{"", "", "500", "tailnet=remote (status failed, https://control.example does not answer (HTTP 500))"},
+			{"not json", "", "200", "tailnet=local (backend=unparsable, https://control.example answers)"},
+			{"", "", "200", "tailnet=local (status failed, https://control.example answers)"},
+			{"hang", "", "200", "tailnet=local (status failed, https://control.example answers)"},
 		} {
 			n.remove("ts/status")
 			n.remove("ts/hang")
@@ -533,8 +557,8 @@ var nwCases = []struct {
 			n.write("log", "")
 			n.write("ts/answer", c.answer)
 			n.remove("ts/control_ok")
-			if c.control {
-				n.write("ts/control_ok", "")
+			if c.control != "" {
+				n.write("ts/control_ok", c.control)
 			}
 			switch c.status {
 			case "":
@@ -669,7 +693,7 @@ func nwLog(traces []string) string {
 			if len(f) != 23 {
 				return fmt.Sprintf("malformed trace line %q", l)
 			}
-			o := fmt.Sprintf("O(%q, %s, %s, %s)", f[10], b(f[11]), b(f[12]), b(f[13]))
+			o := fmt.Sprintf("O(%q, %s, %s, %q)", f[10], b(f[11]), b(f[12]), map[string]string{"0": "silent", "1": "answers", "5": "error"}[f[13]])
 			row := fmt.Sprintf("T(%s, %s, %q, %s, %s, %s)", rec(f[0:8]), b(f[8]), f[9], o, b(f[14]), rec(f[15:23]))
 			if !seen[row] {
 				seen[row] = true
@@ -681,7 +705,7 @@ func nwLog(traces []string) string {
 (* The ticks roles/netwatch/files/nova-netwatch took in netwatch_functional_test.go, distinct and in the order *)
 (* the cases first took them: the record before (misses, rung, wait, busyWaits, reboots, outage, alerted,      *)
 (* halted), the LAN signal, the tailnet signal, what was seen of the tailnet ("-" unread; a boolean not asked  *)
-(* is FALSE), whether a protected job ran, and the record after. Written by the test (NETWATCH_UPDATE_LOG=1);   *)
+(* is FALSE, a control not asked "silent"), whether a protected job ran, and the record after. Written by the test (NETWATCH_UPDATE_LOG=1);   *)
 (* NetWatchTrace.tla checks each is a Step of NetWatch.tla and its tailnet signal is Classify of what was seen. *)
 R(m, r, wt, bw, rb, o, a, h) == [misses |-> m, rung |-> r, wait |-> wt, busyWaits |-> bw, reboots |-> rb,
                                  outage |-> o, alerted |-> a, halted |-> h]

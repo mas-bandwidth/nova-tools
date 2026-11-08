@@ -5,8 +5,8 @@
 # default route's; an instance on another interface is stopped and disabled). A LAN miss (the gateway silent and no
 # packet arrived) climbs: 1 restart tailscaled, 2 ethtool -r, 3 link bounce, 4 driver reload, 5 reboot. A tailnet
 # miss with the LAN working gets rung 1, then the reboot only when the fault is this machine's (tailscale not running
-# or answering, or the machine offline to the tailnet with its peers silent, while the coordination server answers),
-# else the alert alone. The reboot waits for protected jobs
+# or answering, or the machine offline to the tailnet with its peers silent, while the coordination server answers
+# with an HTTP code 200-499; a 5xx is a control plane down, not an answer), else the alert alone. The reboot waits for protected jobs
 # (nova_netwatch_busy_patterns, /run/nova-netwatch/hold.d); past nova_netwatch_max_reboots in the window or in one
 # outage the watch raises the alert and halts until the network is back. The hang guard: the lockup panics and the
 # board's hardware watchdog driven by systemd (kernel.panic is the health play's). The model is

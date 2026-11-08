@@ -12,3 +12,5 @@ NetWatchTrace.cfg	NetWatchTrace.tla	pass	-	check
 NetWatchTraceBrokenSkipRestart.cfg	NetWatchTrace.tla	invariant	TraceMatches	check
 NetWatchBrokenOldClassify.cfg	NetWatch.tla	action	NoRebootForARemoteTailnet	check
 NetWatchTraceBrokenOldClassify.cfg	NetWatchTrace.tla	invariant	TraceMatches	check
+NetWatchBrokenAnyReply.cfg	NetWatch.tla	action	NoRebootForARemoteTailnet	check
+NetWatchTraceBrokenAnyReply.cfg	NetWatchTrace.tla	invariant	TraceMatches	check

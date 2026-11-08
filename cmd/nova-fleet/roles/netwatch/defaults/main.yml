@@ -23,7 +23,8 @@ nova_netwatch_window: 21600           # seconds (6 hours) the reboot budget coun
 nova_netwatch_dry: false
 
 # The coordination server whose answer over the plain internet tells a local tailnet fault (reboot) from a remote
-# one (the alert only); empty is the ControlURL `tailscale debug prefs` names.
+# one (the alert only); only an HTTP code 200-499 is an answer (a 5xx is a control plane down, which every node sees
+# at once). Empty is the ControlURL `tailscale debug prefs` names.
 nova_netwatch_control_url: ""
 
 # Process patterns (pgrep -f, extended regular expressions) of a protected job: a match defers the reboot (never

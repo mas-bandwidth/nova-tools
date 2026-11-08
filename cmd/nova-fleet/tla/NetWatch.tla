@@ -4,6 +4,8 @@
 (* still arrive) and, on the tailnet's interface while the LAN works, the tailnet, which the script cannot see *)
 (* directly: it sees an observation (obs: tailscale's state, its own node online, a peer answering, the       *)
 (* coordination server answering) and Classify turns that into "ok", "local" or "remote", as the script does. *)
+(* The coordination server answers only with an HTTP code 200-499; a 5xx ("error": a front end up over a      *)
+(* control plane that is down, seen by every node at once) and no reply ("silent") are not answering.         *)
 (* A tick with either down is a miss. After                                                                   *)
 (* Threshold consecutive misses, waiting Backoff(r) ticks after rung r:                                       *)
 (*   1 restart tailscaled, for any miss                                                                      *)
@@ -27,8 +29,9 @@
 (* clears; or, when RemoteFaults, remotely, which nothing on the machine clears. Each fault shows one of the  *)
 (* observations it can produce (LocalObs, RemoteObs), and may change to another while it lasts. A local fault  *)
 (* is assumed to leave the coordination server reachable and to show either tailscale not answering or not   *)
-(* Running, or the own node offline with the peers silent (a machine the tailnet has lost); a local fault that *)
-(* looks like a remote one (own node online, peers silent) is not modelled: it gets the alert, not a reboot.  *)
+(* Running (with its own node online or not), or the own node offline with the peers silent (a machine the   *)
+(* tailnet has lost); a local fault that looks like a remote one (own node online and peers silent, or the    *)
+(* coordination server giving a 5xx) is not modelled: it gets the alert, not a reboot.                        *)
 (* At most MaxFaults faults;                                                                                  *)
 (* each may clear by itself; protected jobs start and stop (when BusyJobs); reboots age out of the window.    *)
 (* None of these is fair. The watch's Tick is weakly fair (a systemd timer).                                  *)
@@ -36,17 +39,19 @@
 (* Reversed witnesses: GuardBusy FALSE, AlertOnBusy FALSE, RestartTailscaled FALSE, TailLikeLan TRUE (the      *)
 (* tailnet miss climbs the card's rungs and reboots like a LAN miss), Latch FALSE (the budget counts only the  *)
 (* window and is tried again after it, so a fault that never clears reboots the machine forever), OldClassify  *)
-(* TRUE (silent peers with the own node online taken as local: a relay outage reboots every machine).          *)
+(* TRUE (silent peers with the own node online taken as local: a relay outage reboots every machine), AnyReply *)
+(* TRUE (any HTTP reply, a 5xx too, taken as the coordination server answering: a control-plane outage behind  *)
+(* a working front end reboots every machine).                                                                *)
 EXTENDS Naturals
 
 CONSTANTS Threshold, BackoffStep, BusyBackoff, MaxFaults, MaxReboots, BusyWaitLimit,
           Depths, TailDepths, RemoteFaults, BusyJobs,
-          GuardBusy, AlertOnBusy, RestartTailscaled, TailLikeLan, Latch, OldClassify
+          GuardBusy, AlertOnBusy, RestartTailscaled, TailLikeLan, Latch, OldClassify, AnyReply
 
 ASSUME Threshold \in Nat \ {0} /\ BackoffStep \in Nat \ {0} /\ BusyBackoff \in Nat \ {0}
 ASSUME MaxFaults \in Nat /\ MaxReboots \in Nat /\ BusyWaitLimit \in Nat \ {0}
 ASSUME Depths \subseteq 2..6 /\ TailDepths \subseteq {1, 5, 6}
-ASSUME \A c \in {RemoteFaults, BusyJobs, GuardBusy, AlertOnBusy, RestartTailscaled, TailLikeLan, Latch, OldClassify} : c \in BOOLEAN
+ASSUME \A c \in {RemoteFaults, BusyJobs, GuardBusy, AlertOnBusy, RestartTailscaled, TailLikeLan, Latch, OldClassify, AnyReply} : c \in BOOLEAN
 
 Rungs == 4               \* the rungs before the reboot
 RebootRung == Rungs + 1
@@ -69,9 +74,12 @@ Down == depth > 0 \/ tkind # "none"
 
 \* An observation of the tailnet: backend is "running", "stopped" (tailscale down by hand), "login" (NeedsLogin or NeedsMachineAuth), "other" (another
 \* state) or "none" (the status does not answer); self, the own node online; peers, a peer answering tailscale ping
-\* (read only while running); control, the coordination server answering over the plain internet.
-Obs == [backend: {"running", "stopped", "login", "other", "none"}, self: BOOLEAN, peers: BOOLEAN, control: BOOLEAN]
-Healthy == [backend |-> "running", self |-> TRUE, peers |-> TRUE, control |-> TRUE]
+\* (read only while running); control, the coordination server over the plain internet: "answers" (HTTP 200-499),
+\* "error" (a 5xx) or "silent" (no reply, or not asked).
+Obs == [backend: {"running", "stopped", "login", "other", "none"}, self: BOOLEAN, peers: BOOLEAN,
+        control: {"answers", "error", "silent"}]
+Healthy == [backend |-> "running", self |-> TRUE, peers |-> TRUE, control |-> "answers"]
+Answers(o) == o.control = "answers" \/ (AnyReply /\ o.control = "error")
 
 \* the script's read_tailnet
 Classify(o) ==
@@ -79,21 +87,23 @@ Classify(o) ==
     ELSE IF o.backend = "login" THEN "remote"
     ELSE IF o.backend = "running" /\ o.peers THEN (IF o.self THEN "ok" ELSE "remote")
     ELSE IF o.backend = "running" /\ o.self /\ ~OldClassify THEN "remote"
-    ELSE IF o.control THEN "local"
+    ELSE IF Answers(o) THEN "local"
     ELSE "remote"
 
 \* what a fault can look like: a local one leaves the coordination server reachable (see above); a remote one is
 \* anything else that is not healthy: the coordination server silent, a new login, the own node offline while
 \* peers answer, or silent peers while the own node is online (a relay outage, the peers down)
 LocalObs ==
-    {[backend |-> b, self |-> FALSE, peers |-> FALSE, control |-> TRUE] : b \in {"none", "other"}}
-    \cup {[backend |-> "running", self |-> FALSE, peers |-> FALSE, control |-> TRUE]}
+    {[backend |-> "none", self |-> FALSE, peers |-> FALSE, control |-> "answers"]}
+    \cup {[backend |-> "other", self |-> s, peers |-> FALSE, control |-> "answers"] : s \in BOOLEAN}
+    \cup {[backend |-> "running", self |-> FALSE, peers |-> FALSE, control |-> "answers"]}
 RemoteObs ==
     {o \in Obs : /\ o.backend # "stopped"
-                 /\ o.backend \in {"none", "other"} => (~o.self /\ ~o.peers)
+                 /\ o.backend = "none" => (~o.self /\ ~o.peers)
+                 /\ o.backend = "other" => ~o.peers
                  /\ o.backend = "login" => (~o.self /\ ~o.peers)
                  /\ \/ o.backend = "login"
-                    \/ ~o.control /\ ~(o.backend = "running" /\ o.self /\ o.peers)
+                    \/ o.control # "answers" /\ ~(o.backend = "running" /\ o.self /\ o.peers)
                     \/ o.backend = "running" /\ ~o.self /\ o.peers
                     \/ o.backend = "running" /\ o.self /\ ~o.peers}
 ObsOf(k) == IF k = "local" THEN LocalObs ELSE IF k = "remote" THEN RemoteObs ELSE {Healthy}

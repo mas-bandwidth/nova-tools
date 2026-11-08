@@ -115,7 +115,8 @@ if [ "$rx" != -1 ] && [ "$lastrx" != -1 ] && [ "$rx" -gt "$lastrx" ]; then lan=1
 istailnet=0; [ -n "$TAILNET_IF" ] && [ "$IF" = "$TAILNET_IF" ] && istailnet=1
 tail=skip; why=""
 # what was seen of the tailnet (the model's obs; "-" while unread): tailscale's state (running, stopped, login,
-# other, none: no status), the own node online, a peer answering, the coordination server answering (0 when unasked)
+# other, none: no status), the own node online, a peer answering, the coordination server: 1 answering (HTTP
+# 200-499), 5 a server error (5xx: a front end up over a broken control plane, so not answering), 0 no reply or unasked
 ob_backend=-; ob_self=0; ob_peers=0; ob_control=0
 # read_tailnet sets tail to ok, local or remote, why, and the ob_ variables.
 read_tailnet() {
@@ -167,15 +168,18 @@ print(s.get("BackendState") or "none", "true" if me.get("Online") else "false", 
   if [ "$ob_control" = 1 ]; then tail=local; else tail=remote; fi
 }
 # probe_control asks the coordination server over the plain internet and notes the answer in ob_control and why.
+# Only an HTTP code 200-499 is an answer: a 5xx is a front end over a control plane that is down, which every
+# node sees at once, so counting it would class a fleet-wide outage local and reboot the fleet.
 probe_control() {
-  local url=$CONTROL_URL
+  local url=$CONTROL_URL code
   [ -n "$url" ] || url=$(timeout 5 tailscale debug prefs 2>/dev/null | python3 -I -c 'import json, sys; print(json.load(sys.stdin).get("ControlURL") or "")' 2>/dev/null)
   [ -n "$url" ] || url=https://controlplane.tailscale.com
-  if curl -sS -o /dev/null --max-time 5 "$url" >/dev/null 2>&1; then
-    ob_control=1; why="$why, $url answers"
-  else
-    why="$why, $url does not answer"
-  fi
+  code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$url" 2>/dev/null)
+  case $code in
+    [234][0-9][0-9]) ob_control=1; why="$why, $url answers" ;;
+    5[0-9][0-9]) ob_control=5; why="$why, $url does not answer (HTTP $code)" ;;
+    *) why="$why, $url does not answer" ;;
+  esac
 }
 [ "$istailnet" = 1 ] && [ "$lan" = 1 ] && read_tailnet
 
