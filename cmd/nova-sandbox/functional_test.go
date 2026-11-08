@@ -9,10 +9,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -370,7 +368,7 @@ func TestSystemdRunEscapeIsClosed(t *testing.T) {
 	assert.NotContains(t, stdout, "leak", "the file outside the wall was not read")
 }
 
-func TestKeepFDsLeavesAnInheritedDescriptorOpen(t *testing.T) {
+func TestAnInheritedDescriptorIsClosed(t *testing.T) {
 	t.Parallel()
 	job, out := scratch(t)
 	f, err := os.Create(filepath.Join(out, "inherited"))
@@ -379,21 +377,16 @@ func TestKeepFDsLeavesAnInheritedDescriptorOpen(t *testing.T) {
 	_, err = f.WriteString("data")
 	require.NoError(t, err)
 	// Pass the open descriptor to the child as fd 3 and have it read from /dev/fd/3.
-	run := func(extra ...string) (int, string) {
-		cmd := exec.Command(bin(t), append(append([]string{}, extra...), "--write", job, "--", "/bin/sh", "-c", "cat <&3 2>/dev/null; true")...)
-		cmd.Env, cmd.Dir = []string{"PATH=/usr/bin:/bin", "HOME=" + job}, job
-		rf, _ := os.Open(f.Name())
-		defer rf.Close()
-		cmd.ExtraFiles = []*os.File{rf} // becomes fd 3 in the child
-		var b strings.Builder
-		cmd.Stdout = &b
-		_ = cmd.Run()
-		return 0, b.String()
-	}
-	_, withClose := run()
-	assert.NotContains(t, withClose, "data", "by default the inherited fd 3 is closed before exec")
-	_, withKeep := run("--keep-fds")
-	assert.Contains(t, withKeep, "data", "--keep-fds leaves it open")
+	cmd := exec.Command(bin(t), "--write", job, "--", "/bin/sh", "-c", "cat <&3 2>/dev/null; true")
+	cmd.Env, cmd.Dir = []string{"PATH=/usr/bin:/bin", "HOME=" + job}, job
+	rf, err := os.Open(f.Name())
+	require.NoError(t, err)
+	defer rf.Close()
+	cmd.ExtraFiles = []*os.File{rf} // becomes fd 3 in the child
+	var b strings.Builder
+	cmd.Stdout = &b
+	_ = cmd.Run() // ignored: the output is the check
+	assert.NotContains(t, b.String(), "data", "the inherited fd 3 is closed before exec")
 }
 
 func TestNetDenyRefusesAConnect(t *testing.T) {
@@ -526,70 +519,6 @@ func TestNetDenyClosesDNS(t *testing.T) {
 		assert.Equal(t, 0, code, "/etc/hosts still answers: "+stderr)
 		assert.Contains(t, out, "127.0.0.1")
 	}
-}
-
-// TestShowSnapshot compares show to the block it must print on this host: the system
-// roots by their presence here, the rest literal. It runs nothing.
-func TestShowSnapshot(t *testing.T) {
-	t.Parallel()
-	_, chk, _ := sandbox(t, os.TempDir(), "check")
-	if !strings.Contains(chk, "net=enforceable") {
-		t.Skip("--net-deny is not enforceable here: " + chk)
-	}
-	if !strings.Contains(chk, "backend=landlock") {
-		t.Skip("the expected block is Landlock's: " + chk)
-	}
-	abi := regexp.MustCompile(`abi=(\d+)`).FindStringSubmatch(chk)[1]
-	job, out := scratch(t)
-	code, got, stderr := sandbox(t, job, "show", "--read", out, "--write", job, "--net-deny")
-	require.Equal(t, 0, code, stderr)
-	var want strings.Builder
-	used := abi
-	if n, _ := strconv.Atoi(abi); n > maxABI {
-		used = strconv.Itoa(maxABI)
-	}
-	fmt.Fprintf(&want, "wall backend=landlock abi=%s seccomp=on\n", used)
-	n, _ := strconv.Atoi(used)
-	fmt.Fprintf(&want, "fs handled=%s\n", fsNames(handledFS(n)))
-	roots := slices.Clone(linuxReadRoots)
-	if d := resolverDirOf("/etc/resolv.conf"); d != "" && !slices.Contains(roots, d) {
-		roots = append(roots, d)
-	}
-	for _, r := range roots {
-		state := ""
-		if _, err := os.Stat(r); err != nil {
-			state = " state=absent"
-		}
-		fmt.Fprintf(&want, "path access=read path=%s from=root%s\n", r, state)
-	}
-	want.WriteString(`path access=write path=/dev/null from=root
-path access=write path=/dev/tty from=root
-path access=write path=/dev/shm from=root
-path access=read path=` + out + ` from=--read
-path access=write path=` + job + ` from=--write
-net rule=closed tcp=deny by=landlock,seccomp udp=deny raw=deny packet=deny by=seccomp dns=/etc/hosts_only
-seccomp action=kill rule="another architecture's syscall (i386, x32 compat)"
-seccomp action=kill rule="an x32 syscall number"
-seccomp action=eperm rule=ptrace
-seccomp action=eperm rule="io_uring_setup, io_uring_enter, io_uring_register"
-seccomp action=eperm rule=socket(AF_UNIX)
-seccomp action=eperm rule="socket of every family but AF_UNIX and AF_NETLINK (no TCP, UDP, raw or packet socket)"
-seccomp action=eperm rule="socket(AF_NETLINK) unless NETLINK_ROUTE (no sock_diag, which lists other processes' connections)"
-seccomp action=eperm rule="socketpair of any family but AF_UNIX"
-seccomp action=eperm rule="socketpair(AF_UNIX) unless SOCK_STREAM"
-seccomp action=allow rule="everything else"
-`)
-	if n >= 6 {
-		want.WriteString("scope signal=wall abstract_unix=wall\n")
-	} else {
-		want.WriteString("scope none note=below landlock abi 6 a signal can reach a process outside the wall\n")
-	}
-	want.WriteString("fds close=above_stderr\n")
-	assert.Equal(t, want.String(), got)
-	assert.Empty(t, stderr)
-	entries, err := os.ReadDir(job)
-	require.NoError(t, err)
-	assert.Empty(t, entries, "show runs nothing and writes nothing")
 }
 
 // TestSpecWorkedExample runs a Go build walled as cmd/nova-sandbox/README.md shows, with

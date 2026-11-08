@@ -123,13 +123,7 @@ func TestFunctionalBackgroundedWhileWaitingStillRelays(t *testing.T) {
 		t.Skip("no bash to drive job control")
 	}
 	bin, dir := build(t), t.TempDir()
-	holder := exec.Command(bin, "hold", "--slots", "1", "--for", "1h", "--dir", dir)
-	out, err := holder.StdoutPipe()
-	require.NoError(t, err)
-	require.NoError(t, holder.Start())
-	t.Cleanup(func() { _ = holder.Process.Kill(); _ = holder.Wait() })
-	_, err = out.Read(make([]byte, 64)) // CAPACITY SET: the slot is held
-	require.NoError(t, err)
+	holder := startHolder(t, bin, dir, "--slots", "1") // the slot is held
 	master, seen, done := onTerminal(t, bash, "--norc", "--noprofile", "-i")
 	typed := func(s string) {
 		_, err := master.Write([]byte(s))
@@ -140,7 +134,7 @@ func TestFunctionalBackgroundedWhileWaitingStillRelays(t *testing.T) {
 	typed("\x1a")
 	require.Eventually(t, seen("Stopped"), 10*time.Second, 20*time.Millisecond)
 	typed("bg\n")
-	require.NoError(t, holder.Process.Signal(syscall.SIGTERM))
+	require.NoError(t, holder.Process.Kill()) // SIGKILL: the kernel frees its slot
 	require.Eventually(t, seen("ready"), patience, 20*time.Millisecond, "the backgrounded run never started its command")
 	typed("fg\n")
 	time.Sleep(500 * time.Millisecond) // a guess: the shell continues the job before the line is typed

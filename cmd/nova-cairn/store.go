@@ -40,7 +40,7 @@ const idRule = "an id names exactly one file or directory inside the store on ev
 var devices = regexp.MustCompile(`(?i)^(con|prn|aux|nul|com[1-9]|lpt[1-9])$`)
 
 func validID(s string) bool {
-	if s == "" || len(s) > 128 || strings.Contains(s, "..") || strings.Trim(s, ".") == "" ||
+	if s == "" || len(s) > 128 || !utf8.ValidString(s) || strings.Contains(s, "..") || strings.Trim(s, ".") == "" ||
 		strings.HasSuffix(s, ".") || strings.ContainsAny(s, `/\:*?"<>|`) {
 		return false
 	}
@@ -52,11 +52,6 @@ func validID(s string) bool {
 	base, _, _ := strings.Cut(s, ".")
 	return !devices.MatchString(base)
 }
-
-// writableID is validID and valid UTF-8: an id written now goes into JSON, which
-// holds only UTF-8. The read verbs take validID alone, so a store an older build
-// wrote with other bytes in its ids still lists and reads.
-func writableID(s string) bool { return validID(s) && utf8.ValidString(s) }
 
 // refusal is a failed run: code 1 for a conflict (it ran and said no), 2 for
 // anything that could not run. remedy is the command to run next ("" is help).
@@ -680,10 +675,10 @@ func runStore(verb string, args []string, stdin io.Reader, stdout, stderr io.Wri
 		}
 	}
 	for _, id := range []struct{ name, v string }{{"session", *session}, {"entry", *entry}} {
-		if id.v != "" && !validID(id.v) {
+		if at := badUTF8(id.v); at >= 0 {
+			problems = append(problems, fmt.Sprintf("--%s %s is not valid UTF-8 at byte %d: an id must be valid UTF-8", id.name, strconv.Quote(id.v), at))
+		} else if id.v != "" && !validID(id.v) {
 			problems = append(problems, fmt.Sprintf("--%s %s is not an id: %s", id.name, strconv.Quote(id.v), idRule))
-		} else if id.v != "" && (verb == "open" || verb == "append") && !writableID(id.v) {
-			problems = append(problems, fmt.Sprintf("--%s %s is not valid UTF-8 at byte %d: an id written now must be valid UTF-8", id.name, strconv.Quote(id.v), badUTF8(id.v)))
 		}
 	}
 	if at := badUTF8(*source); at >= 0 {

@@ -87,8 +87,7 @@ func storeError(err error, user, op string) error {
 	case slices.Contains([]string{"42P01", "42703", "3F000"}, pe.Code): // undefined table, undefined column, no such schema
 		return errors.New(SchemaMissing)
 	case strings.HasPrefix(pe.Code, "28"):
-		pw := cmp.Or(os.Getenv("NOVA_PG_PASSWORD_ENV"), "NOVA_PG_PASSWORD")
-		return fmt.Errorf("postgres refused the login for %s: check %s; run: PGPASSWORD=\"$%s\" psql \"$NOVA_PG_DSN\" -c 'select 1'", user, pw, pw)
+		return fmt.Errorf("postgres refused the login for %s: check NOVA_PG_PASSWORD; run: PGPASSWORD=\"$NOVA_PG_PASSWORD\" psql \"$NOVA_PG_DSN\" -c 'select 1'", user)
 	case pe.Code == "42501":
 		words := append([]string{"the table"}, strings.Fields(strings.Split(pe.Message, "\n")[0])...) // never empty
 		return fmt.Errorf("%s may not %s %s", user, op, cmp.Or(pe.TableName, words[len(words)-1]))

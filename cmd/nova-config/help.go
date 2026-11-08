@@ -15,8 +15,8 @@ const writeLine = "[--actor <name>] [--reason <line>] [--dry-run]"
 
 const historyLine = "nova-config history [<kind> [<name>]] [--since <duration|RFC3339>] [--max <n>] [--json]"
 
-const trailer = `Store: --pg <dsn> or NOVA_PG_DSN (postgres://user@host:port/db, no password; the password is read from the variable
-NOVA_PG_PASSWORD_ENV names, else NOVA_PG_PASSWORD). Exit codes: 0 done, 1 refused, 2 could not run.
+const trailer = `Store: --pg <dsn> or NOVA_PG_DSN (postgres://user@host:port/db, no password; the password is read from
+NOVA_PG_PASSWORD). Exit codes: 0 done, 1 refused, 2 could not run.
 `
 
 // usage is the root help: every verb path by name, from the kind tables.

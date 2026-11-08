@@ -81,13 +81,13 @@ nova-secrets exec --only NAME[,NAME] --store <dir> --key <file> [--as <seat>] [-
   runs after it: the shell reports a command killed by a signal as 128+N, as for any process).
   Exit: the command's own status; 125 when exec refused at run time and the command never ran.
 
---store defaults to $NOVA_SECRETS_STORE, else ~/.config/nova-secrets/store; --key is required where a verb
-lists it (or NOVA_SECRETS_KEY; set defaults it to ~/.config/nova-secrets/<seat>.key). The current directory
-is never assumed. --as defaults to $NOVA_SECRETS_SEAT, else the short hostname; --sops
+--store defaults to $NOVA_SECRETS_STORE, else ~/.config/nova-secrets/store; --key to $NOVA_SECRETS_KEY, else
+~/.config/nova-secrets/<seat>.key; --pins to $NOVA_SECRETS_PINS, else ~/.config/nova-secrets/pins. The current
+directory is never assumed. --as defaults to $NOVA_SECRETS_SEAT, else the short hostname; --sops
 to sops on PATH. No verb prints a value. Exit codes: 0 done, 2 refused (exec: 125). A refusal is one stderr line,
 SECRETS <VERB> REFUSED reason=<r>: <why>, r one of no-store no-seat no-key not-recipient no-name no-sops
 no-command sops git other, and for set, grant and the files they read no-pin key-changed untrusted-rule
-wrong-recipients duplicate-name not-regular grants-changed recovery-key partial. --pins may come from NOVA_SECRETS_PINS.
+wrong-recipients duplicate-name not-regular grants-changed recovery-key partial.
 `
 
 // helpFor is the paragraph for a verb, or the whole text for "".
@@ -109,10 +109,6 @@ var identityEnv = []string{"NOVA_SECRETS_KEY", "NOVA_SECRETS_STORE", "NOVA_SECRE
 
 // maxValue is the longest secret set accepts: a key or a token.
 const maxValue = 65536
-
-// markKey is a clear provenance line older releases wrote into seat files; it is
-// not a secret, so it is never delivered, and a set drops it.
-const markKey = "NOVA_SECRETS_WRITTEN_BY"
 
 var (
 	seatName = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
@@ -240,7 +236,6 @@ func (t tool) parse(verb string, args []string, npos int, needKey bool, also ...
 	for name, p := range map[string]*string{"store": &o.store, "as": &o.as, "key": &o.key, "sops": &o.sops, "only": &o.only, "recovery": &o.recovery, "to": &o.to, "pins": &o.pins, "pub": &o.pub} {
 		fs.StringVar(p, name, "", "")
 	}
-	fs.Func("require", "", func(v string) error { o.only += "," + v; return nil }) // hidden alias of --only, for existing units
 	if err = fs.Parse(args); err != nil {
 		msg := err.Error()
 		if n, ok := strings.CutPrefix(msg, "flag provided but not defined: "); ok {
@@ -251,7 +246,7 @@ func (t tool) parse(verb string, args []string, npos int, needKey bool, also ...
 		return o, nil, bad("%s", msg)
 	}
 	takes := map[string]string{"init": "store recovery pins", "seat add": "store", "seat list": "store", "seat remove": "store pins", "names": "store as",
-		"set": "store key pins as recovery sops", "grant": "to pins store key as pub recovery sops", "exec": "only require store key as sops"}[verb]
+		"set": "store key pins as recovery sops", "grant": "to pins store key as pub recovery sops", "exec": "only store key as sops"}[verb]
 	fs.Visit(func(f *flag.Flag) {
 		if err == nil && !slices.Contains(strings.Fields(takes), f.Name) {
 			err = bad("unknown flag --%s", f.Name)
@@ -279,19 +274,13 @@ func (t tool) parse(verb string, args []string, npos int, needKey bool, also ...
 		missing = append(missing, "--to <seat>")
 	}
 	if o.pins == "" && slices.Contains([]string{"grant", "set", "seat remove"}, verb) {
-		if o.pins = envValue(t.environ, "NOVA_SECRETS_PINS"); o.pins == "" && verb == "set" {
+		if o.pins = envValue(t.environ, "NOVA_SECRETS_PINS"); o.pins == "" {
 			o.pins = filepath.Join(filepath.Dir(t.keyFile("x")), "pins")
-		}
-		if o.pins == "" {
-			missing = append(missing, "--pins <dir> (or NOVA_SECRETS_PINS)")
 		}
 	}
 	if needKey && o.key == "" {
-		if o.key = envValue(t.environ, "NOVA_SECRETS_KEY"); o.key == "" && verb == "set" {
+		if o.key = envValue(t.environ, "NOVA_SECRETS_KEY"); o.key == "" {
 			o.key = t.keyFile(cmp.Or(o.as, t.ownSeat()))
-		}
-		if o.key == "" {
-			missing = append(missing, "--key <file> (or NOVA_SECRETS_KEY)")
 		}
 	}
 	if missing = append(missing, also...); len(missing) > 0 {
@@ -917,7 +906,7 @@ func plainNames(o opts, name string) ([]string, error) {
 	}
 	var names []string
 	for i := 0; i+1 < len(top.Content); i += 2 {
-		if k := top.Content[i].Value; k != "sops" && k != markKey {
+		if k := top.Content[i].Value; k != "sops" {
 			names = append(names, k)
 		}
 	}
@@ -942,7 +931,7 @@ func (t tool) decryptFile(o opts, seat, file string) (map[string]string, error) 
 	}
 	values := map[string]string{}
 	for k, v := range raw {
-		if k == markKey || k == "sops" {
+		if k == "sops" {
 			continue
 		}
 		var s string
@@ -1031,11 +1020,6 @@ func (t tool) encrypt(o opts, seat string, values map[string]string, rec string)
 		return err
 	}
 	age := ageOf(rule)
-	if len(rule.Content) == 6 && field(rule, "unencrypted_regex") != nil && field(rule, "unencrypted_regex").Value == "^NOVA_SECRETS_WRITTEN_BY$" {
-		rule = &yaml.Node{Kind: rule.Kind, Content: slices.DeleteFunc(slices.Clone(rule.Content), func(n *yaml.Node) bool {
-			return n == field(rule, "unencrypted_regex") || n.Value == "unencrypted_regex"
-		})}
-	}
 	if len(rule.Content) != 4 || field(rule, "path_regex") == nil || len(age) != 2 || age[1] != rec {
 		return deny("untrusted-rule", "the rule for %s.yaml is not the one seat add writes (path_regex, and age: the seat's key then the recovery key), so a value could reach another key: fix it, then run again", seat)
 	}
@@ -1328,7 +1312,7 @@ func (t tool) names(args []string) error {
 		for i := 0; i+1 < len(top.Content); i += 2 {
 			k, v := top.Content[i], top.Content[i+1]
 			switch {
-			case k.Value == "sops" || k.Value == markKey:
+			case k.Value == "sops":
 			case k.Kind != yaml.ScalarNode || k.Tag != "!!str" || !envName.MatchString(k.Value) || v.Kind != yaml.ScalarNode:
 				refused++
 			case slices.Contains(seen, k.Value):

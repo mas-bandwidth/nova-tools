@@ -312,18 +312,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 func gate(play string, need []string, stdout, stderr io.Writer) bool {
 	fam, missing := family(), 0
 	for _, b := range need {
-		p, err := lookPath(b)
-		if err != nil {
+		if p, err := lookPath(b); err != nil {
 			missing++
 			fmt.Fprintf(stdout, "CHECK MISSING %s: %s\n", b, fix(b, fam))
-			continue
-		}
-		if galaxy := filepath.Join(filepath.Dir(p), "ansible-galaxy"); b == "ansible-playbook" {
-			if o, why, c := outCmd(galaxy, []string{"collection", "list"}, os.Environ()); !strings.Contains(o, "ansible.posix") {
-				missing++
-				fmt.Fprintf(stdout, "CHECK MISSING ansible.posix: nova-fleet show requirements > requirements.yml && %s collection install -r requirements.yml%s\n", galaxy,
-					map[bool]string{true: "  # " + galaxy + " could not run, so the collections are unchecked: " + oneLine(why)}[c == 127])
-			}
+		} else if b == "ansible-playbook" {
+			posixMissing(stdout, p, &missing)
 		}
 	}
 	if missing > 0 {

@@ -155,7 +155,7 @@ func storeDSN(fs *flag.FlagSet, d deps) (string, string) {
 	case dsn == "":
 		return "", "no store: set NOVA_PG_DSN or --pg (postgres://USER@HOST:PORT/DB?sslmode=disable)"
 	case str(fs, "pg") != "" && dsnPassword(dsn):
-		return "", "--pg carries a password; leave it out and name its variable in NOVA_PG_PASSWORD_ENV"
+		return "", "--pg carries a password; leave it out and set NOVA_PG_PASSWORD"
 	case dsnPassword(dsn):
 		return "", "NOVA_PG_DSN carries a password; remove it and set NOVA_PG_PASSWORD"
 	case config.DSNProblem(dsn) != "":
@@ -170,7 +170,7 @@ func open(ctx context.Context, fs *flag.FlagSet, d deps) (Store, error) {
 	if prob != "" {
 		return nil, usagef(strings.TrimPrefix(fs.Name(), "nova-config "), "", "%s", prob)
 	}
-	return d.openPG(ctx, dsn, d.getenv(cmp.Or(d.getenv("NOVA_PG_PASSWORD_ENV"), "NOVA_PG_PASSWORD")))
+	return d.openPG(ctx, dsn, d.getenv("NOVA_PG_PASSWORD"))
 }
 
 func runKind(ctx context.Context, k *kind, verb string, args []string, d deps, stdout io.Writer) error {
@@ -262,8 +262,6 @@ func runKind(ctx context.Context, k *kind, verb string, args []string, d deps, s
 	case op == "list":
 		printRows(stdout, k, verb, rows, nil, str(fs, "json") == "true")
 		return nil
-	case op == "add" && found:
-		return refused("%s %s exists; use: nova-config %s set %s", k.name, name, k.name, name)
 	case op != "add" && !found:
 		return refused("%s %s not found; run: nova-config %s list", k.name, name, k.name)
 	case op == "show":

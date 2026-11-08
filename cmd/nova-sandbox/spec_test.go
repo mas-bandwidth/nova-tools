@@ -21,10 +21,10 @@ func reasons(bad []refusal) []string {
 func TestParseArgs(t *testing.T) {
 	t.Parallel()
 	s, bad := parseArgs([]string{"--read", "/r", "--read", "/r2", "--write", "/w", "--net-deny",
-		"--net-allow", "localhost:1", "--gpu", "--unix", "--keep-fds", "--env", "TMPDIR", "--", "ls", "--read", "-l"}, true)
+		"--net-allow", "localhost:1", "--gpu", "--unix", "--env", "TMPDIR", "--", "ls", "--read", "-l"})
 	require.Empty(t, bad)
 	assert.Equal(t, spec{reads: []string{"/r", "/r2"}, writes: []string{"/w"}, netAllow: []string{"localhost:1"},
-		netDeny: true, gpu: true, unix: true, keepFDs: true, passEnv: []string{"TMPDIR"},
+		netDeny: true, gpu: true, unix: true, passEnv: []string{"TMPDIR"},
 		argv: []string{"ls", "--read", "-l"}}, s, "everything after -- is the command, verbatim")
 
 	for _, c := range []struct {
@@ -38,7 +38,7 @@ func TestParseArgs(t *testing.T) {
 		{[]string{"--write", "/w", "--"}, []string{"no_command"}},
 		{nil, []string{"no_command"}},
 	} {
-		_, bad := parseArgs(c.args, true)
+		_, bad := parseArgs(c.args)
 		assert.Equal(t, c.want, reasons(bad), c.args)
 	}
 }
@@ -141,7 +141,7 @@ func TestExitCodes(t *testing.T) {
 	assert.Equal(t, 0, code)
 	assert.Contains(t, out, "--net-allow")
 	assert.Empty(t, errs)
-	for _, v := range []string{"show", "check", "probe"} {
+	for _, v := range []string{"check", "probe"} {
 		for _, form := range [][]string{{v, "-h"}, {v, "--help"}, {"help", v}} {
 			code, out, errs := exit(form...)
 			assert.Equal(t, 0, code, form)
@@ -151,7 +151,7 @@ func TestExitCodes(t *testing.T) {
 	}
 	code, out, _ = exit("--write", "/w", "--help", "--", "ls")
 	assert.Equal(t, 0, code, "-h before -- is the run form's help")
-	assert.Contains(t, out, "nova-sandbox show")
+	assert.Contains(t, out, "nova-sandbox check")
 
 	// A malformed invocation: exit 2, one refusal line naming every problem.
 	oneLine := func(prefix string, args ...string) string {
@@ -169,10 +169,10 @@ func TestExitCodes(t *testing.T) {
 	assert.Contains(t, oneLine("nova-sandbox help", "help", "nope"), "nope")
 	errs = oneLine("nova-sandbox", "no-such-verb")
 	assert.Contains(t, errs, "unknown verb no-such-verb")
-	assert.Contains(t, errs, "show check probe help (see nova-sandbox help)")
+	assert.Contains(t, errs, "check probe help (see nova-sandbox help)")
 	code, out, errs = exit()
 	assert.Equal(t, 0, code, "a bare nova-sandbox prints the help")
-	assert.Contains(t, out, "nova-sandbox show")
+	assert.Contains(t, out, "nova-sandbox check")
 	assert.Empty(t, errs)
 	for _, c := range []struct {
 		args []string
@@ -182,7 +182,6 @@ func TestExitCodes(t *testing.T) {
 		{[]string{"--write", "--net-deny", "--", "true"}, `nova-sandbox: bad_value: --write wants an absolute path, got "--net-deny"; run: nova-sandbox -h` + "\n"},
 		{[]string{"--net-deny", "--net-allow", "--", "true"}, `nova-sandbox: bad_value: --net-allow wants host:port, got "--"; run: nova-sandbox -h` + "\n"},
 		{[]string{"--env", "--", "true"}, `nova-sandbox: bad_value: --env wants a name, got "--"; run: nova-sandbox -h` + "\n"},
-		{[]string{"show", "--read", "--unix"}, `nova-sandbox show: bad_value: --read wants an absolute path, got "--unix"; run: nova-sandbox show -h` + "\n"},
 	} {
 		code, out, errs := exit(c.args...)
 		assert.Equal(t, 2, code, c.args)
@@ -200,10 +199,6 @@ func TestExitCodes(t *testing.T) {
 	errs = oneLine("nova-sandbox", "--read", filepath.Join(t.TempDir(), "missing"))
 	assert.Contains(t, errs, "--read")
 	assert.Contains(t, errs, "no_command")
-	assert.Contains(t, oneLine("nova-sandbox show", "show", "--bogus"), "--bogus")
-	code, _, errs = exit("show", "--", "no-such-command-here")
-	assert.Equal(t, 127, code, "show exits for a missing command as a run does")
-	assert.Contains(t, errs, "SANDBOX REFUSED reason=not_found")
 	for _, form := range [][]string{{"help", "-h"}, {"help", "--help"}} {
 		code, out, errs := exit(form...)
 		assert.Equal(t, 0, code, form)
@@ -247,13 +242,6 @@ func TestPassedEnv(t *testing.T) {
 	assert.Empty(t, out.String())
 	assert.Contains(t, errb.String(), "bad_env")
 	assert.Contains(t, errb.String(), "letters, digits and underscores")
-
-	out.Reset()
-	errb.Reset()
-	code = run([]string{"show", "--env", "NO_SUCH"}, &out, &errb, nil)
-	assert.Equal(t, 0, code, errb.String())
-	assert.NotEmpty(t, out.String())
-	assert.Empty(t, errb.String())
 }
 
 func TestReport(t *testing.T) {

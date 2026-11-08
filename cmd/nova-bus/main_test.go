@@ -37,7 +37,6 @@ type fake struct {
 	presence  map[string]string
 	deadline  map[string]time.Time
 	claims    []time.Time // the clock at each successful Claim
-	trims     []string    // the id of each Trim
 	down      int         // fail this many Add, Count and Presence calls: refused
 	log       []string    // the order of writes to stdout and acks
 	groups    map[string]bool
@@ -149,11 +148,6 @@ func (f *fake) Waiting(_ context.Context, stream string) ([]Msg, error) {
 		out = append(out, f.find(stream, id))
 	}
 	return append(out, f.entries[stream][f.delivered[stream]:]...), nil
-}
-
-func (f *fake) Trim(_ context.Context, stream, id string) error {
-	f.trims = append(f.trims, stream+" "+id)
-	return nil
 }
 
 var errRefused = errors.New("dial tcp 127.0.0.1:1: connect: connection refused")
@@ -456,29 +450,6 @@ func TestHelp(t *testing.T) {
 	_, out, _ := call(t, newFake(), nil, "", "help")
 	assert.Contains(t, out, "One hook per name: a hook that finds the name held waits up to 40 s")
 	assert.Contains(t, out, "nova-bus pending --as <name> [--list]")
-}
-
-// Streams from an older build hold acked history: it is removed the first
-// time a hook finds unacked entries pending, below the first of them.
-func TestHookTrimsAckedHistoryOnce(t *testing.T) {
-	t.Parallel()
-	f := newFake()
-	for _, s := range []string{"one", "two", "three", "four"} {
-		send(t, f, s, "b")
-	}
-	f.delivered["bus:beta"] = 3 // one and two acked; three handed, not acked
-	f.pending["bus:beta"] = []string{"3-0"}
-	out, _ := runHookOnce(t, f, "beta")
-	assert.Equal(t, 2, strings.Count(out, "\n"))
-	assert.Equal(t, []string{"bus:beta 3-0"}, f.trims, "trimmed below the oldest unacked entry, once")
-
-	g := newFake()
-	for _, s := range []string{"one", "two", "three"} {
-		send(t, g, s, "b")
-	}
-	g.delivered["bus:beta"] = 2 // nothing pending: nothing is trimmed
-	_, _ = runHookOnce(t, g, "beta")
-	assert.Empty(t, g.trims, "a new entry is never the trim point")
 }
 
 func TestHookAcksEachLineAfterPrintingIt(t *testing.T) {

@@ -3,7 +3,6 @@
 package main
 
 import (
-	"bufio"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -109,54 +108,6 @@ func TestExclusiveWaitsForSharedHolders(t *testing.T) {
 	assert.Equal(t, 7, ee.ExitCode())
 }
 
-// TestHoldEndsOnSIGTERMNotStdin: a hold with stdin at /dev/null (an AI's tool
-// call) stays held until SIGTERM, then says why it let go.
-func TestHoldEndsOnSIGTERMNotStdin(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("no SIGTERM to send on Windows")
-	}
-	t.Parallel()
-	bin, dir := build(t), t.TempDir()
-	cmd := exec.Command(bin, "hold", "--slots", "1", "--why", "bench run", "--dir", dir)
-	cmd.Stdin = nil // /dev/null
-	out, err := cmd.StdoutPipe()
-	require.NoError(t, err)
-	require.NoError(t, cmd.Start())
-	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
-	lines := bufio.NewScanner(out)
-	require.True(t, lines.Scan())
-	assert.Equal(t, "CAPACITY SET slots=1", lines.Text())
-	require.True(t, lines.Scan())
-	assert.True(t, strings.HasPrefix(lines.Text(), "HELD mode=shared slot=1/1 pid="), lines.Text())
-	time.Sleep(time.Second) // stdin is at EOF all along; the hold must outlast it
-	status, _ := exec.Command(bin, "status", "--dir", dir).Output()
-	assert.Contains(t, string(status), "slot1 held pid="+strconv.Itoa(cmd.Process.Pid))
-	assert.Contains(t, string(status), `why=bench\srun`)
-	require.NoError(t, cmd.Process.Signal(syscall.SIGTERM))
-	require.True(t, lines.Scan())
-	assert.True(t, strings.HasPrefix(lines.Text(), "RELEASED reason=signal signal=SIGTERM held_for="), lines.Text())
-	require.NoError(t, cmd.Wait())
-	status, _ = exec.Command(bin, "status", "--dir", dir).Output()
-	assert.Contains(t, string(status), "slot1 free")
-}
-
-// TestOrphanedHoldEnds: a hold with no --for whose shell exits lets go.
-func TestOrphanedHoldEnds(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("no sh on Windows")
-	}
-	t.Parallel()
-	bin, dir := build(t), t.TempDir()
-	out := filepath.Join(t.TempDir(), "hold.out")
-	require.NoError(t, exec.Command("sh", "-c", shellQuote(bin)+" hold --dir "+shellQuote(dir)+" >"+shellQuote(out)+" 2>&1 & sleep 0.5").Run())
-	require.Eventually(t, func() bool {
-		b, _ := os.ReadFile(out)
-		return strings.Contains(string(b), "RELEASED reason=parent_exit held_for=")
-	}, patience, 50*time.Millisecond)
-	status, _ := exec.Command(bin, "status", "--dir", dir).Output()
-	assert.Contains(t, string(status), "slot1 free")
-}
-
 func TestStatusDuringAnExclusiveRunOnRealLocks(t *testing.T) {
 	t.Parallel()
 	bin, dir := build(t), t.TempDir()
@@ -169,14 +120,6 @@ func TestStatusDuringAnExclusiveRunOnRealLocks(t *testing.T) {
 	}, patience, 50*time.Millisecond)
 	assert.Contains(t, string(out), "free=0/3\n")
 	assert.NotContains(t, string(out), "  ")
-}
-
-func TestHoldEndsAfterFor(t *testing.T) {
-	t.Parallel()
-	bin, dir := build(t), t.TempDir()
-	out, err := exec.Command(bin, "hold", "--for", "300ms", "--dir", dir, "--slots", "2").Output()
-	require.NoError(t, err)
-	assert.Contains(t, string(out), "\nRELEASED reason=for held_for=")
 }
 
 // TestTwoCapacitiesNeverBothRun is the per-caller bug on real locks: a

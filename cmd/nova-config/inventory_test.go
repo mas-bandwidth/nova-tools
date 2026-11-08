@@ -46,13 +46,6 @@ func TestInventoryLocalMachine(t *testing.T) {
 	h.host = "Bench-A.tail.net"
 	_, out, _ := h.run(t, "inventory", "--host", "bench-a")
 	assert.Contains(t, out, `"ansible_connection": "local"`, "the host name's first label, lower-cased")
-	h.env["NOVA_MACHINE"] = "bench-b"
-	_, out, _ = h.run(t, "inventory", "--host", "bench-a")
-	assert.NotContains(t, out, "ansible_connection", "NOVA_MACHINE wins over the host name")
-	h.env["NOVA_MACHINE"] = "nope"
-	code, _, errs := h.run(t, "inventory")
-	assert.Equal(t, 1, code)
-	assert.Contains(t, errs, "NOVA_MACHINE nope names no machine row; the machines are bench-a,bench-b; set NOVA_MACHINE to one of them, or run: nova-config machine add nope --user <user>\n")
 }
 
 func TestInventoryRefusals(t *testing.T) {

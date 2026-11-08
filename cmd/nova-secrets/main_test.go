@@ -268,7 +268,7 @@ func envMap(env []string) map[string]string {
 func TestExecDeliversOnlyTheNamedValues(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
-	h.seed("ada", map[string]string{"GH_TOKEN": "ghp-sealed-one", "API_KEY": "sk-sealed-two", "OTHER": "sealed-three", markKey: "seal v1"})
+	h.seed("ada", map[string]string{"GH_TOKEN": "ghp-sealed-one", "API_KEY": "sk-sealed-two", "OTHER": "sealed-three"})
 	code := h.main(h.seat("exec", "--only", "API_KEY", "--", "true", "x")...)
 	require.Equal(t, 0, code, h.stderr.String())
 	assert.Equal(t, []string{"true", "x"}, h.became)
@@ -328,7 +328,7 @@ func TestExecUsageErrorsAre2AndNameEveryMissingFlag(t *testing.T) {
 	assert.Equal(t, 2, h.main("exec", "--x"))
 	assert.Equal(t, "nova-secrets exec: unknown flag --x; run: nova-secrets exec -h\n", h.stderr.String())
 	assert.Equal(t, 2, h.main("exec"))
-	for _, w := range []string{"--only", "--key", "command"} {
+	for _, w := range []string{"--only", "command"} {
 		assert.Contains(t, h.stderr.String(), w)
 	}
 	assert.Len(t, strings.Split(strings.TrimSpace(h.stderr.String()), "\n"), 1)
@@ -357,10 +357,10 @@ func TestKeyFileMustBePrivate(t *testing.T) {
 func TestSetSetsOneValueAndCommits(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
-	h.seed("ada", map[string]string{"OLD": "sealed-old", markKey: "seal v1"})
+	h.seed("ada", map[string]string{"OLD": "sealed-old"})
 	h.stdin = "fresh-value-123\n"
 	require.Equal(t, 0, h.main(h.set("NEW")...), h.stderr.String())
-	assert.Equal(t, map[string]string{"OLD": "sealed-old", "NEW": "fresh-value-123"}, h.open("ada"), "the old mark is dropped")
+	assert.Equal(t, map[string]string{"OLD": "sealed-old", "NEW": "fresh-value-123"}, h.open("ada"))
 	var git [][]string
 	for _, c := range h.calls {
 		if c.name == "git" && !slices.Contains([]string{"rev-parse", "status", "ls-files", "diff"}, c.args[0]) {
@@ -423,19 +423,6 @@ func TestSealIsGone(t *testing.T) {
 	h := newHarness(t)
 	assert.Equal(t, 2, h.main(h.seat("seal", "--name", "NEW")...))
 	assert.Contains(t, h.stderr.String(), `unknown verb "seal"`)
-}
-
-func TestRequireIsAHiddenAliasOfOnly(t *testing.T) {
-	t.Parallel()
-	h := newHarness(t)
-	h.seed("ada", map[string]string{"API_KEY": "sk-1", "OTHER": "sealed-3"})
-	require.Equal(t, 0, h.main(h.seat("exec", "--only", "API_KEY", "--require", "OTHER", "--", "true")...), h.stderr.String())
-	assert.Equal(t, "sealed-3", envMap(h.env)["OTHER"])
-	assert.Equal(t, "sk-1", envMap(h.env)["API_KEY"])
-	require.Equal(t, 0, h.main(h.seat("exec", "--require=API_KEY", "--", "true")...), h.stderr.String())
-	assert.Equal(t, 125, h.main(h.seat("exec", "--require", "NOPE", "--", "true")...))
-	h.main("help")
-	assert.NotContains(t, h.stdout.String(), "--require", "hidden")
 }
 
 func (h *harness) rules() []map[string]string {
@@ -521,7 +508,8 @@ func TestSeatAddGoesBeforeACatchAll(t *testing.T) {
 	assert.Equal(t, ".*", rules[3]["path_regex"])
 }
 
-func TestStoreAndKeyAreRequired(t *testing.T) {
+// Without --key or NOVA_SECRETS_KEY, exec reads the seat's default key, and names it when it is not there.
+func TestExecWithoutAKeyNamesTheDefault(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	h.seed("ada", map[string]string{"API_KEY": "sk-sealed-two"})
@@ -530,8 +518,8 @@ func TestStoreAndKeyAreRequired(t *testing.T) {
 		{"exec", "--as", "ada", "--store", h.store, "--only", "API_KEY", "--", "true"},
 	} {
 		code := h.main(args...)
-		assert.Contains(t, []int{2, 125}, code, "%v", args)
-		assert.Contains(t, h.stderr.String(), "missing --")
+		assert.Equal(t, 125, code, "%v", args)
+		assert.Contains(t, h.stderr.String(), "reason=no-key: key file /home/ada/.config/nova-secrets/ada.key does not exist")
 		assert.Empty(t, h.calls, "%v", args)
 	}
 }
@@ -611,7 +599,6 @@ func TestEveryVerbRefusesAFlagItDoesNotTake(t *testing.T) {
 		{"key", []string{"names", "--key", "/nonexistent", "--sops", "/nope"}},
 		{"sops", []string{"names", "--sops", "/nope"}},
 		{"only", []string{"set", "OTHER", "--only", "TOKEN"}},
-		{"require", []string{"set", "OTHER", "--require", "X"}},
 		{"key", []string{"seat", "list", "--key", "/x", "--only", "Y"}},
 		{"sops", []string{"seat", "add", "bo", pubB, "--sops", "sops"}},
 		{"key", []string{"seat", "remove", "bo", "--key", "/x"}},
@@ -769,10 +756,10 @@ func TestNamesListsOnlyRealNamesNeverValues(t *testing.T) {
 		"nested:\n    inner: ENC[x]\n" +
 		"\"SECRETS SET OK forged\\e[31m\": ENC[x]\n" +
 		"? [a, b]\n: ENC[x]\n" +
-		"API_KEY: ENC[AES256_GCM,data:z]\n" + markKey + ": x\nsops:\n    age:\n        - recipient: " + pubA + "\n"
+		"API_KEY: ENC[AES256_GCM,data:z]\nsops:\n    age:\n        - recipient: " + pubA + "\n"
 	require.NoError(t, os.WriteFile(filepath.Join(h.store, "ada.yaml"), []byte(body), 0o600))
 	require.Equal(t, 0, h.main("names", "--store", h.store, "--as", "ada"), h.stderr.String())
-	assert.Equal(t, "GH_TOKEN\nAPI_KEY\n", h.stdout.String(), "the sops block, the old mark and every non-name key are not printed")
+	assert.Equal(t, "GH_TOKEN\nAPI_KEY\n", h.stdout.String(), "the sops block and every non-name key are not printed")
 	assert.Equal(t, "SECRETS NAMES OK as=ada names=2 refused=3\n", h.stderr.String())
 	assert.Empty(t, h.calls, "no program runs, no key is read")
 	h.noLeak("sealed-needle")
@@ -902,9 +889,6 @@ func TestVerbHelp(t *testing.T) {
 			assert.Empty(t, h.calls)
 		}
 	}
-	h.stdout.Reset()
-	h.main("exec", "-h")
-	assert.NotContains(t, h.stdout.String(), "--require")
 	h.seed("ada", map[string]string{"X": "v"})
 	h.stdout.Reset()
 	assert.Equal(t, 0, h.main(h.seat("exec", "--only", "X", "--", "true", "-h")...), "-h after -- belongs to the command: %s", h.stderr.String())
@@ -1118,6 +1102,20 @@ func TestSetBootstrapsAFreshNode(t *testing.T) {
 	h2.stdin = "\n"
 	assert.Equal(t, 2, h2.main("set", "X", "--sops", "sops"))
 	assert.NoDirExists(t, dir2)
+}
+
+// Every verb that takes --key or --pins defaults them as set does, to this seat's key and the pins
+// under ~/.config/nova-secrets, so a node set bootstrapped needs neither flag nor variable.
+func TestEveryVerbDefaultsKeyAndPinsAsSetDoes(t *testing.T) {
+	t.Parallel()
+	h, _ := fresh(t)
+	require.Equal(t, 0, h.main("set", "TAILSCALE_API_KEY", "--sops", "sops"), h.stderr.String())
+	require.Equal(t, 0, h.main("exec", "--only", "TAILSCALE_API_KEY", "--sops", "sops", "--", "true"), h.stderr.String())
+	assert.Equal(t, fakeKey("api", "FRESH"), envMap(h.env)["TAILSCALE_API_KEY"])
+	h.main("grant", "TAILSCALE_API_KEY", "--to", "bo", "--sops", "sops")
+	assert.NotContains(t, h.stderr.String(), "missing", "grant takes the default key and pins")
+	require.Equal(t, 0, h.main("seat", "add", "bo", pubB), h.stderr.String())
+	require.Equal(t, 0, h.main("seat", "remove", "bo"), h.stderr.String())
 }
 
 // No store at the default but a key, the recovery key or the pin there: refused, nothing written or overwritten.

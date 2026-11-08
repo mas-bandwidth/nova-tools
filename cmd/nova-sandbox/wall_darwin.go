@@ -45,10 +45,8 @@ func execWall(w *wall, env []string) []refusal {
 		argv = append(argv, "-D", kv)
 	}
 	argv = append(append(argv, "--"), w.argv...)
-	if !w.keepFDs {
-		if err := closeInheritedFDs(fdDir()); err != nil {
-			return []refusal{refuse("sandbox_failed", "inherited descriptors could not be closed: %v", err)}
-		}
+	if err := closeInheritedFDs(fdDir()); err != nil {
+		return []refusal{refuse("sandbox_failed", "inherited descriptors could not be closed: %v", err)}
 	}
 	err := syscall.Exec(bin, argv, env)
 	return []refusal{refuse("sandbox_failed", "%s could not be started: %v", bin, err)}
@@ -65,13 +63,4 @@ func darwinPlan(w *wall) (bin, text string, params []string, bad []refusal) {
 		return "", "", nil, []refusal{refuse("sandbox_failed", "the profile could not be generated: %v", err)}
 	}
 	return bin, text, params, nil
-}
-
-// describeWall is show's text: the profile execWall would apply here.
-func describeWall(w *wall) (string, []refusal) {
-	bin, text, params, bad := darwinPlan(w)
-	if len(bad) > 0 {
-		return "", bad
-	}
-	return formatDarwin(w, bin, text, params), nil
 }

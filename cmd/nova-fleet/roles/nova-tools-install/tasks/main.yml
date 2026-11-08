@@ -2,8 +2,7 @@
 # Installs the release nova_tools_version of nova_tools_repo (nova-tools by default) on this machine: each tool's
 # asset is downloaded, checked against the release's SHA256SUMS and put in the
 # bin directory. get_url with a checksum leaves a binary that already holds the
-# digest alone, so a second run changes nothing. Nothing is restarted unless
-# nova_tools_restart is true.
+# digest alone, so a second run changes nothing. Nothing is restarted.
 
 - name: a release is named
   ansible.builtin.assert:
@@ -104,7 +103,6 @@
     mode: "0755"
   loop: "{{ nova_tools_plan }}"
   loop_control: { label: "{{ item.dest }}" }
-  register: nova_tools_installed
   when: nova_tools_local_dir | length == 0 and not (ansible_check_mode and nova_tools_unix_dir is changed)
 
 - name: each local binary's digest, on the control node
@@ -136,13 +134,4 @@
     mode: "0755"
   loop: "{{ nova_tools_plan }}"
   loop_control: { label: "{{ item.dest }}" }
-  register: nova_tools_installed_local
   when: nova_tools_local_dir | length > 0 and not (ansible_check_mode and nova_tools_unix_dir is changed)
-
-- name: the restart commands, only when asked and only when a binary changed
-  ansible.builtin.command:
-    argv: "{{ item }}"
-  loop: "{{ nova_tools_restart_commands }}"
-  when:
-    - nova_tools_restart | bool
-    - (nova_tools_installed.changed | default(false)) or (nova_tools_installed_local.changed | default(false))

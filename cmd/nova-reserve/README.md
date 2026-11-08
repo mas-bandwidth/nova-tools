@@ -72,37 +72,6 @@ nova-reserve: HELD mode=exclusive slot=all pid=811079
 An exclusive job waits for every running job to finish. While it waits, no
 new job can start; once it has run, the others go on.
 
-## Hold a reservation without a command
-
-`hold` keeps a slot until it gets SIGTERM, SIGINT or SIGHUP, or until `--for`
-runs out. Without `--for` it also ends when the shell that started it exits.
-Give `--for` when the hold must outlast the shell.
-
-```sh
-nova-reserve hold --for 2h --why "bench sweep" &
-reservation_pid=$!
-sleep 1
-nova-reserve status
-kill "$reservation_pid"
-wait "$reservation_pid"
-```
-
-```text
-HELD mode=shared slot=1/4 pid=820774
-capacity=4 set_by_pid=820683 set_at=2026-11-05T23:45:53Z
-slot1 held pid=820774 since=2026-11-05T23:45:54Z why=bench\ssweep
-slot2 free
-slot3 free
-slot4 free
-gate free # held by an --exclusive run from when it starts waiting until it ends
-all free # the exclusive lock: held by an --exclusive run while it runs
-free=3/4
-RELEASED reason=signal signal=SIGTERM held_for=1.001s
-```
-
-`hold` prints its lines on stdout. The release reason is `signal`, `for` or
-`parent_exit`.
-
 ## Read the state
 
 ```sh
@@ -130,12 +99,11 @@ Every refusal is one line on stderr.
 | `--dir DIR is a file, not a directory; run: ls -ld DIR` | 2 | Give a directory, or a path that does not exist yet. |
 | `... status could not show this hold; run: sudo rm -f FILE && ...` | 2 | A holder file this user can neither remove nor write (another user's). Run the printed command. No slot is kept. |
 | `... is not a reservation directory ...` | 2 | `status` found no reservation there. Use the directory your jobs use. |
-| `no parent to watch (parent pid 1); run: nova-reserve hold --for ...` | 2 | An untimed `hold` started by init, systemd or launchd needs `--for`. |
 | `capacity=? # corrupt: ...` | 0 | The capacity file is damaged. Run the printed `set` command while no job holds a slot. |
 
 A bad or repeated flag, a missing command, a number outside 1 to 1024, or a
-`--wait` or `--for` not above zero exits 2; `nova-reserve help run` (or `hold`,
-`status`, `set`) shows the usage. A run that starts returns the
+`--wait` not above zero exits 2; `nova-reserve help run` (or `status`, `set`)
+shows the usage. A run that starts returns the
 command's own status; if a signal ended it, 128 plus the signal number, and
 stderr says so: `nova-reserve: make ended by signal SIGKILL; exit 137`.
 

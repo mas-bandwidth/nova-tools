@@ -649,8 +649,7 @@ func TestAppendRefusesBytesThatAreNotUTF8(t *testing.T) {
 	code, _, errs = do(t, "", "append", "--store", store, "--session", "s1", "--entry", "e1", "--text", "x", "--source", "p\xfe")
 	assert.Equal(t, 2, code)
 	assert.Contains(t, errs, "--source is not valid UTF-8 at byte 1")
-	assert.False(t, writableID("s\xff"))
-	assert.True(t, validID("s\xff"), "the read verbs still take an older store's ids")
+	assert.False(t, validID("s\xff"))
 	_, err := os.Stat(filepath.Join(store, "entries"))
 	assert.True(t, os.IsNotExist(err), "nothing was written")
 
@@ -662,62 +661,14 @@ func TestAppendRefusesBytesThatAreNotUTF8(t *testing.T) {
 	assert.Contains(t, out, "text="+strconv.Quote(words))
 }
 
-// TestAnOlderStoresLatin1IDsStillRead: an older build wrote ids with bytes that are
-// not UTF-8, and its JSON holds U+FFFD for them. The store is made here with UTF-8 ids,
-// then renamed and rewritten to that shape. index lists the session and the entry,
-// receipt reads it, memory counts it as skipped with one WARN, and a new append under
-// that id is refused. Skipped where the file system refuses such a name.
-func TestAnOlderStoresLatin1IDsStillRead(t *testing.T) {
+// TestAppendMissingFileNamesIt: a --file that does not exist is refused with ls -l
+// of the path, quoted.
+func TestAppendMissingFileNamesIt(t *testing.T) {
 	t.Parallel()
 	store := t.TempDir()
-	code, _, _ := do(t, "", "open", "--store", store, "--session", "cafe", "--publish", "never")
-	require.Equal(t, 0, code)
-	code, _, _ = do(t, "", "append", "--store", store, "--session", "cafe", "--entry", "note", "--text", "brass lantern words")
-	require.Equal(t, 0, code)
-	s, e := "caf\xe9", "n\xf6te"
-	if err := os.Rename(filepath.Join(store, "entries", "cafe"), filepath.Join(store, "entries", s)); err != nil {
-		t.Skipf("this file system refuses a name that is not UTF-8: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(store, "entries", s)); err != nil {
-		t.Skipf("this file system changed a name that is not UTF-8: %v", err)
-	}
-	header, err := os.ReadFile(filepath.Join(store, "sessions", "cafe.md"))
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(store, "sessions", s+".md"), bytes.Replace(header, []byte("# cairn cafe"), []byte("# cairn "+s), 1), 0o644))
-	require.NoError(t, os.Remove(filepath.Join(store, "sessions", "cafe.md")))
-	old := filepath.Join(store, "entries", s, "note.json")
-	raw, err := os.ReadFile(old)
-	require.NoError(t, err)
-	raw = bytes.Replace(raw, []byte(`"session":"cafe"`), []byte(`"session":"caf\ufffd"`), 1)
-	raw = bytes.Replace(raw, []byte(`"id":"note"`), []byte(`"id":"n\ufffdte"`), 1)
-	require.Contains(t, string(raw), `n\ufffdte`, "the entry json has the shape this test rewrites")
-	require.NoError(t, os.WriteFile(filepath.Join(store, "entries", s, e+".json"), raw, 0o644))
-	require.NoError(t, os.Remove(old))
-
-	code, out, errs := do(t, "", "index", "--store", store)
-	assert.Equal(t, 0, code, errs)
-	assert.Contains(t, out, "INDEX OK sessions=1 entries=1\n")
-	assert.Regexp(t, `INDEX SESSION session=caf\\xe9 .* entries=1\n`, out) // its open record in the log names it in U+FFFD, so its policy reads unknown, as before
-	assert.Contains(t, out, `INDEX ENTRY session=caf\xe9 entry=n\xf6te `)
-
-	code, out, errs = do(t, "", "receipt", "--store", store, "--session", s, "--entry", e, "--text")
-	assert.Equal(t, 0, code, errs)
-	assert.Contains(t, out, "brass lantern words")
-	assert.Contains(t, out, `session=caf\xe9 entry=n\xf6te `, "receipt names the entry as index does")
-
-	require.NoError(t, os.WriteFile(filepath.Join(store, "a.md"), []byte("The brass lantern is lit.\n"), 0o644))
-	code, out, errs = do(t, "", "memory", "search", "--root", store, "--channels", "bm25", "--k", "1", "brass")
-	assert.Equal(t, 0, code, errs)
-	assert.Contains(t, errs, " WARN skipped=1 ")
-	assert.Contains(t, out, " skipped=1 ")
-
-	code, _, errs = do(t, "", "append", "--store", store, "--session", s, "--entry", "e2", "--text", "x")
-	assert.Equal(t, 2, code)
-	assert.Contains(t, errs, "is not valid UTF-8 at byte 3: an id written now must be valid UTF-8")
-
 	do(t, "", "open", "--store", store, "--session", "ok", "--publish", "never")
 	missing := filepath.Join(store, "no such file")
-	code, _, errs = do(t, "", "append", "--store", store, "--session", "ok", "--entry", "e", "--file", missing)
+	code, _, errs := do(t, "", "append", "--store", store, "--session", "ok", "--entry", "e", "--file", missing)
 	assert.Equal(t, 2, code)
 	assert.True(t, strings.HasSuffix(errs, "; run: ls -l '"+missing+"'\n"), errs)
 }

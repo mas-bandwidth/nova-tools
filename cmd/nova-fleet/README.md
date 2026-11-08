@@ -251,7 +251,6 @@ refused before anything is written.
 | `nova_bin_dir` | `~/.local/bin` | where they go; v2 binaries replace v1's of the same name there, so a v1 sprint still running from it stops working after `up` (accepted) |
 | `nova_tools_repo` | `mas-bandwidth/nova-tools` | whose release (`--repo`); `--names` is `nova_tools_names`, empty for every binary listed |
 | `nova_tools_release_url` | `nova_tools_repo`'s GitHub releases | `<base>/<tag>/<asset>` |
-| `nova_tools_restart`, `nova_tools_restart_commands` | false, empty | argv lists run once, only if a binary changed |
 
 **Another repository's release.** A dependent tool whose release is laid out the same way (assets
 `<name>_<tag>_<os>_<arch>` and one `SHA256SUMS`) installs with `--repo` and `--tag`, getting every binary its

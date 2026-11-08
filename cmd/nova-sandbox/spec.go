@@ -26,7 +26,6 @@ func refuse(reason, format string, a ...any) refusal {
 type spec struct {
 	reads, writes, netAllow, passEnv []string
 	netDeny, gpu, unix               bool
-	keepFDs                          bool
 	argv                             []string
 }
 
@@ -36,7 +35,7 @@ type wall struct {
 	linkSpellings []string // the caller's spelling where it differs from the resolved path
 	optRoots      []string // darwin: the active developer directory the /usr/bin shims read
 	netDeny, gpu  bool
-	unix, keepFDs bool
+	unix          bool
 	netPorts      []uint16 // --net-allow, loopback only
 	passEnv       []string // --env names, beyond PATH, HOME, LANG and TERM
 	command       string
@@ -47,7 +46,7 @@ type wall struct {
 // nothing.
 func build(s spec, goos string) (*wall, []refusal) {
 	var bad []refusal
-	w := &wall{netDeny: s.netDeny, gpu: s.gpu, unix: s.unix, keepFDs: s.keepFDs}
+	w := &wall{netDeny: s.netDeny, gpu: s.gpu, unix: s.unix}
 	if s.gpu && goos != "darwin" {
 		bad = append(bad, refuse("bad_gpu", "--gpu is macOS only; on Linux grant the device directory itself, e.g. --write /dev/dri"))
 	}
