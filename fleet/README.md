@@ -250,6 +250,8 @@ refused before anything is written.
 | `nova_tools_restart`, `nova_tools_restart_commands` | false, empty | argv lists run once, only if a binary changed |
 | `nova_tools_remove_enabled` | false | retire the binaries below |
 | `nova_tools_remove` | the retired list | names to retire |
+| `nova_tools_keep` | empty | another product's binaries that belong in the bin directory (see Leftovers) |
+| `nova_tools_system_unit_dir` | `/etc/systemd/system` | where Leftovers reads system units |
 
 **Another repository's release.** A dependent tool whose release is laid out the same way (assets
 `<name>_<tag>_<os>_<arch>[.exe]` and one `SHA256SUMS`) installs with `--repo` and `--tag`, getting every binary its
@@ -284,6 +286,16 @@ found in the bin directory is moved to `<nova_bin_dir>/retired-<date>/`, never d
 A name also being installed is refused. The default list is the rows of `retired-tools.txt` that say `retired` or
 `rowan-tools`; another product's binaries are never in it. To retire more, name the whole list:
 `-e nova_tools_remove_enabled=true -e nova_tools_remove='["nova-sprint","nova-card"]'`. Unix machines only.
+
+**Leftovers.** Last, after the install has happened, the play reads what an older install left beside the new binaries
+and prints one line per host, `INSTALL <host> leftovers=<n>: <names>` (or `leftovers=0`): in the bin directory, any
+`nova-*`, `novadog-*`, `mirror-refresh`, `disk-guard` or `ci-hold-broker` the release's `SHA256SUMS` does not list for the
+platform (less `nova_tools_keep`, another product's binaries installed with `--repo`); in the login's unit directory
+(`~/.config/systemd/user` on Linux, `~/Library/LaunchAgents` on macOS), any `nova-*` or `com.nova.*` unit, timer or plist
+that is not the `nova-service-<record>` unit of a service record this machine has (its `nova_services`); and in
+`/etc/systemd/system` (Linux; a read, no sudo), any `nova*` unit no record names. A host with any is failed with the fix:
+remove them (`nova-fleet services` for units of a record; by hand for the rest), then install again. The play removes
+nothing itself. Unix machines, nova-tools' own release only (a `--repo` install skips it); `--check` prints the line too.
 
 ## services
 

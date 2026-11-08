@@ -5,7 +5,8 @@
 # digest alone, so a second run changes nothing. Nothing is restarted unless
 # nova_tools_restart is true. When nova_tools_remove_enabled is true, the
 # retired binaries named in nova_tools_remove are then moved (never deleted)
-# into <bin dir>/retired-<date>/.
+# into <bin dir>/retired-<date>/. Last, what an older install left beside the new
+# binaries is listed, one INSTALL line per host, and a host with any is refused.
 
 - name: a release is named
   ansible.builtin.assert:
@@ -55,15 +56,18 @@
   when: nova_tools_local_dir | length > 0
 
 # An empty nova_tools_names is every asset SHA256SUMS lists for this platform, by name.
+# The release's names are kept whole: the leftover check at the end allows them all,
+# not only the ones --names installs.
 - name: the tools to install
   ansible.builtin.set_fact:
-    nova_tools_install_names: >-
-      {{ nova_tools_names if nova_tools_names | length > 0 else
-         (nova_tools_sums.content.splitlines() | select | map('split') | map('last')
-          | select('match', '^[a-z0-9][a-z0-9-]*' ~ nova_tools_suffix ~ '$')
-          | map('regex_replace', nova_tools_suffix ~ '$', '') | list) }}
+    nova_tools_release_names: "{{ nova_tools_listed }}"
+    nova_tools_install_names: "{{ nova_tools_names if nova_tools_names | length > 0 else nova_tools_listed }}"
   vars:
     nova_tools_suffix: "{{ ('_' ~ nova_tools_version ~ '_' ~ nova_tools_os ~ '_' ~ nova_tools_arch ~ ('.exe' if nova_tools_win else '')) | regex_escape }}"
+    nova_tools_listed: >-
+      {{ nova_tools_sums.content.splitlines() | select | map('split') | map('last')
+         | select('match', '^[a-z0-9][a-z0-9-]*' ~ nova_tools_suffix ~ '$')
+         | map('regex_replace', nova_tools_suffix ~ '$', '') | list }}
 
 - name: something to install, and nothing both installed and retired
   ansible.builtin.assert:
@@ -201,3 +205,54 @@
   loop: "{{ nova_tools_retire_stat.results | default([]) | selectattr('stat', 'defined') | selectattr('stat.exists') | list }}"
   loop_control: { label: "{{ item.item }}" }
   when: nova_tools_remove_enabled | bool and not nova_tools_win
+
+# Leftovers, last (the install above has happened): the bin directory, the login's
+# unit directory and the system unit directory are read for the names an older
+# install used; a file the release does not list, or a unit no service record of
+# this machine names, fails the host with the fix. Nothing is removed here. find is
+# a read, so --check runs it too; a directory that is not there holds nothing.
+- name: what else is on the machine (a read; the leftovers of an older install)
+  ansible.builtin.find:
+    paths: "{{ item.path }}"
+    patterns: "{{ item.patterns }}"
+    use_regex: true
+    file_type: any
+  loop: "{{ nova_tools_leftover_dirs }}"
+  loop_control: { label: "{{ item.path }}" }
+  register: nova_tools_found
+  when: not nova_tools_win and nova_tools_repo == 'mas-bandwidth/nova-tools'
+  vars:
+    nova_tools_records: "{{ nova_services | default([]) | map(attribute='name') | map('regex_escape') | join('|') or '-' }}"
+    nova_tools_leftover_dirs: >-
+      {{ [{'path': nova_tools_bin_dir,
+           'patterns': ['^(nova-.*|novadog-.*|mirror-refresh|disk-guard|ci-hold-broker)$'],
+           'ok': '^(' ~ ((nova_tools_release_names + nova_tools_keep) | map('regex_escape') | join('|')) ~ ')$'},
+          {'path': (nova_home | default(ansible_facts['env']['HOME'])) ~ ('/.config/systemd/user' if nova_tools_os == 'linux' else '/Library/LaunchAgents'),
+           'patterns': ['^(nova-.*|com[.]nova[.].*)$'],
+           'ok': '^(nova-service-(' ~ nova_tools_records ~ ')[.](service|timer)|com[.]nova[.]service[.](' ~ nova_tools_records ~ ')[.]plist)$'}]
+         + ([{'path': nova_tools_system_unit_dir,
+              'patterns': ['^nova.*$'],
+              'ok': '^nova-service-(' ~ nova_tools_records ~ ')[.](service|timer)$'}] if nova_tools_os == 'linux' else []) }}
+
+- name: "the leftovers: binaries the release does not list, units no record names"
+  ansible.builtin.set_fact:
+    nova_tools_leftovers: >-
+      {%- set out = [] -%}
+      {%- for r in nova_tools_found.results | default([]) -%}
+      {%- for f in r.files | default([]) if not f.isdir and (f.path | basename) is not match(r.item.ok) -%}
+      {%- set _ = out.append(f.path | basename) -%}
+      {%- endfor -%}
+      {%- endfor -%}
+      {{ out | sort }}
+
+- name: the leftovers, one line per host
+  ansible.builtin.debug:
+    msg: "INSTALL {{ inventory_hostname }} leftovers={{ nova_tools_leftovers | length }}{{ (': ' ~ (nova_tools_leftovers | join(', '))) if nova_tools_leftovers else '' }}"
+
+- name: nothing an older install left behind
+  ansible.builtin.assert:
+    quiet: true
+    that: nova_tools_leftovers | length == 0
+    fail_msg: >-
+      INSTALL {{ inventory_hostname }} leftovers={{ nova_tools_leftovers | length }}: {{ nova_tools_leftovers | join(', ') }};
+      remove them (nova-fleet services for units of a record; by hand for the rest), then install again

@@ -58,3 +58,15 @@ nova_tools_remove:
   - nova-up
   - nova-update
   - nova-version
+
+# Leftovers. After the install the role lists what an older install left beside the
+# new binaries and refuses the host when it finds any (fleet/README.md, "install",
+# Leftovers): in the bin directory a nova-*, novadog-*, mirror-refresh, disk-guard or
+# ci-hold-broker the release's SHA256SUMS does not list for the platform, in the
+# login's unit directory (~/.config/systemd/user, ~/Library/LaunchAgents) a nova-* or
+# com.nova.* unit no service record of the machine names, and in the system unit
+# directory a nova* unit no record names. Another product's binaries that belong in
+# the bin directory (installed with --repo) are named in nova_tools_keep. Unix
+# machines, nova-tools' own release only; nothing is removed by the role.
+nova_tools_keep: []
+nova_tools_system_unit_dir: /etc/systemd/system
