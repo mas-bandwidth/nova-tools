@@ -34,7 +34,8 @@ A new store takes four commands, in this order: init, seat add, set, exec.
 
 nova-secrets init --store <dir> --recovery <age-public-key> [--pins <dir>]
   Create a store in <dir>, which must be absent or empty (its parent must exist) and not inside another git
-  work tree: git init, .sops.yaml with no rules, recovery.pub, one commit. Refuses a store that exists.
+  work tree: git init, .sops.yaml with no rules, recovery.pub, one commit. Refuses a store that exists, but finishes one
+  whose commit failed.
   The recovery key is a public key (age-keygen -y <file>); keep its private half offline. --pins also writes
   it to <dir>/recovery.pub, the control node's pin, outside the store (grant reads it).
   Prints: SECRETS INIT OK store=<dir>, then next: <this node's seat add, or the age-keygen -o that makes its key first>
@@ -479,17 +480,22 @@ func (t tool) set(args []string) error {
 // absent elsewhere is no-store; absent with a key, the recovery key or the pin there is partial: a store made now
 // would not match them, and nothing that exists is ever overwritten.
 func (t tool) bootstrap(o opts) error {
-	if _, err := os.Stat(o.store); err == nil {
-		return nil
-	}
 	dir := filepath.Dir(t.keyFile("x"))
+	rk := filepath.Join(dir, "recovery.key")
+	resume := false // a store this bootstrap made and stopped in before the seat (a failed commit): finished with its keys
+	if _, err := os.Stat(o.store); err == nil {
+		cfg, _ := os.ReadFile(filepath.Join(o.store, ".sops.yaml")) // ignored: an unreadable one is no store to finish
+		if _, kerr := os.Lstat(rk); o.store != filepath.Join(dir, "store") || string(cfg) != "creation_rules: []\n" || kerr != nil {
+			return nil
+		}
+		resume = true
+	}
 	if o.store != filepath.Join(dir, "store") {
 		return deny("no-store", "store %s does not exist; run: nova-secrets init --store %s --recovery <age-public-key>", o.store, o.store)
 	}
-	rk := filepath.Join(dir, "recovery.key")
 	var there []string
 	for _, p := range []string{o.key, rk, filepath.Join(o.pins, "recovery.pub")} {
-		if _, err := os.Lstat(p); err == nil {
+		if _, err := os.Lstat(p); err == nil && !resume {
 			there = append(there, p)
 		}
 	}
@@ -497,16 +503,25 @@ func (t tool) bootstrap(o opts) error {
 		return deny("partial", "there is no store at %s, but %s: a store made now would not match, and nothing that exists is overwritten; "+
 			"put the store back (git clone <its upstream> %s), or move those aside and run again", o.store, strings.Join(there, " and ")+" exist", o.store)
 	}
+	made := resume // the recovery key exists from here, so its backup line is printed whatever follows
+	defer func() {
+		if made {
+			fmt.Fprintf(t.stdout, "SECRETS SET NEW store=%s seat=%s key=%s: back up %s, the recovery key, off this machine now: it opens every seat if a key is lost\n", o.store, o.as, o.key, rk)
+		}
+	}()
 	pub := map[string]string{}
 	for _, k := range []string{rk, o.key} {
-		if err := os.MkdirAll(filepath.Dir(k), 0o700); err != nil {
-			return refuse("creating %s: %v", filepath.Dir(k), err)
-		}
-		if _, err := t.run(nil, t.environ, filepath.Dir(k), "age-keygen", "-o", k); err != nil {
-			return refuse("age-keygen -o %s: %v; install age", k, err)
-		}
-		if err := os.Chmod(k, 0o600); err != nil {
-			return refuse("chmod 600 %s: %v", k, err)
+		if !resume {
+			if err := os.MkdirAll(filepath.Dir(k), 0o700); err != nil {
+				return refuse("creating %s: %v", filepath.Dir(k), err)
+			}
+			if _, err := t.run(nil, t.environ, filepath.Dir(k), "age-keygen", "-o", k); err != nil {
+				return refuse("age-keygen -o %s: %v; install age", k, err)
+			}
+			made = true
+			if err := os.Chmod(k, 0o600); err != nil {
+				return refuse("chmod 600 %s: %v", k, err)
+			}
 		}
 		p, err := t.publicOf(opts{store: filepath.Dir(k), key: k})
 		if err != nil {
@@ -516,14 +531,12 @@ func (t tool) bootstrap(o opts) error {
 	}
 	quiet := t
 	quiet.stdout = io.Discard
-	if err := quiet.initStore([]string{"--store", o.store, "--recovery", pub[rk], "--pins", o.pins}); err != nil {
-		return err
+	if !resume || t.initPending(o.store, pub[rk]) {
+		if err := quiet.initStore([]string{"--store", o.store, "--recovery", pub[rk], "--pins", o.pins}); err != nil {
+			return fmt.Errorf("%w, then run the same nova-secrets set again", err) // which finishes this store with these keys
+		}
 	}
-	if err := quiet.seatAdd([]string{o.as, pub[o.key], "--store", o.store}); err != nil {
-		return err
-	}
-	fmt.Fprintf(t.stdout, "SECRETS SET NEW store=%s seat=%s key=%s: back up %s, the recovery key, off this machine now: it opens every seat if a key is lost\n", o.store, o.as, o.key, rk)
-	return nil
+	return quiet.seatAdd([]string{o.as, pub[o.key], "--store", o.store})
 }
 
 func (t tool) seatAdd(args []string) error {
@@ -1341,13 +1354,14 @@ func (t tool) initStore(args []string) error {
 	} else if err != nil {
 		return refuse("%s cannot be read: %v", o.store, err)
 	}
+	pending := t.initPending(o.store, rec) // written by an init whose commit failed: this one commits it
 	var names []string
 	for _, e := range entries {
-		if names = append(names, e.Name()); e.Name() == ".sops.yaml" || e.Name() == "recovery.pub" {
+		if names = append(names, e.Name()); !pending && (e.Name() == ".sops.yaml" || e.Name() == "recovery.pub") {
 			return refuse("store %s exists; use: nova-secrets seat add <seat> <age-public-key> --store %s", o.store, o.store)
 		}
 	}
-	if names = slices.DeleteFunc(names, func(n string) bool { return n == ".git" }); len(names) > 0 {
+	if names = slices.DeleteFunc(names, func(n string) bool { return n == ".git" || pending && (n == ".sops.yaml" || n == "recovery.pub") }); len(names) > 0 {
 		return refuse("%s is not empty (it holds %s); init needs a directory that is absent or empty, and never touches files that are there", o.store, strings.Join(names[:min(len(names), 5)], ", "))
 	}
 	top, gerr := t.toplevel(at)
@@ -1370,10 +1384,8 @@ func (t tool) initStore(args []string) error {
 			return err
 		}
 	}
-	for _, g := range [][]string{append([]string{"add", "--"}, files...), append([]string{"commit", "-q", "-m", "init secrets store", "--"}, files...)} {
-		if err := t.git(o.store, g...); err != nil {
-			return err
-		}
+	if err := t.commit(o, "", "init secrets store", "the store is written: run:", files...); err != nil {
+		return err
 	}
 	seat := t.ownSeat() // next: its seat add, with its key's public half; the age-keygen -o that makes the key first
 	key := t.keyFile(seat)
@@ -1383,6 +1395,14 @@ func (t tool) initStore(args []string) error {
 	}
 	fmt.Fprintf(t.stdout, "SECRETS INIT OK store=%s\nnext: %s\n", o.store, then)
 	return nil
+}
+
+// initPending is whether store holds what init writes for the recovery key rec and no commit: an init whose commit
+// failed, which a second init finishes.
+func (t tool) initPending(store, rec string) bool {
+	cfg, _ := os.ReadFile(filepath.Join(store, ".sops.yaml"))   // ignored: absent or unreadable is not what init wrote
+	pub, _ := os.ReadFile(filepath.Join(store, "recovery.pub")) // ignored: as above
+	return string(cfg) == "creation_rules: []\n" && string(pub) == rec+"\n" && t.git(store, "rev-parse", "-q", "--verify", "HEAD") != nil
 }
 
 // pinned is the pin <dir>/<name>.pub, a public key kept on the control node outside the store, so nothing a
@@ -1539,6 +1559,10 @@ func (t tool) grant(args []string) error {
 func (t tool) commit(o opts, flag, msg, done string, files ...string) error {
 	for _, g := range [][]string{append(strings.Fields("add "+flag+" --"), files...), append([]string{"commit", "-q", "-m", msg, "--"}, files...)} {
 		if err := t.git(o.store, g...); err != nil {
+			if g[0] == "commit" && t.git(o.store, "var", "GIT_COMMITTER_IDENT") != nil { // git commits only with an author
+				return fmt.Errorf("%w: git has no commit identity; %s git -C %s config user.name 'Your Name' && git -C %s config user.email you@example.com && %s",
+					err, done, q(o.store), q(o.store), next(append([]string{"git", "-C", o.store}, g...)...))
+			}
 			return fmt.Errorf("%w; %s git -C %s status", err, done, o.store)
 		}
 	}
