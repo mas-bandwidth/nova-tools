@@ -13,8 +13,8 @@ import (
 
 const historyHint = "history takes [<kind> [<name>]] --since <duration|RFC3339> --max <n> --json --pg <dsn>; kinds: machine, service, friend"
 
-// historyKinds are the kinds the history table holds; fleet is retired and still reads.
-var historyKinds = []string{"machine", "service", "friend", "fleet"}
+// historyKinds are the kinds the history table holds.
+var historyKinds = []string{"machine", "service", "friend"}
 
 // parseSince is a duration back from now (90m, 24h, 7d) or an RFC 3339 time.
 func parseSince(s string, now time.Time) (time.Time, error) {
@@ -80,14 +80,11 @@ func runHistory(ctx context.Context, args []string, d deps, stdout io.Writer) er
 	}
 	var items []string
 	for _, e := range entries {
-		if e.Kind == "loop" { // rows written before the rename
-			e.Kind = "service"
-		}
 		if str(fs, "json") == "true" {
 			items = append(items, fmt.Sprintf(`{"rev":%d,"at":%s,"actor":%s,"kind":%s,"name":%s,"op":%s,"before":%s,"after":%s}`, e.ID, jsonString(e.At), jsonString(e.Actor), jsonString(e.Kind), jsonString(e.Name), jsonString(e.Op), marshal(e.Before), marshal(e.After)))
 		} else {
 			fmt.Fprintf(stdout, "HISTORY at=%s actor=%s kind=%s name=%s op=%s rev=%d\n", value(e.At), value(e.Actor), value(e.Kind), value(e.Name), value(e.Op), e.ID)
-			for _, l := range changeLines(kindNamed(e.Kind), e.Op, e.Before, e.After) {
+			for _, l := range changeLines(kinds[e.Kind], e.Op, e.Before, e.After) {
 				fmt.Fprintln(stdout, l)
 			}
 		}
