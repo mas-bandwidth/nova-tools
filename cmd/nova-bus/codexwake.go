@@ -210,7 +210,8 @@ func (c *codexWake) recover(stderr io.Writer) error {
 			for i, id := range ids {
 				ids[i] = filepath.Join(d, id+".json")
 			}
-			fmt.Fprintf(stderr, "HOOK WAKE FAULT harness=codex thread=%s result=thread-changed files=%s\n", strings.TrimPrefix(filepath.Base(d), name+"-codex-"), escaper.Replace(strings.Join(ids, ",")))
+			other := strings.TrimPrefix(filepath.Base(d), name+"-codex-")
+			fmt.Fprintf(stderr, "HOOK WAKE FAULT harness=codex thread=%s result=thread-changed files=%s; run: nova-bus show codex-wake --as %s --codex-thread %s\n", other, escaper.Replace(strings.Join(ids, ",")), name, other)
 		}
 	}
 	if w, ok := readRecord(c.dir, "woken"); ok {
@@ -223,7 +224,7 @@ func (c *codexWake) recover(stderr io.Writer) error {
 			return err
 		} else {
 			c.woken = maxID(c.woken, in.last)
-			fmt.Fprintf(stderr, "HOOK WAKE FAULT harness=codex id=%s result=unknown file=%s\n", in.last, filepath.Join(c.dir, in.last+".json"))
+			fmt.Fprintf(stderr, "HOOK WAKE FAULT harness=codex id=%s result=unknown file=%s; %s\n", in.last, filepath.Join(c.dir, in.last+".json"), c.show())
 		}
 		if err := c.mark(); err != nil {
 			return err
@@ -343,6 +344,7 @@ func (c *codexWake) poll(ctx context.Context, out, stderr io.Writer) (string, er
 			c.woken = maxID(c.woken, f.last)
 			if err := settle(c.dir, f.last, c.mark); err != nil {
 				fmt.Fprintf(stderr, "HOOK WAKE FAILED harness=codex id=%s reason=%s\n", f.last, escaper.Replace(err.Error()))
+				return "", wakeFailed{f.last, err}
 			} else if _, err := fmt.Fprintf(out, "HOOK WAKE OK harness=codex id=%s first=%s result=reconciled\n", f.last, f.first); err != nil {
 				return "", err
 			}
@@ -415,12 +417,12 @@ func (c *codexWake) poll(ctx context.Context, out, stderr io.Writer) (string, er
 		c.sentAt, c.pending = size, start
 	} else {
 		result := map[bool]string{true: "unknown", false: "failed"}[outcome == "unknown"]
-		fmt.Fprintf(stderr, "HOOK WAKE FAULT harness=codex id=%s result=%s first=%s file=%s\n", last, result, first, filepath.Join(c.dir, last+".json"))
+		fmt.Fprintf(stderr, "HOOK WAKE FAULT harness=codex id=%s result=%s first=%s file=%s; %s\n", last, result, first, filepath.Join(c.dir, last+".json"), c.show())
 	}
 	if merr := settle(c.dir, old, c.mark); merr != nil { // woken first, the intent gone, then the settled fault
 		// Not durable: the intent stays, and this hook ends, so no later wake
 		// overwrites it before a start reconciles it.
-		fmt.Fprintf(stderr, "HOOK WAKE FAULT harness=codex id=%s result=unrecorded reason=%s\n", last, escaper.Replace(merr.Error()))
+		fmt.Fprintf(stderr, "HOOK WAKE FAULT harness=codex id=%s result=unrecorded reason=%s; %s\n", last, escaper.Replace(merr.Error()), c.show())
 		return "", wakeFailed{last, merr}
 	}
 	if outcome != "queued" {
@@ -432,6 +434,11 @@ func (c *codexWake) poll(ctx context.Context, out, stderr io.Writer) (string, er
 	}
 	_, err = io.WriteString(out, receipt+"\n")
 	return "", err
+}
+
+// show is the remedy a HOOK WAKE FAULT line ends in.
+func (c *codexWake) show() string {
+	return "run: nova-bus show codex-wake --as " + c.name + " --codex-thread " + c.thread
 }
 
 // queueOutcome classifies one codex queue run: "failed" when the program
@@ -498,9 +505,13 @@ func (c *codexWake) rolloutHas(from int64, text string) (bool, error) {
 }
 
 // codexShow prints the wake state of name's thread: CODEX WAKE OK, then one
-// line per id that is not plainly woken, id<TAB>state<TAB>detail<TAB>file.
-func codexShow(s sys, name, thread string, stdout io.Writer) {
+// line per id that is not plainly woken, id<TAB>state<TAB>detail<TAB>file. A
+// name and thread no hook has run for (a typo) is refused.
+func codexShow(s sys, name, thread string, stdout, stderr io.Writer) int {
 	dir := codexDir(s, name, thread)
+	if _, err := os.Stat(dir); err != nil {
+		return fail(stderr, "show", "no codex wake state for %s on thread %s (%s is not there): no such hook has run; run: ls %s", name, thread, dir, shellQuote(filepath.Dir(dir)))
+	}
 	w, _ := readRecord(dir, "woken") // ignored: absent is the zero record, nothing woken
 	faults := readFaults(dir)
 	awaiting := "no"
@@ -519,6 +530,7 @@ func codexShow(s sys, name, thread string, stdout io.Writer) {
 			fmt.Fprintf(stdout, "%s\twaiting\t-\t%s\n", id, filepath.Join(dir, id+".json"))
 		}
 	}
+	return 0
 }
 
 // codexResolve settles a fault, or an intent, whose result an operator has

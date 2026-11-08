@@ -54,9 +54,9 @@ with `codex queue` while its chat is idle; **Grok** tails a wake file under its 
 **Antigravity** is sent to with `agentapi send-message`. The hook checks its harness at start, before it claims the
 name: a harness that is not there (a missing directory or workspace, a bad id, no `codex` on PATH) is refused with exit 2, one that
 does not answer with exit 1. With `grok` and `antigravity`, stdout carries one receipt per message,
-`HOOK WAKE OK harness=<h> id=<id>` (`confirmed=no reason=<r>` when the send was cut off and may have arrived: the
-message is marked handled, so a turn is never started twice), or `HOOK WAKE FAILED harness=<h> id=<id> reason=<r>`
-on stderr: a wake that surely failed ends the hook, exit 1, with the message unhandled and every later one behind
+`HOOK WAKE OK harness=<h> id=<id>`, or `HOOK WAKE FAILED harness=<h> id=<id> reason=<r>`
+on stderr: a wake that failed, or was cut off and may have arrived (then the next hook sends it again, so a turn
+may start twice, but the message is never lost), ends the hook, exit 1, with the message unhandled and every later one behind
 it, so the order is kept; `nova-bus pending --as <name> --list` shows them, and the next hook (the service restarts
 it) delivers them. There is no retry loop. The hook refreshes its presence before every delivery and bounds each
 wake to 8 s, so a slow harness never lets the name lapse.
@@ -131,7 +131,8 @@ Inspect local wake state independently of the Redis inbox:
 nova-bus show codex-wake --as <name> --codex-thread <thread>
 ```
 
-The output lists waiting messages, intents, and faults with their saved files. Its `woken` field is an id
+The output lists waiting messages, intents, and faults with their saved files; a name and thread no hook has
+run for (a typo) is refused, exit 1. Every `HOOK WAKE FAULT` line ends in this command. Its `woken` field is an id
 checkpoint, not proof that every message through that id was read: inspect the fault rows and model replies.
 `nova-bus pending` counts bus
 messages, so it can be empty while local wake work remains. The service log is
@@ -169,7 +170,7 @@ Monitor: tail -n 0 -F ~/.grok/nova-hook.wake
 
 then the hook runs beside the session as a service: `nova-bus hook --as <name> --harness grok --grok-home ~/.grok
 --service`. A wake with nothing holding the file open (no Monitor yet) fails and ends the hook: start the Monitor
-first.
+first. The check is `lsof`; without it the wake fails saying so: install lsof.
 
 **Antigravity** (`--harness antigravity`). Each message is saved to `<events-dir>/<id>.json` and sent into the
 conversation as a new turn with the workspace's own `language_server agentapi send-message`, with the fixed text
@@ -198,7 +199,8 @@ The conversation id is the directory name under `~/.gemini/antigravity/brain/` o
 **`--exec <command>`** (with the default harness) runs a command of yours per message instead of printing it: the
 line on its stdin, the fields in `NOVA_BUS_ID`, `NOVA_BUS_FROM`, `NOVA_BUS_RE`, `NOVA_BUS_SUBJECT` and
 `NOVA_BUS_BODY`, under the 8 s limit. Exit 0 is the delivery (`HOOK EXEC OK id=<id>`), and only then is the message
-marked handled; any other exit is `HOOK EXEC FAILED id=<id> exit=<n>` on stderr and ends the hook with the message
+marked handled; any other exit is `HOOK EXEC FAILED id=<id> exit=<n>` (`exit=-1 reason=timed out after 8s` when the
+limit cut it off) on stderr and ends the hook with the message
 unhandled.
 
 ### The service
@@ -214,7 +216,9 @@ log=<log> changed=true`. Run again with the same flags it changes nothing (`chan
 the unit's hook holds the name: a unit that is loaded but not hooked in (retrying a login Redis refuses, say) is
 `HOOK SERVICE FAILED name=<name> unit=<unit> reason=the unit is loaded but <name> is not hooked in; its log ends:
 <line>; run: tail -n 20 <log>`, exit 1. With new flags (a new
-session id) it rewrites and restarts the unit. `--service stop` stops and removes it (`state=stopped`, or
+session id) it rewrites and restarts the unit. `--service stop` stops and removes it (`state=stopped` once the
+manager no longer runs it, else `HOOK SERVICE FAILED ... reason=still running after the stop`, exit 1, the unit
+kept; or
 `state=absent`). Without `launchctl` or `systemctl` it refuses, exit 2. Not for `claude` without `--exec` or `--codex-thread`: that
 wake is the Monitor of the session itself. The foreground form, the same command without `--service`, is for
 diagnosis.
@@ -240,7 +244,8 @@ crash), then claims the name, or exits 1 if the other hook is still refreshing i
 `<name><TAB><uptime><TAB><session>` for each running hook, sorted by name. The session is a 16-byte hex id,
 kept across reconnects and changed on restart; a crashed hook drops out within 30 s. **pending** prints
 `PENDING OK waiting=<n>` for `<name>`'s unacked messages, and with `--list` their
-`<id><TAB><from><TAB><subject>` (the subject only, never the body), consuming nothing. To read one waiting
+`<id><TAB><from><TAB><subject>` (the subject only, never the body), consuming nothing; it also runs once a hook
+for the name has ended (to see what a failed wake left), and refuses a name no hook has ever read. To read one waiting
 message whole without a hook, use **recv**, which acks nothing. Once recv has printed a message it holds the name
 naming it (`who` shows `<name><TAB><uptime><TAB>recv holding <id>`) for 15 minutes, or until `ack` or the next
 `recv`: a slow relay, its ack and the parent's reply all pass the hook-in gate; a reader that died leaves the
@@ -297,7 +302,8 @@ flag the harness does not take, a missing one, a harness or events directory
 that is not there or not private, a foreground hook or recv in a Codex main thread, `--exec` with a
 harness, `--service` without a service manager or with claude and no
 `--exec` or `--codex-thread`, a bad `--id`, a negative `--timeout`, a `show` argument that is not
-`agents`, `codex-agents`, or `codex-wake`, missing name/thread fields for `show codex-wake`, or a
+`agents`, `codex-agents`, or `codex-wake`, missing name/thread fields for `show codex-wake`, `HOME` unset for
+`--service`, `--codex-thread` or `show codex-wake` (their files live under it), or a
 `--resolve` value other than `<id>=woken` or `<id>=retry`. An unknown verb gets
 `nova-bus: unknown verb "<verb>"; verbs: send, hook, recv, ack, who, pending,
 show, help; run: nova-bus help`. go-redis's own logging is silenced: every message on stderr is
@@ -359,8 +365,8 @@ written once one has. recv is the first half (read and print) and ack the
 second, as two commands. For the Grok, Antigravity, and exec adapters, a delivery that surely failed (a wake that did not
 answer, an exec that exited non-zero) ends the hook with the entry unacked
 and nothing behind it delivered, so the order is kept and the next hook
-starts from the pending list; a wake whose outcome is unknown is acked, so a
-turn is never started twice. Presence is refreshed when due before every
+starts from the pending list; so does a wake whose outcome is unknown (it is
+never lost; its turn may start twice). Presence is refreshed when due before every
 delivery, and a delivery is bounded by 8 s, so a batch never outlives the
 key.
 
@@ -450,7 +456,7 @@ only until it lapses).
   stderr; the hook exits 1 with that message and every later one unhandled,
   in order (`pending --list` shows them); the next hook, or the service
   restarting it, delivers them. A wake cut off with its outcome unknown is
-  acked.
+  the same: not acked, sent again by the next hook.
 - **A recv's reader dies before its ack.** The message stays pending and the
   next recv prints it again; the reader sees it twice, by its id.
 - **Redis is unreachable.** send, recv, ack, pending and who exit 1. A hook logs

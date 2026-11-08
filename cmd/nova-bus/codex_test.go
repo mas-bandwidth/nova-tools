@@ -229,7 +229,7 @@ func TestCodexDefiniteFailureIsRetriedThreeTimesThenFaulted(t *testing.T) {
 		assert.Equal(t, "HOOK WAKE FAILED harness=codex id=7-0 try=1/3 reason="+tc.reason+"\n"+
 			"HOOK WAKE FAILED harness=codex id=7-0 try=2/3 reason="+tc.reason+"\n"+
 			"HOOK WAKE FAILED harness=codex id=7-0 try=3/3 reason="+tc.reason+"\n"+
-			"HOOK WAKE FAULT harness=codex id=7-0 result=failed first=7-0 file="+filepath.Join(c.dir, "7-0.json")+"\n", errOut.String())
+			"HOOK WAKE FAULT harness=codex id=7-0 result=failed first=7-0 file="+filepath.Join(c.dir, "7-0.json")+"; run: nova-bus show codex-wake --as beta --codex-thread "+testThread+"\n", errOut.String())
 		assert.Equal(t, []codexFault{{last: "7-0", first: "7-0", result: "failed", attempts: 3, err: tc.reason}}, readFaults(c.dir))
 		_, err = os.Stat(filepath.Join(c.dir, "7-0.json"))
 		require.NoError(t, err, "the message file is kept")
@@ -248,7 +248,7 @@ func TestCodexUnknownResultIsFaultedNotRequeued(t *testing.T) {
 	r.err = context.DeadlineExceeded
 	var out, errOut bytes.Buffer
 	require.NoError(t, deliver(context.Background(), c, msgN("7-0", "hi"), &out, &errOut))
-	assert.Equal(t, "HOOK WAKE FAULT harness=codex id=7-0 result=unknown first=7-0 file="+filepath.Join(c.dir, "7-0.json")+"\n", errOut.String())
+	assert.Equal(t, "HOOK WAKE FAULT harness=codex id=7-0 result=unknown first=7-0 file="+filepath.Join(c.dir, "7-0.json")+"; run: nova-bus show codex-wake --as beta --codex-thread "+testThread+"\n", errOut.String())
 	_, err := c.poll(context.Background(), &out, &errOut)
 	require.NoError(t, err)
 	assert.Len(t, r.calls, 1)
@@ -276,7 +276,7 @@ func TestCodexIntentAtStartIsReconciledNotRequeued(t *testing.T) {
 		if drained {
 			assert.NotContains(t, errOut.String(), "FAULT")
 		} else {
-			assert.Contains(t, errOut.String(), "HOOK WAKE FAULT harness=codex id=7-0 result=unknown file="+filepath.Join(c.dir, "7-0.json")+"\n")
+			assert.Contains(t, errOut.String(), "HOOK WAKE FAULT harness=codex id=7-0 result=unknown file="+filepath.Join(c.dir, "7-0.json")+"; run: nova-bus show codex-wake --as beta --codex-thread "+testThread+"\n")
 		}
 		assert.Contains(t, errOut.String(), "waiting=0 faults="+map[bool]string{true: "0", false: "1"}[drained])
 		assert.Equal(t, "7-0", c2.woken)
@@ -326,7 +326,7 @@ func TestCodexThreadChangeFaultsTheOldThreadsFiles(t *testing.T) {
 	c2, err := startCodex(next, c.s, f, &errOut)
 	require.NoError(t, err)
 	assert.Equal(t, "HOOK HARNESS OK harness=codex thread="+next+" rollout="+filepath.Join(dir, "rollout-2026-11-05T12-00-00-"+next+".jsonl")+" program=/opt/bin/codex events="+c2.dir+"\n"+
-		"HOOK WAKE FAULT harness=codex thread="+testThread+" result=thread-changed files="+filepath.Join(c.dir, "7-0.json")+","+filepath.Join(c.dir, "8-0.json")+"\n"+
+		"HOOK WAKE FAULT harness=codex thread="+testThread+" result=thread-changed files="+filepath.Join(c.dir, "7-0.json")+","+filepath.Join(c.dir, "8-0.json")+"; run: nova-bus show codex-wake --as beta --codex-thread "+testThread+"\n"+
 		"HOOK WAKE STATE harness=codex thread="+next+" waiting=0 faults=0\n", errOut.String())
 	assert.NotEqual(t, c.dir, c2.dir, "state is per name and thread")
 	for _, id := range []string{"7-0", "8-0"} {
@@ -518,7 +518,7 @@ func TestCodexResolveAnIntent(t *testing.T) {
 	require.NoError(t, os.MkdirAll(dir, 0o700))
 	require.NoError(t, writeRecord(dir, "intent", codexRecord{last: "8-0", size: 10, first: "7-0", start: "nova-bus: 2 new messages for beta since 7-0:"}))
 	var out, errOut bytes.Buffer
-	codexShow(s, "beta", testThread, &out)
+	require.Equal(t, 0, codexShow(s, "beta", testThread, &out, &errOut), errOut.String())
 	assert.Equal(t, "CODEX WAKE OK name=beta thread="+testThread+" dir="+dir+" woken=- awaiting=no faults=0\n8-0\tintent-unknown\tfirst=7-0\t"+filepath.Join(dir, "8-0.json")+"\n", out.String())
 	out.Reset()
 	require.Equal(t, 0, codexResolve(s, "beta", testThread, "7-0=woken", &out, &errOut), errOut.String())
@@ -791,4 +791,57 @@ func TestCodexWithoutTheProgramIsRefused(t *testing.T) {
 	assert.Empty(t, out)
 	assert.Equal(t, "nova-bus hook: codex is not on PATH, so the chat could never be woken: install the Codex CLI, or run the hook where codex is on PATH; run: nova-bus hook -h\n", errOut)
 	assert.Empty(t, f.claims, "the name is never claimed")
+}
+
+// show codex-wake for a name or thread no hook has kept state for (a typo)
+// is a refusal, never an empty OK.
+func TestShowCodexWakeRefusesAnUnknownNameOrThread(t *testing.T) {
+	t.Parallel()
+	c, _, f, _ := codexSetup(t, rolloutMeta+rolloutTurn+rolloutComplete, time.Minute)
+	run := func(args ...string) (int, string, string) {
+		var o, e bytes.Buffer
+		code := run(context.Background(), args, func(string) string { return "" }, nil, &o, &e, func(string, string, string) Store { return f }, f, c.s)
+		return code, o.String(), e.String()
+	}
+	code, out, _ := run("show", "codex-wake", "--as", "beta", "--codex-thread", testThread)
+	assert.Equal(t, 0, code)
+	assert.True(t, strings.HasPrefix(out, "CODEX WAKE OK name=beta"), out)
+	for _, args := range [][]string{{"--as", "betta", "--codex-thread", testThread}, {"--as", "beta", "--codex-thread", "019a5c1e-typo"}} {
+		code, out, errOut := run(append([]string{"show", "codex-wake"}, args...)...)
+		assert.Equal(t, 1, code, args)
+		assert.Empty(t, out, args)
+		dir := codexDir(c.s, args[1], args[3])
+		assert.Equal(t, "nova-bus show: no codex wake state for "+args[1]+" on thread "+args[3]+" ("+dir+" is not there): no such hook has run; run: ls "+filepath.Dir(dir)+"\n", errOut, args)
+	}
+}
+
+// A reconciled wake whose woken mark cannot be written ends the hook, as
+// every other failed write of the wake state does.
+func TestCodexReconcileWriteFailureEndsTheHook(t *testing.T) {
+	t.Parallel()
+	c, r, f, rollout := codexSetup(t, rolloutMeta+rolloutTurn+rolloutComplete, time.Minute)
+	r.out = "no line\n"
+	var out, errOut bytes.Buffer
+	ctx := context.Background()
+	require.NoError(t, deliver(ctx, c, msgN("7-0", "hi"), &out, &errOut))
+	require.Len(t, readFaults(c.dir), 1)
+	writeRollout(t, rollout, rolloutMeta+rolloutTurn+rolloutComplete+`{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"nova-bus 7-0 for beta from alpha"}]}}`+"\n"+rolloutComplete, f.clock.Add(-time.Minute))
+	require.NoError(t, os.Mkdir(filepath.Join(c.dir, "woken.tmp"), 0o700)) // the mark's temp name is taken
+	errOut.Reset()
+	_, err := c.poll(ctx, &out, &errOut)
+	var wf wakeFailed
+	require.ErrorAs(t, err, &wf)
+	assert.Equal(t, "7-0", wf.id)
+	assert.Contains(t, errOut.String(), "HOOK WAKE FAILED harness=codex id=7-0 reason=")
+	assert.Len(t, readFaults(c.dir), 1, "the fault stays for the next start")
+}
+
+// Every HOOK WAKE FAULT line ends in the command that shows the faults.
+func TestCodexFaultLinesNameTheNextCommand(t *testing.T) {
+	t.Parallel()
+	c, r, _, _ := codexSetup(t, rolloutMeta+rolloutTurn+rolloutComplete, time.Minute)
+	r.out = "no line\n"
+	var out, errOut bytes.Buffer
+	require.NoError(t, deliver(context.Background(), c, msgN("7-0", "hi"), &out, &errOut))
+	assert.Contains(t, errOut.String(), "HOOK WAKE FAULT harness=codex id=7-0 result=unknown first=7-0 file="+filepath.Join(c.dir, "7-0.json")+"; run: nova-bus show codex-wake --as beta --codex-thread "+testThread+"\n")
 }

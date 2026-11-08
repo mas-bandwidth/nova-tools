@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -314,16 +315,14 @@ func TestAntigravityFindsTheServerAgainAfterAFailedSend(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	fake.onSend = cancel // the second send is cut off by the wake's limit
 	err = w.wake(ctx, testMsg)
-	var u unconfirmed
-	assert.ErrorAs(t, err, &u, "it may have arrived: acked, never sent twice")
+	assert.Error(t, err, "it may have arrived, and fails: the message stays for the next hook")
 	assert.Equal(t, agentWake, w.(*agWake).limit(), "two sends and a find, inside the presence TTL")
 
 	// A first send cut off by its own per-call deadline (the exec returns
-	// the deadline's error): unconfirmed at once, no find, no second send.
+	// the deadline's error): it fails at once, no find, no second send.
 	fake.onSend, fake.sendFails, fake.cutOff = nil, 0, 1
 	n = len(fake.calls)
 	err = w.wake(context.Background(), testMsg)
-	assert.ErrorAs(t, err, &u, "%v", err)
 	assert.ErrorContains(t, err, "cut off after 5s")
 	assert.Len(t, fake.calls, n+1, "one send, nothing after it")
 }
@@ -418,7 +417,7 @@ func (w *wakeFake) wake(_ context.Context, m Msg) error {
 	case w.fail[m.ID]:
 		return errors.New("socket gone\nsecond line")
 	case w.unknown[m.ID]:
-		return unconfirmed{errors.New("cut off")}
+		return cutOff{errors.New("cut off")}
 	}
 	return nil
 }
@@ -435,8 +434,8 @@ func runWake(t *testing.T, f *fake, w waker) (string, string, error) {
 
 // A wake that surely failed is one receipt on stderr and ends the hook with
 // the message unacked and nothing behind it delivered; the next hook
-// delivers it first (tla/Bus.tla FailWake, BusWake.cfg). An unconfirmed
-// wake is acked: a turn is never started twice.
+// delivers it first (tla/Bus.tla FailWake, BusWake.cfg). A wake cut off,
+// its outcome unknown, is the same: never acked, so it is never lost.
 func TestFailedWakeEndsTheHookWithTheMessageUnhandled(t *testing.T) {
 	t.Parallel()
 	f := newFake()
@@ -460,11 +459,19 @@ func TestFailedWakeEndsTheHookWithTheMessageUnhandled(t *testing.T) {
 
 	w.fail = nil
 	out, errOut, err = runWake(t, f, w)
+	require.ErrorAs(t, err, &wf)
+	assert.Equal(t, "3-0", wf.id)
+	assert.Equal(t, "HOOK WAKE OK harness=antigravity id=2-0\n", out)
+	assert.Equal(t, "HOOK WAKE FAILED harness=antigravity id=3-0 reason=cut off\n", errOut)
+	assert.Equal(t, []string{"3-0"}, f.pending["bus:beta"], "a wake cut off is not acked: the next hook sends it again")
+
+	w.unknown = nil
+	out, errOut, err = runWake(t, f, w)
 	require.NoError(t, errors.Unwrap(err)) // the context ended it
 	assert.Empty(t, errOut)
-	assert.Equal(t, "HOOK WAKE OK harness=antigravity id=2-0\nHOOK WAKE OK harness=antigravity id=3-0 confirmed=no reason=cut off\nHOOK WAKE OK harness=antigravity id=4-0\n", out)
-	assert.Equal(t, []string{"1-0", "2-0", "2-0", "3-0", "4-0"}, w.woken)
-	assert.Empty(t, f.pending["bus:beta"], "an unconfirmed wake is acked")
+	assert.Equal(t, "HOOK WAKE OK harness=antigravity id=3-0\nHOOK WAKE OK harness=antigravity id=4-0\n", out)
+	assert.Equal(t, []string{"1-0", "2-0", "2-0", "3-0", "3-0", "4-0"}, w.woken)
+	assert.Empty(t, f.pending["bus:beta"])
 }
 
 func TestFailedWakeExitsOneAndReleasesPresence(t *testing.T) {
@@ -706,6 +713,7 @@ type mgr struct {
 	log     string
 	running bool
 	mute    bool
+	stuck   bool // bootout and disable fail and leave it running
 }
 
 func (m *mgr) exec(_ context.Context, _ []string, name string, args ...string) ([]byte, error) {
@@ -730,6 +738,8 @@ func (m *mgr) exec(_ context.Context, _ []string, name string, args ...string) (
 			_, _ = f.WriteString("HOOK HARNESS OK harness=grok\nHOOK OK name=beta waiting=0\n")
 			_ = f.Close()
 		}
+	case (strings.HasPrefix(a, "bootout ") || strings.HasPrefix(a, "--user disable")) && m.stuck:
+		return []byte("Boot-out failed: 5: Input/output error"), errors.New("exit status 5")
 	case strings.HasPrefix(a, "bootout ") || strings.HasPrefix(a, "--user disable"):
 		m.running = false
 	}
@@ -801,7 +811,7 @@ func TestServiceInstallsALaunchdAgentAfterThePreflight(t *testing.T) {
 	assert.Equal(t, "HOOK SERVICE OK name=beta unit=nova-bus.hook.beta state=stopped\n", out)
 	_, err = os.Stat(plist)
 	assert.True(t, errors.Is(err, os.ErrNotExist))
-	assert.Equal(t, [][]string{{"launchctl", "bootout", "gui/" + uid + "/nova-bus.hook.beta"}}, m.calls)
+	assert.Equal(t, [][]string{{"launchctl", "bootout", "gui/" + uid + "/nova-bus.hook.beta"}, {"launchctl", "print", "gui/" + uid + "/nova-bus.hook.beta"}}, m.calls, "stopped, and seen stopped")
 	code, out, _ = callSys(t, s, serviceEnv, "hook", "--as", "beta", "--service", "stop")
 	require.Equal(t, 0, code)
 	assert.Equal(t, "HOOK SERVICE OK name=beta unit=nova-bus.hook.beta state=absent\n", out)
@@ -835,7 +845,7 @@ func TestServiceInstallsASystemdUserUnit(t *testing.T) {
 	code, out, _ = callSys(t, s, serviceEnv, "hook", "--as", "beta", "--service", "stop")
 	require.Equal(t, 0, code)
 	assert.Equal(t, "HOOK SERVICE OK name=beta unit=nova-bus-hook-beta.service state=stopped\n", out)
-	assert.Equal(t, [][]string{{"systemctl", "--user", "disable", "--now", "nova-bus-hook-beta.service"}, {"systemctl", "--user", "daemon-reload"}}, m.calls)
+	assert.Equal(t, [][]string{{"systemctl", "--user", "disable", "--now", "nova-bus-hook-beta.service"}, {"systemctl", "--user", "is-active", "--quiet", "nova-bus-hook-beta.service"}, {"systemctl", "--user", "daemon-reload"}}, m.calls)
 }
 
 func TestServiceRefusalsAndTimeout(t *testing.T) {
@@ -896,4 +906,103 @@ func TestServiceRerunIsOKOnlyWhileTheNameIsHooked(t *testing.T) {
 	code, _, errOut = callStore(t, down, s, serviceEnv, args...)
 	assert.Equal(t, 1, code)
 	assert.Contains(t, errOut, "reason=cannot see whether beta is hooked in: cannot reach redis at 127.0.0.1:1")
+}
+
+// A stop that leaves the unit running says so, keeps the unit file, and
+// never prints state=stopped.
+func TestServiceStopRefusesAUnitStillRunning(t *testing.T) {
+	t.Parallel()
+	for _, goos := range []string{"darwin", "linux"} {
+		m := &mgr{}
+		s, home := serviceSys(t, goos, m)
+		s.shell = (&shellFake{}).shell
+		code, _, errOut := callSys(t, s, serviceEnv, "hook", "--as", "beta", "--exec", "relay", "--service")
+		require.Equal(t, 0, code, errOut)
+		m.stuck = true
+		code, out, errOut := callSys(t, s, serviceEnv, "hook", "--as", "beta", "--service", "stop")
+		assert.Equal(t, 1, code, goos)
+		assert.Empty(t, out, goos)
+		unit, file, look := "nova-bus.hook.beta", filepath.Join(home, "Library", "LaunchAgents", "nova-bus.hook.beta.plist"), "launchctl print gui/"+fmt.Sprint(os.Getuid())+"/nova-bus.hook.beta"
+		if goos == "linux" {
+			unit, file, look = "nova-bus-hook-beta.service", filepath.Join(home, ".config", "systemd", "user", "nova-bus-hook-beta.service"), "systemctl --user status nova-bus-hook-beta.service"
+		}
+		assert.True(t, strings.HasPrefix(errOut, "nova-bus hook: HOOK SERVICE FAILED name=beta unit="+unit+" reason=still running after the stop: "), errOut)
+		assert.True(t, strings.HasSuffix(errOut, "; run: "+look+"\n"), errOut)
+		_, err := os.Stat(file)
+		assert.NoError(t, err, "the unit file is kept: %s", goos)
+	}
+}
+
+// lsof missing is said as that, with the fix, not as a Monitor not started.
+func TestGrokWakeSaysLsofIsMissing(t *testing.T) {
+	t.Parallel()
+	home := grokHome(t)
+	none := func(context.Context, []string, string, ...string) ([]byte, error) {
+		return nil, &exec.Error{Name: "lsof", Err: exec.ErrNotFound}
+	}
+	w, err := newWaker(context.Background(), "grok", "beta", map[string]string{"grok-home": home}, sys{uid: os.Getuid(), exec: none}, io.Discard)
+	require.NoError(t, err)
+	assert.EqualError(t, w.wake(context.Background(), testMsg), `lsof cannot run (exec: "lsof": executable file not found in $PATH), so whether a Monitor tails `+filepath.Join(home, "nova-hook.wake")+` cannot be seen: install lsof`)
+}
+
+// expired is a context whose deadline has passed: a wake under it is cut
+// off by its limit with no real time spent.
+type expired struct{ context.Context }
+
+func (expired) Done() <-chan struct{} {
+	c := make(chan struct{})
+	close(c)
+	return c
+}
+func (expired) Err() error { return context.DeadlineExceeded }
+
+// An exec cut off by the 8 s limit (the shell reports exit -1, killed) says
+// it timed out.
+func TestExecCutOffSaysItTimedOut(t *testing.T) {
+	t.Parallel()
+	killed := func(context.Context, []string, string, string) (int, error) { return -1, nil }
+	var out, errOut bytes.Buffer
+	err := deliver(expired{context.Background()}, execWake{"relay", sys{shell: killed}}, testMsg, &out, &errOut)
+	var wf wakeFailed
+	require.ErrorAs(t, err, &wf)
+	assert.Equal(t, "HOOK EXEC FAILED id=7-0 exit=-1 reason=timed out after 8s\n", errOut.String())
+}
+
+// With HOME unset nothing is written or read at a path relative to the
+// working directory: the verbs that need it refuse.
+func TestHomeUnsetIsRefused(t *testing.T) {
+	t.Parallel()
+	m := &mgr{}
+	s, _ := serviceSys(t, "darwin", m)
+	s.home = ""
+	for _, args := range [][]string{
+		{"hook", "--as", "beta", "--service", "stop"},
+		{"show", "codex-wake", "--as", "beta", "--codex-thread", "t1"},
+		{"hook", "--as", "beta", "--codex-thread", "t1"},
+	} {
+		code, out, errOut := callSys(t, s, serviceEnv, args...)
+		assert.Equal(t, 2, code, args)
+		assert.Empty(t, out, args)
+		assert.Equal(t, "nova-bus "+args[0]+": HOME is unset, and the unit, its log and the wake state live under it: set HOME; run: nova-bus "+args[0]+" -h\n", errOut, args)
+	}
+	assert.Empty(t, m.calls, "no service manager reached")
+}
+
+// An Antigravity send cut off against a hung server has an unknown outcome:
+// it is HOOK WAKE FAILED and the message is not acked, never an OK that
+// drops it from the bus.
+func TestAntigravityCutOffWakeIsNotAcked(t *testing.T) {
+	t.Parallel()
+	ws, dir := t.TempDir(), filepath.Join(t.TempDir(), "events")
+	fake := &ag{ps: fmt.Sprintf("70 %d "+hub2_29+"\n", os.Getuid(), "tok"), lsof: "p70\nn127.0.0.1:7000\n",
+		answer: map[string]string{"tok:7000": `{}`}, send: `{}`, cutOff: 1}
+	s, _ := agSys(t, fake)
+	w, err := newWaker(context.Background(), "antigravity", "beta", agFlags(ws, dir), s, io.Discard)
+	require.NoError(t, err)
+	var out, errOut bytes.Buffer
+	err = deliver(context.Background(), w, testMsg, &out, &errOut)
+	var wf wakeFailed
+	require.ErrorAs(t, err, &wf)
+	assert.Empty(t, out.String(), "no OK receipt")
+	assert.True(t, strings.HasPrefix(errOut.String(), "HOOK WAKE FAILED harness=antigravity id=7-0 reason=agentapi send-message: context deadline exceeded (cut off after 5s)"), errOut.String())
 }

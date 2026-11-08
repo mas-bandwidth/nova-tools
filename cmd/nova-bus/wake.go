@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -16,17 +17,13 @@ import (
 // A waker puts one message into a session, waking it if it is idle: the wake
 // is the bus (cmd/nova-bus/README.md, How your session gets woken). Claude Code has none, its
 // Monitor turns each stdout line into a notification; every other harness
-// has one, and stdout carries its receipts. A wake that surely failed ends
-// the hook with the message unacked, for the next hook (tla/Bus.tla
-// FailWake); one that may have arrived (unconfirmed) is acked, so a turn is
-// never started twice.
+// has one, and stdout carries its receipts. A wake that failed, or was cut
+// off with its outcome unknown, ends the hook with the message unacked, for
+// the next hook (tla/Bus.tla FailWake): never lost, at the cost of a turn
+// that may start twice.
 type waker interface {
 	wake(ctx context.Context, m Msg) error
 }
-
-// unconfirmed is a wake whose request was handed on but whose outcome is
-// unknown (the send was cut off): it may have arrived.
-type unconfirmed struct{ error }
 
 // wakeLimit bounds one wake; a waker with a limit() of its own (antigravity:
 // two sends and a find, agentWake) is bounded by that instead. The hook
@@ -229,7 +226,11 @@ func (g *grokWake) open() (*os.File, error) {
 }
 
 func (g *grokWake) wake(ctx context.Context, m Msg) error {
-	out, _ := g.s.exec(ctx, nil, "lsof", "-t", "--", g.file) // exit 1 and no output: nobody has it open
+	out, err := g.s.exec(ctx, nil, "lsof", "-t", "--", g.file) // exit 1 and no output: nobody has it open
+	var missing *exec.Error
+	if errors.As(err, &missing) {
+		return fmt.Errorf("lsof cannot run (%v), so whether a Monitor tails %s cannot be seen: install lsof", err, g.file)
+	}
 	if strings.TrimSpace(string(out)) == "" {
 		return fmt.Errorf("no process has %s open: start the Monitor first: tail -n 0 -F %s", g.file, g.file)
 	}

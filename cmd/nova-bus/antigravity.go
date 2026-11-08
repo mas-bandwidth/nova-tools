@@ -174,20 +174,13 @@ func (a *agWake) wake(ctx context.Context, m Msg) error {
 	text := fmt.Sprintf("nova-bus saved event %s in %s. Read that JSON file and follow local_receiver.", m.ID, path)
 	err = a.agentapi(ctx, "send-message", "--title=nova-bus", a.session, text)
 	var cut cutOff
-	switch {
-	case err == nil:
-		return nil
-	case errors.As(err, &cut) || ctx.Err() != nil:
-		return unconfirmed{err} // the send was cut off: it may have arrived, so it is never sent again
+	if err == nil || errors.As(err, &cut) || ctx.Err() != nil {
+		return err // a send cut off may have arrived: not sent again in this wake
 	}
 	if ferr := a.find(ctx); ferr != nil {
 		return fmt.Errorf("%v; found again: %v", err, ferr)
 	}
-	err = a.agentapi(ctx, "send-message", "--title=nova-bus", a.session, text)
-	if err != nil && (errors.As(err, &cut) || ctx.Err() != nil) {
-		return unconfirmed{err}
-	}
-	return err
+	return a.agentapi(ctx, "send-message", "--title=nova-bus", a.session, text)
 }
 
 // agentapi runs one agentapi command; agentapi prints {"error": ...} at

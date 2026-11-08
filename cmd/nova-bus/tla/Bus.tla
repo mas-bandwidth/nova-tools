@@ -14,7 +14,8 @@
 \* set when an id already acked is delivered again.
 \*
 \* The wake (cmd/nova-bus/wake.go): with Fail, a delivery may fail (FailWake, a wake
-\* that surely did not answer), at most MaxFail times. The entry is not acked
+\* that did not answer; one cut off that may have arrived is a Print whose hook then
+\* ends unacked, as after Crash), at most MaxFail times. The entry is not acked
 \* and stays pending, and the failure ends the hook (runHook exits 1; the
 \* service manager or the person restarts it), so nothing behind it is
 \* delivered first and the next start delivers it from the pending list.

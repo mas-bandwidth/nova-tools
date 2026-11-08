@@ -80,8 +80,9 @@ var verbUsage = map[string]string{
           message is saved to <dir>/<id>.json and sent into the conversation
           with the workspace's language_server agentapi send-message.
       grok and antigravity print one receipt per message on stdout,
-      HOOK WAKE OK harness=<h> id=<id> [confirmed=no reason=<r>], or
-      HOOK WAKE FAILED harness=<h> id=<id> reason=<r> on stderr and exit 1 with
+      HOOK WAKE OK harness=<h> id=<id>, or HOOK WAKE FAILED harness=<h>
+      id=<id> reason=<r> on stderr (also for a send cut off, which may have
+      arrived) and exit 1 with
       the message unhandled and every later one behind it: once the harness
       answers, run the hook again (the service restarts it). The harness is
       checked at start, before the name is claimed: not there, exit 2; not
@@ -134,7 +135,7 @@ var verbUsage = map[string]string{
 	"pending": `  nova-bus pending --as <name> [--list]
       Print PENDING OK waiting=<n>, the messages for <name> no hook has handled;
       with --list, then id<TAB>from<TAB>subject for each, oldest first. Nothing
-      is consumed.
+      is consumed. It also runs once a hook for <name> has ended.
 `,
 	"show": `  nova-bus show agents | codex-agents | codex-wake --as <name> --codex-thread <id>
       Print the lines for your harness's standing instructions file (AGENTS.md,
@@ -268,8 +269,8 @@ func (hookedByRecv) Is(target error) bool { return target == errHookedByRecv }
 func main() {
 	signal.Ignore(syscall.SIGPIPE)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	home, _ := os.UserHomeDir()
-	exe, _ := os.Executable()
+	home, _ := os.UserHomeDir() // ignored: "" when HOME is unset, refused where a path is built on it
+	exe, _ := os.Executable()   // ignored: "" when unknown, refused by --service
 	s := sys{uid: os.Getuid(), goos: runtime.GOOS, home: home, exe: exe, devOf: realDevOf, outGone: stdoutGone, environ: os.Environ,
 		exec: realExec, look: exec.LookPath, program: realProgram, shell: realShell}
 	code := run(ctx, os.Args[1:], os.Getenv, os.Stdin, os.Stdout, os.Stderr, dialRedis, realClock{}, s)
@@ -417,10 +418,13 @@ func run(ctx context.Context, args []string, env func(string) string, stdin io.R
 		return misuse(stderr, verb, "--service with --harness claude wakes nothing: Claude Code's wake is the session's Monitor; run the hook under the Monitor tool, give --exec a command to run beside the session, or --codex-thread a Codex chat to wake")
 	case verb == "hook" && !*service && *harness == "claude" && *command == "" && *codexThread == "" && stdoutIsNull(s):
 		return misuse(stderr, verb, "stdout is /dev/null, nothing would read the messages")
+	case s.home == "" && (codexShowing || verb == "hook" && (*service || *codexThread != "")):
+		return misuse(stderr, verb, "HOME is unset, and the unit, its log and the wake state live under it: set HOME")
+	case s.exe == "" && verb == "hook" && *service && !stop:
+		return misuse(stderr, verb, "this program's own path is unknown, so no unit can run it: run it by its full path")
 	}
 	if codexShowing {
-		codexShow(s, *as, *codexThread, stdout)
-		return 0
+		return codexShow(s, *as, *codexThread, stdout, stderr)
 	}
 	if verb == "hook" && *resolve != "" {
 		return codexResolve(s, *as, *codexThread, *resolve, stdout, stderr)
@@ -496,7 +500,11 @@ func run(ctx context.Context, args []string, env func(string) string, stdin io.R
 		if err != nil {
 			return fail(stderr, verb, "%s", describe(err, addr))
 		}
-		if _, ok := present[*as]; !ok {
+		if _, ok := present[*as]; !ok && verb == "pending" { // it only reads: also after a hook ended, never for a name no hook has read
+			if hooked, err := store.Hooked(ctx, "bus:"+*as); err != nil || !hooked {
+				return fail(stderr, verb, "%s is not hooked in, and no hook has ever held it; run: nova-bus who", *as)
+			}
+		} else if !ok {
 			var environ []string
 			if s.environ != nil {
 				environ = s.environ()
@@ -562,6 +570,9 @@ func idShape(id string) bool {
 // describe names a Redis error, saying an unreachable or lost server plainly.
 func describe(err error, addr string) string {
 	msg := err.Error()
+	if errors.Is(err, errTaken) { // nova-bus's own words, not Redis's
+		return msg
+	}
 	for _, c := range [][2]string{{"connection refused", "connection refused"}, {"no such host", "no such host"}, {"timeout", "timed out"},
 		{"connection reset", "connection lost"}, {"broken pipe", "connection lost"}, {io.EOF.Error(), "connection lost"}} {
 		if strings.Contains(msg, c[0]) {
@@ -677,8 +688,8 @@ func runHook(ctx context.Context, store Store, name, addr string, clk Clock, std
 // lost is delivered after the reconnect. With no waker an entry is delivered
 // by printing its line; with one, by its wake and a receipt. A wake that
 // surely failed ends the hook, unacked, so nothing behind it arrives first
-// and the next hook delivers it (tla/Bus.tla FailWake); an unconfirmed one is
-// acked. Presence is refreshed when due before every delivery, and a wake is
+// and the next hook delivers it (tla/Bus.tla FailWake), as does one whose
+// outcome is unknown. Presence is refreshed when due before every delivery, and a wake is
 // bounded by wakeLimit, so a batch never outlives the key (tla/Presence.tla R).
 func hook(ctx context.Context, store Store, name, value string, clk Clock, out, stderr io.Writer, onClaim func(waiting int64), w waker, gone func() bool) error {
 	stream := "bus:" + name
@@ -803,8 +814,8 @@ type wakeFailed struct {
 func (e wakeFailed) Error() string { return e.err.Error() }
 
 // deliver prints m's line, or wakes the session with it and prints its
-// receipt: HOOK WAKE OK on stdout (confirmed=no when its outcome is
-// unknown), or HOOK WAKE FAILED on stderr and a wakeFailed.
+// receipt: HOOK WAKE OK on stdout, or HOOK WAKE FAILED on stderr and a
+// wakeFailed (also for a wake whose outcome is unknown).
 func deliver(ctx context.Context, w waker, m Msg, out, stderr io.Writer) error {
 	if c, ok := w.(*codexWake); ok {
 		return c.deliver(ctx, m, out, stderr)
@@ -821,21 +832,22 @@ func deliver(ctx context.Context, w waker, m Msg, out, stderr io.Writer) error {
 	}
 	wctx, cancel := context.WithTimeout(ctx, limit)
 	err := w.wake(wctx, m)
+	timedOut := ""
+	if errors.Is(wctx.Err(), context.DeadlineExceeded) { // the signal context is cancelled, never past a deadline: this is the limit
+		timedOut = " reason=timed out after " + limit.String()
+	}
 	cancel()
 	receipt := "HOOK WAKE OK harness=" + harnessName(w) + " id=" + m.ID
-	var u unconfirmed
 	var x exitError
 	switch {
 	case errors.As(err, &x):
-		fmt.Fprintf(stderr, "HOOK EXEC FAILED id=%s exit=%d\n", m.ID, x.code)
+		fmt.Fprintf(stderr, "HOOK EXEC FAILED id=%s exit=%d%s\n", m.ID, x.code, timedOut)
 		return wakeFailed{m.ID, err}
 	case err != nil && harnessName(w) == "exec":
 		fmt.Fprintf(stderr, "HOOK EXEC FAILED id=%s exit=-1 reason=%s\n", m.ID, escaper.Replace(err.Error()))
 		return wakeFailed{m.ID, err}
 	case harnessName(w) == "exec":
 		receipt = "HOOK EXEC OK id=" + m.ID
-	case errors.As(err, &u):
-		receipt += " confirmed=no reason=" + escaper.Replace(err.Error())
 	case err != nil:
 		fmt.Fprintf(stderr, "HOOK WAKE FAILED harness=%s id=%s reason=%s\n", harnessName(w), m.ID, escaper.Replace(err.Error()))
 		return wakeFailed{m.ID, err}
@@ -876,7 +888,7 @@ func recv(ctx context.Context, store Store, name, addr string, timeout time.Dura
 	claim := func(v string, ttl time.Duration) error {
 		held, err := store.Hold(ctx, name, v, ttl)
 		if err == nil && held != "" {
-			err = fmt.Errorf("name hooked: a hook took %s; run: nova-bus who", name)
+			err = fmt.Errorf("%w: a hook took %s while this recv held it; run: nova-bus who", errTaken, name)
 		}
 		return err
 	}
