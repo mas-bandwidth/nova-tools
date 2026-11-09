@@ -203,6 +203,26 @@ func TestOneLine(t *testing.T) {
 	assert.Equal(t, "a b c", oneLine("a\n  b\tc\n"))
 }
 
+// A set with a malformed value names that value and nothing else: the row is checked once the values are on it.
+func TestSetNamesOnlyTheValuesGiven(t *testing.T) {
+	t.Parallel()
+	h := fleet(t)
+	h.ok(t, "friend", "add", "friend-a", "--harness", "h", "--actor", "t")
+	for _, c := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"friend", "set", "friend-a", "--width", "abc", "--actor", "t"}, `nova-config friend set: --width "abc": want a non-negative integer; ` + kinds["friend"].fieldsLine() + "; run: nova-config friend set -h\n"},
+		{[]string{"service", "set", "member-b", "--keepalive", "true", "--env", "nope", "--actor", "t"},
+			`nova-config service set: --env: want a JSON object of NAME to value strings: '{"NAME":"value"}'; ` + kinds["service"].fieldsLine() + "; run: nova-config service set -h\n"},
+	} {
+		code, out, errs := h.run(t, c.args...)
+		assert.Equal(t, 2, code, "%v", c.args)
+		assert.Empty(t, out, "%v", c.args)
+		assert.Equal(t, c.want, errs, "%v", c.args)
+	}
+}
+
 // A set that changes nothing writes nothing: no history row, and it says so.
 func TestNoOpSetWritesNothing(t *testing.T) {
 	t.Parallel()
