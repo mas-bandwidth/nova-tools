@@ -174,3 +174,27 @@ func TestFIFOAsCapacityIsRefusedNotWaitedOn(t *testing.T) {
 	_, _, err := readCapacity(h.dir)
 	requireOdd(t, err, fifo)
 }
+
+// TestMadeFilesAreForEveryUser: under a umask of 077, every file a run makes in
+// the directory can still be read and written by every user, the lock files
+// too: no user can take a lock on a file it may not open. Not parallel: the
+// umask is the process's, so this runs while no other test does.
+func TestMadeFilesAreForEveryUser(t *testing.T) {
+	old := syscall.Umask(0o077)
+	defer syscall.Umask(old)
+	h := newHarness(t)
+	h.w.lock = osLock
+	mode := func(name string) os.FileMode {
+		fi, err := os.Stat(filepath.Join(h.dir, name))
+		require.NoError(t, err)
+		return fi.Mode().Perm()
+	}
+	h.w.exec = func(string, []string) int {
+		assert.Equal(t, os.FileMode(0o666), mode("slot1.holder"), "slot1.holder")
+		return 0
+	}
+	require.Equal(t, 0, run([]string{"--slots", "2", "--", "make"}, h.w), h.err.String())
+	for _, name := range []string{"capacity", "gate", "all", "slot1"} {
+		assert.Equal(t, os.FileMode(0o666), mode(name), name)
+	}
+}

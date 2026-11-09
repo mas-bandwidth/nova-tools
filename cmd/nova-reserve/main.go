@@ -444,8 +444,6 @@ func writeCapacity(dir string, n, pid int, at time.Time) error {
 	if err != nil {
 		return err
 	}
-	// ignored: only the file's owner may widen it, and only a new file needs it
-	_ = f.Chmod(0o666)
 	_, err = f.WriteAt(rec, 0)
 	err = errors.Join(err, f.Truncate(int64(len(rec))), f.Sync(), f.Close())
 	if err == nil && target != path {
@@ -553,10 +551,7 @@ func (t *taker) mark(name string) error {
 	_ = os.Remove(p)
 	file, err := openIn(p, os.O_WRONLY)
 	if errors.Is(err, fs.ErrNotExist) {
-		if file, err = openIn(p, os.O_WRONLY|os.O_CREATE|os.O_EXCL); err == nil {
-			// ignored: only the file's owner may widen it, and this process made it
-			_ = file.Chmod(0o666)
-		}
+		file, err = openIn(p, os.O_WRONLY|os.O_CREATE|os.O_EXCL)
 	}
 	if line := strings.Join(f, " ") + "\n"; err == nil {
 		_, err = file.WriteAt([]byte(line), 0)
