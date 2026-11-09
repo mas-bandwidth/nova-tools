@@ -339,6 +339,9 @@ A stop or restart ends the whole runner: on Linux the unit sets `RUNNER_MANUALLY
 passes the stop to its listener as SIGINT and waits for it (a running job is cancelled by the runner, not killed), and
 `KillMode=mixed` kills whatever is left in the unit once `run.sh` exits, or after `TimeoutStopSec` (5 minutes). On macOS
 launchd kills what is left of the job's process group.
+A Linux unit sets `LimitMEMLOCK=infinity`: the kernel charges locked memory (io_uring rings) to the login across all its
+runners, and systemd's 8 MiB default refuses that. A macOS daemon starts with `/opt/homebrew/bin` on its PATH, before the
+system's, so a job finds Homebrew's formulae and its `python3`.
 
 **Public repositories.** A self-hosted runner runs the code of any workflow that reaches it, and on a public repository
 that includes pull requests from forks. Use these runners on private repositories, or restrict which workflows and
