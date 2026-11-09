@@ -41,7 +41,8 @@ var verbUsage = map[string]string{
       into the session that runs the hook, waking it when it is idle.
       --exec <command>: run the command (sh -c) for each message, its line on
       stdin and NOVA_BUS_ID, NOVA_BUS_FROM, NOVA_BUS_RE, NOVA_BUS_SUBJECT and
-      NOVA_BUS_BODY in its environment, under the 8 s wake limit; exit 0 is the
+      NOVA_BUS_BODY in its environment (empty for a field over 64 KiB or with a
+      NUL byte: read it from the line), under the 8 s wake limit; exit 0 is the
       delivery (HOOK EXEC OK id=<id> on stdout), and only then is the message
       marked handled. Any other exit is HOOK EXEC FAILED id=<id> exit=<n> on
       stderr and the hook ends, exit 1, the message unhandled for the next hook.
@@ -490,6 +491,9 @@ func run(ctx context.Context, args []string, env func(string) string, stdin io.R
 			return fail(stderr, verb, "reading body from stdin: %v", err)
 		}
 		body = strings.TrimSuffix(string(b), "\n")
+	}
+	if strings.Contains(body, "\x00") {
+		return misuse(stderr, verb, "the body holds a NUL byte, and a body is text: encode binary data (base64, say) and send that")
 	}
 	msg := map[string]string{"from": *as, "to": strings.Join(names, ","), "subject": fs.Arg(0), "body": body, "re": *re}
 	for _, name := range names {
