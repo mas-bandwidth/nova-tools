@@ -413,11 +413,15 @@ nova-fleet up --tools "$NOVA_TOOLS_VERSION" store-1=203.0.113.7 web-1=203.0.113.
 
 The addresses are placeholders; put your machines' in their place. `up` runs
 in a fixed order (check, tailnet, reach, the first machine's Tailscale, PostgreSQL and
-Redis, join, grant, push the store, health, tools, services, runners, a bus
-message read back), prints `UP <step> OK` per step and `UP MACHINE <name> OK
-...` per machine, and stops at the first `UP <step> FAILED exit=<n>`; the same
-command resumes. Every step and what it prints is in
-[cmd/nova-fleet/README.md](../cmd/nova-fleet/README.md#up).
+Redis, join, grant, push the store, health, tools, services, runners, then
+`nova-bus who` answered over the fleet's Redis), prints `UP <step> OK` per
+step and `UP MACHINE <name> OK ...` per machine, and stops at the first
+`UP <step> FAILED exit=<n>`; the same command resumes. Every step and what it
+prints is in [cmd/nova-fleet/README.md](../cmd/nova-fleet/README.md#up).
+
+The tools step is the `install` play, which also puts the opencode harness on
+every machine in the `bench` group (the role `up` gives each machine it
+joins), at the version `nova_opencode_version` holds.
 
 A tool whose release is laid out as nova-tools' is (assets
 `<name>_<tag>_<os>_<arch>` and one `SHA256SUMS`) puts its binaries on
@@ -581,6 +585,19 @@ because a machine row without `--roles` gets that role, `runner` because its
 `runs-on: [self-hosted, linux]`. The service files need passwordless sudo on
 Linux and macOS (`join` sets it up on Linux; on a Mac your human sets it at
 the console); no command asks for a password.
+
+Every runner these plays set up enforces two rules on its jobs. A `push`,
+`pull_request` or `merge_group` job is stopped after 120 seconds and fails;
+`schedule` and `workflow_dispatch` jobs have no limit. A `push` job runs only
+on `main`, on a branch matching `sprint/*` or on a tag; a push to any other
+branch is refused before its first step, and that branch gets CI through its
+pull request. `github_runner_ci_limit_seconds` and
+`github_runner_ci_push_branches` (a list of globs) hold the two values. Set
+them after `--` on every run of `github-runners`, because a run without them
+applies the defaults again: `-e github_runner_ci_limit_seconds=<seconds>`, and
+the list as JSON, `-e '{"github_runner_ci_push_branches":["main","release/*"]}'`.
+`up` passes on the first form only. The rules in full are in
+[cmd/nova-fleet/README.md](../cmd/nova-fleet/README.md#ci-rules).
 
 Retiring a runner removes it from GitHub with a **removal token**, which the
 play asks gh for the same way:
