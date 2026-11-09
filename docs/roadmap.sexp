@@ -15,6 +15,7 @@
      ("sandbox-self-binary-write" "nova-sandbox refuses a --write grant covering its own binary or anything on PATH that chooses it")
      ("probe-names-binary" "nova-sandbox probe prints bin= like check and show")
      ("vm-mock-fleet" "A VM mock fleet so nova-fleet up can be run cold end to end")
+     ("verified-commits" "Verified commits: one GitHub account per friend and one for the fleet, each backed by a real email, so every commit shows Verified as the identity that made it")
      )
    :columns (("done" "done"))
    :cells (
@@ -27,6 +28,7 @@
      ("sandbox-self-binary-write" "done" "t-sandbox-self-binary-write")
      ("probe-names-binary" "done" "t-probe-names-binary")
      ("vm-mock-fleet" "done" "t-vm-mock-fleet")
+     ("verified-commits" "done" "t-verified-commits")
      ))
   (:id "t-reserve-slots-are-cores" :type :task :title "nova-reserve slots bound CPU, so N one-slot jobs cannot saturate a bench" :state :todo)
   (:id "t-fleet-placement" :type :task :title "Place one heavy job on the quietest bench fleet-wide" :state :todo)
@@ -36,4 +38,5 @@
   (:id "t-secrets-refresh-guards-dead-code" :type :task :title "Remove the dead nova_seal_store guards in roles/secrets-refresh (dead since #6279)" :state :todo)
   (:id "t-sandbox-self-binary-write" :type :task :title "nova-sandbox refuses a --write grant covering its own binary or anything on PATH that chooses it" :state :todo)
   (:id "t-probe-names-binary" :type :task :title "nova-sandbox probe prints bin= like check and show" :state :todo)
-  (:id "t-vm-mock-fleet" :type :task :title "A VM mock fleet so nova-fleet up can be run cold end to end" :state :todo)))
+  (:id "t-vm-mock-fleet" :type :task :title "A VM mock fleet so nova-fleet up can be run cold end to end" :state :todo)
+  (:id "t-verified-commits" :type :task :title "Verified commits: one GitHub account per friend and one for the fleet, each backed by a real email, so every commit shows Verified as the identity that made it" :state :todo)))
