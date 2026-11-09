@@ -90,15 +90,13 @@ uses Bash on Linux, macOS or WSL2.
 
 This needs git and the Go version in [go.mod](../go.mod), or a compatible
 newer version. It builds only your chosen tool from the same release tag.
-These source paths match the pinned release; for a checkout of `main`, use
-`./cmd/nova-<tool>` as described in the [build checks](../AGENTS.md#build-and-ci-checks):
 
 ```sh
 (
   set -eu
   cd "$work"
   git clone -q --depth 1 --branch "$NOVA_TOOLS_VERSION" https://github.com/mas-bandwidth/nova-tools
-  go build -C nova-tools -o "$work/bin/nova-$tool" "./$tool"
+  go build -C nova-tools -o "$work/bin/nova-$tool" "./cmd/nova-$tool"
   "$work/bin/nova-$tool" -h
 )
 ```
@@ -163,7 +161,7 @@ block while keeping the shared walkthrough setup.
     git clone -q --depth 1 --branch "$NOVA_TOOLS_VERSION" https://github.com/mas-bandwidth/nova-tools
   fi
   for t in bus cairn config fleet reserve sandbox secrets; do
-    go build -C nova-tools -o "$work/bin/nova-$t" "./$t"
+    go build -C nova-tools -o "$work/bin/nova-$t" "./cmd/nova-$t"
   done
   for t in bus cairn config fleet reserve sandbox secrets; do
     "$work/bin/nova-$t" -h > /dev/null

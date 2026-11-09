@@ -32,6 +32,9 @@ jobs:
             echo "::error file=docs/README.md::docs/README.md pins NOVA_TOOLS_VERSION=$pin, but the tag is $TAG; set the pin to $TAG on main and tag again"
             exit 1
           fi
+      - name: the guide's build lines build every tool from this tree
+        # the test builds the seven tools, then runs each go build line of docs/README.md for each tool
+        run: go test -count=1 -tags functional -run '^TestFunctionalGuideBuildLines$' ./tests/contract
       - name: build every tool for every platform
         shell: bash
         env:

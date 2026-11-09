@@ -214,6 +214,59 @@ func TestDocs(t *testing.T) {
 	t.Logf("docs: %d commands checked, %d help commands run; %d refusals quoted, %d run cold, the rest checked for verb and remedy", len(cmds), h.cold, len(refusals), ran)
 }
 
+// TestFunctionalGuideBuildLines runs every "go build" line in the shell blocks of
+// docs/README.md as the guide writes it, once for each tool, with this checkout standing
+// where the guide's clone is (nova-tools under $work). A line that names a path the tree
+// does not have fails here. GOPROXY=off: the build reads this tree and the module cache,
+// never the network. The release workflow runs this test against the tagged tree.
+func TestFunctionalGuideBuildLines(t *testing.T) {
+	t.Parallel()
+	root, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	guide, err := os.ReadFile(filepath.Join(root, "docs", "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	found, inBlock, lang := 0, false, ""
+	for i, line := range strings.Split(string(guide), "\n") {
+		if strings.HasPrefix(line, "```") {
+			inBlock, lang = !inBlock, strings.TrimSpace(line[3:])
+			continue
+		}
+		line = strings.TrimSpace(line)
+		if !inBlock || !shellLangs[lang] || !strings.HasPrefix(line, "go build ") {
+			continue
+		}
+		found++
+		for _, tool := range []string{"bus", "cairn", "config", "fleet", "reserve", "sandbox", "secrets"} {
+			t.Run("line"+itoa(i+1)+"/"+tool, func(t *testing.T) {
+				t.Parallel()
+				work := t.TempDir()
+				if err := os.Mkdir(filepath.Join(work, "bin"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(root, filepath.Join(work, "nova-tools")); err != nil {
+					t.Fatal(err)
+				}
+				cmd := exec.Command("/bin/sh", "-euc", line) // -u: a variable the guide did not set is a failure
+				cmd.Dir = work
+				cmd.Env = append(os.Environ(), "GOPROXY=off", "work="+work, "tool="+tool, "t="+tool)
+				if out, err := cmd.CombinedOutput(); err != nil {
+					t.Fatalf("docs/README.md:%d: `%s` with %s for its tool: %v: %s", i+1, line, tool, err, oneline(string(out)))
+				}
+				if _, err := os.Stat(filepath.Join(work, "bin", "nova-"+tool)); err != nil {
+					t.Errorf("docs/README.md:%d: `%s` built no %s: %v", i+1, line, filepath.Join("$work", "bin", "nova-"+tool), err)
+				}
+			})
+		}
+	}
+	if found == 0 {
+		t.Fatal("found no go build line in docs/README.md; the reader is broken")
+	}
+}
+
 // readDoc returns the nova commands in a doc's shell blocks and code spans, and the
 // refusals it quotes: lines and spans shaped "nova-<tool>[ <verb>]: <message>", and the
 // first-cell spans of a table under a heading or header about refusals.
