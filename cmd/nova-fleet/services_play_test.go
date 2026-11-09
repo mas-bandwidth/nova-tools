@@ -140,7 +140,7 @@ func TestFleetFilesNameNoRetiredTool(t *testing.T) {
 	}
 }
 
-// The install defaults: nova-tools' release, the seven tools, and retiring off until asked.
+// The install defaults: nova-tools' release and the seven tools.
 func TestInstallRoleDefaults(t *testing.T) {
 	t.Parallel()
 	b, err := os.ReadFile("roles/nova-tools-install/defaults/main.yml")
@@ -154,37 +154,16 @@ func TestInstallRoleDefaults(t *testing.T) {
 	assert.Equal(t, []any{"nova-bus", "nova-cairn", "nova-config", "nova-sandbox", "nova-secrets", "nova-reserve", "nova-fleet"}, gv["nova_tools_names"])
 	assert.Equal(t, "mas-bandwidth/nova-tools", d["nova_tools_repo"])
 	assert.Equal(t, "https://github.com/{{ nova_tools_repo }}/releases/download", d["nova_tools_release_url"])
-	assert.Equal(t, false, d["nova_tools_remove_enabled"])
-	names, _ := gv["nova_tools_names"].([]any)
-	for _, r := range d["nova_tools_remove"].([]any) {
-		assert.NotContains(t, names, r)
-	}
 }
 
-// The default retire list is the rows of retired-tools.txt that say "retired"
-// or "moved", and no other row: another product's binaries are never in it.
-func TestRetireListIsOnlyRetiredAndMoved(t *testing.T) {
-	t.Parallel()
-	b, err := os.ReadFile("roles/nova-tools-install/defaults/main.yml")
-	require.NoError(t, err)
-	var d map[string]any
-	require.NoError(t, yaml.Unmarshal(b, &d))
-	var want []any
-	txt, err := os.ReadFile("retired-tools.txt")
-	require.NoError(t, err)
-	for _, line := range strings.Split(string(txt), "\n") {
-		f := strings.Split(line, "\t")
-		if len(f) < 3 || strings.HasPrefix(line, "#") {
-			continue
-		}
-		if strings.HasPrefix(f[2], "retired") || f[2] == "moved" {
-			want = append(want, f[0])
+// taskIndex is the position of the first task whose name has the prefix, or -1.
+func taskIndex(tasks []map[string]any, prefix string) int {
+	for i, task := range tasks {
+		if strings.HasPrefix(asText(task["name"]), prefix) {
+			return i
 		}
 	}
-	assert.ElementsMatch(t, want, d["nova_tools_remove"])
-	for _, other := range []string{"nova-sprint", "nova-card", "nova-work", "nova-swarm", "nova-hook", "nova-friend"} {
-		assert.NotContains(t, d["nova_tools_remove"], other)
-	}
+	return -1
 }
 
 // tasksOf is a play's top-level tasks.
@@ -240,17 +219,13 @@ func taskVar(t *testing.T, task map[string]any, key string) string {
 	return ""
 }
 
-// The play names the units its earlier name wrote (com.nova.loop.*, nova-loop-*), and its mark matches
-// both marks, so the first run under the new name retires them.
-func TestOldLoopUnitsAreRetired(t *testing.T) {
+// The mark the play finds its units by matches the first comment of every template it writes.
+func TestServiceMarkMatchesTheTemplates(t *testing.T) {
 	t.Parallel()
 	b, err := os.ReadFile("services.yml")
 	require.NoError(t, err)
-	for _, want := range []string{"'com.nova.loop.*.plist'", "'nova-loop-*.service'", "'nova-loop-*.timer'"} {
-		assert.Contains(t, string(b), want)
-	}
-	mark := regexp.MustCompile(`written by fleet/(services|loops)[.]yml from the (service|loop) record`)
-	assert.True(t, mark.MatchString("# /x/nova-loop-a.service: written by fleet/loops.yml from the loop record a"))
+	assert.Contains(t, string(b), "service_mark: written by fleet/services[.]yml from the service record\n")
+	mark := regexp.MustCompile(`written by fleet/services[.]yml from the service record`)
 	for _, f := range []string{"templates/nova-service.plist.j2", "templates/nova-service.service.j2", "templates/nova-service.timer.j2"} {
 		tmpl, err := os.ReadFile(f)
 		require.NoError(t, err)

@@ -29,9 +29,9 @@
       ansible.builtin.include_role: { name: preflight }
       vars:
         preflight_control: >-
-          {{ ([{'cmd': nova_control_config, 'for': 'the schema: nova-config schema', 'v2': true}] if (nova_pg_schema | default(true) | bool) else [])
+          {{ ([{'cmd': nova_control_config, 'for': 'the schema: nova-config schema'}] if (nova_pg_schema | default(true) | bool) else [])
            + ([{'cmd': 'gpg', 'for': 'the PostgreSQL repository key check'}] if (nova_pg_source | default('auto')) != 'distro' else [])
-           + ([{'cmd': nova_control_secrets, 'for': 'the seal', 'v2': true}, {'cmd': nova_control_sops, 'for': 'the seal'}] if nova_seal_store is defined else []) }}
+           + ([{'cmd': nova_control_secrets, 'for': 'the seal'}, {'cmd': nova_control_sops, 'for': 'the seal'}] if nova_seal_store is defined else []) }}
   roles:
     - postgres
   tasks:

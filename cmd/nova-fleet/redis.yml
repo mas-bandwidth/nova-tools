@@ -25,7 +25,7 @@
     - name: the control node has what the run needs
       ansible.builtin.include_role: { name: preflight }
       vars:
-        preflight_control: "{{ ([{'cmd': nova_control_secrets, 'for': 'the seal', 'v2': true}, {'cmd': nova_control_sops, 'for': 'the seal'}] if nova_seal_store is defined else []) }}"
+        preflight_control: "{{ ([{'cmd': nova_control_secrets, 'for': 'the seal'}, {'cmd': nova_control_sops, 'for': 'the seal'}] if nova_seal_store is defined else []) }}"
   roles:
     - redis
   tasks:

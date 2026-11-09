@@ -49,10 +49,6 @@ func TestOpencodeIsPinnedByDigest(t *testing.T) {
 	}, sums)
 	// It goes where the tools go: nova_bin_dir, the directory every service unit's PATH starts with.
 	assert.Equal(t, "{{ nova_bin_dir }}", asText(d["nova_opencode_bin_dir"]))
-	// The leftover check of nova-tools-install allows what this role writes there.
-	owns, ok := d["nova_opencode_owns"].(map[string]any)
-	require.True(t, ok)
-	assert.Equal(t, []any{"opencode", "opencode.bin"}, owns["bin"])
 }
 
 // The archive is fetched at its digest, the binary unpacked as opencode.bin, and opencode is the wrapper that execs it.
@@ -83,8 +79,7 @@ func TestOpencodeRoleFetchesAtTheDigestAndWrapsTheBinary(t *testing.T) {
 	assert.Less(t, b, w)
 }
 
-// install.yml gives the bench group the pinned opencode, after the tools, and the install role's leftover check reads
-// what this role owns.
+// install.yml gives the bench group the pinned opencode, after the tools.
 func TestInstallPlayGivesTheBenchOpencode(t *testing.T) {
 	t.Parallel()
 	b, err := os.ReadFile("install.yml")
@@ -95,12 +90,6 @@ func TestInstallPlayGivesTheBenchOpencode(t *testing.T) {
 	assert.Equal(t, []any{"nova-tools-install"}, plays[0]["roles"])
 	assert.Equal(t, "bench", plays[1]["hosts"])
 	assert.Equal(t, []any{"opencode"}, plays[1]["roles"])
-
-	tasks := installRoleTasks(t)
-	ownsVars, err := yaml.Marshal(tasks[taskIndex(tasks, "what the fleet's own roles write")]["vars"])
-	require.NoError(t, err)
-	assert.Contains(t, string(ownsVars), "/opencode/defaults/main.yml")
-	assert.Contains(t, string(ownsVars), "nova_opencode_owns")
 }
 
 // A worker finds the pinned opencode first: the PATH every service unit gets starts with nova_bin_dir, ahead of

@@ -30,7 +30,7 @@
     - name: the control node has what the run needs
       ansible.builtin.include_role: { name: preflight }
       vars:
-        preflight_control: "{{ [{'cmd': nova_control_secrets, 'for': 'the seat rule: nova-secrets seat add', 'v2': true}, {'cmd': 'git', 'for': 'nova-secrets commits the store'}] }}"
+        preflight_control: "{{ [{'cmd': nova_control_secrets, 'for': 'the seat rule: nova-secrets seat add'}, {'cmd': 'git', 'for': 'nova-secrets commits the store'}] }}"
 
     - name: an age-keygen on the machine
       ansible.builtin.command: "{{ nova_age_keygen }} --version"

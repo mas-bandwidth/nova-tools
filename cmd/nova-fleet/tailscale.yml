@@ -29,7 +29,7 @@
       vars:
         preflight_control: >-
           {{ [{'cmd': 'ssh-keyscan', 'for': 'pinning the host key'}]
-             + ([{'cmd': nova_control_config, 'for': 'the address: nova-config machine set', 'v2': true}] if (nova_tailscale_record_address | default(true) | bool) else []) }}
+             + ([{'cmd': nova_control_config, 'for': 'the address: nova-config machine set'}] if (nova_tailscale_record_address | default(true) | bool) else []) }}
 
     - name: the machine's host key, pinned at the first connection
       ansible.builtin.include_role: { name: hostkey }

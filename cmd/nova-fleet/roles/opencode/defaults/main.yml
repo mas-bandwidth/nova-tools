@@ -31,8 +31,3 @@ nova_opencode_cache_dir: "{{ nova_home }}/.cache/nova/opencode"
 nova_opencode_env:
   OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER: "1"
   OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX: "128000"
-
-# What this role writes where an install's leftover check reads (nova-tools-install, cmd/nova-fleet/README.md "install",
-# Leftovers): bin is the bin directory. opencode_play_test.go holds it to the names the tasks write.
-nova_opencode_owns:
-  bin: [opencode, opencode.bin]

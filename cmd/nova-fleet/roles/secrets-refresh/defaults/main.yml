@@ -2,16 +2,5 @@
 # secrets-refresh.yml's defaults (cmd/nova-fleet/README.md, "secrets-refresh").
 
 # false on a machine whose copy is kept by hand (the one that writes the
-# store, say): the play removes any pull timer there and changes nothing else.
+# store, say): the play changes nothing there.
 nova_secrets_refresh: true
-
-# Retired (D8c): pull mode, a timer pulling a git clone of the store on each
-# machine. Set, the play stops; the control node pushes the store instead.
-nova_secrets_repo: ""
-
-# What this role writes where an install's leftover check reads (nova-tools-install,
-# cmd/nova-fleet/README.md "install", Leftovers): bin is the bin directory, user the login's unit
-# directory. install_play_test.go holds it to the names the tasks write.
-nova_secrets_refresh_owns:
-  bin: [nova-secrets-refresh]
-  user: [nova-secrets-refresh.service, nova-secrets-refresh.timer, com.nova.secrets-refresh.plist]

@@ -74,12 +74,8 @@ function Get-Tree([long]$root, [string]$exclude, $rows) {
     } while ($more)
     return @($rows | Where-Object { [long]$_.Id -ne $root -and $keep.ContainsKey([long]$_.Id) } | ForEach-Object { [long]$_.Id })
 }
-# The places a chained hook may no longer point: v1's ci-hold under C:\rowan-jobs\ (retired 2026-11-07).
-$unchain = @('C:\rowan-jobs\')
-# Test-Gone PATH: a hook that names a retired place or a file that is not there is never chained (it would fail, or
-# run v1, before every job).
+# Test-Gone PATH: a hook that names a file that is not there is never chained (it would fail before every job).
 function Test-Gone([string]$p) {
-    if (@($unchain | Where-Object { $p.StartsWith($_, [StringComparison]::OrdinalIgnoreCase) }).Count -gt 0) { return $true }
     return -not ($p -and (Test-Path -LiteralPath $p -PathType Leaf))
 }
 

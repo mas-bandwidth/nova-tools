@@ -255,10 +255,6 @@ refused before anything is written.
 | `nova_tools_repo` | `mas-bandwidth/nova-tools` | whose release (`--repo`); `--names` is `nova_tools_names`, empty for every binary listed |
 | `nova_tools_release_url` | `nova_tools_repo`'s GitHub releases | `<base>/<tag>/<asset>` |
 | `nova_tools_restart`, `nova_tools_restart_commands` | false, empty | argv lists run once, only if a binary changed |
-| `nova_tools_remove_enabled` | false | retire the binaries below |
-| `nova_tools_remove` | the retired list | names to retire |
-| `nova_tools_manifest_dir` | `~/.local/share/nova/installed` | where a `--repo` install records its names (see Leftovers) |
-| `nova_tools_system_unit_dir` | `/etc/systemd/system` (Linux), `/Library/LaunchDaemons` (macOS) | where Leftovers reads system units |
 
 **Another repository's release.** A dependent tool whose release is laid out the same way (assets
 `<name>_<tag>_<os>_<arch>[.exe]` and one `SHA256SUMS`) installs with `--repo` and `--tag`, getting every binary its
@@ -297,42 +293,6 @@ unit's PATH starts with `nova_bin_dir` (`nova_service_path`), so a worker finds 
 `/usr/local/bin`'s, which are left alone. One line per machine: `OPENCODE <host> version=<v> path=<wrapper>`; a Windows
 machine is skipped.
 
-**Retiring.** With `-e nova_tools_remove_enabled=true`, after a successful install each name in `nova_tools_remove`
-found in the bin directory is moved to `<nova_bin_dir>/retired-<date>/`, never deleted; a name not there is skipped.
-A name also being installed is refused. The default list is the rows of `retired-tools.txt` that say `retired` or
-`moved`; another product's binaries are never in it. To retire more, name the whole list:
-`-e '{"nova_tools_remove_enabled":true,"nova_tools_remove":["nova-sprint","nova-card"]}'` (JSON: a `key=value` `-e` is a
-string, never a list). Unix machines only.
-
-**Leftovers.** Last, after the install has happened, the play reads what an older install left beside the new binaries
-and prints one line per host, `INSTALL <host> leftovers=<n>: <names>` (or `leftovers=0`). v2 only: nothing of v1 is
-allowed by name. It reads every file in the bin directory (dotted names and `.bak` copies too); the login's unit directory
-(`~/.config/systemd/user` on Linux, `~/Library/LaunchAgents` on macOS) for any `nova-*` or `com.nova.*` unit, timer or
-plist; the system unit directory (`/etc/systemd/system` on Linux, any `nova*` unit; `/Library/LaunchDaemons` on macOS,
-where a headless Mac's services are, any `com.nova.*` plist; a read, no sudo); both unit directories for every glob in
-`retired-units.txt` (the v1 units and plists); and `~/.gitconfig` for a credential helper that runs the retired
-`nova-push-credential`. Allowed: the release's `SHA256SUMS` names for the platform; every name another repository's release
-recorded (a `--repo` install writes its names to `~/.local/share/nova/installed/<owner>_<name>.names`,
-`nova_tools_manifest_dir`); what the fleet's own plays and roles write there (`nova_join_owns` for join.yml's age,
-age-keygen and sops; each role's `nova_<role>_owns`; `nova_redis_unit`); a friend's nova-bus hook unit
-(`nova-bus.hook.<name>.plist`, `nova-bus-hook-<name>.service`); the unit of a service record this machine has (its
-`nova_services`). An inventory with no `nova_services` (not nova-config's) has its units left
-unread, and the line ends with a NOTE saying so.
-
-A leftover fails the host, and the refusal names the plays that retire it, names filled in. `nova-fleet install --tag <tag>
--- -l <host> -e '{"nova_tools_remove_enabled":true,"nova_tools_remove":[...],"nova_tools_remove_units":[...]}'` moves the
-binaries into `<bin dir>/retired-<date>/` and stops the units and moves them into `retired-<date>/` beside them (the system
-directory takes sudo); nothing is deleted, and nothing moves unless `nova_tools_remove_enabled` is true. Retiring
-`nova-push-credential` also unsets each global `credential.helper` / `credential.<url>.helper` whose value is that script
-(`git config --global --unset-all`, matched by its path alone; other helpers stay), and the INSTALL line says so.
-`nova-fleet services -- -l <host> -e '{"nova_retire_units":[...]}'` retires a unit of the services play's shapes
-(`nova-service-*`, `nova-loop-*`, `com.nova.service.*`, `com.nova.loop.*`); anything no play retires is named on its own.
-Only a binary in `retired-tools.txt` (every v1 tool nova-tools and rowan-tools shipped), a backup of one (its name
-before `.bak`, `.old` or `.before` is retired: `winlock.bak-4slots`), or a unit in
-`retired-units.txt` refuses a host. Any other binary nothing accounts for (a tool the machine uses that no release ships:
-redis-server, go, gh, ...) is a `WARNING unrecorded=<n>` naming it, never a refusal. The check itself removes nothing. Unix machines, nova-tools' own
-release only (a `--repo` install prints no line); `--check` prints the line too.
-
 ## services
 
 One supervised unit per service row, on the machine the row names: a LaunchAgent (or LaunchDaemon) on macOS, a
@@ -354,7 +314,7 @@ nova-fleet services -- -e nova_service_restart=reader
 - Rows without `every` are kept alive; `enabled` defaults to true; `enabled false` writes the unit and does not load it.
 - Every unit carries a mark. A marked unit no row names, or one in the other place (user versus system), is retired;
   `--check` lists it as `WOULD-RETIRE`. A unit of another tool is left alone and named in a `NOTE`;
-  `nova_retire_units` names any to retire. Units of the play's earlier name (`loops.yml`) are retired on the first run.
+  `nova_retire_units` names any to retire.
 - A host with no rows retires nothing by itself: a run that would retire every marked unit on it refuses, naming
   them, unless `-e nova_service_retire_all=true`.
 - A unit whose file changed is restarted, and named in the receipt (`restarted=<names>`, `would-restart=<names>` under
@@ -479,32 +439,6 @@ cannot read GitHub's list for a target refuses, rather than take a whole runner 
 from its directories and GitHub's own list; a run where any is short fails. `--check` reads both, asks for the tokens it
 would need, and prints `RUNNER-PLAN <machine> windows=<n> register=<names> repair=<names> labels=<labels>`.
 
-**Retiring v1's Windows side** is opt-in and comes after v2 is up, so CI keeps its Windows runners throughout. The
-run names what v1 left on that machine, as JSON extra vars; the role ships no machine's names or paths:
-
-```
-nova-fleet windows-runners --check -- -l <machine> -e @v1.json
-nova-fleet windows-runners -- -l <machine> -e @v1.json
-```
-
-```json
-{"nova_windows_retire_v1": {
-  "runners": [{"dir": "C:\\actions-runner-x\\1", "name": "<machine>-x-1", "url": "https://github.com/<owner>/<repo>"}],
-  "labels": {"https://github.com/<owner>/<repo>": ["<label the workflows select>"]},
-  "delete": ["C:\\actions-runner-x", "C:\\old-tools"],
-  "tasks": ["<scheduled task under \\>"],
-  "kept": ["C:\\tools (CI may use it)"]}}
-```
-
-It is refused (`V1-RETIRE <machine> refused: ...`, naming what is missing) unless every v2 Windows runner the record
-names is whole and online; every v1 target is a url of the record whose v2 runners carry that target's `labels`; and no
-v1 runner is busy in GitHub's list. Then, per target, each v1 runner is stopped (it takes no new job), GitHub's list is
-read again and the run refused while one is still busy, naming it (it does not wait: run again), and each is removed
-from GitHub with `config.cmd remove --unattended` and a removal token on stdin, its service goes and its directory is
-deleted. Then each `delete` path is deleted and each task unregistered. v1 is deleted, never moved aside: no
-credential, `.env` or hook of it stays on disk. One line per item: `V1-RETIRE <machine> RETIRED|DELETED|ABSENT|UNTASKED
-...`, then a `kept:` line for each `kept` entry.
-
 ## CI rules
 
 Every runner nova-fleet sets up enforces the fleet's CI rules itself, so a repository cannot opt out by forgetting a
@@ -527,8 +461,8 @@ started hook arms a watchdog, a detached process that the completed hook stops; 
 nothing behind. A hook the `.env` held before is kept as `NOVA_CI_CHAIN_JOB_STARTED` / `_COMPLETED` and run from ours, in its
 own process by its extension (after the push check, before the watchdog is armed, so waiting for a lock is not job
 time). Each started hook first stops any watchdog and verdict an earlier job left, so a runner that died mid-job
-never fails the next one. A chained hook under `C:\rowan-jobs\` (v1's ci-hold) or naming a file that is not there is
-dropped from the `.env`, never chained (the unchain rule), so applying the rules again takes v1's chain off a runner. The limit and the push branches are one value
+never fails the next one. A chained hook naming a file that is not there is
+dropped from the `.env`, never chained (the unchain rule). The limit and the push branches are one value
 each for the fleet (`group_vars` or `-e`), never per repository.
 
 **Applying.** `nova-ci-rules apply` writes the hooks and the `.env`, and restarts a runner whose `.env` changed (the
@@ -840,10 +774,7 @@ the encrypted store (no `.git`, stale files deleted, 0700/0600) to each machine'
 `up` again, or `nova-fleet secrets-refresh -- -e nova_seal_store=S`, pushes again. No machine needs read access to the
 store's repository, and nothing on a machine fetches the store on a clock.
 
-Pull mode (`nova_secrets_repo`: a timer on each machine pulling a git clone) is retired: with it set the play stops
-before changing anything. On every machine the play removes what pull mode installed (the systemd user timer and
-unit, the crontab line or the LaunchAgent, and the `nova-secrets-refresh` script). The machine that writes the store
-sets `nova_secrets_refresh: false`, which removes those and changes nothing else.
+The machine that writes the store sets `nova_secrets_refresh: false`, which changes nothing there.
 
 ```
 nova-fleet secrets-refresh --check --diff -- -e nova_seal_store=S
@@ -853,7 +784,7 @@ nova-fleet secrets-refresh -- -e nova_seal_store=S
 | Variable | Default | |
 |---|---|---|
 | `nova_seal_store` | none, required | the control node's clone of the store, to push; without it a machine with `nova_secrets_refresh: true` stops before anything changes, and a directory without `.sops.yaml` and `recovery.pub` is refused before the push |
-| `nova_secrets_refresh` | `true` | `false` removes the pull timer and skips the push |
+| `nova_secrets_refresh` | `true` | `false` skips the push |
 
 **Check.** `SECRETS-REFRESH <machine> mode=push files=<n> pushed` (or `same`). **Rollback.** Push the previous
 commit of the store: check it out in the clone and run again.

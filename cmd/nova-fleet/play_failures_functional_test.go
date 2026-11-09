@@ -19,7 +19,7 @@ import (
 
 // play_failures_functional_test.go runs a few of the plays' and roles' own tasks, copied into a localhost playbook,
 // against the test's temp dir, with a fake systemctl or launchctl first on PATH where a task calls one. Each task used
-// to report success over a failure: a unit moved aside that was never stopped, an empty Redis password file that
+// to report success over a failure: an empty Redis password file that
 // wrote no users.acl, a missing sops at join, a runner with no record of its labels.
 
 // taskGroups is a playbook's tasks, one group per play, or a role task file's tasks as one group.
@@ -85,49 +85,6 @@ func runTasksLocally(t *testing.T, tasks []map[string]any, vars map[string]any, 
 	cmd.Env = append(os.Environ(), "ANSIBLE_NOCOLOR=1", "ANSIBLE_LOCAL_TEMP="+filepath.Join(dir, "tmp"), "PATH="+bin+":"+os.Getenv("PATH"))
 	out, err := cmd.CombinedOutput()
 	return string(out), err
-}
-
-// TestFunctionalInstallMovesARetiredUnitOnlyOnceStopped: a retired unit that systemctl or launchctl could not stop
-// stays where it is and the run fails with the cause; one that stopped, or that launchd does not have loaded, is
-// moved into retired-<date>/.
-func TestFunctionalInstallMovesARetiredUnitOnlyOnceStopped(t *testing.T) {
-	t.Parallel()
-	tasks := taskRange(t, "roles/nova-tools-install/tasks/main.yml", "the retired units, stopped and moved aside", "this release's names")
-	for name, c := range map[string]struct {
-		os, fake, script string
-		moved            bool
-	}{
-		"systemctl fails":           {"linux", "systemctl", "echo 'Failed to connect to bus: No medium found' >&2; exit 1", false},
-		"systemctl stops it":        {"linux", "systemctl", `echo "$*" >> "$CALLS"`, true},
-		"launchctl fails, loaded":   {"darwin", "launchctl", `case "$1" in bootout) echo 'Boot-out failed: 5: Input/output error' >&2; exit 5;; *) exit 0;; esac`, false},
-		"launchctl fails, unloaded": {"darwin", "launchctl", `case "$1" in bootout) echo 'Boot-out failed: 3: No such process' >&2; exit 3;; *) exit 113;; esac`, true},
-	} {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-			units, sys := t.TempDir(), t.TempDir()
-			unit := filepath.Join(units, "nova-old.service")
-			require.NoError(t, os.WriteFile(unit, []byte("[Unit]\n"), 0o644))
-			out, err := runTasksLocally(t, tasks, map[string]any{
-				"nova_tools_unit_manager": true, "nova_tools_os": c.os, "nova_tools_remove_enabled": true, "nova_tools_win": false,
-				"nova_tools_system_unit_dir": sys, "nova_tools_user_unit_dir": units,
-				"nova_tools_unit_stat": map[string]any{"results": []any{map[string]any{"stat": map[string]any{"exists": true}, "item": []any{units, "nova-old.service"}}}},
-			}, map[string]string{c.fake: "CALLS=" + filepath.Join(sys, "calls") + "\n" + c.script})
-			_, stat := os.Stat(unit)
-			if c.moved {
-				require.NoError(t, err, out)
-				assert.True(t, os.IsNotExist(stat), "the stopped unit is moved aside")
-				if c.os == "linux" {
-					calls, err := os.ReadFile(filepath.Join(sys, "calls"))
-					require.NoError(t, err)
-					assert.Equal(t, "--user disable --now nova-old.service\n--user daemon-reload\n", string(calls), "systemd reads the user directory again, and only it")
-				}
-				return
-			}
-			require.Error(t, err, out)
-			assert.NoError(t, stat, "a unit still running stays where it is")
-			assert.Regexp(t, `"stderr": "(Failed to connect to bus|Boot-out failed: 5)`, out, "the refusal carries the cause")
-		})
-	}
 }
 
 // TestFunctionalRedisRefusesAnEmptyPasswordFile: an empty <user>.pass (kept by creates:) fails a run naming the file;

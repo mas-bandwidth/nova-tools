@@ -122,111 +122,20 @@ func TestRunnerTokenNeverOnACommandLine(t *testing.T) {
 	}
 }
 
-// TestWindowsRetireV1IsOptInAndGuarded: retiring v1 runs only with nova_windows_retire_v1 (default false), and its
-// first task refuses unless every v2 Windows runner is registered and online; nothing else includes it.
-func TestWindowsRetireV1IsOptInAndGuarded(t *testing.T) {
+// TestRunnerWindowsShipsNoMachine: the role ships no machine's names or paths; retire removes a runner with
+// --unattended and deletes its directory; register resets the directory's ACL first; the firewall is never touched.
+func TestRunnerWindowsShipsNoMachine(t *testing.T) {
 	t.Parallel()
-	b, err := fs.ReadFile(tree, roleDir+"/defaults/main.yml")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var defaults map[string]any
-	if err := yaml.Unmarshal(b, &defaults); err != nil {
-		t.Fatal(err)
-	}
-	if v, ok := defaults["nova_windows_retire_v1"].(map[string]any); !ok || len(v) != 0 {
-		t.Errorf("nova_windows_retire_v1 defaults to %v, want {} (the v1 list comes only in the run's extra vars)", defaults["nova_windows_retire_v1"])
-	}
-	tasks := roleTasks(t)
-	includes := 0
-	for file, ts := range tasks {
-		for _, task := range ts {
-			if strings.Contains(text(t, task["ansible.builtin.include_tasks"]), "wsl-windows-retire-v1.yml") {
-				includes++
-				if file != "wsl-windows.yml" || task["when"] != "nova_windows_retire_v1 | length > 0" {
-					t.Errorf("%s includes the v1 retirement with when %v; only wsl-windows.yml may, when nova_windows_retire_v1 | length > 0", file, task["when"])
-				}
-			}
-		}
-	}
-	if includes != 1 {
-		t.Errorf("the v1 retirement is included %d times, want once", includes)
-	}
-	retire := tasks["wsl-windows-retire-v1.yml"]
-	if len(retire) == 0 {
-		t.Fatal("no wsl-windows-retire-v1.yml")
-	}
-	guard, ok := retire[0]["ansible.builtin.assert"].(map[string]any)
-	if !ok {
-		t.Fatalf("the first task of the v1 retirement is %q, want the assert that v2 is up", retire[0]["name"])
-	}
-	that := text(t, guard["that"])
-	for _, want := range []string{
-		"github_runner_win_registered_n | int == github_runner_win_want | length",
-		"github_runner_win_online_n | int == github_runner_win_want | length",
-		"github_runner_win_unread | length == 0",
-		"nova_windows_runners | default([]) | length > 0",
-	} {
-		if !strings.Contains(that, want) {
-			t.Errorf("the v1 retirement's guard lacks %q", want)
-		}
-	}
-	if retire[0]["when"] != nil {
-		t.Error("the v1 retirement's guard is conditional; it must always run, under --check too")
-	}
-	// then the coverage and busy guards, unconditional, before anything that changes the machine
-	var guards []string
-	for _, task := range retire {
-		if a, ok := task["ansible.builtin.assert"].(map[string]any); ok && task["when"] == nil {
-			guards = append(guards, text(t, a["that"]))
-			continue
-		}
-		if task["ansible.builtin.include_tasks"] == "wsl-windows-retire-v1-runners.yml" || task["ansible.builtin.shell"] != nil {
-			break
-		}
-	}
-	if g := strings.Join(guards, "\n"); len(guards) != 4 || !strings.Contains(g, "nova_windows_retire_v1.runners is sequence") || !strings.Contains(g, "github_runner_v1_uncovered | length == 0") || !strings.Contains(g, "github_runner_v1_busy | length == 0") {
-		t.Errorf("before the first change the v1 retirement asserts v2 up, the v1 list's shape, v2 covering every v1 target and no v1 runner busy; it asserts %q", guards)
-	}
-	// the online and registered counts it reads are set before it, in wsl-windows.yml, under --check too
-	if !strings.Contains(text(t, tasks["wsl-windows.yml"]), "github_runner_win_online_n:") {
-		t.Error("wsl-windows.yml no longer sets github_runner_win_online_n")
-	}
-}
-
-// TestWindowsRetireV1ShipsNothingOfCaptain: the role ships no machine's v1 names or paths (they come in the run's
-// extra vars); each v1 runner is stopped, checked for a job against GitHub again, then removed with --unattended; and
-// v1 is deleted, never moved aside, so no credential, .env or ci-hold of it stays on disk.
-func TestWindowsRetireV1ShipsNothingOfCaptain(t *testing.T) {
-	t.Parallel()
-	for _, f := range []string{"defaults/main.yml", "tasks/wsl-windows-retire-v1.yml", "tasks/wsl-windows-retire-v1-runners.yml", "files/runner-windows.ps1"} {
+	for _, f := range []string{"defaults/main.yml", "files/runner-windows.ps1"} {
 		b, err := fs.ReadFile(tree, roleDir+"/"+f)
 		if err != nil {
 			t.Fatal(err)
 		}
 		for _, v1 := range []string{"captain", "actions-runner-r", "rowan-jobs", "ci-hold", "nova-wsl-keepalive", "robotgamedevelopers", "mas-bandwidth/rocketnet", "nova-retired"} {
 			if strings.Contains(string(b), v1) {
-				t.Errorf("%s names %s: the v1 list is the run's extra vars, nothing of it ships", f, v1)
+				t.Errorf("%s names %s: nothing of one machine ships", f, v1)
 			}
 		}
-	}
-	tasks := roleTasks(t)["wsl-windows-retire-v1-runners.yml"]
-	var order []string
-	for _, task := range tasks {
-		name, _ := task["name"].(string)
-		switch {
-		case strings.Contains(text(t, task["ansible.builtin.shell"]), "-Action stop"):
-			order = append(order, "stop")
-		case strings.Contains(text(t, task["ansible.builtin.include_tasks"]), "wsl-windows-github.yml"):
-			order = append(order, "github")
-		case strings.Contains(name, "busy"):
-			order = append(order, "busy")
-		case strings.Contains(text(t, task["ansible.builtin.shell"]), "-Action retire"):
-			order = append(order, "retire")
-		}
-	}
-	if strings.Join(order, ",") != "stop,github,busy,retire" {
-		t.Errorf("per target the v1 runners are stopped, GitHub read, busy refused, then removed; the order is %q", order)
 	}
 	b, err := fs.ReadFile(tree, roleDir+"/files/runner-windows.ps1")
 	if err != nil {
@@ -244,14 +153,6 @@ func TestWindowsRetireV1ShipsNothingOfCaptain(t *testing.T) {
 	reg = reg[:strings.Index(reg, "\n  }\n")]
 	if !strings.Contains(reg, "icacls.exe $Dir /reset /T /C /Q") || !strings.Contains(ps, `-replace '[^\x20-\x7E]', '?'`) {
 		t.Error("register resets the runner directory's ACL first, and config.cmd's lines reach ansible as ASCII")
-	}
-	del := ps[strings.Index(ps, "  'delete' {"):]
-	del = del[:strings.Index(del, "\n  }\n")]
-	if !strings.Contains(del, "Remove-Item -LiteralPath $i.FullName -Recurse -Force") || strings.Contains(retire+del, "Move-Aside") {
-		t.Error("v1 is deleted, never moved aside")
-	}
-	if !strings.Contains(del, "Get-Item -LiteralPath $Path") || strings.Contains(del, "Get-Item -Path") || !strings.Contains(del, "REFUSED $Path") {
-		t.Error("delete takes one literal path and refuses a pattern, a drive root or a system folder")
 	}
 	if strings.Contains(strings.ToLower(ps), "netfirewallrule") {
 		t.Error("runner-windows.ps1 touches a firewall rule; the firewall is kept")
@@ -307,14 +208,14 @@ func TestWindowsRunnersPlay(t *testing.T) {
 	if s := string(b); !strings.Contains(s, "tasks_from: wsl-windows.yml") || !strings.Contains(s, "when: nova_windows_runners | default([]) | length > 0") {
 		t.Error("windows-runners.yml must include wsl-windows.yml only where nova_windows_runners is non-empty")
 	}
-	for _, f := range []string{"wsl-windows.yml", "wsl-windows-state.yml", "wsl-windows-github.yml", "wsl-windows-register.yml", "wsl-windows-retire-v1.yml", "wsl-windows-retire-v1-runners.yml"} {
+	for _, f := range []string{"wsl-windows.yml", "wsl-windows-state.yml", "wsl-windows-github.yml", "wsl-windows-register.yml"} {
 		if _, err := fs.Stat(tree, path.Join(roleDir, "tasks", f)); err != nil {
 			t.Errorf("%s is not embedded", f)
 		}
 	}
 }
 
-// TestCIRulesUnchainRule: both scripts drop a chained hook under C:\rowan-jobs\ (v1's ci-hold) or naming a missing file,
+// TestCIRulesUnchainRule: both scripts drop a chained hook naming a missing file,
 // and never chain such a hook (the functional TestCIRulesEnvEdit runs it).
 func TestCIRulesUnchainRule(t *testing.T) {
 	t.Parallel()
@@ -327,7 +228,6 @@ func TestCIRulesUnchainRule(t *testing.T) {
 	}
 	ps := read("nova-ci-rules.ps1")
 	for _, want := range []string{
-		`$unchain = @('C:\rowan-jobs\')`,
 		`return -not ($p -and (Test-Path -LiteralPath $p -PathType Leaf))`,
 		`if ($v -eq $ours[$k] -or -not (Test-Gone $v)) { $old[$k] = $v }`,
 		`if (Test-Gone $v) { continue }`,
@@ -338,7 +238,6 @@ func TestCIRulesUnchainRule(t *testing.T) {
 	}
 	sh := read("nova-ci-rules.sh")
 	for _, want := range []string{
-		`case $1 in [Cc]:'\rowan-jobs\'* | /mnt/[Cc]/rowan-jobs/*) return 0 ;; esac`,
 		`[ ! -f "$1" ]`,
 		`ACTIONS_RUNNER_HOOK_JOB_*=* | NOVA_CI_CHAIN_JOB_*=*) hook_gone "${l#*=}" && continue ;;`,
 	} {

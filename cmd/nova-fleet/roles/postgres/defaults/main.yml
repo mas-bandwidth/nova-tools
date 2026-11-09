@@ -48,9 +48,3 @@ nova_pg_roles:
 # Load `nova-config schema` (from the control node's nova-config) into the
 # database: on the first run, and again whenever its SQL changes.
 nova_pg_schema: true
-
-# What this role writes where an install's leftover check reads (nova-tools-install,
-# cmd/nova-fleet/README.md "install", Leftovers): system is /etc/systemd/system.
-# install_play_test.go holds it to the names the tasks write.
-nova_postgres_owns:
-  system: [nova-pg-dump.service, nova-pg-dump.timer]

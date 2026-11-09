@@ -191,12 +191,10 @@ func TestCIRulesEnvEdit(t *testing.T) {
 		{"keeps the rest", "LANG=C.UTF-8\nJAVA_HOME=/j\n", "LANG=C.UTF-8\nJAVA_HOME=/j\n" + ours},
 		{"chains a hook that was there", "LANG=C\nACTIONS_RUNNER_HOOK_JOB_STARTED=" + x + "/hold-start.sh\nACTIONS_RUNNER_HOOK_JOB_COMPLETED=" + x + "/hold-stop.sh\n",
 			"LANG=C\nNOVA_CI_CHAIN_JOB_COMPLETED=" + x + "/hold-stop.sh\nNOVA_CI_CHAIN_JOB_STARTED=" + x + "/hold-start.sh\n" + ours},
-		// the unchain rule: v1's ci-hold chain on captain's runners goes; a chain to a file that is gone goes; a live one stays
-		{"unchains v1's ci-hold", "LANG=C\nNOVA_CI_CHAIN_JOB_STARTED=C:\\rowan-jobs\\ci-hold\\ci-hold-start.ps1\nNOVA_CI_CHAIN_JOB_COMPLETED=c:\\Rowan-Jobs\\ci-hold\\ci-hold-stop.ps1\n" + ours,
-			"LANG=C\n" + ours},
+		// the unchain rule: a chain to a file that is gone goes; a live one stays
 		{"unchains a missing file, keeps a present one", "NOVA_CI_CHAIN_JOB_STARTED=/gone/start.sh\nNOVA_CI_CHAIN_JOB_COMPLETED=" + x + "/hold-stop.sh\n" + ours,
 			"NOVA_CI_CHAIN_JOB_COMPLETED=" + x + "/hold-stop.sh\n" + ours},
-		{"never chains a hook that is gone", "ACTIONS_RUNNER_HOOK_JOB_STARTED=/mnt/c/rowan-jobs/ci-hold/ci-hold-start.sh\nACTIONS_RUNNER_HOOK_JOB_COMPLETED=/gone/stop.sh\n", ours},
+		{"never chains a hook that is gone", "ACTIONS_RUNNER_HOOK_JOB_STARTED=/gone/start.sh\nACTIONS_RUNNER_HOOK_JOB_COMPLETED=/gone/stop.sh\n", ours},
 	} {
 		_, got := ciRun(t, sh, ciRulesDir, tc.in, nil, "env-edit", "/h")
 		if sortLines(got) != sortLines(tc.want) {
