@@ -491,20 +491,33 @@ func TestReceiptNamesTheHarness(t *testing.T) {
 	assert.Equal(t, "grok", harnessName(&grokWake{}))
 	assert.Equal(t, "antigravity", harnessName(&agWake{}))
 	assert.Equal(t, "exec", harnessName(execWake{}))
+	assert.Equal(t, "grok", harnessName(execThenWake{w: &grokWake{}}), "exec beside a harness: the wake names the harness")
 }
 
-// shellFake records each --exec run and answers with an exit code per id.
+// shellFake records each --exec run and answers with an exit code per id,
+// writing say[id] to the command's stdout and calling onRun when set.
 type shellFake struct {
 	exits map[string]int
+	say   map[string]string
+	onRun func()
 	runs  []string // command, then stdin, then the NOVA_BUS_ vars
 }
 
-func (s *shellFake) shell(_ context.Context, env []string, stdin, command string) (int, error) {
+func (s *shellFake) shell(_ context.Context, env []string, stdin, command string, out io.Writer) (int, error) {
 	s.runs = append(s.runs, command+"|"+stdin+"|"+strings.Join(env, ","))
 	if command == "missing" {
 		return -1, errors.New("fork/exec: no such file")
 	}
-	return s.exits[strings.SplitN(stdin, "\t", 2)[0]], nil
+	id := strings.SplitN(stdin, "\t", 2)[0]
+	if s.say[id] != "" {
+		if _, err := io.WriteString(out, s.say[id]); err != nil {
+			return -1, err
+		}
+	}
+	if s.onRun != nil {
+		s.onRun()
+	}
+	return s.exits[id], nil
 }
 
 // --exec: the command gets the line on stdin and the fields in its
@@ -517,7 +530,7 @@ func TestExecRunsTheCommandAndAcksOnExitZero(t *testing.T) {
 	send(t, f, "s2", "b")
 	send(t, f, "s3", "c")
 	sh := &shellFake{exits: map[string]int{"2-0": 3}}
-	out, errOut, err := runWake(t, f, execWake{"relay --up", sys{shell: sh.shell}})
+	out, errOut, err := runWake(t, f, execWake{"relay --up", sys{shell: sh.shell}, nil})
 	var wf wakeFailed
 	require.ErrorAs(t, err, &wf)
 	assert.Equal(t, "HOOK EXEC OK id=1-0\n", out)
@@ -529,18 +542,105 @@ func TestExecRunsTheCommandAndAcksOnExitZero(t *testing.T) {
 	assert.Equal(t, []string{"2-0"}, f.pending["bus:beta"], "the hook ended before reading on")
 
 	sh.exits = nil
-	out, errOut, _ = runWake(t, f, execWake{"relay --up", sys{shell: sh.shell}})
+	out, errOut, _ = runWake(t, f, execWake{"relay --up", sys{shell: sh.shell}, nil})
 	assert.Equal(t, "HOOK EXEC OK id=2-0\nHOOK EXEC OK id=3-0\n", out)
 	assert.Empty(t, errOut)
 	assert.Empty(t, f.pending["bus:beta"])
 
-	_, errOut, err = runWake(t, f, execWake{"missing", sys{shell: sh.shell}})
+	_, errOut, err = runWake(t, f, execWake{"missing", sys{shell: sh.shell}, nil})
 	assert.NoError(t, errors.Unwrap(err), "nothing to deliver: the command never ran")
 	assert.Empty(t, errOut)
 	send(t, f, "s4", "d")
-	_, errOut, err = runWake(t, f, execWake{"missing", sys{shell: sh.shell}})
+	_, errOut, err = runWake(t, f, execWake{"missing", sys{shell: sh.shell}, nil})
 	require.ErrorAs(t, err, &wf)
 	assert.Equal(t, "HOOK EXEC FAILED id=4-0 exit=-1 reason=fork/exec: no such file\n", errOut)
+}
+
+// execSeen is a harness wake that records the command's receipt each
+// message carries, and whether the presence was claimed at the clock's
+// current time (refreshed after the command, before the wake).
+type execSeen struct {
+	f     *fake
+	fail  map[string]bool
+	seen  []execResult
+	fresh []bool
+}
+
+func (w *execSeen) wake(_ context.Context, m Msg) error {
+	w.seen = append(w.seen, *m.Exec)
+	w.fresh = append(w.fresh, w.f.claims[len(w.f.claims)-1].Equal(w.f.clock))
+	if w.fail[m.ID] {
+		return errors.New("socket gone")
+	}
+	return nil
+}
+
+// --exec beside a harness with a wake: the command runs first, as the plain
+// --exec does, its stdout kept (up to maxExecOutput); the presence is
+// refreshed; then the harness wakes the session with the message and the
+// command's receipt and output. A failed command is said and the wake still
+// follows: only the wake decides the ack (tla/Bus.tla RunExec, BusExecWake.cfg).
+func TestExecBesideAHarnessRunsThenWakes(t *testing.T) {
+	t.Parallel()
+	f := newFake()
+	for i := 1; i <= 3; i++ {
+		send(t, f, fmt.Sprint("s", i), "b")
+	}
+	long := strings.Repeat("x", maxExecOutput+10)
+	sh := &shellFake{exits: map[string]int{"2-0": 3}, say: map[string]string{"1-0": "TAKE OK card=12\n", "2-0": long}}
+	sh.onRun = func() { f.clock = f.clock.Add(presenceRefresh) } // each command takes a whole refresh period
+	w := &execSeen{f: f, fail: map[string]bool{"3-0": true}}
+	out, errOut, err := runWake(t, f, execThenWake{execWake{"take --as beta", sys{shell: sh.shell}, nil}, w})
+	var wf wakeFailed
+	require.ErrorAs(t, err, &wf)
+	assert.Equal(t, "HOOK EXEC OK id=1-0\nHOOK WAKE OK harness=antigravity id=1-0\nHOOK WAKE OK harness=antigravity id=2-0\nHOOK EXEC OK id=3-0\n", out)
+	assert.Equal(t, "HOOK EXEC FAILED id=2-0 exit=3\nHOOK WAKE FAILED harness=antigravity id=3-0 reason=socket gone\n", errOut)
+	assert.Equal(t, []execResult{{"HOOK EXEC OK id=1-0", "TAKE OK card=12\n"}, {"HOOK EXEC FAILED id=2-0 exit=3", long[:maxExecOutput]}, {"HOOK EXEC OK id=3-0", ""}}, w.seen)
+	assert.Equal(t, []bool{true, true, true}, w.fresh, "presence refreshed after each command, before its wake")
+	assert.Len(t, sh.runs, 3)
+	assert.Equal(t, []string{"3-0"}, f.pending["bus:beta"], "acked only once woken; a failed wake leaves it for the next hook")
+}
+
+// From the command line: --exec with --harness grok starts, and each
+// message runs the command and then appends the wake naming its receipt.
+func TestExecWithGrokHarnessStartsAndWakes(t *testing.T) {
+	t.Parallel()
+	home := grokHome(t)
+	f := newFake()
+	send(t, f, "s1", "b")
+	sh := &shellFake{}
+	code, out, errOut := callStore(t, f, sys{uid: os.Getuid(), exec: lsofOf("1\n"), shell: sh.shell}, testEnv,
+		"hook", "--as", "beta", "--harness", "grok", "--grok-home", home, "--exec", "relay")
+	require.Equal(t, 0, code, errOut)
+	assert.Equal(t, "HOOK EXEC OK id=1-0\nHOOK WAKE OK harness=grok id=1-0\n", out)
+	assert.Len(t, sh.runs, 1)
+	b, err := os.ReadFile(filepath.Join(home, "nova-hook.wake"))
+	require.NoError(t, err)
+	assert.Equal(t, "nova-bus saved event 1-0 in "+filepath.Join(home, "nova-bus", "1-0.json")+", with HOOK EXEC OK id=1-0. Read that JSON file and follow local_receiver.\n", string(b))
+	assert.Empty(t, f.pending["bus:beta"])
+}
+
+// The saved event carries the command's receipt and output under exec.
+func TestSavedEventCarriesTheExecResult(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	m := testMsg
+	m.Exec = &execResult{"HOOK EXEC FAILED id=7-0 exit=3", "no card\n"}
+	path, err := save(dir, "beta", m)
+	require.NoError(t, err)
+	b, err := os.ReadFile(path)
+	require.NoError(t, err)
+	var e struct {
+		Exec execResult `json:"exec"`
+	}
+	require.NoError(t, json.Unmarshal(b, &e))
+	assert.Equal(t, *m.Exec, e.Exec)
+	assert.Equal(t, "nova-bus saved event 7-0 in "+path+", with HOOK EXEC FAILED id=7-0 exit=3. Read that JSON file and follow local_receiver.", wakeText(m, path))
+	path, err = save(dir, "beta", testMsg)
+	require.NoError(t, err)
+	b, err = os.ReadFile(path)
+	require.NoError(t, err)
+	assert.NotContains(t, string(b), `"exec"`, "no exec, no field")
 }
 
 func devs(out, null uint64, outChar bool) func(string) (uint64, bool, error) {
@@ -610,7 +710,6 @@ func TestHarnessFlagRefusals(t *testing.T) {
 		{[]string{"--antigravity-events-dir", "/x"}, "--antigravity-events-dir not taken by --harness claude"},
 		{[]string{"--harness", "antigravity", "--antigravity-events-dir", "/x"}, "missing --antigravity-dir <workspace>, --antigravity-session <id>"},
 		{[]string{"--harness", "grok", "--grok-home", "rel"}, `--grok-home "rel" wants an absolute path (normally $HOME/.grok)`},
-		{[]string{"--harness", "grok", "--grok-home", "/x", "--exec", "relay"}, "--exec delivers each message to a command of yours; it takes no --harness"},
 		{[]string{"--exec", " "}, "--exec wants a command"},
 		{[]string{"--service", "extra"}, `--service takes only stop after it, not "extra"`},
 		{[]string{"--service"}, "--service with --harness claude wakes nothing: Claude Code's wake is the session's Monitor; run the hook under the Monitor tool, give --exec a command to run beside the session, or --codex-thread a Codex chat to wake"},
@@ -924,9 +1023,9 @@ func (expired) Err() error { return context.DeadlineExceeded }
 // it timed out.
 func TestExecCutOffSaysItTimedOut(t *testing.T) {
 	t.Parallel()
-	killed := func(context.Context, []string, string, string) (int, error) { return -1, nil }
+	killed := func(context.Context, []string, string, string, io.Writer) (int, error) { return -1, nil }
 	var out, errOut bytes.Buffer
-	err := deliver(expired{context.Background()}, execWake{"relay", sys{shell: killed}}, testMsg, &out, &errOut)
+	err := deliver(expired{context.Background()}, execWake{"relay", sys{shell: killed}, nil}, testMsg, &out, &errOut)
 	var wf wakeFailed
 	require.ErrorAs(t, err, &wf)
 	assert.Equal(t, "HOOK EXEC FAILED id=7-0 exit=-1 reason=timed out after 8s\n", errOut.String())
