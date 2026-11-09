@@ -77,6 +77,13 @@ type execWake struct {
 	out     io.Writer
 }
 
+// maxEnvField bounds one field in the command's environment; a longer one,
+// or one with a NUL byte, is empty there and read from the line. Linux
+// refuses an exec with an environment string over MAX_ARG_STRLEN (131072
+// bytes), macOS one whose arguments and environment pass ARG_MAX (1 MiB) in
+// all: half the first, so four fields at the bound are a quarter of the second.
+const maxEnvField = 131072 / 2
+
 // exitError is the command's non-zero exit (-1: it did not run or was cut
 // off by the limit).
 type exitError struct{ code int }
@@ -86,7 +93,11 @@ func (e exitError) Error() string { return fmt.Sprintf("exit %d", e.code) }
 func (e execWake) wake(ctx context.Context, m Msg) error {
 	env := []string{"NOVA_BUS_ID=" + m.ID}
 	for _, k := range []string{"from", "re", "subject", "body"} {
-		env = append(env, "NOVA_BUS_"+strings.ToUpper(k)+"="+m.Fields[k])
+		v := m.Fields[k]
+		if len(v) > maxEnvField || strings.Contains(v, "\x00") {
+			v = "" // the line on stdin carries it
+		}
+		env = append(env, "NOVA_BUS_"+strings.ToUpper(k)+"="+v)
 	}
 	code, err := e.s.shell(ctx, env, line(m), e.command, e.out)
 	if err != nil {
