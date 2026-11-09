@@ -38,9 +38,10 @@ github_runner_env: {}
 
 # The PATH the service starts with when github_runner_env has none; its jobs inherit it, so a step finds the nova
 # tools (`nova-reserve run ...`): nova_bin_dir first (group_vars/all.yml, where install.yml puts them), then the
-# system's. Linux: systemd's list and the Debian/Ubuntu login tail runners had before; macOS: the daemon's old default.
+# system's. Linux: systemd's list and the Debian/Ubuntu login tail runners had before; macOS: Homebrew's prefix
+# (/opt/homebrew on Apple silicon, /usr/local on Intel) before the system's, as nova_service_path has it.
 github_runner_default_path_linux: "{{ nova_bin_dir }}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin"
-github_runner_default_path_darwin: "{{ nova_bin_dir }}:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+github_runner_default_path_darwin: "{{ nova_bin_dir }}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
 # Linux only: run the runner's bin/installdependencies.sh (system packages) once per
 # release on the host.

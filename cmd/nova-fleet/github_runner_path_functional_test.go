@@ -69,8 +69,9 @@ func TestRunnerServiceFilesPutTheToolsFirstOnPath(t *testing.T) {
 	bin := home + "/.local/bin"
 	assert.Contains(t, service, "\nEnvironment=PATH="+bin+":/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin\n")
 	assert.Equal(t, 1, strings.Count(service, "Environment=PATH="))
-	assert.Contains(t, plist, "<key>PATH</key>\n    <string>"+bin+":/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>\n")
+	assert.Contains(t, plist, "<key>PATH</key>\n    <string>"+bin+":/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>\n")
 	assert.Equal(t, 1, strings.Count(plist, "<key>PATH</key>"))
+	assert.Contains(t, service, "\nLimitMEMLOCK=infinity\n")
 }
 
 func TestRunnerEnvPathStillWins(t *testing.T) {
