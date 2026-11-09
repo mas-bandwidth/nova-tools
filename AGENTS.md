@@ -177,7 +177,7 @@ tests/tla/check.sh /opt/tla/tla2tools.jar                       # every model
 tests/tla/check.sh /opt/tla/tla2tools.jar cmd/nova-bus/tla cmd/nova-reserve/tla   # named directories
 ```
 
-- `CASES.tsv` names each configuration, module, expected result, property and deadlock mode. A normal case must pass; a broken case changes the model on purpose and must fail as its row says. Without a case table a directory holds one model; configurations containing `Broken` must violate and the others must pass. A timeout (default 600 s, `TLC_TIMEOUT`) fails the run. A configuration whose name contains `Large` is a bigger instance of one that also runs; per-commit CI sets `TLC_SKIP_LARGE=1` to leave it out, and the nightly (schedule) run checks every case. Each output line starts with `ok` when the case came out as expected.
+- Each model directory's `CASES.tsv` names each configuration, module, expected result, property and deadlock mode. A normal case must pass; a broken case changes the model on purpose and must fail as its row says: TLC names the row's invariant or action property as violated, or, for a temporal row, ends in a violated temporal property and nothing else. A timeout (default 600 s, `TLC_TIMEOUT`) fails the run. A configuration whose name contains `Large` is a bigger instance of one that also runs; per-commit CI sets `TLC_SKIP_LARGE=1` to leave it out, and the nightly (schedule) run checks every case. Each output line starts with `ok` when the case came out as expected.
 - Model the layout where code does index arithmetic: ring, head, tail, count, modulo, full versus empty. Give each layout model a reversed witness that reproduces the bug, and pair it with an abstract model.
 
 ## Per-tool tests and models

@@ -4,13 +4,12 @@
 #   tests/tla/check.sh JAR      every cmd/<tool>/tla directory that holds a module
 #   tests/tla/check.sh JAR DIR...     only these directories
 #
-# A directory with a CASES.tsv runs its rows (config, module, expected,
+# A directory runs the rows of its CASES.tsv (config, module, expected,
 # property, deadlock). Expected is "pass", or the kind of violation the case
 # is a reversed witness for (invariant, action, temporal) with the property it
-# must break. Deadlock is "check" or "ignore-terminal" (TLC -deadlock).
-# A directory with no CASES.tsv holds one module: each .cfg runs against it,
-# a .cfg whose name contains "Broken" must end in a violation, and every
-# other .cfg must pass.
+# must break: TLC must name that invariant or action property as violated, and
+# a temporal case must end in a violated temporal property and nothing else.
+# Deadlock is "check" or "ignore-terminal" (TLC -deadlock).
 #
 # TLC writes into a private copy of the directory, never into the checkout.
 # Each case is bounded by TLC_TIMEOUT seconds (default 600); a timeout fails.
@@ -37,18 +36,16 @@ if [ "${1:-}" = "--case" ]; then
 	ok=0
 	case "$expected" in
 	pass) [ "$code" -eq 0 ] && ok=1 ;;
-	*)
+	invariant | action)
 		if [ "$code" -ge 10 ] && [ "$code" -le 14 ]; then
-			ok=1
-			if [ "$expected" = invariant ] || [ "$expected" = action ]; then
-				ok=0
-				IFS='|' read -r -a props <<<"$property"
-				for p in "${props[@]}"; do
-					grep -q -E "(Invariant|Action property) $p is violated" <<<"$out" && ok=1
-				done
-			fi
+			IFS='|' read -r -a props <<<"$property"
+			for p in "${props[@]}"; do
+				grep -q -E "(Invariant|Action property) $p is violated" <<<"$out" && ok=1
+			done
 		fi
 		;;
+	# 13 is TLC's exit status for a violated temporal property; its output does not say which
+	temporal) [ "$code" -eq 13 ] && ok=1 ;;
 	esac
 	if [ "$ok" -eq 1 ]; then
 		echo "ok   $dir/$cfg ($expected)"
@@ -78,23 +75,11 @@ fi
 cases=$(mktemp)
 trap 'rm -f "$cases"' EXIT
 for d in "${dirs[@]}"; do
-	if [ -f "$d/CASES.tsv" ]; then
-		tail -n +2 "$d/CASES.tsv" | while IFS=$'\t' read -r cfg module expected property deadlock; do
-			[ -n "${TLC_SKIP_LARGE:-}" ] && [[ $cfg == *Large* ]] && { echo "skip $d/$cfg (TLC_SKIP_LARGE)" >&2; continue; }
-			printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$d" "$cfg" "$module" "$expected" "$property" "$deadlock"
-		done >>"$cases"
-		continue
-	fi
-	mods=("$d"/[!M]*.tla)
-	[ ${#mods[@]} -eq 1 ] && [ -f "${mods[0]}" ] || { echo "$d: no CASES.tsv and not exactly one module" >&2; exit 2; }
-	module=$(basename "${mods[0]}")
-	for c in "$d"/*.cfg; do
-		cfg=$(basename "$c")
+	[ -f "$d/CASES.tsv" ] || { echo "$d: no CASES.tsv" >&2; exit 2; }
+	tail -n +2 "$d/CASES.tsv" | while IFS=$'\t' read -r cfg module expected property deadlock; do
 		[ -n "${TLC_SKIP_LARGE:-}" ] && [[ $cfg == *Large* ]] && { echo "skip $d/$cfg (TLC_SKIP_LARGE)" >&2; continue; }
-		expected=pass
-		case "$cfg" in *Broken*) expected=violation ;; esac
-		printf '%s\t%s\t%s\t%s\t-\tcheck\n' "$d" "$cfg" "$module" "$expected" >>"$cases"
-	done
+		printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$d" "$cfg" "$module" "$expected" "$property" "$deadlock"
+	done >>"$cases"
 done
 
 jobs=$(getconf _NPROCESSORS_ONLN)
