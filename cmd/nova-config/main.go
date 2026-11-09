@@ -229,8 +229,8 @@ func runKind(ctx context.Context, k *kind, verb string, args []string, d deps, s
 			problems = append(problems, "no field given to set")
 		} else if op == "add" {
 			after, err = k.newRow(name, given)
-		} else if op == "set" {
-			_, err = k.merge(Row{Name: name, F: map[string]string{"every": "1"}}, given)
+		} else if op == "set" { // the values given, with no check of the row: it is checked whole once they are on the row the store holds
+			_, err = (&kind{fields: k.fields}).merge(Row{F: map[string]string{}}, given)
 		}
 		if err != nil && (op == "add" || errors.As(err, new(valueError))) {
 			problems = append(problems, err.Error())

@@ -195,7 +195,8 @@ The conversation id is the directory name under `~/.gemini/antigravity/brain/` o
 
 **`--exec <command>`** with the default harness runs a command of yours per message instead of printing it: the
 line on its stdin, the fields in `NOVA_BUS_ID`, `NOVA_BUS_FROM`, `NOVA_BUS_RE`, `NOVA_BUS_SUBJECT` and
-`NOVA_BUS_BODY`, under the 8 s limit. Exit 0 is the delivery (`HOOK EXEC OK id=<id>`), and only then is the message
+`NOVA_BUS_BODY` (empty for a field over 64 KiB or with a NUL byte: read it from the line), under the 8 s limit.
+Exit 0 is the delivery (`HOOK EXEC OK id=<id>`), and only then is the message
 marked handled; any other exit is `HOOK EXEC FAILED id=<id> exit=<n>` (`exit=-1 reason=timed out after 8s` when the
 limit cut it off) on stderr and ends the hook with the message
 unhandled.
@@ -271,8 +272,8 @@ for the name has ended (to see what a failed wake left), and refuses a name no h
 `NOVA_BUS_USER` without `NOVA_BUS_PASSWORD` is refused (exit 2): go-redis
 would send no `AUTH` at all and run as `default`. The user needs the keys
 `bus:*` and the commands nova-bus sends (streams, `GET`/`SET`/`DEL`, `SCAN`,
-`EVALSHA`/`EVAL`, `MULTI`/`EXEC`):
-`~bus:* +@stream +@string +@keyspace +@transaction +eval +evalsha +@connection -@dangerous`.
+`EVALSHA`/`EVAL`):
+`~bus:* +@stream +@string +@keyspace +eval +evalsha +@connection -@dangerous`.
 The functional test runs a server with exactly that user and `default` off.
 
 Each process keeps one Redis connection and runs its commands in turn. The
@@ -359,7 +360,7 @@ A hook reads its pending entries first (`XREADGROUP ... 0`: handed to a hook
 and never acked), then new ones (`XREADGROUP ... >`, up to 100 at a
 time). For each entry it delivers it (writes the line, runs the `--exec`
 command, saves the Codex event and prints its line, or wakes the session), then acks it and deletes it (`XACK` and
-`XDEL` in one `MULTI`), so an inbox holds only what is waiting. The ack runs
+`XDEL` in one Lua script), so an inbox holds only what is waiting. The ack runs
 to the end even if a signal arrives after the write, and no further line is
 written once one has. For the Grok, Antigravity, and exec adapters, a delivery that surely failed (a wake that did not
 answer, an exec without a harness that exited non-zero) ends the hook with the entry unacked
@@ -386,8 +387,8 @@ For the bus transport:
   the batch) is not retried: the hook reconnects after a second and starts
   again from the pending list, so the batch is printed then.
 
-**No retries.** A send that fails prints `nova-bus: SEND FAILED to <name>:
-<error>` and exits 1; the names before it were sent (their lines are on
+**No retries.** A send that fails prints `nova-bus send: SEND FAILED to
+<name>: <error>` and exits 1; the names before it were sent (their lines are on
 stdout), the names after it were not. The tool never retries a send: if the
 connection dropped mid-command the message may or may not have been
 appended, so retrying is the caller's choice, knowing that it can duplicate.

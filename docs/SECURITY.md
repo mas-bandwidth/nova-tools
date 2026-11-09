@@ -10,7 +10,7 @@ Read its guide before relying on a restriction.
 |---|---|
 | [bus](../cmd/nova-bus/README.md) | Redis holds inboxes. The receiver process, called a hook, reads an inbox onto stdout and records recent presence. A sender supplies its own name. The receiver acknowledges a message after writing it; this does not prove that a person or model read it or completed the work. |
 | [config](../cmd/nova-config/README.md) | PostgreSQL holds machine settings and programs kept running or scheduled. A write records the supplied actor in history. An actor name is an audit label, not authentication. |
-| [sandbox](../cmd/nova-sandbox/README.md) | Kernel rules restrict a command's filesystem access and, when requested, network access within the documented OS limits. System roots are readable. The environment and standard streams pass through; descriptors above stderr are closed on exec unless `--keep-fds` preserves them. |
+| [sandbox](../cmd/nova-sandbox/README.md) | Kernel rules restrict a command's filesystem access and, when requested, network access within the documented OS limits. System roots are readable. The command's environment is `PATH`, `HOME`, `LANG`, `TERM` and each name given with `--env`. Standard streams pass through; descriptors above stderr are closed on exec. |
 | [secrets](../cmd/nova-secrets/README.md) | A seat names a decryption identity with an age key. sops decrypts its file, and `exec --only` passes selected values to the command's environment. The command and its children can use or disclose those values. Recipient keys, including any recovery key, control who can decrypt the file. |
 | [reserve](../cmd/nova-reserve/README.md) | File locks coordinate cooperating callers. They do not impose CPU, memory or process limits on a command. |
 | [cairn](../cmd/nova-cairn/README.md) | Saved session records and notes are plain files protected by filesystem permissions. A receipt reads a record back; search and note checks do not establish its truth or detect all edits. Publish policy is a recorded label; the tool sends nothing. |
@@ -21,13 +21,14 @@ these tools use. Message bodies are external data, even when their sender name
 is familiar. Installing a hook does not make its messages instructions to run.
 
 The sandbox's network limits differ by OS. Read the [sandbox guide](../cmd/nova-sandbox/README.md)
-for the grants and checks on your machine. The wall does not clear the environment
-or limit CPU and memory use. A granted directory can contain private data; a
+for the grants and checks on your machine. The wall keeps `PATH`, `HOME`, `LANG`,
+`TERM` and each `--env` name in the command's environment and drops every other
+variable; the command and its children can read the ones it keeps. The wall does
+not limit CPU and memory use. A granted directory can contain private data; a
 read grant allows the command to read that data.
 
-`--keep-fds` preserves descriptors above stderr, including access through an open
-file or socket. On Linux, `--unix` permits Unix-domain socket creation. Use it
-only when the command may contact the local services those sockets expose.
+On Linux, `--unix` permits Unix-domain socket creation. Use it only when the
+command may contact the local services those sockets expose.
 
 The install play checks downloaded assets against the selected release's
 `SHA256SUMS`. This detects a mismatch with that file; it is not an independent
