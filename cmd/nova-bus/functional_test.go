@@ -315,7 +315,7 @@ func TestHookEndsWhenItsReaderGoes(t *testing.T) {
 // the login is refused.
 func TestNamedACLUser(t *testing.T) {
 	t.Parallel()
-	addr := startRedis(t, "--user", "bus", "on", ">secret", "~bus:*", "+@stream", "+@string", "+@keyspace", "+@transaction", "+eval", "+evalsha", "+@connection", "-@dangerous", "--user", "default", "off")
+	addr := startRedis(t, "--user", "bus", "on", ">secret", "~bus:*", "+@stream", "+@string", "+@keyspace", "+eval", "+evalsha", "+@connection", "-@dangerous", "--user", "default", "off")
 	bin := filepath.Join(t.TempDir(), "nova-bus")
 	build := exec.Command("go", "build", "-o", bin, ".")
 	build.Stderr = os.Stderr
