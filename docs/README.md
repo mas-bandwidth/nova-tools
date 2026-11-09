@@ -90,8 +90,6 @@ uses Bash on Linux, macOS or WSL2.
 
 This needs git and the Go version in [go.mod](../go.mod), or a compatible
 newer version. It builds only your chosen tool from the same release tag.
-These source paths match the pinned release; for a checkout of `main`, use
-`./cmd/nova-<tool>` as described in the [build checks](../AGENTS.md#build-and-ci-checks):
 
 ```sh
 (
