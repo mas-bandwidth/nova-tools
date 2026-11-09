@@ -122,7 +122,7 @@ machine is the one nova-config's rows say ("Adding a machine" below). Nothing he
 | 9 | health | `health` on every machine of the bench, runner and services groups (Linux; a Mac is skipped) | the guards are in place before anything long-running starts |
 | 10 | tools | `install` on every machine of the bench, runner and services groups, from the release `--tools vX.Y.Z` or a local build `--tools DIR`; a machine with no role (a seat only) gets no software | the services run these binaries |
 | 11 | services | `services` | each seat holds its granted values now |
-| 12 | runners | `github-runners` on every machine named except this control node, `--runner-count` per machine (default `cores`: one per `github_runner_cores_per_runner`, 4, cores, at least 1) (only with `--runners`); the play asks GitHub for its token with this node's `gh` login | |
+| 12 | runners | `github-runners` on every machine named except this control node, `--runner-count` per machine (default `cores`: one per `github_runner_cores_per_runner`, 4, cores, at least 1) (only with `--runners`; with only this control node named, no runner is registered and the step fails); the play asks GitHub for its token with this node's `gh` login | |
 | 13 | bus | `nova-bus who` over the store machine's Redis with the fleet's `NOVA_BUS_PASSWORD`; it names no inbox and sends nothing as a person (receipt `UP BUS OK <redis> present=<n>`) | the fleet is reached end to end |
 
 Each play prints its own receipts; each step adds `UP <step> OK` (or `WOULD-...` under `--check`), and the run ends
@@ -1002,6 +1002,7 @@ stderr; missing prerequisites also print one diagnostic per gap on stdout:
 | an unknown play or verb | the verbs and the plays, and `run: nova-fleet help` |
 | an unknown flag before `--`, or a word before `--` | `ansible-playbook flags go after --` |
 | `--inventory` naming nothing | the path, and to name an existing file or script |
+| `nova-fleet` with no verb or play | `nova-fleet: want a verb or a play; run: nova-fleet help` |
 | ansible-playbook, its `ansible.posix` collection, or (with no `--inventory`) nova-config missing | one `CHECK MISSING <name>: <the pasteable fix line>` per gap on stdout, all at once, then `this control node lacks <n> of what the play needs ...; run: nova-fleet check` |
 
 A play whose machine groups match no host is refused with exit 1 before it runs: `no host is in <groups> ...; run:

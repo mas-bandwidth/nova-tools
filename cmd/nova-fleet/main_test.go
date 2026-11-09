@@ -20,6 +20,7 @@ type fake struct {
 	found    map[string]string
 	code     int
 	list     string
+	noGalaxy bool // ansible-galaxy cannot run (exit 127)
 	bin      string
 	argv     []string
 	env      []string
@@ -37,6 +38,8 @@ func (f *fake) install(t *testing.T) {
 		switch {
 		case slices.Contains(args, "--list-hosts"):
 			return f.list, "", 0
+		case filepath.Base(bin) == "ansible-galaxy" && f.noGalaxy:
+			return "", "exec: not found", 127
 		case filepath.Base(bin) == "ansible-galaxy":
 			return "ansible.posix 1.5.4\n", "", 0
 		}
@@ -336,6 +339,17 @@ func TestMissingHelpers(t *testing.T) {
 	}
 }
 
+// A play's gate with an ansible-galaxy that cannot run counts ansible.posix missing, with the reason.
+func TestGateGalaxyThatCannotRun(t *testing.T) {
+	f := &fake{found: map[string]string{"ansible-playbook": "/a/ansible-playbook", "nova-config": "/b/nova-config"}, noGalaxy: true}
+	f.install(t)
+	code, out, errs := runArgs("services")
+	if code != 2 || f.argv != nil || out != "CHECK MISSING ansible.posix: nova-fleet show requirements > requirements.yml && /a/ansible-galaxy collection install -r requirements.yml  # /a/ansible-galaxy could not run, so the collections are unchecked: exec: not found\n" ||
+		!strings.Contains(errs, "lacks 1 of what the play needs") {
+		t.Errorf("code %d ran %q stdout %q stderr %q", code, f.argv, out, errs)
+	}
+}
+
 func TestHelp(t *testing.T) {
 	for _, args := range [][]string{{"help"}, {"-h"}, {"--help"}} {
 		if code, out, errs := runArgs(args...); code != 0 || out != banner || errs != "" {
@@ -348,8 +362,8 @@ func TestHelp(t *testing.T) {
 			t.Errorf("%q: code %d stdout %q stderr %q", args, code, out, errs)
 		}
 	}
-	if code, _, errs := runArgs(); code != 2 || errs != banner {
-		t.Errorf("no arguments: code %d", code)
+	if code, out, errs := runArgs(); code != 2 || out != "" || errs != "nova-fleet: want a verb or a play; run: nova-fleet help\n" {
+		t.Errorf("no arguments: code %d stdout %q stderr %q", code, out, errs)
 	}
 }
 
