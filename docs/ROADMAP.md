@@ -15,6 +15,8 @@ Ideas and future work for nova-tools. Nothing here is scheduled; the owner decid
 | nova-sandbox refuses a --write grant covering its own binary or anything on PATH that chooses it | ❌ |
 | nova-sandbox probe prints bin= like check and show | ❌ |
 | A VM mock fleet so nova-fleet up can be run cold end to end | ❌ |
+| Verified commits: one GitHub account per friend and one for the fleet, each backed by a real email, so every commit shows Verified as the identity that made it | ❌ |
+| MicroVM sandboxing: nova-sandbox runs unattended work in a microVM with an egress allowlist, so a card branch carrying a malicious test cannot reach the host, its keys or the tailnet | ❌ |
 | complete | 0% |
 
 [Source data](roadmap.sexp)
