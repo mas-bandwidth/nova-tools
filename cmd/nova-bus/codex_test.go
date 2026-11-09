@@ -508,6 +508,80 @@ func TestCodexFaultsShowAndResolve(t *testing.T) {
 	}
 }
 
+// A fault marked retry while the chat is busy, by a start or by --resolve,
+// gets one more codex queue once the chat is idle, and its record goes with
+// that wake: no later idle period queues it again.
+func TestCodexRetryMarkedWhileBusyIsQueuedOnce(t *testing.T) {
+	t.Parallel()
+	idle := rolloutMeta + rolloutTurn + rolloutComplete
+	started := `{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"nova-bus: 1 new messages for beta since 7-0:"}]}}` + "\n"
+	for _, by := range []string{"start", "resolve"} {
+		c, r, f, rollout := codexSetup(t, idle, time.Minute)
+		ctx := context.Background()
+		var out, errOut bytes.Buffer
+		r.err = &exec.Error{Name: "codex", Err: exec.ErrNotFound}
+		require.NoError(t, deliver(ctx, c, msgN("7-0", "one"), &out, &errOut))
+		for range codexTries - 1 {
+			_, err := c.poll(ctx, &out, &errOut)
+			require.NoError(t, err)
+		}
+		require.Equal(t, "failed", readFaults(c.dir)[0].result, by)
+		r.err, r.calls = nil, nil
+
+		writeRollout(t, rollout, idle+rolloutTurn, f.clock.Add(-time.Minute)) // a turn is running
+		if by == "start" {
+			var err error
+			c, err = startCodex(testThread, c.s, f, io.Discard)
+			require.NoError(t, err)
+		} else {
+			require.Equal(t, 0, codexResolve(c.s, "beta", testThread, "7-0=retry", &out, &errOut), errOut.String())
+		}
+		require.Equal(t, "retry", readFaults(c.dir)[0].result, by)
+		why, err := c.poll(ctx, &out, &errOut)
+		require.NoError(t, err)
+		assert.Equal(t, "a turn is running", why, by)
+		assert.Empty(t, r.calls, by)
+
+		content := idle + rolloutTurn + rolloutComplete
+		for period := 1; period <= 4; period++ {
+			writeRollout(t, rollout, content, f.clock.Add(-time.Minute)) // the chat is idle again
+			for range 3 {
+				_, err := c.poll(ctx, &out, &errOut)
+				require.NoError(t, err)
+			}
+			require.Len(t, r.calls, 1, "%s, idle period %d: one more codex queue for the message, ever", by, period)
+			assert.Empty(t, readFaults(c.dir), "%s, idle period %d: the retried fault went with its wake", by, period)
+			content += started + rolloutComplete // the queued wake's turn runs and ends
+		}
+		assert.True(t, strings.HasPrefix(r.calls[0][5], "nova-bus: 1 new messages for beta since 7-0:"), r.calls[0][5])
+	}
+}
+
+// A retried fault whose wake was queued as the hook stopped: the next start
+// finds the wake's text in the rollout, so it is woken and its fault goes
+// with it; nothing is queued for it again.
+func TestCodexRetryQueuedBeforeAStopIsNotQueuedAgain(t *testing.T) {
+	t.Parallel()
+	idle := rolloutMeta + rolloutTurn + rolloutComplete
+	c, r, f, rollout := codexSetup(t, idle, time.Minute)
+	_, err := save(c.dir, "beta", msgN("7-0", "hi"))
+	require.NoError(t, err)
+	const start = "nova-bus: 1 new messages for beta since 7-0:"
+	require.NoError(t, writeFault(c.dir, codexFault{last: "7-0", first: "7-0", result: "retry"}))
+	require.NoError(t, writeRecord(c.dir, "intent", codexRecord{last: "7-0", size: int64(len(idle)), first: "7-0", start: start}))
+	writeRollout(t, rollout, idle+`{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"`+start+` read each"}]}}`+"\n"+rolloutComplete, f.clock.Add(-time.Minute))
+	c2, err := startCodex(testThread, c.s, f, io.Discard)
+	require.NoError(t, err)
+	assert.Equal(t, "7-0", c2.woken)
+	assert.Empty(t, readFaults(c.dir), "the fault went with its wake")
+	var out, errOut bytes.Buffer
+	for range 3 {
+		_, err := c2.poll(context.Background(), &out, &errOut)
+		require.NoError(t, err)
+	}
+	assert.Empty(t, r.calls, "never queued again")
+}
+
 // An intent left when the hook stopped is reported by show and settled by
 // resolve: woken records it as woken.
 func TestCodexResolveAnIntent(t *testing.T) {
