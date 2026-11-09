@@ -415,6 +415,12 @@ func (t tool) set(args []string) error {
 	if !envName.MatchString(name) {
 		return bad("NAME %q is not an environment variable name", name)
 	}
+	if err := t.bootstrap(o, true); err != nil {
+		return err
+	}
+	if err := t.ready(o); err != nil {
+		return err
+	}
 	var raw []byte
 	if f, ok := t.stdin.(*os.File); ok && isTerminal(f) {
 		fmt.Fprintf(t.stderr, "%s (paste it, then enter; it is not shown): ", name)
@@ -433,13 +439,10 @@ func (t tool) set(args []string) error {
 	if value == "" || strings.ContainsAny(value, "\r\n\x00") {
 		return refuse("set: empty or multi-line value on stdin; the value must be one non-empty line; run: nova-secrets set -h")
 	}
-	if err := t.bootstrap(o); err != nil {
+	if err := t.bootstrap(o, false); err != nil {
 		return err
 	}
 	if _, err := t.toplevel(o.store); err != nil {
-		if errors.As(err, new(refusal)) { // git itself is missing
-			return err
-		}
 		return refuse("%s is not a git repository; run: git -C %s init && git -C %s add -A && git -C %s commit -m store", o.store, o.store, o.store, o.store)
 	}
 	rec, err := t.pinnedRecovery(o)
@@ -473,11 +476,35 @@ func (t tool) set(args []string) error {
 	return nil
 }
 
+// ready refuses a set that could not finish, before the value is read, so it is given once: a program set runs is
+// missing, the store's directory (the nearest one there is, for a store set makes) cannot be written, or git has no
+// author or committer for the commit.
+func (t tool) ready(o opts) error {
+	if err := t.sopsFound(o); err != nil {
+		return err
+	}
+	if _, err := t.lookPath("age-keygen"); err != nil {
+		return refuse("age-keygen not found on PATH; install age: apt install age (Debian, Ubuntu), brew install age (macOS)")
+	}
+	dir := existingDir(o.store)
+	if err := writable(dir); err != nil {
+		return refuse("%s cannot be written, and the store is kept there: %v; run: ls -ld %s", dir, err, q(dir))
+	}
+	for _, who := range []string{"GIT_AUTHOR_IDENT", "GIT_COMMITTER_IDENT"} {
+		if _, err := t.gitRun(dir, "var", who); errors.As(err, new(refusal)) { // git itself is missing
+			return err
+		} else if err != nil {
+			return deny("git", "git has no commit identity, and set commits what it writes; nothing was read: run: git config --global user.name 'Your Name' && git config --global user.email you@example.com")
+		}
+	}
+	return nil
+}
+
 // bootstrap makes a fresh node's store when set finds none at the default: a recovery key and this node's key
 // (0600, beside each other), the recovery pin, the store (init) and the seat (seat add), in that order. A store
 // absent elsewhere is no-store; absent with a key, the recovery key or the pin there is partial: a store made now
-// would not match them, and nothing that exists is ever overwritten.
-func (t tool) bootstrap(o opts) error {
+// would not match them, and nothing that exists is ever overwritten. With check it refuses the same and makes nothing.
+func (t tool) bootstrap(o opts, check bool) error {
 	dir := filepath.Dir(t.keyFile("x"))
 	rk := filepath.Join(dir, "recovery.key")
 	resume := false // a store this bootstrap made and stopped in before the seat (a failed commit): finished with its keys
@@ -500,6 +527,9 @@ func (t tool) bootstrap(o opts) error {
 	if len(there) > 0 {
 		return deny("partial", "there is no store at %s, but %s: a store made now would not match, and nothing that exists is overwritten; "+
 			"put the store back (git clone <its upstream> %s), or move those aside and run again", o.store, strings.Join(there, " and ")+" exist", o.store)
+	}
+	if check {
+		return nil
 	}
 	made := resume // the recovery key exists from here, so its backup line is printed whatever follows
 	defer func() {
@@ -750,13 +780,21 @@ func envWhere(env []string, keep func(name string) bool) []string {
 	return out
 }
 
+// sopsFound refuses when --sops is not a program that can be run.
+func (t tool) sopsFound(o opts) error {
+	if _, err := t.lookPath(o.sops); err != nil {
+		install := map[bool]string{true: "brew install sops", false: "the release binary from https://github.com/getsops/sops/releases on PATH, executable"}[runtime.GOOS == "darwin"]
+		return deny("no-sops", "sops not found at %s; install sops 3.x: %s, or pass --sops <path>", o.sops, install)
+	}
+	return nil
+}
+
 // sopsRun runs sops in the store with --key as its only identity, after the key
 // file's mode and owner check. A failure carries the command that ran, in a form
 // that is safe to paste: a scratch HOME, and a decrypt that writes to /dev/null.
 func (t tool) sopsRun(o opts, stdin io.Reader, args ...string) ([]byte, error) {
-	if _, err := t.lookPath(o.sops); err != nil {
-		install := map[bool]string{true: "brew install sops", false: "the release binary from https://github.com/getsops/sops/releases on PATH, executable"}[runtime.GOOS == "darwin"]
-		return nil, deny("no-sops", "sops not found at %s; install sops 3.x: %s, or pass --sops <path>", o.sops, install)
+	if err := t.sopsFound(o); err != nil {
+		return nil, err
 	}
 	if err := checkKey(o.key); err != nil {
 		return nil, err

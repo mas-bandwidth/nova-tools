@@ -58,6 +58,9 @@ func checkPrivate(_ string, fi os.FileInfo) error {
 	return nil
 }
 
+// writable is nil when this user may make files in dir.
+func writable(dir string) error { return unix.Access(dir, unix.W_OK) }
+
 // readHidden reads one line from the terminal f with echo off, so a pasted value is never shown.
 func readHidden(f *os.File) ([]byte, error) {
 	fd := int(f.Fd())

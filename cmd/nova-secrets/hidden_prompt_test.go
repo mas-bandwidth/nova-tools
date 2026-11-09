@@ -30,8 +30,13 @@ func TestFunctionalCtrlCAtTheHiddenPromptPutsEchoBack(t *testing.T) {
 	build := exec.Command("go", "build", "-o", bin, ".")
 	build.Stderr = os.Stderr
 	require.NoError(t, build.Run())
-	cmd := exec.Command(bin, "set", "X", "--store", filepath.Join(dir, "store"), "--key", filepath.Join(dir, "k"), "--pins", filepath.Join(dir, "pins"))
-	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + dir, "NOVA_SECRETS_SEAT=ada"}
+	tools := filepath.Join(dir, "tools") // set asks for its value only when it could finish: stand-ins that answer yes
+	require.NoError(t, os.Mkdir(tools, 0o755))
+	for _, name := range []string{"sops", "age-keygen", "git"} {
+		require.NoError(t, os.WriteFile(filepath.Join(tools, name), []byte("#!/bin/sh\nexit 0\n"), 0o755))
+	}
+	cmd := exec.Command(bin, "set", "X") // a fresh node: the prompt comes before anything is made
+	cmd.Env = []string{"PATH=" + tools, "HOME=" + dir, "NOVA_SECRETS_SEAT=ada"}
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = slave, slave, slave
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true, Ctty: 0} // the pty is its terminal: Ctrl-C signals it
 	require.NoError(t, cmd.Start())

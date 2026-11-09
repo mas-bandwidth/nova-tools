@@ -345,7 +345,8 @@ nova-fleet check || echo "exit $?"
 a command for you (installs, builds) and check again. The list covers the
 helper programs and each Ansible collection from `nova-fleet show
 requirements`. Then the tailnet (a `CHECK NOTE` if this machine is not on it:
-`up` joins it). On a fresh machine that has the helpers and the collections
+`up` joins it). On a fresh machine that has the helpers, a git commit identity
+(`CHECK OK git-identity`) and the collections
 (the venv block above installs the collections), exactly one `CHECK MISSING`
 line is left, and the run ends `CHECK FAILED missing=1` on stderr, exit 1:
 
