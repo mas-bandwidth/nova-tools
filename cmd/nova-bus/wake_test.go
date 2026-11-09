@@ -504,6 +504,14 @@ type shellFake struct {
 }
 
 func (s *shellFake) shell(_ context.Context, env []string, stdin, command string, out io.Writer) (int, error) {
+	for _, v := range env { // as a real exec refuses: a NUL in a variable, or one over Linux's MAX_ARG_STRLEN
+		if strings.Contains(v, "\x00") {
+			return -1, errors.New("exec: environment variable contains NUL")
+		}
+		if len(v) >= 131072 {
+			return -1, errors.New("fork/exec /bin/sh: argument list too long")
+		}
+	}
 	s.runs = append(s.runs, command+"|"+stdin+"|"+strings.Join(env, ","))
 	if command == "missing" {
 		return -1, errors.New("fork/exec: no such file")
@@ -554,6 +562,33 @@ func TestExecRunsTheCommandAndAcksOnExitZero(t *testing.T) {
 	_, errOut, err = runWake(t, f, execWake{"missing", sys{shell: sh.shell}, nil})
 	require.ErrorAs(t, err, &wf)
 	assert.Equal(t, "HOOK EXEC FAILED id=4-0 exit=-1 reason=fork/exec: no such file\n", errOut)
+}
+
+// A field the command's environment cannot hold (a NUL byte, or too long)
+// does not stop the delivery: the command runs with that variable empty and
+// the whole line on its stdin, the entry is acked, and the next one follows.
+func TestExecDeliversAFieldItsEnvironmentCannotHold(t *testing.T) {
+	t.Parallel()
+	f := newFake()
+	big, most := strings.Repeat("x", 3<<20), strings.Repeat("y", maxEnvField)
+	for _, body := range []string{"a\x00b", big, most + "y", most, "c"} { // written as a stream holds them: send refuses a NUL
+		_, err := f.Add(context.Background(), "bus:beta", map[string]string{"from": "alpha", "subject": "s", "body": body})
+		require.NoError(t, err)
+	}
+	sh := &shellFake{}
+	out, errOut, _ := runWake(t, f, execWake{"relay", sys{shell: sh.shell}, nil})
+	require.Equal(t, "HOOK EXEC OK id=1-0\nHOOK EXEC OK id=2-0\nHOOK EXEC OK id=3-0\nHOOK EXEC OK id=4-0\nHOOK EXEC OK id=5-0\n", out, errOut)
+	assert.Empty(t, errOut)
+	assert.Empty(t, f.pending["bus:beta"], "each one acked")
+	run := func(id, body, inEnv string) string { // not printed on a mismatch: megabytes
+		return "relay|" + id + "\talpha\t-\ts\t" + body + "\n|NOVA_BUS_ID=" + id + ",NOVA_BUS_FROM=alpha,NOVA_BUS_RE=,NOVA_BUS_SUBJECT=s,NOVA_BUS_BODY=" + inEnv
+	}
+	require.Len(t, sh.runs, 5)
+	assert.True(t, sh.runs[0] == run("1-0", "a\x00b", ""), "a NUL: on stdin, empty in the environment")
+	assert.True(t, sh.runs[1] == run("2-0", big, ""), "3 MiB: on stdin, empty in the environment")
+	assert.True(t, sh.runs[2] == run("3-0", most+"y", ""), "one byte over maxEnvField: on stdin, empty in the environment")
+	assert.True(t, sh.runs[3] == run("4-0", most, most), "maxEnvField bytes: in the environment")
+	assert.True(t, sh.runs[4] == run("5-0", "c", "c"))
 }
 
 // execSeen is a harness wake that records the command's receipt each
