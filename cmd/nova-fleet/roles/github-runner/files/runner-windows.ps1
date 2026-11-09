@@ -16,10 +16,8 @@
 #             into <dir>\retired-<yyyymmdd>\ and its service removed: REPAIR <dir>
 #   ensure    -Dir                                    its service starts at boot and is running: SERVICE <dir> ok|started,
 #             or NO-SERVICE <dir> (the role counts it as not registered, and the next run repairs it)
-#   retire    -Dir                                    stdin carries ONE removal token: config.cmd remove --unattended (GitHub
-#             and the service), the service gone, the dir deleted: RETIRED <dir>
 param(
-  [Parameter(Mandatory = $true)][ValidateSet('install', 'register', 'ensure', 'retire')][string]$Action,
+  [Parameter(Mandatory = $true)][ValidateSet('install', 'register', 'ensure')][string]$Action,
   [string]$Dir = '',
   [string]$Cache = '',
   [string]$Version = '',
@@ -142,18 +140,5 @@ switch ($Action) {
     if ($s.StartMode -ne 'Auto') { Set-Service -Name $s.Name -StartupType Automatic; $did = 'started' }
     if ($s.State -ne 'Running') { Start-Service -Name $s.Name; $did = 'started' }
     "SERVICE $Dir $did $($s.Name)"
-  }
-  'retire' {
-    Need-Admin
-    if (-not (Test-Path -LiteralPath $Dir)) { "ABSENT $Dir"; exit 0 }
-    if (Test-Path (Join-Path $Dir '.runner')) {
-      $rc = Invoke-Config @('remove', '--unattended')
-      if ($rc -ne 0) { "RETIRE-FAILED $Dir rc=$rc"; exit $rc }
-    }
-    $s = Service-Of $Dir
-    if ($s) { Stop-Service -Name $s.Name -Force -ErrorAction SilentlyContinue; & sc.exe delete $s.Name | Out-Null }
-    if (Service-Of $Dir) { "SERVICE-LEFT $Dir"; exit 6 }
-    Remove-Item -LiteralPath $Dir -Recurse -Force
-    "RETIRED $Dir"
   }
 }
