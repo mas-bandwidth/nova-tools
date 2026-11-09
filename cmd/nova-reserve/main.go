@@ -394,8 +394,18 @@ type corrupt string
 
 func (c corrupt) Error() string { return string(c) }
 
+// readIn reads a file of the reservation directory, opened as openIn opens it.
+func readIn(path string) ([]byte, error) {
+	f, err := openIn(path, os.O_RDONLY)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close() // read only
+	return io.ReadAll(f)
+}
+
 func readCapacity(dir string) (capacity, bool, error) {
-	b, err := os.ReadFile(filepath.Join(dir, "capacity"))
+	b, err := readIn(filepath.Join(dir, "capacity"))
 	if errors.Is(err, fs.ErrNotExist) {
 		return capacity{}, false, nil
 	}
@@ -425,18 +435,19 @@ func readCapacity(dir string) (capacity, bool, error) {
 func writeCapacity(dir string, n, pid int, at time.Time) error {
 	path := filepath.Join(dir, "capacity")
 	rec := fmt.Appendf(nil, "%d\npid %d at %s\n", n, pid, at.UTC().Format(time.RFC3339))
-	target, flags := path, os.O_RDWR // no O_CREATE: fs.protected_regular refuses it on another user's file
-	if _, err := os.Lstat(path); errors.Is(err, fs.ErrNotExist) {
-		target, flags = path+"."+strconv.Itoa(pid)+".tmp", os.O_RDWR|os.O_CREATE
+	target := path
+	f, err := openIn(path, os.O_RDWR) // no O_CREATE: fs.protected_regular refuses it on another user's file
+	if errors.Is(err, fs.ErrNotExist) {
+		target = path + "." + strconv.Itoa(pid) + ".tmp"
+		f, err = openIn(target, os.O_RDWR|os.O_CREATE)
 	}
-	f, err := os.OpenFile(target, flags, 0o666)
 	if err != nil {
 		return err
 	}
+	// ignored: only the file's owner may widen it, and only a new file needs it
+	_ = f.Chmod(0o666)
 	_, err = f.WriteAt(rec, 0)
 	err = errors.Join(err, f.Truncate(int64(len(rec))), f.Sync(), f.Close())
-	// ignored: only the file's owner may widen it, and only a new file needs it
-	_ = os.Chmod(target, 0o666)
 	if err == nil && target != path {
 		err = os.Rename(target, path)
 		if d, derr := os.Open(dir); derr == nil {
@@ -487,6 +498,9 @@ func setCapacity(o options, w world) error {
 	}
 	defer free()
 	if err := writeCapacity(o.dir, o.slots, w.pid, w.now()); err != nil {
+		if odd := (*exitError)(nil); errors.As(err, &odd) {
+			return err // openIn's refusal carries its own remedy
+		}
 		p := filepath.Join(o.dir, "capacity")
 		return refuse(2, "%v; run: sudo rm -f %s && nova-reserve %s", err, shellQuote(p), quoteAll(o.args))
 	}
@@ -518,11 +532,13 @@ type taker struct {
 
 func (t *taker) path(name string) string { return filepath.Join(t.o.dir, name) }
 
-// mark writes <name>.holder for status to read, and empties and removes it on
-// release before the lock it names. A holder is believed only while its pid
+// mark writes <name>.holder for status to read and keeps it open, so release,
+// before the lock it names, empties the file this hold wrote, whatever the
+// path names by then, and removes it. A holder is believed only while its pid
 // lives. Another user's file in the sticky directory cannot be removed, so it
 // is rewritten in place, opened without O_CREATE, which fs.protected_regular
-// refuses there. A file that cannot be written is a refusal: status would
+// refuses there; a new one is made with O_EXCL, so nothing put there since the
+// remove is opened. A file that cannot be written is a refusal: status would
 // show the slot free, or held by a stale pid.
 func (t *taker) mark(name string) error {
 	f := []string{"pid=" + strconv.Itoa(t.w.pid), "since=" + t.w.now().UTC().Format(time.RFC3339)}
@@ -535,21 +551,25 @@ func (t *taker) mark(name string) error {
 	p := t.path(name + ".holder")
 	// ignored: a file that stays is rewritten in place
 	_ = os.Remove(p)
-	file, err := os.OpenFile(p, os.O_WRONLY|os.O_TRUNC, 0)
+	file, err := openIn(p, os.O_WRONLY)
 	if errors.Is(err, fs.ErrNotExist) {
-		file, err = os.OpenFile(p, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o666)
-		// ignored: only the file's owner may widen it, and this process made it
-		_ = os.Chmod(p, 0o666)
+		if file, err = openIn(p, os.O_WRONLY|os.O_CREATE|os.O_EXCL); err == nil {
+			// ignored: only the file's owner may widen it, and this process made it
+			_ = file.Chmod(0o666)
+		}
 	}
-	if err == nil {
-		_, err = file.WriteString(strings.Join(f, " ") + "\n")
-		err = errors.Join(err, file.Close())
+	if line := strings.Join(f, " ") + "\n"; err == nil {
+		_, err = file.WriteAt([]byte(line), 0)
+		err = errors.Join(err, file.Truncate(int64(len(line))))
+	}
+	if odd := (*exitError)(nil); err != nil && !errors.As(err, &odd) { // openIn's refusal carries its own remedy
+		err = refuse(2, "%v; status could not show this hold; run: sudo rm -f %s && nova-reserve %s", err, shellQuote(p), quoteAll(t.o.args))
 	}
 	if err != nil {
-		return refuse(2, "%v; status could not show this hold; run: sudo rm -f %s && nova-reserve %s", err, shellQuote(p), quoteAll(t.o.args))
+		return err
 	}
 	// ignored: emptied, a file that cannot be removed names no holder
-	t.held = append(t.held, func() { _ = os.Truncate(p, 0); _ = os.Remove(p) })
+	t.held = append(t.held, func() { _ = file.Truncate(0); _ = file.Close(); _ = os.Remove(p) })
 	return nil
 }
 
@@ -716,7 +736,7 @@ func (t *taker) describe() string {
 // "lockprobe"); a file is believed only while the pid in it is alive, so a
 // SIGKILLed holder's leftover file reads as free.
 func holderOf(w world, dir, name string) (string, bool) {
-	b, err := os.ReadFile(filepath.Join(dir, name+".holder"))
+	b, err := readIn(filepath.Join(dir, name+".holder"))
 	line := strings.TrimSpace(string(b))
 	for _, f := range strings.Fields(line) {
 		if v, ok := strings.CutPrefix(f, "pid="); ok && err == nil {
