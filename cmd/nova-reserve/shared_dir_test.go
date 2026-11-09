@@ -198,3 +198,92 @@ func TestMadeFilesAreForEveryUser(t *testing.T) {
 		assert.Equal(t, os.FileMode(0o666), mode(name), name)
 	}
 }
+
+// linked is the refusal of an entry that is one of two names of one file.
+func linked(path string) string {
+	return path + " has 2 names (a hard link); nova-reserve opens no file in its directory that has another name; run: sudo rm -f " + shellQuote(path)
+}
+
+// hardLink makes path a second name of a file outside the reservation
+// directory holding a valid capacity; same checks it is as it was made.
+func hardLink(t *testing.T, path string) (same func()) {
+	t.Helper()
+	target := filepath.Join(t.TempDir(), "outside")
+	require.NoError(t, os.WriteFile(target, []byte("4\n"), 0o600))
+	require.NoError(t, os.Link(target, path))
+	return func() {
+		t.Helper()
+		b, err := os.ReadFile(target)
+		require.NoError(t, err)
+		assert.Equal(t, "4\n", string(b), "the other name's file keeps its content")
+		fi, err := os.Stat(target)
+		require.NoError(t, err)
+		assert.Equal(t, os.FileMode(0o600), fi.Mode().Perm(), "the other name's file keeps its mode")
+	}
+}
+
+// TestHardLinkedCapacityIsRefused: capacity, or the temporary file a first
+// write renames into place, is a second name of a file elsewhere: a run, set
+// and status refuse, and that file is as it was.
+func TestHardLinkedCapacityIsRefused(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	p := filepath.Join(h.dir, "capacity")
+	same := hardLink(t, p)
+	assert.Equal(t, 2, run([]string{"set", "--slots", "8"}, h.w))
+	assert.Equal(t, "nova-reserve set: "+linked(p)+"\n", h.err.String())
+	h.err.Reset()
+	assert.Equal(t, 2, run([]string{"--", "make"}, h.w))
+	assert.Equal(t, "nova-reserve: "+linked(p)+"\n", h.err.String())
+	assert.Nil(t, h.ran)
+	h.err.Reset()
+	assert.Equal(t, 2, run([]string{"status"}, h.w))
+	assert.Equal(t, "nova-reserve status: "+linked(p)+"\n", h.err.String())
+	assert.True(t, h.f.idle())
+	same()
+
+	h = newHarness(t)
+	tmp := filepath.Join(h.dir, "capacity.42.tmp")
+	same = hardLink(t, tmp)
+	assert.Equal(t, 2, run([]string{"set", "--slots", "8"}, h.w))
+	assert.Equal(t, "nova-reserve set: "+linked(tmp)+"\n", h.err.String())
+	assert.NoFileExists(t, filepath.Join(h.dir, "capacity"))
+	same()
+}
+
+// TestHardLinkedHolderIsRefused: a holder this run cannot remove (the
+// directory is read-only here) that is a second name of a file elsewhere: the
+// hold is refused and that file is as it was.
+func TestHardLinkedHolderIsRefused(t *testing.T) {
+	t.Parallel()
+	if os.Geteuid() == 0 {
+		t.Skip("needs a directory this user cannot write")
+	}
+	h := newHarness(t)
+	h.setCap(t, 1)
+	p := filepath.Join(h.dir, "slot1.holder")
+	same := hardLink(t, p)
+	require.NoError(t, os.Chmod(h.dir, 0o555))
+	t.Cleanup(func() { _ = os.Chmod(h.dir, 0o755) })
+	tk, err := acquire(h.w, h.opts(0, false, 0))
+	require.NoError(t, err)
+	err = tk.mark(tk.name())
+	var e *exitError
+	require.ErrorAs(t, err, &e)
+	assert.Equal(t, exitError{2, linked(p)}, *e)
+	same()
+}
+
+// TestHardLinkedLockIsRefused: a lock file that is a second name of a file
+// elsewhere: no lock is taken and that file is as it was.
+func TestHardLinkedLockIsRefused(t *testing.T) {
+	t.Parallel()
+	p := filepath.Join(t.TempDir(), "gate")
+	same := hardLink(t, p)
+	_, ok, err := osLock(p, true)
+	assert.False(t, ok)
+	var e *exitError
+	require.ErrorAs(t, err, &e)
+	assert.Equal(t, exitError{2, linked(p)}, *e)
+	same()
+}

@@ -22,7 +22,7 @@ const systemDir = "/var/tmp/nova-reserve"
 // openIn opens a file of the reservation directory, where any user may have
 // put anything: it follows no symbolic link (O_NOFOLLOW), waits on no FIFO
 // (O_NONBLOCK), and refuses what is not a regular file, read off the open
-// descriptor and never off the path. A file it may make (O_CREATE) is 0666
+// descriptor and never off the path, or that has a second name. A file it may make (O_CREATE) is 0666
 // whatever the maker's umask, or no other user could open it, lock files too.
 func openIn(path string, flag int) (*os.File, error) {
 	odd := refuse(2, "%s is not a regular file; nova-reserve opens no link or special file in its directory; run: sudo rm -f %s", path, shellQuote(path))
@@ -38,6 +38,11 @@ func openIn(path string, flag int) (*os.File, error) {
 		// ignored: nothing was written through it
 		_ = f.Close()
 		return nil, cmp.Or[error](err, odd)
+	} else if n := uint64(fi.Sys().(*syscall.Stat_t).Nlink); n > 1 {
+		// a second name is a file elsewhere; every file this tool makes has one
+		// name (made or renamed here, never linked). ignored: nothing was written
+		_ = f.Close()
+		return nil, refuse(2, "%s has %d names (a hard link); nova-reserve opens no file in its directory that has another name; run: sudo rm -f %s", path, n, shellQuote(path))
 	}
 	if flag&os.O_CREATE != 0 {
 		// ignored: only the file's owner may widen it, and its maker is the owner
