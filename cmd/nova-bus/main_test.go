@@ -310,6 +310,19 @@ func TestSendBodyFromStdin(t *testing.T) {
 	assert.Equal(t, "from stdin\n", f.entries["bus:beta"][0].Fields["body"], "exactly one trailing newline trimmed")
 }
 
+// A body is text: one holding a NUL byte is refused in one line and nothing
+// is sent.
+func TestSendRefusesABodyWithANUL(t *testing.T) {
+	t.Parallel()
+	f := newFake()
+	hookedIn(t, f, "delta")
+	code, out, errOut := call(t, f, testEnv, "a\x00b\n", "send", "--as", "delta", "--to", "beta", "s", "-")
+	assert.Equal(t, 2, code)
+	assert.Empty(t, out)
+	assert.Equal(t, "nova-bus send: the body holds a NUL byte, and a body is text: encode binary data (base64, say) and send that; run: nova-bus send -h\n", errOut)
+	assert.Empty(t, f.entries, "a refused send writes nothing")
+}
+
 func TestHookPrintsPendingThenNew(t *testing.T) {
 	t.Parallel()
 	f := newFake()

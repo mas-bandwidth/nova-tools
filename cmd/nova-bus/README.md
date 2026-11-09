@@ -195,7 +195,8 @@ The conversation id is the directory name under `~/.gemini/antigravity/brain/` o
 
 **`--exec <command>`** with the default harness runs a command of yours per message instead of printing it: the
 line on its stdin, the fields in `NOVA_BUS_ID`, `NOVA_BUS_FROM`, `NOVA_BUS_RE`, `NOVA_BUS_SUBJECT` and
-`NOVA_BUS_BODY`, under the 8 s limit. Exit 0 is the delivery (`HOOK EXEC OK id=<id>`), and only then is the message
+`NOVA_BUS_BODY` (empty for a field over 64 KiB or with a NUL byte: read it from the line), under the 8 s limit.
+Exit 0 is the delivery (`HOOK EXEC OK id=<id>`), and only then is the message
 marked handled; any other exit is `HOOK EXEC FAILED id=<id> exit=<n>` (`exit=-1 reason=timed out after 8s` when the
 limit cut it off) on stderr and ends the hook with the message
 unhandled.
