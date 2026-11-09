@@ -165,7 +165,7 @@ func installService(ctx context.Context, s sys, clk Clock, name string, cmd []st
 	}
 	if !changed && u.running(ctx, s) {
 		p, err := dial(env("NOVA_BUS_REDIS"), env("NOVA_BUS_USER"), env("NOVA_BUS_PASSWORD")).Presence(ctx)
-		if v, ok := p[name]; err == nil && ok && !strings.Contains(v, "\trecv") {
+		if _, ok := p[name]; err == nil && ok {
 			fmt.Fprintf(stdout, "HOOK SERVICE OK name=%s unit=%s log=%s changed=false\n", name, u.label, u.log)
 			return 0
 		}

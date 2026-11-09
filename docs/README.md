@@ -214,8 +214,7 @@ This live receiver remains installed after the walkthrough. To stop and
 remove it, run `NOVA_BUS_REDIS=<host:port> nova-bus hook --as <name> --service stop`.
 
 Keep the computer awake, the desktop app running, and Redis available.
-Use one receiver per inbox. Stop an older child receiver before starting the
-service; the child-only relay does not wake an idle parent chat. Do not use
+Use one receiver per inbox. Do not use
 `codex queue --resume` or attach a second app-server to the same chat.
 The setup, receipts, and recovery behavior are in
 [cmd/nova-bus/README.md](../cmd/nova-bus/README.md#how-your-session-gets-woken).
@@ -259,7 +258,7 @@ kill %1 %2
 Redis keeps running for the sections below, which use it again; the last
 block shuts it down.
 
-Both names hook in first, because a verb that acts as a name (`send`, `ack`,
+Both names hook in first, because a verb that acts as a name (`send`,
 `pending`) refuses until that name is hooked in, and says how to hook in. The
 two hooks here are background jobs into files only because this is a demo on
 throwaway names; your own hook uses the recipe for your harness, as

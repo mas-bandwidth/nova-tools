@@ -23,8 +23,6 @@ shows transport delivery using a throwaway Redis.
 ```
 nova-bus send --as <me> --to <name>[,<name>] [--re <id>] [--new] <subject> <body | ->
 nova-bus hook --as <name> [--harness claude|grok|antigravity] [its flags] [--exec <command> | --codex-thread <id>] [--service [stop]]
-nova-bus recv --as <name> [--timeout <d>]
-nova-bus ack --as <name> --id <id>
 nova-bus who
 nova-bus show agents | codex-agents
 nova-bus show codex-wake --as <name> --codex-thread <thread>
@@ -35,12 +33,12 @@ nova-bus pending --as <name> [--list]
 **send** appends one message (from, to, subject, body, re) to the stream `bus:<name>` of each recipient and
 prints `<name> <id>` for each. A body of `-` is read from stdin. `--re <id>` names the message this one answers.
 `--as` is required on both verbs: on send it is the sender, on hook the inbox. **You have to hook in before you
-can send**: a verb that acts as you (`send`, `ack`, `pending`) refuses until you are hooked in (a hook holds your
-name, or a `recv` receiver does), exit 1, and tells you how, with the recipe for the harness it
+can send**: a verb that acts as you (`send`, `pending`) refuses until you are hooked in (a hook holds your
+name), exit 1, and tells you how, with the recipe for the harness it
 detects from your environment (`CODEX_THREAD_ID`: the `--codex-thread` service line; `ANTIGRAVITY_*` or `GEMINI_*`: the
 Antigravity hook line; `GROK_HOME`: the Grok line; otherwise the Monitor command), then `run: nova-bus show
-agents` for the full text. So everybody always hooks in, and every answer has a reader. `who`, `show`, `hook`
-and `recv` stay open. A name no hook (or recv) has ever read is refused before anything is sent, exit 1, `no hook has ever held <name>, so nothing would read it`: a typo
+agents` for the full text. So everybody always hooks in, and every answer has a reader. `who`, `show` and `hook`
+stay open. A name no hook has ever read is refused before anything is sent, exit 1, `no hook has ever held <name>, so nothing would read it`: a typo
 would otherwise sit unread forever. `--new` sends to it anyway, for the first message to a name about to hook in.
 
 **hook** delivers every message still waiting for `<name>`, including ones an earlier hook delivered but did not
@@ -156,8 +154,7 @@ Resolution applies to the wake batch containing that id. `retry` requests one fu
 the confirmed outcome. Keep deduplication by message id in the receiving workflow: queue acceptance, model
 receipt, and completion of the requested work are separate events.
 
-Under Codex a foreground hook is refused because it would block the chat; use `--service`. `recv` remains
-available to child receivers, but the standard idle-wake setup is the service above. `nova-bus show
+Under Codex a foreground hook is refused because it would block the chat; use `--service`. `nova-bus show
 codex-agents` prints its instructions for AGENTS.md.
 
 **Grok** (`--harness grok --grok-home <dir>`, normally `~/.grok`). Each message is saved to `<dir>/nova-bus/<id>.json`
@@ -245,16 +242,7 @@ crash), then claims the name, or exits 1 if the other hook is still refreshing i
 kept across reconnects and changed on restart; a crashed hook drops out within 30 s. **pending** prints
 `PENDING OK waiting=<n>` for `<name>`'s unacked messages, and with `--list` their
 `<id><TAB><from><TAB><subject>` (the subject only, never the body), consuming nothing; it also runs once a hook
-for the name has ended (to see what a failed wake left), and refuses a name no hook has ever read. To read one waiting
-message whole without a hook, use **recv**, which acks nothing. Once recv has printed a message it holds the name
-naming it (`who` shows `<name><TAB><uptime><TAB>recv holding <id>`) for 15 minutes, or until `ack` or the next
-`recv`: a slow relay, its ack and the parent's reply all pass the hook-in gate; a reader that died leaves the
-claim to lapse, and the next recv hands the message out again. **recv** prints one message (the oldest unhandled first, as hook
-orders them) and exits 0 without marking it handled, or `RECV NONE name=<name> waited=<d>` on stderr and exit 1 when
-`--timeout` passes with none; it records `<name>`'s presence like a hook but takes no lock, and does not coexist
-with a hook for the same name (they would take the same messages). **ack** marks a received message handled:
-`ACK OK id=<id>`, or `ACK FAILED ...` exit 1 when it was not received or is handled already. hook acks after
-printing by itself; recv and ack are the same two steps as two commands, for a receiver that relays in between.
+for the name has ended (to see what a failed wake left), and refuses a name no hook has ever read.
 
 `nova-bus help` prints the usage.
 
@@ -285,7 +273,7 @@ Answer a message with `nova-bus send --as <name> --to <from> --re <id> <subject>
 | Code | When |
 |---|---|
 | 0 | done; help; a hook stopped by SIGINT or SIGTERM |
-| 1 | refused or failed: Redis unreachable or erring, `SEND FAILED`, a send to a name no hook has held, `name already hooked`, stdout failing or its reader gone, a harness that does not answer at start, a wake or exec that failed, `RECV NONE`, `ACK FAILED`, `HOOK SERVICE FAILED` |
+| 1 | refused or failed: Redis unreachable or erring, `SEND FAILED`, a send to a name no hook has held, `name already hooked`, stdout failing or its reader gone, a harness that does not answer at start, a wake or exec that failed, `HOOK SERVICE FAILED` |
 | 2 | a malformed invocation |
 
 A malformed invocation is refused in one stderr line,
@@ -297,16 +285,16 @@ the verb does not take (`unknown flag --x`); a flag without a value; a bad
 `--list` value; a name that is not letters, digits, `.`, `_` and `-` (for
 `--as` and every `--to` name); a `--re` that is not `<ms>-<seq>`; an empty
 name in `--to` (`a,,b`); an empty subject; more than a subject and a body; an
-argument to hook, recv, ack, who or pending ("takes no arguments"); a harness
+argument to hook, who or pending ("takes no arguments"); a harness
 flag the harness does not take, a missing one, a harness or events directory
-that is not there or not private, a foreground hook or recv in a Codex main thread, `--exec` with a
+that is not there or not private, a foreground hook under Codex, `--exec` with a
 harness, `--service` without a service manager or with claude and no
-`--exec` or `--codex-thread`, a bad `--id`, a negative `--timeout`, a `show` argument that is not
+`--exec` or `--codex-thread`, a `show` argument that is not
 `agents`, `codex-agents`, or `codex-wake`, missing name/thread fields for `show codex-wake`, `HOME` unset for
 `--service`, `--codex-thread` or `show codex-wake` (their files live under it), or a
 `--resolve` value other than `<id>=woken` or `<id>=retry`. An unknown verb gets
-`nova-bus: unknown verb "<verb>"; verbs: send, hook, recv, ack, who, pending,
-show, help; run: nova-bus help`. go-redis's own logging is silenced: every message on stderr is
+`nova-bus: unknown verb "<verb>"; verbs: send, hook, who, pending, show,
+help; run: nova-bus help`. go-redis's own logging is silenced: every message on stderr is
 nova-bus's.
 
 A runtime failure keeps the one-line shape, `nova-bus <verb>: <what>`, exit 1.
@@ -335,8 +323,8 @@ NOVA_BUS_REDIS=<addr> is the fleet's Redis and that it is up`.
   with the fields `from`, `to` (the recipients, trimmed, each once, joined by
   commas), `subject`, `body`
   and `re` (empty when none), all strings.
-- Every hook, and recv, reads with the consumer group `hook` and the consumer
-  `hook`. The group is created at id `0` on the first hook or recv, so
+- Every hook reads with the consumer group `hook` and the consumer
+  `hook`. The group is created at id `0` on the first hook, so
   messages sent before it are delivered too; its existence is what send
   checks (`XINFO GROUPS`) before sending to a name without `--new`.
 - A hook's line is tab-separated:
@@ -350,19 +338,17 @@ NOVA_BUS_REDIS=<addr> is the fleet's Redis and that it is up`.
   subject the same way.
 - Presence of `<name>` is the string key `bus:presence:<name>`, whose value is
   the hook's start time (RFC 3339 UTC, to the second), a tab, and a random
-  token that process made at start; recv sets it with the token `recv` and
-  the time of the first recv.
+  token that process made at start.
 
 ## Delivery
 
 A hook reads its pending entries first (`XREADGROUP ... 0`: handed to a hook
-or a recv and never acked), then new ones (`XREADGROUP ... >`, up to 100 at a
+and never acked), then new ones (`XREADGROUP ... >`, up to 100 at a
 time). For each entry it delivers it (writes the line, runs the `--exec`
 command, saves the Codex event and prints its line, or wakes the session), then acks it and deletes it (`XACK` and
 `XDEL` in one `MULTI`), so an inbox holds only what is waiting. The ack runs
 to the end even if a signal arrives after the write, and no further line is
-written once one has. recv is the first half (read and print) and ack the
-second, as two commands. For the Grok, Antigravity, and exec adapters, a delivery that surely failed (a wake that did not
+written once one has. For the Grok, Antigravity, and exec adapters, a delivery that surely failed (a wake that did not
 answer, an exec that exited non-zero) ends the hook with the entry unacked
 and nothing behind it delivered, so the order is kept and the next hook
 starts from the pending list; so does a wake whose outcome is unknown (it is
@@ -382,8 +368,7 @@ For the bus transport:
 - an acked message is never printed again;
 - an entry send did not write (no `from` or `subject`: something else wrote
   the stream) is not mail: the hook prints `HOOK BAD id=<id> missing=<fields>`
-  on stdout and acks it, so it never blocks the inbox; recv says `RECV BAD`
-  on stderr, acks it, and exits 1, so the next recv reads on;
+  on stdout and acks it, so it never blocks the inbox;
 - a read whose reply is lost (the connection dropped after the server handed
   the batch) is not retried: the hook reconnects after a second and starts
   again from the pending list, so the batch is printed then.
@@ -411,9 +396,7 @@ their reader, however long that takes.
 
 ## Presence
 
-Presence means one thing: a hook process is alive for this name, or a recv is waiting on it (the value then ends
-in `recv`, from the first recv; a recv claims again every 10 s while it waits, and a hook is refused by a recv's key
-only until it lapses).
+Presence means one thing: a hook process is alive for this name.
 
 - **One hook per name.** On start the hook claims the key: one Lua script sets
   it with a 30 s TTL unless it holds another process's value. If it does, the
@@ -457,9 +440,7 @@ only until it lapses).
   in order (`pending --list` shows them); the next hook, or the service
   restarting it, delivers them. A wake cut off with its outcome unknown is
   the same: not acked, sent again by the next hook.
-- **A recv's reader dies before its ack.** The message stays pending and the
-  next recv prints it again; the reader sees it twice, by its id.
-- **Redis is unreachable.** send, recv, ack, pending and who exit 1. A hook logs
+- **Redis is unreachable.** send, pending and who exit 1. A hook logs
   `nova-bus: <error>; reconnecting` to stderr and retries every second; its
   presence may lapse meanwhile, and it claims again when Redis is back. A
   refused or missing login, a missing permission, or an address that is not
