@@ -32,6 +32,7 @@ type upFake struct {
 	untagged    bool   // the control node lacks tag:control
 	noPosix     bool   // ansible.posix is not installed
 	noGalaxy    bool   // ansible-galaxy cannot run (exit 127)
+	noIdent     bool   // git has no commit identity: git var GIT_*_IDENT exits 128
 	namesErr    string // nova-secrets names exits 2 with this stderr
 	busErr      string // nova-bus who exits 1 with this stderr
 	api         *fakeAPI
@@ -167,6 +168,8 @@ func (f *upFake) install(t *testing.T) {
 			return "", "exec: \"/bin/ansible-galaxy\": file does not exist", 127
 		case strings.HasSuffix(line, "collection list") && !f.noPosix:
 			return "ansible.posix   2.2.2\nansible.windows 2.0.0\n", "", 0
+		case strings.HasPrefix(line, "git var GIT_") && f.noIdent:
+			return "", "fatal: no email was given and auto-detection is disabled", 128
 		case strings.HasPrefix(line, "go version"):
 			return "go version go1.99.0 linux/amd64\n", "", 0
 		case strings.HasSuffix(line, "--version") || strings.HasSuffix(line, " version"):
@@ -659,6 +662,27 @@ func TestCheck(t *testing.T) {
 		if code, _, errs := runArgs(append([]string{"check"}, tc...)...); code != 2 || !strings.HasPrefix(errs, "nova-fleet check: ") || !strings.HasSuffix(errs, "; run: nova-fleet check -h\n") {
 			t.Errorf("check %q: code %d stderr %q", tc, code, errs)
 		}
+	}
+}
+
+// check says whether git can commit, beside git itself: nova-secrets set commits what it writes, so a node whose git
+// has no author or committer is not ready for the token.
+func TestCheckNamesAMissingGitIdentity(t *testing.T) {
+	f := &upFake{}
+	f.install(t)
+	if code, out, errs := runArgs("check"); code != 0 || errs != "" || !strings.Contains(out, "CHECK OK git-identity\n") {
+		t.Errorf("git can commit: code %d stderr %q\n%s", code, errs, out)
+	}
+	for _, who := range []string{"GIT_AUTHOR_IDENT", "GIT_COMMITTER_IDENT"} {
+		if !slices.Contains(f.calls, "git var "+who) {
+			t.Errorf("check did not ask git for %s: %q", who, f.calls)
+		}
+	}
+	f.noIdent = true
+	code, out, errs := runArgs("check")
+	want := "CHECK MISSING git-identity: git config --global user.name 'Your Name' && git config --global user.email you@example.com  # nova-secrets set commits what it writes, and git has no author or committer to commit as\n"
+	if code != 1 || errs != "CHECK FAILED missing=1\n" || !strings.Contains(out, want) || strings.Contains(out, "CHECK OK git-identity") {
+		t.Errorf("no identity: code %d stderr %q, stdout lacks %q:\n%s", code, errs, want, out)
 	}
 }
 

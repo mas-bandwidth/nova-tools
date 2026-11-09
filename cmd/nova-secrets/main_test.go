@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -37,6 +38,7 @@ type harness struct {
 	stdout      bytes.Buffer
 	stderr      bytes.Buffer
 	stdin       string
+	in          io.Reader // set's stdin when a test watches the reads; else stdin
 	environ     []string
 	pins        string   // the control node's pin directory, holding the recovery pin
 	became      []string // argv
@@ -48,7 +50,8 @@ type harness struct {
 	extraKey    string // the fake sops seals to this key too, as a hostile config would make it
 	sopsMissing bool
 	noAgeKeygen bool
-	failGit     bool
+	failGit     bool            // git fails at everything but naming its identity (git var)
+	failCommit  bool            // git commit exits 1
 	keyPub      string          // what the fake age-keygen -y prints
 	notRepo     bool            // git rev-parse fails
 	top         string          // what git rev-parse --show-toplevel prints; the directory asked about when ""
@@ -204,7 +207,7 @@ func (h *harness) run(stdin io.Reader, env []string, dir, name string, args ...s
 				return nil, exitErr(128)
 			}
 		}
-	case name == "git" && h.failGit:
+	case name == "git" && (h.failGit && args[0] != "var" || h.failCommit && args[0] == "commit"):
 		return nil, exitErr(1)
 	case name == "git":
 		h.heads[dir] = h.heads[dir] || args[0] == "commit"
@@ -217,7 +220,7 @@ func (h *harness) main(args ...string) int {
 	h.stdout.Reset()
 	h.stderr.Reset()
 	t := tool{
-		stdin: strings.NewReader(h.stdin), stdout: &h.stdout, stderr: &h.stderr, environ: h.environ, run: h.run,
+		stdin: cmp.Or(h.in, io.Reader(strings.NewReader(h.stdin))), stdout: &h.stdout, stderr: &h.stderr, environ: h.environ, run: h.run,
 		become: func(argv, env []string) error { h.became, h.env = argv, env; return nil },
 		lookPath: func(name string) (string, error) {
 			if name == "no-such-program-here" || name == "sops" && h.sopsMissing || name == "age-keygen" && h.noAgeKeygen || name == "git" && h.noGit {
@@ -363,7 +366,7 @@ func TestSetSetsOneValueAndCommits(t *testing.T) {
 	assert.Equal(t, map[string]string{"OLD": "sealed-old", "NEW": "fresh-value-123"}, h.open("ada"))
 	var git [][]string
 	for _, c := range h.calls {
-		if c.name == "git" && !slices.Contains([]string{"rev-parse", "status", "ls-files", "diff"}, c.args[0]) {
+		if c.name == "git" && !slices.Contains([]string{"rev-parse", "status", "ls-files", "diff", "var"}, c.args[0]) {
 			git = append(git, c.args)
 			assert.Equal(t, h.store, c.dir)
 		}
@@ -389,7 +392,9 @@ func TestSetRefusesABadValue(t *testing.T) {
 		h.stdin = in
 		assert.Equal(t, 2, h.main(h.set("NEW")...), "%q", in)
 		assert.Contains(t, h.stderr.String(), "one non-empty line")
-		assert.Empty(t, h.calls)
+		for _, c := range h.calls {
+			assert.Equal(t, "git var", c.name+" "+c.args[0], "only the question about git's identity ran")
+		}
 		h.noLeak("two", "lines", "nul")
 	}
 	h := newHarness(t)
@@ -647,7 +652,7 @@ func TestVerbs(t *testing.T) {
 func (h *harness) gitCalls() [][]string {
 	var out [][]string
 	for _, c := range h.calls {
-		if c.name == "git" && !slices.Contains([]string{"rev-parse", "status", "ls-files", "diff"}, c.args[0]) {
+		if c.name == "git" && !slices.Contains([]string{"rev-parse", "status", "ls-files", "diff", "var"}, c.args[0]) {
 			out = append(out, c.args)
 		}
 	}
@@ -869,8 +874,8 @@ func TestSetFromDevNullIsAnEmptyValueNotATerminal(t *testing.T) {
 	f, err := os.Open(os.DevNull)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, f.Close()) }()
-	tl := tool{stdin: f, stdout: &h.stdout, stderr: &h.stderr, environ: h.environ, run: h.run}
-	assert.Equal(t, 2, tl.main(h.set("NEW")))
+	h.in = f
+	assert.Equal(t, 2, h.main(h.set("NEW")...))
 	assert.Contains(t, h.stderr.String(), "empty or multi-line value on stdin")
 	assert.NotContains(t, h.stderr.String(), "terminal")
 }
@@ -1020,8 +1025,8 @@ func TestSetRefusesAnEndlessStdin(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	in := &endless{}
-	tl := tool{stdin: in, stdout: &h.stdout, stderr: &h.stderr, environ: h.environ, run: h.run}
-	assert.Equal(t, 2, tl.main(h.set("NEW")))
+	h.in = in
+	assert.Equal(t, 2, h.main(h.set("NEW")...))
 	assert.Contains(t, h.stderr.String(), "value is over 65536 bytes")
 	assert.Less(t, in.read, 1<<20, "it stops reading")
 }
@@ -1145,15 +1150,12 @@ func TestSetRefusesAPartialNode(t *testing.T) {
 	assert.Empty(t, h.calls)
 }
 
-// A commit git refuses for want of an author names that, and the commands that finish it, on every verb that commits.
+// A commit git refuses for want of an author names that, and the commands that finish it (set asks git before it
+// reads the value: TestSetRefusesBeforeReadingWhatItCouldNotFinish).
 func TestAFailedCommitNamesTheMissingIdentity(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	h.noIdent = true
-	h.stdin = "v\n"
-	assert.Equal(t, 2, h.main(h.set("NEW")...))
-	assert.Equal(t, "SECRETS SET REFUSED reason=git: git commit in "+h.store+" failed (exit status 128): git has no commit identity; the file is written: run: git -C "+h.store+
-		" config user.name 'Your Name' && git -C "+h.store+" config user.email you@example.com && git -C "+h.store+" commit -q -m 'set NEW in ada.yaml' -- ada.yaml\n", h.stderr.String())
 	assert.Equal(t, 2, h.main("seat", "add", "bo", pubB, "--store", h.store))
 	assert.Contains(t, h.stderr.String(), "git has no commit identity; .sops.yaml is written: run: git -C "+h.store+" config user.name 'Your Name' && git -C "+h.store+
 		" config user.email you@example.com && git -C "+h.store+" commit -q -m 'seat bo' -- .sops.yaml\n")
@@ -1192,13 +1194,12 @@ func TestSetBootstrapFinishesAfterAFailedCommit(t *testing.T) {
 	t.Parallel()
 	for _, byHand := range []bool{false, true} {
 		h, dir := fresh(t)
-		h.noIdent = true
+		h.failCommit = true
 		assert.Equal(t, 2, h.main("set", "TAILSCALE_API_KEY", "--sops", "sops"))
 		rk := filepath.Join(dir, "recovery.key")
 		assert.Equal(t, "SECRETS SET NEW store="+h.store+" seat=ada key="+h.key+": back up "+rk+", the recovery key, off this machine now: it opens every seat if a key is lost\n", h.stdout.String())
-		assert.Contains(t, h.stderr.String(), "git has no commit identity; the store is written: run: ")
-		assert.Contains(t, h.stderr.String(), "-- .sops.yaml recovery.pub, then run the same nova-secrets set again\n")
-		h.noIdent, h.calls = false, nil
+		assert.Contains(t, h.stderr.String(), "the store is written: run: git -C "+h.store+" status, then run the same nova-secrets set again\n")
+		h.failCommit, h.calls = false, nil
 		h.heads[h.store] = byHand
 		require.Equal(t, 0, h.main("set", "TAILSCALE_API_KEY", "--sops", "sops"), h.stderr.String())
 		assert.Contains(t, h.stdout.String(), "SECRETS SET OK as=ada name=TAILSCALE_API_KEY file=ada.yaml committed")

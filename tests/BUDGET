@@ -3,7 +3,7 @@ cmd/nova-cairn  2335
 cmd/nova-config  1969
 cmd/nova-reserve  1169
 cmd/nova-sandbox  1874
-cmd/nova-secrets  1727
-cmd/nova-fleet  2021
+cmd/nova-secrets  1787
+cmd/nova-fleet  2029
 tests/boundary  400
 tests/contract  50

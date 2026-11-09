@@ -21,7 +21,7 @@ The control node's preflight, the first step of nova-fleet up: one line per prer
 CHECK OK <name> <version|path> or CHECK MISSING <name>: <the command that fixes it, for this
 OS, pasteable as it stands, a reason after # when there is one, in paste order>; the helpers
 are found in ~/.local/bin too, where the repairs install them, and CHECK MISSING PATH prints the
-line that puts that directory on PATH; this node on
+line that puts that directory on PATH; git-identity, whether git can commit; this node on
 the tailnet (a NOTE when not: up joins it); with --runners gh and its login; the store, key,
 seat and pins of NOVA_SECRETS_STORE, NOVA_SECRETS_KEY, NOVA_SECRETS_SEAT and NOVA_SECRETS_PINS;
 TAILSCALE_API_KEY, the one credential a human gives, read from the seat, the reason printed when
@@ -222,6 +222,14 @@ func (u *upRun) control(out io.Writer) int {
 	}
 	if dir := localBin(); len(local) > 0 && !onPath(dir, os.Getenv("PATH")) {
 		miss("PATH", `export PATH="$HOME/.local/bin:$PATH"`, strings.Join(local, " ")+" found only in "+dir+", which is not on PATH; append the line to ~/.profile to keep it")
+	}
+	if p := u.bin["git"]; p != "" { // git on PATH is not git able to commit
+		_, _, a := outCmd(p, []string{"var", "GIT_AUTHOR_IDENT"}, os.Environ())
+		if _, _, c := outCmd(p, []string{"var", "GIT_COMMITTER_IDENT"}, os.Environ()); a != 0 || c != 0 {
+			miss("git-identity", "git config --global user.name 'Your Name' && git config --global user.email you@example.com", "nova-secrets set commits what it writes, and git has no author or committer to commit as")
+		} else {
+			fmt.Fprintln(out, "CHECK OK git-identity")
+		}
 	}
 	if !posixMissing(out, u.bin["ansible-playbook"], &missing) {
 		fmt.Fprintln(out, "CHECK OK ansible.posix")
