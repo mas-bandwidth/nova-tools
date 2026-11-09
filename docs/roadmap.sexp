@@ -1,0 +1,39 @@
+; docs/roadmap.sexp: the data the tables in ROADMAP.md are generated from (nova-roadmap render).
+(:schema 1
+ :root "goal"
+ :page (:roadmaps ("future"))
+ :nodes
+ ((:id "goal" :type :work-set :children ("future"))
+  (:id "future" :type :roadmap :title "Future work"
+   :rows (
+     ("reserve-slots-are-cores" "nova-reserve slots bound CPU, so N one-slot jobs cannot saturate a bench")
+     ("fleet-placement" "Place one heavy job on the quietest bench fleet-wide")
+     ("race-detector-tiers" "race-detector-tiers — PR #6301, branch quality/race: unit and functional tiers under -race")
+     ("bus-latency-benchmarks" "bus-latency-benchmarks — PR #6302, branch perf/bus-benchmarks: functional benchmarks for nova-bus send-to-hook latency and hook idle cost")
+     ("netwatch-in-up" "nova-fleet up applies the netwatch play as part of fleet setup")
+     ("secrets-refresh-guards-dead-code" "Remove the dead nova_seal_store guards in roles/secrets-refresh (dead since #6279)")
+     ("sandbox-self-binary-write" "nova-sandbox refuses a --write grant covering its own binary or anything on PATH that chooses it")
+     ("probe-names-binary" "nova-sandbox probe prints bin= like check and show")
+     ("vm-mock-fleet" "A VM mock fleet so nova-fleet up can be run cold end to end")
+     )
+   :columns (("done" "done"))
+   :cells (
+     ("reserve-slots-are-cores" "done" "t-reserve-slots-are-cores")
+     ("fleet-placement" "done" "t-fleet-placement")
+     ("race-detector-tiers" "done" "t-race-detector-tiers")
+     ("bus-latency-benchmarks" "done" "t-bus-latency-benchmarks")
+     ("netwatch-in-up" "done" "t-netwatch-in-up")
+     ("secrets-refresh-guards-dead-code" "done" "t-secrets-refresh-guards-dead-code")
+     ("sandbox-self-binary-write" "done" "t-sandbox-self-binary-write")
+     ("probe-names-binary" "done" "t-probe-names-binary")
+     ("vm-mock-fleet" "done" "t-vm-mock-fleet")
+     ))
+  (:id "t-reserve-slots-are-cores" :type :task :title "nova-reserve slots bound CPU, so N one-slot jobs cannot saturate a bench" :state :todo)
+  (:id "t-fleet-placement" :type :task :title "Place one heavy job on the quietest bench fleet-wide" :state :todo)
+  (:id "t-race-detector-tiers" :type :task :title "race-detector-tiers — PR #6301, branch quality/race: unit and functional tiers under -race" :state :todo)
+  (:id "t-bus-latency-benchmarks" :type :task :title "bus-latency-benchmarks — PR #6302, branch perf/bus-benchmarks: functional benchmarks for nova-bus send-to-hook latency and hook idle cost" :state :todo)
+  (:id "t-netwatch-in-up" :type :task :title "nova-fleet up applies the netwatch play as part of fleet setup" :state :todo)
+  (:id "t-secrets-refresh-guards-dead-code" :type :task :title "Remove the dead nova_seal_store guards in roles/secrets-refresh (dead since #6279)" :state :todo)
+  (:id "t-sandbox-self-binary-write" :type :task :title "nova-sandbox refuses a --write grant covering its own binary or anything on PATH that chooses it" :state :todo)
+  (:id "t-probe-names-binary" :type :task :title "nova-sandbox probe prints bin= like check and show" :state :todo)
+  (:id "t-vm-mock-fleet" :type :task :title "A VM mock fleet so nova-fleet up can be run cold end to end" :state :todo)))
