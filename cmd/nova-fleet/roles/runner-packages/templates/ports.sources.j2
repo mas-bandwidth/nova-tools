@@ -1,0 +1,7 @@
+# nova-fleet runner-packages (nova_runner_foreign_architectures): {{ item }} packages from Ubuntu's ports archive.
+Types: deb
+URIs: {{ nova_runner_ports_uri }}
+Suites: {{ rp_codename }} {{ rp_codename }}-updates {{ rp_codename }}-security
+Components: main restricted universe multiverse
+Architectures: {{ item }}
+Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
