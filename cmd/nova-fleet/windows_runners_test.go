@@ -122,8 +122,7 @@ func TestRunnerTokenNeverOnACommandLine(t *testing.T) {
 	}
 }
 
-// TestRunnerWindowsShipsNoMachine: the role ships no machine's names or paths; retire removes a runner with
-// --unattended and deletes its directory; register resets the directory's ACL first; the firewall is never touched.
+// TestRunnerWindowsShipsNoMachine: the role ships no machine's names or paths; register resets the directory's ACL first; the firewall is never touched.
 func TestRunnerWindowsShipsNoMachine(t *testing.T) {
 	t.Parallel()
 	for _, f := range []string{"defaults/main.yml", "files/runner-windows.ps1"} {
@@ -142,13 +141,6 @@ func TestRunnerWindowsShipsNoMachine(t *testing.T) {
 		t.Fatal(err)
 	}
 	ps := string(b)
-	retire := ps[strings.Index(ps, "  'retire' {"):]
-	retire = retire[:strings.Index(retire, "\n  }\n")]
-	for _, want := range []string{"Invoke-Config @('remove', '--unattended')", "Remove-Item -LiteralPath $Dir -Recurse -Force"} {
-		if !strings.Contains(retire, want) {
-			t.Errorf("retire lacks %q", want)
-		}
-	}
 	reg := ps[strings.Index(ps, "  'register' {"):]
 	reg = reg[:strings.Index(reg, "\n  }\n")]
 	if !strings.Contains(reg, "icacls.exe $Dir /reset /T /C /Q") || !strings.Contains(ps, `-replace '[^\x20-\x7E]', '?'`) {
@@ -244,5 +236,18 @@ func TestCIRulesUnchainRule(t *testing.T) {
 		if !strings.Contains(sh, want) {
 			t.Errorf("nova-ci-rules.sh lacks %q", want)
 		}
+	}
+}
+
+// TestWindowsRunnerScriptHasNoRetire: no task calls runner-windows.ps1 with -Action retire (the native Windows runner
+// path went in #6309; a WSL machine's runners are retired by unix-retire.yml), so the script accepts no retire action.
+func TestWindowsRunnerScriptHasNoRetire(t *testing.T) {
+	t.Parallel()
+	b, err := fs.ReadFile(tree, roleDir+"/files/runner-windows.ps1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "'retire'") {
+		t.Error("runner-windows.ps1 still accepts -Action retire, which nothing calls")
 	}
 }
