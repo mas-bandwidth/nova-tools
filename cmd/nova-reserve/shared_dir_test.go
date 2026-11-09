@@ -287,3 +287,23 @@ func TestHardLinkedLockIsRefused(t *testing.T) {
 	assert.Equal(t, exitError{2, linked(p)}, *e)
 	same()
 }
+
+// TestDirectoryLinkIsRefused: the directory's own path is a link to another
+// directory: a run is refused, and that directory keeps its mode and is empty.
+func TestDirectoryLinkIsRefused(t *testing.T) {
+	t.Parallel()
+	target := t.TempDir()
+	require.NoError(t, os.Chmod(target, 0o700))
+	link := filepath.Join(t.TempDir(), "reserve")
+	require.NoError(t, os.Symlink(target, link))
+	h := newHarness(t)
+	assert.Equal(t, 2, run([]string{"--dir", link, "--", "make"}, h.w))
+	assert.Equal(t, "nova-reserve: --dir "+link+" is a symbolic link; nova-reserve uses no link as its directory: give the directory it names, or remove the link; run: ls -ld "+shellQuote(link)+"\n", h.err.String())
+	assert.Nil(t, h.ran)
+	fi, err := os.Stat(target)
+	require.NoError(t, err)
+	assert.Equal(t, os.ModeDir|0o700, fi.Mode(), "the link's target keeps its mode")
+	entries, err := os.ReadDir(target)
+	require.NoError(t, err)
+	assert.Empty(t, entries)
+}

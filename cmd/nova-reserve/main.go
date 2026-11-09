@@ -347,11 +347,30 @@ func do(o options, w world) error {
 		}
 		return refuse(2, "%s %s: %v; run: ls -ld %s", o.dirFrom, o.dir, errors.Unwrap(err), shellQuote(parent))
 	}
-	if fi, err := os.Stat(o.dir); err == nil && !fi.IsDir() {
+	// the directory itself is opened, following no link, and its mode is set
+	// on what is open; the files in it are still reached by path
+	d, err := os.OpenFile(o.dir, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_DIRECTORY, 0)
+	if fi, lerr := os.Lstat(o.dir); err != nil && lerr == nil && fi.Mode()&os.ModeSymlink != 0 {
+		return refuse(2, "%s %s is a symbolic link; nova-reserve uses no link as its directory: give the directory it names, or remove the link; run: ls -ld %s",
+			o.dirFrom, o.dir, shellQuote(o.dir))
+	}
+	if err == nil {
+		fi, serr := d.Stat()
+		if serr == nil && fi.IsDir() {
+			// ignored: only the directory's owner may widen it; others share it as it is
+			_ = d.Chmod(0o777 | os.ModeSticky)
+		}
+		// ignored: opened read-only to set its mode
+		_ = d.Close()
+		if serr != nil || !fi.IsDir() {
+			err = syscall.ENOTDIR
+		}
+	}
+	// any other error (a directory this user may not read) leaves its mode as
+	// it is, as a failed chmod by a user who does not own it does
+	if errors.Is(err, syscall.ENOTDIR) {
 		return refuse(2, "%s %s is a file, not a directory; run: ls -ld %s", o.dirFrom, o.dir, shellQuote(o.dir))
 	}
-	// ignored: only the directory's owner may widen it; others share it as it is
-	_ = os.Chmod(o.dir, 0o777|os.ModeSticky)
 	if o.verb == "set" {
 		return setCapacity(o, w)
 	}
