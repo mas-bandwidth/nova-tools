@@ -5,10 +5,10 @@
 # running on the machine (the ci-rules play). A busy runner is left running and says restart=busy: run again.
 # Linux and macOS: nova-ci-rules.sh, as root on Linux (runners of other logins) and wherever ci_rules_become is true (the
 # github-runners play, whose macOS runners are LaunchDaemons); otherwise macOS applies as the login, which reaches the
-# login's own runners only (a daemon says restart=needs-root). Windows: nova-ci-rules.ps1, and a WSL machine also applies it to the Windows side.
+# login's own runners only (a daemon says restart=needs-root). A WSL machine also applies nova-ci-rules.ps1 to the Windows side.
 
 - name: the CI rules, staged (Linux and macOS)
-  when: ansible_facts['os_family'] != 'Windows' and not ansible_check_mode
+  when: not ansible_check_mode
   block:
     - name: a staging directory
       ansible.builtin.tempfile: { state: directory, suffix: .nova-ci-rules }
@@ -45,31 +45,10 @@
       ansible.builtin.file: { path: "{{ ci_rules_stage.path }}", state: absent }
       when: ci_rules_stage.path is defined
 
-- name: the CI rules (Windows)
-  when: ansible_facts['os_family'] == 'Windows' and not ansible_check_mode
-  block:
-    - name: a staging directory
-      ansible.windows.win_tempfile: { state: directory, suffix: .nova-ci-rules }
-      register: ci_rules_stage_win
-    - name: the hooks, staged
-      ansible.windows.win_copy:
-        src: ci-rules/
-        dest: "{{ ci_rules_stage_win.path }}\\"
-    - name: apply them to the runners
-      ansible.windows.win_shell: >-
-        & '{{ ci_rules_stage_win.path }}\nova-ci-rules.ps1' apply {{ github_runner_ci_limit_seconds }} '{{ github_runner_ci_push_branches | join(' ') }}'
-        {% for d in ci_rules_dirs | default([]) %}'{{ d }}' {% endfor %}; exit $LASTEXITCODE
-      register: ci_rules_applied_win
-      changed_when: "'hooks=set' in ci_rules_applied_win.stdout or 'restart=done' in ci_rules_applied_win.stdout"
-  always:
-    - name: the staging directory is removed
-      ansible.windows.win_file: { path: "{{ ci_rules_stage_win.path }}", state: absent }
-      when: ci_rules_stage_win.path is defined
-
 - name: the CI rules' receipt
   ansible.builtin.debug:
     msg: >-
       {% if ansible_check_mode %}CI-RULES {{ inventory_hostname }} (check: not checked; --check does not run nova-ci-rules, a run applies the rules){% else %}{{
-      ((ci_rules_applied.stdout_lines | default([])) + (ci_rules_windows.stdout_lines | default([]) | reject('equalto', 'NO-WSL') | list)
-      + (ci_rules_applied_win.stdout_lines | default([]))) | map('regex_replace', '^CI-RULES ', 'CI-RULES ' ~ inventory_hostname ~ ' ') | join('\n') or
+      ((ci_rules_applied.stdout_lines | default([])) + (ci_rules_windows.stdout_lines | default([]) | reject('equalto', 'NO-WSL') | list))
+      | map('regex_replace', '^CI-RULES ', 'CI-RULES ' ~ inventory_hostname ~ ' ') | join('\n') or
       'CI-RULES ' ~ inventory_hostname ~ ' no runners' }}{% endif %}

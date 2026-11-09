@@ -27,8 +27,7 @@ On Windows `plays`, `show` and `help` work, and running a play is refused with t
 no native Windows controller, so a Windows machine is a host the plays reach, never the one running them (use a
 Linux, macOS or WSL control node).
 
-The control machine needs ansible-core 2.15 or later on PATH; a Windows host in the inventory also needs the `ansible.windows`
-collection. On macOS `brew install ansible`; on Linux a venv (Debian and Ubuntu ship python3 without it, so there the
+The control machine needs ansible-core 2.15 or later on PATH. On macOS `brew install ansible`; on Linux a venv (Debian and Ubuntu ship python3 without it, so there the
 line starts `sudo apt-get update -qq && sudo apt-get install -y python3-venv && `; `nova-fleet check` prints the line for this machine, and says so when
 python3 has no venv module):
 
@@ -251,7 +250,7 @@ refused before anything is written.
 |---|---|---|
 | `nova_tools_version` | none, required | the tag, `vX.Y.Z` |
 | `nova_tools_names` | the seven tools | which tools to install (and which `argv[0]` services prefixes) |
-| `nova_bin_dir` | `~/.local/bin` | where they go (Windows: `<profile>\.local\bin`); v2 binaries replace v1's of the same name there, so a v1 sprint still running from it stops working after `up` (accepted) |
+| `nova_bin_dir` | `~/.local/bin` | where they go; v2 binaries replace v1's of the same name there, so a v1 sprint still running from it stops working after `up` (accepted) |
 | `nova_tools_repo` | `mas-bandwidth/nova-tools` | whose release (`--repo`); `--names` is `nova_tools_names`, empty for every binary listed |
 | `nova_tools_release_url` | `nova_tools_repo`'s GitHub releases | `<base>/<tag>/<asset>` |
 | `nova_tools_restart`, `nova_tools_restart_commands` | false, empty | argv lists run once, only if a binary changed |
@@ -330,11 +329,10 @@ nova-fleet services -- -e nova_service_restart=reader
 GitHub Actions runners on every machine of the `runner` group: as many as the machine row's `runners` says, each
 registered to one repository or organization, run as a service that starts at boot. **Labels:** a runner's labels are
 its machine's inventory groups (the row's roles: `bench`, `runner`, `services`; `ungrouped` and `all` are left out),
-the host's own os (`linux`, `darwin`, `windows`) and arch (`amd64`, `arm64`) as its facts report them (a machine row's
+the host's own os (`linux`, `darwin`) and arch (`amd64`, `arm64`) as its facts report them (a machine row's
 `os` and `arch` fields say how it is reached, never what it is labelled), plus `github_runner_labels`; so a bench
 machine's runner is labelled `amd64,bench,linux,runner`, and a job selects it with `runs-on: [self-hosted, linux]`.
-Linux (amd64, arm64; WSL2 with systemd counts as Linux), macOS and native Windows (the runner's own service;
-`ansible.windows` and an administrator login). On macOS the runner is a LaunchDaemon dropped to the login, not a
+Linux (amd64, arm64; WSL2 with systemd counts as Linux) and macOS. On macOS the runner is a LaunchDaemon dropped to the login, not a
 LaunchAgent: a LaunchAgent runs only inside a logged-in GUI session, and a CI machine comes back from a reboot with
 none. Only a run needs sudo for that file (`/Library/LaunchDaemons` is world-readable, so `--check` reads and diffs it
 as the login and finishes without a password). Linux and macOS write the service files with sudo, so the login needs
@@ -384,7 +382,7 @@ is not online fails the run; `verified=no reason=...` says why the list could no
 github_runner_verify=false` skips it.
 
 **What it does.** Per runner: the pinned release, checked against GitHub's digest, unpacked in
-`<home>/actions-runner/<owner>-<repo>-<i>` (Windows `C:\actions-runner`); registered as `<machine>-<i>` unless
+`<home>/actions-runner/<owner>-<repo>-<i>`; registered as `<machine>-<i>` unless
 `.runner` is there; one service per runner, enabled at boot. Labels are fixed at registration: changed labels are
 reported as `LABEL-DRIFT` and the runner is left alone. A changed unit restarts its runner, ending any job on it. A
 machine whose count drops has its highest-numbered runners retired and removed from GitHub, with a removal
@@ -409,13 +407,13 @@ expires in an hour.
 
 ## Windows runners of a WSL machine
 
-A WSL machine's Windows side runs its own runners (captain: rocketnet's and robotgamedevelopers' Windows CI). They are
+A WSL machine's Windows side runs its own runners (a repository's or organization's Windows CI). They are
 a field of the machine's record and a play, like everything else on the fleet:
 
 ```
-nova-config machine set captain --windows_runners 'https://github.com/mas-bandwidth/rocketnet=3:rocketnet-windows,https://github.com/robotgamedevelopers=2:fleet' --actor rowan
-nova-fleet windows-runners --check -- -l captain
-nova-fleet windows-runners -- -l captain
+nova-config machine set bench-1 --windows_runners 'https://github.com/<owner>/<repo>=3:<label>,https://github.com/<org>=2:<label>' --actor alice
+nova-fleet windows-runners --check -- -l bench-1
+nova-fleet windows-runners -- -l bench-1
 ```
 
 `windows_runners` is `<url>=<count>[:<label>+<label>]`, comma-separated (cmd/nova-config/README.md); the inventory hands it to
@@ -596,13 +594,12 @@ one. On a Mac machine, open the Tailscale app once at its console and approve it
 **What the play does, per machine:**
 
 1. Installs Tailscale: Tailscale's apt repository on Debian and Ubuntu (the same key and source line its own install
-   script writes), Homebrew's cask on macOS, winget on Windows.
+   script writes), Homebrew's cask on macOS.
 2. `tailscale up --reset --auth-key=file:/dev/stdin --hostname=<machine> --advertise-tags=tag:nova[,tag:runner] --ssh`
-   (`--ssh` on Linux; the macOS and Windows clients do not serve Tailscale SSH). `tag:runner` is added for a machine in
+   (`--ssh` on Linux; the macOS client does not serve Tailscale SSH). `tag:runner` is added for a machine in
    the `runner` group. The key comes from `TAILSCALE_AUTHKEY` in the control node's environment (`up` puts the one it minted there; run
    alone, give one) and reaches the
-   machine on the command's stdin only (on Windows, which has no `/dev/stdin`, in a file only the login can read,
-   removed after the command). A machine already Running with the same tags is not joined again; a hostname or
+   machine on the command's stdin only. A machine already Running with the same tags is not joined again; a hostname or
    Tailscale SSH setting that differs is set in place with `tailscale set`, with no key.
 3. Records `Self.DNSName` (`<machine>.<tailnet>.ts.net`) as the machine's address: `nova-config machine set <name>
    --address <dns name>`, then reads the inventory again, so the firewall play, every run after it, the bus and the
@@ -610,7 +607,7 @@ one. On a Mac machine, open the Tailscale app once at its console and approve it
 4. The firewall. Linux: ufw denies incoming on every interface but `tailscale0`, allows outgoing and UDP 41641
    (Tailscale's direct connections). It is turned on only when the run itself comes in on the tailnet (or is local),
    so it cannot cut its own connection; otherwise it stops with `FIREWALL HELD` and says why. macOS: the application
-   firewall on (sudo: the login needs passwordless sudo, set at the console). Windows is left as it is.
+   firewall on (sudo: the login needs passwordless sudo, set at the console).
 
 `redis` and `postgres` listen on the machine's tailnet address only, read from `tailscale ip -4`.
 

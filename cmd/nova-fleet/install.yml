@@ -14,8 +14,7 @@
 #
 #   nova-fleet install --repo OWNER/NAME --tag v2.0.0 [--names a,b] <machine>...
 #
-# Variables: roles/nova-tools-install/defaults/main.yml. A Windows host
-# needs the ansible.windows collection on the control node (requirements.yml).
+# Variables: roles/nova-tools-install/defaults/main.yml.
 - name: nova-tools release on the machine
   hosts: bench:runner:services   # the fleet's workers, never all: a seat-only machine (roles -) gets no software (D13, 2026-11-07)
   gather_facts: true

@@ -17,7 +17,7 @@ const roleDir = "roles/github-runner"
 
 // commandModules are the modules that start a program on the machine or the control node.
 var commandModules = []string{"ansible.builtin.command", "ansible.builtin.shell", "ansible.builtin.raw", "ansible.builtin.script",
-	"command", "shell", "raw", "script", "ansible.windows.win_shell", "ansible.windows.win_command"}
+	"command", "shell", "raw", "script"}
 
 // roleTasks is every task of the role's task files, block, rescue and always flattened, with its file.
 func roleTasks(t *testing.T) map[string][]map[string]any {
@@ -73,7 +73,7 @@ func TestRunnerTokenNeverOnACommandLine(t *testing.T) {
 	for file, tasks := range roleTasks(t) {
 		for _, task := range tasks {
 			name, _ := task["name"].(string)
-			for _, m := range []string{"ansible.builtin.copy", "copy", "ansible.windows.win_copy", "ansible.builtin.template", "ansible.builtin.lineinfile"} {
+			for _, m := range []string{"ansible.builtin.copy", "copy", "ansible.builtin.template", "ansible.builtin.lineinfile"} {
 				if task[m] != nil && strings.Contains(text(t, task[m]), "github_runner_token") {
 					t.Errorf("%s %q writes the token into a file", file, name)
 				}
@@ -101,14 +101,14 @@ func TestRunnerTokenNeverOnACommandLine(t *testing.T) {
 					if task["no_log"] != true {
 						t.Errorf("%s %q carries the token on stdin without no_log: true", file, name)
 					}
-					if v, _ := task["vars"].(map[string]any); v["ansible_pipelining"] != true && !strings.HasPrefix(m, "ansible.windows.") {
+					if v, _ := task["vars"].(map[string]any); v["ansible_pipelining"] != true {
 						t.Errorf("%s %q carries the token without ansible_pipelining: the module would be a file on the machine", file, name)
 					}
 				}
 			}
 		}
 	}
-	if carriers < 4 { // unix and windows register and retire, and the two WSL ones
+	if carriers < 3 { // unix register and retire, and the WSL register
 		t.Errorf("found %d tasks that hand the token on stdin; the test reads no tasks", carriers)
 	}
 	ps, err := fs.ReadFile(tree, roleDir+"/files/runner-windows.ps1")
