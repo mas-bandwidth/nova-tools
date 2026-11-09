@@ -30,23 +30,24 @@ nova_pg_dir: /var/lib/nova-pg
 nova_pg_dump_keep_days: 14
 nova_pg_dump_on_calendar: "*-*-* 03:15:00 UTC"
 
-# nova-config's roles: nova_admin owns the database (migrations), nova_config
-# owns schema config (the tool), nova_read reads it. want is the
-# login|createdb|createrole a role must show.
+# The roles this play makes, each with a password made once on the machine,
+# proven by a login and set only when the proof fails. role: its name; schema:
+# the schema it owns in nova_pg_db ("" none); secret: the nova-secrets name its
+# password is sealed as into nova_seal_seat ("" none); seats: the seats that
+# name is then granted to (nova-secrets grant). flags and want (optional,
+# default "LOGIN NOCREATEDB NOCREATEROLE" and "t|f|f"): the attributes and the
+# login|createdb|createrole the role must show. The default is nova-config's
+# three: nova_admin owns the database (migrations), nova_config owns schema
+# config (the tool), nova_read reads it. A list given with -e replaces this
+# one: keep these three in it and add yours.
 nova_pg_roles:
-  - { name: nova_admin,  flags: "LOGIN CREATEDB CREATEROLE",     want: "t|t|t" }
-  - { name: nova_config, flags: "LOGIN NOCREATEDB NOCREATEROLE", want: "t|f|f" }
-  - { name: nova_read,   flags: "LOGIN NOCREATEDB NOCREATEROLE", want: "t|f|f" }
+  - { role: nova_admin,  schema: "",     secret: "",               seats: [], flags: "LOGIN CREATEDB CREATEROLE", want: "t|t|t" }
+  - { role: nova_config, schema: config, secret: NOVA_PG_PASSWORD, seats: [] }
+  - { role: nova_read,   schema: "",     secret: "",               seats: [] }
 
 # Load `nova-config schema` (from the control node's nova-config) into the
 # database: on the first run, and again whenever its SQL changes.
 nova_pg_schema: true
-
-# The role whose password is sealed into nova_seal_seat, and the name it is
-# sealed as (nova-config reads NOVA_PG_PASSWORD unless NOVA_PG_PASSWORD_ENV
-# names another).
-nova_pg_seal_role: nova_config
-nova_pg_seal_name: NOVA_PG_PASSWORD
 
 # What this role writes where an install's leftover check reads (nova-tools-install,
 # cmd/nova-fleet/README.md "install", Leftovers): system is /etc/systemd/system.
