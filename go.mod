@@ -1,6 +1,6 @@
 module github.com/mas-bandwidth/nova-tools/v2
 
-go 1.26.6
+go 1.26.10
 
 // nova-tools is one module: every directory is a package of it, so an
 // outside module that requires nova-tools resolves every package from this one
@@ -37,7 +37,7 @@ require (
 	golang.org/x/mod v0.41.0 // indirect
 	golang.org/x/sync v0.23.0 // indirect
 	golang.org/x/telemetry v0.0.0-20260908163034-4bcc4b2ee518 // indirect
-	golang.org/x/text v0.40.0 // indirect
+	golang.org/x/text v0.41.0 // indirect
 	golang.org/x/tools v0.50.0 // indirect
 	honnef.co/go/tools v0.8.1 // indirect
 )

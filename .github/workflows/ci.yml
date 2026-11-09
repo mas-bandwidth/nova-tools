@@ -64,6 +64,9 @@ jobs:
         run: go tool staticcheck -tags functional,slow ./...
       - name: vet for Windows
         run: GOOS=windows go vet ./...
+      - name: govulncheck
+        # pinned; a vulnerability reachable from the tools' code fails the job, and the nightly run finds one published since
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
 
   unit:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
