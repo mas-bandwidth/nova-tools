@@ -14,6 +14,11 @@
 #
 # TLC writes into a private copy of the directory, never into the checkout.
 # Each case is bounded by TLC_TIMEOUT seconds (default 600); a timeout fails.
+# Each TLC has 4 workers: the small cases end in seconds and leave their cores to
+# the long ones (the trace checks), which would otherwise run on one core each.
+# With TLC_SKIP_LARGE=1 a config whose name contains "Large" (a bigger instance of
+# a config that still runs) is left out: per-commit CI sets it to stay inside its
+# 2 minutes, and the nightly (schedule) run checks every case.
 set -euo pipefail
 
 if [ "${1:-}" = "--case" ]; then
@@ -26,7 +31,7 @@ if [ "${1:-}" = "--case" ]; then
 	[ "$deadlock" = "ignore-terminal" ] && flags+=(-deadlock)
 	set +e
 	out=$(cd "$work" && timeout "${TLC_TIMEOUT:-600}" java -XX:+UseParallelGC -Djava.io.tmpdir="$work" \
-		-cp "$TLC_JAR" tlc2.TLC -workers 1 -metadir "$work/meta" -config "$cfg" "${flags[@]}" "$module" 2>&1)
+		-cp "$TLC_JAR" tlc2.TLC -workers 4 -metadir "$work/meta" -config "$cfg" "${flags[@]}" "$module" 2>&1)
 	code=$?
 	set -e
 	ok=0
@@ -75,6 +80,7 @@ trap 'rm -f "$cases"' EXIT
 for d in "${dirs[@]}"; do
 	if [ -f "$d/CASES.tsv" ]; then
 		tail -n +2 "$d/CASES.tsv" | while IFS=$'\t' read -r cfg module expected property deadlock; do
+			[ -n "${TLC_SKIP_LARGE:-}" ] && [[ $cfg == *Large* ]] && { echo "skip $d/$cfg (TLC_SKIP_LARGE)" >&2; continue; }
 			printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$d" "$cfg" "$module" "$expected" "$property" "$deadlock"
 		done >>"$cases"
 		continue
@@ -84,6 +90,7 @@ for d in "${dirs[@]}"; do
 	module=$(basename "${mods[0]}")
 	for c in "$d"/*.cfg; do
 		cfg=$(basename "$c")
+		[ -n "${TLC_SKIP_LARGE:-}" ] && [[ $cfg == *Large* ]] && { echo "skip $d/$cfg (TLC_SKIP_LARGE)" >&2; continue; }
 		expected=pass
 		case "$cfg" in *Broken*) expected=violation ;; esac
 		printf '%s\t%s\t%s\t%s\t-\tcheck\n' "$d" "$cfg" "$module" "$expected" >>"$cases"

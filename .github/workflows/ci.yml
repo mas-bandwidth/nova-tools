@@ -143,7 +143,9 @@ jobs:
     steps:
       - *clean
       - *checkout
-      - name: TLC over every model case
+      - name: TLC over every model case (the Large configs only in the nightly)
+        env:
+          TLC_SKIP_LARGE: ${{ github.event_name != 'schedule' && '1' || '' }}
         run: tests/tla/check.sh "${{ vars.TLC_JAR }}"
 
   fleet:
