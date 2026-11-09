@@ -397,7 +397,7 @@ func TestFindServersPutsTheWorkspacesFirst(t *testing.T) {
 		"2 501 /b/language_server --workspace_id file_w --csrf_token y\n" +
 		"1501 502 /c/language_server --workspace_id file_w --csrf_token z\n" +
 		"501 501 /d/language_server --csrf_token w\n"
-	assert.Equal(t, []server{{"2", "/b/language_server", "y"}, {"1", "/a/language_server", "x"}, {"501", "/d/language_server", "w"}}, findServers(ps, "501", []string{"file_w"}))
+	assert.Equal(t, []server{{"2", "y"}, {"1", "x"}, {"501", "w"}}, findServers(ps, "501", []string{"file_w"}))
 }
 
 func TestWorkspaceIDs(t *testing.T) {
@@ -529,6 +529,7 @@ func TestExecRunsTheCommandAndAcksOnExitZero(t *testing.T) {
 
 	_, errOut, err = runWake(t, f, execWake{"missing", sys{shell: sh.shell}})
 	assert.NoError(t, errors.Unwrap(err), "nothing to deliver: the command never ran")
+	assert.Empty(t, errOut)
 	send(t, f, "s4", "d")
 	_, errOut, err = runWake(t, f, execWake{"missing", sys{shell: sh.shell}})
 	require.ErrorAs(t, err, &wf)
@@ -850,9 +851,12 @@ func TestServiceRefusalsAndTimeout(t *testing.T) {
 	assert.Equal(t, "nova-bus hook: --service wants launchctl on PATH (launchctl on macOS, systemctl elsewhere); without one, run the hook in the foreground under a supervisor of your own; run: nova-bus hook -h\n", errOut)
 	code, _, errOut = callSys(t, none, serviceEnv, "hook", "--as", "beta", "--service", "stop")
 	assert.Equal(t, 2, code)
+	assert.Equal(t, "nova-bus hook: --service wants launchctl on PATH (launchctl on macOS, systemctl elsewhere); without one, run the hook in the foreground under a supervisor of your own; run: nova-bus hook -h\n", errOut)
 
-	code, _, errOut = callSys(t, s, serviceEnv, "hook", "--as", "beta", "--harness", "grok", "--grok-home", filepath.Join(home, "none"), "--service")
+	missing := filepath.Join(home, "none")
+	code, _, errOut = callSys(t, s, serviceEnv, "hook", "--as", "beta", "--harness", "grok", "--grok-home", missing, "--service")
 	assert.Equal(t, 2, code, "the pre-flight refuses before any unit is written")
+	assert.Equal(t, "nova-bus hook: --grok-home "+missing+": lstat "+missing+": no such file or directory; run: nova-bus hook -h\n", errOut)
 	_, err := os.Stat(filepath.Join(home, "Library"))
 	assert.True(t, errors.Is(err, os.ErrNotExist))
 

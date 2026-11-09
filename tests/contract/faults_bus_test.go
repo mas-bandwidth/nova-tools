@@ -2,6 +2,12 @@
 
 package contract
 
+import (
+	"bufio"
+	"fmt"
+	"net"
+)
+
 var busSend = []string{"send", "--as", "a", "--to", "b", "subject", "body"}
 
 func busRedis(e *Env, addr string) { e.Set("NOVA_BUS_REDIS", addr) }
@@ -15,6 +21,23 @@ func busWrongUser(e *Env) {
 	e.Set("NOVA_BUS_PASSWORD", "bad")
 }
 func busUp(e *Env) { busRedis(e, e.Redis()) }
+
+// busSenderHooked is a Redis where the sender a holds its name as a live hook does (the
+// presence key, bus guide), so a send gets past the sender check to the recipient's.
+func busSenderHooked(e *Env) {
+	addr := e.Redis()
+	busRedis(e, addr)
+	c, err := net.Dial("tcp", addr)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	defer c.Close()
+	key, val := "bus:presence:a", "2026-11-08T12:00:00Z\tplanted"
+	fmt.Fprintf(c, "*5\r\n$3\r\nSET\r\n$%d\r\n%s\r\n$%d\r\n%s\r\n$2\r\nPX\r\n$5\r\n60000\r\n", len(key), key, len(val), val)
+	if r, err := bufio.NewReader(c).ReadString('\n'); err != nil || r != "+OK\r\n" {
+		e.t.Fatalf("SET %s: %q %v", key, r, err)
+	}
+}
 
 func init() {
 	cannot := Want{Reason: []string{"redis"}}
@@ -38,7 +61,7 @@ func init() {
 			Want: Want{Reason: []string{"hook"}}},
 		Fault{Tool: "bus", Name: "pending: name never hooked in", Setup: busUp, Argv: []string{"pending", "--as", "ghost"},
 			Want: Want{Reason: []string{"hook"}}},
-		Fault{Tool: "bus", Name: "send: recipient never read", Setup: busUp, Argv: busSend,
+		Fault{Tool: "bus", Name: "send: recipient never read", Setup: busSenderHooked, Argv: busSend,
 			Want: Want{Reason: []string{"no hook has ever held"}}, Known: "bus-never-held"},
 		Fault{Tool: "bus", Name: "send: nothing named", Setup: busUp, Argv: []string{"send"},
 			Want: Want{Reason: []string{"--as", "--to"}}},

@@ -246,6 +246,7 @@ func TestRecvCheckoutOutlastsASlowRelay(t *testing.T) {
 		f.clock = f.clock.Add(tc.after)
 		code, out, errOut := call(t, f, testEnv, "", "send", "--as", "beta", "--to", "alpha", "--re", "1-0", "re", "ok")
 		assert.Equal(t, map[bool]int{true: 0, false: 1}[tc.acked], code, "%s: the reply to the parent: %s", tc.after, errOut)
+		assert.Equal(t, map[bool]string{true: "alpha 1-0\n", false: ""}[tc.acked], out, "%s: the reply's receipt", tc.after)
 		code, out, errOut = call(t, f, testEnv, "", "ack", "--as", "beta", "--id", "1-0")
 		if tc.acked {
 			require.Equal(t, 0, code, "%s: %s", tc.after, errOut)

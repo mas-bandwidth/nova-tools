@@ -64,7 +64,7 @@ func TestUsageErrorsAreOneLine(t *testing.T) {
 func TestArgvAndValuesRoundTrip(t *testing.T) {
 	t.Parallel()
 	h := fleet(t)
-	argv := []string{"/bin/sh", "-c", "A=b echo \"x y\" <z> ‮ & \t"}
+	argv := []string{"/bin/sh", "-c", "A=b echo \"x y\" <z> \u202e & \t"}
 	raw, err := json.Marshal(argv)
 	require.NoError(t, err)
 	h.ok(t, "service", "add", "rt", "--machine", "bench-a", "--argv", string(raw), "--every", "5", "--actor", "t")
@@ -75,7 +75,7 @@ func TestArgvAndValuesRoundTrip(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(line), &back), line)
 	assert.Equal(t, argv, back)
 	assert.NotContains(t, out, `\x3d`)
-	assert.NotContains(t, out, "‮", "bidi controls are escaped")
+	assert.NotContains(t, out, "\u202e", "bidi controls are escaped")
 	assert.Equal(t, `"" -> "the first"`, strings.TrimPrefix(strings.TrimSpace(strings.Split(h.ok(t, "machine", "set", "bench-a", "--note", "the first", "--actor", "t", "--dry-run"), "\n")[1]), "note: "))
 	h.ok(t, "machine", "set", "bench-a", "--note", "k=v \"q\"", "--actor", "t")
 	assert.Contains(t, h.ok(t, "machine", "list"), `note="k=v \"q\""`)

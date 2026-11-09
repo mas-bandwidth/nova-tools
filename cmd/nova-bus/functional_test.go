@@ -207,7 +207,7 @@ func TestPresenceWhoAndPending(t *testing.T) {
 	assert.True(t, ttl > 0 && ttl <= presenceTTL, ttl)
 	second := exec.Command(bin, "hook", "--as", "beta")
 	second.Env = append(os.Environ(), "NOVA_BUS_REDIS="+addr)
-	out, err := second.CombinedOutput()
+	out, _ := second.CombinedOutput() // ignored: the exit status is the assertion below
 	assert.Equal(t, 1, second.ProcessState.ExitCode(), string(out))
 	assert.Regexp(t, `^HOOK WAIT name=beta held_since=\S+Z ttl=30s budget=40s\n`, string(out))
 	assert.Contains(t, string(out), "name already hooked: beta after 40s", "after 40 s of the first hook refreshing")
