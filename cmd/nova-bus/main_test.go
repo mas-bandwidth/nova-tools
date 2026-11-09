@@ -28,6 +28,7 @@ type fake struct {
 	failRead  int // hand this many entries and then lose the reply
 	idle      func()
 	onWrite   func() // after each line is written
+	onRead    func() // after each quiet read
 	quiet     int    // quiet reads to time out before idle
 	step      time.Duration
 	clock     time.Time
@@ -124,6 +125,9 @@ func (f *fake) Read(ctx context.Context, stream string, pending bool, block time
 		if f.quiet > 0 {
 			f.quiet--
 			f.clock = f.clock.Add(block)
+			if f.onRead != nil {
+				f.onRead()
+			}
 			return nil, nil
 		}
 		f.idle()
@@ -755,6 +759,23 @@ func TestPendingCountsHandedAndUnhandedWithoutConsuming(t *testing.T) {
 	code, out, _ = call(t, f, testEnv, "", "pending", "--as", "nobody")
 	assert.Equal(t, 0, code)
 	assert.Equal(t, "PENDING OK waiting=0\n", out)
+}
+
+// pending is the README's remedy after a hook ends on a failed wake: it
+// runs with no hook holding the name; a name no hook has read is refused.
+func TestPendingRunsAfterTheHookEnds(t *testing.T) {
+	t.Parallel()
+	f := newFake()
+	f.strict = true
+	require.NoError(t, f.Group(context.Background(), "bus:beta"))
+	send(t, f, "one", "1")
+	code, out, errOut := call(t, f, testEnv, "", "pending", "--as", "beta", "--list")
+	require.Equal(t, 0, code, errOut)
+	assert.Equal(t, "PENDING OK waiting=1\n1-0\talpha\tone\n", out)
+	code, out, errOut = call(t, f, testEnv, "", "pending", "--as", "betta")
+	assert.Equal(t, 1, code)
+	assert.Empty(t, out)
+	assert.Equal(t, "nova-bus pending: betta is not hooked in, and no hook has ever held it; run: nova-bus who\n", errOut)
 }
 
 func TestSendDedupesRecipients(t *testing.T) {

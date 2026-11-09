@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -199,8 +200,8 @@ func TestVerbsRefuseUntilHookedIn(t *testing.T) {
 		{[]string{"GEMINI_CLI_CSRF_TOKEN=1"}, "`NOVA_BUS_REDIS=127.0.0.1:1 nova-bus hook --as alpha --harness antigravity --antigravity-dir <workspace> --antigravity-session <conversation id> --antigravity-events-dir ~/.gemini/antigravity/nova-bus-alpha --service`; run: nova-bus hook -h"},
 	} {
 		s := sys{environ: func() []string { return tc.environ }}
-		for _, args := range [][]string{{"send", "--as", "alpha", "--to", "beta", "--new", "s", "b"}, {"ack", "--as", "alpha", "--id", "1-0"}, {"pending", "--as", "alpha"}} {
-			code, out, errOut := callSys(t, s, testEnv, args...)
+		for _, args := range [][]string{{"send", "--as", "alpha", "--to", "beta", "--new", "s", "b"}, {"ack", "--as", "alpha", "--id", "1-0"}} {
+			code, out, errOut := callSys(t, s, testEnv, args...) // pending: TestPendingRunsAfterTheHookEnds
 			assert.Equal(t, 1, code, "%v %v", tc.environ, args)
 			assert.Empty(t, out)
 			assert.Equal(t, "nova-bus "+args[0]+": alpha is not hooked in, so nothing would read an answer; hook in first: "+tc.want+"\n", errOut, "%v %v", tc.environ, args)
@@ -289,4 +290,22 @@ func TestHookNamesTheRecvThatHoldsItsName(t *testing.T) {
 	code = runHook(ctx, f, "beta", testAddr, f, &out, &errOut, nil, "again", nil)
 	assert.Equal(t, 1, code)
 	assert.Contains(t, errOut.String(), "a recv is waiting on it and claims it every 10 s: stop that reader first, or ack; run: nova-bus who\n")
+}
+
+// A hook that takes the name from a waiting recv is said as that, never as
+// an error from Redis.
+func TestRecvSaysAHookTookTheName(t *testing.T) {
+	t.Parallel()
+	f := newFake()
+	f.quiet = 100
+	f.onRead = func() {
+		if f.clock.Sub(t0) >= 5*time.Second && !strings.HasSuffix(f.presence["beta"], "\ttoken") {
+			f.presence["beta"], f.deadline["beta"] = testValue, f.clock.Add(presenceTTL) // a hook claims it
+		}
+	}
+	var out, errOut bytes.Buffer
+	code := recv(context.Background(), f, "beta", testAddr, 35*time.Second, f, &out, &errOut)
+	assert.Equal(t, 1, code)
+	assert.Empty(t, out.String())
+	assert.Equal(t, "nova-bus recv: name taken by another hook: a hook took beta while this recv held it; run: nova-bus who\n", errOut.String())
 }

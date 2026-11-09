@@ -217,10 +217,14 @@ func stopService(ctx context.Context, s sys, name string, stdout, stderr io.Writ
 		fmt.Fprintf(stdout, "HOOK SERVICE OK name=%s unit=%s state=absent\n", name, u.label)
 		return 0
 	}
+	// A failed stop of a unit that was not loaded is not a failure: the
+	// running check after it decides.
+	stop, look := []string{"disable", "--now", u.label}, "systemctl --user status "+u.label
 	if u.mgr == "launchctl" {
-		_ = u.run(ctx, s, "bootout", u.domain(s)+"/"+u.label) // ignored: it may not be loaded
-	} else {
-		_ = u.run(ctx, s, "disable", "--now", u.label) // ignored: it may not be loaded
+		stop, look = []string{"bootout", u.domain(s) + "/" + u.label}, "launchctl print "+u.domain(s)+"/"+u.label
+	}
+	if err := u.run(ctx, s, stop...); u.running(ctx, s) {
+		return fail(stderr, "hook", "HOOK SERVICE FAILED name=%s unit=%s reason=still running after the stop: %s; run: %s", name, u.label, escaper.Replace(fmt.Sprint(err)), look)
 	}
 	err := os.Remove(u.path)
 	if err == nil && u.mgr == "systemctl" {
