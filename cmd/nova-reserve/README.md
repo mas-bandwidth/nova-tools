@@ -101,7 +101,7 @@ RELEASED reason=signal signal=SIGTERM held_for=1.001s
 ```
 
 `hold` prints its lines on stdout. The release reason is `signal`, `for` or
-`parent_exit`. On Windows, stop a hold with Ctrl+C or use `--for`.
+`parent_exit`.
 
 ## Read the state
 
@@ -154,8 +154,6 @@ Limits:
   temporary files, or the stored capacity is lost.
 - On Linux, macOS and the BSDs, a watchdog process (nova-reserve --watch) polls
   once a second and kills the command's process group after a SIGKILL of
-  nova-reserve; on Linux, Pdeathsig kills the command itself at once. Windows
-  uses a job object.
-- On Windows a hold notices its parent's exit by PID only; a reused PID can
-  keep an untimed hold alive.
-- Release builds cover Linux amd64 and arm64, macOS arm64 and Windows amd64.
+  nova-reserve; on Linux, Pdeathsig kills the command itself at once.
+- Release builds cover Linux amd64 and arm64 and macOS arm64; on Windows, use
+  the Linux build under WSL2.

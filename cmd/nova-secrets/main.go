@@ -1433,7 +1433,7 @@ func pinned(dir, name, want string) (string, error) {
 		return "", deny("no-pin", "pin directory %s: %v", dir, err)
 	}
 	if fi, err := os.Lstat(dir); err != nil || !fi.IsDir() || checkPrivate(dir, fi) != nil {
-		return "", deny("no-pin", "pin directory %s must be a directory of yours that no one else can write; run: chmod 700 %s (Windows: icacls %s /inheritance:r /grant:r %%USERNAME%%:(OI)(CI)F)", dir, dir, dir)
+		return "", deny("no-pin", "pin directory %s must be a directory of yours that no one else can write; run: chmod 700 %s", dir, dir)
 	}
 	p := filepath.Join(dir, name+".pub")
 	fi, err := os.Lstat(p)

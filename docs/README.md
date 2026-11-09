@@ -83,11 +83,8 @@ block before installation.
 )
 ```
 
-The [releases](https://github.com/mas-bandwidth/nova-tools/releases) also
-carry Windows amd64 files named `nova-<tool>_<tag>_windows_amd64.exe` and the
-same checksum manifest. Check the chosen tool's platform limits: a published
-binary does not mean every operation is supported on Windows. The walkthrough
-on this page uses Bash on Linux or macOS.
+On Windows, use the Linux binaries under WSL2. The walkthrough on this page
+uses Bash on Linux, macOS or WSL2.
 
 ### Or build one tool from source
 
@@ -426,7 +423,7 @@ command resumes. Every step and what it prints is in
 [cmd/nova-fleet/README.md](../cmd/nova-fleet/README.md#up).
 
 A tool whose release is laid out as nova-tools' is (assets
-`<name>_<tag>_<os>_<arch>[.exe]` and one `SHA256SUMS`) puts its binaries on
+`<name>_<tag>_<os>_<arch>` and one `SHA256SUMS`) puts its binaries on
 machines the same way, every binary its `SHA256SUMS` lists unless `--names`
 says which ([cmd/nova-fleet/README.md](../cmd/nova-fleet/README.md#install)):
 
