@@ -164,7 +164,7 @@ These cover parsing and a check-mode plan against a stub host; an installation o
 
 `tests/contract` holds a functional-tier fault contract (build tag `functional`, rows in parallel). Each row in `faults_<tool>_test.go` provokes one real fault (Redis stopped, missing store, read-only directory, corrupt file, child killed by a signal, fake `ansible-playbook` on PATH, missing binary, bad DSN, unset variable) and holds the tool to five rules: a non-zero exit; exactly one stderr line (apart from declared receipt lines); that line holds the row's reason tokens; it ends in a pasteable remedy `run: <command>`, which is run where it has no `<placeholder>`; stdout is empty unless the row documents otherwise.
 
-- A row that fails today carries `Known: "<label>"`. It is skipped with the reason while it fails and fails the build the day it passes; the fix deletes the `Known`.
+- A row that fails today carries `Known: "<label>"` and `Gap`, the problems it has. It is skipped with the reason while it has exactly those problems, and fails the build on any other outcome and the day it passes; the fix deletes the `Known`. A `Known` row with no `Gap` is skipped on any problem.
 - `lint_test.go` refuses a `_ =` on an error without an `ignored:` comment, a non-zero exit with nothing written to stderr first, and a `no_log:` task in `cmd/nova-fleet/` with no receipt task. Known counts may not grow and are lowered the day they shrink.
 - Run it: `go test -tags functional -run 'Faults|Lint' -v ./tests/contract`. It needs `redis-server`, PostgreSQL `initdb` and `psql`, `sops`, `age-keygen` and `git`; a row with a missing dependency is skipped, or fails under `NOVA_CONTRACT_STRICT=1` (set in CI). A row that changes a mode skips as root.
 

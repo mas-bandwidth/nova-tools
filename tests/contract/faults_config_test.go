@@ -102,7 +102,13 @@ func (e *Env) SQL(dsn, stmts string) {
 func init() {
 	list := []string{"machine", "list"}
 	dsn := func(v string) func(e *Env) { return func(e *Env) { e.Set("NOVA_PG_DSN", v) } }
-	stopped := func(e *Env) { e.Set("NOVA_PG_DSN", "postgres://u@"+e.Dead()+"/db?sslmode=disable") }
+	stopped := func(e *Env) {
+		if _, err := exec.LookPath("psql"); err != nil {
+			e.skip("psql is not on PATH") // the remedy the row is held to runs it
+		}
+		e.Set("NOVA_PG_DSN", "postgres://u@"+e.Dead()+"/db?sslmode=disable")
+	}
+	psqlFails := []string{`remedy "psql \"$NOVA_PG_DSN\" -c 'select 1'" exits 2: `} // then psql's own words
 	register(
 		Fault{Tool: "config", Name: "store unset", Argv: list, Want: Want{Reason: []string{"NOVA_PG_DSN"}}},
 		Fault{Tool: "config", Name: "store unset and a flag missing", Argv: []string{"machine", "add", "m1", "--actor", "a"},
@@ -112,9 +118,9 @@ func init() {
 		Fault{Tool: "config", Name: "dsn carries a password", Setup: dsn("postgres://u:pw@127.0.0.1:1/db"), Argv: list,
 			Want: Want{Reason: []string{"NOVA_PG_PASSWORD"}}},
 		Fault{Tool: "config", Name: "postgres stopped", Setup: stopped, Argv: list,
-			Want: Want{Reason: []string{"cannot reach postgres"}}, Known: "config-store-refusal"},
+			Want: Want{Reason: []string{"cannot reach postgres"}}, Known: "config-store-refusal", Gap: psqlFails},
 		Fault{Tool: "config", Name: "inventory: postgres stopped", Setup: stopped, Argv: []string{"inventory"},
-			Want: Want{Reason: []string{"cannot reach postgres"}}, Known: "config-store-refusal"},
+			Want: Want{Reason: []string{"cannot reach postgres"}}, Known: "config-store-refusal", Gap: psqlFails},
 		Fault{Tool: "config", Name: "schema not loaded", Setup: func(e *Env) { e.PG(false) }, Argv: list,
 			Want: Want{Reason: []string{"schema"}}},
 		Fault{Tool: "config", Name: "database missing", Setup: func(e *Env) {
