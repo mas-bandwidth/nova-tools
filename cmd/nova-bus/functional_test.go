@@ -315,7 +315,7 @@ func TestHookEndsWhenItsReaderGoes(t *testing.T) {
 // the login is refused.
 func TestNamedACLUser(t *testing.T) {
 	t.Parallel()
-	addr := startRedis(t, "--user", "bus", "on", ">secret", "~bus:*", "+@stream", "+@string", "+@keyspace", "+@transaction", "+eval", "+evalsha", "+@connection", "-@dangerous", "--user", "default", "off")
+	addr := startRedis(t, "--user", "bus", "on", ">secret", "~bus:*", "+@stream", "+@string", "+@keyspace", "+eval", "+evalsha", "+@connection", "-@dangerous", "--user", "default", "off")
 	bin := filepath.Join(t.TempDir(), "nova-bus")
 	build := exec.Command("go", "build", "-o", bin, ".")
 	build.Stderr = os.Stderr
@@ -376,6 +376,26 @@ func buildBus(t *testing.T) string {
 	build.Stderr = os.Stderr
 	require.NoError(t, build.Run())
 	return bin
+}
+
+// TestFunctionalExecRunsForAFieldItsEnvironmentCannotHold runs a real sh for
+// a body with a NUL byte and one of 3 MiB: each command starts, with
+// NOVA_BUS_BODY empty and the whole line on its stdin. All four fields at
+// maxEnvField bytes arrive in the environment: the bound fits this platform.
+func TestFunctionalExecRunsForAFieldItsEnvironmentCannotHold(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithTimeout(context.Background(), wait)
+	defer cancel()
+	most := strings.Repeat("x", maxEnvField)
+	for _, tc := range []struct{ from, re, subject, body, check string }{
+		{"alpha", "", "s", "a\x00b", `test -z "$NOVA_BUS_BODY"`},
+		{"alpha", "", "s", strings.Repeat("x", 3<<20), `test -z "$NOVA_BUS_BODY"`},
+		{most, most, most, most, `test ${#NOVA_BUS_FROM}${#NOVA_BUS_RE}${#NOVA_BUS_SUBJECT}${#NOVA_BUS_BODY} = ` + strings.Repeat(strconv.Itoa(maxEnvField), 4)},
+	} {
+		m := Msg{ID: "7-0", Fields: map[string]string{"from": tc.from, "re": tc.re, "subject": tc.subject, "body": tc.body}}
+		e := execWake{command: tc.check + ` && test $(wc -c) -eq ` + strconv.Itoa(len(line(m))), s: sys{shell: realShell}}
+		assert.NoError(t, e.wake(ctx, m), "a body of %d bytes", len(tc.body))
+	}
 }
 
 // TestClaudeHookOnDevNull: a hook whose stdout is /dev/null (exec's nil
