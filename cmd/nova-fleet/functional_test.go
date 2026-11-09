@@ -52,6 +52,7 @@ func runFleet(t *testing.T, bin string, args ...string) (int, string, string) {
 }
 
 func TestFleetBinaryAgainstAnsible(t *testing.T) {
+	t.Parallel()
 	if _, err := exec.LookPath("ansible-playbook"); err != nil {
 		t.Skip("ansible-core is not installed on this machine")
 	}
@@ -98,6 +99,7 @@ func TestFleetBinaryAgainstAnsible(t *testing.T) {
 // file is checked against its SHA256SUMS line; a second run changes nothing, and a
 // file that does not match its line is refused.
 func TestInstallFromALocalBuild(t *testing.T) {
+	t.Parallel()
 	if _, err := exec.LookPath("ansible-playbook"); err != nil {
 		t.Skip("ansible-core is not installed on this machine")
 	}
@@ -150,6 +152,7 @@ func TestInstallFromALocalBuild(t *testing.T) {
 
 // github-runners asks GitHub for its token with the control node's gh under --check too, and a refusal says why.
 func TestRunnerTokenRequestFailsWithItsReason(t *testing.T) {
+	t.Parallel()
 	if _, err := exec.LookPath("ansible-playbook"); err != nil {
 		t.Skip("ansible-core is not installed on this machine")
 	}
@@ -173,6 +176,7 @@ func TestRunnerTokenRequestFailsWithItsReason(t *testing.T) {
 // empty HOME is a fresh node: no store, key, seat or pins line, and the one TAILSCALE_API_KEY line that makes
 // them, so the exit is 1 with the count on stderr.
 func TestCheckOnThisMachine(t *testing.T) {
+	t.Parallel()
 	bin := buildFleet(t)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
@@ -210,6 +214,7 @@ func TestCheckOnThisMachine(t *testing.T) {
 
 // A child killed by a signal is reported as such, with exit 128+N, never as a plain 1.
 func TestSignalReported(t *testing.T) {
+	t.Parallel()
 	if runtime.GOOS == "windows" {
 		t.Skip("no signals")
 	}
