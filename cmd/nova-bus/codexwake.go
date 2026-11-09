@@ -218,15 +218,16 @@ func (c *codexWake) recover(stderr io.Writer) error {
 		c.woken, c.sentAt, c.pending = w.last, w.size, w.start
 	}
 	if in, ok := readRecord(c.dir, "intent"); ok {
+		old := ""
 		if has, _ := c.rolloutHas(in.size, in.start); has { // ignored: unreadable is no evidence
-			c.woken, c.sentAt, c.pending = maxID(c.woken, in.last), in.size, ""
+			c.woken, c.sentAt, c.pending, old = maxID(c.woken, in.last), in.size, "", in.last
 		} else if err := writeFault(c.dir, codexFault{last: in.last, first: in.first, result: "unknown", size: in.size, start: in.start, err: "the hook stopped during codex queue"}); err != nil {
 			return err
 		} else {
 			c.woken = maxID(c.woken, in.last)
 			fmt.Fprintf(stderr, "HOOK WAKE FAULT harness=codex id=%s result=unknown file=%s; %s\n", in.last, filepath.Join(c.dir, in.last+".json"), c.show())
 		}
-		if err := c.mark(); err != nil {
+		if err := settle(c.dir, old, c.mark); err != nil { // a delivered wake that was a fault's retry takes the fault with it
 			return err
 		}
 	}
@@ -350,23 +351,22 @@ func (c *codexWake) poll(ctx context.Context, out, stderr io.Writer) (string, er
 			}
 		}
 	}
-	if len(c.waiting) == 0 {
-		for _, f := range faults {
-			if f.result == "retry" {
-				for _, id := range saved(c.dir, f.first, f.last) {
-					c.waiting = append(c.waiting, Msg{ID: id})
-				}
-				c.tries, c.limit, retry = 0, 1, &f
-				break
-			}
-		}
-		if len(c.waiting) == 0 {
-			return "", nil
-		}
+	i := slices.IndexFunc(faults, func(f codexFault) bool { return f.result == "retry" })
+	if len(c.waiting) == 0 && i < 0 {
+		return "", nil
 	}
 	size, why := c.busy()
 	if why != "" {
 		return why, nil
+	}
+	if len(c.waiting) == 0 { // taken only once the chat is idle: the poll that takes a fault queues it and settles its record
+		retry, c.tries, c.limit = &faults[i], 0, 1
+		for _, id := range saved(c.dir, retry.first, retry.last) {
+			c.waiting = append(c.waiting, Msg{ID: id})
+		}
+		if len(c.waiting) == 0 {
+			return "", nil
+		}
 	}
 	msgs, first, last := c.waiting, c.waiting[0].ID, c.waiting[len(c.waiting)-1].ID
 	text, start := c.text(msgs)
