@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -39,13 +40,17 @@ type agWake struct {
 	s                                               sys
 }
 
-// realShell runs command with sh -c, stdin on its stdin and vars added to
-// the environment, and returns its exit code; -1 when it did not run.
-func realShell(ctx context.Context, vars []string, stdin, command string) (int, error) {
+// realShell runs command with sh -c, stdin on its stdin, vars added to the
+// environment and its stdout out (nil: this process's), and returns its exit
+// code; -1 when it did not run.
+func realShell(ctx context.Context, vars []string, stdin, command string, out io.Writer) (int, error) {
 	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", command)
 	cmd.Env = append(os.Environ(), vars...)
 	cmd.Stdin = strings.NewReader(stdin)
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+	if out != nil { // a pipe: one a child of the command still holds is closed a second after the limit
+		cmd.Stdout, cmd.WaitDelay = out, time.Second
+	}
 	err := cmd.Run()
 	var exit *exec.ExitError
 	if errors.As(err, &exit) {
@@ -171,7 +176,7 @@ func (a *agWake) wake(ctx context.Context, m Msg) error {
 	if err != nil {
 		return err
 	}
-	text := fmt.Sprintf("nova-bus saved event %s in %s. Read that JSON file and follow local_receiver.", m.ID, path)
+	text := wakeText(m, path)
 	err = a.agentapi(ctx, "send-message", "--title=nova-bus", a.session, text)
 	var cut cutOff
 	if err == nil || errors.As(err, &cut) || ctx.Err() != nil {

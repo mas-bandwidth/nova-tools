@@ -5,6 +5,8 @@ BusBrokenNewFirst.cfg	Bus.tla	temporal	EveryPrinted	check
 BusWake.cfg	Bus.tla	pass	-	check
 BusBrokenAckFail.cfg	Bus.tla	invariant	AckedOnlyPrinted	check
 BusBrokenNoRetry.cfg	Bus.tla	temporal	EveryPrinted	check
+BusExecWake.cfg	Bus.tla	pass	-	check
+BusBrokenAckExec.cfg	Bus.tla	invariant	AckedOnlyPrinted	check
 Presence.cfg	Presence.tla	pass	-	check
 PresenceStuckStrict.cfg	Presence.tla	invariant	LiveIsPresentStrict	check
 PresenceBrokenNoExpire.cfg	Presence.tla	invariant	PresentOnlyIfFresh	check

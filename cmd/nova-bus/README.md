@@ -193,12 +193,26 @@ nova-bus hook --as <name> --harness antigravity --antigravity-dir "$PWD" \
 
 The conversation id is the directory name under `~/.gemini/antigravity/brain/` of the conversation.
 
-**`--exec <command>`** (with the default harness) runs a command of yours per message instead of printing it: the
+**`--exec <command>`** with the default harness runs a command of yours per message instead of printing it: the
 line on its stdin, the fields in `NOVA_BUS_ID`, `NOVA_BUS_FROM`, `NOVA_BUS_RE`, `NOVA_BUS_SUBJECT` and
 `NOVA_BUS_BODY`, under the 8 s limit. Exit 0 is the delivery (`HOOK EXEC OK id=<id>`), and only then is the message
 marked handled; any other exit is `HOOK EXEC FAILED id=<id> exit=<n>` (`exit=-1 reason=timed out after 8s` when the
 limit cut it off) on stderr and ends the hook with the message
 unhandled.
+
+With `--harness grok` or `--harness antigravity`, `--exec` runs the command first for each message, the same way,
+its stdout kept (the first 4 KiB) and its receipt printed (`HOOK EXEC OK id=<id>` on stdout, or `HOOK EXEC FAILED`
+on stderr); then the harness wakes the session as above. The saved event carries `exec` (`receipt`, `output`) and
+the wake text names the receipt: `nova-bus saved event <id> in <path>, with HOOK EXEC OK id=<id>. Read that JSON
+file and follow local_receiver.` A failed command does not end the hook, and the wake still follows so the session
+sees the message and the failure; the wake's receipt decides whether the message is marked handled. A command that
+acts on the message (taking work it names, say) runs on the push, without waiting for the session's next turn:
+
+```sh
+nova-bus hook --as <name> --harness antigravity --antigravity-dir "$PWD" \
+  --antigravity-session <conversation id> --antigravity-events-dir "$HOME/.gemini/antigravity/nova-bus-<name>" \
+  --exec '<command>' --service
+```
 
 ### The service
 
@@ -287,8 +301,7 @@ the verb does not take (`unknown flag --x`); a flag without a value; a bad
 name in `--to` (`a,,b`); an empty subject; more than a subject and a body; an
 argument to hook, who or pending ("takes no arguments"); a harness
 flag the harness does not take, a missing one, a harness or events directory
-that is not there or not private, a foreground hook under Codex, `--exec` with a
-harness, `--service` without a service manager or with claude and no
+that is not there or not private, a foreground hook under Codex, `--service` without a service manager or with claude and no
 `--exec` or `--codex-thread`, a `show` argument that is not
 `agents`, `codex-agents`, or `codex-wake`, missing name/thread fields for `show codex-wake`, `HOME` unset for
 `--service`, `--codex-thread` or `show codex-wake` (their files live under it), or a
@@ -349,7 +362,7 @@ command, saves the Codex event and prints its line, or wakes the session), then 
 `XDEL` in one `MULTI`), so an inbox holds only what is waiting. The ack runs
 to the end even if a signal arrives after the write, and no further line is
 written once one has. For the Grok, Antigravity, and exec adapters, a delivery that surely failed (a wake that did not
-answer, an exec that exited non-zero) ends the hook with the entry unacked
+answer, an exec without a harness that exited non-zero) ends the hook with the entry unacked
 and nothing behind it delivered, so the order is kept and the next hook
 starts from the pending list; so does a wake whose outcome is unknown (it is
 never lost; its turn may start twice). Presence is refreshed when due before every
@@ -431,7 +444,9 @@ Presence means one thing: a hook process is alive for this name.
   stderr; the hook exits 1 with that message and every later one unhandled,
   in order (`pending --list` shows them); the next hook, or the service
   restarting it, delivers them. A wake cut off with its outcome unknown is
-  the same: not acked, sent again by the next hook.
+  the same: not acked, sent again by the next hook. An `--exec` beside a
+  harness that fails is `HOOK EXEC FAILED` alone: the wake still follows and
+  decides.
 - **Redis is unreachable.** send, pending and who exit 1. A hook logs
   `nova-bus: <error>; reconnecting` to stderr and retries every second; its
   presence may lapse meanwhile, and it claims again when Redis is back. A

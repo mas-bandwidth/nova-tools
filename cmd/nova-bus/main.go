@@ -34,7 +34,7 @@ var verbUsage = map[string]string{
       otherwise exit 1 with the hook-in recipe for the harness this runs under. A failed send prints SEND FAILED and
       exits 1; it is never retried.
 `,
-	"hook": `  nova-bus hook --as <name> [--harness <harness> <its flags> | --exec <command>
+	"hook": `  nova-bus hook --as <name> [--harness <harness> <its flags>] [--exec <command>
                 | --codex-thread <id> [--resolve <msg id>=woken|retry]]
                 [--service [stop]]
       Deliver every waiting message for <name>, then each new one as it arrives,
@@ -45,6 +45,12 @@ var verbUsage = map[string]string{
       delivery (HOOK EXEC OK id=<id> on stdout), and only then is the message
       marked handled. Any other exit is HOOK EXEC FAILED id=<id> exit=<n> on
       stderr and the hook ends, exit 1, the message unhandled for the next hook.
+      With --harness grok or antigravity, --exec runs the command first for
+      each message, the same way, its stdout kept (the first 4 KiB) and its
+      receipt printed; then the harness wakes the session: the saved event
+      carries exec {receipt, output} and the wake text the receipt. A failed
+      command does not end the hook and the wake still follows; the wake's
+      receipt decides, as without --exec.
       --codex-thread <id>: save each message to ~/.local/state/nova-bus/
       <name>-codex-<id>/<msg id>.json (not saved: HOOK WAKE FAILED, the hook
       ends, exit 1, the message unhandled), print its line as claude does, and
@@ -178,6 +184,7 @@ const (
 type Msg struct {
 	ID     string
 	Fields map[string]string
+	Exec   *execResult // the --exec command's receipt, for a harness wake beside it (execThenWake)
 }
 
 // Store is the part of Redis nova-bus uses.
@@ -363,8 +370,6 @@ func run(ctx context.Context, args []string, env func(string) string, stdin io.R
 		return misuse(stderr, verb, "send takes one subject and one body, not %d arguments", fs.NArg())
 	case verb == "send" && strings.TrimSpace(fs.Arg(0)) == "":
 		return misuse(stderr, verb, "empty subject")
-	case verb == "hook" && *command != "" && *harness != "claude":
-		return misuse(stderr, verb, "--exec delivers each message to a command of yours; it takes no --harness")
 	case verb == "hook" && *codexThread != "" && (*command != "" || *harness != "claude"):
 		return misuse(stderr, verb, "--codex-thread wakes a Codex chat beside the stdout lines; it takes no --exec or --harness")
 	case verb == "hook" && *command != "" && strings.TrimSpace(*command) == "":
@@ -410,9 +415,7 @@ func run(ctx context.Context, args []string, env func(string) string, stdin io.R
 			f[k] = *v
 		}
 		var err error
-		if *command != "" {
-			w = execWake{*command, s}
-		} else if *codexThread != "" {
+		if *codexThread != "" {
 			if w, err = newCodex(*codexThread, *as, env("NOVA_BUS_REDIS"), env, s, clk, stderr); err != nil {
 				return misuse(stderr, verb, "%v", err)
 			}
@@ -422,6 +425,11 @@ func run(ctx context.Context, args []string, env func(string) string, stdin io.R
 				return misuse(stderr, verb, "%v", err)
 			}
 			return fail(stderr, verb, "%v; once it answers, run: %s", err, again)
+		}
+		if e := (execWake{*command, s, nil}); *command != "" && w == nil {
+			w = e
+		} else if *command != "" {
+			w = execThenWake{e, w}
 		}
 		if *service {
 			unitArgs := []string{"hook", "--as", *as, "--harness", *harness}
@@ -719,8 +727,20 @@ func hook(ctx context.Context, store Store, name, value string, clk Clock, out, 
 				if _, err := fmt.Fprintf(out, "HOOK BAD id=%s missing=%s\n", m.ID, missing); err != nil {
 					return writeError{err}
 				}
-			} else if err := deliver(ctx, w, m, out, stderr); err != nil {
-				return err
+			} else {
+				// --exec beside a harness: the command first, then a refresh, so
+				// the wake that follows has its own presenceRefresh bound.
+				if e, ok := w.(execThenWake); ok {
+					if m.Exec, err = e.run(ctx, m, out, stderr); err != nil {
+						return err
+					}
+					if err := refresh(); err != nil {
+						return err
+					}
+				}
+				if err := deliver(ctx, w, m, out, stderr); err != nil {
+					return err
+				}
 			}
 			ack, cancel := context.WithTimeout(context.WithoutCancel(ctx), cleanupTimeout)
 			_, err := store.Ack(ack, stream, m.ID)
@@ -765,16 +785,12 @@ func deliver(ctx context.Context, w waker, m Msg, out, stderr io.Writer) error {
 	}
 	cancel()
 	receipt := "HOOK WAKE OK harness=" + harnessName(w) + " id=" + m.ID
-	var x exitError
 	switch {
-	case errors.As(err, &x):
-		fmt.Fprintf(stderr, "HOOK EXEC FAILED id=%s exit=%d%s\n", m.ID, x.code, timedOut)
-		return wakeFailed{m.ID, err}
 	case err != nil && harnessName(w) == "exec":
-		fmt.Fprintf(stderr, "HOOK EXEC FAILED id=%s exit=-1 reason=%s\n", m.ID, escaper.Replace(err.Error()))
+		fmt.Fprintln(stderr, execReceipt(m.ID, err, timedOut))
 		return wakeFailed{m.ID, err}
 	case harnessName(w) == "exec":
-		receipt = "HOOK EXEC OK id=" + m.ID
+		receipt = execReceipt(m.ID, nil, "")
 	case err != nil:
 		fmt.Fprintf(stderr, "HOOK WAKE FAILED harness=%s id=%s reason=%s\n", harnessName(w), m.ID, escaper.Replace(err.Error()))
 		return wakeFailed{m.ID, err}

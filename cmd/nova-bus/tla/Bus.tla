@@ -21,6 +21,12 @@
 \* delivered first and the next start delivers it from the pending list.
 \* Restart is weakly fair, so EveryPrinted holds with Fail as without it.
 \*
+\* With Exec (--exec beside a harness, wake.go execThenWake), the command runs
+\* for the entry in hand first (RunExec, stage "ran"), whatever its exit, and
+\* only then is the wake tried: the wake's outcome, never the command's,
+\* decides the ack. A crash after the command runs it again on the restart:
+\* the command, like the wake, is at least once.
+\*
 \* A batch read (COUNT 100) is a run of single reads here: the hook handles a
 \* batch one entry at a time, and a crash inside a batch leaves the rest
 \* pending, which is the case of a crash after any single read.
@@ -35,9 +41,11 @@
 \*   "noretry"   a failed wake does not end the hook, which reads past the
 \*               entry (skip): with the hook up, nothing reads it again, and
 \*               EveryPrinted fails
+\*   "ackexec"   with Exec, the entry is acked once its command has run,
+\*               before the wake: AckedOnlyPrinted fails
 EXTENDS Naturals, FiniteSets
 
-CONSTANTS N, MaxCrash, MaxFail, Broken, Fail
+CONSTANTS N, MaxCrash, MaxFail, Broken, Fail, Exec
 
 VARIABLES sent, delivered, pend, acked, up, mode, cur, stage, crashes, fails, skip, printed, badPrint
 
@@ -48,7 +56,7 @@ TypeOK ==
   /\ sent \in 0..N /\ delivered \in 0..sent
   /\ pend \subseteq 1..delivered /\ acked \subseteq 1..delivered
   /\ up \in BOOLEAN /\ mode \in {"pending", "new"}
-  /\ cur \in 0..N /\ stage \in {"read", "printed"}
+  /\ cur \in 0..N /\ stage \in {"read", "ran", "printed"}
   /\ crashes \in 0..MaxCrash /\ fails \in 0..MaxFail /\ skip \subseteq Ids
   /\ printed \subseteq Ids /\ badPrint \in BOOLEAN
 
@@ -89,8 +97,21 @@ ReadNew ==
   /\ (Broken /= "ackfirst" => pend' = pend \cup {delivered + 1})
   /\ UNCHANGED <<sent, up, mode, crashes, fails, skip, printed, badPrint>>
 
+\* The stage a wake is tried from: after the command, with Exec.
+Woken == IF Exec THEN "ran" ELSE "read"
+
+\* The command runs for the entry in hand; exit 0 or not, the wake follows
+\* ("ackexec": the entry is acked here).
+RunExec ==
+  /\ Exec /\ up /\ cur /= 0 /\ stage = "read"
+  /\ stage' = "ran"
+  /\ IF Broken = "ackexec"
+       THEN acked' = acked \cup {cur} /\ pend' = pend \ {cur}
+       ELSE UNCHANGED <<acked, pend>>
+  /\ UNCHANGED <<sent, delivered, up, mode, cur, crashes, fails, skip, printed, badPrint>>
+
 Print ==
-  /\ up /\ cur /= 0 /\ stage = "read"
+  /\ up /\ cur /= 0 /\ stage = Woken
   /\ printed' = printed \cup {cur}
   /\ badPrint' = (badPrint \/ cur \in acked)
   /\ IF Broken = "ackfirst"
@@ -101,15 +122,15 @@ Print ==
 \* A wake that surely failed: one receipt, no ack, the entry stays pending,
 \* and the hook ends ("noretry": it reads on past the entry instead).
 FailWake ==
-  /\ Fail /\ up /\ cur /= 0 /\ stage = "read" /\ fails < MaxFail
-  /\ cur' = 0 /\ fails' = fails + 1
+  /\ Fail /\ up /\ cur /= 0 /\ stage = Woken /\ fails < MaxFail
+  /\ cur' = 0 /\ stage' = "read" /\ fails' = fails + 1
   /\ IF Broken = "ackfail"
        THEN acked' = acked \cup {cur} /\ pend' = pend \ {cur}
        ELSE UNCHANGED <<acked, pend>>
   /\ IF Broken = "noretry"
        THEN skip' = skip \cup {cur} /\ UNCHANGED up
        ELSE up' = FALSE /\ UNCHANGED skip
-  /\ UNCHANGED <<sent, delivered, mode, stage, crashes, printed, badPrint>>
+  /\ UNCHANGED <<sent, delivered, mode, crashes, printed, badPrint>>
 
 Ack ==
   /\ up /\ cur /= 0 /\ stage = "printed"
@@ -127,11 +148,11 @@ Restart ==
   /\ up' = TRUE /\ mode' = (IF Broken = "newfirst" THEN "new" ELSE "pending") /\ skip' = {}
   /\ UNCHANGED <<sent, delivered, pend, acked, cur, stage, crashes, fails, printed, badPrint>>
 
-Next == Send \/ ReadPending \/ ReadNew \/ Print \/ FailWake \/ Ack \/ Crash \/ Restart
+Next == Send \/ ReadPending \/ ReadNew \/ RunExec \/ Print \/ FailWake \/ Ack \/ Crash \/ Restart
 
 Spec == Init /\ [][Next]_vars
           /\ WF_vars(Send) /\ WF_vars(ReadPending) /\ WF_vars(ReadNew)
-          /\ WF_vars(Print) /\ WF_vars(Ack) /\ WF_vars(Restart)
+          /\ WF_vars(RunExec) /\ WF_vars(Print) /\ WF_vars(Ack) /\ WF_vars(Restart)
 
 \* No entry is acked before it is printed.
 AckedOnlyPrinted == acked \subseteq printed
