@@ -138,6 +138,18 @@ func TestHistory(t *testing.T) {
 	}
 }
 
+// A history row of a kind this tool does not know prints like any other: its kind as stored, its fields as text.
+func TestHistoryPrintsARowOfAnUnknownKind(t *testing.T) {
+	t.Parallel()
+	h := fleet(t) // writes 1..3
+	h.st.history = append(h.st.history, change{"gadget", "g1", "set", "t", map[string]string{"size": "1"}, map[string]string{"size": "2", "reason": "grow it"}})
+	out := h.ok(t, "history")
+	assert.True(t, strings.HasPrefix(out, "HISTORY at=2026-01-02T00:00:04Z actor=t kind=gadget name=g1 op=set rev=4\n  size: \"1\" -> \"2\"\n  reason: \"grow it\"\n"+
+		"HISTORY at=2026-01-02T00:00:03Z actor=t kind=service name=member-b op=add rev=3\n"), out)
+	assert.True(t, strings.HasSuffix(out, "CONFIG HISTORY rows=4\n"), out)
+	assert.Equal(t, 4, strings.Count(out, "HISTORY at="))
+}
+
 func TestParseSince(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 3, 10, 12, 0, 0, 0, time.UTC)
