@@ -929,9 +929,39 @@ nova-fleet runner-packages -- -l mini-m5
 | Variable | Default | |
 |---|---|---|
 | `nova_runner_packages` | `{darwin: ["postgresql@18"], debian: []}` | another OS with a non-empty list is refused |
+| `nova_runner_foreign_architectures` | `[]` | Ubuntu: dpkg architectures the debian list may name packages of, as `<name>:<arch>` |
+| `nova_runner_ports_uri` | `http://ports.ubuntu.com/ubuntu-ports/` | the archive a foreign architecture comes from |
+| `nova_runner_vm_kernel` | `false` | Debian/Ubuntu: keep each kernel image readable by the login, for a VM of the host's own kernel |
+| `nova_runner_vm_kernel_dir` | `<home>/vm-kernels` | where the copies go, as `vmlinuz-<version>` |
+
+Both switches apply on Debian and Ubuntu only; another OS skips them.
+
+**Foreign architectures.** A cross build that links a library of another architecture (`libsodium-dev:s390x`) needs
+dpkg multiarch. For each architecture the list names, the play runs `dpkg --add-architecture` where
+`dpkg --print-foreign-architectures` lacks it, writes `/etc/apt/sources.list.d/ubuntu-ports-<arch>.sources` (deb822,
+`Architectures: <arch>`, the release's suites with `-updates` and `-security`, signed by the Ubuntu archive key), and
+restricts the native sources in `/etc/apt/sources.list.d/ubuntu.sources` to the native architecture by adding
+`Architectures: <native>` to each, so the main archive is never asked for the foreign architecture nor the ports archive
+for the native one. It edits that file only when none of its sources has an `Architectures` line, and refuses when
+some do and some do not. It never edits `/etc/apt/sources.list` (the one-line form, which Ubuntu 22.04 uses): a `deb`
+line there with no `[arch=...]` is refused, naming the line; restrict it by hand (`deb [arch=amd64] http://...`) and run
+again. Other files in `sources.list.d` are left as they are. apt reads its sources again after any of these changes. The
+presence check matches `<name>:<arch>` as package_facts names a foreign architecture's package, so an installed one is
+adopted like any other. `--check` prints `WOULD-ADD-ARCHITECTURE dpkg --add-architecture <arch>` and diffs the sources.
+
+**The VM tier's kernel.** A CI job that boots a VM of the host's own kernel (virtme-ng: `vng --run
+<dir>/vmlinuz-$(uname -r)`) needs that kernel's image readable by the runner's login, and Ubuntu installs
+`/boot/vmlinuz-<version>` readable by root only. With `nova_runner_vm_kernel: true` the play writes the kernel hook
+`/etc/kernel/postinst.d/zz-nova-vm-kernel`, which copies every kernel image the host installs from then on into
+`nova_runner_vm_kernel_dir` (owned by the login, mode 0600), so an upgrade brings its copy with it; copies the running
+kernel's image there now; and adds the login to `kvm`, the group `/dev/kvm` is open to. A host whose running kernel has
+no image in `/boot`, or that has no `kvm` group, is refused with the package to add. The VM tools themselves are entries
+of the debian list (`virtme-ng`, `qemu-system-x86`). Joining `kvm` reaches a runner already running only when it
+restarts. Copies of kernels later removed stay until deleted.
 
 **Check.** `RUNNER-PACKAGES host=<machine> wanted=<n> present=<n> installed=<n>`, one line per machine.
-**Rollback.** The play never removes a package: one taken out of the list stays installed until a play removes it.
+**Rollback.** The play never removes a package: one taken out of the list stays installed until a play removes it. Nor
+does it remove a foreign architecture, a ports source, the `Architectures` lines, the kernel hook or the copies.
 
 ## Refusals
 

@@ -1,0 +1,107 @@
+---
+# Ubuntu: the foreign dpkg architectures nova_runner_foreign_architectures names, so the debian list can name packages
+# of them (libsodium-dev:s390x). Each comes from Ubuntu's ports archive through a deb822 source of its own restricted to
+# it, and the native sources are restricted to the native architecture, so neither archive is asked for an
+# architecture it does not carry. /etc/apt/sources.list (the one-line form) is never edited: a line there that names no
+# architecture is refused. A second run changes nothing.
+- name: the native architecture
+  ansible.builtin.command: dpkg --print-architecture
+  register: rp_native_arch
+  changed_when: false
+  check_mode: false
+
+- name: the foreign architectures dpkg has
+  ansible.builtin.command: dpkg --print-foreign-architectures
+  register: rp_foreign_have
+  changed_when: false
+  check_mode: false
+
+- name: foreign architectures come from Ubuntu's ports archive
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['distribution'] == 'Ubuntu'
+      - rp_native_arch.stdout not in nova_runner_foreign_architectures
+    fail_msg: >-
+      {{ inventory_hostname }} ({{ ansible_facts['distribution'] }}, {{ rp_native_arch.stdout }}): nova_runner_foreign_architectures
+      ({{ nova_runner_foreign_architectures | join(', ') }}) must name architectures other than the native one, from Ubuntu's ports
+      archive; run: nova-fleet runner-packages -- -l {{ inventory_hostname }} -e '{"nova_runner_foreign_architectures": []}'
+    quiet: true
+
+- name: the native sources
+  ansible.builtin.slurp: { src: /etc/apt/sources.list.d/ubuntu.sources }
+  register: rp_deb822
+  failed_when: false
+
+- name: the one-line sources
+  ansible.builtin.slurp: { src: /etc/apt/sources.list }
+  register: rp_oneline
+  failed_when: false
+
+- name: which native sources name no architecture
+  ansible.builtin.set_fact:
+    rp_codename: "{{ ansible_facts['distribution_release'] }}"
+    rp_stanzas: "{{ (rp_deb822.content | default('') | b64decode).split('\n\n') | select('search', '(?m)^Types:') | list }}"
+    rp_oneline_open: "{{ rp_oneline.content | default('') | b64decode | regex_findall('(?m)^[ \t]*deb[ \t]+(?![^\n]*arch=).*$') }}"
+
+- name: the deb822 sources with no Architectures line
+  ansible.builtin.set_fact:
+    rp_stanzas_open: "{{ rp_stanzas | reject('search', '(?m)^Architectures:') | list }}"
+
+- name: the one-line sources name an architecture
+  ansible.builtin.assert:
+    that: rp_oneline_open | length == 0
+    fail_msg: >-
+      {{ inventory_hostname }}: /etc/apt/sources.list has {{ rp_oneline_open | length }} source line(s) with no architecture
+      ({{ rp_oneline_open | first | default('') | trim }}), so apt would ask that archive for {{ nova_runner_foreign_architectures | join(', ') }};
+      this play does not edit that file. Restrict each line by hand ("deb [arch={{ rp_native_arch.stdout }}] http://..."),
+      then run: nova-fleet runner-packages -- -l {{ inventory_hostname }}
+    quiet: true
+
+- name: ubuntu.sources names an architecture in all of its sources or in none
+  ansible.builtin.assert:
+    that: rp_stanzas_open | length == 0 or rp_stanzas_open | length == rp_stanzas | length
+    fail_msg: >-
+      {{ inventory_hostname }}: /etc/apt/sources.list.d/ubuntu.sources gives {{ rp_stanzas | length - rp_stanzas_open | length }} of its
+      {{ rp_stanzas | length }} sources an Architectures line; this play adds the line only when none has it. Add
+      "Architectures: {{ rp_native_arch.stdout }}" to the other {{ rp_stanzas_open | length }} by hand, then run:
+      nova-fleet runner-packages -- -l {{ inventory_hostname }}
+    quiet: true
+
+- name: the native sources are restricted to the native architecture
+  ansible.builtin.replace:
+    path: /etc/apt/sources.list.d/ubuntu.sources
+    regexp: '^(Types:.*)$'
+    replace: '\1\nArchitectures: {{ rp_native_arch.stdout }}'
+  become: "{{ not ansible_check_mode }}"
+  register: rp_native_restricted
+  when: rp_stanzas_open | length > 0
+
+- name: a ports source for each foreign architecture
+  ansible.builtin.template:
+    src: ports.sources.j2
+    dest: "/etc/apt/sources.list.d/ubuntu-ports-{{ item }}.sources"
+    owner: root
+    group: root
+    mode: "0644"
+  loop: "{{ nova_runner_foreign_architectures }}"
+  become: "{{ not ansible_check_mode }}"
+  register: rp_ports_source
+
+- name: dpkg adds the architectures it lacks
+  ansible.builtin.command: "dpkg --add-architecture {{ item }}"
+  loop: "{{ nova_runner_foreign_architectures | difference(rp_foreign_have.stdout_lines) }}"
+  become: true
+  register: rp_arch_added
+  changed_when: true
+  when: not ansible_check_mode
+
+- name: would add the architectures dpkg lacks
+  ansible.builtin.debug: { msg: "WOULD-ADD-ARCHITECTURE dpkg --add-architecture {{ item }}" }
+  loop: "{{ nova_runner_foreign_architectures | difference(rp_foreign_have.stdout_lines) }}"
+  changed_when: true
+  when: ansible_check_mode
+
+- name: apt reads the changed sources
+  ansible.builtin.apt: { update_cache: true }
+  become: true
+  when: not ansible_check_mode and (rp_native_restricted is changed or rp_ports_source is changed or rp_arch_added is changed)

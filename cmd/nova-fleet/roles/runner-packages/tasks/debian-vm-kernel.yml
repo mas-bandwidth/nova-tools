@@ -1,0 +1,74 @@
+---
+# Debian, Ubuntu: the VM tier (nova_runner_vm_kernel). A CI job that boots a VM of the host's own kernel
+# (vng --run <nova_runner_vm_kernel_dir>/vmlinuz-$(uname -r)) needs that image readable by the runner's login, and
+# Ubuntu installs /boot/vmlinuz-<version> readable by root only. A kernel postinst hook copies each image the host
+# installs, so a kernel upgrade brings its copy with it; this run copies the running kernel's; and the login joins kvm,
+# the group /dev/kvm is open to. The VM tools (virtme-ng, qemu-system-x86) are entries of nova_runner_packages.debian.
+- name: the login the copies are for
+  ansible.builtin.set_fact:
+    rp_vm_user: "{{ ansible_facts['user_id'] }}"
+
+- name: the running kernel's image in /boot
+  ansible.builtin.stat: { path: "/boot/vmlinuz-{{ ansible_facts['kernel'] }}", get_checksum: false }
+  become: true
+  register: rp_vm_image
+
+- name: the running kernel has its image
+  ansible.builtin.assert:
+    that: rp_vm_image.stat.exists
+    fail_msg: >-
+      {{ inventory_hostname }} runs kernel {{ ansible_facts['kernel'] }} and has no /boot/vmlinuz-{{ ansible_facts['kernel'] }}
+      (its image package is not installed): add linux-image-{{ ansible_facts['kernel'] }} to nova_runner_packages.debian, or
+      reboot into an installed kernel, then run: nova-fleet runner-packages -- -l {{ inventory_hostname }}
+    quiet: true
+
+- name: the kvm group
+  ansible.builtin.command: getent group kvm
+  register: rp_kvm_group
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: the host has a kvm group
+  ansible.builtin.assert:
+    that: rp_kvm_group.rc == 0
+    fail_msg: >-
+      {{ inventory_hostname }} has no kvm group (getent group kvm: rc={{ rp_kvm_group.rc }}), so /dev/kvm is open to no
+      group the login can join: add qemu-system-x86 to nova_runner_packages.debian (its install creates it), then run:
+      nova-fleet runner-packages -- -l {{ inventory_hostname }}
+    quiet: true
+
+- name: the login is in kvm
+  ansible.builtin.user:
+    name: "{{ rp_vm_user }}"
+    groups: [kvm]
+    append: true
+  become: true
+
+- name: the kernel hook that copies each image the host installs
+  ansible.builtin.template:
+    src: vm-kernel.postinst.j2
+    dest: /etc/kernel/postinst.d/zz-nova-vm-kernel
+    owner: root
+    group: root
+    mode: "0755"
+  become: "{{ not ansible_check_mode }}"
+
+- name: the directory of kernel copies
+  ansible.builtin.file:
+    path: "{{ nova_runner_vm_kernel_dir }}"
+    state: directory
+    owner: "{{ rp_vm_user }}"
+    mode: "0755"
+  become: true
+  register: rp_vm_dir
+
+- name: the running kernel's image, readable by the login
+  ansible.builtin.copy:
+    src: "/boot/vmlinuz-{{ ansible_facts['kernel'] }}"
+    remote_src: true
+    dest: "{{ nova_runner_vm_kernel_dir }}/vmlinuz-{{ ansible_facts['kernel'] }}"
+    owner: "{{ rp_vm_user }}"
+    mode: "0600"
+  become: true
+  when: not (ansible_check_mode and rp_vm_dir is changed)

@@ -1,0 +1,11 @@
+#!/bin/sh
+# nova-fleet runner-packages (nova_runner_vm_kernel). The kernel's postinst hooks run with a kernel's version and its
+# image's path; this copies the image to {{ nova_runner_vm_kernel_dir }}/vmlinuz-<version>, readable by {{ rp_vm_user }}
+# only, for a CI job that boots a VM of the host's own kernel (vng --run). Ubuntu installs /boot/vmlinuz-<version>
+# readable by root only.
+set -eu
+version=$1
+image=${2:-/boot/vmlinuz-$version}
+[ -f "$image" ] || exit 0
+install -d -o '{{ rp_vm_user }}' -m 0755 '{{ nova_runner_vm_kernel_dir }}'
+install -o '{{ rp_vm_user }}' -m 0600 "$image" '{{ nova_runner_vm_kernel_dir }}/vmlinuz-'"$version"
