@@ -128,11 +128,6 @@ func (r redisStore) Waiting(ctx context.Context, stream string) ([]Msg, error) {
 	}
 }
 
-// Trim deletes every entry older than id (XTRIM MINID).
-func (r redisStore) Trim(ctx context.Context, stream, id string) error {
-	return r.c.XTrimMinID(ctx, stream, id).Err()
-}
-
 // claim sets the key unless it holds another value; release deletes it only
 // if it holds this one (tla/Presence.tla Claim, Release: StartOnlyWhenFree,
 // OnlyOwnerDeletes).

@@ -289,9 +289,6 @@ func scanText(text string) (fs []finding, claims, datedN int) {
 var errNotUTF8 = errors.New("file is not valid UTF-8")
 
 func runSelfTalk(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
-	if len(args) > 0 && args[0] == "scan" { // the older spelling, self-talk scan
-		args = args[1:]
-	}
 	fs := flags()
 	var skips, ruleDocs multi
 	fs.Var(&skips, "skip", "basename to skip, repeatable")

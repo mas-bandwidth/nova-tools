@@ -223,17 +223,7 @@ func (u *upRun) control(out io.Writer) int {
 	if dir := localBin(); len(local) > 0 && !onPath(dir, os.Getenv("PATH")) {
 		miss("PATH", `export PATH="$HOME/.local/bin:$PATH"`, strings.Join(local, " ")+" found only in "+dir+", which is not on PATH; append the line to ~/.profile to keep it")
 	}
-	galaxy, posix, why := "ansible-galaxy", true, []string(nil) // without ansible, the line is printed for after its fix line has run
-	if p := u.bin["ansible-playbook"]; p != "" {                // the collections the plays use (requirements.yml)
-		galaxy = filepath.Join(filepath.Dir(p), "ansible-galaxy")
-		o, e, c := outCmd(galaxy, []string{"collection", "list"}, os.Environ())
-		if posix = strings.Contains(o, "ansible.posix"); c == 127 {
-			why = []string{galaxy + " could not run, so the collections are unchecked:", e}
-		}
-	}
-	if !posix || u.bin["ansible-playbook"] == "" {
-		miss("ansible.posix", "nova-fleet show requirements > requirements.yml && "+galaxy+" collection install -r requirements.yml", why...)
-	} else {
+	if !posixMissing(out, u.bin["ansible-playbook"], &missing) {
 		fmt.Fprintln(out, "CHECK OK ansible.posix")
 	}
 	// The ansible-playbook line above makes a venv; say so when this python3 cannot.
@@ -400,4 +390,20 @@ func runCheck(args []string, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintf(stdout, "CHECK OK missing=0\nnext: nova-fleet up --check --tools <TAG|DIR>%s <name>=<address>...\n", map[bool]string{true: " --runners " + u.runners}[u.runners != ""])
 	return 0
+}
+
+// posixMissing prints and counts the line that installs the plays' collections (requirements.yml) unless the ansible-galaxy
+// beside playbook has ansible.posix, saying when it cannot run (127); with no ansible it names the one on PATH.
+func posixMissing(out io.Writer, playbook string, missing *int) bool {
+	galaxy, why := filepath.Join(filepath.Dir(playbook), "ansible-galaxy"), "" // "" gives ansible-galaxy
+	if playbook != "" {
+		o, e, c := outCmd(galaxy, []string{"collection", "list"}, os.Environ())
+		if strings.Contains(o, "ansible.posix") {
+			return false
+		}
+		why = map[bool]string{true: "  # " + oneLine(galaxy+" could not run, so the collections are unchecked: "+e)}[c == 127]
+	}
+	*missing++
+	fmt.Fprintf(out, "CHECK MISSING ansible.posix: nova-fleet show requirements > requirements.yml && %s collection install -r requirements.yml%s\n", galaxy, why)
+	return true
 }

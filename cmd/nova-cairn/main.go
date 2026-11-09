@@ -126,7 +126,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runSelfTalk(rest, stdin, stdout, stderr)
 	case "memory":
 		return runMemory(rest, stdin, stdout, stderr)
-	case "version", "--version":
+	case "version":
 		fs := flags()
 		if code := parse(fs, "version", rest, stdout, stderr); code >= 0 {
 			return code

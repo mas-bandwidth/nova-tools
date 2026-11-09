@@ -383,16 +383,8 @@ Because an ack deletes its entry, a stream holds exactly the messages no hook
 has acked. pending's count is one `XLEN`; `--list` reads the stream with
 `XRANGE`, 1000 entries at a time, and is O(entries waiting).
 
-A stream written by an older build, whose acks did not delete, may still hold
-acked history. That history is removed the first time a hook finds unacked
-entries pending: the first pending entry is the oldest unacked one, so the hook
-trims everything older (`XTRIM MINID <that id>`) before printing. A new
-(undelivered) entry is never the trim point, because another hook, paused
-past its TTL, may hold an older entry it has been handed and not yet printed.
-Until then pending counts that history too.
-
-An inbox nobody hooks is never trimmed, by design: its messages wait for
-their reader, however long that takes.
+An inbox nobody hooks keeps its messages, by design: they wait for their
+reader, however long that takes.
 
 ## Presence
 

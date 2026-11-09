@@ -93,8 +93,6 @@ func newHarness(t *testing.T) *harness {
 			h.ran = argv
 			return h.code
 		},
-		hold:    func(time.Duration, int) string { return "signal signal=SIGTERM" },
-		ppid:    func() int { return 4242 },
 		running: func(pid int) bool { return !h.dead[pid] },
 		pid:     42,
 		cpus:    8,
@@ -434,75 +432,6 @@ func TestCapacityRewriteCannotLeaveItEmpty(t *testing.T) {
 	assert.Equal(t, capacity{n: 4, pid: "9", at: "2026-11-05T22:03:32Z"}, c)
 }
 
-// --- hold ---------------------------------------------------------------------
-
-func TestHoldUntilFor(t *testing.T) {
-	t.Parallel()
-	h := newHarness(t)
-	var asked time.Duration
-	h.w.hold = func(d time.Duration, ppid int) string {
-		asked = d
-		assert.Equal(t, 4242, ppid, "the parent read before the slot was taken")
-		h.c.t = h.c.t.Add(d)
-		return "for"
-	}
-	require.Equal(t, 0, run([]string{"hold", "--for", "30m", "--slots", "8"}, h.w))
-	assert.Equal(t, 30*time.Minute, asked)
-	assert.Equal(t, "CAPACITY SET slots=8\nHELD mode=shared slot=1/8 pid=42\nRELEASED reason=for held_for=30m0s\n", h.out.String())
-	assert.Empty(t, h.err.String())
-	assert.True(t, h.f.idle())
-}
-
-func TestHoldUntilSignalOrParentExit(t *testing.T) {
-	t.Parallel()
-	for _, reason := range []string{"signal signal=SIGINT", "parent_exit"} {
-		h := newHarness(t)
-		h.w.hold = func(d time.Duration, _ int) string {
-			assert.Zero(t, d, "no --for: no bound")
-			h.c.t = h.c.t.Add(90 * time.Second)
-			return reason
-		}
-		require.Equal(t, 0, run([]string{"hold", "--exclusive"}, h.w))
-		assert.Equal(t, "HELD mode=exclusive slot=all pid=42\nRELEASED reason="+reason+" held_for=1m30s\n", h.out.String())
-		assert.True(t, h.f.idle())
-	}
-}
-
-// TestHoldWithInitAsParentIsRefused: under init (launchd, systemd, a
-// container's first process) no parent's exit can end a hold with no --for.
-func TestHoldWithInitAsParentIsRefused(t *testing.T) {
-	t.Parallel()
-	h := newHarness(t)
-	h.dir = filepath.Join(h.dir, "never")
-	h.w.ppid = func() int { return 1 }
-	h.w.hold = func(time.Duration, int) string { t.Fatal("held"); return "" }
-	assert.Equal(t, 2, run([]string{"hold", "--why", "x"}, h.w))
-	assert.Equal(t, "nova-reserve hold: no parent to watch (parent pid 1); run: nova-reserve hold --for <duration> ...\n", h.err.String())
-	assert.Empty(t, h.out.String())
-	assert.NoDirExists(t, h.dir, "nothing taken, nothing made")
-	assert.True(t, h.f.idle())
-	h.w.hold = func(time.Duration, int) string { return "for" }
-	assert.Equal(t, 0, run([]string{"hold", "--for", "1m"}, h.w), "with --for there is no parent to watch")
-}
-
-func TestHoldHonoursDir(t *testing.T) {
-	t.Parallel()
-	h := newHarness(t)
-	other := filepath.Join(t.TempDir(), "jobs")
-	var status bytes.Buffer
-	h.w.hold = func(time.Duration, int) string {
-		s := h.sibling(9)
-		require.Equal(t, 0, run([]string{"status", "--dir", other}, s.w))
-		status.WriteString(s.out.String())
-		return "for"
-	}
-	require.Equal(t, 0, run([]string{"hold", "--dir", other, "--slots", "2", "--why", "bench sweep"}, h.w))
-	assert.Contains(t, status.String(), "slot1 held pid=42 since=2026-11-05T22:03:32Z why=bench\\ssweep\n")
-	assert.Contains(t, status.String(), "free=1/2\n")
-	assert.NoFileExists(t, filepath.Join(h.dir, "capacity"), "the default directory is untouched")
-	assert.FileExists(t, filepath.Join(other, "capacity"))
-}
-
 // --- status -------------------------------------------------------------------
 
 // statusDuring runs status from another caller while h's command runs.
@@ -614,22 +543,17 @@ func TestRefusals(t *testing.T) {
 		{[]string{"--wait", "0", "--", "x"}, `nova-reserve: --wait wants a duration above 0, like 90s or 15m, not "0"; run: nova-reserve -h`},
 		{[]string{"--wait=0s", "--", "x"}, `nova-reserve: --wait wants a duration above 0, like 90s or 15m, not "0s"; run: nova-reserve -h`},
 		{[]string{"--bogus", "--", "x"}, "nova-reserve: unknown flag --bogus; run: nova-reserve -h"},
-		{[]string{"hold", "--no-such-flag"}, "nova-reserve hold: unknown flag --no-such-flag; run: nova-reserve hold -h"},
 		{[]string{"status", "--slots", "2"}, "nova-reserve status: status takes no --slots; it takes --dir; run: nova-reserve status -h"},
 		{[]string{"status", "--wait", "1s"}, "nova-reserve status: status takes no --wait; it takes --dir; run: nova-reserve status -h"},
-		{[]string{"--for", "1m", "--", "x"}, "nova-reserve: run takes no --for; it takes --slots, --exclusive, --wait, --why, --dir; run: nova-reserve -h"},
-		{[]string{"hold", "--slots"}, "nova-reserve hold: --slots wants 1..1024; run: nova-reserve hold -h"},
-		{[]string{"hold", "--for", "0s"}, `nova-reserve hold: --for wants a duration above 0, like 30m, not "0s"; run: nova-reserve hold -h`},
 		{[]string{"--exclusive", "--slots", "2", "--", "x"}, "nova-reserve: --exclusive takes every slot; --slots does not apply; run: nova-reserve -h"},
 		{[]string{"--exclusive=yes", "--", "x"}, `nova-reserve: --exclusive takes no value, not "yes"; run: nova-reserve -h`},
 		{[]string{"--slots", "1", "--slots", "2", "--", "x"}, "nova-reserve: --slots given twice; run: nova-reserve -h"},
 		{[]string{"set"}, "nova-reserve set: set wants --slots N (1..1024); run: nova-reserve set -h"},
 		{[]string{"set", "--slots", "2", "--exclusive"}, "nova-reserve set: set takes no --exclusive; it takes --slots, --dir; run: nova-reserve set -h"},
 		{[]string{"status", "extra"}, `nova-reserve status: unexpected "extra"; a command goes after --; run: nova-reserve status -h`},
-		{[]string{"hold", "--", "x"}, `nova-reserve hold: hold takes no command, not "x"; run: nova-reserve hold -h`},
 		{[]string{"--why", "", "--", "x"}, `nova-reserve: --why wants text, not ""; run: nova-reserve -h`},
-		{[]string{"help", "nope"}, `nova-reserve help: help takes one of run, hold, status, set, not "nope"; run: nova-reserve -h`},
-		{[]string{"no-such-verb"}, "nova-reserve: unknown verb \"no-such-verb\"; verbs: run, hold, status, set, help; a command goes after --: nova-reserve -- no-such-verb; run: nova-reserve help"},
+		{[]string{"help", "nope"}, `nova-reserve help: help takes one of run, status, set, not "nope"; run: nova-reserve -h`},
+		{[]string{"no-such-verb"}, "nova-reserve: unknown verb \"no-such-verb\"; verbs: run, status, set, help; a command goes after --: nova-reserve -- no-such-verb; run: nova-reserve help"},
 		{[]string{"--card", "x", "--", "true"}, "nova-reserve: unknown flag --card; run: nova-reserve -h"},
 	} {
 		h := newHarness(t)
@@ -647,7 +571,6 @@ func TestVerbHelp(t *testing.T) {
 	t.Parallel()
 	for _, args := range [][]string{
 		{"help"}, {"-h"}, {"--help"}, {"help", "run"}, {"run", "-h"}, {"--slots", "2", "--help", "--", "x"},
-		{"hold", "-h"}, {"hold", "--help"}, {"help", "hold"},
 		{"status", "-h"}, {"status", "--help"}, {"help", "status"},
 		{"set", "-h"}, {"set", "--help"}, {"help", "set"},
 		{"status", "--slots", "x", "-h"},
@@ -656,7 +579,7 @@ func TestVerbHelp(t *testing.T) {
 		h.dir = filepath.Join(h.dir, "never")
 		assert.Equal(t, 0, run(args, h.w), "%q", args)
 		assert.Contains(t, h.out.String(), "nova-reserve", "%q", args)
-		for _, v := range []string{"hold", "status", "set"} {
+		for _, v := range []string{"status", "set"} {
 			if strings.Contains(strings.Join(args, " "), v) {
 				assert.True(t, strings.HasPrefix(h.out.String(), "nova-reserve "+v), "%q: %s", args, h.out.String())
 			}
@@ -718,9 +641,9 @@ func TestMissingParentNamesTheEnvironment(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	h.dir = filepath.Join(h.dir, "no", "x")
-	assert.Equal(t, 2, run([]string{"hold", "--for", "1m"}, h.w))
-	assert.Equal(t, "nova-reserve hold: NOVA_RESERVE_DIR "+h.dir+": parent "+filepath.Dir(h.dir)+" does not exist; run: mkdir -p "+
-		shellQuote(filepath.Dir(h.dir))+" && nova-reserve hold --for 1m\n", h.err.String())
+	assert.Equal(t, 2, run([]string{"set", "--slots", "2"}, h.w))
+	assert.Equal(t, "nova-reserve set: NOVA_RESERVE_DIR "+h.dir+": parent "+filepath.Dir(h.dir)+" does not exist; run: mkdir -p "+
+		shellQuote(filepath.Dir(h.dir))+" && nova-reserve set --slots 2\n", h.err.String())
 }
 
 func TestUnwritableDirParentIsRefused(t *testing.T) {
@@ -732,8 +655,8 @@ func TestUnwritableDirParentIsRefused(t *testing.T) {
 	ro := filepath.Join(h.dir, "ro")
 	require.NoError(t, os.Mkdir(ro, 0o500))
 	t.Cleanup(func() { _ = os.Chmod(ro, 0o700) })
-	assert.Equal(t, 2, run([]string{"hold", "--for", "1m", "--dir", filepath.Join(ro, "r")}, h.w))
-	assert.Equal(t, "nova-reserve hold: --dir "+filepath.Join(ro, "r")+": parent "+ro+" is not writable by this user; run: ls -ld "+shellQuote(ro)+"\n", h.err.String())
+	assert.Equal(t, 2, run([]string{"set", "--slots", "2", "--dir", filepath.Join(ro, "r")}, h.w))
+	assert.Equal(t, "nova-reserve set: --dir "+filepath.Join(ro, "r")+": parent "+ro+" is not writable by this user; run: ls -ld "+shellQuote(ro)+"\n", h.err.String())
 }
 
 // TestUnwritableHolderFileIsRefused: a holder file this run can neither remove

@@ -156,7 +156,9 @@ shell as 128+N, as for any process. The exit status is the command's.
 ### Defaults and help
 `--store` may come from `NOVA_SECRETS_STORE`, `--key` from `NOVA_SECRETS_KEY`,
 `--pins` from `NOVA_SECRETS_PINS`, and `--as` from `NOVA_SECRETS_SEAT` (then the
-short hostname). `--sops` is
+short hostname). Unset, every verb that takes them uses
+`~/.config/nova-secrets/store`, `~/.config/nova-secrets/<seat>.key` and
+`~/.config/nova-secrets/pins`. `--sops` is
 `sops` on PATH.
 
 ```sh

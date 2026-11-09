@@ -14,7 +14,7 @@ status is 128+N. `nova-sandbox probe` confirms the wall before you trust a denia
 Words used below: the **wall** is the set of kernel restrictions applied to the
 command. A **grant** is a directory you name with `--read` or `--write`. The
 **system roots** are paths the command can always read and run, such as `/usr`,
-`/bin`, `/lib` and `/etc` (`nova-sandbox show` lists them all).
+`/bin`, `/lib` and `/etc`.
 
 ## Install
 
@@ -28,7 +28,7 @@ process counts and disk use are not limited by this tool.
 ## Run a command
 
 ```text
-nova-sandbox [--read <dir>]... [--write <dir>]... [--net-deny [--net-allow <host:port>]...] [--gpu] [--unix] [--keep-fds] [--env <name>]... -- <cmd> <args...>
+nova-sandbox [--read <dir>]... [--write <dir>]... [--net-deny [--net-allow <host:port>]...] [--gpu] [--unix] [--env <name>]... -- <cmd> <args...>
 ```
 
 | Flag | Effect |
@@ -39,8 +39,7 @@ nova-sandbox [--read <dir>]... [--write <dir>]... [--net-deny [--net-allow <host
 | `--net-allow <host:port>` | Under `--net-deny`, allow a port named with a loopback host. Linux permits TCP to that port on every destination address; macOS permits TCP and UDP to localhost on it. |
 | `--gpu` | macOS only: allow Metal and video services. On Linux, use `--write /dev/dri`. |
 | `--unix` | Linux only: leave Unix-domain sockets open. |
-| `--keep-fds` | Keep inherited descriptors above stderr open (they are closed by default). |
-| `--env <name>` | Pass this variable by name. `PATH`, `HOME`, `LANG` and `TERM` pass without it. Repeatable. An unset name is refused on a run. |
+| `--env <name>` | Pass this variable by name. `PATH`, `HOME`, `LANG` and `TERM` pass without it. Repeatable. An unset name is refused. |
 
 Flags go before `--`; everything after it is the command. Directories must be
 absolute and exist. A missing `--write` names `mkdir -p` of that path. A path
@@ -70,22 +69,6 @@ needs `--read "$(go env GOROOT)"`. A Go build also needs
 `GOCACHE` inside a `--write`, and a populated `GOMODCACHE` inside a `--read`.
 Set `GOPROXY=off` for a build from that cache with `--net-deny`; `GOPROXY` is
 a module-download setting, not a filesystem path. `HOME` is kept.
-
-## Preview the wall: `show`
-
-`show` takes the run flags and prints the rules without starting anything.
-
-```sh
-nova-sandbox show --write "$work_dir" --net-deny --net-allow localhost:5432 | grep -E '^(wall|net|fds)'
-```
-
-```text
-wall backend=landlock abi=4 seccomp=on
-net rule=tcp_allow tcp_connect=allow ports=5432 tcp_bind=deny by=landlock listen=deny accept=deny fastopen=deny udp=deny raw=deny packet=deny by=seccomp dns=/etc/hosts_or_a_resolver_on_an_allowed_tcp_port note=landlock filters by port: an allowed port is open on every address
-fds close=above_stderr
-```
-
-Exit 0 means the wall can start here, 1 means it would be refused.
 
 ## Check the host: `check`
 
@@ -171,7 +154,6 @@ If the command is killed by signal N, stderr gains
 
 - Needs Linux 5.13 or later (Landlock; `--net-deny` needs ABI 4). `check` reports yours.
 - `--unix` lets the command reach any local socket by path, so use it only for trusted commands.
-- A kept descriptor (`--keep-fds`) can carry access past the grants.
 - CPU, memory, processes and disk use are not limited.
 - nova-sandbox waits for the command, in the same process group, so a terminal read keeps working. SIGINT, SIGTERM, SIGHUP and SIGQUIT are forwarded to the command. On Linux the command is killed when the waiter dies. On macOS, SIGKILL of the waiter can leave the command running. See Reference below.
 
@@ -181,9 +163,8 @@ If the command is killed by signal N, stderr gains
 
 `PATH`, `HOME`, `LANG` and `TERM` are kept. `--env <name>` passes another
 variable by name; the value is never an argument. A name that is not letters,
-digits and underscores, or that is unset on a run, is `bad_env` (exit 2), and
-it is reported together with every other problem. `show` checks the name and
-does not require it to be set. A Go build passes `TMPDIR`, `GOCACHE`,
+digits and underscores, or that is unset, is `bad_env` (exit 2), and
+it is reported together with every other problem. A Go build passes `TMPDIR`, `GOCACHE`,
 `GOMODCACHE` and `GOPROXY` with `--env`. `TMPDIR` and `GOCACHE` point inside a
 `--write`; a populated `GOMODCACHE` points inside a `--read`. `GOPROXY=off`
 prevents module downloads for a cache-only build under `--net-deny`. `HOME` is kept.
