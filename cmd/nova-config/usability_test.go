@@ -138,6 +138,18 @@ func TestHistory(t *testing.T) {
 	}
 }
 
+// A history row of a kind this tool does not know prints like any other: its kind as stored, its fields as text.
+func TestHistoryPrintsARowOfAnUnknownKind(t *testing.T) {
+	t.Parallel()
+	h := fleet(t) // writes 1..3
+	h.st.history = append(h.st.history, change{"gadget", "g1", "set", "t", map[string]string{"size": "1"}, map[string]string{"size": "2", "reason": "grow it"}})
+	out := h.ok(t, "history")
+	assert.True(t, strings.HasPrefix(out, "HISTORY at=2026-01-02T00:00:04Z actor=t kind=gadget name=g1 op=set rev=4\n  size: \"1\" -> \"2\"\n  reason: \"grow it\"\n"+
+		"HISTORY at=2026-01-02T00:00:03Z actor=t kind=service name=member-b op=add rev=3\n"), out)
+	assert.True(t, strings.HasSuffix(out, "CONFIG HISTORY rows=4\n"), out)
+	assert.Equal(t, 4, strings.Count(out, "HISTORY at="))
+}
+
 func TestParseSince(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 3, 10, 12, 0, 0, 0, time.UTC)
@@ -189,6 +201,26 @@ func TestDiagnose(t *testing.T) {
 func TestOneLine(t *testing.T) {
 	t.Parallel()
 	assert.Equal(t, "a b c", oneLine("a\n  b\tc\n"))
+}
+
+// A set with a malformed value names that value and nothing else: the row is checked once the values are on it.
+func TestSetNamesOnlyTheValuesGiven(t *testing.T) {
+	t.Parallel()
+	h := fleet(t)
+	h.ok(t, "friend", "add", "friend-a", "--harness", "h", "--actor", "t")
+	for _, c := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"friend", "set", "friend-a", "--width", "abc", "--actor", "t"}, `nova-config friend set: --width "abc": want a non-negative integer; ` + kinds["friend"].fieldsLine() + "; run: nova-config friend set -h\n"},
+		{[]string{"service", "set", "member-b", "--keepalive", "true", "--env", "nope", "--actor", "t"},
+			`nova-config service set: --env: want a JSON object of NAME to value strings: '{"NAME":"value"}'; ` + kinds["service"].fieldsLine() + "; run: nova-config service set -h\n"},
+	} {
+		code, out, errs := h.run(t, c.args...)
+		assert.Equal(t, 2, code, "%v", c.args)
+		assert.Empty(t, out, "%v", c.args)
+		assert.Equal(t, c.want, errs, "%v", c.args)
+	}
 }
 
 // A set that changes nothing writes nothing: no history row, and it says so.
