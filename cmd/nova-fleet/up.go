@@ -565,6 +565,10 @@ func (u *upRun) steps() int {
 		if m.unreachable != "" || m.later {
 			continue
 		}
+		if m.self {
+			u.say("UP GRANT %s SKIPPED this control node (tailscale status Self): its own seat holds the values", m.name)
+			continue
+		}
 		pub, why, c := outCmd(u.bin["ssh"], []string{"-o", "BatchMode=yes", m.user + "@" + m.dns, "sh", "-c",
 			"'PATH=" + strings.Join(slices.Compact([]string{u.binDir, "$HOME/.local/bin"}), ":") + `:/opt/homebrew/bin:$PATH age-keygen -y $HOME/.config/nova-secrets/` + m.name + `.key'`}, os.Environ())
 		pub = strings.TrimSpace(pub)
