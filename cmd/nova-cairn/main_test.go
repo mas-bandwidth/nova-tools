@@ -465,6 +465,19 @@ func TestVerifyCoverage(t *testing.T) {
 	assert.Contains(t, errs, "VERIFY FAIL gating=2 shown=2 info=0 coverage=2 frontmatter=0 links=gate")
 }
 
+// A Markdown link inside fenced code is an example, not a link: it needs no file.
+func TestVerifyBacklinksSkipFencedCode(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "m"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "m", "listed.md"), []byte("body\n"), 0o644))
+	index := "- [listed](listed.md)\n\n```markdown\n- [example](nonexistent-example.md)\n```\n"
+	require.NoError(t, os.WriteFile(filepath.Join(root, "m", "index-a.md"), []byte(index), 0o644))
+	code, out, errs := do(t, "", "memory", "verify", "--root", root, "--links", "gate", "--coverage", "m/*.md:m/index-*.md")
+	assert.Equal(t, 0, code, errs)
+	assert.Contains(t, out, "VERIFY OK gating=0")
+}
+
 // TestMemoryFindsStoreEntries: the words an AI appended are found by memory search,
 // stats and check, and a hit names what receipt needs. No real clock: the store is
 // written with a fixed time.
