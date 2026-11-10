@@ -679,6 +679,13 @@ The refusal you will meet first is
 
 The whole tool: [cmd/nova-secrets/README.md](../cmd/nova-secrets/README.md).
 
+`nova-fleet join` gives every shell of a machine's login, including a plain
+`ssh <machine> '<cmd>'`, `NOVA_SECRETS_STORE` and `NOVA_SECRETS_SEAT`, so a bare
+`nova-secrets exec --only NAME -- <cmd>` there opens that machine's seat. To clone a
+private repository there, use the one recipe in `nova-secrets help exec`: the
+token reaches git only through a credential helper that reads it from the
+environment ([cmd/nova-secrets/README.md](../cmd/nova-secrets/README.md#clone-a-private-repository-on-a-fleet-machine)).
+
 ## Share machines without stepping on each other
 
 A **slot** is one place in a machine's limit on jobs that run at once. A job
