@@ -360,13 +360,13 @@ func (c *codexWake) poll(ctx context.Context, out, stderr io.Writer) (string, er
 		return why, nil
 	}
 	if len(c.waiting) == 0 { // taken only once the chat is idle: the poll that takes a fault queues it and settles its record
-		retry, c.tries, c.limit = &faults[i], 0, 1
-		for _, id := range saved(c.dir, retry.first, retry.last) {
+		for _, id := range saved(c.dir, faults[i].first, faults[i].last) {
 			c.waiting = append(c.waiting, Msg{ID: id})
 		}
 		if len(c.waiting) == 0 {
 			return "", nil
 		}
+		retry, c.tries, c.limit = &faults[i], 0, 1
 	}
 	msgs, first, last := c.waiting, c.waiting[0].ID, c.waiting[len(c.waiting)-1].ID
 	text, start := c.text(msgs)
