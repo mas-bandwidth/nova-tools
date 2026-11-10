@@ -317,6 +317,21 @@ func TestSSHNamesRefusesABadRecord(t *testing.T) {
 	f.wroteNothing(t)
 }
 
+// A machine name nova-config would not take ([a-z0-9][a-z0-9-]*: a leading dash would reach ssh as an option) is refused
+// too, though the machine is asleep and its address and user are good.
+func TestSSHNamesRefusesABadName(t *testing.T) {
+	t.Parallel()
+	f := newSSHNamesFleet(t, nil)
+	inv, err := os.ReadFile(f.inventory)
+	require.NoError(t, err)
+	inv = append(inv, []byte(`    "-bench-2": {ansible_host: bench-2.`+sshNamesTailnet+`, ansible_user: dave, ansible_ssh_executable: "false"}`+"\n")...)
+	require.NoError(t, os.WriteFile(f.inventory, inv, 0o644))
+	out, err := f.run(t, "")
+	require.Error(t, err, out)
+	assert.Contains(t, out, `SSH-NAMES REFUSED machine "-bench-2" name`)
+	f.wroteNothing(t)
+}
+
 // An address may be one of the tailnet's IPs.
 func TestSSHNamesTakesAnIPAddress(t *testing.T) {
 	t.Parallel()

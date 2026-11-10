@@ -608,17 +608,15 @@ one. On a Mac machine, open the Tailscale app once at its console and approve it
    apply them; other owners stay); the fleet's grants and ssh rules are appended where an equal rule (the same JSON)
    is not already there. Among them, so your own devices keep reaching every tagged machine whatever the policy was
    built on (allow-all, or `autogroup:self`, which no tagged device is): a grant from `autogroup:admin` to `tag:nova`,
-   `tag:runner` and `tag:control` on every port (`ip: ["*"]`), and ssh rules with Tailscale's `check` action (you
-   confirm in a browser, then it holds for a while): `autogroup:admin` into `tag:nova` and `tag:runner` as
-   `autogroup:nonroot` and `root`, and into `tag:control` as `autogroup:nonroot` only. Every fleet tag reaches
+   `tag:runner` and `tag:control` on every port (`ip: ["*"]`), an ssh rule accepting `autogroup:admin` into
+   `tag:nova` and `tag:runner` as `autogroup:nonroot` and `root`, and one into `tag:control` as `autogroup:nonroot`
+   only with Tailscale's `check` action (you confirm in a browser, then it holds for a while). Every fleet tag reaches
    `tag:nova` and `tag:runner` on port 22 and over Tailscale SSH as a non-root login, never root (`ssh-names` below
    checks every pair). Nothing reaches `tag:control` without a person: no tag has its port 22 or an ssh rule into it.
    Nothing is opened to an untagged or member device. The members reach the store's ports
    (`tcp:5432`, `tcp:6379`) on `tag:control` too, for a fleet whose store is the control node itself, so the store
    does not depend on an allow-all rule staying in the policy. Nothing the policy has is removed or replaced, so
-   the default policy's allow-all `acls` rule still allows all, and a rule an earlier release added stays until you
-   delete it in the admin console: before this release the admins' rule into `tag:nova` and `tag:runner` was
-   `accept` (root with no check); delete that one. It is written (`POST` with `If-Match`, HuJSON) only
+   the default policy's allow-all `acls` rule still allows all. It is written (`POST` with `If-Match`, HuJSON) only
    when the merge added something; a 412 reads it again and retries once; a second run writes nothing.
 2. This node tagged `tag:control` (`POST /api/v2/device/<Self.ID>/tags`, its tags kept); a node not on the tailnet is
    first joined with a minted `tag:control` key (`tailscale up --reset --auth-key=file:/dev/stdin`, the key on stdin;

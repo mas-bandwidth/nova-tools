@@ -129,7 +129,7 @@
       vars:
         ssh_names_refused: >-
           {%- set bad = [] -%}
-          {%- set name_re = '^[a-z0-9-]+\Z' -%}
+          {%- set name_re = '^[a-z0-9][a-z0-9-]*\Z' -%}
           {%- set address_re = '^[a-z0-9-]+\.' ~ (ssh_names_suffix | regex_escape) ~ '\Z' -%}
           {%- set ipv4_re = '^((25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])\.){3}(25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])\Z' -%}
           {%- set ipv6_re = '^[0-9a-f]*:[0-9a-f:]*\Z' -%}
@@ -138,7 +138,7 @@
           {%-   set a = hostvars[h].ansible_host | default('') | string -%}
           {%-   set u = hostvars[h].ansible_user | default('') | string -%}
           {%-   if h is not match(name_re) -%}
-          {%-     set _ = bad.append('machine ' ~ (h | to_json) ~ ' name: not [a-z0-9-]') -%}
+          {%-     set _ = bad.append('machine ' ~ (h | to_json) ~ ' name: not [a-z0-9][a-z0-9-]*, as nova-config takes') -%}
           {%-   endif -%}
           {%-   if a is not match(address_re) and a is not match(ipv4_re) and a is not match(ipv6_re) -%}
           {%-     set _ = bad.append('machine ' ~ h ~ ' address ' ~ (a | to_json) ~ ': not <label>.' ~ ssh_names_suffix ~ ' or an IP (nova-config machine set ' ~ h ~ ' --address ' ~ h ~ '.' ~ ssh_names_suffix ~ ')') -%}

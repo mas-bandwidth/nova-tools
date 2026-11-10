@@ -84,19 +84,7 @@
 			]
 		},
 		{
-			"action": "check",
-			"src": [
-				"autogroup:admin"
-			],
-			"dst": [
-				"tag:control"
-			],
-			"users": [
-				"autogroup:nonroot"
-			]
-		},
-		{
-			"action": "check",
+			"action": "accept",
 			"src": [
 				"autogroup:admin"
 			],
@@ -107,6 +95,18 @@
 			"users": [
 				"autogroup:nonroot",
 				"root"
+			]
+		},
+		{
+			"action": "check",
+			"src": [
+				"autogroup:admin"
+			],
+			"dst": [
+				"tag:control"
+			],
+			"users": [
+				"autogroup:nonroot"
 			]
 		}
 	]
