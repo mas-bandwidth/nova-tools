@@ -179,6 +179,11 @@ func (h *harness) run(stdin io.Reader, env []string, dir, name string, args ...s
 	case name == "age-keygen" && args[0] == "-o":
 		return nil, os.WriteFile(args[1], []byte("AGE-SECRET-KEY-FAKE\n"), 0o644)
 	case name == "age-keygen" && args[0] == "-y" && filepath.Base(args[1]) == "recovery.key":
+		if _, err := os.Stat(args[1]); err == nil {
+			if _, err := os.ReadFile(args[1]); err != nil {
+				return nil, exitErr(1) // as age-keygen: a key it cannot read prints nothing
+			}
+		}
 		return []byte(pubRec + "\n"), nil
 	case name == "age-keygen" && args[0] == "-y":
 		return []byte(h.keyPub + "\n"), nil
@@ -1228,6 +1233,23 @@ func TestSetFinishesNoStoreMadeForAnotherRecoveryKey(t *testing.T) {
 	b, err := os.ReadFile(filepath.Join(h.store, ".sops.yaml"))
 	require.NoError(t, err)
 	assert.Equal(t, "creation_rules: []\n", string(b), "no seat is added")
+}
+
+// A store this bootstrap made, with a recovery key it cannot read: set says so, naming the key, and adds no seat.
+func TestSetNamesAnUnreadableRecoveryKey(t *testing.T) {
+	t.Parallel()
+	h, dir := fresh(t)
+	require.Equal(t, 0, h.main("init", "--store", h.store, "--recovery", pubRec, "--pins", h.pins), h.stderr.String())
+	rk := filepath.Join(dir, "recovery.key")
+	for _, k := range []string{rk, h.key} {
+		require.NoError(t, os.WriteFile(k, []byte("AGE-SECRET-KEY-FAKE\n"), 0o600))
+	}
+	require.NoError(t, os.Chmod(rk, 0o000))
+	h.stderr.Reset()
+	assert.Equal(t, 2, h.main("set", "TAILSCALE_API_KEY", "--sops", "sops"))
+	assert.Contains(t, h.stderr.String(), "reason=no-key")
+	assert.Contains(t, h.stderr.String(), "age-keygen -y "+rk+" did not print an age public key")
+	assert.NotContains(t, h.stderr.String(), "no-seat")
 }
 
 // Each refusal ends in the command to run next.
