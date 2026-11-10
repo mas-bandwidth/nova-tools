@@ -15,9 +15,10 @@
     # the last line: a login shell may print a banner first
     health_gocache_dir: "{{ health_gocache.stdout_lines | default([]) | last | default('') | trim }}"
 
-- name: the cache trim applies (go answers, and names an absolute go-build dir)
+- name: the cache trim applies (go answers, and names an absolute go-build dir outside /Volumes)
   ansible.builtin.set_fact:
-    health_gocache_on: "{{ nova_health_disk_clean | bool and health_gocache.rc | default(1) == 0 and health_gocache_dir is match('/') and (health_gocache_dir | basename) == 'go-build' }}"
+    # launchd jobs cannot read a removable volume without a privacy grant; Go trims its own cache daily after 5 days
+    health_gocache_on: "{{ nova_health_disk_clean | bool and health_gocache.rc | default(1) == 0 and health_gocache_dir is match('/') and health_gocache_dir is not match('/Volumes/') and (health_gocache_dir | basename) == 'go-build' }}"
 
 - name: the trim script
   ansible.builtin.copy: { src: nova-go-cache-clean, dest: "{{ nova_bin_dir }}/nova-go-cache-clean", mode: "0755" }
@@ -71,7 +72,7 @@
   changed_when: "'BOOTSTRAPPED' in health_gocache_load.stdout"
   when: health_gocache_on | bool and not ansible_check_mode
 
-- name: the trim's daemon, gone when the trim does not apply (switched off, or no go-build cache)
+- name: the trim's daemon, gone when the trim does not apply (switched off, no go-build cache, or one under /Volumes)
   ansible.builtin.shell: |
     l=system/com.nova.go-cache-clean
     f=/Library/LaunchDaemons/com.nova.go-cache-clean.plist
@@ -87,6 +88,6 @@
     msg: >-
       GO-CACHE-CLEAN {{ inventory_hostname }}
       {%- if not nova_health_disk_clean | bool %} off (nova_health_disk_clean)
-      {%- elif not health_gocache_on | bool %} skipped: go env GOCACHE gave "{{ health_gocache_dir }}" (rc={{ health_gocache.rc | default('-') }}), not a go-build dir
+      {%- elif not health_gocache_on | bool %} skipped: go env GOCACHE gave "{{ health_gocache_dir }}" (rc={{ health_gocache.rc | default('-') }}), not a go-build dir outside /Volumes
       {%- else %} cache={{ health_gocache_dir }} hourly, log={{ nova_home }}/Library/Logs/nova-go-cache-clean.log{% endif %}
   changed_when: false
