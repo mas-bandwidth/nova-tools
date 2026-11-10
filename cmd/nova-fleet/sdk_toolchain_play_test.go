@@ -310,3 +310,31 @@ func TestSDKToolchainEnvPutsTheSDKFirst(t *testing.T) {
 	}
 	assert.Contains(t, rc, `. "{{ nova_sdk_dir }}/env.sh"`)
 }
+
+// SQ names a Squirrel built with 64-bit integers and floats (sq64 with SQUSEDOUBLE), the interpreter a float64 survives,
+// and env.sh exports it only where that binary is.
+func TestSDKToolchainSQIsTheDoubleSquirrel(t *testing.T) {
+	t.Parallel()
+	b, err := os.ReadFile(sdkToolchainRole + "/defaults/main.yml")
+	require.NoError(t, err)
+	var files struct {
+		Env map[string]string `yaml:"nova_sdk_env_files"`
+	}
+	require.NoError(t, yaml.Unmarshal(b, &files))
+	sq := files.Env["SQ"]
+	dir, _, _ := strings.Cut(sq, "/")
+	var tool *sdkTool
+	d := readSDKDefaults(t)
+	for i := range d.Tools {
+		if d.Tools[i].Dir == dir {
+			tool = &d.Tools[i]
+		}
+	}
+	require.NotNil(t, tool, "SQ=%s names a tool's directory", sq)
+	assert.Equal(t, dir+"/"+tool.Probe, sq, "SQ is the tool's probe, so it exists once the tool is installed")
+	assert.Contains(t, tool.Build, "sq64")
+	assert.Contains(t, tool.Build, "-DSQUSEDOUBLE")
+	env, err := os.ReadFile(sdkToolchainRole + "/templates/env.sh.j2")
+	require.NoError(t, err)
+	assert.Contains(t, string(env), `if [ -x "{{ nova_sdk_dir }}/{{ v }}" ]; then export {{ k }}=`)
+}

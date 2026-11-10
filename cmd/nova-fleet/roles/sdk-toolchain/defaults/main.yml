@@ -28,6 +28,10 @@ nova_sdk_env:
   ELIXIR: elixir
   MIX: mix
 
+# Make variables naming a file under the SDK, exported from env.sh only where that file is executable.
+nova_sdk_env_files:
+  SQ: squirrel-3.2-double/bin/sq
+
 # One entry per tool. A tool is installed on a platform (linux: x86_64 Linux and WSL; darwin: Apple silicon) only when
 # it has an entry for it. Keys:
 #   dir     the directory under nova_sdk_dir                probe  a file under it that exists once it is installed
@@ -252,7 +256,8 @@ nova_sdk_tools:
       mv "$dest" "$stage/s"
       mkdir -p "$dest"
       cd "$stage/s"
-      INSTALL_ROOT="$dest" sh install.sh >/dev/null
+      unset SBCL_HOME   # install.sh refuses an SBCL_HOME that is not under INSTALL_ROOT, as another sbcl's env sets
+      INSTALL_ROOT="$dest" sh install.sh >"$stage/install.log" || { cat "$stage/install.log"; exit 1; }
     linux:
       url: https://downloads.sourceforge.net/project/sbcl/sbcl/2.5.8/sbcl-2.5.8-x86-64-linux-binary.tar.bz2
       sha256: 103fa33b913341791f0f61f5d500e1723ac986125e665b584efba760006fed67
@@ -306,6 +311,20 @@ nova_sdk_tools:
       sha256: 211f1452f00b24b94f60ba44b50abe327fd2735600a7bacabc5b774b327c81db
       root: squirrel3   # the archive also carries a stray inner tar beside its one directory
 
+  # The interpreter serialize.nut pins (its Makefile's dist-squirrel): the v3.2 tag's archive, built as sq64 with
+  # SQUSEDOUBLE, so _intsize_ and _floatsize_ are both 8. The squirrel above is the float-32 build; this one is not
+  # linked into bin and is reached through SQ (nova_sdk_env_files).
+  - name: squirrel-double
+    version: "3.2"
+    dir: squirrel-3.2-double
+    probe: bin/sq
+    links: []
+    build: nice -n 15 make -s sq64 DEFS=-DSQUSEDOUBLE >/dev/null 2>&1
+    linux:
+      url: https://github.com/albertodemichelis/squirrel/archive/refs/tags/v3.2.tar.gz
+      file: squirrel-3.2-tag.tar.gz   # the URL's own name, v3.2.tar.gz, says nothing of what it is
+      sha256: 02805414cfadd5bbb921891d3599b83375a40650abd6404a8ab407dc5e86a996
+
   - name: clang-format
     version: "23.1.3"
     dir: clang-format-23.1.3
@@ -334,7 +353,7 @@ nova_sdk_tools:
     kind: git
     build: |
       cmake -S . -B b -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$dest" -DFILESDIR="$dest/share/cppcheck" -DBUILD_TESTS=OFF -DCMAKE_POLICY_VERSION_MINIMUM=3.5 >/dev/null
-      cmake --build b -j"$jobs" >/dev/null
+      cmake --build b --target cppcheck -j"$jobs" >/dev/null   # alone: dmake can race the match compiler's sources
       cmake --install b >/dev/null
     linux: { repo: https://github.com/danmar/cppcheck, ref: "2.13.0", commit: da29903ffcbde465b6c2b47e8dc38277743f47ec }
 
