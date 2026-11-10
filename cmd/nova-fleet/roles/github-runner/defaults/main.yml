@@ -88,6 +88,8 @@ github_runner_wsl_ci_stage_unix: /mnt/c/ProgramData/nova-ci-rules-stage
 github_runner_wsl_ci_script: 'C:\ProgramData\nova-ci-rules-stage\nova-ci-rules.ps1'
 github_runner_wsl_base_dir: 'C:\actions-runner'
 github_runner_wsl_cache: 'C:\actions-runner\.cache'
+# The keepalive (tasks/wsl-keepalive.yml) finds this distro on the Windows side by its machine-id.
+github_runner_wsl_machine_id_file: /etc/machine-id
 # The labels every Windows-side runner gets, before the record's extras (GitHub adds self-hosted, X64 and Windows): the
 # base labels and the machine's name. Not the machine's roles, os and arch as on Linux: a job that selects [self-hosted, bench] or [self-hosted, amd64]
 # must never land on Windows.

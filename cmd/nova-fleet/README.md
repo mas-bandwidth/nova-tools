@@ -175,7 +175,7 @@ reached as root at the address given, as on the first run.
 | `secrets-refresh` | the control node's encrypted store pushed to every machine with `ansible.posix.synchronize` (`verify_host: true`, no `.git`, stale files deleted, 0700/0600); no machine runs a timer (pull mode is retired; one left is removed) | `nova_seal_store` (the control node's clone) to push |
 | `services` | one supervised unit per service record, on the machine the record names (bench, runner and services groups) | the inventory's `nova_services` |
 | `ssh-names` | `ssh <machine>` by its tailnet name from every machine of the fleet: each login's ssh config and the fleet's host keys from the record, then every pair checked (all machines; one asleep or away is reported offline) | nothing |
-| `windows-runners` | a WSL machine's Windows-side GitHub Actions runners, from its record's `windows_runners`, through WSL interop | the record's `windows_runners`; `gh` on the control node logged in with admin on each repository or organization |
+| `windows-runners` | a WSL machine held running from boot, and its Windows-side GitHub Actions runners from its record's `windows_runners`, through WSL interop | the record's `windows_runners`; `gh` on the control node logged in with admin on each repository or organization |
 | `tailscale` | each machine on the tailnet, its address the MagicDNS name, its firewall closed to all but the tailnet | `TAILSCALE_AUTHKEY` in the environment for a machine not on the tailnet (`up` mints it) |
 
 ```
@@ -442,7 +442,7 @@ nova-fleet windows-runners -- -l bench-1
 ```
 
 `windows_runners` is `<url>=<count>[:<label>+<label>]`, comma-separated (cmd/nova-config/README.md); the inventory hands it to
-the play as `nova_windows_runners`. A machine without it is skipped; one with it that is not WSL with interop is
+the play as `nova_windows_runners`. A machine without it gets no runners (only the keepalive below); one with it that is not WSL with interop is
 refused. **The channel** is the one `ci-rules` already uses: from the WSL login, `powershell.exe` by its full path
 runs the role's `files/runner-windows.ps1`, staged to `C:\ProgramData\nova-runner-stage`. It acts as the Windows account
 that started WSL, elevated; no Windows login, password or key is involved, and no port is opened. **Each runner** is
@@ -461,6 +461,21 @@ directory's own `retired-<yyyymmdd>\`, its service is removed, and it registers 
 cannot read GitHub's list for a target refuses, rather than take a whole runner for a half one. Each machine prints `GITHUB-RUNNERS host=<machine> windows=<n> registered=<n> online=<n>`
 from its directories and GitHub's own list; a run where any is short fails. `--check` reads both, asks for the tokens it
 would need, and prints `RUNNER-PLAN <machine> windows=<n> register=<names> repair=<names> labels=<labels>`.
+
+### WSL held running from boot
+
+WSL starts a distro only when something on Windows asks for one, and stops it when the last `wsl.exe` holding it ends
+(a WSL update from Windows Update does this). So the same play gives every WSL machine with interop, whether or not
+its record names `windows_runners`, one scheduled task on the Windows side: `WSL2 keepalive (<distro>)`, which runs
+`wsl.exe -d <distro> -u <login> --exec /bin/sleep infinity` (under `conhost.exe --headless`) as the Windows account that
+started WSL, logon type S4U: it runs with nobody logged in, and no password is stored. Its boot trigger repeats every
+minute with `IgnoreNew`, so WSL is up at boot and is started again within a minute after a WSL update, a `wsl
+--shutdown` or a reboot inside the distro; inside it systemd starts the services as at any boot (a login's units need
+lingering, which `join` sets). The distro is the running one whose `/etc/machine-id` is this machine's
+(`github_runner_wsl_machine_id_file`), read through `\\wsl.localhost`; none is `NO-DISTRO` and fails the run. A task
+of that name is set when what it does differs and started when it is not running; one line per machine: `KEEPALIVE
+<machine> <distro> ok|set|started|set,started task=<name>`. `--check` reads nothing on the Windows side and prints
+`KEEPALIVE-PLAN <machine> machine-id=<id> user=<login>`.
 
 ## CI rules
 
