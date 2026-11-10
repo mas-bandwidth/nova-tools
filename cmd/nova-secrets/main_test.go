@@ -1212,6 +1212,24 @@ func TestSetBootstrapFinishesAfterAFailedCommit(t *testing.T) {
 	}
 }
 
+// A store at the default made for another recovery key is not a bootstrap to finish, even with a recovery
+// key beside it: set adds no seat, names no key to back up, and refuses as for any store without the seat.
+func TestSetFinishesNoStoreMadeForAnotherRecoveryKey(t *testing.T) {
+	t.Parallel()
+	h, dir := fresh(t)
+	require.Equal(t, 0, h.main("init", "--store", h.store, "--recovery", pubB, "--pins", h.pins), h.stderr.String())
+	for _, k := range []string{filepath.Join(dir, "recovery.key"), h.key} {
+		require.NoError(t, os.WriteFile(k, []byte("AGE-SECRET-KEY-FAKE\n"), 0o600))
+	}
+	h.stdout.Reset()
+	assert.Equal(t, 2, h.main("set", "TAILSCALE_API_KEY", "--sops", "sops"))
+	assert.NotContains(t, h.stdout.String(), "SECRETS SET NEW")
+	assert.Contains(t, h.stderr.String(), "SECRETS SET REFUSED reason=no-seat")
+	b, err := os.ReadFile(filepath.Join(h.store, ".sops.yaml"))
+	require.NoError(t, err)
+	assert.Equal(t, "creation_rules: []\n", string(b), "no seat is added")
+}
+
 // Each refusal ends in the command to run next.
 func TestRefusalsSayWhatToRunNext(t *testing.T) {
 	t.Parallel()
