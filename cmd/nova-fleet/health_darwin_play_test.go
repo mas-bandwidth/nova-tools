@@ -23,7 +23,7 @@ func TestHealthOnDarwinTrimsOnlyTheGoCache(t *testing.T) {
 	require.NoError(t, err)
 	for _, want := range []string{"go env GOCACHE", "/Library/LaunchDaemons/com.nova.go-cache-clean.plist", "<key>UserName</key>",
 		"<key>StartInterval</key>", "launchctl bootstrap system", "nova-go-cache-clean",
-		"launchctl bootout \"$l\" && echo REMOVED", "when: not health_gocache_on | bool"} {
+		"launchctl bootout \"$l\" || { echo \"bootout $l failed\" >&2; exit 1; }", "when: not health_gocache_on | bool"} {
 		assert.Contains(t, string(d), want)
 	}
 	for _, linux := range []string{"systemd", "/tmp", "DISK_CLEAN_DIRS"} {

@@ -75,7 +75,7 @@
   ansible.builtin.shell: |
     l=system/com.nova.go-cache-clean
     f=/Library/LaunchDaemons/com.nova.go-cache-clean.plist
-    if launchctl print "$l" >/dev/null 2>&1; then launchctl bootout "$l" && echo REMOVED; fi
+    if launchctl print "$l" >/dev/null 2>&1; then launchctl bootout "$l" || { echo "bootout $l failed" >&2; exit 1; }; echo REMOVED; fi
     if [ -e "$f" ]; then rm -f "$f" && echo REMOVED; fi
   become: true
   register: health_gocache_unload
