@@ -163,7 +163,7 @@ reached as root at the address given, as on the first run.
 |---|---|---|
 | `ci-rules` | the CI rules on every GitHub Actions runner a machine runs, whoever registered it (bench, runner and services groups) | nothing; `-l` the machines |
 | `github-runners` | GitHub Actions runners on every machine of the runner group, registered to one repository or organization | `github_runner_url`, `github_runner_scope`; `gh` on the control node logged in with admin on the repository |
-| `health` | guards that let a Linux machine get itself out of trouble, and a disk report (bench, runner and services groups) | nothing |
+| `health` | guards that let a Linux machine get itself out of trouble, a disk report and clean, and a Mac's Go build cache trim (bench, runner and services groups) | nothing |
 | `install` | install one nova-tools release, by tag, on the machines named (bench, runner and services groups) | `nova_tools_version` (a tag `vX.Y.Z`; no default) |
 | `netwatch` | a Linux machine that loses its network or the tailnet recovers by itself, and a hung one resets (bench, runner and services groups) | nothing; `-l` the machines |
 | `join` | a new machine joins the fleet: its row, its login, the tailnet, the tools a seat needs, its seat | the machine as the argument; its row's fields; `NOVA_PG_DSN` and `NOVA_PG_PASSWORD` in the environment, and `TAILSCALE_AUTHKEY` for a machine not on the tailnet (`up` mints it) |
@@ -820,7 +820,14 @@ nova-fleet health --check --diff
 nova-fleet health
 journalctl -t nova-disk-report --since -1d        # the disk lines
 journalctl -t nova-disk-clean --since -1d         # what the clean removed
+cat ~/Library/Logs/nova-go-cache-clean.log         # a Mac: what the trim removed
 ```
+
+On a Mac the role does one thing: `nova-go-cache-clean`, hourly from the LaunchDaemon `com.nova.go-cache-clean` run as
+the login, removes the files of the Go build cache `go env GOCACHE` names in the login's shell that are unchanged for
+`nova_health_disk_clean_age_min` (`nova_health_disk_clean_pressed_min` on a volume over `nova_health_disk_warn_pct`).
+No temp or working directory is touched; `nova_health_disk_clean: false` turns it off. `DISK_CLEAN_DRY=1` with the
+daemon's environment says `WOULD` and removes nothing.
 
 | Variable | Default | |
 |---|---|---|

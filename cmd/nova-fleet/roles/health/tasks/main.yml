@@ -2,7 +2,11 @@
 # The health role (cmd/nova-fleet/health.yml): guards that let a Linux machine recover by itself, and a disk report. Each is a
 # file this role owns (a drop-in, a sysctl file, a unit); applying one restarts only the daemon it configures, never
 # the user's units.
-- name: Linux only
+- name: a Mac trims its Go build cache and nothing else (darwin.yml)
+  ansible.builtin.include_tasks: darwin.yml
+  when: (nova_system | default(ansible_facts['system'])) == 'Darwin'
+
+- name: Linux only from here
   ansible.builtin.meta: end_host
   when: (nova_system | default(ansible_facts['system'])) != 'Linux'
 
