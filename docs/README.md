@@ -450,6 +450,16 @@ What each installs and its variables are in
 [sdk-toolchain](../cmd/nova-fleet/README.md#sdk-toolchain) and
 [netwatch](../cmd/nova-fleet/README.md#netwatch).
 
+`ssh-names` makes `ssh <machine>` work by its tailnet name from every machine
+to every other: each login's ssh config and the fleet's host keys, from the
+record, then every pair tried; a machine asleep or away is reported offline
+([ssh-names](../cmd/nova-fleet/README.md#ssh-names)):
+
+```text
+nova-fleet ssh-names --check --diff
+nova-fleet ssh-names
+```
+
 A tool whose release is laid out as nova-tools' is (assets
 `<name>_<tag>_<os>_<arch>` and one `SHA256SUMS`) puts its binaries on
 machines the same way, every binary its `SHA256SUMS` lists unless `--names`

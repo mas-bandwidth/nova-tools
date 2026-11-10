@@ -1,0 +1,9 @@
+{% for h in ssh_names_hosts %}
+{%   set address = hostvars[h].ansible_host | default(h) %}
+{%   set key = (hostvars[h].ansible_facts | default({})).ssh_host_key_ed25519_public | default('') %}
+{%   if key %}
+{{ h }}{{ (',' ~ address) if address != h else '' }} ssh-ed25519 {{ key }}
+{%   elif h in ssh_names_kept %}
+{{ ssh_names_kept[h] }}
+{%   endif %}
+{% endfor %}

@@ -49,6 +49,7 @@
 				"tag:control"
 			],
 			"ip": [
+				"tcp:22",
 				"tcp:6379",
 				"tcp:5432"
 			]
@@ -77,7 +78,20 @@
 			],
 			"dst": [
 				"tag:nova",
-				"tag:runner"
+				"tag:runner",
+				"tag:control"
+			],
+			"users": [
+				"autogroup:nonroot"
+			]
+		},
+		{
+			"action": "accept",
+			"src": [
+				"autogroup:admin"
+			],
+			"dst": [
+				"tag:control"
 			],
 			"users": [
 				"autogroup:nonroot"

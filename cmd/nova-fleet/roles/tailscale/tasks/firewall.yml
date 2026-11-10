@@ -16,7 +16,7 @@
       register: fw_pkg
 
     - name: the machine's tailnet addresses
-      ansible.builtin.command: "{{ nova_tailscale_bin }} ip"
+      ansible.builtin.command: "{{ ts_bin | default(nova_tailscale_bin) }} ip"
       register: fw_ts_ips
       changed_when: false
       failed_when: false

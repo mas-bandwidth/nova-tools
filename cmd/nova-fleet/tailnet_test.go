@@ -58,7 +58,7 @@ func TestFleetPolicyIsTheEmbeddedFile(t *testing.T) {
 	want := fleetPolicy()
 	owners := want["tagOwners"].(map[string]any)
 	if canon(owners["tag:nova"]) != `["autogroup:admin"]` || canon(owners["tag:control"]) != `["autogroup:admin"]` ||
-		len(want["grants"].([]any)) != 4 || len(want["ssh"].([]any)) != 2 {
+		len(want["grants"].([]any)) != 4 || len(want["ssh"].([]any)) != 3 {
 		t.Errorf("fleetPolicy() = %s", canon(want))
 	}
 }
@@ -92,7 +92,7 @@ func TestMergePolicy(t *testing.T) {
 			t.Errorf("allow-all: the line %q is gone:\n%s", line, got)
 		}
 	}
-	if ssh := m["ssh"].([]any); len(ssh) != 3 || canon(ssh[0]) != canon(have["ssh"].([]any)[0]) || canon(ssh[1:]) != canon(want["ssh"]) {
+	if ssh := m["ssh"].([]any); len(ssh) != 4 || canon(ssh[0]) != canon(have["ssh"].([]any)[0]) || canon(ssh[1:]) != canon(want["ssh"]) {
 		t.Errorf("allow-all: ssh = %s", canon(ssh))
 	}
 	// idempotent: the merged policy merges to itself, byte for byte
@@ -151,6 +151,47 @@ func TestMergeKeepsAdminAccess(t *testing.T) {
 	got, _ := merge(t, allowAll)
 	if canon(std(t, got)["acls"]) != `[{"action":"accept","dst":["*:*"],"src":["*"]}]` {
 		t.Errorf("allow-all rule changed:\n%s", got)
+	}
+}
+
+// Every fleet machine reaches every other over Tailscale SSH whatever the policy was built on: each pair of fleet tags
+// has a grant on tcp:22 and an accepting ssh rule as a non-root login (nova-fleet ssh-names checks the pairs). The
+// tailnet's admins get the control node as a non-root login only, never as root.
+func TestMergeLetsEveryFleetTagSSHToEveryOther(t *testing.T) {
+	has := func(list any, v string) bool { l, _ := list.([]any); return slices.Contains(l, any(v)) }
+	tags := []string{"tag:nova", "tag:runner", "tag:control"}
+	for name, src := range map[string]string{"allow-all": allowAll, "autogroup:self": selfOnly} {
+		got, _ := merge(t, src)
+		m := std(t, got)
+		for _, from := range tags {
+			for _, to := range tags {
+				if from == "tag:control" && to == "tag:control" {
+					continue // one control node
+				}
+				port := slices.ContainsFunc(m["grants"].([]any), func(r any) bool {
+					g := r.(map[string]any)
+					return has(g["src"], from) && has(g["dst"], to) && (has(g["ip"], "tcp:22") || has(g["ip"], "*"))
+				})
+				ssh := slices.ContainsFunc(m["ssh"].([]any), func(r any) bool {
+					g := r.(map[string]any)
+					return g["action"] == "accept" && has(g["src"], from) && has(g["dst"], to) && has(g["users"], "autogroup:nonroot")
+				})
+				if !port || !ssh {
+					t.Errorf("%s: %s cannot ssh to %s (grant on 22: %v, ssh rule: %v):\n%s", name, from, to, port, ssh, got)
+				}
+			}
+		}
+		adminRootOnControl := slices.ContainsFunc(m["ssh"].([]any), func(r any) bool {
+			g := r.(map[string]any)
+			return has(g["src"], "autogroup:admin") && has(g["dst"], "tag:control") && has(g["users"], "root")
+		})
+		adminOnControl := slices.ContainsFunc(m["ssh"].([]any), func(r any) bool {
+			g := r.(map[string]any)
+			return g["action"] == "accept" && has(g["src"], "autogroup:admin") && has(g["dst"], "tag:control") && has(g["users"], "autogroup:nonroot")
+		})
+		if adminRootOnControl || !adminOnControl {
+			t.Errorf("%s: admins on the control node: as root %v (want false), as a non-root login %v (want true)", name, adminRootOnControl, adminOnControl)
+		}
 	}
 }
 
