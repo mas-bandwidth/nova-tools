@@ -937,7 +937,7 @@ nova-fleet runner-packages -- -l mini-m5
 | `nova_runner_vm_kernel` | `false` | Debian/Ubuntu: keep each kernel image readable by the login, for a VM of the host's own kernel |
 | `nova_runner_vm_kernel_dir` | `<home>/vm-kernels` | where the copies go, as `vmlinuz-<version>` |
 
-Both switches apply on Debian and Ubuntu only; another OS skips them.
+Both switches apply on Debian and Ubuntu only; another OS skips them. The play reaches every bench as well as every runner, so a run that turns a switch on names its machines with `-l`: a WSL2 machine has no `/boot/vmlinuz-<version>` and no `kvm` group, and the VM tier refuses there by name.
 
 **Foreign architectures.** A cross build that links a library of another architecture (`libsodium-dev:s390x`) needs
 dpkg multiarch. For each architecture the list names, the play runs `dpkg --add-architecture` where
