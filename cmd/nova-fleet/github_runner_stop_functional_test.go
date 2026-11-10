@@ -29,12 +29,12 @@ func TestRunnerServiceRendersAWholeRunnerStop(t *testing.T) {
 		assert.Contains(t, service, "\nKillSignal=SIGTERM\n", name)
 		assert.Contains(t, service, "\nTimeoutStopSec=5min\n", name)
 		if extra != nil {
-			// github_runner_env keeps every line it had: PATH once, then each other key
+			// github_runner_env keeps every line it had: PATH and TMPDIR once, then each other key
 			assert.Contains(t, service, "\nEnvironment=PATH=/mine:/bin\n", name)
 			assert.Contains(t, service, "\nEnvironment=FOO=bar\n", name)
 			assert.Contains(t, service, "\nEnvironment=GOFLAGS=-mod=mod\n", name)
 			assert.Equal(t, 1, strings.Count(service, "Environment=PATH="), name)
-			assert.Equal(t, 4, strings.Count(service, "\nEnvironment="), name)
+			assert.Equal(t, 5, strings.Count(service, "\nEnvironment="), name)
 		}
 	}
 }

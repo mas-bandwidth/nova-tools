@@ -135,3 +135,44 @@
   loop: "{{ nova_tools_plan }}"
   loop_control: { label: "{{ item.dest }}" }
   when: nova_tools_local_dir | length > 0 and not (ansible_check_mode and nova_tools_unix_dir is changed)
+
+# The v1 gh wrapper (rowan-tools fleet/push-credential.yml, retired with v1) ran gh under a secrets store v2 no longer
+# has, from the bin directory, ahead of the real gh on PATH. It is removed when the file there names GH_PUSH_TOKEN;
+# a git credential helper that still names it keeps it, and the run says so.
+- name: is the bin directory's gh the v1 wrapper
+  ansible.builtin.stat: { path: "{{ nova_tools_bin_dir }}/gh", get_checksum: false }
+  register: nova_tools_gh_stat
+
+- name: the v1 gh wrapper names GH_PUSH_TOKEN
+  ansible.builtin.command:
+    argv: [grep, -q, GH_PUSH_TOKEN, "{{ nova_tools_bin_dir }}/gh"]
+  register: nova_tools_gh_grep
+  check_mode: false
+  changed_when: false
+  failed_when: nova_tools_gh_grep.rc > 1
+  when: nova_tools_gh_stat.stat.isreg | default(false)
+
+# --name-only: the run holds the helpers' names, never their values (a helper line can hold a token). Exit 1 is none.
+- name: the git credential helpers that name the wrapper
+  ansible.builtin.command:
+    argv: [git, config, --global, --name-only, --get-regexp, '^credential\..*helper$', "{{ (nova_tools_bin_dir ~ '/gh') | regex_escape }}"]
+  environment: { HOME: "{{ nova_home }}" }
+  register: nova_tools_gh_helpers
+  check_mode: false
+  changed_when: false
+  failed_when: nova_tools_gh_helpers.rc > 1
+  when: nova_tools_gh_grep.rc | default(1) == 0
+
+- name: whether the wrapper is there and named by a helper
+  ansible.builtin.set_fact:
+    nova_tools_gh_wrapper: "{{ nova_tools_gh_grep.rc | default(1) == 0 }}"
+    nova_tools_gh_named: "{{ nova_tools_gh_helpers.rc | default(1) == 0 }}"
+
+- name: the v1 gh wrapper is gone from the bin directory
+  ansible.builtin.file: { path: "{{ nova_tools_bin_dir }}/gh", state: absent }
+  when: nova_tools_gh_wrapper and not nova_tools_gh_named
+
+- name: the v1 gh wrapper a git credential helper names
+  ansible.builtin.debug:
+    msg: "GH-WRAPPER KEPT host={{ inventory_hostname }} path={{ nova_tools_bin_dir }}/gh: a git credential helper names it; point the helper at the real gh, then run install again"
+  when: nova_tools_gh_wrapper and nova_tools_gh_named

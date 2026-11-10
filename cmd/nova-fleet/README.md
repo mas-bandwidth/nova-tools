@@ -281,6 +281,12 @@ nova-fleet install -- -e nova_tools_version=local -e nova_tools_local_dir=$PWD/d
 
 `nova-fleet up --tools $PWD/dist` does the same for every machine.
 
+**The v1 gh wrapper.** A `<nova_bin_dir>/gh` that names `GH_PUSH_TOKEN` is v1's push-credential wrapper, which runs gh
+under a secrets store v2 does not have, ahead of the real gh on PATH; the play removes it. While a git credential
+helper of the login still names it, it is kept and the run prints `GH-WRAPPER KEPT host=<machine> path=<file>`: point
+the helper at the real gh and run install again. Only the helpers' names are read, never their values. Any other
+`gh` there is left alone.
+
 **opencode.** After the tools, the bench group gets the opencode nova-sprint's workers run (`roles/opencode`):
 `nova_opencode_version` (1.18.20; 1.x, since 2.x starts a background service on a fixed port) from sst/opencode's
 release archive for the platform, checked against `nova_opencode_sha256` (the digests GitHub publishes for each asset),
@@ -326,10 +332,11 @@ nova-fleet services -- -e nova_service_restart=reader
 
 GitHub Actions runners on every machine of the `runner` group: as many as the machine row's `runners` says, each
 registered to one repository or organization, run as a service that starts at boot. **Labels:** a runner's labels are
-its machine's inventory groups (the row's roles: `bench`, `runner`, `services`; `ungrouped` and `all` are left out),
-the host's own os (`linux`, `darwin`) and arch (`amd64`, `arm64`) as its facts report them (a machine row's
-`os` and `arch` fields say how it is reached, never what it is labelled), plus `github_runner_labels`; so a bench
-machine's runner is labelled `amd64,bench,linux,runner`, and a job selects it with `runs-on: [self-hosted, linux]`.
+`fleet` (`github_runner_base_labels`, which the Windows side carries too), its machine's inventory groups (the row's
+roles: `bench`, `runner`, `services`; `ungrouped` and `all` are left out), the host's own os (`linux`, `darwin`) and
+arch (`amd64`, `arm64`) as its facts report them (a machine row's `os` and `arch` fields say how it is reached, never
+what it is labelled), plus `github_runner_labels`; so a bench machine's runner is labelled
+`amd64,bench,fleet,linux,runner`, and a job selects it with `runs-on: [self-hosted, Linux, fleet]`.
 Linux (amd64, arm64; WSL2 with systemd counts as Linux) and macOS. On macOS the runner is a LaunchDaemon dropped to the login, not a
 LaunchAgent: a LaunchAgent runs only inside a logged-in GUI session, and a CI machine comes back from a reboot with
 none. Only a run needs sudo for that file (`/Library/LaunchDaemons` is world-readable, so `--check` reads and diffs it
@@ -341,7 +348,11 @@ passes the stop to its listener as SIGINT and waits for it (a running job is can
 `KillMode=mixed` kills whatever is left in the unit once `run.sh` exits, or after `TimeoutStopSec` (5 minutes). On macOS
 launchd kills what is left of the job's process group.
 A Linux unit sets `LimitMEMLOCK=infinity`: the kernel charges locked memory (io_uring rings) to the login across all its
-runners, and systemd's 8 MiB default refuses that. A macOS daemon starts with `/opt/homebrew/bin` on its PATH, before the
+runners, and systemd's 8 MiB default refuses that. It also sets `TMPDIR`, by default `<home>/.cache/runner-tmp`
+(`github_runner_tmpdir`), one directory for all the login's runners that the play makes (the login's, `0700`) before
+the units start: a job's temporary files land there and not in `/tmp`, and the health play's disk clean reads the
+directory from the units. A macOS daemon gets no `TMPDIR` unless `github_runner_env` names one, so its jobs use `/tmp`,
+which macOS cleans. A macOS daemon starts with `/opt/homebrew/bin` on its PATH, before the
 system's, so a job finds Homebrew's formulae and its `python3`.
 
 **Public repositories.** A self-hosted runner runs the code of any workflow that reaches it, and on a public repository
@@ -356,7 +367,9 @@ events may use them.
 | `runner_count` | overrides the row's `runners` for one run; 0 retires every runner; `cores` is one runner per `github_runner_cores_per_runner` (4) of the row's `cores`, else the host's own, at least 1. A host with neither is refused |
 | `github_runner_state` | `present` (default) or `absent`, which retires every runner of that url |
 | `github_runner_deregister` | true: retiring removes the runner from GitHub (needs a removal token) |
-| `github_runner_env` | the service's environment, `{NAME: value}` (default none), inherited by every job: a `PATH` replaces the default (`nova_bin_dir` first, then the system's); a path under the login's home is written `{{ ansible_facts['user_dir'] }}/...`, rendered per machine. Nothing keeps it on the machine: a run for the same url without it writes the units without it and restarts the runners, so pass it on every run. [docs/examples/github-runners-env.yml](../../docs/examples/github-runners-env.yml) is a vars file with the url, scope, labels and an environment for Ubuntu runners, for `-e @github-runners-env.yml` (read from the directory you run in) |
+| `github_runner_env` | the service's environment, `{NAME: value}`, inherited by every job; default the machine record's `runner_env` (the inventory's `nova_runner_env`; `nova-config machine set <machine> --runner_env '<json-object>'`, cmd/nova-config/README.md), so every run for any url writes it. A `PATH` replaces the default (`nova_bin_dir` first, then the system's); a `TMPDIR` replaces `github_runner_tmpdir`. `-e github_runner_env` replaces the record's for one run; there a path under the login's home may be written `{{ ansible_facts['user_dir'] }}/...`, rendered per machine (the record holds literal values). [docs/examples/github-runners-env.yml](../../docs/examples/github-runners-env.yml) is a vars file with the url, scope, labels and an environment for Ubuntu runners, for `-e @github-runners-env.yml` (read from the directory you run in) |
+| `github_runner_tmpdir` | a Linux runner's `TMPDIR` when the environment names none: `<home>/.cache/runner-tmp` |
+| `github_runner_base_labels` | `[fleet]`: the labels every runner gets, Linux, macOS and the Windows side |
 | `github_runner_version`, `github_runner_sha256` | the pinned actions/runner release and its digests |
 | `github_runner_ci_limit_seconds` | 120: the per-commit job limit every runner enforces ("CI rules") |
 | `github_runner_ci_push_branches` | `[main, sprint/*]`: the branches a push may run CI on, as globs where `*` and `?` stop at a `/` (tags always may); any other branch gets CI through its pull request |
@@ -385,13 +398,21 @@ github_runner_verify=false` skips it.
 
 **What it does.** Per runner: the pinned release, checked against GitHub's digest, unpacked in
 `<home>/actions-runner/<owner>-<repo>-<i>`; registered as `<machine>-<i>` unless
-`.runner` is there; one service per runner, enabled at boot. Labels are fixed at registration: changed labels are
-reported as `LABEL-DRIFT` and the runner is left alone. A changed unit restarts its runner, ending any job on it. A
+`.runner` is there; one service per runner, enabled at boot. The labels a runner was registered with are recorded in
+its `.labels`. A registered runner that lacks a wanted label (or has no `.labels`) gets it from the control node's gh,
+`gh api -X POST <repos|orgs>/<path>/actions/runners/<id>/labels` with the body on stdin, never by registering again,
+so it keeps its session and the jobs queued for it; `.labels` is then rewritten from what GitHub holds, and the run
+prints `LABEL-ADD <runner> added=<labels> labels=<labels>`. A runner GitHub does not list fails the run, its labels
+untouched. A label it holds beyond the wanted is reported as `LABEL-EXTRA` and kept: pass it in `github_runner_labels`,
+or retire the runner (`-e github_runner_state=absent`) and converge again to drop it. A changed unit restarts its
+runner, ending any job on it. A
 machine whose count drops has its highest-numbered runners retired and removed from GitHub, with a removal
 token (`.../actions/runners/remove-token`, asked for the same way). A second run changes nothing.
 
 **Plan.** Under `--check` each machine prints `RUNNER-PLAN <machine> want=<n> register=<names> retire=<names>
-labels=<labels>`, the runners named `<machine>-<i>` as GitHub will list them.
+labels=<labels>`, the runners named `<machine>-<i>` as GitHub will list them, and each registered runner that lacks a
+label prints `LABEL-PLAN <runner>: lacks <labels>` (`no record of its labels` without `.labels`); nothing is asked of
+GitHub.
 
 **CI rules.** Every runner the play sets up enforces the CI rules ("CI rules" below); its receipt is the
 `CI-RULES` lines.

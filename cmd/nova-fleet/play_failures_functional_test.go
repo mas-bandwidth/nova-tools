@@ -3,6 +3,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"os"
 	"os/exec"
@@ -20,7 +21,7 @@ import (
 // play_failures_functional_test.go runs a few of the plays' and roles' own tasks, copied into a localhost playbook,
 // against the test's temp dir, with a fake systemctl or launchctl first on PATH where a task calls one. Each task used
 // to report success over a failure: an empty Redis password file that
-// wrote no users.acl, a missing sops at join, a runner with no record of its labels.
+// wrote no users.acl, a missing sops at join, a runner whose labels lack a wanted one.
 
 // taskGroups is a playbook's tasks, one group per play, or a role task file's tasks as one group.
 func taskGroups(t *testing.T, file string) [][]map[string]any {
@@ -153,21 +154,31 @@ func TestFunctionalJoinRefusesAMissingSops(t *testing.T) {
 	}
 }
 
-// TestFunctionalRunnerReportsLabelsItCannotRead: a runner with no .labels (registered before the file, or the file
-// lost) is reported as label drift, since its labels cannot be checked; --check on a runner not registered yet is not.
-func TestFunctionalRunnerReportsLabelsItCannotRead(t *testing.T) {
+// TestFunctionalRunnerGetsTheLabelsItLacks: a registered runner whose record (.labels) lacks a wanted label, or that has
+// no record (registered before the file, or the file lost), gets the label added in GitHub by the control node's gh
+// (a fake here that answers the lookup and logs the POST and its stdin body), and the record is rewritten from what
+// GitHub holds; a label held beyond the wanted is reported and kept; --check and a runner not registered yet call
+// nothing; a runner GitHub does not list fails the run, its labels untouched.
+func TestFunctionalRunnerGetsTheLabelsItLacks(t *testing.T) {
 	t.Parallel()
 	tasks := taskRange(t, "roles/github-runner/tasks/unix-runner.yml", "the labels it holds now", "the unit (Linux)")
 	for name, c := range map[string]struct {
-		labels string
-		need   []any
-		check  bool
-		drift  bool
+		labels, github string // the record's labels; the custom labels GitHub holds ("" lists no runner)
+		need           []any
+		check, fails   bool
+		post, record   string // the POST body sent ("" none); the record after ("" unchanged)
+		want, out      string // the wanted labels ("" is a,b); a line the run prints
 	}{
-		"no labels file":            {"", []any{}, false, true},
-		"same labels":               {"a,b\n", []any{}, false, false},
-		"other labels":              {"a\n", []any{}, false, true},
-		"check, not registered yet": {"", []any{0}, true, false},
+		"GitHub's Linux is linux":     {labels: "a\n", github: "A", want: "a,linux", need: []any{}, record: "a,linux\n", out: "LABEL-ADD r1 added=- labels=a,linux"},
+		"an empty record":             {labels: "\n", github: "a,b", need: []any{}, record: "a,b\n", out: "LABEL-ADD r1 added=- labels=a,b"},
+		"same labels":                 {labels: "a,b\n", github: "a,b", need: []any{}, out: "ok="},
+		"lacks one":                   {labels: "a\n", github: "a", need: []any{}, post: `{"labels": ["b"]}`, record: "a,b\n", out: "LABEL-ADD r1 added=b labels=a,b"},
+		"no record":                   {labels: "", github: "a,c", need: []any{}, post: `{"labels": ["b"]}`, record: "a,b,c\n", out: "LABEL-ADD r1 added=b labels=a,b,c"},
+		"no record, GitHub has all":   {labels: "", github: "a,b", need: []any{}, record: "a,b\n", out: "LABEL-ADD r1 added=- labels=a,b"},
+		"an extra label":              {labels: "a,b,c\n", github: "a,b,c", need: []any{}, out: "LABEL-EXTRA r1: holds c beyond the wanted a,b; kept"},
+		"check, lacks one":            {labels: "a\n", github: "a", need: []any{}, check: true, out: "LABEL-PLAN r1: lacks b"},
+		"check, not registered yet":   {labels: "", github: "", need: []any{0}, check: true, out: "ok="},
+		"GitHub lists no such runner": {labels: "a\n", github: "", need: []any{}, fails: true, out: "GitHub lists no runner of that name"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -175,15 +186,50 @@ func TestFunctionalRunnerReportsLabelsItCannotRead(t *testing.T) {
 			if c.labels != "" {
 				require.NoError(t, os.WriteFile(filepath.Join(dir, ".labels"), []byte(c.labels), 0o644))
 			}
+			entry := `{"total_count":0,"runners":[]}`
+			if c.github != "" {
+				var ls []string
+				for _, l := range strings.Split(c.github, ",") {
+					ls = append(ls, `{"id":1,"name":"`+l+`","type":"custom"}`)
+				}
+				entry = `{"total_count":1,"runners":[{"id":42,"name":"r1","labels":[{"id":0,"name":"self-hosted","type":"read-only"},{"id":0,"name":"Linux","type":"read-only"},` + strings.Join(ls, ",") + `]}]}`
+			}
+			calls := filepath.Join(dir, "gh.calls")
+			gh := `echo "$*" >> ` + calls + `
+case "$*" in
+  "api -X POST repos/o/r/actions/runners/42/labels --input -") cat >> ` + calls + `; echo '{}' ;;
+  "api repos/o/r/actions/runners?name=r1") echo '` + entry + `' ;;
+  *) echo "unexpected: $*" >&2; exit 9 ;;
+esac`
 			var extra []string
 			if c.check {
 				extra = []string{"--check"}
 			}
 			out, err := runTasksLocally(t, tasks, map[string]any{
-				"github_runner_dir": dir, "github_runner_name": "r1", "github_runner_label_string": "a,b", "runner_index": 0, "github_runner_need": c.need,
-			}, nil, extra...)
-			require.NoError(t, err, out)
-			assert.Equal(t, c.drift, strings.Contains(out, "LABEL-DRIFT r1"), out)
+				"github_runner_dir": dir, "github_runner_name": "r1", "github_runner_label_string": cmp.Or(c.want, "a,b"), "runner_index": 0, "github_runner_need": c.need,
+				"github_runner_gh": "gh", "github_runner_scope": "repo", "github_runner_path": "o/r",
+			}, map[string]string{"gh": gh}, extra...)
+			if c.fails {
+				require.Error(t, err, out)
+			} else {
+				require.NoError(t, err, out)
+			}
+			assert.Contains(t, out, c.out)
+			got, _ := os.ReadFile(calls) // ignored: absent when gh was never called
+			if c.post != "" {
+				assert.Contains(t, string(got), "api -X POST repos/o/r/actions/runners/42/labels --input -\n"+c.post, "the body rides on stdin")
+			} else {
+				assert.NotContains(t, string(got), "POST", "no label was added")
+			}
+			if c.check || c.out == "ok=" {
+				assert.Empty(t, string(got), "gh was called")
+			}
+			record, _ := os.ReadFile(filepath.Join(dir, ".labels")) // ignored: compared below
+			want := c.labels
+			if c.record != "" {
+				want = c.record
+			}
+			assert.Equal(t, want, string(record))
 		})
 	}
 }

@@ -146,6 +146,13 @@ func build(machines []Row, services []Row, local string) (*inventory, error) {
 			}
 			hv["nova_windows_runners"] = ws
 		}
+		if env := map[string]unsafeText{}; v["runner_env"] != "" && v["runner_env"] != "{}" {
+			if _, err := kinds["machine"].findField("runner_env").canonical(v["runner_env"]); err != nil {
+				return nil, refused("machine %s has corrupt runner_env (%v); run: nova-config machine set %s --runner_env <json-object>", m, err, m)
+			}
+			_ = json.Unmarshal([]byte(v["runner_env"]), &env) // ignored: checked above
+			hv["nova_runner_env"] = env
+		}
 		if m == local {
 			hv["ansible_connection"] = "local"
 		}

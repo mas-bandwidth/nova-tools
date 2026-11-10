@@ -72,6 +72,6 @@ func TestRunnerServiceFilesSetPath(t *testing.T) {
 		b, err := os.ReadFile(f)
 		require.NoError(t, err)
 		assert.Contains(t, string(b), want, f)
-		assert.Contains(t, string(b), "github_runner_env.items() | sort if k != 'PATH'", f+": the env loop writes PATH a second time")
+		assert.Regexp(t, `github_runner_env\.items\(\) \| sort if (k != 'PATH'|k not in \['PATH', 'TMPDIR'\])`, string(b), f+": the env loop writes PATH a second time")
 	}
 }

@@ -26,9 +26,11 @@ type Machine struct {
 	Runners int    `json:"runners"`
 	// WindowsRunners is a WSL machine's Windows-side runners: <url>=<count>[:<label>+<label>], comma-separated
 	WindowsRunners string `json:"windows_runners"`
-	Note           string `json:"note"`
-	Created        string `json:"created"`
-	Updated        string `json:"updated"`
+	// RunnerEnv is the environment its GitHub Actions runners' services start with (the github-runners play)
+	RunnerEnv map[string]string `json:"runner_env"`
+	Note      string            `json:"note"`
+	Created   string            `json:"created"`
+	Updated   string            `json:"updated"`
 }
 
 // Friend is an AI that works on the fleet, named by its bus name.
