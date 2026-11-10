@@ -140,12 +140,21 @@ jobs:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, linux, x64]
     timeout-minutes: 60
+    # One job per shard, each on its own runner: the whole set on one runner
+    # overran the 2-minute rule under fleet load. The shards together run
+    # every case (tests/tla/check.sh, TLC_SHARD).
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5]
+    name: tlc (${{ matrix.shard }}/5)
     steps:
       - *clean
       - *checkout
-      - name: TLC over every model case (the Large configs only in the nightly)
+      - name: TLC over every model case in this shard (the Large configs only in the nightly)
         env:
           TLC_SKIP_LARGE: ${{ github.event_name != 'schedule' && '1' || '' }}
+          TLC_SHARD: ${{ matrix.shard }}/5
         run: tests/tla/check.sh "${{ vars.TLC_JAR }}"
 
   fleet:
