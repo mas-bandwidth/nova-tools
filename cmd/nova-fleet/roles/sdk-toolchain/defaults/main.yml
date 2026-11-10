@@ -321,6 +321,7 @@ nova_sdk_tools:
     build: nice -n 15 make -s sq64 DEFS=-DSQUSEDOUBLE >/dev/null 2>&1
     linux:
       url: https://github.com/albertodemichelis/squirrel/archive/refs/tags/v3.2.tar.gz
+      file: squirrel-3.2-tag.tar.gz   # the URL's own name, v3.2.tar.gz, says nothing of what it is
       sha256: 02805414cfadd5bbb921891d3599b83375a40650abd6404a8ab407dc5e86a996
 
   - name: clang-format
