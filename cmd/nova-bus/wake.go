@@ -320,12 +320,12 @@ func (g *grokWake) open() (*os.File, error) {
 }
 
 func (g *grokWake) wake(ctx context.Context, m Msg) error {
-	out, err := g.s.exec(ctx, nil, "lsof", "-t", "--", g.file) // exit 1 and no output: nobody has it open
+	out, err := g.s.exec(ctx, nil, "lsof", "-t", "--", g.file) // a non-zero exit or no pid: nobody has it open
 	var missing *exec.Error
 	if errors.As(err, &missing) {
 		return fmt.Errorf("lsof cannot run (%v), so whether a Monitor tails %s cannot be seen: install lsof", err, g.file)
 	}
-	if strings.TrimSpace(string(out)) == "" {
+	if err != nil || strings.TrimSpace(string(out)) == "" {
 		return fmt.Errorf("no process has %s open: start the Monitor first: tail -n 0 -F %s", g.file, g.file)
 	}
 	path, err := save(g.dir, g.name, m)
