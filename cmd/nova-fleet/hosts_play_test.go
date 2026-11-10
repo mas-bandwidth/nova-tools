@@ -21,6 +21,7 @@ func TestPlaysTargetTheirGroups(t *testing.T) {
 		"ci-rules":        {workers},
 		"github-runners":  {"runner"},
 		"runner-packages": {"bench:runner"},
+		"sdk-toolchain":   {"bench:runner"},
 		"health":          {workers},
 		"netwatch":        {workers},
 		"install":         {workers, "bench"}, // then the pinned opencode, bench only (roles/opencode)

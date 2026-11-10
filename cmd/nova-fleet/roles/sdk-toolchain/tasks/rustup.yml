@@ -1,0 +1,121 @@
+---
+# Rust through a pinned rustup (nova_sdk_rustup): rustup-init, checked against its digest, installs rustup into
+# <sdk>/rustup-<version> (RUSTUP_HOME; its proxies under cargo/bin) with the first toolchain as the default and
+# self-update off; each toolchain then gets the components and targets it lists. The first toolchain's binaries are
+# linked into <sdk>/bin; <sdk>/bin/rustup is a wrapper naming this RUSTUP_HOME unless the caller set one.
+- name: rustup's paths
+  ansible.builtin.set_fact:
+    sdk_rust_host: "{{ nova_sdk_rustup[sdk_platform].host }}"
+    sdk_rustup_home: "{{ nova_sdk_dir }}/rustup-{{ nova_sdk_rustup.version }}"
+    sdk_rustup_init: "{{ nova_sdk_dir }}/dl/rustup-init-{{ nova_sdk_rustup.version }}-{{ nova_sdk_rustup[sdk_platform].host }}"
+    sdk_rust_first: "{{ nova_sdk_rustup.toolchains | first }}"
+
+- name: rustup's environment
+  ansible.builtin.set_fact:
+    sdk_rustup_env:
+      RUSTUP_HOME: "{{ sdk_rustup_home }}"
+      CARGO_HOME: "{{ sdk_rustup_home }}/cargo"
+      RUSTUP_INIT_SKIP_PATH_CHECK: "yes"
+      PATH: "{{ sdk_rustup_home }}/cargo/bin:/usr/local/bin:/usr/bin:/bin"
+    sdk_rust_bin: "{{ sdk_rustup_home }}/toolchains/{{ sdk_rust_first.name }}-{{ sdk_rust_host }}/bin"
+
+- name: rustup's probe
+  ansible.builtin.stat: { path: "{{ sdk_rustup_home }}/cargo/bin/rustup", get_checksum: false }
+  register: sdk_rustup_stat
+
+- name: what a run would install
+  ansible.builtin.debug:
+    msg: "SDK-TOOLCHAIN WOULD-INSTALL host={{ inventory_hostname }} tool=rustup version={{ nova_sdk_rustup.version }} into={{ sdk_rustup_home }}"
+  when: ansible_check_mode and not sdk_rustup_stat.stat.exists
+
+- name: rustup-init, checked against its digest
+  ansible.builtin.get_url:
+    url: "{{ nova_sdk_rustup[sdk_platform].url }}"
+    dest: "{{ sdk_rustup_init }}"
+    checksum: "sha256:{{ nova_sdk_rustup[sdk_platform].sha256 }}"
+    mode: "0755"
+    timeout: 300
+  when: not ansible_check_mode and not sdk_rustup_stat.stat.exists
+
+- name: rustup, with the first toolchain as its default
+  ansible.builtin.command:
+    argv: "{{ [sdk_rustup_init, '-y', '--no-modify-path', '--profile', 'minimal', '--default-toolchain', sdk_rust_first.name]
+              + (sdk_rust_first.components | map('regex_replace', '^', '--component=') | list)
+              + (sdk_rust_first.targets | map('regex_replace', '^', '--target=') | list) }}"
+    creates: "{{ sdk_rustup_home }}/cargo/bin/rustup"
+  environment: "{{ sdk_rustup_env }}"
+  register: sdk_rustup_init_run
+  when: not ansible_check_mode
+
+- name: rustup never updates itself
+  ansible.builtin.command: { argv: [rustup, set, auto-self-update, disable] }
+  environment: "{{ sdk_rustup_env }}"
+  when: sdk_rustup_init_run is changed
+
+# Read-only under --check (it reports what it would install); otherwise installs what a toolchain lacks.
+- name: each toolchain, with its components and targets
+  ansible.builtin.shell:
+    cmd: |
+      set -euo pipefail
+      have() { [ -x "$RUSTUP_HOME/cargo/bin/rustup" ] && [ -x "$RUSTUP_HOME/toolchains/$1-{{ sdk_rust_host }}/bin/rustc" ]; }
+      {% for tc in nova_sdk_rustup.toolchains %}
+      want=0
+      if have {{ tc.name | quote }}; then
+        comps=$(rustup component list --installed --toolchain {{ tc.name | quote }})
+        {% for c in tc.components %}
+        printf '%s\n' "$comps" | grep -qx {{ (c ~ '-' ~ sdk_rust_host) | quote }} || printf '%s\n' "$comps" | grep -qx {{ c | quote }} || want=1
+        {% endfor %}
+        tgts=$(rustup target list --installed --toolchain {{ tc.name | quote }})
+        {% for g in tc.targets %}
+        printf '%s\n' "$tgts" | grep -qx {{ g | quote }} || want=1
+        {% endfor %}
+      else
+        want=1
+      fi
+      if [ "$want" = 1 ]; then
+        {% if ansible_check_mode %}
+        echo "SDK-TOOLCHAIN WOULD-INSTALL host={{ inventory_hostname }} tool=rust version={{ tc.name }} components={{ tc.components | join(',') or '-' }} targets={{ tc.targets | join(',') or '-' }}"
+        {% else %}
+        rustup toolchain install {{ tc.name | quote }} --profile minimal --no-self-update{% for c in tc.components %} --component {{ c | quote }}{% endfor %}{% for g in tc.targets %} --target {{ g | quote }}{% endfor %} >/dev/null 2>&1
+        echo "SDK-TOOLCHAIN-INSTALLED rust {{ tc.name }}"
+        {% endif %}
+      fi
+      {% endfor %}
+    executable: /bin/bash
+  environment: "{{ sdk_rustup_env }}"
+  register: sdk_rust_toolchains
+  changed_when: "'SDK-TOOLCHAIN-INSTALLED' in sdk_rust_toolchains.stdout or 'WOULD-INSTALL' in sdk_rust_toolchains.stdout"
+  check_mode: false
+
+- name: the first toolchain's commands in the SDK's bin
+  ansible.builtin.file: { src: "{{ sdk_rust_bin }}/{{ item }}", dest: "{{ nova_sdk_dir }}/bin/{{ item }}", state: link, force: true }
+  loop: "{{ nova_sdk_rustup.links }}"
+
+- name: rustup in the SDK's bin
+  ansible.builtin.copy:
+    dest: "{{ nova_sdk_dir }}/bin/rustup"
+    mode: "0755"
+    content: |
+      #!/bin/sh
+      # Written by the sdk-toolchain role: the pinned rustup {{ nova_sdk_rustup.version }}, on its own RUSTUP_HOME unless the caller set one.
+      : "${RUSTUP_HOME:={{ sdk_rustup_home }}}"
+      export RUSTUP_HOME
+      exec "{{ sdk_rustup_home }}/cargo/bin/rustup" "$@"
+
+- name: each cargo tool, built with --locked by the first toolchain
+  ansible.builtin.command:
+    argv: [nice, -n, "15", "{{ sdk_rust_bin }}/cargo", install, --locked, --quiet, --root, "{{ nova_sdk_dir }}/{{ item.name }}-{{ item.version }}",
+           "{{ item.name }}", --version, "{{ item.version }}"]
+    creates: "{{ nova_sdk_dir }}/{{ item.name }}-{{ item.version }}/bin/{{ item.name }}"
+  environment: { PATH: "{{ sdk_rust_bin }}:/usr/local/bin:/usr/bin:/bin" }
+  loop: "{{ nova_sdk_cargo_tools }}"
+  loop_control: { label: "{{ item.name }} {{ item.version }}" }
+
+- name: each cargo tool in the SDK's bin
+  ansible.builtin.file:
+    src: "{{ nova_sdk_dir }}/{{ item.name }}-{{ item.version }}/bin/{{ item.name }}"
+    dest: "{{ nova_sdk_dir }}/bin/{{ item.name }}"
+    state: link
+    force: true
+  loop: "{{ nova_sdk_cargo_tools }}"
+  loop_control: { label: "{{ item.name }}" }
