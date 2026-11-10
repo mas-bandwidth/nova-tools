@@ -493,6 +493,23 @@ func TestVerifyWikilinksSkipInlineCode(t *testing.T) {
 	assert.Contains(t, errs, "VERIFY FAIL wikilink [[MissingPage]] resolves to no file (e.g. from note.md)")
 }
 
+// TestVerifyWikilinksSkipDoubleBacktickCode: a code span closes only at a backtick
+// run of its own length, so a link inside a double-backtick span is code, and a
+// link after a closed span is still checked.
+func TestVerifyWikilinksSkipDoubleBacktickCode(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	note := filepath.Join(root, "note.md")
+	require.NoError(t, os.WriteFile(note, []byte("Run ``x [[MissingPage]] y`` and ``a ` [[MissingPage]] b``.\n"), 0o644))
+	code, out, errs := do(t, "", "memory", "verify", "--root", root, "--links", "gate")
+	assert.Equal(t, 0, code, errs)
+	assert.Contains(t, out, "VERIFY OK gating=0")
+	require.NoError(t, os.WriteFile(note, []byte("Run ``x`` on [[MissingPage]].\n"), 0o644))
+	code, _, errs = do(t, "", "memory", "verify", "--root", root, "--links", "gate")
+	assert.Equal(t, 1, code)
+	assert.Contains(t, errs, "VERIFY FAIL wikilink [[MissingPage]] resolves to no file (e.g. from note.md)")
+}
+
 // TestMemoryFindsStoreEntries: the words an AI appended are found by memory search,
 // stats and check, and a hit names what receipt needs. No real clock: the store is
 // written with a fixed time.
