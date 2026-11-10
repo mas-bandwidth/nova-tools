@@ -2,12 +2,10 @@
 # ~/.ssh/config includes this file on its first line, so for these names the HostName and User here win over a Host
 # block of the same name there, and that block's other options still apply.
 {% for h in ssh_names_hosts %}
-{%   set address = hostvars[h].ansible_host | default(h) %}
+{%   set address = hostvars[h].ansible_host %}
 
 Host {{ h }}{{ (' ' ~ address) if address != h else '' }}
   HostName {{ address }}
-{%   if hostvars[h].ansible_user is defined %}
   User {{ hostvars[h].ansible_user }}
-{%   endif %}
-  UserKnownHostsFile ~/.ssh/known_hosts ~/.ssh/config.d/nova-fleet.known_hosts
+  UserKnownHostsFile ~/.ssh/known_hosts ~/.ssh/nova-fleet.known_hosts
 {% endfor %}
