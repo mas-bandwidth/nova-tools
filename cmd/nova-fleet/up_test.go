@@ -35,6 +35,7 @@ type upFake struct {
 	noIdent     bool   // git has no commit identity: git var GIT_*_IDENT exits 128
 	namesErr    string // nova-secrets names exits 2 with this stderr
 	busErr      string // nova-bus who exits 1 with this stderr
+	noHostKeys  bool   // peers report no sshHostKeys in tailscale status (Tailscale SSH off, the fleet's default)
 	api         *fakeAPI
 	self        string // this control node's own MagicDNS label (tailscale status Self), when it has one
 	pushErr     string // the store's plain git push exits 1 with this stderr
@@ -182,7 +183,11 @@ func (f *upFake) install(t *testing.T) {
 		case strings.HasPrefix(line, "tailscale status --json"):
 			var peers []string
 			for name, ip := range f.peers {
-				peers = append(peers, `"k-`+name+`":{"ID":"n-`+name+`","HostName":"`+name+`","Tags":["tag:nova"],"DNSName":"`+name+`.ts.example.","TailscaleIPs":["`+ip+`"],"SSH_HostKeys":["ssh-ed25519 KEY-`+name+`"],"TxBytes":`+strconv.FormatInt(f.bytes[name][0], 10)+`,"RxBytes":`+strconv.FormatInt(f.bytes[name][1], 10)+`}`)
+				keys := `"sshHostKeys":["ssh-ed25519 KEY-` + name + `"],` // the field as tailscale status --json names it
+				if f.noHostKeys {
+					keys = ""
+				}
+				peers = append(peers, `"k-`+name+`":{"ID":"n-`+name+`","HostName":"`+name+`","Tags":["tag:nova"],"DNSName":"`+name+`.ts.example.","TailscaleIPs":["`+ip+`"],`+keys+`"TxBytes":`+strconv.FormatInt(f.bytes[name][0], 10)+`,"RxBytes":`+strconv.FormatInt(f.bytes[name][1], 10)+`}`)
 			}
 			tags := `["tag:control"]`
 			if f.untagged {
@@ -1049,6 +1054,18 @@ func TestUpUnpinnedHostKeyIsSaid(t *testing.T) {
 	_, out, errs := runArgs("up", "--tools", "v2.0.0", "second=203.0.113.8")
 	if strings.Contains(out, "UP HOSTKEY") || !strings.Contains(errs, "nova-fleet up: second's Tailscale SSH host keys are not pinned in "+filepath.Join(ssh, "known_hosts")+": ") ||
 		!strings.Contains(errs, "; run: ls -ld "+ssh+" "+filepath.Join(ssh, "known_hosts")+"\n") {
+		t.Errorf("%s\n%s", out, errs)
+	}
+}
+
+// A machine that reports no ssh host key on the tailnet (Tailscale SSH off, as the fleet runs it) has nothing pinned
+// here, and up says where its sshd key gets pinned instead, without blaming Tailscale SSH being off.
+func TestUpNoHostKeyOnTheTailnetIsSaid(t *testing.T) {
+	f := &upFake{noHostKeys: true}
+	existing(t, f, "")
+	_, out, errs := runArgs("up", "--tools", "v2.0.0", "second=203.0.113.8")
+	if strings.Contains(out, "UP HOSTKEY") || strings.Contains(errs, "is Tailscale SSH on?") ||
+		!strings.Contains(errs, "nova-fleet up: second reports no ssh host key on the tailnet (Tailscale SSH is off, as the fleet runs it), so none is pinned here; nova-fleet ssh-names pins each machine's sshd key\n") {
 		t.Errorf("%s\n%s", out, errs)
 	}
 }

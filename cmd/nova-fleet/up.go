@@ -217,9 +217,9 @@ func (u *upRun) secrets(names []string, argv ...string) []string {
 	return append([]string{u.bin["nova-secrets"], "exec", "--only", strings.Join(names, ","), "--"}, argv...)
 }
 
-// env is the plays' environment: the fleet's store for nova-config, unparsed inventories fatal.
+// env is the plays' environment (playEnv) and the fleet's store for nova-config.
 func (u *upRun) env() []string {
-	env := append(os.Environ(), "ANSIBLE_INVENTORY_UNPARSED_FAILED=true")
+	env := playEnv()
 	if u.dsn != "" {
 		env = append(env, "NOVA_PG_DSN="+u.dsn)
 	}
@@ -273,7 +273,8 @@ func (u *upRun) config(args ...string) ([]map[string]any, string, int) {
 }
 
 // peer is the machine as the control node's tailscale sees it: its MagicDNS name, its address, and
-// its Tailscale SSH host keys, which are pinned in this node's known_hosts (never trusted on first use).
+// the ssh host keys it reports on the tailnet (only while it runs Tailscale SSH), which are pinned in
+// this node's known_hosts (never trusted on first use).
 func (u *upRun) peer(m *machine) bool {
 	st, on := u.status()
 	if !on && !u.check {
@@ -286,15 +287,15 @@ func (u *upRun) peer(m *machine) bool {
 	m.self = self
 	if ok {
 		m.dns = strings.TrimSuffix(p.DNSName, ".")
-		if len(p.SSH_HostKeys) == 0 {
-			fmt.Fprintf(u.stderr, "nova-fleet up: %s has no Tailscale SSH host key in tailscale status; its ssh over the tailnet is not pinned (is Tailscale SSH on?)\n", m.name)
+		if len(p.SSHHostKeys) == 0 {
+			fmt.Fprintf(u.stderr, "nova-fleet up: %s reports no ssh host key on the tailnet (Tailscale SSH is off, as the fleet runs it), so none is pinned here; nova-fleet ssh-names pins each machine's sshd key\n", m.name)
 			return true
 		}
 		home, _ := os.UserHomeDir()
 		path := filepath.Join(home, ".ssh", "known_hosts")
 		have, _ := os.ReadFile(path)
 		var add []string
-		for _, k := range p.SSH_HostKeys {
+		for _, k := range p.SSHHostKeys {
 			line := strings.Join([]string{m.name, m.dns, p.TailscaleIPs[0]}, ",") + " " + k
 			pinned := slices.ContainsFunc(strings.Split(string(have), "\n"), func(l string) bool {
 				hosts, key, _ := strings.Cut(l, " ")
