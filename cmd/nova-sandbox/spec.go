@@ -259,7 +259,7 @@ func developerDir() []string {
 		t = got
 	}
 	t = strings.TrimSuffix(t, "/Developer")
-	if fi, err := os.Stat(t); err != nil || !fi.IsDir() || t == "/" || underAny(t, darwinRoots) {
+	if fi, err := os.Stat(t); err != nil || !fi.IsDir() || t == "/" || underAny(t, darwinRoots) || badPath("darwin", t) != "" {
 		return nil
 	}
 	return []string{t}
