@@ -808,7 +808,9 @@ applying it restarts only the daemon it configures, never the login's units. A d
   and swap, `DISK-WARN` at priority warning over `nova_health_disk_warn_pct`.
 - `nova-disk-clean` every hour from `nova-disk-clean.timer`, as the login: a top-level entry it owns in
   `nova_health_disk_clean_dirs` (`/tmp`) or a runner's `TMPDIR` goes whole once nothing under it changed for
-  `nova_health_disk_clean_age_min` and no process of the login works in it, runs from it or holds a file in it; a file
+  `nova_health_disk_clean_age_min`, it holds no socket, FIFO, `.git`, quarantine, pid or lock file, and no process of
+  the login works in it, runs from it, maps it or holds a file in it (checked again just before the removal). A root
+  that is `/`, the home or above it, or under a runner's `_work` or `actions-runner*` is refused (`CLEAN-REFUSED`); a file
   of `nova_health_disk_clean_caches` (Go's build cache) unchanged that long goes too. On a filesystem over
   `nova_health_disk_warn_pct` the age is `nova_health_disk_clean_pressed_min`. One `CLEAN` line per removal and a
   `CLEAN-DONE` line in the journal.
