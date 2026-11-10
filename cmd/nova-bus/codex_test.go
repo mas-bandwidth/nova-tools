@@ -628,6 +628,37 @@ func TestCodexResolveAnIntent(t *testing.T) {
 	assert.True(t, errors.Is(err, os.ErrNotExist))
 }
 
+// resolve <id>=retry on an intent records the retry before the intent goes:
+// a retry that cannot be recorded leaves the intent, and nothing woken.
+func TestCodexResolveAnIntentToRetry(t *testing.T) {
+	t.Parallel()
+	if os.Getuid() == 0 {
+		t.Skip("root writes into a mode 0500 directory")
+	}
+	home := t.TempDir()
+	s := sys{uid: os.Getuid(), home: home}
+	dir := codexDir(s, "beta", testThread)
+	faults := filepath.Join(dir, "faults")
+	require.NoError(t, os.MkdirAll(faults, 0o700))
+	require.NoError(t, writeRecord(dir, "intent", codexRecord{last: "9-0", size: 1, first: "9-0", start: "x"}))
+	require.NoError(t, os.Chmod(faults, 0o500))
+	var out, errOut bytes.Buffer
+	assert.Equal(t, 1, codexResolve(s, "beta", testThread, "9-0=retry", &out, &errOut))
+	assert.Contains(t, errOut.String(), "HOOK RESOLVE FAILED id=9-0")
+	_, ok := readRecord(dir, "intent")
+	assert.True(t, ok, "the intent stays while its retry is not recorded")
+	_, ok = readRecord(dir, "woken")
+	assert.False(t, ok, "nothing is woken")
+	assert.Empty(t, readFaults(dir))
+	require.NoError(t, os.Chmod(faults, 0o700))
+	errOut.Reset()
+	require.Equal(t, 0, codexResolve(s, "beta", testThread, "9-0=retry", &out, &errOut), errOut.String())
+	_, ok = readRecord(dir, "intent")
+	assert.False(t, ok)
+	require.Len(t, readFaults(dir), 1)
+	assert.Equal(t, "retry", readFaults(dir)[0].result)
+}
+
 func TestCodexQueueOutcome(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
