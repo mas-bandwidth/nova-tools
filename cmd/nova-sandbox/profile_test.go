@@ -69,6 +69,21 @@ func TestDarwinGPUAndLinks(t *testing.T) {
 	assert.Contains(t, lines(text), `(allow file-read* (literal "/w/alias"))`)
 }
 
+// A literal carries the path's own UTF-8: the profile language has no \u escape,
+// so a no-break space must reach it as the character, as it does in a -D param.
+func TestDarwinLiteralsCarryThePathAsWritten(t *testing.T) {
+	t.Parallel()
+	w := &wall{reads: []string{"/r/nb sp/a"}, optRoots: []string{"/o/x y"}, linkSpellings: []string{"/l/nb link"}}
+	text, params, err := darwinProfile(w)
+	require.NoError(t, err)
+	got := lines(text)
+	assert.Contains(t, got, "(allow file-read-metadata (literal \"/r/nb sp\"))")
+	assert.Contains(t, got, "(allow file-read* (subpath \"/o/x y\"))")
+	assert.Contains(t, got, "(allow file-read* (literal \"/l/nb link\"))")
+	assert.NotContains(t, text, `\u`, "no Go escape reaches the profile")
+	assert.Equal(t, []string{"READ0=/r/nb sp/a"}, params)
+}
+
 func TestDarwinRootsMatchTheTemplate(t *testing.T) {
 	t.Parallel()
 	for _, r := range darwinRoots {
