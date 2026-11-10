@@ -308,6 +308,9 @@ func (u *upRun) peer(m *machine) bool {
 			_ = os.MkdirAll(filepath.Dir(path), 0o700) // ignored: the open below fails with the reason
 			f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 			if err == nil {
+				if len(have) > 0 && have[len(have)-1] != '\n' { // a last line without its newline would run into the first pin
+					add[0] = "\n" + add[0]
+				}
 				_, err = fmt.Fprintln(f, strings.Join(add, "\n"))
 				err = cmp.Or(err, f.Close())
 			}
