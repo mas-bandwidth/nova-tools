@@ -130,7 +130,7 @@ func verify(r *roots, links string, coverage, front, exempt multi, failMax int, 
 		for _, b := range bs {
 			all.WriteString(texts[b] + "\n")
 			inB[b] = true
-			for _, m := range mdLink.FindAllStringSubmatch(texts[b], -1) {
+			for _, m := range mdLink.FindAllStringSubmatch(maskCode(texts[b]), -1) {
 				if target, ok := linkTarget(m[1]); ok {
 					linked[path.Join(path.Dir(b), target)] = true
 				}
@@ -144,7 +144,7 @@ func verify(r *roots, links string, coverage, front, exempt multi, failMax int, 
 			}
 		}
 		for _, b := range bs {
-			for _, m := range mdLink.FindAllStringSubmatch(texts[b], -1) {
+			for _, m := range mdLink.FindAllStringSubmatch(maskCode(texts[b]), -1) {
 				if target, ok := linkTarget(m[1]); ok {
 					if resolved := path.Join(path.Dir(b), target); !slices.Contains(files, resolved) {
 						gating = append(gating, issue{"backlink", fmt.Sprintf("%s links %s which does not exist (resolved %s)", b, strings.TrimSpace(m[1]), resolved)})
