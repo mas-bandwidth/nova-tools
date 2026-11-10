@@ -1048,8 +1048,8 @@ nova-fleet sdk-toolchain -- -l bench
 
 On x86_64 Linux and WSL: Go, Node, Dart, Erlang/OTP, Elixir, a Temurin JDK, .NET 10 with the .NET 8 SDK and runtime in
 the same directory, golangci-lint, staticcheck, nilaway, ESBMC, SpotBugs with find-sec-bugs, Deno, Jazzer,
-google-java-format, TypeScript, ESLint, sbcl, Lua, luacheck, Luau, Squirrel, clang-format, LLVM (as `~/sdk/llvm`, not
-on PATH), cppcheck, AFL++ and Frama-C with Alt-Ergo and Why3 in their own opam root (`~/sdk/opam`). A Mac gets the tools
+google-java-format, TypeScript, ESLint, sbcl, Lua, luacheck, Luau, Squirrel (and a second Squirrel built as sq64 with
+`SQUSEDOUBLE`, not on PATH, named by `SQ`), clang-format, LLVM (as `~/sdk/llvm`, not on PATH), cppcheck, AFL++ and Frama-C with Alt-Ergo and Why3 in their own opam root (`~/sdk/opam`). A Mac gets the tools
 with a `darwin` pin: Go, Node, Dart, Elixir, the JDK and .NET. Each tool has one of six kinds: an `archive` or a
 `file` (a URL and its sha256 or sha512), `git` (a tag, refused unless it is the pinned commit, then built), `go`
 (`go install` of a module version, which Go checks against its checksum database), `npm` (refused unless the lock file
@@ -1084,6 +1084,7 @@ version bump installs the new directory beside the old and moves the links.
 | `nova_sdk_rustup` | rustup 1.29.1; `1.98.1` with `clippy` and `rustfmt`, and `nightly-2026-10-01` | `version`, the `linux` rustup-init `url`, `sha256` and `host`, the `toolchains` (each `name`, `components`, `targets`; the first is on PATH) and the commands `links` puts in `~/sdk/bin` |
 | `nova_sdk_cargo_tools` | `cargo-fuzz` 0.13.1 | crates built with `cargo install --locked` |
 | `nova_sdk_env` | `DART`, `NODE`, `JAVA`, `JAVAC`, `ELIXIR`, `MIX` set to their commands | make variables `env.sh` exports |
+| `nova_sdk_env_files` | `SQ`: `squirrel-3.2-double/bin/sq` | make variables naming a file under the SDK; `env.sh` exports each only where that file is executable |
 | `nova_sdk_shell_rc` | `true` | Linux: `~/.bashrc` sources `env.sh` on its first line, unless a line of it already names `sdk/env.sh` |
 
 **Check.** `SDK-TOOLCHAIN host=<machine> platform=<linux|darwin> tools=<n> present=<n> installed=<n> dotnet=<runtimes>`,
