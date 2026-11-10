@@ -304,6 +304,7 @@ nova_sdk_tools:
     linux:
       url: https://github.com/albertodemichelis/squirrel/releases/download/v3.2/squirrel_3_2_stable.tar.gz
       sha256: 211f1452f00b24b94f60ba44b50abe327fd2735600a7bacabc5b774b327c81db
+      root: squirrel3   # the archive also carries a stray inner tar beside its one directory
 
   - name: clang-format
     version: "23.1.3"
