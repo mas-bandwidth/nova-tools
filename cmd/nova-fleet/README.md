@@ -163,7 +163,7 @@ reached as root at the address given, as on the first run.
 |---|---|---|
 | `ci-rules` | the CI rules on every GitHub Actions runner a machine runs, whoever registered it (bench, runner and services groups) | nothing; `-l` the machines |
 | `github-runners` | GitHub Actions runners on every machine of the runner group, registered to one repository or organization | `github_runner_url`, `github_runner_scope`; `gh` on the control node logged in with admin on the repository |
-| `health` | guards that let a Linux machine get itself out of trouble, and a disk report (bench, runner and services groups) | nothing |
+| `health` | guards that let a Linux machine get itself out of trouble, a disk report and clean, and a Mac's Go build cache trim (bench, runner and services groups) | nothing |
 | `install` | install one nova-tools release, by tag, on the machines named (bench, runner and services groups) | `nova_tools_version` (a tag `vX.Y.Z`; no default) |
 | `netwatch` | a Linux machine that loses its network or the tailnet recovers by itself, and a hung one resets (bench, runner and services groups) | nothing; `-l` the machines |
 | `join` | a new machine joins the fleet: its row, its login, the tailnet, the tools a seat needs, its seat | the machine as the argument; its row's fields; `NOVA_PG_DSN` and `NOVA_PG_PASSWORD` in the environment, and `TAILSCALE_AUTHKEY` for a machine not on the tailnet (`up` mints it) |
@@ -496,7 +496,10 @@ the row and reads the inventory again.
 3. **The tailnet**: `tailscale` (below). From here on the plays reach the machine over the tailnet.
 4. **The tools a seat needs** (as the login): `nova_bin_dir` on the login PATH, and `NOVA_SECRETS_STORE`
    (`nova_secrets_store`, where the store is pushed) and `NOVA_SECRETS_SEAT` (`nova_seat`) exported in the login
-   profile, so a bare `nova-secrets exec --only NAME -- <cmd>` there opens the machine's own seat in the pushed store
+   profile and, for `ssh <machine> '<cmd>'`, first in `~/.bashrc` (`~/.zshenv` for zsh), with the directory of
+   `sops` on PATH (`/opt/homebrew/bin` on a Mac), so a bare
+   `nova-secrets exec --only NAME -- <cmd>` there opens the machine's own seat in the pushed store (the private-clone
+   recipe is in `nova-secrets help exec`)
    (the key defaults to `~/.config/nova-secrets/<seat>.key`; the short hostname need not be the seat); on Linux the pinned `age` and `sops`
    release binaries, checked against their published digests. A darwin machine takes them from Homebrew
    (`brew install age sops`).
@@ -807,12 +810,28 @@ applying it restarts only the daemon it configures, never the login's units. A d
   back (`user-<uid>.slice.d/90-nova-memory.conf`, `user@.service.d/90-nova-restart.conf`).
 - `nova-disk-report` every 6 hours from `nova-disk-report.timer`: one line in the journal for /, the home filesystem
   and swap, `DISK-WARN` at priority warning over `nova_health_disk_warn_pct`.
+- `nova-disk-clean` every hour from `nova-disk-clean.timer`, as the login: a top-level entry it owns in
+  `nova_health_disk_clean_dirs` (`/tmp`) or a runner's `TMPDIR` goes whole once nothing under it changed (ctime, which an unpack cannot set back) for
+  `nova_health_disk_clean_age_min`, it holds no socket, FIFO, `.git`, quarantine, pid or lock file, and no process of
+  the login works in it, runs from it, maps it or holds a file in it (checked again just before the removal). A root
+  that is `/`, the home or above it, or under a runner's `_work` or `actions-runner*` is refused (`CLEAN-REFUSED`); a file
+  of `nova_health_disk_clean_caches` (Go's build cache) unchanged that long goes too. On a filesystem over
+  `nova_health_disk_warn_pct` the age is `nova_health_disk_clean_pressed_min`. One `CLEAN` line per removal and a
+  `CLEAN-DONE` line in the journal.
 
 ```
 nova-fleet health --check --diff
 nova-fleet health
 journalctl -t nova-disk-report --since -1d        # the disk lines
+journalctl -t nova-disk-clean --since -1d         # what the clean removed
+cat ~/Library/Logs/nova-go-cache-clean.log         # a Mac: what the trim removed
 ```
+
+On a Mac the role does one thing: `nova-go-cache-clean`, hourly from the LaunchDaemon `com.nova.go-cache-clean` run as
+the login, removes the files of the Go build cache `go env GOCACHE` names in the login's shell that are unchanged for
+`nova_health_disk_clean_age_min` (`nova_health_disk_clean_pressed_min` on a volume over `nova_health_disk_warn_pct`).
+No temp or working directory is touched; `nova_health_disk_clean: false` turns it off. `DISK_CLEAN_DRY=1` with the
+daemon's environment says `WOULD` and removes nothing.
 
 | Variable | Default | |
 |---|---|---|
@@ -822,6 +841,8 @@ journalctl -t nova-disk-report --since -1d        # the disk lines
 | `nova_health_log_maxsize`, `nova_health_log_trim`, `nova_health_log_files` | `1G`, 4 GiB, syslog and kern.log | `0` trim is off |
 | `nova_health_user_memory_max_pct` | `85` | `0` is no limit |
 | `nova_health_disk_report`, `nova_health_disk_warn_pct`, `nova_health_disk_on_calendar` | `true`, `80`, every 6 hours | |
+| `nova_health_disk_clean`, `nova_health_disk_clean_dirs`, `nova_health_disk_clean_caches` | `true`, `/tmp`, `~/.cache/go-build` | |
+| `nova_health_disk_clean_age_min`, `nova_health_disk_clean_pressed_min`, `nova_health_disk_clean_on_calendar` | `2880`, `360`, hourly | minutes |
 
 **Check.** `HEALTH <machine> journal=persistent panic=10 ssh_oom=0 slice_max=<bytes> | DISK <machine> root=<n>%
 swap=<n>%`. **Rollback.** Remove the file of the guard (named above), then `systemctl daemon-reload` and restart the
@@ -938,7 +959,7 @@ nova-fleet runner-packages -- -l mini-m5
 | `nova_runner_vm_kernel` | `false` | Debian/Ubuntu: keep each kernel image readable by the login, for a VM of the host's own kernel |
 | `nova_runner_vm_kernel_dir` | `<home>/vm-kernels` | where the copies go, as `vmlinuz-<version>` |
 
-Both switches apply on Debian and Ubuntu only; another OS skips them. The play reaches every bench as well as every runner, so a run that turns a switch on names its machines with `-l`: a WSL2 machine has no `/boot/vmlinuz-<version>` and no `kvm` group, and the VM tier refuses there by name.
+Both switches apply on Debian and Ubuntu only; another OS skips them. The play reaches every bench as well as every runner, so a run that turns a switch on names its machines with `-l`: a WSL2 machine (`/proc/sys/fs/binfmt_misc/WSLInterop`) has no `/boot/vmlinuz-<version>` and no `kvm` group, so the VM tier is skipped there.
 
 **Foreign architectures.** A cross build that links a library of another architecture (`libsodium-dev:s390x`) needs
 dpkg multiarch. For each architecture the list names, the play runs `dpkg --add-architecture` where

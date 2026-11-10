@@ -31,3 +31,14 @@ nova_health_user_memory_max_pct: 85
 nova_health_disk_report: true
 nova_health_disk_warn_pct: 80
 nova_health_disk_on_calendar: "*-*-* 00/6:00:00"
+
+# The disk clean: every hour, as the login, what jobs leave and nothing else removes (files/nova-disk-clean): a
+# top-level entry of /tmp, of these dirs and of each runner's TMPDIR unchanged for the age and held by no process, and
+# a Go build cache file unchanged for the age. The age is the pressed one on a filesystem over nova_health_disk_warn_pct.
+# Both ages are guesses, not measurements; a job whose temp dir sits unchanged and unheld longer than the age loses it.
+nova_health_disk_clean: true
+nova_health_disk_clean_dirs: [/tmp]
+nova_health_disk_clean_caches: ["{{ nova_home }}/.cache/go-build"]
+nova_health_disk_clean_age_min: 2880
+nova_health_disk_clean_pressed_min: 360
+nova_health_disk_clean_on_calendar: hourly
