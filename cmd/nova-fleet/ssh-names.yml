@@ -1,70 +1,64 @@
-# purpose: ssh <machine> by its tailnet name from every machine of the fleet: each login's ssh config and the fleet's host keys from the record, then every pair checked (all machines; one asleep or away is reported offline)
+# purpose: the owner's ssh <machine> by tailnet name from every machine, as root with his agent forwarded; workers locked out (all machines; one asleep or away is reported offline)
 #
-# ssh-names.yml (cmd/nova-fleet/README.md, "ssh-names"). On each machine, as its login and never root:
+# ssh-names.yml (cmd/nova-fleet/README.md, "ssh-names"). The model: ssh between fleet machines by name is the owner's,
+# for his own interactive use. He lands on a Linux machine as root (on a Mac as its login, which is his) with his own
+# key, his agent forwarded, and goes on from there by name: the next hop authenticates with the same forwarded agent,
+# so his key never leaves his machine. Tailscale SSH is off (the tailscale play): it trusts the machine, not the
+# person, so with it on every worker on a tagged machine would get in. Fleet workers (the fleet login on a Linux
+# machine) get none of this: no names, no pins, and no key any machine's root accepts.
+#
+# On each machine, the home it writes to is root's on Linux (/root, by sudo) and the fleet login's on a Mac:
 #
 #   ~/.ssh/config.d/nova-fleet      one Host block per machine of the inventory: `Host <name> <address>`, HostName the
-#                                   record's address (its MagicDNS name, so the name resolves through MagicDNS and the
-#                                   connection travels over the tailnet whatever /etc/hosts maps the short name to),
-#                                   User the record's login, and the fleet's known hosts file
-#   ~/.ssh/nova-fleet.known_hosts   each machine's ed25519 host key, read from the machine itself over the play's own
-#                                   (host-key checked) connection; a machine offline in this run keeps the line the
-#                                   file held. Outside config.d, so a login that includes ~/.ssh/config.d/* never
-#                                   reads it as config.
+#                                   record's address (its MagicDNS name), User root (a Mac: its login), ForwardAgent
+#                                   yes, and the fleet's known hosts file; on a Mac also AddKeysToAgent yes and
+#                                   UseKeychain yes, so the owner's key is in his agent when he forwards it
+#   ~/.ssh/nova-fleet.known_hosts   each machine's sshd ed25519 host key (/etc/ssh/ssh_host_ed25519_key.pub), read
+#                                   over the play's own host-key-checked connection; a machine offline in this run
+#                                   keeps the line the file held
 #   ~/.ssh/config                   `Include ~/.ssh/config.d/nova-fleet` as its first line (moved there from elsewhere
-#                                   at the top level; through a symlink to the file it names); nothing else in the
-#                                   file is touched. An Include of it inside a Host or Match block is left alone and
-#                                   reported: it applies to that block only, and moving it is the login's call.
+#                                   at the top level; through a symlink, the file it names); an Include of it inside a
+#                                   Host or Match block is left alone and reported
 #
-# Before anything is written, every machine checks the whole record and the keys, and the run is refused (nothing
-# written anywhere) on: an address that is not <label>.<the tailnet's MagicDNS suffix> or an IP; a user that is not a
-# login name; a host key that differs from every key the tailnet publishes for that machine (`tailscale status` on the
-# control node; a machine that does not serve Tailscale SSH publishes none and is reported unchecked); a tailnet that
-# cannot be read; a write limited with -l (every machine's file holds every machine's key, so a write runs on all;
-# --check takes -l).
+# On a Linux machine the fleet login's home is the workers': what an earlier release wrote there (its
+# config.d/nova-fleet, the known hosts file, the Include line) is removed, and nothing is written.
 #
-# ssh takes the first value it reads for each option, so for a fleet name the HostName and User here win over a
-# hand-written Host block of the same name below; that block's other options (IdentityFile, HostKeyAlias,
-# ControlMaster) still apply. Authentication is the tailnet's when the target serves Tailscale SSH (the tailscale play
-# turns it on, nova_tailscale_ssh), else the target's sshd and its authorized_keys.
+# Before anything is written, the run is refused (nothing written anywhere) on: a record whose address is not a
+# tailnet name (<label>.<tailnet>.ts.net) or an IP, whose user is not a login name, whose os is neither linux nor
+# darwin, or whose name nova-config would not take; a machine that answers with no sshd ed25519 key; a write limited
+# with -l (every machine's file holds every machine's key; --check takes -l). No private key is ever read.
 #
-# Then the mesh: from each machine, `ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=<the
-# fleet's known hosts> <name> true` to every other machine online in this run. A machine that does not answer the play
-# (a laptop asleep or away) is reported OFFLINE and skipped, never a failure; the control node (tag:control) takes a
-# person's check (the tailnet policy), so a pair ending there is reported check-required and not tried; any other pair
-# that fails fails the run with ssh's own last line.
+# Then three checks (none under --check; none forwards an agent):
+#   CONTROL  from the control node, `ssh -o BatchMode=yes -l <root|the Mac's login> <address> true` to every machine,
+#            with the control node's own key and its pinned host keys: each ok or failed
+#   WORKERS  on each Linux machine, as the fleet login, the same as root to every other machine: each must be DENIED
+#            (sshd's "Permission denied"); one that gets in, or that cannot be told, fails the run
+#   CONFIG   on each machine, as root (a Mac: its login), `ssh -G <name>` for every machine: the user, address and
+#            ForwardAgent the file says
+# A machine that does not answer the play (a laptop asleep) is reported OFFLINE and skipped, never a failure.
 #
 #   nova-fleet ssh-names --check --diff
 #   nova-fleet ssh-names
-- name: ssh by tailnet name from every machine of the fleet
+- name: the owner's ssh by name, as root with his agent forwarded; workers locked out
   hosts: all
   gather_facts: true
   gather_subset: [min]
   ignore_unreachable: true   # a machine asleep or away is reported offline, not failed
   become: false
   vars:
-    ssh_names_dir: "{{ nova_home }}/.ssh/config.d"
-    ssh_names_known_file: "{{ nova_home }}/.ssh/nova-fleet.known_hosts"
     ssh_names_include: "Include ~/.ssh/config.d/nova-fleet"
     ssh_names_host_key_default: /etc/ssh/ssh_host_ed25519_key.pub   # a machine's ssh_names_host_key overrides it
-    # the machines of the inventory, those in this run, and those that answered this run's fact gathering
+    # the machines of the inventory, and those that answered this run's fact gathering
     ssh_names_hosts: "{{ groups['all'] | sort }}"
     ssh_names_online: "{{ ansible_play_hosts_all | map('extract', hostvars) | selectattr('ansible_facts.env', 'defined') | map(attribute='inventory_hostname') | sort }}"
     ssh_names_offline: "{{ ssh_names_hosts | reject('in', ssh_names_online) | list }}"
-    # by the tailnet's node for each machine online: the control node (its ssh rules take a person's check), and the
-    # machines that publish no host key (no Tailscale SSH), whose key is written unchecked
-    ssh_names_control: >-
-      {%- set c = [] -%}
-      {%- for h in ssh_names_online if 'tag:control' in (ssh_names_tailnet[hostvars[h].ansible_host] | default({})).tags | default([]) -%}
-      {%-   set _ = c.append(h) -%}
-      {%- endfor -%}
-      {{ c }}
-    ssh_names_unchecked: >-
-      {%- set c = [] -%}
-      {%- for h in ssh_names_online if not (ssh_names_tailnet[hostvars[h].ansible_host] | default({})).hostkeys | default([]) -%}
-      {%-   set _ = c.append(h) -%}
-      {%- endfor -%}
-      {{ c }}
-    ssh_names_targets: "{{ ssh_names_online | reject('equalto', inventory_hostname) | reject('in', ssh_names_control) | list }}"
+    ssh_names_macs: "{{ ssh_names_hosts | map('extract', hostvars) | selectattr('nova_os', 'defined') | selectattr('nova_os', 'equalto', 'darwin') | map(attribute='inventory_hostname') | list }}"
+    # this machine: a Mac writes its login's home; Linux writes root's, by sudo (ssh_names_root_home and
+    # ssh_names_root_sudo are the test's seams)
+    ssh_names_mac: "{{ inventory_hostname in ssh_names_macs }}"
+    ssh_names_home: "{{ nova_home if ssh_names_mac else (ssh_names_root_home | default('/root')) }}"
+    ssh_names_sudo: "{{ not ssh_names_mac and (ssh_names_root_sudo | default(true) | bool) }}"
+    ssh_names_known_file: "{{ ssh_names_home }}/.ssh/nova-fleet.known_hosts"
   tasks:
     - name: a write runs on every machine (each machine's file holds every machine's key)
       ansible.builtin.assert:
@@ -84,42 +78,14 @@
       ansible.builtin.meta: end_host
       when: ansible_facts.env is not defined
 
-    - name: the tailnet as the control node sees it (names, tags, published host keys)
-      ansible.builtin.command: tailscale status --json
-      delegate_to: localhost
-      run_once: true
-      register: ssh_names_status
-      changed_when: false
-      failed_when: false
-      check_mode: false
-
-    - name: the tailnet can be read
-      ansible.builtin.assert:
-        that: ssh_names_status.rc == 0 and (ssh_names_status.stdout | from_json).MagicDNSSuffix | default('') | length > 0
-        fail_msg: >-
-          SSH-NAMES REFUSED the tailnet cannot be read on the control node: `tailscale status --json` said
-          {{ ssh_names_status.stderr_lines | default([]) | last | default(ssh_names_status.msg | default('nothing')) }}
-          (the record and the host keys are checked against it before anything is written)
-        quiet: true
-
-    - name: the host key this machine presents
+    - name: the sshd host key this machine presents (its public key; no private key is read)
       ansible.builtin.slurp: { src: "{{ ssh_names_host_key | default(ssh_names_host_key_default) }}" }
       register: ssh_names_key_read
       failed_when: false
 
-    - name: the tailnet's nodes by address, and this machine's key as a known hosts entry
+    - name: this machine's key as a known hosts entry
       ansible.builtin.set_fact:
         ssh_names_key: "{{ (ssh_names_key_read.content | default('') | b64decode).split()[:2] | join(' ') }}"
-        ssh_names_suffix: "{{ (ssh_names_status.stdout | from_json).MagicDNSSuffix }}"
-        ssh_names_tailnet: >-
-          {%- set st = ssh_names_status.stdout | from_json -%}
-          {%- set nodes = {} -%}
-          {%- for n in [st.Self | default({}, true)] + ((st.Peer | default({}, true)).values() | list) -%}
-          {%-   for a in [(n.DNSName | default('')).rstrip('.')] + (n.TailscaleIPs | default([], true)) if a -%}
-          {%-     set _ = nodes.update({a: {'hostkeys': n.sshHostKeys | default([], true), 'tags': n.Tags | default([], true)}}) -%}
-          {%-   endfor -%}
-          {%- endfor -%}
-          {{ nodes }}
 
     - name: the record and every host key read, checked before anything is written
       ansible.builtin.assert:
@@ -130,137 +96,216 @@
         ssh_names_refused: >-
           {%- set bad = [] -%}
           {%- set name_re = '^[a-z0-9][a-z0-9-]*\Z' -%}
-          {%- set address_re = '^[a-z0-9-]+\.' ~ (ssh_names_suffix | regex_escape) ~ '\Z' -%}
+          {%- set address_re = '^[a-z0-9-]+\.[a-z0-9-]+\.ts\.net\Z' -%}
           {%- set ipv4_re = '^((25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])\.){3}(25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])\Z' -%}
           {%- set ipv6_re = '^[0-9a-f]*:[0-9a-f:]*\Z' -%}
           {%- set user_re = '^[a-z_][a-z0-9_-]*\Z' -%}
           {%- for h in ssh_names_hosts -%}
           {%-   set a = hostvars[h].ansible_host | default('') | string -%}
           {%-   set u = hostvars[h].ansible_user | default('') | string -%}
+          {%-   set o = hostvars[h].nova_os | default('') | string -%}
           {%-   if h is not match(name_re) -%}
           {%-     set _ = bad.append('machine ' ~ (h | to_json) ~ ' name: not [a-z0-9][a-z0-9-]*, as nova-config takes') -%}
           {%-   endif -%}
           {%-   if a is not match(address_re) and a is not match(ipv4_re) and a is not match(ipv6_re) -%}
-          {%-     set _ = bad.append('machine ' ~ h ~ ' address ' ~ (a | to_json) ~ ': not <label>.' ~ ssh_names_suffix ~ ' or an IP (nova-config machine set ' ~ h ~ ' --address ' ~ h ~ '.' ~ ssh_names_suffix ~ ')') -%}
+          {%-     set _ = bad.append('machine ' ~ h ~ ' address ' ~ (a | to_json) ~ ': not <label>.<tailnet>.ts.net or an IP (nova-config machine set ' ~ h ~ ' --address <its MagicDNS name>)') -%}
           {%-   endif -%}
           {%-   if u is not match(user_re) -%}
           {%-     set _ = bad.append('machine ' ~ h ~ ' user ' ~ (u | to_json) ~ ': not a login name [a-z_][a-z0-9_-]* (nova-config machine set ' ~ h ~ ' --user <login>)') -%}
           {%-   endif -%}
-          {%-   if h in ssh_names_online -%}
-          {%-     set key = hostvars[h].ssh_names_key | default('') -%}
-          {%-     set node = ssh_names_tailnet[a] | default(none) -%}
-          {%-     if key is not match('^ssh-ed25519 [A-Za-z0-9+/=]+\Z') -%}
-          {%-       set _ = bad.append('machine ' ~ h ~ ' host key: none read from ' ~ (hostvars[h].ssh_names_host_key | default(ssh_names_host_key_default))) -%}
-          {%-     elif node is none -%}
-          {%-       set _ = bad.append('machine ' ~ h ~ ' address ' ~ a ~ ': no node of the tailnet has it') -%}
-          {%-     elif node.hostkeys | length > 0 and key not in node.hostkeys -%}
-          {%-       set _ = bad.append('machine ' ~ h ~ ' host key ' ~ key ~ ' is not one the tailnet publishes for ' ~ a ~ ' (' ~ (node.hostkeys | join(', ')) ~ '): not trusted') -%}
-          {%-     endif -%}
+          {%-   if o not in ['linux', 'darwin'] -%}
+          {%-     set _ = bad.append('machine ' ~ h ~ ' os ' ~ (o | to_json) ~ ': not linux or darwin (nova-config machine set ' ~ h ~ ' --os <linux|darwin>)') -%}
+          {%-   endif -%}
+          {%-   if h in ssh_names_online and hostvars[h].ssh_names_key | default('') is not match('^ssh-ed25519 [A-Za-z0-9+/=]+\Z') -%}
+          {%-     set _ = bad.append('machine ' ~ h ~ ' host key: none read from ' ~ (hostvars[h].ssh_names_host_key | default(ssh_names_host_key_default))) -%}
           {%-   endif -%}
           {%- endfor -%}
           {{ bad }}
 
-    - name: the directory the play owns
-      ansible.builtin.file: { path: "{{ ssh_names_dir }}", state: directory, mode: "0700" }
+    - name: the files, in root's home (Linux) or the login's (a Mac)
+      become: "{{ ssh_names_sudo }}"
+      block:
+        - name: the directory the play owns
+          ansible.builtin.file: { path: "{{ ssh_names_home }}/.ssh/config.d", state: directory, mode: "0700" }
 
-    - name: the fleet's known hosts as this machine holds them
-      ansible.builtin.slurp: { src: "{{ ssh_names_known_file }}" }
-      register: ssh_names_known_was
-      failed_when: false
+        - name: the fleet's known hosts as this machine holds them
+          ansible.builtin.slurp: { src: "{{ ssh_names_known_file }}" }
+          register: ssh_names_known_was
+          failed_when: false
 
-    - name: the lines kept for machines that did not answer this run
-      ansible.builtin.set_fact:
-        ssh_names_kept: >-
-          {%- set kept = {} -%}
-          {%- for line in (ssh_names_known_was.content | default('') | b64decode).splitlines() if line | trim | length > 0 -%}
-          {%- set _ = kept.update({line.split(' ')[0].split(',')[0]: line}) -%}
-          {%- endfor -%}
-          {{ kept }}
+        - name: the lines kept for machines that did not answer this run
+          ansible.builtin.set_fact:
+            ssh_names_kept: >-
+              {%- set kept = {} -%}
+              {%- for line in (ssh_names_known_was.content | default('') | b64decode).splitlines() if line | trim | length > 0 -%}
+              {%- set _ = kept.update({line.split(' ')[0].split(',')[0]: line}) -%}
+              {%- endfor -%}
+              {{ kept }}
 
-    - name: the ssh config of the fleet
-      ansible.builtin.template: { src: templates/ssh-names.config.j2, dest: "{{ ssh_names_dir }}/nova-fleet", mode: "0600" }
-      register: ssh_names_config
+        - name: the ssh config of the fleet
+          ansible.builtin.template: { src: templates/ssh-names.config.j2, dest: "{{ ssh_names_home }}/.ssh/config.d/nova-fleet", mode: "0600" }
+          register: ssh_names_config
 
-    - name: the fleet's host keys
-      ansible.builtin.template: { src: templates/ssh-names.known_hosts.j2, dest: "{{ ssh_names_known_file }}", mode: "0600" }
-      register: ssh_names_known
+        - name: the fleet's host keys
+          ansible.builtin.template: { src: templates/ssh-names.known_hosts.j2, dest: "{{ ssh_names_known_file }}", mode: "0600" }
+          register: ssh_names_known
 
-    - name: the login's ssh config
-      ansible.builtin.slurp: { src: "{{ nova_home }}/.ssh/config" }
-      register: ssh_names_config_was
-      failed_when: false
+        - name: the ssh config of root (Linux) or the login (a Mac)
+          ansible.builtin.slurp: { src: "{{ ssh_names_home }}/.ssh/config" }
+          register: ssh_names_config_was
+          failed_when: false
 
-    - name: where the login's ssh config includes the fleet's (inside a Host or Match block it applies to that block only)
-      ansible.builtin.set_fact:
-        ssh_names_include_inside: >-
-          {%- set ns = namespace(block=false, line=0) -%}
-          {%- for line in (ssh_names_config_was.content | default('') | b64decode).split('\n') -%}
-          {%-   if line is match('(?i)[ \t]*(host|match)([ \t=]|\Z)') %}{% set ns.block = true %}{% endif -%}
-          {%-   if ns.block and not ns.line and line is match('[ \t]*' ~ (ssh_names_include | regex_escape) ~ '[ \t]*\r?\Z') -%}
-          {%-     set ns.line = loop.index -%}
-          {%-   endif -%}
-          {%- endfor -%}
-          {{ ns.line }}
+        - name: where it includes the fleet's (inside a Host or Match block it applies to that block only)
+          ansible.builtin.set_fact:
+            ssh_names_include_inside: >-
+              {%- set ns = namespace(block=false, line=0) -%}
+              {%- for line in (ssh_names_config_was.content | default('') | b64decode).split('\n') -%}
+              {%-   if line is match('(?i)[ \t]*(host|match)([ \t=]|\Z)') %}{% set ns.block = true %}{% endif -%}
+              {%-   if ns.block and not ns.line and line is match('[ \t]*' ~ (ssh_names_include | regex_escape) ~ '[ \t]*\r?\Z') -%}
+              {%-     set ns.line = loop.index -%}
+              {%-   endif -%}
+              {%- endfor -%}
+              {{ ns.line }}
 
-    - name: an Include inside a block is left alone
-      ansible.builtin.debug:
-        msg: >-
-          SSH-NAMES {{ inventory_hostname }} INCLUDE LEFT ALONE: line {{ ssh_names_include_inside }} of ~/.ssh/config
-          includes the fleet's file inside a Host or Match block, where it applies to that block only; move it to the
-          first line by hand for every fleet name to resolve
-      when: ssh_names_include_inside | int > 0
+        - name: an Include inside a block is left alone
+          ansible.builtin.debug:
+            msg: >-
+              SSH-NAMES {{ inventory_hostname }} INCLUDE LEFT ALONE: line {{ ssh_names_include_inside }} of {{ ssh_names_home }}/.ssh/config
+              includes the fleet's file inside a Host or Match block, where it applies to that block only; move it to the
+              first line by hand for every fleet name to resolve
+          when: ssh_names_include_inside | int > 0
 
-    - name: the Include, first in the login's ssh config (a Host block above it would swallow it)
-      ansible.builtin.copy:
-        dest: "{{ nova_home }}/.ssh/config"
-        content: "{{ ssh_names_include }}\n{{ ssh_names_rest }}"
-        mode: "{{ omit if ssh_names_config_was.content is defined else '0600' }}"
-        follow: true   # a ~/.ssh/config that is a symlink (dotfiles) stays one; the file it names is written
-      vars:
-        ssh_names_rest: "{{ ssh_names_config_was.content | default('') | b64decode | regex_replace('(?m)^[ \\t]*' ~ (ssh_names_include | regex_escape) ~ '[ \\t]*\\r?(\\n|$)', '') }}"
-      register: ssh_names_config_include
-      when: ssh_names_include_inside | int == 0
+        - name: the Include, first in the ssh config (a Host block above it would swallow it)
+          ansible.builtin.copy:
+            dest: "{{ ssh_names_home }}/.ssh/config"
+            content: "{{ ssh_names_include }}\n{{ ssh_names_rest }}"
+            mode: "{{ omit if ssh_names_config_was.content is defined else '0600' }}"
+            follow: true   # a ~/.ssh/config that is a symlink (dotfiles) stays one; the file it names is written
+          vars:
+            ssh_names_rest: "{{ ssh_names_config_was.content | default('') | b64decode | regex_replace('(?m)^[ \\t]*' ~ (ssh_names_include | regex_escape) ~ '[ \\t]*\\r?(\\n|$)', '') }}"
+          register: ssh_names_config_include
+          when: ssh_names_include_inside | int == 0
 
-    - name: the mesh from this machine (ssh <name> true to every other machine online in this run but the control node)
-      ansible.builtin.shell: |
-        d=$(mktemp -d)
-        for h in {{ ssh_names_targets | map('quote') | join(' ') }}; do
-          ( if ssh -n -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=yes -o UserKnownHostsFile={{ ssh_names_known_file | quote }} "$h" true >/dev/null 2>"$d/$h"; then echo "ok $h"
-            else echo "failed $h: $(tail -n 1 "$d/$h" | tr -s ' \t' '  ')"; fi ) &
-        done
-        wait
-        rm -rf "$d"
-      register: ssh_names_mesh
-      changed_when: false
-      when: not ansible_check_mode   # ConnectTimeout 10 s is a guess, unmeasured: a tailnet peer answers in well under 1 s
+    # Linux: the fleet login is the workers'. What an earlier release wrote into its home goes; nothing is written there.
+    - name: the workers' home holds none of it (Linux)
+      when: not ssh_names_mac and nova_home != ssh_names_home
+      block:
+        - name: an earlier release's files, removed from the fleet login's home
+          ansible.builtin.file: { path: "{{ item }}", state: absent }
+          loop:
+            - "{{ nova_home }}/.ssh/config.d/nova-fleet"
+            - "{{ nova_home }}/.ssh/config.d/nova-fleet.known_hosts"
+            - "{{ nova_home }}/.ssh/nova-fleet.known_hosts"
+          register: ssh_names_removed_files
+
+        - name: an earlier release's Include, removed from the fleet login's ssh config
+          ansible.builtin.lineinfile:
+            path: "{{ nova_home }}/.ssh/config"
+            regexp: '^[ \t]*{{ ssh_names_include | regex_escape }}[ \t]*\r?$'
+            state: absent
+          register: ssh_names_removed_include
+          failed_when: false   # no ssh config at all is fine
 
     - name: the receipt
       ansible.builtin.debug:
         msg: >-
-          SSH-NAMES {{ inventory_hostname }} machines={{ ssh_names_hosts | length }} online={{ ssh_names_online | length }}
+          SSH-NAMES {{ inventory_hostname }} as={{ ansible_user if ssh_names_mac else 'root' }} machines={{ ssh_names_hosts | length }}
+          online={{ ssh_names_online | length }}
           config={{ (w ~ 'written') if ssh_names_config is changed else 'same' }}
           known_hosts={{ (w ~ 'written') if ssh_names_known is changed else 'same' }}
           include={{ 'inside-a-block' if ssh_names_include_inside | int > 0 else (w ~ 'set') if ssh_names_config_include is changed else 'first' }}
-          unchecked={{ ssh_names_online | select('in', ssh_names_unchecked) | join(',') or '-' }}
+          removed={{ ((ssh_names_removed_files.results | default([]) | select('changed') | list | length) + (1 if ssh_names_removed_include is changed else 0)) or '-' }}
           {%- if ansible_check_mode %} (check: nothing changed){% endif %}
       vars:
         w: "{{ 'would-be-' if ansible_check_mode else '' }}"
 
-    - name: the mesh receipt
+    # ---- CONFIG: each machine's own ssh reads the names as the file says (no network) ----
+    - name: CONFIG, ssh -G for every machine as root (a Mac, its login)
+      ansible.builtin.shell: |
+        check() {
+          g=$(ssh -G "$1" 2>&1) || { echo "wrong $1: $(echo "$g" | tail -n 1)"; return; }
+          u=$(echo "$g" | awk '$1 == "user" { print $2 }')
+          n=$(echo "$g" | awk '$1 == "hostname" { print $2 }')
+          f=$(echo "$g" | awk '$1 == "forwardagent" { print $2 }')
+          if [ "$u" = "$2" ] && [ "$n" = "$3" ] && [ "$f" = yes ]; then echo "ok $1"
+          else echo "wrong $1: user=$u hostname=$n forwardagent=$f"; fi
+        }
+        {% for h in ssh_names_hosts %}
+        check {{ h | quote }} {{ (hostvars[h].ansible_user if h in ssh_names_macs else 'root') | quote }} {{ hostvars[h].ansible_host | quote }}
+        {% endfor %}
+      environment: { HOME: "{{ ssh_names_home }}" }
+      become: "{{ ssh_names_sudo }}"
+      register: ssh_names_config_check
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: CONFIG receipt
       ansible.builtin.debug:
         msg: >-
-          SSH-NAMES MESH {{ inventory_hostname }} ok={{ ssh_names_mesh.stdout_lines | select('match', '^ok ') | list | length }}
-          check-required={{ ssh_names_online | reject('equalto', inventory_hostname) | select('in', ssh_names_control) | join(',') or '-' }}
-          offline={{ ssh_names_offline | join(',') or '-' }}
-          failed={{ ssh_names_mesh.stdout_lines | select('match', '^failed ') | map('regex_replace', '^failed ([^:]*):.*$', '\1') | sort | join(',') or '-' }}
-      when: ssh_names_mesh is not skipped
+          SSH-NAMES CONFIG {{ inventory_hostname }} ok={{ ssh_names_config_check.stdout_lines | select('match', '^ok ') | list | length }}
+          wrong={{ ssh_names_config_check.stdout_lines | select('match', '^wrong ') | map('regex_replace', '^wrong ([^:]*):.*$', '\1') | sort | join(',') or '-' }}
+      when: ssh_names_config_check is not skipped
 
-    - name: every machine online reaches every other by name
+    # ---- WORKERS: the fleet login on a Linux machine gets in as root nowhere ----
+    - name: WORKERS, ssh as root to every other machine as the fleet login (each must be denied)
+      ansible.builtin.shell: |
+        d=$(mktemp -d)
+        {% for h in ssh_names_online | reject('equalto', inventory_hostname) %}
+        ( if ssh -n -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -l root {{ hostvars[h].ansible_host | quote }} true >/dev/null 2>"$d/{{ h }}"; then echo "in {{ h }}"
+          elif grep -q 'Permission denied' "$d/{{ h }}"; then echo "denied {{ h }}"
+          else echo "unproven {{ h }}: $(tail -n 1 "$d/{{ h }}" | tr -s ' \t' '  ')"; fi ) &
+        {% endfor %}
+        wait
+        rm -rf "$d"
+      register: ssh_names_workers
+      changed_when: false
+      when: not ansible_check_mode and not ssh_names_mac
+
+    - name: WORKERS receipt
+      ansible.builtin.debug:
+        msg: >-
+          SSH-NAMES WORKERS {{ inventory_hostname }} denied={{ ssh_names_workers.stdout_lines | select('match', '^denied ') | list | length }}
+          got-in={{ ssh_names_workers.stdout_lines | select('match', '^in ') | map('regex_replace', '^in ', '') | sort | join(',') or '-' }}
+          unproven={{ ssh_names_workers.stdout_lines | select('match', '^unproven ') | map('regex_replace', '^unproven ([^:]*):.*$', '\1') | sort | join(',') or '-' }}
+      when: ssh_names_workers is not skipped
+
+    # ---- CONTROL: the control node reaches every machine with its own key ----
+    - name: CONTROL, ssh from the control node to every machine as root (a Mac, its login)
+      ansible.builtin.shell: |
+        d=$(mktemp -d)
+        {% for h in ssh_names_online %}
+        ( if ssh -n -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=yes -l {{ (hostvars[h].ansible_user if h in ssh_names_macs else 'root') | quote }} {{ hostvars[h].ansible_host | quote }} true >/dev/null 2>"$d/{{ h }}"; then echo "ok {{ h }}"
+          else echo "failed {{ h }}: $(tail -n 1 "$d/{{ h }}" | tr -s ' \t' '  ')"; fi ) &
+        {% endfor %}
+        wait
+        rm -rf "$d"
+      delegate_to: localhost
+      run_once: true
+      register: ssh_names_control
+      changed_when: false
+      when: not ansible_check_mode   # ConnectTimeout 10 s is a guess, unmeasured: a tailnet peer answers in well under 1 s
+
+    - name: CONTROL receipt
+      ansible.builtin.debug:
+        msg: >-
+          SSH-NAMES CONTROL ok={{ ssh_names_control.stdout_lines | select('match', '^ok ') | list | length }}
+          failed={{ ssh_names_control.stdout_lines | select('match', '^failed ') | map('regex_replace', '^failed ([^:]*):.*$', '\1') | sort | join(',') or '-' }}
+          offline={{ ssh_names_offline | join(',') or '-' }}
+      run_once: true
+      when: ssh_names_control is not skipped
+
+    - name: every check holds
       ansible.builtin.assert:
-        that: ssh_names_mesh.stdout_lines | select('match', '^failed ') | list | length == 0
+        that:
+          - ssh_names_config_check.stdout_lines | default([]) | select('match', '^wrong ') | list | length == 0
+          - ssh_names_workers.stdout_lines | default([]) | reject('match', '^denied ') | list | length == 0
+          - ssh_names_control.stdout_lines | default([]) | select('match', '^failed ') | list | length == 0
         fail_msg: >-
-          SSH-NAMES MESH {{ inventory_hostname }} FAILED {{ ssh_names_mesh.stdout_lines | select('match', '^failed ') | sort | join('; ') }}
-          (a target without Tailscale SSH needs this login's key in its authorized_keys; run: nova-fleet tailscale
-          to turn Tailscale SSH on where it can run)
+          {% set wrong = ssh_names_config_check.stdout_lines | default([]) | select('match', '^wrong ') | list %}
+          {% set workers = ssh_names_workers.stdout_lines | default([]) | reject('match', '^denied ') | list %}
+          {% set control = ssh_names_control.stdout_lines | default([]) | select('match', '^failed ') | list %}
+          {% if wrong %}SSH-NAMES CONFIG {{ inventory_hostname }} FAILED {{ wrong | sort | join('; ') }} (root's ssh does not read the names as written: is the Include first?) {% endif %}
+          {% if workers %}SSH-NAMES WORKERS {{ inventory_hostname }} FAILED {{ workers | sort | join('; ') }} (the fleet login must be denied as root everywhere: find the key that let it in, in that machine's /root/.ssh/authorized_keys) {% endif %}
+          {% if control %}SSH-NAMES CONTROL FAILED {{ control | sort | join('; ') }} (the control node's key must be in that machine's root authorized_keys; a Mac, its login's) {% endif %}
         quiet: true
-      when: ssh_names_mesh is not skipped
+      when: not ansible_check_mode

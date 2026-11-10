@@ -1,11 +1,17 @@
-# nova-fleet ssh-names: one block per machine of the fleet record, written by `nova-fleet ssh-names`; a run rewrites it.
-# ~/.ssh/config includes this file on its first line, so for these names the HostName and User here win over a Host
-# block of the same name there, and that block's other options still apply.
+# nova-fleet ssh-names: the owner's ssh by machine name, written by `nova-fleet ssh-names`; a run rewrites it.
+# Linux machines are reached as root, Macs as their login, with the owner's agent forwarded: his key never leaves his
+# machine. No fleet login (a worker's) is let in by these names. ~/.ssh/config includes this file on its first line.
 {% for h in ssh_names_hosts %}
 {%   set address = hostvars[h].ansible_host %}
 
 Host {{ h }}{{ (' ' ~ address) if address != h else '' }}
   HostName {{ address }}
-  User {{ hostvars[h].ansible_user }}
+  User {{ hostvars[h].ansible_user if h in ssh_names_macs else 'root' }}
+  ForwardAgent yes
+{%   if ssh_names_mac %}
+  AddKeysToAgent yes
+  IgnoreUnknown UseKeychain
+  UseKeychain yes
+{%   endif %}
   UserKnownHostsFile ~/.ssh/known_hosts ~/.ssh/nova-fleet.known_hosts
 {% endfor %}

@@ -450,9 +450,12 @@ What each installs and its variables are in
 [sdk-toolchain](../cmd/nova-fleet/README.md#sdk-toolchain) and
 [netwatch](../cmd/nova-fleet/README.md#netwatch).
 
-`ssh-names` makes `ssh <machine>` work by its tailnet name from every machine
-to every other: each login's ssh config and the fleet's host keys, from the
-record, then every pair tried; a machine asleep or away is reported offline
+`ssh-names` gives the owner `ssh <machine>` by tailnet name from every
+machine to every other, as root (a Mac: its login) with his own key and his
+agent forwarded. Tailscale SSH stays off, because it trusts the machine and
+would let any worker in. The fleet logins (the workers) get no names and no
+root: the play checks that each is denied. A machine asleep or away is
+reported offline
 ([ssh-names](../cmd/nova-fleet/README.md#ssh-names)):
 
 ```text

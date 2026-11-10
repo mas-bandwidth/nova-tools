@@ -174,7 +174,7 @@ reached as root at the address given, as on the first run.
 | `seat` | each machine's seat in the secrets store | `nova_seal_store` |
 | `secrets-refresh` | the control node's encrypted store pushed to every machine with `ansible.posix.synchronize` (`verify_host: true`, no `.git`, stale files deleted, 0700/0600); no machine runs a timer (pull mode is retired; one left is removed) | `nova_seal_store` (the control node's clone) to push |
 | `services` | one supervised unit per service record, on the machine the record names (bench, runner and services groups) | the inventory's `nova_services` |
-| `ssh-names` | `ssh <machine>` by its tailnet name from every machine of the fleet: each login's ssh config and the fleet's host keys from the record, then every pair checked (all machines; one asleep or away is reported offline) | nothing |
+| `ssh-names` | the owner's `ssh <machine>` by tailnet name from every machine, as root with his agent forwarded; workers locked out (all machines; one asleep or away is reported offline) | nothing |
 | `windows-runners` | a WSL machine held running from boot, and its Windows-side GitHub Actions runners from its record's `windows_runners`, through WSL interop | the record's `windows_runners`; `gh` on the control node logged in with admin on each repository or organization |
 | `tailscale` | each machine on the tailnet, its address the MagicDNS name, its firewall closed to all but the tailnet | `TAILSCALE_AUTHKEY` in the environment for a machine not on the tailnet (`up` mints it) |
 
@@ -623,16 +623,19 @@ one. On a Mac machine, open the Tailscale app once at its console and approve it
    apply them; other owners stay); the fleet's grants and ssh rules are appended where an equal rule (the same JSON)
    is not already there. Among them, so your own devices keep reaching every tagged machine whatever the policy was
    built on (allow-all, or `autogroup:self`, which no tagged device is): a grant from `autogroup:admin` to `tag:nova`,
-   `tag:runner` and `tag:control` on every port (`ip: ["*"]`), an ssh rule accepting `autogroup:admin` into
-   `tag:nova` and `tag:runner` as `autogroup:nonroot` and `root`, and one into `tag:control` as `autogroup:nonroot`
-   only with Tailscale's `check` action (you confirm in a browser, then it holds for a while). Every fleet tag reaches
-   `tag:nova` and `tag:runner` on port 22 and over Tailscale SSH as a non-root login, never root (`ssh-names` below
-   checks every pair). Nothing reaches `tag:control` without a person: no tag has its port 22 or an ssh rule into it.
+   `tag:runner` and `tag:control` on every port (`ip: ["*"]`), and an ssh rule accepting `autogroup:admin` into
+   `tag:nova` and `tag:runner` as `autogroup:nonroot` and `root` (inert while no machine serves Tailscale SSH, which
+   the `tailscale` play turns off). No ssh rule has a tagged source: Tailscale SSH trusts the machine, not the
+   person, so such a rule would let in every worker on that machine. ssh between machines is the owner's key instead
+   (`ssh-names` below). Tags reach each other's port 22 (the control node's plays) but not the control node's.
    Nothing is opened to an untagged or member device. The members reach the store's ports
    (`tcp:5432`, `tcp:6379`) on `tag:control` too, for a fleet whose store is the control node itself, so the store
    does not depend on an allow-all rule staying in the policy. Nothing the policy has is removed or replaced, so
    the default policy's allow-all `acls` rule still allows all. It is written (`POST` with `If-Match`, HuJSON) only
-   when the merge added something; a 412 reads it again and retries once; a second run writes nothing.
+   when the merge added something; a 412 reads it again and retries once; a second run writes nothing. Because the
+   merge never removes, a tailnet merged by v2.0.31 to v2.0.33 still holds the two ssh rules they added and this
+   release dropped (tagged machines into `tag:nova`/`tag:runner` as `autogroup:nonroot`, and `autogroup:admin` into
+   `tag:control` with `check`): delete those two from the policy in the admin console.
 2. This node tagged `tag:control` (`POST /api/v2/device/<Self.ID>/tags`, its tags kept); a node not on the tailnet is
    first joined with a minted `tag:control` key (`tailscale up --reset --auth-key=file:/dev/stdin`, the key on stdin;
    `sudo` on Linux). A device of yours tagged this way is owned by the tag from then on, not by your account.
@@ -646,13 +649,16 @@ one. On a Mac machine, open the Tailscale app once at its console and approve it
 1. Installs Tailscale: Tailscale's apt repository on Debian and Ubuntu (the same key and source line its own install
    script writes), Homebrew's cask on macOS. A Mac whose running daemon is the open-source `tailscaled` (Homebrew's
    formula, run as root) gets no cask: the play drives it as it drives Linux, with the `tailscale` beside the daemon,
-   sudo and `--ssh`.
-2. `tailscale up --reset --auth-key=file:/dev/stdin --hostname=<machine> --advertise-tags=tag:nova[,tag:runner] --ssh`
-   (`--ssh` on Linux and on the open-source `tailscaled`; the macOS app does not serve Tailscale SSH). `tag:runner` is added for a machine in
+   sudo and `--ssh=false`.
+2. `tailscale up --reset --auth-key=file:/dev/stdin --hostname=<machine> --advertise-tags=tag:nova[,tag:runner] --ssh=false`
+   (`--ssh=false` on Linux and on the open-source `tailscaled`; the macOS app does not serve Tailscale SSH). `tag:runner` is added for a machine in
    the `runner` group. The key comes from `TAILSCALE_AUTHKEY` in the control node's environment (`up` puts the one it minted there; run
    alone, give one) and reaches the
-   machine on the command's stdin only. A machine already Running with the same tags is not joined again; a hostname or
-   Tailscale SSH setting that differs is set in place with `tailscale set`, with no key.
+   machine on the command's stdin only. A machine already Running with the same tags is not joined again; a hostname
+   that differs, or Tailscale SSH left on by an earlier release, is set in place with `tailscale set
+   --hostname=<machine> --ssh=false`, with no key. Tailscale SSH stays off: it trusts the machine, not the person,
+   so with it on every worker on a tagged machine is let in. Before turning it off on a machine, make sure the
+   control node's key is in that machine's login's `authorized_keys` (its sshd takes over port 22).
 3. Records `Self.DNSName` (`<machine>.<tailnet>.ts.net`) as the machine's address: `nova-config machine set <name>
    --address <dns name>`, then reads the inventory again, so the firewall play, every run after it, the bus and the
    services reach the machine by that name.
@@ -672,7 +678,7 @@ nova-secrets exec --only NOVA_PG_PASSWORD --store S --key K --as SEAT -- \
 | Variable | Default | |
 |---|---|---|
 | `nova_tailscale_tags` | `tag:nova`, plus `tag:runner` in the `runner` group | the tags the key must be allowed |
-| `nova_tailscale_ssh` | `true` | Tailscale SSH (Linux, and a Mac on the open-source `tailscaled`) |
+| `nova_tailscale_ssh` | `false` | Tailscale SSH (Linux, and a Mac on the open-source `tailscaled`); off, as `--ssh=false` |
 | `nova_tailscale_record_address` | `true` | write the MagicDNS name into nova-config |
 | `nova_firewall` | `true` | ufw on Linux, the application firewall on macOS |
 | `nova_firewall_allow_udp` | `[41641]` | UDP ports open on every interface |
@@ -685,56 +691,72 @@ address>`.
 
 ## ssh-names
 
-`ssh <machine>` by its tailnet name, from every machine of the fleet to every other, over the tailnet. The play runs on
-every machine of the inventory, as its login, and writes three things there:
+The owner's `ssh <machine>` by tailnet name, for his own interactive use, from any machine of the fleet to any other.
+
+**The model.** He reaches a Linux machine as root (a Mac as its login, which is his) with his own key, and his ssh
+agent is forwarded, so from there `ssh <name>` to the next machine authenticates with the same key, still held only
+on his own machine: no private key is copied anywhere, and the play never reads one. Each machine's root must accept
+his public key in `/root/.ssh/authorized_keys` (a Mac: its login's); this play does not write `authorized_keys`.
+Tailscale SSH is off (the `tailscale` play, `--ssh=false`): it trusts the machine, not the person, so with it on every
+worker or CI job on a tagged machine would get in. Fleet workers (the fleet login on a Linux machine, e.g. `nova`)
+get nothing from this play: no names, no pins, and no key that any root accepts.
+
+On each machine the play writes into root's home on Linux (by sudo) and into the login's home on a Mac:
 
 - `~/.ssh/config.d/nova-fleet`: one block per machine of the inventory, `Host <name> <address>` with `HostName` the
-  record's address, `User` the record's login and `UserKnownHostsFile ~/.ssh/known_hosts
-  ~/.ssh/nova-fleet.known_hosts`. The address is the machine's MagicDNS name (the `tailscale` play records it), so
-  `ssh <name>` resolves through MagicDNS and travels over the tailnet whatever `/etc/hosts` maps the short name to.
-- `~/.ssh/nova-fleet.known_hosts`: each machine's ed25519 host key, as `<name>,<address> ssh-ed25519 ...`, read from
-  the machine itself (`/etc/ssh/ssh_host_ed25519_key.pub`) over the play's own connection, whose host key the control
-  node checks. Tailscale SSH presents the same key. A machine that does not answer this run keeps the line the file
-  held. It sits outside `config.d`, so a login that includes `~/.ssh/config.d/*` never reads it as config.
+  record's address (its MagicDNS name, so the name resolves through MagicDNS and travels over the tailnet whatever
+  `/etc/hosts` says), `User root` (a Mac target: its login), `ForwardAgent yes` and `UserKnownHostsFile
+  ~/.ssh/known_hosts ~/.ssh/nova-fleet.known_hosts`. Written on a Mac, the blocks also carry `AddKeysToAgent yes` and
+  `UseKeychain yes`, so the owner's key is in his agent when he forwards it.
+- `~/.ssh/nova-fleet.known_hosts`: each machine's sshd ed25519 host key (`/etc/ssh/ssh_host_ed25519_key.pub`), as
+  `<name>,<address> ssh-ed25519 ...`, read over the play's own connection, whose host key the control node checks. A
+  machine that does not answer this run keeps the line the file held. It sits outside `config.d`, so a config that
+  includes `~/.ssh/config.d/*` never reads it as config.
 - `Include ~/.ssh/config.d/nova-fleet` as the first line of `~/.ssh/config` (moved there from elsewhere at the top
   level, CRLF lines too; the file made if there is none; through a symlink, the file it names); nothing else in the
   file is changed. An `Include` of it inside a `Host` or `Match` block applies to that block only; the file is left
   alone and the run prints `SSH-NAMES <machine> INCLUDE LEFT ALONE` with the line: move it by hand.
 
-Before anything is written anywhere, every machine checks the whole record and every key read against the tailnet as
-the control node's `tailscale status --json` shows it, and the run is refused (`SSH-NAMES REFUSED ...`, naming the
-machine and the field) on: an address that is not `<label>.<the tailnet's MagicDNS suffix>` or an IP; a user that is
-not a login name (`[a-z_][a-z0-9_-]*`); a host key that is not one the tailnet publishes for that machine; a tailnet
-that cannot be read. A machine that does not serve Tailscale SSH publishes no host key, so its key is written
-unchecked and named in the receipt. A write limited with `-l` is refused too: every machine's file holds every
-machine's key, so a write runs on all of them (`--check` takes `-l`).
+On a Linux machine the fleet login's home is the workers': the play writes nothing there and removes what an earlier
+release wrote (`config.d/nova-fleet`, `nova-fleet.known_hosts`, the `Include` line); the rest of that config, such as
+the workers' own `config.d/*` files, is left alone.
 
-ssh takes the first value it reads for an option, so for a fleet name the `HostName` and `User` of this file win over
-a hand-written `Host` block of the same name later in `~/.ssh/config`, and that block's other options (an
-`IdentityFile`, a `HostKeyAlias`, `ControlMaster`) still apply. A machine added to the record has its name everywhere
-on the next run.
+Before anything is written anywhere, the run is refused (`SSH-NAMES REFUSED ...`, naming the machine and the field) on:
+an address that is not `<label>.<tailnet>.ts.net` or an IP; a user that is not a login name (`[a-z_][a-z0-9_-]*`); an
+os that is not `linux` or `darwin`; a name nova-config would not take; a machine that answers with no sshd ed25519
+key. A write limited with `-l` is refused too: every machine's file holds every machine's key, so a write runs on all
+of them (`--check` takes `-l`).
 
-Authentication is the target's: Tailscale SSH, where the `tailscale` play turned it on (`nova_tailscale_ssh`, Linux and
-a Mac on the open-source `tailscaled`), lets in every fleet tag as a non-root login with no key (the policy above);
-elsewhere the target's sshd wants the source login's key in its `authorized_keys`, which this play does not write. The
-control node takes a person's check, never a tag (the policy above).
+ssh takes the first value it reads for an option, so for a fleet name the values of this file win over a
+hand-written `Host` block of the same name later in `~/.ssh/config`, and that block's other options still apply.
 
-Then the mesh: from each machine, `ssh -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=yes -o
-UserKnownHostsFile=~/.ssh/nova-fleet.known_hosts <name> true` to every other machine that answered this run, all at
-once. A machine that did not answer (a laptop asleep or away) is `OFFLINE`, skipped, and never fails the run; a pair
-ending at the control node (`tag:control` on the tailnet) is `check-required` and not tried; any other pair that
-cannot connect fails the run with ssh's own last line.
+Then three checks, none under `--check` and none forwarding an agent (the owner's is not the play's):
+
+- **CONTROL**: from the control node, `ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -l <root, or a Mac's login>
+  <address> true` to every machine, with the control node's own key: each `ok` or `failed` with ssh's last line.
+- **WORKERS**: on each Linux machine, as the fleet login, the same as root to every other machine: each must be
+  `denied` by sshd. One that gets in fails the run (`got-in=`), and so does one whose answer is not a denial
+  (`unproven=`, e.g. a timeout: lockout not shown).
+- **CONFIG**: on each machine, as root (a Mac, its login), `ssh -G <name>` for every machine: the user, address and
+  `ForwardAgent yes` the file says.
+
+A machine that did not answer the play (a laptop asleep or away) is `OFFLINE`, skipped, and never fails the run.
 
 ```
 nova-fleet ssh-names --check --diff
 nova-fleet ssh-names
 ```
 
-**Check.** Per machine `SSH-NAMES <machine> machines=<n> online=<n> config=<written|same> known_hosts=<written|same>
-include=<set|first|inside-a-block> unchecked=<names>` and `SSH-NAMES MESH <machine> ok=<n> check-required=<names>
-offline=<names> failed=<names>`; a machine that did not answer prints `SSH-NAMES <machine> OFFLINE`. Under `--check`
-nothing is written and no pair is tried. **Rollback.** Remove the `Include` line, `~/.ssh/config.d/nova-fleet` and
-`~/.ssh/nova-fleet.known_hosts`.
+**Check.** Per machine `SSH-NAMES <machine> as=<root|login> machines=<n> online=<n> config=<written|same>
+known_hosts=<written|same> include=<set|first|inside-a-block> removed=<n>`, `SSH-NAMES CONFIG <machine> ok=<n>
+wrong=<names>`, on Linux `SSH-NAMES WORKERS <machine> denied=<n> got-in=<names> unproven=<names>`, and once `SSH-NAMES
+CONTROL ok=<n> failed=<names> offline=<names>`. Under `--check` nothing is written or removed and nothing is tried.
+**Rollback.** Remove the `Include` line, `~/.ssh/config.d/nova-fleet` and `~/.ssh/nova-fleet.known_hosts` from root's
+home (a Mac, the login's).
+
+**What it does not stop.** A fleet login with passwordless sudo can become root on its own machine, and while the
+owner is logged in there with his agent forwarded, root can use that agent. The WORKERS check proves the login's own
+keys open no root; it does not prove a worker cannot reach root locally.
 
 ## seat
 
