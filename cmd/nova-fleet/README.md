@@ -807,7 +807,7 @@ applying it restarts only the daemon it configures, never the login's units. A d
 - `nova-disk-report` every 6 hours from `nova-disk-report.timer`: one line in the journal for /, the home filesystem
   and swap, `DISK-WARN` at priority warning over `nova_health_disk_warn_pct`.
 - `nova-disk-clean` every hour from `nova-disk-clean.timer`, as the login: a top-level entry it owns in
-  `nova_health_disk_clean_dirs` (`/tmp`) or a runner's `TMPDIR` goes whole once nothing under it changed for
+  `nova_health_disk_clean_dirs` (`/tmp`) or a runner's `TMPDIR` goes whole once nothing under it changed (ctime, which an unpack cannot set back) for
   `nova_health_disk_clean_age_min`, it holds no socket, FIFO, `.git`, quarantine, pid or lock file, and no process of
   the login works in it, runs from it, maps it or holds a file in it (checked again just before the removal). A root
   that is `/`, the home or above it, or under a runner's `_work` or `actions-runner*` is refused (`CLEAN-REFUSED`); a file
