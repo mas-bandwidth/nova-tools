@@ -81,8 +81,8 @@ nova-secrets exec --only NAME[,NAME] --store <dir> --key <file> [--as <seat>] [-
   runs after it: the shell reports a command killed by a signal as 128+N, as for any process).
   Exit: the command's own status; 125 when exec refused at run time and the command never ran.
   On a machine nova-fleet joined, every shell of the login (ssh <machine> '<cmd>' too) has NOVA_SECRETS_STORE and
-  NOVA_SECRETS_SEAT, so a bare exec opens the machine's own seat. Clone a private repository there with the token given to git only by a credential helper
-  that reads it from the environment (never argv, never a file):
+  NOVA_SECRETS_SEAT, so a bare exec opens the machine's own seat. Clone a private repository there with the token
+  given to git only by a credential helper that reads it from the environment (never argv, never a file):
     nova-secrets exec --only GH_GATE_TOKEN -- git -c credential.helper= -c credential.helper='!f() { test "$1" = get && echo username=x-access-token && echo "password=$GH_GATE_TOKEN"; }; f' clone https://github.com/<owner>/<repo>.git
 
 --store defaults to $NOVA_SECRETS_STORE, else ~/.config/nova-secrets/store; --key to $NOVA_SECRETS_KEY, else

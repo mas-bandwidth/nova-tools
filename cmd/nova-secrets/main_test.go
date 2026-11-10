@@ -1261,5 +1261,5 @@ func TestExecHelpGivesTheCloneRecipe(t *testing.T) {
 	out := h.stdout.String()
 	assert.Contains(t, out, "nova-secrets exec --only GH_GATE_TOKEN -- git -c credential.helper= -c credential.helper=")
 	assert.Contains(t, out, `password=$GH_GATE_TOKEN`)
-	assert.Contains(t, out, "NOVA_SECRETS_STORE and NOVA_SECRETS_SEAT")
+	assert.Contains(t, out, "(ssh <machine> '<cmd>' too) has NOVA_SECRETS_STORE and\n  NOVA_SECRETS_SEAT, so a bare exec opens")
 }
