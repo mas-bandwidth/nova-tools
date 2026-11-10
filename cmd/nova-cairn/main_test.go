@@ -478,6 +478,20 @@ func TestVerifyBacklinksSkipFencedCode(t *testing.T) {
 	assert.Contains(t, out, "VERIFY OK gating=0")
 }
 
+// A Markdown link inside inline code is not a link: it needs no file, and a note
+// it names is still covered, because coverage reads names in the whole index.
+func TestVerifyCoverageAndBacklinksSkipInlineCode(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "m"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "m", "listed.md"), []byte("body\n"), 0o644))
+	index := "- `[listed](listed.md)`\n- `[example](nonexistent-example.md)`\n"
+	require.NoError(t, os.WriteFile(filepath.Join(root, "m", "index-a.md"), []byte(index), 0o644))
+	code, out, errs := do(t, "", "memory", "verify", "--root", root, "--links", "gate", "--coverage", "m/*.md:m/index-*.md")
+	assert.Equal(t, 0, code, errs)
+	assert.Contains(t, out, "VERIFY OK gating=0")
+}
+
 // A wikilink inside an inline code span is an example, wherever it sits in the span; one outside code is a link.
 func TestVerifyWikilinksSkipInlineCode(t *testing.T) {
 	t.Parallel()
