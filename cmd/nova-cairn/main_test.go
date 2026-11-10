@@ -601,6 +601,31 @@ func TestHealLogsTheHeadersPolicy(t *testing.T) {
 	assert.Contains(t, out, "source=src publish=never reopened=true")
 }
 
+// A session whose header is gone and whose open record is in the log gets the
+// header back as the log has it, whatever a re-open names, and no second record.
+func TestALostHeaderIsWrittenBackFromTheLog(t *testing.T) {
+	t.Parallel()
+	store := t.TempDir()
+	code, _, _ := do(t, "", "open", "--store", store, "--session", "s1", "--source", "src", "--publish", "never")
+	require.Equal(t, 0, code)
+	path := filepath.Join(store, "sessions", "s1.md")
+	header, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.NoError(t, os.Remove(path))
+	code, _, errs := do(t, "", "open", "--store", store, "--session", "s1", "--publish", "immediate")
+	assert.Equal(t, 1, code)
+	assert.Contains(t, errs, "OPEN FAILED: session \"s1\" is already open with publish=never source=src")
+	got, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, string(header), string(got), "the header is the log's open record")
+	log, err := os.ReadFile(filepath.Join(store, "log.jsonl"))
+	require.NoError(t, err)
+	assert.Equal(t, 1, strings.Count(string(log), `"event":"open"`), "one open record")
+	code, out, _ := do(t, "", "open", "--store", store, "--session", "s1", "--publish", "never")
+	assert.Equal(t, 0, code)
+	assert.Contains(t, out, "source=src publish=never reopened=true")
+}
+
 func TestARetryNamingAnotherSourceIsAConflict(t *testing.T) {
 	t.Parallel()
 	store := t.TempDir()
