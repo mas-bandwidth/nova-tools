@@ -30,6 +30,10 @@
 \*                              session
 \*   OpenCrash                  crash after the session file is written, before
 \*                              the open record reaches the log
+\*   HeaderLost                 the session file is removed from outside while
+\*                              the open record stays in the log; the next Open
+\*                              writes it back as the log has it and logs
+\*                              nothing
 \*                              
 \*   Append                     stores exact prose under a stable id with a
 \*                              clock stamp; a retry of the same request is
@@ -75,6 +79,8 @@
 \*     (DurableBeforeReported fails).
 \*   BrokenDuplicateNoLog: a duplicate reports success without writing the log
 \*     record an interrupted append left out (LoggedBeforeReported fails).
+\*   BrokenRelogLostHeader: an Open after a lost header writes it from its own
+\*     arguments and logs a second open record (OpenIdempotent fails).
 
 EXTENDS Naturals, FiniteSets
 
@@ -144,6 +150,11 @@ openLogged(s) == \E i \in DOMAIN log : log[i].event = "open" /\ log[i].session =
 Open(s, pub, src) ==
     IF s \in FlatSessions
     THEN UNCHANGED vars
+    ELSE IF ~sessions[s].open /\ openLogged(s) /\ Broken /= "BrokenRelogLostHeader"
+    THEN \* the header is written back as the log has it; nothing is logged
+         /\ sessions' = [sessions EXCEPT ![s].open = TRUE]
+         /\ UNCHANGED <<flatFiles, entries, log, index, coverage, written, fsynced,
+                        logged, indexed, persisted, reported, writtenText>>
     ELSE IF ~sessions[s].open
          THEN /\ sessions' = [sessions EXCEPT ![s] = [open |-> TRUE, pointers |-> {}, source |-> src, publish |-> pub]]
               /\ log' = Seq!Append(log, [event |-> "open", session |-> s, entry |-> None, text |-> None, publish |-> pub])
@@ -169,7 +180,18 @@ Open(s, pub, src) ==
 OpenCrash(s, pub, src) ==
     /\ s \notin FlatSessions
     /\ ~sessions[s].open
+    /\ ~openLogged(s)
     /\ sessions' = [sessions EXCEPT ![s] = [open |-> TRUE, pointers |-> {}, source |-> src, publish |-> pub]]
+    /\ UNCHANGED <<flatFiles, entries, log, index, coverage, written, fsynced,
+                   logged, indexed, persisted, reported, writtenText>>
+
+\* HeaderLost: the session file is removed from outside; the open record stays
+\* in the log, and with it the session's policy and source.
+HeaderLost(s) ==
+    /\ s \notin FlatSessions
+    /\ sessions[s].open
+    /\ openLogged(s)
+    /\ sessions' = [sessions EXCEPT ![s].open = FALSE, ![s].pointers = {}]
     /\ UNCHANGED <<flatFiles, entries, log, index, coverage, written, fsynced,
                    logged, indexed, persisted, reported, writtenText>>
 
@@ -243,6 +265,7 @@ IndexCoverage ==
 Next ==
     \/ \E s \in Sessions, pub \in Policies, src \in Sources : Open(s, pub, src)
     \/ \E s \in Sessions, pub \in Policies, src \in Sources : OpenCrash(s, pub, src)
+    \/ \E s \in Sessions : HeaderLost(s)
     \/ \E s \in Sessions, e \in EntryIDs, text \in Texts : Append(s, e, text)
     \/ \E s \in Sessions, e \in EntryIDs, text \in Texts : AppendCrash(s, e, text)
     \/ IndexCoverage
