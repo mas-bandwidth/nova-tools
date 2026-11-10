@@ -312,6 +312,31 @@ func TestSelfTalkInstallationShapes(t *testing.T) {
 	}
 }
 
+// A sentence after a closed quotation is the writer's own, whichever quote
+// marks closed it; a sentence inside one is a quoted specimen.
+func TestSelfTalkAfterAClosedQuotation(t *testing.T) {
+	t.Parallel()
+	own := "My weakest instrument is patience."
+	for _, page := range []string{
+		`She wrote: "First." ` + own,
+		`She wrote: "First sentence. Second sentence." ` + own,
+		"She wrote: “First.” " + own,
+		"She wrote: “First sentence. Second sentence.” " + own,
+	} {
+		code, _, errs := do(t, page+"\n", "self-talk", "-")
+		assert.Equal(t, 1, code, page)
+		assert.Equal(t, `SELFTALK FAIL -:1: RANKING match="My weakest": `+own+"\n", errs, page)
+	}
+	for _, page := range []string{
+		`She wrote: "` + own + `" Then she left.`,
+		"She wrote: “" + own + "” Then she left.",
+	} {
+		code, _, errs := do(t, page+"\n", "self-talk", "-")
+		assert.Equal(t, 0, code, page)
+		assert.Empty(t, errs, page)
+	}
+}
+
 // TestBannerListsEachVerbOnce: the banner is one usage line per verb, names
 // where the long text lives, and carries none of the group notes.
 func TestBannerListsEachVerbOnce(t *testing.T) {
