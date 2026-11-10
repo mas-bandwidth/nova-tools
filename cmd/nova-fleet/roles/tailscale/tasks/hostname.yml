@@ -1,44 +1,64 @@
 ---
-# The machine's names match its record name (Linux, WSL included; included by main.yml after the join, so `join`,
-# `up` and every `nova-fleet tailscale` run keep them matched). The tailnet name is set in main.yml (`tailscale set
-# --hostname`); here:
+# The machine's names match its record name (Linux, WSL included; included by names.yml after the join, so `join`,
+# `up` and every `nova-fleet tailscale` run keep them matched). valid.yml checked the name is a hostname before the
+# role wrote anything; the tailnet name is set in main.yml (`tailscale set --hostname`). Here, in this order:
 #
-#   - the OS hostname: /etc/hostname, and the running kernel's (`hostname <name>`); on WSL also [network] hostname in
-#     /etc/wsl.conf, which WSL sets the hostname from at every start;
+#   - the tailnet's DNS name: what the tailnet gave the machine must be <machine>.<tailnet>, asked again a few times
+#     where it still carries the old label (a rename just made settles a moment later); another one is refused;
 #   - /etc/hosts: exactly one 127.0.1.1 line, naming the machine (Debian's convention, so sudo and anything else that
-#     resolves the hostname finds it); every other 127.0.1.1 line (an old name, an installer's) goes;
-#   - cloud-init (where /etc/cloud exists): preserve_hostname true in 99-nova-hostname.cfg, so no boot puts the
-#     provider's name back.
+#     resolves the hostname finds it), written before the hostname changes so every lookup after finds the new name.
+#     The old line's names are renamed with their domain kept (old.example.com old -> amd-1.example.com amd-1); every
+#     other 127.0.1.1 line (an installer's) goes;
+#   - the OS hostname: /etc/hostname, on WSL [network] hostname in /etc/wsl.conf (WSL sets the hostname from it at
+#     every start), then the running kernel's (`hostname <name>`);
+#   - cloud-init (where /etc/cloud/cloud.cfg.d exists): 99_zz-nova-hostname.cfg, sorted last, sets preserve_hostname
+#     true and manage_etc_hosts false, so no boot puts the provider's name or its hosts template back.
 #
-# A name that is not a hostname, or a tailnet that gave the machine another DNS name (the name is held by another
-# node), is refused: the run fails for that machine and says how to fix it (HOSTNAME <machine> drift-refused).
-- name: the record name, as a hostname
+# A refusal fails the machine, says how to fix it (HOSTNAME <machine> drift-refused), and comes before any write.
+- name: WSL or not
   ansible.builtin.set_fact:
     hn_wsl: "{{ nova_wsl | default('microsoft' in (ansible_facts['kernel'] | default('') | lower)) | bool }}"
-    hn_valid: "{{ inventory_hostname is match('^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$') }}"
 
-- name: a record name that is not a hostname is refused
-  ansible.builtin.fail:
-    msg: >-
-      HOSTNAME {{ inventory_hostname }} drift-refused: the record name is not a hostname (lowercase letters, digits and
-      inner '-', at most 63); rename the record (nova-config machine set) or set nova_join_hostname=false for it
-  when: nova_join_hostname | bool and not hn_valid
-
-# The tailnet name: main.yml set it (`tailscale set --hostname`) where it differed. The MagicDNS label is what the
-# tailnet gave: another one means another node holds the name. (Under --check a rename not made yet is no drift.)
+# ---- the tailnet's DNS name (main.yml set the tailnet name where it differed) ----
 - name: the tailnet name, as the tailnet gave it
   ansible.builtin.set_fact:
     hn_ts_would: "{{ ansible_check_mode and (ts_self.HostName | default('')) != inventory_hostname }}"
     hn_ts_label: "{{ (ts_dns | default('')).split('.') | first }}"
 
-- name: a tailnet name another node holds is refused
-  ansible.builtin.fail:
-    msg: >-
-      HOSTNAME {{ inventory_hostname }} drift-refused: the tailnet gave this machine {{ ts_dns }}, not
-      {{ inventory_hostname }}.<tailnet>: another node holds the name. Remove or rename that node in the Tailscale
-      admin console (Machines), then run nova-fleet tailscale -- -l {{ inventory_hostname }} again
+# A rename just made (`tailscale set --hostname`) can leave the old label in the status for a moment: ask again,
+# bounded, before calling it drift.
+- name: the tailnet's DNS name, asked again until it settles (a few tries)
+  ansible.builtin.command: "{{ ts_bin }} status --json"
+  register: hn_ts_poll
+  until: >-
+    ((hn_ts_poll.stdout | default('') | trim).startswith('{')
+     and (((hn_ts_poll.stdout | from_json).Self | default({})).DNSName | default('')).split('.') | first == inventory_hostname)
+  retries: 4
+  delay: 2
+  changed_when: false
+  ignore_errors: true   # a name that never settles is refused below, with the reason
+  check_mode: false
   when: hn_ts_label | length > 0 and hn_ts_label != inventory_hostname and not hn_ts_would
 
+- name: the tailnet's DNS name, settled
+  ansible.builtin.set_fact:
+    hn_ts_dns: "{{ ((hn_ts_poll.stdout | from_json).Self | default({})).DNSName | default('') | regex_replace('\\.$', '') }}"
+  when: hn_ts_poll is not skipped and (hn_ts_poll.stdout | default('') | trim).startswith('{')
+
+- name: a tailnet name that is not the machine name is refused
+  ansible.builtin.fail:
+    msg: >-
+      HOSTNAME {{ inventory_hostname }} drift-refused: the tailnet gave this machine {{ hn_ts_dns | default(ts_dns) }},
+      not {{ inventory_hostname }}.<tailnet>:
+      {{ ('another node holds the name. Remove or rename that node in the Tailscale admin console (Machines)'
+          if hn_label is match('^' ~ (inventory_hostname | regex_escape) ~ '-[0-9]+$') else
+          'that is a machine name set in the Tailscale admin console (Machines > the machine > Edit machine name):
+          set it back to auto-generate from the OS hostname') }}, then run nova-fleet tailscale -- -l {{ inventory_hostname }} again
+  vars:
+    hn_label: "{{ (hn_ts_dns | default(ts_dns)).split('.') | first }}"
+  when: hn_ts_poll is not skipped and hn_label != inventory_hostname
+
+# ---- /etc/hosts, before the hostname changes ----
 - name: the hostname now
   ansible.builtin.command: hostname
   register: hn_now
@@ -51,25 +71,56 @@
   register: hn_hosts
   when: nova_join_hostname | bool
 
-# Exactly one 127.0.1.1 line naming the machine is left as it is (WSL writes its own, `<name>.<domain> <name>`);
-# otherwise every 127.0.1.1 line goes and `127.0.1.1<tab><name>` is put after the 127.0.0.1 line (first, with none).
+# Exactly one 127.0.1.1 line naming the machine is left as it is (WSL writes its own, `<name>.<domain> <name>`).
+# Otherwise the names of the 127.0.1.1 lines that name the machine or its old hostname are kept, the old name renamed
+# (its domain kept), the machine name added where missing, as one line after the 127.0.0.1 line (first, with none);
+# every other 127.0.1.1 line goes.
+- name: the 127.0.1.1 lines now
+  ansible.builtin.set_fact:
+    hn_lines: "{{ (hn_hosts.content | b64decode).splitlines() }}"
+    hn_loop: "{{ (hn_hosts.content | b64decode).splitlines() | select('match', '\\s*127\\.0\\.1\\.1\\s') | list }}"
+    hn_old: "{{ (hn_now.stdout | trim).split('.') | first }}"
+  when: nova_join_hostname | bool
+
 - name: the 127.0.1.1 line wanted
   ansible.builtin.set_fact:
     hn_hosts_ok: "{{ (hn_loop | length) == 1 and inventory_hostname in hn_loop[0].split()[1:] }}"
-    hn_kept: "{{ hn_lines | reject('match', '127\\.0\\.1\\.1\\s') | list }}"
+    hn_kept: "{{ hn_lines | reject('match', '\\s*127\\.0\\.1\\.1\\s') | list }}"
+    hn_names: >-
+      {%- set ns = namespace(out=[]) -%}
+      {%- for l in hn_loop -%}
+      {%-   set f = l.split()[1:] -%}
+      {%-   if f | select('match', hn_ours) | list | length > 0 -%}
+      {%-     for a in f -%}
+      {%-       set ns.out = ns.out + [a | regex_replace(hn_rename, inventory_hostname ~ '\\1')] -%}
+      {%-     endfor -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ (ns.out + [inventory_hostname]) | unique | join(' ') }}
   vars:
-    hn_lines: "{{ (hn_hosts.content | b64decode).splitlines() }}"
-    hn_loop: "{{ hn_lines | select('match', '127\\.0\\.1\\.1\\s') | list }}"
+    hn_ours: "^({{ hn_old | regex_escape }}|{{ inventory_hostname | regex_escape }})(\\.|$)"
+    hn_rename: "^{{ hn_old | regex_escape }}(\\.|$)"
   when: nova_join_hostname | bool
 
 - name: the hosts file wanted
   ansible.builtin.set_fact:
-    hn_hosts_new: "{{ hn_kept[:hn_at | int] + ['127.0.1.1\t' ~ inventory_hostname] + hn_kept[hn_at | int:] }}"
+    hn_hosts_new: "{{ hn_kept[:hn_at | int] + ['127.0.1.1\t' ~ hn_line_names] + hn_kept[hn_at | int:] }}"
   vars:
-    hn_lo: "{{ hn_kept | select('match', '127\\.0\\.0\\.1\\s') | list }}"
+    # the short name last, as Debian writes it (`<name>.<domain> <name>`)
+    hn_line_names: "{{ ((hn_names.split() | reject('equalto', inventory_hostname) | list) + [inventory_hostname]) | join(' ') }}"
+    hn_lo: "{{ hn_kept | select('match', '\\s*127\\.0\\.0\\.1\\s') | list }}"
     hn_at: "{{ (hn_kept.index(hn_lo[0]) + 1) if hn_lo else 0 }}"
   when: nova_join_hostname | bool and not hn_hosts_ok
 
+- name: "/etc/hosts: one 127.0.1.1 line, {{ inventory_hostname }}"
+  ansible.builtin.copy:
+    dest: "{{ nova_etc }}/hosts"
+    content: "{{ hn_hosts_new | join('\n') }}\n"
+  become: true
+  register: hn_hosts_file
+  when: nova_join_hostname | bool and not hn_hosts_ok
+
+# ---- the hostname ----
 - name: "/etc/hostname is {{ inventory_hostname }}"
   ansible.builtin.copy:
     dest: "{{ nova_etc }}/hostname"
@@ -116,25 +167,20 @@
   become: true
   when: nova_join_hostname | bool and hn_now.stdout | trim != inventory_hostname
 
-- name: "/etc/hosts: one 127.0.1.1 line, {{ inventory_hostname }}"
-  ansible.builtin.copy:
-    dest: "{{ nova_etc }}/hosts"
-    content: "{{ hn_hosts_new | join('\n') }}\n"
-  become: true
-  register: hn_hosts_file
-  when: nova_join_hostname | bool and not hn_hosts_ok
-
+# ---- cloud-init ----
 - name: cloud-init, there
   ansible.builtin.stat: { path: "{{ nova_etc }}/cloud/cloud.cfg.d" }
   register: hn_cloud
   when: nova_join_hostname | bool
 
-- name: cloud-init keeps the hostname at boot
+- name: cloud-init keeps the hostname and /etc/hosts at boot
   ansible.builtin.copy:
-    dest: "{{ nova_etc }}/cloud/cloud.cfg.d/99-nova-hostname.cfg"
+    dest: "{{ nova_etc }}/cloud/cloud.cfg.d/99_zz-nova-hostname.cfg"
     content: |
-      # nova-fleet (roles/tailscale): the hostname is the machine's record name; no boot sets it from the provider's.
+      # nova-fleet (roles/tailscale): the hostname is the machine's record name, and /etc/hosts names it; no boot sets
+      # either from the provider's. Sorted last of cloud.cfg.d, so it wins over the files before it.
       preserve_hostname: true
+      manage_etc_hosts: false
     mode: "0644"
   become: true
   register: hn_cloud_file

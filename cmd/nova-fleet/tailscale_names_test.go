@@ -41,6 +41,20 @@ func TestNamesRunAtJoinAndAtEveryTailscaleRun(t *testing.T) {
 	assert.NotContains(t, string(b), "ansible.builtin.hostname", "one path sets the hostname: the tailscale role")
 }
 
+// The machine name is checked to be a hostname before the role writes anything on any OS: valid.yml is main.yml's
+// first task, unconditional, so it runs ahead of the install, `tailscale up`/`set`, names.yml and the prompt.
+func TestNameIsCheckedBeforeAnyWrite(t *testing.T) {
+	t.Parallel()
+	tasks := roleFileTasks(t, "roles/tailscale/tasks/main.yml")
+	require.NotEmpty(t, tasks)
+	assert.Equal(t, "valid.yml", asText(tasks[0]["ansible.builtin.include_tasks"]), "the first task of the role")
+	assert.Nil(t, tasks[0]["when"], "every OS, Macs included")
+	set := taskIndex(tasks, "tailscale set (hostname, ssh)")
+	require.Greater(t, set, 0)
+	assert.Equal(t, -1, taskIndex(roleFileTasks(t, "roles/tailscale/tasks/hostname.yml"), "a record name that is not a hostname"),
+		"one check, in valid.yml")
+}
+
 // The prompt the fleet asked for, byte for byte: bash's from the drop-in, the record name for \h on a Mac, zsh's with
 // the record name, and the rc line that sources it.
 func TestPromptIsTheFleetsPrompt(t *testing.T) {

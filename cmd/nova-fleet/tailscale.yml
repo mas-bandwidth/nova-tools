@@ -11,9 +11,10 @@
 #      machine is never brought up again: a hostname or Tailscale SSH that differs is set in place with no key, and
 #      tags that differ stop the run with the command to retag it at its console.
 #   3. The machine's names and prompt (roles/tailscale/tasks/names.yml), so a re-run keeps them matched: on Linux and
-#      WSL the OS hostname is the machine name (/etc/hostname and the running one; /etc/wsl.conf [network] on WSL),
-#      /etc/hosts has one 127.0.1.1 line naming it, cloud-init keeps it (preserve_hostname), and a tailnet that gave
-#      the machine another DNS name stops the run (the name is held by another node). On every machine, Macs too, the
+#      WSL /etc/hosts has one 127.0.1.1 line naming the machine (written first), the OS hostname is the machine name
+#      (/etc/hostname and the running one; /etc/wsl.conf [network] on WSL), cloud-init keeps both (preserve_hostname,
+#      manage_etc_hosts false), and a tailnet DNS name that is not the machine's, once settled, stops the machine before
+#      any write. A machine name that is not a hostname stops it before anything at all (valid.yml, every OS). On every machine, Macs too, the
 #      login's prompt is user@<machine>:<cwd> with user@<machine> in cyan: ~/.config/nova/prompt.<bash|zsh>, written by
 #      the play, sourced by one line in the shell's rc file. Macs keep their hostname (their Bonjour name).
 #      Receipt: HOSTNAME <machine> matched|renamed|WOULD-RENAME os= hosts= cloud-init= tailnet= prompt=.

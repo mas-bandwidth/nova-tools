@@ -22,8 +22,18 @@
 - name: the prompt, for this shell
   when: pr_rc | length > 0
   block:
+    # a mode is set only on what the role makes: an existing ~/.config/nova (0700, say) or rc file (0600) keeps its own
+    - name: ~/.config/nova and the rc file, there already
+      ansible.builtin.stat: { path: "{{ item }}" }
+      loop: ["{{ nova_home }}/.config/nova", "{{ nova_home }}/{{ pr_rc }}"]
+      become: false
+      register: pr_there
+
     - name: ~/.config/nova
-      ansible.builtin.file: { path: "{{ nova_home }}/.config/nova", state: directory, mode: "0755" }
+      ansible.builtin.file:
+        path: "{{ nova_home }}/.config/nova"
+        state: directory
+        mode: "{{ omit if pr_there.results[0].stat.exists else '0755' }}"
       become: false
       register: pr_dir
 
@@ -53,7 +63,7 @@
         path: "{{ nova_home }}/{{ pr_rc }}"
         line: "[ -f ~/.config/nova/prompt.{{ pr_shell }} ] && . ~/.config/nova/prompt.{{ pr_shell }}"
         create: true
-        mode: "0644"
+        mode: "{{ omit if pr_there.results[1].stat.exists else '0644' }}"
       become: false
       register: pr_line
 

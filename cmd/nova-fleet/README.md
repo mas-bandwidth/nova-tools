@@ -644,21 +644,33 @@ one. On a Mac machine, open the Tailscale app once at its console and approve it
    alone, give one) and reaches the
    machine on the command's stdin only. A machine already Running with the same tags is not joined again; a hostname or
    Tailscale SSH setting that differs is set in place with `tailscale set`, with no key.
-3. The machine's names and prompt (`roles/tailscale/tasks/names.yml`):
-   - Linux and WSL: the OS hostname is the machine name (`/etc/hostname`, and the running one with `hostname
-     <machine>`; on WSL also `hostname` in the `[network]` section of `/etc/wsl.conf`, which WSL starts from).
-     `/etc/hosts` has exactly one `127.0.1.1` line, and it names the machine: a single line that already does (WSL's
-     `<machine>.<domain> <machine>`) is kept; otherwise every `127.0.1.1` line goes and `127.0.1.1<tab><machine>` is
-     put after the `127.0.0.1` line. Where `/etc/cloud/cloud.cfg.d` exists, `99-nova-hostname.cfg` sets
-     `preserve_hostname: true`, so no boot puts the provider's name back. `nova_join_hostname=false` leaves all three.
-   - Refused (`HOSTNAME <machine> drift-refused: ...`, the machine fails before anything is written): a machine name
-     that is not a hostname (lowercase letters, digits, inner `-`, at most 63), and a tailnet that gave the machine
-     another MagicDNS name than `<machine>.<tailnet>.ts.net` (another node holds the name: remove or rename it in the
-     admin console, then run again).
+3. The machine's names and prompt (`roles/tailscale/tasks/names.yml`). Before any of this, and before the install
+   and `tailscale up`/`set` above, on every machine, Macs included, a machine name that is not a hostname (lowercase
+   letters, digits, inner `-`, at most 63) is refused: `HOSTNAME <machine> drift-refused: the record name is not a
+   hostname`, and nothing is written.
+   - Linux and WSL, in this order:
+     - The tailnet's DNS name must be `<machine>.<tailnet>.ts.net`. Right after `tailscale set --hostname` the status
+       can still carry the old label, so it is asked again (4 more tries, 2 seconds apart) before it counts. Another
+       name is refused before anything is written (`HOSTNAME <machine> drift-refused: the tailnet gave this machine
+       ...`): `<machine>-<n>` means another node holds the name (remove or rename it in the admin console), any other
+       name is a machine name set in the admin console (set it back to auto-generate). Then run again.
+     - `/etc/hosts`, written before the hostname changes: exactly one `127.0.1.1` line, naming the machine. A single
+       line that already does (WSL's `<machine>.<domain> <machine>`) is kept. Otherwise the names on the `127.0.1.1`
+       lines that name the machine or its old hostname are kept with the old name renamed and its domain kept
+       (`old.example.com old` becomes `<machine>.example.com <machine>`), the machine name added if missing, as one
+       line after the `127.0.0.1` line; every other `127.0.1.1` line goes. Indented lines count.
+     - The OS hostname: `/etc/hostname`; on WSL `hostname` in the `[network]` section of `/etc/wsl.conf`, which WSL
+       starts from; then the running one, `hostname <machine>`.
+     - Where `/etc/cloud/cloud.cfg.d` exists, `99_zz-nova-hostname.cfg` (sorted after every `99-*.cfg`) sets
+       `preserve_hostname: true` and `manage_etc_hosts: false`, so no boot puts the provider's name back or rewrites
+       `/etc/hosts` from cloud-init's template (some providers set `manage_etc_hosts: localhost`).
+     - `nova_join_hostname=false` leaves `/etc/hosts`, the hostname and cloud-init.
    - Every machine, Macs included: the login's prompt. The play owns `~/.config/nova/prompt.bash` or
      `~/.config/nova/prompt.zsh` (the login shell's), rewrites it every run, and adds one line to the shell's rc file
      (`~/.bashrc`; `~/.bash_profile` for bash on a Mac; `~/.zshrc`) that sources it:
      `[ -f ~/.config/nova/prompt.bash ] && . ~/.config/nova/prompt.bash`. It applies to interactive shells only.
+     A mode is set only on what the play makes (`~/.config/nova` 0755, a new rc file 0644): an existing directory
+     or rc file keeps its own.
      bash: `PS1='\[\033[36m\]\u@\h\[\033[00m\]:\w\$ '` (`\h` is the hostname, the machine name; on a Mac the machine
      name in its place); zsh: `PROMPT='%F{cyan}%n@<machine>%f:%~%# '`. Either way `user@<machine>:<cwd>$`, the
      `user@<machine>` cyan. Another login shell is left as it is. Macs keep their hostname (their Bonjour name).
@@ -693,7 +705,7 @@ nova-secrets exec --only NOVA_PG_PASSWORD --store S --key K --as SEAT -- \
 `FIREWALL <machine> ufw as declared`; `tailscale status` on the control node lists the machine. **Rollback.** On the
 machine `tailscale logout` and `ufw disable` (macOS: `socketfilterfw --setglobalstate off`); `nova-config machine set
 <name> --address <old address>`; the old name with `hostnamectl set-hostname <old>` and the `127.0.1.1` line of
-`/etc/hosts` by hand, `rm /etc/cloud/cloud.cfg.d/99-nova-hostname.cfg`; the prompt by deleting the source line from
+`/etc/hosts` by hand, `rm /etc/cloud/cloud.cfg.d/99_zz-nova-hostname.cfg`; the prompt by deleting the source line from
 the rc file and `rm ~/.config/nova/prompt.*`.
 
 ## ssh-names
@@ -1053,8 +1065,8 @@ tailnet=<interface> dry=False watchdog=<interval> device=yes panic=<n> oops=<n> 
 The packages a CI runner's tests need, on each machine of the `bench` and `runner` groups (a bench runs the same gates), from `nova_runner_packages`
 (`group_vars/all.yml`): a list per OS, Homebrew formulae on `darwin` (as the login; brew refuses root) and apt
 packages on `debian`. The default is the toolchain of a fleet whose repositories build C, C++, Go, .NET, Java, OCaml
-and Python and test them: on macOS `postgresql@18` (the functional tier), `cmake`, `libsodium` and `pkgconf`; on
-Debian and Ubuntu the compilers, assemblers and build systems (`build-essential`, `clang-18`, `lld`, `cmake`,
+and Python and test them: on macOS `postgresql@18` (the functional tier), `cmake`, `libsodium`, `pkgconf` and
+`ansible` (nova-fleet's play tests run `ansible-playbook` and skip without it); on Debian and Ubuntu `ansible` too, the compilers, assemblers and build systems (`build-essential`, `clang-18`, `lld`, `cmake`,
 `ninja-build`, `ccache`, `nasm`), the libraries the tests link (libsodium, libbpf, libxdp, liburing, libcurl, MPFR,
 zlib, OpenGL), the runtimes (`golang-go`, `dotnet-sdk-10.0`, Mono, a Java runtime, `opam`, Python's pip and venv),
 the analysers and provers (`cppcheck`, `valgrind`, `cbmc`, `cadical`, `z3`, `gappa`, `sollya`), the store clients
@@ -1085,7 +1097,7 @@ nova-fleet runner-packages -- -e @runner-packages-s390x-vm.yml -l bench
 
 | Variable | Default | |
 |---|---|---|
-| `nova_runner_packages` | `darwin`: `postgresql@18`, `cmake`, `libsodium`, `pkgconf`; `debian`: the toolchain above (`group_vars/all.yml`) | another OS with a non-empty list is refused |
+| `nova_runner_packages` | `darwin`: `postgresql@18`, `cmake`, `libsodium`, `pkgconf`, `ansible`; `debian`: the toolchain above (`group_vars/all.yml`) | another OS with a non-empty list is refused |
 | `nova_runner_foreign_architectures` | `[]` | Ubuntu: dpkg architectures the debian list may name packages of, as `<name>:<arch>` |
 | `nova_runner_ports_uri` | `http://ports.ubuntu.com/ubuntu-ports/` | the archive a foreign architecture comes from |
 | `nova_runner_vm_kernel` | `false` | Debian/Ubuntu: keep each kernel image readable by the login, for a VM of the host's own kernel |

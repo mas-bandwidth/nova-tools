@@ -24,19 +24,33 @@ import (
 // name is a file. The tailnet's view (ts_os, ts_self, ts_dns) is what main.yml would have set. Nothing outside the
 // test's directory is read or written, and nothing reaches a network.
 
-// fakeHostname prints the name in $FAKE_HOSTNAME, or with an argument sets it and logs the call.
+// fakeHostname prints the name in $FAKE_HOSTNAME, or with an argument sets it and logs the call. Setting a name that
+// /etc/hosts ($FAKE_HOSTS) does not name yet fails, as sudo's lookups would after it: the hosts line comes first.
 const fakeHostname = `#!/bin/sh
 if [ $# -eq 0 ]; then cat "$FAKE_HOSTNAME"; exit 0; fi
+grep -Eq "^[[:space:]]*127\.0\.1\.1[[:space:]](.*[[:space:]])?$1([[:space:]]|$)" "$FAKE_HOSTS" || { echo "hostname: /etc/hosts does not name $1 yet" >&2; exit 1; }
 printf '%s\n' "$1" > "$FAKE_HOSTNAME"
 echo "hostname $*" >> "$FAKE_HOSTNAME_CALLS"
 `
 
+// fakeTailscaleStatus answers `status --json` with $FAKE_TS_DIR/status.<n> for its n-th call, the last one after that,
+// as a tailnet whose DNS name settles a moment after a rename would.
+const fakeTailscaleStatus = `#!/bin/sh
+[ "$1 $2" = "status --json" ] || { echo "tailscale $*: not faked" >&2; exit 1; }
+n=$(( $(cat "$FAKE_TS_DIR/calls" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$FAKE_TS_DIR/calls"
+f="$FAKE_TS_DIR/status.$n"; [ -f "$f" ] || f=$(ls "$FAKE_TS_DIR"/status.* | sort -t. -k2 -n | tail -n 1)
+cat "$f"
+`
+
+// namesPlay is the tailscale role's order: valid.yml first, before any write, then names.yml after the join.
 const namesPlay = `- hosts: all
   gather_facts: true
   gather_subset: [min]
   tasks:
+    - ansible.builtin.include_role: { name: tailscale, tasks_from: valid.yml }
     - ansible.builtin.set_fact:
         ts_os: "{{ names_os }}"
+        ts_bin: tailscale
         ts_self: "{{ names_self }}"
         ts_dns: "{{ names_self.DNSName | default('') | regex_replace('\\.$', '') }}"
     - ansible.builtin.include_role: { name: tailscale, tasks_from: names.yml }
@@ -52,6 +66,7 @@ type namesOpts struct {
 	name, shell, system, wsl, tsHost, tsDNS, hostname string
 	hosts, wslConf, rc                                string
 	cloud                                             bool
+	tsPolls                                           []string // the DNS names `tailscale status --json` answers, call by call
 }
 
 func newNamesMachine(t *testing.T, o namesOpts) *namesMachine {
@@ -87,6 +102,17 @@ func newNamesMachine(t *testing.T, o namesOpts) *namesMachine {
 		require.NoError(t, os.WriteFile(path, []byte(body), 0o644))
 	}
 	require.NoError(t, os.WriteFile(filepath.Join(m.bin, "hostname"), []byte(fakeHostname), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(m.bin, "tailscale"), []byte(fakeTailscaleStatus), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(m.dir, "ts"), 0o755))
+	polls := o.tsPolls
+	if len(polls) == 0 {
+		polls = []string{o.tsDNS}
+	}
+	for i, dns := range polls {
+		b, err := json.Marshal(map[string]any{"BackendState": "Running", "Self": map[string]any{"HostName": o.name, "DNSName": dns}})
+		require.NoError(t, err)
+		write(filepath.Join(m.dir, "ts", fmt.Sprintf("status.%d", i+1)), string(b))
+	}
 	write(m.state, o.hostname+"\n")
 	write(filepath.Join(m.etc, "hostname"), o.hostname+"\n")
 	write(filepath.Join(m.etc, "hosts"), o.hosts)
@@ -125,7 +151,8 @@ func (m *namesMachine) run(t *testing.T, extra ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "ansible-playbook", append([]string{"-i", m.inventory, m.play}, extra...)...)
 	cmd.Env = append(os.Environ(), "ANSIBLE_NOCOLOR=1", "ANSIBLE_ROLES_PATH="+roles, "HOME="+m.home, "TMPDIR="+filepath.Join(m.dir, "tmp"),
 		"ANSIBLE_LOCAL_TEMP="+filepath.Join(m.dir, "tmp"), "ANSIBLE_REMOTE_TEMP="+filepath.Join(m.dir, "tmp"),
-		"PATH="+m.bin+":"+os.Getenv("PATH"), "FAKE_HOSTNAME="+m.state, "FAKE_HOSTNAME_CALLS="+m.calls)
+		"PATH="+m.bin+":"+os.Getenv("PATH"), "FAKE_HOSTNAME="+m.state, "FAKE_HOSTNAME_CALLS="+m.calls,
+		"FAKE_HOSTS="+filepath.Join(m.etc, "hosts"), "FAKE_TS_DIR="+filepath.Join(m.dir, "ts"))
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }
@@ -178,7 +205,9 @@ func TestNamesRenameThenNothing(t *testing.T) {
 	assert.Equal(t, "hostname amd-1\n", m.read(t, m.calls))
 	assert.Equal(t, "amd-1\n", m.read(t, filepath.Join(m.etc, "hostname")))
 	assert.Equal(t, "127.0.0.1 localhost\n127.0.1.1\tamd-1\n::1     ip6-localhost ip6-loopback\n", m.read(t, filepath.Join(m.etc, "hosts")))
-	assert.Contains(t, m.read(t, filepath.Join(m.etc, "cloud", "cloud.cfg.d", "99-nova-hostname.cfg")), "\npreserve_hostname: true\n")
+	cloud := m.read(t, filepath.Join(m.etc, "cloud", "cloud.cfg.d", "99_zz-nova-hostname.cfg"))
+	assert.Contains(t, cloud, "\npreserve_hostname: true\n")
+	assert.Contains(t, cloud, "\nmanage_etc_hosts: false\n", "no boot rewrites /etc/hosts from cloud-init's template")
 
 	dropin := filepath.Join(m.home, ".config", "nova", "prompt.bash")
 	assert.Contains(t, strings.Split(m.read(t, dropin), "\n"), bashPS1, "the drop-in's PS1 is the fleet's, exactly")
@@ -214,7 +243,8 @@ func TestNamesCheckWritesNothing(t *testing.T) {
 	require.NoError(t, err, out)
 	assert.Contains(t, out, "HOSTNAME space WOULD-RENAME os=WOULD-RENAME from spacegame.losangeles hosts=WOULD-SET cloud-init=WOULD-SET tailnet=matched prompt=WOULD-SET", out)
 	assert.Contains(t, out, "-127.0.1.1\tubuntu-2604-amd64-tinkerbell", out)
-	assert.Contains(t, out, "+127.0.1.1\tspace", out)
+	assert.Contains(t, out, "+127.0.1.1\tspace.losangeles space\n", out)
+	assert.Contains(t, out, "-127.0.1.1\tspacegame.losangeles\tspacegame", out)
 	assert.Equal(t, before, m.snapshot(t), "--check wrote something")
 	_, err = os.Stat(m.calls)
 	assert.True(t, os.IsNotExist(err), "--check ran hostname <name>")
@@ -277,19 +307,82 @@ func TestNamesMacPromptOnly(t *testing.T) {
 	assert.Equal(t, "[ -f ~/.config/nova/prompt.bash ] && . ~/.config/nova/prompt.bash\n", b.read(t, filepath.Join(b.home, ".bash_profile")))
 }
 
-// drift-refused: a tailnet that gave the machine another name (another node holds it) and a record name that is not a
-// hostname both stop the machine, saying why, before anything is written.
+// drift-refused: a tailnet that gave the machine another name stops it before anything is written, saying which: a
+// `<name>-<n>` label is another node holding the name, any other label a machine name set in the admin console. A record
+// name that is not a hostname is refused first of all, on every OS (a Mac included), before any write.
 func TestNamesDriftRefused(t *testing.T) {
 	t.Parallel()
 	m := newNamesMachine(t, namesOpts{hostname: "b1", hosts: b1Hosts, tsDNS: "amd-1-1.tail0test.ts.net."})
+	before := m.snapshot(t)
 	out, err := m.run(t)
 	require.Error(t, err, out)
 	assert.Contains(t, out, "HOSTNAME amd-1 drift-refused: the tailnet gave this machine amd-1-1.tail0test.ts.net", out)
+	assert.Contains(t, out, "another node holds the name", out)
+	assert.Equal(t, before, m.snapshot(t))
 
-	bad := newNamesMachine(t, namesOpts{name: "Bad_Name", hostname: "b1", hosts: b1Hosts})
-	before := bad.snapshot(t)
-	out, err = bad.run(t)
+	c := newNamesMachine(t, namesOpts{hostname: "b1", hosts: b1Hosts, tsDNS: "builder.tail0test.ts.net."})
+	out, err = c.run(t)
 	require.Error(t, err, out)
-	assert.Contains(t, out, "HOSTNAME Bad_Name drift-refused: the record name is not a hostname", out)
-	assert.Equal(t, before, bad.snapshot(t))
+	assert.Contains(t, out, "HOSTNAME amd-1 drift-refused: the tailnet gave this machine builder.tail0test.ts.net", out)
+	assert.Contains(t, out, "machine name set in the Tailscale admin console", out)
+	assert.NotContains(t, out, "another node holds", out)
+
+	for _, system := range []string{"Linux", "Darwin"} {
+		bad := newNamesMachine(t, namesOpts{name: "Bad_Name", hostname: "b1", hosts: b1Hosts, system: system})
+		before := bad.snapshot(t)
+		out, err = bad.run(t)
+		require.Error(t, err, out)
+		assert.Contains(t, out, "HOSTNAME Bad_Name drift-refused: the record name is not a hostname", out)
+		assert.Equal(t, before, bad.snapshot(t), "%s: nothing is written for a bad name, the prompt included", system)
+	}
+}
+
+// Right after `tailscale set --hostname` the status can still carry the old DNS label: the role asks again, a few
+// times, until the tailnet's name settles, and the machine is not refused.
+func TestNamesTailnetNameSettles(t *testing.T) {
+	t.Parallel()
+	m := newNamesMachine(t, namesOpts{hostname: "b1", hosts: b1Hosts, tsDNS: "b1.tail0test.ts.net.",
+		tsPolls: []string{"b1.tail0test.ts.net.", "amd-1.tail0test.ts.net."}})
+	out, err := m.run(t)
+	require.NoError(t, err, out)
+	assert.Contains(t, out, "HOSTNAME amd-1 renamed", out)
+	assert.NotContains(t, out, "drift-refused", out)
+}
+
+// On a rename the old 127.0.1.1 line's names are renamed, its domain kept: `old.example.com old` becomes
+// `amd-1.example.com amd-1`; a line indented with whitespace is a 127.0.1.1 line too.
+func TestNamesHostsKeepsTheDomainAlias(t *testing.T) {
+	t.Parallel()
+	m := newNamesMachine(t, namesOpts{hostname: "old", hosts: "127.0.0.1 localhost\n  127.0.1.1\told.example.com old\n"})
+	out, err := m.run(t)
+	require.NoError(t, err, out)
+	assert.Equal(t, "127.0.0.1 localhost\n127.0.1.1\tamd-1.example.com amd-1\n", m.read(t, filepath.Join(m.etc, "hosts")))
+	out, err = m.run(t)
+	require.NoError(t, err, out)
+	assert.Contains(t, out, "hosts=matched", out)
+}
+
+// The role never loosens a mode it did not set: an existing ~/.config/nova (0700) and rc file (0600) keep theirs;
+// the directory it makes is 0755.
+func TestNamesKeepsExistingModes(t *testing.T) {
+	t.Parallel()
+	m := newNamesMachine(t, namesOpts{hostname: "amd-1", hosts: b1Hosts, rc: debianBashrc})
+	require.NoError(t, os.MkdirAll(filepath.Join(m.home, ".config", "nova"), 0o700))
+	require.NoError(t, os.Chmod(filepath.Join(m.home, ".config", "nova"), 0o700))
+	require.NoError(t, os.Chmod(filepath.Join(m.home, ".bashrc"), 0o600))
+	out, err := m.run(t)
+	require.NoError(t, err, out)
+	mode := func(p string) os.FileMode {
+		st, err := os.Stat(p)
+		require.NoError(t, err)
+		return st.Mode().Perm()
+	}
+	assert.Equal(t, os.FileMode(0o700), mode(filepath.Join(m.home, ".config", "nova")))
+	assert.Equal(t, os.FileMode(0o600), mode(filepath.Join(m.home, ".bashrc")))
+
+	fresh := newNamesMachine(t, namesOpts{hostname: "amd-1", hosts: b1Hosts})
+	out, err = fresh.run(t)
+	require.NoError(t, err, out)
+	assert.Equal(t, os.FileMode(0o755), mode(filepath.Join(fresh.home, ".config", "nova")))
+	assert.Equal(t, os.FileMode(0o644), mode(filepath.Join(fresh.home, ".bashrc")))
 }
