@@ -71,21 +71,6 @@
 		{
 			"action": "accept",
 			"src": [
-				"tag:nova",
-				"tag:runner",
-				"tag:control"
-			],
-			"dst": [
-				"tag:nova",
-				"tag:runner"
-			],
-			"users": [
-				"autogroup:nonroot"
-			]
-		},
-		{
-			"action": "accept",
-			"src": [
 				"autogroup:admin"
 			],
 			"dst": [
@@ -95,18 +80,6 @@
 			"users": [
 				"autogroup:nonroot",
 				"root"
-			]
-		},
-		{
-			"action": "check",
-			"src": [
-				"autogroup:admin"
-			],
-			"dst": [
-				"tag:control"
-			],
-			"users": [
-				"autogroup:nonroot"
 			]
 		}
 	]

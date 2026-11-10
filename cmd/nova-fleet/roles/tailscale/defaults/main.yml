@@ -6,9 +6,11 @@
 # (tagOwners in cmd/nova-fleet/tailscale-acl.json).
 nova_tailscale_tags: "{{ ['tag:nova'] + (['tag:runner'] if inventory_hostname in (groups['runner'] | default([])) else []) }}"
 
-# Tailscale SSH on Linux and on a Mac running the open-source tailscaled (Homebrew's formula, as root); the macOS app
-# does not serve it.
-nova_tailscale_ssh: true
+# Tailscale SSH: off. It trusts the machine, not the person, so with it on every worker on a tagged machine is let in
+# by the policy. The role says --ssh=false to the daemon (Linux, and a Mac running the open-source tailscaled), so a run
+# turns it off where an earlier release turned it on. ssh between machines is the owner's key, as root, with agent
+# forwarding (ssh-names.yml).
+nova_tailscale_ssh: false
 
 # The machine's MagicDNS name (<machine>.<tailnet>.ts.net) is written as its
 # address in nova-config, so every later play and the bus reach it there.

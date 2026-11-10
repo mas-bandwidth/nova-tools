@@ -15,7 +15,7 @@
     quiet: true
 
 # A Mac runs either the app (its daemon is a network extension) or the open-source tailscaled, Homebrew's formula run
-# as root. The second is driven like Linux: its own CLI beside the daemon, sudo, and Tailscale SSH served.
+# as root. The second is driven like Linux: its own CLI beside the daemon, sudo, and Tailscale SSH set (off by default).
 - name: the open-source tailscaled (macOS)
   ansible.builtin.shell: "ps -axo comm= | grep '/tailscaled$' | head -n 1"
   register: ts_daemon
@@ -54,7 +54,7 @@
       ansible.builtin.set_fact:
         ts_join: "{{ ts_state != 'Running' }}"
         ts_retag: "{{ ts_state == 'Running' and (ts_self.Tags | default([], true) | sort) != ts_tags }}"
-        ts_ssh_flag: "{{ ['--ssh'] if (ts_root_daemon and nova_tailscale_ssh | bool) else [] }}"
+        ts_ssh_flag: "{{ ['--ssh=' ~ ((nova_tailscale_ssh | bool) | string | lower)] if ts_root_daemon else [] }}"
 
     # Changing a running node's tags needs `tailscale up --reset` with a new key: that drops the node's other
     # preferences and can cut the connection this run comes in on. The play never does it; it names the command.
@@ -166,7 +166,7 @@
   changed_when: not ansible_check_mode
   when: nova_tailscale_record_address | bool and ts_dns | length > 0 and ts_dns != (ansible_host | default(''))
 
-- name: the MagicDNS name's host key (Tailscale SSH's), pinned on the control node
+- name: the MagicDNS name's host key (sshd's, reached over the tailnet), pinned on the control node
   ansible.builtin.include_role: { name: hostkey }
   vars: { hostkey_name: "{{ ts_dns }}" }
   when: ts_recorded is not skipped and not ansible_check_mode
