@@ -106,11 +106,11 @@ func (f field) canonical(raw string) (string, error) {
 		if f.null && raw == "default" {
 			return "", nil
 		}
-		n, err := strconv.Atoi(raw)
+		n, err := strconv.ParseInt(raw, 10, 32) // the columns are integer (int4)
 		if err != nil || n < 0 {
 			return "", fmt.Errorf("--%s %q: want a non-negative integer", f.name, raw)
 		}
-		return strconv.Itoa(n), nil
+		return strconv.FormatInt(n, 10), nil
 	case "bool":
 		b, err := strconv.ParseBool(raw)
 		if err != nil {
