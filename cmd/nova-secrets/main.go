@@ -517,6 +517,11 @@ func (t tool) bootstrap(o opts, check bool) error {
 		if _, kerr := os.Lstat(rk); o.store != filepath.Join(dir, "store") || string(cfg) != "creation_rules: []\n" || kerr != nil {
 			return nil
 		}
+		if b, err := os.ReadFile(filepath.Join(o.store, "recovery.pub")); err == nil { // absent: init stopped before writing it
+			if p, err := t.publicOf(opts{store: o.store, key: rk}); err != nil || string(b) != p+"\n" {
+				return nil // a store made for another recovery key is not this bootstrap's to finish
+			}
+		}
 		resume = true
 	}
 	if o.store != filepath.Join(dir, "store") {
