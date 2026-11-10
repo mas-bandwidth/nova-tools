@@ -852,7 +852,8 @@ cat ~/Library/Logs/nova-go-cache-clean.log         # a Mac: what the trim remove
 On a Mac the role does one thing: `nova-go-cache-clean`, hourly from the LaunchDaemon `com.nova.go-cache-clean` run as
 the login, removes the files of the Go build cache `go env GOCACHE` names in the login's shell that are unchanged for
 `nova_health_disk_clean_age_min` (`nova_health_disk_clean_pressed_min` on a volume over `nova_health_disk_warn_pct`).
-No temp or working directory is touched; `nova_health_disk_clean: false` turns it off. `DISK_CLEAN_DRY=1` with the
+No temp or working directory is touched; `nova_health_disk_clean: false` turns it off, and a cache under `/Volumes`
+gets no daemon (launchd cannot read a removable volume without a privacy grant; Go trims its own cache). `DISK_CLEAN_DRY=1` with the
 daemon's environment says `WOULD` and removes nothing.
 
 | Variable | Default | |
