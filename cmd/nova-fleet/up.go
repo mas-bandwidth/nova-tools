@@ -217,9 +217,9 @@ func (u *upRun) secrets(names []string, argv ...string) []string {
 	return append([]string{u.bin["nova-secrets"], "exec", "--only", strings.Join(names, ","), "--"}, argv...)
 }
 
-// env is the plays' environment (playEnv) and the fleet's store for nova-config.
+// env is the plays' environment: the fleet's store for nova-config, unparsed inventories fatal, no agent forwarded.
 func (u *upRun) env() []string {
-	env := playEnv()
+	env := append(os.Environ(), "ANSIBLE_INVENTORY_UNPARSED_FAILED=true", "ANSIBLE_SSH_EXTRA_ARGS=-o ForwardAgent=no")
 	if u.dsn != "" {
 		env = append(env, "NOVA_PG_DSN="+u.dsn)
 	}
@@ -272,9 +272,8 @@ func (u *upRun) config(args ...string) ([]map[string]any, string, int) {
 	return rows, "", 0
 }
 
-// peer is the machine as the control node's tailscale sees it: its MagicDNS name, its address, and
-// the ssh host keys it reports on the tailnet (only while it runs Tailscale SSH), which are pinned in
-// this node's known_hosts (never trusted on first use).
+// peer is the machine as the control node's tailscale sees it: its MagicDNS name, its address, and the ssh host
+// keys it reports (only while it runs Tailscale SSH), pinned in this node's known_hosts (never trusted on first use).
 func (u *upRun) peer(m *machine) bool {
 	st, on := u.status()
 	if !on && !u.check {

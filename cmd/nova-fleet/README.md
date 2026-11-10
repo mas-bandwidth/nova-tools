@@ -198,7 +198,7 @@ itself).
 
 By default the inventory is a script in the extracted directory that execs `nova-config inventory` (found on PATH),
 and `ANSIBLE_INVENTORY_UNPARSED_FAILED=true` is set so a failing script fails the run rather than reading as an
-empty fleet. Every play's ssh also gets `ANSIBLE_SSH_EXTRA_ARGS=-o ForwardAgent=no` (ahead of yours): a play never
+empty fleet. Every play's ssh also gets `ANSIBLE_SSH_EXTRA_ARGS=-o ForwardAgent=no` (in place of any of yours): a play never
 forwards the control node's agent to a fleet login (`ssh-names`). nova-config (`cmd/nova-config/README.md`) keeps the machines and services as rows; `nova-config inventory`
 prints each machine as a host in the groups its roles name (`bench`, `runner`, `services`, so `-l bench` runs on
 every bench), with its service rows as the host variable `nova_services` (always present; empty means none).
@@ -740,7 +740,7 @@ ssh takes the first value it reads for an option, so for a fleet name the values
 hand-written `Host` block of the same name later in `~/.ssh/config`, and that block's other options still apply.
 
 No play's own ssh connection forwards an agent: nova-fleet passes `-o ForwardAgent=no` to Ansible's ssh
-(`ANSIBLE_SSH_EXTRA_ARGS`, ahead of any of yours), because the control node's own config now says `ForwardAgent yes`
+(`ANSIBLE_SSH_EXTRA_ARGS`, in place of any of yours), because the control node's own config now says `ForwardAgent yes`
 for every fleet name, and a play lands on the fleet login, where any worker could use a forwarded agent.
 
 Then three checks, none under `--check` and each with `-o ForwardAgent=no` (the owner's agent is not the play's):

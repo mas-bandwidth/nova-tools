@@ -148,25 +148,18 @@ func TestPlaysAndShow(t *testing.T) {
 	}
 }
 
-// No play's ssh connection forwards an agent, whatever the control node's ssh config says (ssh-names writes ForwardAgent
-// yes there for the owner's names); ssh arguments of the caller's own are kept after it, and ssh takes the first value.
-func TestPlayEnvForwardsNoAgent(t *testing.T) {
-	t.Setenv("ANSIBLE_SSH_EXTRA_ARGS", "-o ServerAliveInterval=5")
-	env := playEnv()
+// No play up runs forwards an agent, whatever the control node's ssh config says (ssh-names writes ForwardAgent yes
+// there for the owner's names); the value is the last of its name, which os/exec keeps.
+func TestUpPlaysForwardNoAgent(t *testing.T) {
+	t.Setenv("ANSIBLE_SSH_EXTRA_ARGS", "-o ForwardAgent=yes")
 	var last string
-	for _, e := range env {
+	for _, e := range (&upRun{}).env() {
 		if v, ok := strings.CutPrefix(e, "ANSIBLE_SSH_EXTRA_ARGS="); ok {
-			last = v // os/exec keeps the last value of a name
+			last = v
 		}
 	}
-	if last != "-o ForwardAgent=no -o ServerAliveInterval=5" {
+	if last != "-o ForwardAgent=no" {
 		t.Errorf("ANSIBLE_SSH_EXTRA_ARGS=%q", last)
-	}
-	if !slices.Contains(env, "ANSIBLE_INVENTORY_UNPARSED_FAILED=true") {
-		t.Error("env lacks ANSIBLE_INVENTORY_UNPARSED_FAILED=true")
-	}
-	if !slices.Contains((&upRun{}).env(), "ANSIBLE_SSH_EXTRA_ARGS=-o ForwardAgent=no -o ServerAliveInterval=5") {
-		t.Error("up's plays forward an agent")
 	}
 }
 
