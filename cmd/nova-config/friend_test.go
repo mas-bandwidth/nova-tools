@@ -84,6 +84,7 @@ func TestFriendRefusals(t *testing.T) {
 		{1, []string{"friend", "set", "alex", "--tiers", "", "--actor", "a"}, "friend alex has no --tiers; want a comma list of flash, pro, heavy, frontier"},
 		{2, []string{"friend", "set", "alex", "--tiers", "pro,ultra", "--actor", "a"}, `--tiers "ultra": want a comma list of words matching`},
 		{2, []string{"friend", "set", "alex", "--width", "-1", "--actor", "a"}, `--width "-1": want a non-negative integer`},
+		{2, []string{"friend", "set", "alex", "--width", "2147483648", "--actor", "a"}, `--width "2147483648": want a non-negative integer`}, // the column is a 32-bit integer
 		{2, []string{"friend", "set", "alex", "--enabled", "maybe", "--actor", "a"}, `--enabled "maybe": want true or false`},
 		{2, []string{"friend", "set", "alex", "--harness", "", "--actor", "a"}, "--harness: want a value"},
 		{2, []string{"friend", "set", "alex", "--slots", "4", "--actor", "a"}, "unknown flag --slots; friend fields:"},
