@@ -606,6 +606,31 @@ func TestCodexRetryWithNoSavedEventsKeepsTheTries(t *testing.T) {
 	assert.NotContains(t, errOut.String(), "HOOK WAKE FAULT", "one failure is not the last try")
 }
 
+// A fault marked retry whose saved events are gone is settled by the idle
+// poll that takes it, so the retry fault after it is queued.
+func TestCodexRetryWithNoSavedEventsHoldsBackNoLaterRetry(t *testing.T) {
+	t.Parallel()
+	idle := rolloutMeta + rolloutTurn + rolloutComplete
+	c, r, f, _ := codexSetup(t, idle, time.Minute)
+	for _, id := range []string{"7-0", "8-0"} {
+		_, err := save(c.dir, "beta", msgN(id, "hi"))
+		require.NoError(t, err)
+		require.NoError(t, writeFault(c.dir, codexFault{last: id, first: id, result: "retry"}))
+	}
+	require.NoError(t, writeRecord(c.dir, "woken", codexRecord{last: "8-0", first: "8-0"}))
+	require.NoError(t, os.Remove(filepath.Join(c.dir, "7-0.json")))
+	c2, err := startCodex(testThread, c.s, f, io.Discard)
+	require.NoError(t, err)
+	var out, errOut bytes.Buffer
+	for range 5 {
+		_, err := c2.poll(context.Background(), &out, &errOut)
+		require.NoError(t, err)
+	}
+	require.Len(t, r.calls, 1, "the later retry is queued once")
+	assert.True(t, strings.HasPrefix(r.calls[0][5], "nova-bus: 1 new messages for beta since 8-0:"), r.calls[0][5])
+	assert.Empty(t, readFaults(c.dir), "both faults are settled")
+}
+
 // An intent left when the hook stopped is reported by show and settled by
 // resolve: woken records it as woken.
 func TestCodexResolveAnIntent(t *testing.T) {

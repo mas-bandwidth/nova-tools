@@ -363,7 +363,11 @@ func (c *codexWake) poll(ctx context.Context, out, stderr io.Writer) (string, er
 		for _, id := range saved(c.dir, faults[i].first, faults[i].last) {
 			c.waiting = append(c.waiting, Msg{ID: id})
 		}
-		if len(c.waiting) == 0 {
+		if len(c.waiting) == 0 { // its saved events are gone: nothing to queue, and it holds back no later fault
+			if err := settle(c.dir, faults[i].last, c.mark); err != nil {
+				fmt.Fprintf(stderr, "HOOK WAKE FAILED harness=codex id=%s reason=%s\n", faults[i].last, escaper.Replace(err.Error()))
+				return "", wakeFailed{faults[i].last, err}
+			}
 			return "", nil
 		}
 		retry, c.tries, c.limit = &faults[i], 0, 1
