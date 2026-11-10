@@ -12,8 +12,12 @@
 
 - name: the cache trim applies (go answers, and names a go-build dir)
   ansible.builtin.set_fact:
-    health_gocache_dir: "{{ health_gocache.stdout | default('') | trim }}"
-    health_gocache_on: "{{ nova_health_disk_clean | bool and health_gocache.rc | default(1) == 0 and (health_gocache.stdout | default('') | trim | basename) == 'go-build' }}"
+    # the last line: a login shell may print a banner first
+    health_gocache_dir: "{{ health_gocache.stdout_lines | default([]) | last | default('') | trim }}"
+
+- name: the cache trim applies (go answers, and names an absolute go-build dir)
+  ansible.builtin.set_fact:
+    health_gocache_on: "{{ nova_health_disk_clean | bool and health_gocache.rc | default(1) == 0 and health_gocache_dir is match('/') and (health_gocache_dir | basename) == 'go-build' }}"
 
 - name: the trim script
   ansible.builtin.copy: { src: nova-go-cache-clean, dest: "{{ nova_bin_dir }}/nova-go-cache-clean", mode: "0755" }
@@ -66,6 +70,17 @@
   register: health_gocache_load
   changed_when: "'BOOTSTRAPPED' in health_gocache_load.stdout"
   when: health_gocache_on | bool and not ansible_check_mode
+
+- name: the trim's daemon, gone when the trim does not apply (switched off, or no go-build cache)
+  ansible.builtin.shell: |
+    l=system/com.nova.go-cache-clean
+    f=/Library/LaunchDaemons/com.nova.go-cache-clean.plist
+    if launchctl print "$l" >/dev/null 2>&1; then launchctl bootout "$l" && echo REMOVED; fi
+    if [ -e "$f" ]; then rm -f "$f" && echo REMOVED; fi
+  become: true
+  register: health_gocache_unload
+  changed_when: "'REMOVED' in health_gocache_unload.stdout"
+  when: not health_gocache_on | bool and not ansible_check_mode
 
 - name: the trim's receipt
   ansible.builtin.debug:

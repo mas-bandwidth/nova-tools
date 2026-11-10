@@ -22,7 +22,8 @@ func TestHealthOnDarwinTrimsOnlyTheGoCache(t *testing.T) {
 	d, err := os.ReadFile("roles/health/tasks/darwin.yml")
 	require.NoError(t, err)
 	for _, want := range []string{"go env GOCACHE", "/Library/LaunchDaemons/com.nova.go-cache-clean.plist", "<key>UserName</key>",
-		"<key>StartInterval</key>", "launchctl bootstrap system", "nova-go-cache-clean"} {
+		"<key>StartInterval</key>", "launchctl bootstrap system", "nova-go-cache-clean",
+		"launchctl bootout \"$l\" && echo REMOVED", "when: not health_gocache_on | bool"} {
 		assert.Contains(t, string(d), want)
 	}
 	for _, linux := range []string{"systemd", "/tmp", "DISK_CLEAN_DIRS"} {
