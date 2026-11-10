@@ -152,21 +152,21 @@
   failed_when: nova_tools_gh_grep.rc > 1
   when: nova_tools_gh_stat.stat.isreg | default(false)
 
-- name: the git credential helpers (a helper line can hold a token, so never logged)
+# --name-only: the run holds the helpers' names, never their values (a helper line can hold a token). Exit 1 is none.
+- name: the git credential helpers that name the wrapper
   ansible.builtin.command:
-    argv: [git, config, --global, --get-regexp, '^credential\..*helper$']
+    argv: [git, config, --global, --name-only, --get-regexp, '^credential\..*helper$', "{{ (nova_tools_bin_dir ~ '/gh') | regex_escape }}"]
   environment: { HOME: "{{ nova_home }}" }
   register: nova_tools_gh_helpers
   check_mode: false
   changed_when: false
-  failed_when: false
-  no_log: true
+  failed_when: nova_tools_gh_helpers.rc > 1
   when: nova_tools_gh_grep.rc | default(1) == 0
 
 - name: whether the wrapper is there and named by a helper
   ansible.builtin.set_fact:
     nova_tools_gh_wrapper: "{{ nova_tools_gh_grep.rc | default(1) == 0 }}"
-    nova_tools_gh_named: "{{ (nova_tools_bin_dir ~ '/gh') in (nova_tools_gh_helpers.stdout | default('')) }}"
+    nova_tools_gh_named: "{{ nova_tools_gh_helpers.rc | default(1) == 0 }}"
 
 - name: the v1 gh wrapper is gone from the bin directory
   ansible.builtin.file: { path: "{{ nova_tools_bin_dir }}/gh", state: absent }
