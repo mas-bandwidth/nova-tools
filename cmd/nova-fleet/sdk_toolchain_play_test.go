@@ -220,7 +220,7 @@ func TestSDKToolchainEveryToolIsPinned(t *testing.T) {
 		assert.NotEmpty(t, c.Version, "%s is pinned", c.Name)
 	}
 	for _, want := range []string{"go", "node", "dart", "otp", "elixir", "jdk", "dotnet", "golangci-lint", "staticcheck", "esbmc",
-		"spotbugs", "deno", "sbcl", "lua", "luau", "afl", "frama-c"} {
+		"spotbugs", "deno", "sbcl", "lua", "luau", "afl", "frama-c", "python3.11", "python3.15"} {
 		assert.Contains(t, dirs, dirFor(d, want), "%s is in the defaults", want)
 	}
 }
@@ -232,6 +232,39 @@ func dirFor(d sdkDefaults, name string) string {
 		}
 	}
 	return "(no " + name + ")"
+}
+
+// Each CPython is built from source into python-<version> and gets mypy offline: pip takes only the wheels fetched as
+// extras, and the hash lock the build writes names exactly those wheels' sha256s, so pip refuses any other.
+func TestSDKToolchainPythonMypyIsHashLocked(t *testing.T) {
+	t.Parallel()
+	d := readSDKDefaults(t)
+	for _, name := range []string{"python3.11", "python3.15"} {
+		var tool *sdkTool
+		for i := range d.Tools {
+			if d.Tools[i].Name == name {
+				tool = &d.Tools[i]
+			}
+		}
+		require.NotNil(t, tool, name)
+		assert.Equal(t, "python-"+tool.Version, tool.Dir, "%s: the directory a Makefile looks for", name)
+		assert.Equal(t, []any{"bin/" + name}, tool.Links, "%s: linked by its version, never as python3", name)
+		assert.Equal(t, "bin/mypy", tool.Probe, "%s: mypy is installed last, so a build that stopped part way is redone", name)
+		assert.Contains(t, tool.Build, "--disable-test-modules --with-ensurepip=install")
+		assert.Contains(t, tool.Build, "--no-index")
+		assert.Contains(t, tool.Build, "--require-hashes")
+		locked := regexp.MustCompile(`--hash=sha256:([0-9a-f]{64})`).FindAllStringSubmatch(tool.Build, -1)
+		var lock, wheels []string
+		for _, m := range locked {
+			lock = append(lock, m[1])
+		}
+		for _, e := range tool.Linux.Extras {
+			assert.True(t, strings.HasSuffix(e.Path, ".whl"), "%s: %s is a wheel", name, e.Path)
+			wheels = append(wheels, e.SHA256)
+		}
+		require.NotEmpty(t, wheels, "%s: mypy's wheels are fetched as extras", name)
+		assert.ElementsMatch(t, wheels, lock, "%s: the hash lock names exactly the wheels fetched", name)
+	}
 }
 
 // .NET 8 goes into the .NET 10 directory from Microsoft's archives, each held to its SHA-512, on every platform the
