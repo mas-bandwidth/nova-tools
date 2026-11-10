@@ -1,0 +1,11 @@
+---
+# The machine name is a hostname, checked first (main.yml's first task, every OS, Macs included): the role makes it
+# the tailnet name, the OS hostname and the prompt's, so a name that cannot be one stops the machine before anything
+# is installed, joined, set or written.
+- name: a record name that is not a hostname is refused
+  ansible.builtin.assert:
+    that: inventory_hostname is match('^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$')
+    fail_msg: >-
+      HOSTNAME {{ inventory_hostname }} drift-refused: the record name is not a hostname (lowercase letters, digits and
+      inner '-', at most 63); rename the record (nova-config machine set) and run again
+    quiet: true

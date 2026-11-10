@@ -23,6 +23,13 @@ nova_tailscale_apt_url: https://pkgs.tailscale.com/stable
 nova_firewall: true
 nova_firewall_allow_udp: [41641]
 
+# The hostname (tasks/hostname.yml, Linux and WSL): the machine's names match its record name. group_vars/all.yml sets
+# it for the plays; this is the role's own default.
+nova_join_hostname: true
+
+# Where the machine's /etc is: the functional test's seam (a directory of its own); always /etc on a machine.
+nova_etc: /etc
+
 # The CLI per platform; on a Mac running the open-source tailscaled, the tailscale beside the daemon instead.
 nova_tailscale_bin: >-
   {{ '/Applications/Tailscale.app/Contents/MacOS/Tailscale' if (nova_system | default(ansible_facts['system'] | default(''))) == 'Darwin' else 'tailscale' }}

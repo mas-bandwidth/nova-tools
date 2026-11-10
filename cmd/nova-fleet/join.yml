@@ -1,4 +1,4 @@
-# purpose: a new machine joins the fleet: its row, its login, the tailnet, the tools a seat needs, its seat
+# purpose: a new machine joins the fleet: its row, its login, the tailnet (its hostname and tailnet name made the machine name, the fleet's prompt), the tools a seat needs, its seat
 # argument: nova_join_host
 #
 # join.yml: a new machine joins the fleet (cmd/nova-fleet/README.md, "join"). In order, each play only after the one before
@@ -9,9 +9,11 @@
 #      from nova_join_user stops the join by name.
 #   2. the login (Linux, as root over the address given; skipped once the address is the MagicDNS name): rsync (the control node pushes the secrets store with it), the row's user, no
 #      password, in nova_join_sudo_group with passwordless sudo (checked by visudo before it lands), root's
-#      authorized_keys copied to it (or the file nova_join_authorized_keys names on the control node), linger on, the
-#      hostname set to the inventory name.
-#   3. tailscale.yml: Tailscale installed and up with the adopter's tagged auth key, the MagicDNS name recorded as the
+#      authorized_keys copied to it (or the file nova_join_authorized_keys names on the control node), linger on.
+#   3. tailscale.yml: Tailscale installed and up with the adopter's tagged auth key; the machine's names made its
+#      inventory name (on Linux and WSL the hostname, the 127.0.1.1 line of /etc/hosts and cloud-init's
+#      preserve_hostname; the tailnet name everywhere) and the fleet's prompt set on every machine
+#      (user@<machine>:<cwd>, the user@<machine> cyan); the MagicDNS name recorded as the
 #      machine's address, the firewall closed to everything but the tailnet. From here on the plays reach the machine
 #      over the tailnet, as the login: a run that finds the row's address already the MagicDNS name (the joined
 #      state) skips 2 and starts here.
@@ -218,10 +220,6 @@
     - name: "linger for {{ join_login }} (its user units run with no session open)"
       ansible.builtin.command: "loginctl enable-linger {{ join_login }}"
       args: { creates: "/var/lib/systemd/linger/{{ join_login }}" }
-
-    - name: "the hostname is {{ inventory_hostname }}"
-      ansible.builtin.hostname: { name: "{{ inventory_hostname }}" }
-      when: nova_join_hostname | bool
 
 - name: the tailnet
   ansible.builtin.import_playbook: tailscale.yml

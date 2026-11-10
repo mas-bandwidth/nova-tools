@@ -3,6 +3,9 @@
 # The key is TAILSCALE_AUTHKEY in the control node's environment (the run is under nova-secrets exec); it reaches the
 # machine only on the module's stdin (pipelining, so never on its disk, argv or environment). A machine Running with
 # the wanted tags is not joined again.
+- name: the machine name is a hostname (before anything is written, every OS)
+  ansible.builtin.include_tasks: valid.yml
+
 - name: the platform
   ansible.builtin.set_fact:
     ts_os: "{{ 'darwin' if (nova_system | default(ansible_facts['system'])) == 'Darwin' else ('debian' if ansible_facts['os_family'] == 'Debian' else 'other') }}"
@@ -145,6 +148,10 @@
 - name: the machine's MagicDNS name
   ansible.builtin.set_fact:
     ts_dns: "{{ ts_self.DNSName | default('') | regex_replace('\\.$', '') }}"
+
+# ---- the machine's names and prompt, the same at join and at every run after ----
+- name: the hostname, /etc/hosts, cloud-init and the prompt
+  ansible.builtin.include_tasks: names.yml
 
 - name: nova-config's store is in the environment
   ansible.builtin.assert:

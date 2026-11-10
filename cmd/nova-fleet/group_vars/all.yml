@@ -65,8 +65,10 @@ nova_age_keygen: "{{ '/opt/homebrew/bin/age-keygen' if (nova_system | default(an
 # foreign-architecture libraries added and nova_runner_vm_kernel on. A package of another dpkg architecture
 # (`libsodium-dev:s390x`) needs that architecture in nova_runner_foreign_architectures, so none is in the default list.
 nova_runner_packages:
-  darwin: ["postgresql@18", cmake, libsodium, pkgconf]
+  darwin: ["postgresql@18", cmake, libsodium, pkgconf, ansible]
   debian:
+    # ansible-playbook, for nova-fleet's play tests (with the collections they use, ansible.posix among them)
+    - ansible
     # compilers, assemblers, build systems and the tools a build calls
     - build-essential
     - clang
@@ -165,6 +167,8 @@ nova_join_roles: bench
 nova_join_actor: "{{ lookup('ansible.builtin.env', 'USER') or 'fleet' }}"
 nova_join_root_user: root
 nova_join_sudo_group: sudo
+# The hostname, /etc/hosts and cloud-init made to match the machine name on Linux (WSL included), by the tailscale
+# role at join and at every `nova-fleet tailscale` run after it; false leaves them as they are.
 nova_join_hostname: true
 # nova_join_host_key ("ssh-ed25519 AAAA...", from the provider's console) has no default: given, it is the host key
 # pinned for the row's address; else the key the address answers with at the first connection is.

@@ -1,0 +1,74 @@
+---
+# The fleet's prompt, on every machine (Linux, WSL and macOS; included by main.yml, so `join`, `up` and every
+# `nova-fleet tailscale` run set it): the login's user@<machine> in cyan, then :<cwd> and $ (# for root), in
+# interactive shells only. The role owns one file, ~/.config/nova/prompt.<shell>, rewritten by every run, and adds
+# one line to the shell's rc file that sources it; nothing else in the rc file is touched.
+#
+#   bash on Linux: PS1='\[\033[36m\]\u@\h\[\033[00m\]:\w\$ '   (\h is the hostname, which is the record name)
+#   bash on macOS: the same with the record name for \h (a Mac's hostname is its Bonjour name; Macs are not renamed)
+#   zsh:           PROMPT='%F{cyan}%n@<machine>%f:%~%# '
+#
+# Another login shell is left as it is (PROMPT <machine> left: <shell>).
+- name: the login's shell and rc file
+  ansible.builtin.set_fact:
+    pr_shell: "{{ pr_login_shell }}"
+    pr_darwin: "{{ pr_darwin_now }}"
+    pr_rc: >-
+      {{ '.zshrc' if pr_login_shell == 'zsh' else (('.bash_profile' if pr_darwin_now else '.bashrc') if pr_login_shell == 'bash' else '') }}
+  vars:
+    pr_login_shell: "{{ nova_login_shell | default(ansible_facts['user_shell'] | default('') | basename) }}"
+    pr_darwin_now: "{{ (nova_system | default(ansible_facts['system'])) == 'Darwin' }}"
+
+- name: the prompt, for this shell
+  when: pr_rc | length > 0
+  block:
+    # a mode is set only on what the role makes: an existing ~/.config/nova (0700, say) or rc file (0600) keeps its own
+    - name: ~/.config/nova and the rc file, there already
+      ansible.builtin.stat: { path: "{{ item }}" }
+      loop: ["{{ nova_home }}/.config/nova", "{{ nova_home }}/{{ pr_rc }}"]
+      become: false
+      register: pr_there
+
+    - name: ~/.config/nova
+      ansible.builtin.file:
+        path: "{{ nova_home }}/.config/nova"
+        state: directory
+        mode: "{{ omit if pr_there.results[0].stat.exists else '0755' }}"
+      become: false
+      register: pr_dir
+
+    # under --check a directory not made yet cannot take the copy; the task above already says it would be made
+    - name: "~/.config/nova/prompt.{{ pr_shell }}"
+      ansible.builtin.copy:
+        dest: "{{ nova_home }}/.config/nova/prompt.{{ pr_shell }}"
+        mode: "0644"
+        content: "{{ pr_zsh if pr_shell == 'zsh' else pr_bash }}"
+      vars:
+        pr_h: '\h'   # bash's hostname escape, a literal here
+        pr_head: |
+          # nova-fleet (roles/tailscale): the fleet's prompt, user@{{ inventory_hostname }}:<cwd>. A run rewrites this file;
+          # ~/{{ pr_rc }} sources it.
+        pr_bash: |
+          {{ pr_head }}case $- in *i*) ;; *) return ;; esac
+          PS1='\[\033[36m\]\u@{{ inventory_hostname if pr_darwin else pr_h }}\[\033[00m\]:\w\$ '
+        pr_zsh: |
+          {{ pr_head }}[[ -o interactive ]] || return
+          PROMPT='%F{cyan}%n@{{ inventory_hostname }}%f:%~%# '
+      become: false
+      register: pr_file
+      when: not (ansible_check_mode and pr_dir is changed)
+
+    - name: "~/{{ pr_rc }} sources it, once, last"
+      ansible.builtin.lineinfile:
+        path: "{{ nova_home }}/{{ pr_rc }}"
+        line: "[ -f ~/.config/nova/prompt.{{ pr_shell }} ] && . ~/.config/nova/prompt.{{ pr_shell }}"
+        create: true
+        mode: "{{ omit if pr_there.results[1].stat.exists else '0644' }}"
+      become: false
+      register: pr_line
+
+- name: the prompt's state
+  ansible.builtin.set_fact:
+    pr_state: >-
+      {{ ('left: ' ~ (pr_shell or 'no shell')) if pr_rc | length == 0 else
+         ('matched' if pr_dir is not changed and pr_file is not changed and pr_line is not changed else ('WOULD-SET' if ansible_check_mode else 'set')) }}

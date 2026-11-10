@@ -13,8 +13,10 @@
 nova_runner_foreign_architectures: [s390x]
 nova_runner_vm_kernel: true
 nova_runner_packages:
-  darwin: ["postgresql@18", cmake, libsodium, pkgconf]
+  darwin: ["postgresql@18", cmake, libsodium, pkgconf, ansible]
   debian:
+    # ansible-playbook, for nova-fleet's play tests (with the collections they use, ansible.posix among them)
+    - ansible
     # compilers, assemblers, build systems and the tools a build calls
     - build-essential
     - clang
