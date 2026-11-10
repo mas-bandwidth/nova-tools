@@ -8,7 +8,8 @@ Wants=network-online.target
 User={{ ansible_facts['user_id'] }}
 WorkingDirectory={{ github_runner_dir }}
 Environment=PATH={{ github_runner_env.get('PATH', github_runner_default_path_linux) }}
-{% for k, v in github_runner_env.items() | sort if k != 'PATH' %}
+Environment=TMPDIR={{ github_runner_env.get('TMPDIR', github_runner_tmpdir) }}
+{% for k, v in github_runner_env.items() | sort if k not in ['PATH', 'TMPDIR'] %}
 Environment={{ k }}={{ v }}
 {% endfor %}
 # A stop ends the whole runner: run.sh turns SIGTERM into SIGINT to run-helper.sh and the listener and waits for them
