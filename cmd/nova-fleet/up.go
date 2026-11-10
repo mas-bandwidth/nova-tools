@@ -304,7 +304,7 @@ func (u *upRun) peer(m *machine) bool {
 				add = append(add, line)
 			}
 		}
-		if len(add) > 0 && !u.check {
+		if len(add) > 0 {
 			_ = os.MkdirAll(filepath.Dir(path), 0o700) // ignored: the open below fails with the reason
 			f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 			if err == nil {
