@@ -96,6 +96,18 @@
 				"autogroup:nonroot",
 				"root"
 			]
+		},
+		{
+			"action": "check",
+			"src": [
+				"autogroup:admin"
+			],
+			"dst": [
+				"tag:control"
+			],
+			"users": [
+				"autogroup:nonroot"
+			]
 		}
 	]
 }

@@ -33,7 +33,7 @@ func TestVerbHelp(t *testing.T) {
 		}
 	}
 	_, out, _ := h.run(t, "machine", "add", "--help")
-	assert.Contains(t, out, "machine fields: name, address, public, user, os, arch, cores, roles, runners, windows_runners, note")
+	assert.Contains(t, out, "machine fields: name, address, public, user, os, arch, cores, roles, runners, windows_runners, runner_env, note")
 	assert.Contains(t, out, "--user <text>")
 	for _, p := range paths[6:] { // the banner names each verb path
 		assert.Contains(t, usage, "nova-config "+strings.Join(p, " "))
@@ -96,7 +96,7 @@ func TestEnvAndLog(t *testing.T) {
 	h.ok(t, "service", "set", "e1", "--env", "{}", "--log", "", "--actor", "t")
 	_, out, _ = h.run(t, "inventory", "--host", "bench-a")
 	assert.Contains(t, out, `"__ansible_unsafe": "~/.local/state/nova/services/e1.log"`)
-	for _, bad := range []string{`{"lower":"1"}`, `{"1A":"1"}`, `{"A-B":"1"}`, `{"A":1}`, `["A"]`, `A=1`, `{"A":"1"} x`} {
+	for _, bad := range []string{`{"1A":"1"}`, `{"A-B":"1"}`, `{"A":1}`, `["A"]`, `A=1`, `{"A":"1"} x`} {
 		code, _, errs := h.run(t, "service", "set", "e1", "--env", bad, "--actor", "t")
 		assert.Equal(t, 2, code, bad)
 		assert.Contains(t, errs, "--env", bad)
@@ -136,6 +136,18 @@ func TestHistory(t *testing.T) {
 		assert.Equal(t, 2, code, "%v", args)
 		assert.Contains(t, errs, "nova-config history: ")
 	}
+}
+
+// A history row of a kind this tool does not know prints like any other: its kind as stored, its fields as text.
+func TestHistoryPrintsARowOfAnUnknownKind(t *testing.T) {
+	t.Parallel()
+	h := fleet(t) // writes 1..3
+	h.st.history = append(h.st.history, change{"gadget", "g1", "set", "t", map[string]string{"size": "1"}, map[string]string{"size": "2", "reason": "grow it"}})
+	out := h.ok(t, "history")
+	assert.True(t, strings.HasPrefix(out, "HISTORY at=2026-01-02T00:00:04Z actor=t kind=gadget name=g1 op=set rev=4\n  size: \"1\" -> \"2\"\n  reason: \"grow it\"\n"+
+		"HISTORY at=2026-01-02T00:00:03Z actor=t kind=service name=member-b op=add rev=3\n"), out)
+	assert.True(t, strings.HasSuffix(out, "CONFIG HISTORY rows=4\n"), out)
+	assert.Equal(t, 4, strings.Count(out, "HISTORY at="))
 }
 
 func TestParseSince(t *testing.T) {
@@ -189,6 +201,26 @@ func TestDiagnose(t *testing.T) {
 func TestOneLine(t *testing.T) {
 	t.Parallel()
 	assert.Equal(t, "a b c", oneLine("a\n  b\tc\n"))
+}
+
+// A set with a malformed value names that value and nothing else: the row is checked once the values are on it.
+func TestSetNamesOnlyTheValuesGiven(t *testing.T) {
+	t.Parallel()
+	h := fleet(t)
+	h.ok(t, "friend", "add", "friend-a", "--harness", "h", "--actor", "t")
+	for _, c := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"friend", "set", "friend-a", "--width", "abc", "--actor", "t"}, `nova-config friend set: --width "abc": want a non-negative integer; ` + kinds["friend"].fieldsLine() + "; run: nova-config friend set -h\n"},
+		{[]string{"service", "set", "member-b", "--keepalive", "true", "--env", "nope", "--actor", "t"},
+			`nova-config service set: --env: want a JSON object of NAME to value strings: '{"NAME":"value"}'; ` + kinds["service"].fieldsLine() + "; run: nova-config service set -h\n"},
+	} {
+		code, out, errs := h.run(t, c.args...)
+		assert.Equal(t, 2, code, "%v", c.args)
+		assert.Empty(t, out, "%v", c.args)
+		assert.Equal(t, c.want, errs, "%v", c.args)
+	}
 }
 
 // A set that changes nothing writes nothing: no history row, and it says so.

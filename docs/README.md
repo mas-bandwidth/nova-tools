@@ -42,7 +42,7 @@ also used by the fleet walkthrough; release publishing checks that it matches
 the tag. In a Bash shell, choose a tool and make a temporary installation:
 
 ```sh
-NOVA_TOOLS_VERSION=v2.0.18
+NOVA_TOOLS_VERSION=v2.0.34
 tool=bus  # bus, cairn, config, fleet, reserve, sandbox or secrets
 work=$(mktemp -d)
 mkdir -p "$work/bin"
@@ -90,15 +90,13 @@ uses Bash on Linux, macOS or WSL2.
 
 This needs git and the Go version in [go.mod](../go.mod), or a compatible
 newer version. It builds only your chosen tool from the same release tag.
-These source paths match the pinned release; for a checkout of `main`, use
-`./cmd/nova-<tool>` as described in the [build checks](../AGENTS.md#build-and-ci-checks):
 
 ```sh
 (
   set -eu
   cd "$work"
   git clone -q --depth 1 --branch "$NOVA_TOOLS_VERSION" https://github.com/mas-bandwidth/nova-tools
-  go build -C nova-tools -o "$work/bin/nova-$tool" "./$tool"
+  go build -C nova-tools -o "$work/bin/nova-$tool" "./cmd/nova-$tool"
   "$work/bin/nova-$tool" -h
 )
 ```
@@ -163,7 +161,7 @@ block while keeping the shared walkthrough setup.
     git clone -q --depth 1 --branch "$NOVA_TOOLS_VERSION" https://github.com/mas-bandwidth/nova-tools
   fi
   for t in bus cairn config fleet reserve sandbox secrets; do
-    go build -C nova-tools -o "$work/bin/nova-$t" "./$t"
+    go build -C nova-tools -o "$work/bin/nova-$t" "./cmd/nova-$t"
   done
   for t in bus cairn config fleet reserve sandbox secrets; do
     "$work/bin/nova-$t" -h > /dev/null
@@ -345,7 +343,8 @@ nova-fleet check || echo "exit $?"
 a command for you (installs, builds) and check again. The list covers the
 helper programs and each Ansible collection from `nova-fleet show
 requirements`. Then the tailnet (a `CHECK NOTE` if this machine is not on it:
-`up` joins it). On a fresh machine that has the helpers and the collections
+`up` joins it). On a fresh machine that has the helpers, a git commit identity
+(`CHECK OK git-identity`) and the collections
 (the venv block above installs the collections), exactly one `CHECK MISSING`
 line is left, and the run ends `CHECK FAILED missing=1` on stderr, exit 1:
 
@@ -415,11 +414,51 @@ nova-fleet up --tools "$NOVA_TOOLS_VERSION" store-1=203.0.113.7 web-1=203.0.113.
 
 The addresses are placeholders; put your machines' in their place. `up` runs
 in a fixed order (check, tailnet, reach, the first machine's Tailscale, PostgreSQL and
-Redis, join, grant, push the store, health, tools, services, runners, a bus
-message read back), prints `UP <step> OK` per step and `UP MACHINE <name> OK
-...` per machine, and stops at the first `UP <step> FAILED exit=<n>`; the same
-command resumes. Every step and what it prints is in
-[cmd/nova-fleet/README.md](../cmd/nova-fleet/README.md#up).
+Redis, join, grant, push the store, health, tools, services, runners, then
+`nova-bus who` answered over the fleet's Redis), prints `UP <step> OK` per
+step and `UP MACHINE <name> OK ...` per machine, and stops at the first
+`UP <step> FAILED exit=<n>`; the same command resumes. Every step and what it
+prints is in [cmd/nova-fleet/README.md](../cmd/nova-fleet/README.md#up).
+
+The tools step is the `install` play, which also puts the opencode harness on
+every machine in the `bench` group (the role `up` gives each machine it
+joins), at the version `nova_opencode_version` holds.
+
+After `up` (which registers the runners when given `--runners`, with the
+url and scope only; extra labels or an environment go through `nova-fleet
+github-runners` and its variables), three plays it does not run, in this order:
+`runner-packages`, the packages CI jobs and any other job a bench runs need
+(a CI toolchain by default; `nova_runner_packages` is the list), then
+`sdk-toolchain`, the pinned language toolchains in the login's `~/sdk` (with
+.NET 8 beside .NET 10, and Rust through a pinned rustup), then `netwatch`, which lets a Linux machine that loses its
+network or the tailnet recover by itself (a Mac is skipped). Each is
+idempotent and prints one receipt line per machine; run them again after a
+machine joins. `bench` is the inventory group `up` gives every machine it
+joins:
+
+```text
+nova-fleet runner-packages --check --diff -- -l bench
+nova-fleet runner-packages -- -l bench
+nova-fleet sdk-toolchain --check --diff -- -l bench
+nova-fleet sdk-toolchain -- -l bench
+nova-fleet netwatch --check --diff -- -l bench
+nova-fleet netwatch -- -l bench
+```
+
+What each installs and its variables are in
+[cmd/nova-fleet/README.md](../cmd/nova-fleet/README.md#runner-packages),
+[sdk-toolchain](../cmd/nova-fleet/README.md#sdk-toolchain) and
+[netwatch](../cmd/nova-fleet/README.md#netwatch).
+
+`ssh-names` makes `ssh <machine>` work by its tailnet name from every machine
+to every other: each login's ssh config and the fleet's host keys, from the
+record, then every pair tried; a machine asleep or away is reported offline
+([ssh-names](../cmd/nova-fleet/README.md#ssh-names)):
+
+```text
+nova-fleet ssh-names --check --diff
+nova-fleet ssh-names
+```
 
 A tool whose release is laid out as nova-tools' is (assets
 `<name>_<tag>_<os>_<arch>` and one `SHA256SUMS`) puts its binaries on
@@ -584,6 +623,19 @@ because a machine row without `--roles` gets that role, `runner` because its
 Linux and macOS (`join` sets it up on Linux; on a Mac your human sets it at
 the console); no command asks for a password.
 
+Every runner these plays set up enforces two rules on its jobs. A `push`,
+`pull_request` or `merge_group` job is stopped after 120 seconds and fails;
+`schedule` and `workflow_dispatch` jobs have no limit. A `push` job runs only
+on `main`, on a branch matching `sprint/*` or on a tag; a push to any other
+branch is refused before its first step, and that branch gets CI through its
+pull request. `github_runner_ci_limit_seconds` and
+`github_runner_ci_push_branches` (a list of globs) hold the two values. Set
+them after `--` on every run of `github-runners`, because a run without them
+applies the defaults again: `-e github_runner_ci_limit_seconds=<seconds>`, and
+the list as JSON, `-e '{"github_runner_ci_push_branches":["main","release/*"]}'`.
+`up` passes on the first form only. The rules in full are in
+[cmd/nova-fleet/README.md](../cmd/nova-fleet/README.md#ci-rules).
+
 Retiring a runner removes it from GitHub with a **removal token**, which the
 play asks gh for the same way:
 
@@ -662,6 +714,13 @@ The refusal you will meet first is
 [cmd/nova-secrets/README.md](../cmd/nova-secrets/README.md#refusals).
 
 The whole tool: [cmd/nova-secrets/README.md](../cmd/nova-secrets/README.md).
+
+`nova-fleet join` gives every shell of a machine's login, including a plain
+`ssh <machine> '<cmd>'`, `NOVA_SECRETS_STORE` and `NOVA_SECRETS_SEAT`, so a bare
+`nova-secrets exec --only NAME -- <cmd>` there opens that machine's seat. To clone a
+private repository there, use the one recipe in `nova-secrets help exec`: the
+token reaches git only through a credential helper that reads it from the
+environment ([cmd/nova-secrets/README.md](../cmd/nova-secrets/README.md#clone-a-private-repository-on-a-fleet-machine)).
 
 ## Share machines without stepping on each other
 

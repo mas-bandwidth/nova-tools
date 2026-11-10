@@ -113,7 +113,7 @@ machine is the one nova-config's rows say ("Adding a machine" below). Nothing he
 | 3 | reach | one `ssh -o BatchMode=yes ... true` per machine: as its login at its tailnet name once it has a row (join closed the address given then), else as root at the address given; `UP REACH <machine> OK <who>@<where>` | a run never starts a play on a machine it cannot reach |
 | 4 | first | on a new fleet's first machine, from a hand inventory: `tailscale` (no address recorded, firewall later), then `postgres` (nova-config's roles, grants and tables, loaded on the machine as `nova_admin`) and `redis`, their passwords sealed into your seat as `NOVA_PG_PASSWORD` and `NOVA_BUS_PASSWORD` | nova-config's rows live in this PostgreSQL, so it comes before any row |
 | 5 | join | `join` for each machine (`services,bench` for the first; the others `bench`; `runner` with `--runners`): its row, its login with passwordless sudo, its tailnet name and host key, its firewall, its seat; with `--runners`, a row that lacks the `runner` role gets it (`UP ROLE <machine> OK runner`). This node itself, named as a machine, is skipped (`UP JOIN <machine> SKIPPED this control node ...`): join's peer check cannot see the node it runs on, so its row must exist already (else the run stops with the `nova-config machine add` line) | the store exists now |
-| 6 | grant | `nova-secrets grant <--grant names> --to <machine> --pub <its seat key>` for each machine: the values written to that seat's grants file, encrypted to the seat's key (read from the machine over the tailnet with `age-keygen -y`, found in `nova_bin_dir` when `-- -e nova_bin_dir=...` sets it, then `~/.local/bin`; public half only, and pinned in `NOVA_SECRETS_PINS`) and the recovery key; your seat is never a recipient ([secrets guide](../nova-secrets/README.md)) | the seats exist now |
+| 6 | grant | `nova-secrets grant <--grant names> --to <machine> --pub <its seat key>` for each machine but this control node (its own seat holds the values; `UP GRANT <machine> SKIPPED`): the values written to that seat's grants file, encrypted to the seat's key (read from the machine over the tailnet with `age-keygen -y`, found in `nova_bin_dir` when `-- -e nova_bin_dir=...` sets it, then `~/.local/bin`; public half only, and pinned in `NOVA_SECRETS_PINS`) and the recovery key; your seat is never a recipient ([secrets guide](../nova-secrets/README.md)) | the seats exist now |
 | 7 | store | `git push` of your secrets store to its upstream, if it has one (else a NOTE): a copy off this node; the machines never read it. When the upstream refuses the push (`[remote rejected]`: a protected branch that takes changes only through a pull request), the commits are pushed to the branch `nova-fleet-up/<short commit>` instead, `UP STORE PUSH REFUSED: <upstream> is protected (...); pushed branch <name>; open a PR from it` is printed, the run goes on, and it exits 1 (`UP STORE FAILED`) at the end; open and merge that PR. Any other push failure stops the run here | |
 | 8 | refresh | `secrets-refresh` with `nova_seal_store` set to your clone: the encrypted store pushed over the tailnet with rsync to `~/.local/share/nova/secrets/` on each machine (no `.git`, stale files deleted, 0700/0600) | each seat opens what step 6 granted; a rerun of `up`, or `nova-fleet secrets-refresh -- -e nova_seal_store=S`, pushes again |
 | 9 | health | `health` on every machine of the bench, runner and services groups (Linux; a Mac is skipped) | the guards are in place before anything long-running starts |
@@ -163,17 +163,19 @@ reached as root at the address given, as on the first run.
 |---|---|---|
 | `ci-rules` | the CI rules on every GitHub Actions runner a machine runs, whoever registered it (bench, runner and services groups) | nothing; `-l` the machines |
 | `github-runners` | GitHub Actions runners on every machine of the runner group, registered to one repository or organization | `github_runner_url`, `github_runner_scope`; `gh` on the control node logged in with admin on the repository |
-| `health` | guards that let a Linux machine get itself out of trouble, and a disk report (bench, runner and services groups) | nothing |
+| `health` | guards that let a Linux machine get itself out of trouble, a disk report and clean, and a Mac's Go build cache trim (bench, runner and services groups) | nothing |
 | `install` | install one nova-tools release, by tag, on the machines named (bench, runner and services groups) | `nova_tools_version` (a tag `vX.Y.Z`; no default) |
 | `netwatch` | a Linux machine that loses its network or the tailnet recovers by itself, and a hung one resets (bench, runner and services groups) | nothing; `-l` the machines |
 | `join` | a new machine joins the fleet: its row, its login, the tailnet, the tools a seat needs, its seat | the machine as the argument; its row's fields; `NOVA_PG_DSN` and `NOVA_PG_PASSWORD` in the environment, and `TAILSCALE_AUTHKEY` for a machine not on the tailnet (`up` mints it) |
 | `postgres` | the PostgreSQL nova-config keeps the fleet in, on each machine of the services group | `nova_seal_*` to seal its password |
 | `redis` | the Redis nova-bus talks to, on each machine of the services group | `nova_seal_*` to seal its password |
-| `runner-packages` | the packages a CI runner's tests need, from `nova_runner_packages`, on each machine of the runner group; packages only, nothing started | nothing; `-l` the machines |
+| `runner-packages` | the packages a CI runner's tests need, from `nova_runner_packages` (a CI toolchain by default), on each machine of the bench and runner groups (a sprint card's gate needs what a CI job needs); packages only, nothing started. `up` does not run it | nothing; `-l` the machines |
+| `sdk-toolchain` | the pinned language toolchains in each bench and runner login's `~/sdk` (Go, Node, Dart, Erlang/Elixir, Java, .NET 10 and 8, linters, fuzzers, provers), Rust through a pinned rustup; as the login, only what is missing. `up` does not run it | nothing; `-l` the machines |
 | `seat` | each machine's seat in the secrets store | `nova_seal_store` |
 | `secrets-refresh` | the control node's encrypted store pushed to every machine with `ansible.posix.synchronize` (`verify_host: true`, no `.git`, stale files deleted, 0700/0600); no machine runs a timer (pull mode is retired; one left is removed) | `nova_seal_store` (the control node's clone) to push |
 | `services` | one supervised unit per service record, on the machine the record names (bench, runner and services groups) | the inventory's `nova_services` |
-| `windows-runners` | a WSL machine's Windows-side GitHub Actions runners, from its record's `windows_runners`, through WSL interop | the record's `windows_runners`; `gh` on the control node logged in with admin on each repository or organization |
+| `ssh-names` | `ssh <machine>` by its tailnet name from every machine of the fleet: each login's ssh config and the fleet's host keys from the record, then every pair checked (all machines; one asleep or away is reported offline) | nothing |
+| `windows-runners` | a WSL machine held running from boot, and its Windows-side GitHub Actions runners from its record's `windows_runners`, through WSL interop | the record's `windows_runners`; `gh` on the control node logged in with admin on each repository or organization |
 | `tailscale` | each machine on the tailnet, its address the MagicDNS name, its firewall closed to all but the tailnet | `TAILSCALE_AUTHKEY` in the environment for a machine not on the tailnet (`up` mints it) |
 
 ```
@@ -280,6 +282,12 @@ nova-fleet install -- -e nova_tools_version=local -e nova_tools_local_dir=$PWD/d
 
 `nova-fleet up --tools $PWD/dist` does the same for every machine.
 
+**The v1 gh wrapper.** A `<nova_bin_dir>/gh` that names `GH_PUSH_TOKEN` is v1's push-credential wrapper, which runs gh
+under a secrets store v2 does not have, ahead of the real gh on PATH; the play removes it. While a git credential
+helper of the login still names it, it is kept and the run prints `GH-WRAPPER KEPT host=<machine> path=<file>`: point
+the helper at the real gh and run install again. Only the helpers' names are read, never their values. Any other
+`gh` there is left alone.
+
 **opencode.** After the tools, the bench group gets the opencode nova-sprint's workers run (`roles/opencode`):
 `nova_opencode_version` (1.18.20; 1.x, since 2.x starts a background service on a fixed port) from sst/opencode's
 release archive for the platform, checked against `nova_opencode_sha256` (the digests GitHub publishes for each asset),
@@ -325,20 +333,29 @@ nova-fleet services -- -e nova_service_restart=reader
 
 GitHub Actions runners on every machine of the `runner` group: as many as the machine row's `runners` says, each
 registered to one repository or organization, run as a service that starts at boot. **Labels:** a runner's labels are
-its machine's inventory groups (the row's roles: `bench`, `runner`, `services`; `ungrouped` and `all` are left out),
-the host's own os (`linux`, `darwin`) and arch (`amd64`, `arm64`) as its facts report them (a machine row's
-`os` and `arch` fields say how it is reached, never what it is labelled), plus `github_runner_labels`; so a bench
-machine's runner is labelled `amd64,bench,linux,runner`, and a job selects it with `runs-on: [self-hosted, linux]`.
+`fleet` (`github_runner_base_labels`, which the Windows side carries too), its machine's inventory groups (the row's
+roles: `bench`, `runner`, `services`; `ungrouped` and `all` are left out), the host's own os (`linux`, `darwin`) and
+arch (`amd64`, `arm64`) as its facts report them (a machine row's `os` and `arch` fields say how it is reached, never
+what it is labelled), plus `github_runner_labels`; so a bench machine's runner is labelled
+`amd64,bench,fleet,linux,runner`, and a job selects it with `runs-on: [self-hosted, Linux, fleet]`.
 Linux (amd64, arm64; WSL2 with systemd counts as Linux) and macOS. On macOS the runner is a LaunchDaemon dropped to the login, not a
 LaunchAgent: a LaunchAgent runs only inside a logged-in GUI session, and a CI machine comes back from a reboot with
 none. Only a run needs sudo for that file (`/Library/LaunchDaemons` is world-readable, so `--check` reads and diffs it
-as the login and finishes without a password). Linux and macOS write the service files with sudo, so the login needs
+as the login and finishes without a password). The daemon's `ProcessType` is `Interactive`: launchd throttles the CPU and
+I/O of a job with no `ProcessType` as background work, and a CI job inherits its runner's limits. Linux and macOS write the service files with sudo, so the login needs
 passwordless sudo: `join.yml` sets it up on Linux (`/etc/sudoers.d/90-nova-<login>`); on macOS set it at the console.
 No command here asks for a sudo password: an interactive prompt is a stall for an AI running the play.
 A stop or restart ends the whole runner: on Linux the unit sets `RUNNER_MANUALLY_TRAP_SIG=1`, so the release's `run.sh`
 passes the stop to its listener as SIGINT and waits for it (a running job is cancelled by the runner, not killed), and
 `KillMode=mixed` kills whatever is left in the unit once `run.sh` exits, or after `TimeoutStopSec` (5 minutes). On macOS
 launchd kills what is left of the job's process group.
+A Linux unit sets `LimitMEMLOCK=infinity`: the kernel charges locked memory (io_uring rings) to the login across all its
+runners, and systemd's 8 MiB default refuses that. It also sets `TMPDIR`, by default `<home>/.cache/runner-tmp`
+(`github_runner_tmpdir`), one directory for all the login's runners that the play makes (the login's, `0700`) before
+the units start: a job's temporary files land there and not in `/tmp`, and the health play's disk clean reads the
+directory from the units. A macOS daemon gets no `TMPDIR` unless `github_runner_env` names one, so its jobs use `/tmp`,
+which macOS cleans. A macOS daemon starts with `/opt/homebrew/bin` on its PATH, before the
+system's, so a job finds Homebrew's formulae and its `python3`.
 
 **Public repositories.** A self-hosted runner runs the code of any workflow that reaches it, and on a public repository
 that includes pull requests from forks. Use these runners on private repositories, or restrict which workflows and
@@ -352,6 +369,9 @@ events may use them.
 | `runner_count` | overrides the row's `runners` for one run; 0 retires every runner; `cores` is one runner per `github_runner_cores_per_runner` (4) of the row's `cores`, else the host's own, at least 1. A host with neither is refused |
 | `github_runner_state` | `present` (default) or `absent`, which retires every runner of that url |
 | `github_runner_deregister` | true: retiring removes the runner from GitHub (needs a removal token) |
+| `github_runner_env` | the service's environment, `{NAME: value}`, inherited by every job; default the machine record's `runner_env` (the inventory's `nova_runner_env`; `nova-config machine set <machine> --runner_env '<json-object>'`, cmd/nova-config/README.md), so every run for any url writes it. A `PATH` replaces the default (`nova_bin_dir` first, then the system's); a `TMPDIR` replaces `github_runner_tmpdir`. `-e github_runner_env` replaces the record's for one run; there a path under the login's home may be written `{{ ansible_facts['user_dir'] }}/...`, rendered per machine (the record holds literal values). [docs/examples/github-runners-env.yml](../../docs/examples/github-runners-env.yml) is a vars file with the url, scope, labels and an environment for Ubuntu runners, for `-e @github-runners-env.yml` (read from the directory you run in) |
+| `github_runner_tmpdir` | a Linux runner's `TMPDIR` when the environment names none: `<home>/.cache/runner-tmp` |
+| `github_runner_base_labels` | `[fleet]`: the labels every runner gets, Linux, macOS and the Windows side |
 | `github_runner_version`, `github_runner_sha256` | the pinned actions/runner release and its digests |
 | `github_runner_ci_limit_seconds` | 120: the per-commit job limit every runner enforces ("CI rules") |
 | `github_runner_ci_push_branches` | `[main, sprint/*]`: the branches a push may run CI on, as globs where `*` and `?` stop at a `/` (tags always may); any other branch gets CI through its pull request |
@@ -380,13 +400,21 @@ github_runner_verify=false` skips it.
 
 **What it does.** Per runner: the pinned release, checked against GitHub's digest, unpacked in
 `<home>/actions-runner/<owner>-<repo>-<i>`; registered as `<machine>-<i>` unless
-`.runner` is there; one service per runner, enabled at boot. Labels are fixed at registration: changed labels are
-reported as `LABEL-DRIFT` and the runner is left alone. A changed unit restarts its runner, ending any job on it. A
+`.runner` is there; one service per runner, enabled at boot. The labels a runner was registered with are recorded in
+its `.labels`. A registered runner that lacks a wanted label (or has no `.labels`) gets it from the control node's gh,
+`gh api -X POST <repos|orgs>/<path>/actions/runners/<id>/labels` with the body on stdin, never by registering again,
+so it keeps its session and the jobs queued for it; `.labels` is then rewritten from what GitHub holds, and the run
+prints `LABEL-ADD <runner> added=<labels> labels=<labels>`. A runner GitHub does not list fails the run, its labels
+untouched. A label it holds beyond the wanted is reported as `LABEL-EXTRA` and kept: pass it in `github_runner_labels`,
+or retire the runner (`-e github_runner_state=absent`) and converge again to drop it. A changed unit restarts its
+runner, ending any job on it. A
 machine whose count drops has its highest-numbered runners retired and removed from GitHub, with a removal
 token (`.../actions/runners/remove-token`, asked for the same way). A second run changes nothing.
 
 **Plan.** Under `--check` each machine prints `RUNNER-PLAN <machine> want=<n> register=<names> retire=<names>
-labels=<labels>`, the runners named `<machine>-<i>` as GitHub will list them.
+labels=<labels>`, the runners named `<machine>-<i>` as GitHub will list them, and each registered runner that lacks a
+label prints `LABEL-PLAN <runner>: lacks <labels>` (`no record of its labels` without `.labels`); nothing is asked of
+GitHub.
 
 **CI rules.** Every runner the play sets up enforces the CI rules ("CI rules" below); its receipt is the
 `CI-RULES` lines.
@@ -414,7 +442,7 @@ nova-fleet windows-runners -- -l bench-1
 ```
 
 `windows_runners` is `<url>=<count>[:<label>+<label>]`, comma-separated (cmd/nova-config/README.md); the inventory hands it to
-the play as `nova_windows_runners`. A machine without it is skipped; one with it that is not WSL with interop is
+the play as `nova_windows_runners`. A machine without it gets no runners (only the keepalive below); one with it that is not WSL with interop is
 refused. **The channel** is the one `ci-rules` already uses: from the WSL login, `powershell.exe` by its full path
 runs the role's `files/runner-windows.ps1`, staged to `C:\ProgramData\nova-runner-stage`. It acts as the Windows account
 that started WSL, elevated; no Windows login, password or key is involved, and no port is opened. **Each runner** is
@@ -433,6 +461,21 @@ directory's own `retired-<yyyymmdd>\`, its service is removed, and it registers 
 cannot read GitHub's list for a target refuses, rather than take a whole runner for a half one. Each machine prints `GITHUB-RUNNERS host=<machine> windows=<n> registered=<n> online=<n>`
 from its directories and GitHub's own list; a run where any is short fails. `--check` reads both, asks for the tokens it
 would need, and prints `RUNNER-PLAN <machine> windows=<n> register=<names> repair=<names> labels=<labels>`.
+
+### WSL held running from boot
+
+WSL starts a distro only when something on Windows asks for one, and stops it when the last `wsl.exe` holding it ends
+(a WSL update from Windows Update does this). So the same play gives every WSL machine with interop, whether or not
+its record names `windows_runners`, one scheduled task on the Windows side: `WSL2 keepalive (<distro>)`, which runs
+`wsl.exe -d <distro> -u <login> --exec /bin/sleep infinity` (under `conhost.exe --headless`) as the Windows account that
+started WSL, logon type S4U: it runs with nobody logged in, and no password is stored. Its boot trigger repeats every
+minute with `IgnoreNew`, so WSL is up at boot and is started again within a minute after a WSL update, a `wsl
+--shutdown` or a reboot inside the distro; inside it systemd starts the services as at any boot (a login's units need
+lingering, which `join` sets). The distro is the running one whose `/etc/machine-id` is this machine's
+(`github_runner_wsl_machine_id_file`), read through `\\wsl.localhost`; none is `NO-DISTRO` and fails the run. A task
+of that name is set when what it does differs and started when it is not running; one line per machine: `KEEPALIVE
+<machine> <distro> ok|set|started|set,started task=<name>`. `--check` reads nothing on the Windows side and prints
+`KEEPALIVE-PLAN <machine> machine-id=<id> user=<login>`.
 
 ## CI rules
 
@@ -490,7 +533,13 @@ the row and reads the inventory again.
    `authorized_keys` copied to it (or the control node's file `nova_join_authorized_keys` names), linger on, the
    hostname set to the machine name. A darwin machine has no root login: set its login and sudo up at its console.
 3. **The tailnet**: `tailscale` (below). From here on the plays reach the machine over the tailnet.
-4. **The tools a seat needs** (as the login): `nova_bin_dir` on the login PATH; on Linux the pinned `age` and `sops`
+4. **The tools a seat needs** (as the login): `nova_bin_dir` on the login PATH, and `NOVA_SECRETS_STORE`
+   (`nova_secrets_store`, where the store is pushed) and `NOVA_SECRETS_SEAT` (`nova_seat`) exported in the login
+   profile and, for `ssh <machine> '<cmd>'`, first in `~/.bashrc` (`~/.zshenv` for zsh), with the directory of
+   `sops` on PATH (`/opt/homebrew/bin` on a Mac), so a bare
+   `nova-secrets exec --only NAME -- <cmd>` there opens the machine's own seat in the pushed store (the private-clone
+   recipe is in `nova-secrets help exec`)
+   (the key defaults to `~/.config/nova-secrets/<seat>.key`; the short hostname need not be the seat); on Linux the pinned `age` and `sops`
    release binaries, checked against their published digests. A darwin machine takes them from Homebrew
    (`brew install age sops`).
 5. **The tailnet check** (control node): the row's address is now the machine's MagicDNS name and the control node's
@@ -574,8 +623,12 @@ one. On a Mac machine, open the Tailscale app once at its console and approve it
    apply them; other owners stay); the fleet's grants and ssh rules are appended where an equal rule (the same JSON)
    is not already there. Among them, so your own devices keep reaching every tagged machine whatever the policy was
    built on (allow-all, or `autogroup:self`, which no tagged device is): a grant from `autogroup:admin` to `tag:nova`,
-   `tag:runner` and `tag:control` on every port (`ip: ["*"]`), and an ssh rule accepting `autogroup:admin` into
-   `tag:nova` and `tag:runner` as `autogroup:nonroot` and `root`. The members reach the store's ports
+   `tag:runner` and `tag:control` on every port (`ip: ["*"]`), an ssh rule accepting `autogroup:admin` into
+   `tag:nova` and `tag:runner` as `autogroup:nonroot` and `root`, and one into `tag:control` as `autogroup:nonroot`
+   only with Tailscale's `check` action (you confirm in a browser, then it holds for a while). Every fleet tag reaches
+   `tag:nova` and `tag:runner` on port 22 and over Tailscale SSH as a non-root login, never root (`ssh-names` below
+   checks every pair). Nothing reaches `tag:control` without a person: no tag has its port 22 or an ssh rule into it.
+   Nothing is opened to an untagged or member device. The members reach the store's ports
    (`tcp:5432`, `tcp:6379`) on `tag:control` too, for a fleet whose store is the control node itself, so the store
    does not depend on an allow-all rule staying in the policy. Nothing the policy has is removed or replaced, so
    the default policy's allow-all `acls` rule still allows all. It is written (`POST` with `If-Match`, HuJSON) only
@@ -591,9 +644,11 @@ one. On a Mac machine, open the Tailscale app once at its console and approve it
 **What the play does, per machine:**
 
 1. Installs Tailscale: Tailscale's apt repository on Debian and Ubuntu (the same key and source line its own install
-   script writes), Homebrew's cask on macOS.
+   script writes), Homebrew's cask on macOS. A Mac whose running daemon is the open-source `tailscaled` (Homebrew's
+   formula, run as root) gets no cask: the play drives it as it drives Linux, with the `tailscale` beside the daemon,
+   sudo and `--ssh`.
 2. `tailscale up --reset --auth-key=file:/dev/stdin --hostname=<machine> --advertise-tags=tag:nova[,tag:runner] --ssh`
-   (`--ssh` on Linux; the macOS client does not serve Tailscale SSH). `tag:runner` is added for a machine in
+   (`--ssh` on Linux and on the open-source `tailscaled`; the macOS app does not serve Tailscale SSH). `tag:runner` is added for a machine in
    the `runner` group. The key comes from `TAILSCALE_AUTHKEY` in the control node's environment (`up` puts the one it minted there; run
    alone, give one) and reaches the
    machine on the command's stdin only. A machine already Running with the same tags is not joined again; a hostname or
@@ -617,7 +672,7 @@ nova-secrets exec --only NOVA_PG_PASSWORD --store S --key K --as SEAT -- \
 | Variable | Default | |
 |---|---|---|
 | `nova_tailscale_tags` | `tag:nova`, plus `tag:runner` in the `runner` group | the tags the key must be allowed |
-| `nova_tailscale_ssh` | `true` | Tailscale SSH (Linux) |
+| `nova_tailscale_ssh` | `true` | Tailscale SSH (Linux, and a Mac on the open-source `tailscaled`) |
 | `nova_tailscale_record_address` | `true` | write the MagicDNS name into nova-config |
 | `nova_firewall` | `true` | ufw on Linux, the application firewall on macOS |
 | `nova_firewall_allow_udp` | `[41641]` | UDP ports open on every interface |
@@ -627,6 +682,59 @@ nova-secrets exec --only NOVA_PG_PASSWORD --store S --key K --as SEAT -- \
 declared`; `tailscale status` on the control node lists the machine. **Rollback.** On the machine `tailscale logout`
 and `ufw disable` (macOS: `socketfilterfw --setglobalstate off`); `nova-config machine set <name> --address <old
 address>`.
+
+## ssh-names
+
+`ssh <machine>` by its tailnet name, from every machine of the fleet to every other, over the tailnet. The play runs on
+every machine of the inventory, as its login, and writes three things there:
+
+- `~/.ssh/config.d/nova-fleet`: one block per machine of the inventory, `Host <name> <address>` with `HostName` the
+  record's address, `User` the record's login and `UserKnownHostsFile ~/.ssh/known_hosts
+  ~/.ssh/nova-fleet.known_hosts`. The address is the machine's MagicDNS name (the `tailscale` play records it), so
+  `ssh <name>` resolves through MagicDNS and travels over the tailnet whatever `/etc/hosts` maps the short name to.
+- `~/.ssh/nova-fleet.known_hosts`: each machine's ed25519 host key, as `<name>,<address> ssh-ed25519 ...`, read from
+  the machine itself (`/etc/ssh/ssh_host_ed25519_key.pub`) over the play's own connection, whose host key the control
+  node checks. Tailscale SSH presents the same key. A machine that does not answer this run keeps the line the file
+  held. It sits outside `config.d`, so a login that includes `~/.ssh/config.d/*` never reads it as config.
+- `Include ~/.ssh/config.d/nova-fleet` as the first line of `~/.ssh/config` (moved there from elsewhere at the top
+  level, CRLF lines too; the file made if there is none; through a symlink, the file it names); nothing else in the
+  file is changed. An `Include` of it inside a `Host` or `Match` block applies to that block only; the file is left
+  alone and the run prints `SSH-NAMES <machine> INCLUDE LEFT ALONE` with the line: move it by hand.
+
+Before anything is written anywhere, every machine checks the whole record and every key read against the tailnet as
+the control node's `tailscale status --json` shows it, and the run is refused (`SSH-NAMES REFUSED ...`, naming the
+machine and the field) on: an address that is not `<label>.<the tailnet's MagicDNS suffix>` or an IP; a user that is
+not a login name (`[a-z_][a-z0-9_-]*`); a host key that is not one the tailnet publishes for that machine; a tailnet
+that cannot be read. A machine that does not serve Tailscale SSH publishes no host key, so its key is written
+unchecked and named in the receipt. A write limited with `-l` is refused too: every machine's file holds every
+machine's key, so a write runs on all of them (`--check` takes `-l`).
+
+ssh takes the first value it reads for an option, so for a fleet name the `HostName` and `User` of this file win over
+a hand-written `Host` block of the same name later in `~/.ssh/config`, and that block's other options (an
+`IdentityFile`, a `HostKeyAlias`, `ControlMaster`) still apply. A machine added to the record has its name everywhere
+on the next run.
+
+Authentication is the target's: Tailscale SSH, where the `tailscale` play turned it on (`nova_tailscale_ssh`, Linux and
+a Mac on the open-source `tailscaled`), lets in every fleet tag as a non-root login with no key (the policy above);
+elsewhere the target's sshd wants the source login's key in its `authorized_keys`, which this play does not write. The
+control node takes a person's check, never a tag (the policy above).
+
+Then the mesh: from each machine, `ssh -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=yes -o
+UserKnownHostsFile=~/.ssh/nova-fleet.known_hosts <name> true` to every other machine that answered this run, all at
+once. A machine that did not answer (a laptop asleep or away) is `OFFLINE`, skipped, and never fails the run; a pair
+ending at the control node (`tag:control` on the tailnet) is `check-required` and not tried; any other pair that
+cannot connect fails the run with ssh's own last line.
+
+```
+nova-fleet ssh-names --check --diff
+nova-fleet ssh-names
+```
+
+**Check.** Per machine `SSH-NAMES <machine> machines=<n> online=<n> config=<written|same> known_hosts=<written|same>
+include=<set|first|inside-a-block> unchecked=<names>` and `SSH-NAMES MESH <machine> ok=<n> check-required=<names>
+offline=<names> failed=<names>`; a machine that did not answer prints `SSH-NAMES <machine> OFFLINE`. Under `--check`
+nothing is written and no pair is tried. **Rollback.** Remove the `Include` line, `~/.ssh/config.d/nova-fleet` and
+`~/.ssh/nova-fleet.known_hosts`.
 
 ## seat
 
@@ -800,12 +908,29 @@ applying it restarts only the daemon it configures, never the login's units. A d
   back (`user-<uid>.slice.d/90-nova-memory.conf`, `user@.service.d/90-nova-restart.conf`).
 - `nova-disk-report` every 6 hours from `nova-disk-report.timer`: one line in the journal for /, the home filesystem
   and swap, `DISK-WARN` at priority warning over `nova_health_disk_warn_pct`.
+- `nova-disk-clean` every hour from `nova-disk-clean.timer`, as the login: a top-level entry it owns in
+  `nova_health_disk_clean_dirs` (`/tmp`) or a runner's `TMPDIR` goes whole once nothing under it changed (ctime, which an unpack cannot set back) for
+  `nova_health_disk_clean_age_min`, it holds no socket, FIFO, `.git`, quarantine, pid or lock file, and no process of
+  the login works in it, runs from it, maps it or holds a file in it (checked again just before the removal). A root
+  that is `/`, the home or above it, or under a runner's `_work` or `actions-runner*` is refused (`CLEAN-REFUSED`); a file
+  of `nova_health_disk_clean_caches` (Go's build cache) unchanged that long goes too. On a filesystem over
+  `nova_health_disk_warn_pct` the age is `nova_health_disk_clean_pressed_min`. One `CLEAN` line per removal and a
+  `CLEAN-DONE` line in the journal.
 
 ```
 nova-fleet health --check --diff
 nova-fleet health
 journalctl -t nova-disk-report --since -1d        # the disk lines
+journalctl -t nova-disk-clean --since -1d         # what the clean removed
+cat ~/Library/Logs/nova-go-cache-clean.log         # a Mac: what the trim removed
 ```
+
+On a Mac the role does one thing: `nova-go-cache-clean`, hourly from the LaunchDaemon `com.nova.go-cache-clean` run as
+the login, removes the files of the Go build cache `go env GOCACHE` names in the login's shell that are unchanged for
+`nova_health_disk_clean_age_min` (`nova_health_disk_clean_pressed_min` on a volume over `nova_health_disk_warn_pct`).
+No temp or working directory is touched; `nova_health_disk_clean: false` turns it off, and a cache under `/Volumes`
+gets no daemon (launchd cannot read a removable volume without a privacy grant; Go trims its own cache). `DISK_CLEAN_DRY=1` with the
+daemon's environment says `WOULD` and removes nothing.
 
 | Variable | Default | |
 |---|---|---|
@@ -815,6 +940,8 @@ journalctl -t nova-disk-report --since -1d        # the disk lines
 | `nova_health_log_maxsize`, `nova_health_log_trim`, `nova_health_log_files` | `1G`, 4 GiB, syslog and kern.log | `0` trim is off |
 | `nova_health_user_memory_max_pct` | `85` | `0` is no limit |
 | `nova_health_disk_report`, `nova_health_disk_warn_pct`, `nova_health_disk_on_calendar` | `true`, `80`, every 6 hours | |
+| `nova_health_disk_clean`, `nova_health_disk_clean_dirs`, `nova_health_disk_clean_caches` | `true`, `/tmp`, `~/.cache/go-build` | |
+| `nova_health_disk_clean_age_min`, `nova_health_disk_clean_pressed_min`, `nova_health_disk_clean_on_calendar` | `2880`, `360`, hourly | minutes |
 
 **Check.** `HEALTH <machine> journal=persistent panic=10 ssh_oom=0 slice_max=<bytes> | DISK <machine> root=<n>%
 swap=<n>%`. **Rollback.** Remove the file of the guard (named above), then `systemctl daemon-reload` and restart the
@@ -910,25 +1037,137 @@ tailnet=<interface> dry=False watchdog=<interval> device=yes panic=<n> oops=<n> 
 
 ## runner-packages
 
-The packages a CI runner's tests need, on each machine of the `runner` group, from `nova_runner_packages`
+The packages a CI runner's tests need, on each machine of the `bench` and `runner` groups (a bench runs the same gates), from `nova_runner_packages`
 (`group_vars/all.yml`): a list per OS, Homebrew formulae on `darwin` (as the login; brew refuses root) and apt
-packages on `debian`. Today that is `postgresql@18` on macOS, for the functional tier on mini-m5, and nothing on
-Linux. A package already installed is adopted as it is: never reinstalled, upgraded or auto-updated, so a run over it
-reports `changed=0`. Only packages: no server is started, no `brew services`, no unit; the tests run their own
-`initdb` and `pg_ctl` (with `LC_ALL=C`). CI never installs: the macOS functional job refuses when `initdb` is missing
-and names this play.
+packages on `debian`. The default is the toolchain of a fleet whose repositories build C, C++, Go, .NET, Java, OCaml
+and Python and test them: on macOS `postgresql@18` (the functional tier), `cmake`, `libsodium` and `pkgconf`; on
+Debian and Ubuntu the compilers, assemblers and build systems (`build-essential`, `clang-18`, `lld`, `cmake`,
+`ninja-build`, `ccache`, `nasm`), the libraries the tests link (libsodium, libbpf, libxdp, liburing, libcurl, MPFR,
+zlib, OpenGL), the runtimes (`golang-go`, `dotnet-sdk-10.0`, Mono, a Java runtime, `opam`, Python's pip and venv),
+the analysers and provers (`cppcheck`, `valgrind`, `cbmc`, `cadical`, `z3`, `gappa`, `sollya`), the store clients
+(`postgresql-client-18`, `redis-tools`, `sqlite3`), containers, VMs and emulation (`podman`, `bubblewrap`, `virtme-ng`,
+`qemu-system-x86`, `qemu-user`, `qemu-system-s390x` with the s390x cross compilers) and `bats`, `tcpdump` and the
+archivers; the list in `group_vars/all.yml` is grouped that way. Every name resolves on Ubuntu 26.04; a Debian
+release or an older Ubuntu lacks some of the versioned ones (`clang-18`, `postgresql-client-18`, `dotnet-sdk-10.0`),
+and there apt fails the task naming the package, and the fix is your own list, below, without it. A package already
+installed is adopted as it is: never reinstalled, upgraded or auto-updated, so a run over it reports `changed=0`.
+Only packages: no server is started, no `brew services`, no unit; the tests run their own `initdb` and `pg_ctl` (with
+`LC_ALL=C`). CI never installs: the macOS functional job refuses when `initdb` is missing and names this play.
 
 ```
-nova-fleet runner-packages --check -- -l mini-m5    # WOULD-INSTALL brew install --formula <name>, per missing one
-nova-fleet runner-packages -- -l mini-m5
+nova-fleet runner-packages --check -- -l bench      # WOULD-INSTALL apt-get install <name> (brew install --formula <name>), per missing one
+nova-fleet runner-packages -- -l bench
+```
+
+A list given with `-e` replaces the default whole, not merged, so another list starts from a copy: a JSON value, or a
+vars file after `-e @`, read from the directory you run in (the plays are elsewhere, so a file of yours never shadows
+one). [docs/examples/runner-packages-s390x-vm.yml](../../docs/examples/runner-packages-s390x-vm.yml) in the
+repository, copied beside your inventory, is the default list with the two switches below on, the foreign architecture `s390x` and the kernel copies
+for a VM of the host's own kernel, and the s390x libraries a big-endian build links added as `<name>:s390x`:
+
+```
+nova-fleet runner-packages --check -- -e @runner-packages-s390x-vm.yml -l bench
+nova-fleet runner-packages -- -e @runner-packages-s390x-vm.yml -l bench
 ```
 
 | Variable | Default | |
 |---|---|---|
-| `nova_runner_packages` | `{darwin: ["postgresql@18"], debian: []}` | another OS with a non-empty list is refused |
+| `nova_runner_packages` | `darwin`: `postgresql@18`, `cmake`, `libsodium`, `pkgconf`; `debian`: the toolchain above (`group_vars/all.yml`) | another OS with a non-empty list is refused |
+| `nova_runner_foreign_architectures` | `[]` | Ubuntu: dpkg architectures the debian list may name packages of, as `<name>:<arch>` |
+| `nova_runner_ports_uri` | `http://ports.ubuntu.com/ubuntu-ports/` | the archive a foreign architecture comes from |
+| `nova_runner_vm_kernel` | `false` | Debian/Ubuntu: keep each kernel image readable by the login, for a VM of the host's own kernel |
+| `nova_runner_vm_kernel_dir` | `<home>/vm-kernels` | where the copies go, as `vmlinuz-<version>` |
+
+Both switches apply on Debian and Ubuntu only; another OS skips them. The play reaches every bench as well as every runner, so a run that turns a switch on names its machines with `-l`: a WSL2 machine (`/proc/sys/fs/binfmt_misc/WSLInterop`) has no `/boot/vmlinuz-<version>` and no `kvm` group, so the VM tier is skipped there.
+
+**Foreign architectures.** A cross build that links a library of another architecture (`libsodium-dev:s390x`) needs
+dpkg multiarch. For each architecture the list names, the play runs `dpkg --add-architecture` where
+`dpkg --print-foreign-architectures` lacks it, writes `/etc/apt/sources.list.d/ubuntu-ports-<arch>.sources` (deb822,
+`Architectures: <arch>`, the release's suites with `-updates` and `-security`, signed by the Ubuntu archive key), and
+restricts the native sources in `/etc/apt/sources.list.d/ubuntu.sources` to the native architecture by adding
+`Architectures: <native>` to each, so the main archive is never asked for the foreign architecture nor the ports archive
+for the native one. It edits that file only when none of its sources has an `Architectures` line, and refuses when
+some do and some do not. It never edits `/etc/apt/sources.list` (the one-line form, which Ubuntu 22.04 uses): a `deb`
+line there with no `[arch=...]` is refused, naming the line; restrict it by hand (`deb [arch=amd64] http://...`) and run
+again. Other files in `sources.list.d` are left as they are. apt reads its sources again after any of these changes. The
+presence check matches `<name>:<arch>` as package_facts names a foreign architecture's package, so an installed one is
+adopted like any other. `--check` prints `WOULD-ADD-ARCHITECTURE dpkg --add-architecture <arch>` and diffs the sources.
+
+**The VM tier's kernel.** A CI job that boots a VM of the host's own kernel (virtme-ng: `vng --run
+<dir>/vmlinuz-$(uname -r)`) needs that kernel's image readable by the runner's login, and Ubuntu installs
+`/boot/vmlinuz-<version>` readable by root only. With `nova_runner_vm_kernel: true` the play writes the kernel hook
+`/etc/kernel/postinst.d/zz-nova-vm-kernel`, which copies every kernel image the host installs from then on into
+`nova_runner_vm_kernel_dir` (owned by the login, mode 0600), so an upgrade brings its copy with it; copies the running
+kernel's image there now; and adds the login to `kvm`, the group `/dev/kvm` is open to. A host whose running kernel has
+no image in `/boot`, or that has no `kvm` group, is refused with the package to add. The VM tools themselves are entries
+of the debian list (`virtme-ng`, `qemu-system-x86`). Joining `kvm` reaches a runner already running only when it
+restarts. Copies of kernels later removed stay until deleted.
 
 **Check.** `RUNNER-PACKAGES host=<machine> wanted=<n> present=<n> installed=<n>`, one line per machine.
-**Rollback.** The play never removes a package: one taken out of the list stays installed until a play removes it.
+**Rollback.** The play never removes a package: one taken out of the list stays installed until a play removes it. Nor
+does it remove a foreign architecture, a ports source, the `Architectures` lines, the kernel hook or the copies.
+
+## sdk-toolchain
+
+The language toolchains a bench's gates and a runner's CI jobs build and test with, in the login's own SDK directory
+(`nova_sdk_dir`, `~/sdk`), on each machine of the `bench` and `runner` groups. Every version is pinned in
+`roles/sdk-toolchain/defaults/main.yml`; an archive is checked against the publisher's own digest before it is unpacked. Each tool goes into
+`~/sdk/<tool>-<version>`, its commands are linked into `~/sdk/bin`, and `~/sdk/env.sh` puts `~/sdk/bin` first on PATH
+(on Linux, `~/.bashrc` sources it on its first line, before an early return for a non-interactive shell). The play runs
+as the login and never as root; run `runner-packages` first, which brings the compilers, `cmake`, `opam` and LLVM 18
+that the source builds need.
+
+```
+nova-fleet sdk-toolchain --check --diff -- -l bench      # SDK-TOOLCHAIN WOULD-INSTALL tool=<name> version=<v>, per missing one
+nova-fleet sdk-toolchain -- -l bench
+```
+
+On x86_64 Linux and WSL: Go, Node, Dart, Erlang/OTP, Elixir, a Temurin JDK, .NET 10 with the .NET 8 SDK and runtime in
+the same directory, golangci-lint, staticcheck, nilaway, ESBMC, SpotBugs with find-sec-bugs, Deno, Jazzer,
+google-java-format, TypeScript, ESLint, sbcl, Lua, luacheck, Luau, Squirrel (and a second Squirrel built as sq64 with
+`SQUSEDOUBLE`, not on PATH, named by `SQ`), clang-format, LLVM (as `~/sdk/llvm`, not on PATH), cppcheck, AFL++ and Frama-C with Alt-Ergo and Why3 in their own opam root (`~/sdk/opam`). A Mac gets the tools
+with a `darwin` pin: Go, Node, Dart, Elixir, the JDK and .NET. Each tool has one of six kinds: an `archive` or a
+`file` (a URL and its sha256 or sha512), `git` (a tag, refused unless it is the pinned commit, then built), `go`
+(`go install` of a module version, which Go checks against its checksum database), `npm` (refused unless the lock file
+the install writes has the pinned integrity; the package's own dependencies resolve from the registry at install time)
+and `script` (a build alone: Frama-C's opam root, at pinned package versions from the opam repository as it is then).
+
+Rust, on Linux, comes through a pinned rustup: `rustup-init` at `nova_sdk_rustup.version`, checked against its
+`.sha256`, installs rustup into `~/sdk/rustup-<version>` with the first toolchain (a release, `1.98.1`) as the
+default and self-update off; each toolchain then gets its components (`clippy`, `rustfmt`) and targets, and the dated
+nightly that `cargo fuzz` runs on is installed beside it. The first toolchain's own binaries (`cargo`, `rustc`,
+`rustdoc`, `rustfmt`, `cargo-fmt`, `cargo-clippy`, `clippy-driver`) are linked into `~/sdk/bin`; `~/sdk/bin/rustup` is a
+wrapper that uses this rustup's home unless the caller set `RUSTUP_HOME`, so a CI job that installs its own toolchain
+into its own home is unaffected. `cargo-fuzz` is built with `--locked` into `~/sdk/cargo-fuzz-<version>`.
+
+.NET 8: each SDK of `nova_sdk_dotnet_more` (8.0, with its 8.0 runtime) is unpacked from Microsoft's archive, held to
+its SHA-512 from `releases.json`, into the dotnet directory beside the 10.0 SDK, keeping the newer `dotnet` host, so
+one `~/sdk/bin/dotnet --list-runtimes` lists both and a `net8.0` target runs on .NET 8 rather than rolling forward.
+
+A tool whose probe (`dir`/`probe` in the defaults) is in its directory is adopted as it is: never downloaded,
+replaced or upgraded, so a second run reports `changed=0`. A missing one is fetched into `~/sdk/dl`, unpacked in a
+stage beside the SDK and moved into place (a `git` or `script` tool builds into its directory); a directory there
+without its probe is moved aside to `<dir>.broken-<time>`, never deleted. `env.sh` keeps a dated backup of the file it
+replaces. Every link the defaults name is pointed at the pinned version, so a machine whose `~/sdk/bin` named
+another version of a tool names the pinned one after a run; the other version's directory is left where it is. A
+version bump installs the new directory beside the old and moves the links.
+
+| Variable | Default | |
+|---|---|---|
+| `nova_sdk_dir` | `<home>/sdk` | the SDK directory |
+| `nova_sdk_tools` | the toolchain above | one entry per tool: `name`, `version`, `dir`, `probe`, `links`, `kind`, `build`, `alias`, `wrapper`, and a `linux` and/or `darwin` pin; a list given with `-e` replaces it whole |
+| `nova_sdk_dotnet_more` | the .NET 8.0 SDK | more SDKs in the dotnet directory, each a `version` and a `url` and `sha512` per platform |
+| `nova_sdk_rustup` | rustup 1.29.1; `1.98.1` with `clippy` and `rustfmt`, and `nightly-2026-10-01` | `version`, the `linux` rustup-init `url`, `sha256` and `host`, the `toolchains` (each `name`, `components`, `targets`; the first is on PATH) and the commands `links` puts in `~/sdk/bin` |
+| `nova_sdk_cargo_tools` | `cargo-fuzz` 0.13.1 | crates built with `cargo install --locked` |
+| `nova_sdk_env` | `DART`, `NODE`, `JAVA`, `JAVAC`, `ELIXIR`, `MIX` set to their commands | make variables `env.sh` exports |
+| `nova_sdk_env_files` | `SQ`: `squirrel-3.2-double/bin/sq` | make variables naming a file under the SDK; `env.sh` exports each only where that file is executable |
+| `nova_sdk_shell_rc` | `true` | Linux: `~/.bashrc` sources `env.sh` on its first line, unless a line of it already names `sdk/env.sh` |
+
+**Check.** `SDK-TOOLCHAIN host=<machine> platform=<linux|darwin> tools=<n> present=<n> installed=<n> dotnet=<runtimes>`,
+one line per machine (`would-install=<n>` under `--check`, counting the tools; the .NET SDKs and Rust print their own
+`WOULD-INSTALL` lines). Another platform is refused, naming `-l '!<machine>'`.
+**Rollback.** The play removes nothing: set the old version back in the defaults (with its URL and digest) and run it
+again, and the links name the old directory, which is still there.
 
 ## Refusals
 

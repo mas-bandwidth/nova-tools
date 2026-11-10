@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -84,4 +85,23 @@ func TestPlayTextNamesNovaFleetCommands(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotContains(t, string(install), "-e nova_tools_version=vX.Y.Z")
 	assert.Contains(t, string(install), "--tag vX.Y.Z")
+}
+
+// join's login profile makes a bare nova-secrets exec work on a bench: the pushed store, the machine's seat, and sops's
+// directory on PATH (/opt/homebrew/bin on a Mac).
+func TestJoinProfileGivesABareExecItsStoreSeatAndSops(t *testing.T) {
+	t.Parallel()
+	join, err := os.ReadFile("join.yml")
+	require.NoError(t, err)
+	for _, line := range []string{
+		`NOVA_SECRETS_STORE="{{ nova_secrets_store }}"; export NOVA_SECRETS_STORE`,
+		`NOVA_SECRETS_SEAT="{{ nova_seat }}"; export NOVA_SECRETS_SEAT`,
+		`case ":$PATH:" in *":{{ nova_sops | dirname }}:"*) ;; *) PATH="$PATH:{{ nova_sops | dirname }}"; export PATH;; esac`,
+	} {
+		assert.Contains(t, string(join), line)
+	}
+	// ssh <machine> '<cmd>' reads no login profile: the same lines go first in ~/.bashrc, or ~/.zshenv for zsh
+	assert.Contains(t, string(join), `insertbefore: BOF`)
+	assert.Contains(t, string(join), `'.zshenv' if (ansible_facts['user_shell'] | default('') | basename) == 'zsh' else '.bashrc'`)
+	assert.Equal(t, 2, strings.Count(string(join), `block: "{{ join_login_env }}"`), "the login profile and the non-login rc carry the same lines")
 }

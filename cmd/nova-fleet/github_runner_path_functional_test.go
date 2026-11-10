@@ -69,8 +69,9 @@ func TestRunnerServiceFilesPutTheToolsFirstOnPath(t *testing.T) {
 	bin := home + "/.local/bin"
 	assert.Contains(t, service, "\nEnvironment=PATH="+bin+":/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin\n")
 	assert.Equal(t, 1, strings.Count(service, "Environment=PATH="))
-	assert.Contains(t, plist, "<key>PATH</key>\n    <string>"+bin+":/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>\n")
+	assert.Contains(t, plist, "<key>PATH</key>\n    <string>"+bin+":/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>\n")
 	assert.Equal(t, 1, strings.Count(plist, "<key>PATH</key>"))
+	assert.Contains(t, service, "\nLimitMEMLOCK=infinity\n")
 }
 
 func TestRunnerEnvPathStillWins(t *testing.T) {
@@ -84,4 +85,25 @@ func TestRunnerEnvPathStillWins(t *testing.T) {
 	assert.Equal(t, 1, strings.Count(service, "Environment=PATH="))
 	assert.Contains(t, plist, "<key>PATH</key>\n    <string>/mine:/bin</string>\n")
 	assert.Equal(t, 1, strings.Count(plist, "<key>PATH</key>"))
+}
+
+// The Linux unit's TMPDIR is the login's runner-tmp unless the environment names one; the environment is the machine
+// record's (the inventory's nova_runner_env) when no -e replaces it. The plist sets none by default.
+func TestRunnerTmpdirAndTheRecordsEnvironmentRender(t *testing.T) {
+	t.Parallel()
+	if _, err := exec.LookPath("ansible-playbook"); err != nil {
+		t.Skip("ansible-core is not installed on this machine; TestRunnerServiceFilesSetTmpdir still runs")
+	}
+	service, plist, _ := renderRunnerUnits(t)
+	assert.Regexp(t, `\nEnvironment=TMPDIR=/[^\n]*/\.cache/runner-tmp\n`, service, "the login's home (its passwd entry, ansible's user_dir)")
+	assert.NotContains(t, plist, "TMPDIR")
+
+	service, plist, _ = renderRunnerUnits(t, "-e", `{"nova_runner_env": {"TMPDIR": "/scratch/t", "ImageOS": "ubuntu24", "PATH": "/sdk/bin:/bin"}}`)
+	assert.Contains(t, service, "\nEnvironment=PATH=/sdk/bin:/bin\nEnvironment=TMPDIR=/scratch/t\nEnvironment=ImageOS=ubuntu24\n")
+	assert.Equal(t, 1, strings.Count(service, "TMPDIR="))
+	assert.Contains(t, plist, "<key>TMPDIR</key>\n    <string>/scratch/t</string>\n")
+
+	service, _, _ = renderRunnerUnits(t, "-e", `{"nova_runner_env": {"ImageOS": "ubuntu24"}, "github_runner_env": {"FOO": "bar"}}`)
+	assert.Contains(t, service, "\nEnvironment=FOO=bar\n")
+	assert.NotContains(t, service, "ImageOS", "-e github_runner_env replaces the record's for the run")
 }

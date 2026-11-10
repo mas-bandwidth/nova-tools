@@ -19,4 +19,5 @@ CodexWake.cfg	CodexWake.tla	pass	-	check
 CodexWakeBrokenNoCheck.cfg	CodexWake.tla	invariant	SeenIdle	check
 CodexWakeBrokenNoAwait.cfg	CodexWake.tla	invariant	OneRow	check
 CodexWakeBrokenRequeue.cfg	CodexWake.tla	invariant	NoTwice	check
+CodexWakeBrokenLostRetry.cfg	CodexWake.tla	invariant	NoTwice	check
 CodexWakeBrokenNoCatchUp.cfg	CodexWake.tla	temporal	EveryHandled	check

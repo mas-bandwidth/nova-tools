@@ -1,0 +1,24 @@
+# A vars file for the github-runners play (cmd/nova-fleet/README.md, "github-runners"), one per repository or
+# organization the fleet runs CI for, read from the directory you run in. The environment below is for Ubuntu 24.04
+# runners, so name those machines with -l and leave a Mac out; left out, it keeps the machine record's runner_env.
+#
+#   nova-fleet github-runners --check --diff -- -e @github-runners-env.yml -l bench-1,bench-2
+#   nova-fleet github-runners -- -e @github-runners-env.yml -l bench-1,bench-2
+#
+# Nothing here is remembered between runs. github_runner_env below replaces the machine record's runner_env for this
+# run only: an environment every run should keep goes in the record (nova-config machine set bench-1 --runner_env
+# '<json-object>'). A label named here that a registered runner lacks is added in GitHub; keep the file beside your
+# inventory and pass it on every run for this url.
+github_runner_url: https://github.com/OWNER/REPO
+github_runner_scope: repo
+# Extra labels, added to fleet and the machine's groups, os and arch; a job selects them with runs-on.
+github_runner_labels: []
+# The service's environment, inherited by every job. A PATH here would replace the role's default (nova_bin_dir first,
+# then the system's); a path under the login's home is written "{{ ansible_facts['user_dir'] }}/...", rendered per
+# machine.
+github_runner_env:
+  # what actions/setup-* read to name their tool cache; GitHub's hosted Ubuntu images set it and a self-hosted runner
+  # does not
+  ImageOS: ubuntu24
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  DOTNET_NOLOGO: "1"

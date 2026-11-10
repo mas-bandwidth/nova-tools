@@ -84,7 +84,7 @@ func runHistory(ctx context.Context, args []string, d deps, stdout io.Writer) er
 			items = append(items, fmt.Sprintf(`{"rev":%d,"at":%s,"actor":%s,"kind":%s,"name":%s,"op":%s,"before":%s,"after":%s}`, e.ID, jsonString(e.At), jsonString(e.Actor), jsonString(e.Kind), jsonString(e.Name), jsonString(e.Op), marshal(e.Before), marshal(e.After)))
 		} else {
 			fmt.Fprintf(stdout, "HISTORY at=%s actor=%s kind=%s name=%s op=%s rev=%d\n", value(e.At), value(e.Actor), value(e.Kind), value(e.Name), value(e.Op), e.ID)
-			for _, l := range changeLines(kinds[e.Kind], e.Op, e.Before, e.After) {
+			for _, l := range changeLines(map[bool]*kind{true: kinds[e.Kind], false: {}}[kinds[e.Kind] != nil], e.Op, e.Before, e.After) { // a kind this tool does not know has no fields: every column of its row prints as text
 				fmt.Fprintln(stdout, l)
 			}
 		}

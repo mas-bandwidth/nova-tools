@@ -32,6 +32,7 @@ type upFake struct {
 	untagged    bool   // the control node lacks tag:control
 	noPosix     bool   // ansible.posix is not installed
 	noGalaxy    bool   // ansible-galaxy cannot run (exit 127)
+	noIdent     bool   // git has no commit identity: git var GIT_*_IDENT exits 128
 	namesErr    string // nova-secrets names exits 2 with this stderr
 	busErr      string // nova-bus who exits 1 with this stderr
 	api         *fakeAPI
@@ -130,6 +131,9 @@ func (f *upFake) install(t *testing.T) {
 		if f.fail != "" && strings.Contains(line, f.fail) {
 			return 4, nil
 		}
+		if i := slices.Index(args, "--to"); args[0] == "grant" && i >= 0 && i+1 < len(args) && args[i+1] == os.Getenv("NOVA_SECRETS_SEAT") {
+			return 2, nil // nova-secrets refuses a grant to the granting seat
+		}
 		if strings.Contains(line, "up --reset --auth-key=file:/dev/stdin --advertise-tags=tag:control") {
 			f.offnet = false // this node joined the tailnet
 		}
@@ -167,6 +171,8 @@ func (f *upFake) install(t *testing.T) {
 			return "", "exec: \"/bin/ansible-galaxy\": file does not exist", 127
 		case strings.HasSuffix(line, "collection list") && !f.noPosix:
 			return "ansible.posix   2.2.2\nansible.windows 2.0.0\n", "", 0
+		case strings.HasPrefix(line, "git var GIT_") && f.noIdent:
+			return "", "fatal: no email was given and auto-detection is disabled", 128
 		case strings.HasPrefix(line, "go version"):
 			return "go version go1.99.0 linux/amd64\n", "", 0
 		case strings.HasSuffix(line, "--version") || strings.HasSuffix(line, " version"):
@@ -662,6 +668,27 @@ func TestCheck(t *testing.T) {
 	}
 }
 
+// check says whether git can commit, beside git itself: nova-secrets set commits what it writes, so a node whose git
+// has no author or committer is not ready for the token.
+func TestCheckNamesAMissingGitIdentity(t *testing.T) {
+	f := &upFake{}
+	f.install(t)
+	if code, out, errs := runArgs("check"); code != 0 || errs != "" || !strings.Contains(out, "CHECK OK git-identity\n") {
+		t.Errorf("git can commit: code %d stderr %q\n%s", code, errs, out)
+	}
+	for _, who := range []string{"GIT_AUTHOR_IDENT", "GIT_COMMITTER_IDENT"} {
+		if !slices.Contains(f.calls, "git var "+who) {
+			t.Errorf("check did not ask git for %s: %q", who, f.calls)
+		}
+	}
+	f.noIdent = true
+	code, out, errs := runArgs("check")
+	want := "CHECK MISSING git-identity: git config --global user.name 'Your Name' && git config --global user.email you@example.com  # nova-secrets set commits what it writes, and git has no author or committer to commit as\n"
+	if code != 1 || errs != "CHECK FAILED missing=1\n" || !strings.Contains(out, want) || strings.Contains(out, "CHECK OK git-identity") {
+		t.Errorf("no identity: code %d stderr %q, stdout lacks %q:\n%s", code, errs, want, out)
+	}
+}
+
 // TestCheckTraffic reads a canned tailscale status: the lines are sorted by peer name, GB to one decimal, and a
 // peer over trafficWarnBytes in either direction warns once.
 func TestCheckTraffic(t *testing.T) {
@@ -914,7 +941,8 @@ func TestUpSeatKeyUsesTheBinDir(t *testing.T) {
 }
 
 // The control node named in the inventory is tailscale status Self, never a Peer: it gets no join key and
-// no join (join's peer check cannot see the node it runs on); every step after join runs on it as on any.
+// no join (join's peer check cannot see the node it runs on), and no grant (its own seat holds the values, and
+// nova-secrets refuses a grant to the granting seat); every other step runs on it as on any.
 func TestUpControlNodeInTheInventory(t *testing.T) {
 	f := &upFake{self: "control"}
 	existing(t, f, `,{"kind":"machine","fields":{"name":"control","address":"control.ts.example","user":"ops","os":"linux","arch":"amd64","roles":"bench"}}`)
@@ -922,9 +950,10 @@ func TestUpControlNodeInTheInventory(t *testing.T) {
 	all := strings.Join(f.calls, "\n")
 	if code != 0 || f.api.keys != 1 || strings.Contains(all, "nova_join_host=control") || !strings.Contains(all, "nova_join_host=second") ||
 		strings.Contains(strings.Join(f.api.calls, "\n"), "/device/n-control/tags  {\"tags\":[\"tag:control\",\"tag:nova\"]}") ||
-		!strings.Contains(all, "ssh -o BatchMode=yes ops@control.ts.example sh -c") || !strings.Contains(all, "nova-secrets grant NOVA_BUS_PASSWORD --to control") ||
+		strings.Contains(all, "nova-secrets grant NOVA_BUS_PASSWORD --to control") || !strings.Contains(all, "nova-secrets grant NOVA_BUS_PASSWORD --to second") ||
 		!strings.Contains(out, "UP REACH control OK ops@control.ts.example") || !strings.Contains(out, "UP JOIN control SKIPPED this control node (tailscale status Self): already joined") ||
-		!strings.Contains(out, "UP MACHINE control OK address=203.0.113.5 steps=grant,refresh,health,tools,services,bus") {
+		!strings.Contains(out, "UP GRANT control SKIPPED this control node (tailscale status Self): its own seat holds the values") ||
+		!strings.Contains(out, "UP MACHINE control OK address=203.0.113.5 steps=refresh,health,tools,services,bus") {
 		t.Errorf("code %d keys %d\n%s\n%s\n%s", code, f.api.keys, out, errs, all)
 	}
 	// with --runners, the control node gets no runner role and no runners: heavy work never defaults onto it
@@ -933,7 +962,7 @@ func TestUpControlNodeInTheInventory(t *testing.T) {
 	code, out, errs = runArgs("up", "--tools", "v2.0.0", "--runners", "https://github.com/o/r", "control=203.0.113.5", "second=203.0.113.8")
 	all = strings.Join(f.calls, "\n")
 	if code != 0 || strings.Contains(all, "machine set control") || !strings.Contains(all, "-e runner_count=cores -l second\n") ||
-		!strings.Contains(out, "UP MACHINE control OK address=203.0.113.5 steps=grant,refresh,health,tools,services,bus") {
+		!strings.Contains(out, "UP MACHINE control OK address=203.0.113.5 steps=refresh,health,tools,services,bus") {
 		t.Errorf("runners: code %d\n%s\n%s\n%s", code, out, errs, all)
 	}
 	// with no row, join cannot be skipped into one: the run stops with the line that adds it

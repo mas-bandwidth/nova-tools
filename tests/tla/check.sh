@@ -18,6 +18,9 @@
 # With TLC_SKIP_LARGE=1 a config whose name contains "Large" (a bigger instance of
 # a config that still runs) is left out: per-commit CI sets it to stay inside its
 # 2 minutes, and the nightly (schedule) run checks every case.
+# With TLC_SHARD=K/N only shard K of N runs: the cases sorted, then every Nth
+# from the Kth, so the N shards together run every case exactly once. CI runs
+# one job per shard, since the whole set on one runner overran 2 minutes.
 set -euo pipefail
 
 if [ "${1:-}" = "--case" ]; then
@@ -82,6 +85,13 @@ for d in "${dirs[@]}"; do
 	done >>"$cases"
 done
 
+if [ -n "${TLC_SHARD:-}" ]; then
+	[[ $TLC_SHARD =~ ^([0-9]+)/([0-9]+)$ ]] && [ "${BASH_REMATCH[1]}" -ge 1 ] && [ "${BASH_REMATCH[1]}" -le "${BASH_REMATCH[2]}" ] ||
+		{ echo "TLC_SHARD=$TLC_SHARD: want K/N with 1 <= K <= N" >&2; exit 2; }
+	LC_ALL=C sort "$cases" | awk -v k="${BASH_REMATCH[1]}" -v n="${BASH_REMATCH[2]}" '(NR - 1) % n == k - 1' >"$cases.shard"
+	mv "$cases.shard" "$cases"
+	echo "shard $TLC_SHARD"
+fi
 jobs=$(getconf _NPROCESSORS_ONLN)
 echo "$(wc -l <"$cases" | tr -d ' ') cases, $jobs at a time"
 tr '\t' '\n' <"$cases" | xargs -d '\n' -n 6 -P "$jobs" "$0" --case

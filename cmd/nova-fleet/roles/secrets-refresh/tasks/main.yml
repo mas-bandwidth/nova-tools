@@ -53,10 +53,11 @@
         fail_msg: "SECRETS-REFRESH {{ inventory_hostname }} STOP: {{ nova_secrets_store }} is a symlink (to {{ sr_dest.stat.lnk_target | default('?') }}); the store must be a directory of its own: remove the link, then run again"
         quiet: true
 
-    # a symlink in the store would land on every machine pointing wherever it says: the store holds files only
+    # a symlink in the store would land on every machine pointing wherever it says: the store holds files only;
+    # -H follows the clone's own path when that is a link (the root is not in the store), never a link inside it
     - name: symlinks in the control node's clone (outside .git)
       ansible.builtin.command:
-        argv: [find, "{{ nova_seal_store }}", -path, "{{ nova_seal_store | regex_replace('/*$', '') }}/.git", -prune, -o, -type, l, -print]
+        argv: [find, -H, "{{ nova_seal_store }}", -path, "{{ nova_seal_store | regex_replace('/*$', '') }}/.git", -prune, -o, -type, l, -print]
       delegate_to: localhost
       become: false
       register: sr_links

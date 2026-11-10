@@ -2,7 +2,11 @@
 # The health role (cmd/nova-fleet/health.yml): guards that let a Linux machine recover by itself, and a disk report. Each is a
 # file this role owns (a drop-in, a sysctl file, a unit); applying one restarts only the daemon it configures, never
 # the user's units.
-- name: Linux only
+- name: a Mac trims its Go build cache and nothing else (darwin.yml)
+  ansible.builtin.include_tasks: darwin.yml
+  when: (nova_system | default(ansible_facts['system'])) == 'Darwin'
+
+- name: Linux only from here
   ansible.builtin.meta: end_host
   when: (nova_system | default(ansible_facts['system'])) != 'Linux'
 
@@ -195,6 +199,70 @@
   ansible.builtin.systemd_service: { name: nova-disk-report.timer, enabled: true, state: started }
   become: true
   when: nova_health_disk_report | bool and not (ansible_check_mode and health_disk_units is changed)
+
+# ---- the disk clean ----
+- name: the clean script
+  ansible.builtin.copy: { src: nova-disk-clean, dest: /usr/local/sbin/nova-disk-clean, mode: "0755", owner: root, group: root }
+  become: true
+  when: nova_health_disk_clean | bool
+
+# github-runners.yml writes a runner's TMPDIR into its unit; its jobs' leftovers land there, not in /tmp
+- name: the runners' TMPDIRs
+  ansible.builtin.shell: cat /etc/systemd/system/github-runner-*.service 2>/dev/null | sed -n 's/^Environment=TMPDIR=//p' | sort -u
+  register: health_runner_tmp
+  changed_when: false
+  check_mode: false
+  when: nova_health_disk_clean | bool
+
+- name: the clean's unit and timer
+  vars:
+    clean_dirs: "{{ (nova_health_disk_clean_dirs + health_runner_tmp.stdout_lines) | unique | join(':') }}"
+  ansible.builtin.copy:
+    dest: "/etc/systemd/system/nova-disk-clean.{{ item.ext }}"
+    mode: "0644"
+    content: "{{ item.content }}"
+  loop:
+    - ext: service
+      content: |
+        # managed by Ansible (fleet/health.yml)
+        [Unit]
+        Description=what jobs leave in {{ clean_dirs }} and the Go build cache, unchanged {{ nova_health_disk_clean_age_min }}m ({{ nova_health_disk_clean_pressed_min }}m over {{ nova_health_disk_warn_pct }}%)
+        [Service]
+        Type=oneshot
+        User={{ ansible_facts['user_id'] }}
+        Nice=19
+        IOSchedulingClass=idle
+        Environment=DISK_WARN_PCT={{ nova_health_disk_warn_pct }}
+        Environment=DISK_CLEAN_AGE_MIN={{ nova_health_disk_clean_age_min }}
+        Environment=DISK_CLEAN_PRESSED_MIN={{ nova_health_disk_clean_pressed_min }}
+        Environment="DISK_CLEAN_DIRS={{ clean_dirs }}"
+        Environment="DISK_CLEAN_CACHES={{ nova_health_disk_clean_caches | join(':') }}"
+        ExecStart=/usr/local/sbin/nova-disk-clean
+    - ext: timer
+      content: |
+        # managed by Ansible (fleet/health.yml)
+        [Unit]
+        Description=the disk clean ({{ nova_health_disk_clean_on_calendar }})
+        [Timer]
+        OnCalendar={{ nova_health_disk_clean_on_calendar }}
+        RandomizedDelaySec=10m
+        Persistent=true
+        [Install]
+        WantedBy=timers.target
+  loop_control: { label: "nova-disk-clean.{{ item.ext }}" }
+  become: true
+  register: health_clean_units
+  when: nova_health_disk_clean | bool
+
+- name: the system manager reads them
+  ansible.builtin.systemd_service: { daemon_reload: true }
+  become: true
+  when: nova_health_disk_clean | bool and health_clean_units is changed and not ansible_check_mode
+
+- name: the clean's timer, enabled and started
+  ansible.builtin.systemd_service: { name: nova-disk-clean.timer, enabled: true, state: started }
+  become: true
+  when: nova_health_disk_clean | bool and not (ansible_check_mode and health_clean_units is changed)
 
 - name: the changes, applied now
   ansible.builtin.meta: flush_handlers

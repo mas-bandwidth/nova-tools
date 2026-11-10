@@ -1,0 +1,93 @@
+---
+# The health role on a Mac (cmd/nova-fleet/health.yml): only the Go build cache's trim. The cache is the one
+# `go env GOCACHE` names for the login (its login shell's environment); files/nova-go-cache-clean runs hourly from a
+# LaunchDaemon as the login, with the Linux clean's ages. No temp or working directory is touched.
+- name: the login's Go build cache (go env GOCACHE, in its login shell)
+  ansible.builtin.command: "{{ ansible_facts['user_shell'] | default('/bin/zsh') }} -lc 'go env GOCACHE'"
+  register: health_gocache
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: nova_health_disk_clean | bool
+
+- name: the cache trim applies (go answers, and names a go-build dir)
+  ansible.builtin.set_fact:
+    # the last line: a login shell may print a banner first
+    health_gocache_dir: "{{ health_gocache.stdout_lines | default([]) | last | default('') | trim }}"
+
+- name: the cache trim applies (go answers, and names an absolute go-build dir outside /Volumes)
+  ansible.builtin.set_fact:
+    # launchd jobs cannot read a removable volume without a privacy grant; Go trims its own cache daily after 5 days
+    health_gocache_on: "{{ nova_health_disk_clean | bool and health_gocache.rc | default(1) == 0 and health_gocache_dir is match('/') and health_gocache_dir is not match('/Volumes/') and (health_gocache_dir | basename) == 'go-build' }}"
+
+- name: the trim script
+  ansible.builtin.copy: { src: nova-go-cache-clean, dest: "{{ nova_bin_dir }}/nova-go-cache-clean", mode: "0755" }
+  when: health_gocache_on | bool
+
+- name: the trim's LaunchDaemon, run as the login
+  ansible.builtin.copy:
+    dest: /Library/LaunchDaemons/com.nova.go-cache-clean.plist
+    mode: "0644"
+    owner: root
+    group: wheel
+    content: |
+      <?xml version="1.0" encoding="UTF-8"?>
+      <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+      <!-- managed by Ansible (fleet/health.yml): the Go build cache {{ health_gocache_dir }}, files unchanged {{ nova_health_disk_clean_age_min }}m ({{ nova_health_disk_clean_pressed_min }}m over {{ nova_health_disk_warn_pct }}%) -->
+      <plist version="1.0">
+      <dict>
+        <key>Label</key><string>com.nova.go-cache-clean</string>
+        <key>UserName</key><string>{{ ansible_facts['user_id'] }}</string>
+        <key>ProgramArguments</key>
+        <array><string>/bin/bash</string><string>{{ nova_bin_dir }}/nova-go-cache-clean</string></array>
+        <key>EnvironmentVariables</key>
+        <dict>
+          <key>DISK_CLEAN_CACHE</key><string>{{ health_gocache_dir }}</string>
+          <key>DISK_CLEAN_AGE_MIN</key><string>{{ nova_health_disk_clean_age_min }}</string>
+          <key>DISK_CLEAN_PRESSED_MIN</key><string>{{ nova_health_disk_clean_pressed_min }}</string>
+          <key>DISK_WARN_PCT</key><string>{{ nova_health_disk_warn_pct }}</string>
+        </dict>
+        <key>StartInterval</key><integer>3600</integer>
+        <key>Nice</key><integer>19</integer>
+        <key>LowPriorityIO</key><true/>
+        <key>StandardOutPath</key><string>{{ nova_home }}/Library/Logs/nova-go-cache-clean.log</string>
+        <key>StandardErrorPath</key><string>{{ nova_home }}/Library/Logs/nova-go-cache-clean.log</string>
+      </dict>
+      </plist>
+  become: true
+  register: health_gocache_plist
+  when: health_gocache_on | bool
+
+- name: the trim's daemon, loaded (again when its file changed)
+  ansible.builtin.shell: |
+    l=system/com.nova.go-cache-clean
+    if launchctl print "$l" >/dev/null 2>&1; then
+      [ "{{ health_gocache_plist is changed }}" = True ] || { echo LOADED; exit 0; }
+      launchctl bootout "$l"
+      for n in $(seq 1 50); do launchctl print "$l" >/dev/null 2>&1 || break; sleep 0.2; done
+    fi
+    launchctl bootstrap system /Library/LaunchDaemons/com.nova.go-cache-clean.plist && echo BOOTSTRAPPED
+  become: true
+  register: health_gocache_load
+  changed_when: "'BOOTSTRAPPED' in health_gocache_load.stdout"
+  when: health_gocache_on | bool and not ansible_check_mode
+
+- name: the trim's daemon, gone when the trim does not apply (switched off, no go-build cache, or one under /Volumes)
+  ansible.builtin.shell: |
+    l=system/com.nova.go-cache-clean
+    f=/Library/LaunchDaemons/com.nova.go-cache-clean.plist
+    if launchctl print "$l" >/dev/null 2>&1; then launchctl bootout "$l" || { echo "bootout $l failed" >&2; exit 1; }; echo REMOVED; fi
+    if [ -e "$f" ]; then rm -f "$f" && echo REMOVED; fi
+  become: true
+  register: health_gocache_unload
+  changed_when: "'REMOVED' in health_gocache_unload.stdout"
+  when: not health_gocache_on | bool and not ansible_check_mode
+
+- name: the trim's receipt
+  ansible.builtin.debug:
+    msg: >-
+      GO-CACHE-CLEAN {{ inventory_hostname }}
+      {%- if not nova_health_disk_clean | bool %} off (nova_health_disk_clean)
+      {%- elif not health_gocache_on | bool %} skipped: go env GOCACHE gave "{{ health_gocache_dir }}" (rc={{ health_gocache.rc | default('-') }}), not a go-build dir outside /Volumes
+      {%- else %} cache={{ health_gocache_dir }} hourly, log={{ nova_home }}/Library/Logs/nova-go-cache-clean.log{% endif %}
+  changed_when: false

@@ -3,6 +3,7 @@
 package main
 
 import (
+	"cmp"
 	"errors"
 	"os"
 	"os/exec"
@@ -18,14 +19,46 @@ import (
 // capacity outlives a reboot and every caller on the machine shares one.
 const systemDir = "/var/tmp/nova-reserve"
 
+// openIn opens a file of the reservation directory, where any user may have
+// put anything: it follows no symbolic link (O_NOFOLLOW), waits on no FIFO
+// (O_NONBLOCK), and refuses what is not a regular file, read off the open
+// descriptor and never off the path, or that has a second name. A file it may make (O_CREATE) is 0666
+// whatever the maker's umask, or no other user could open it, lock files too.
+func openIn(path string, flag int) (*os.File, error) {
+	odd := refuse(2, "%s is not a regular file; nova-reserve opens no link or special file in its directory; run: sudo rm -f %s", path, shellQuote(path))
+	f, err := os.OpenFile(path, flag|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0o666)
+	if err != nil {
+		// O_NOFOLLOW's error for a link differs by OS; the refusal is the same
+		if fi, lerr := os.Lstat(path); lerr == nil && fi.Mode()&os.ModeSymlink != 0 {
+			return nil, odd
+		}
+		return nil, err
+	}
+	if fi, err := f.Stat(); err != nil || !fi.Mode().IsRegular() {
+		// ignored: nothing was written through it
+		_ = f.Close()
+		return nil, cmp.Or[error](err, odd)
+	} else if n := uint64(fi.Sys().(*syscall.Stat_t).Nlink); n > 1 {
+		// a second name is a file elsewhere; every file this tool makes has one
+		// name (made or renamed here, never linked). ignored: nothing was written
+		_ = f.Close()
+		return nil, refuse(2, "%s has %d names (a hard link); nova-reserve opens no file in its directory that has another name; run: sudo rm -f %s", path, n, shellQuote(path))
+	}
+	if flag&os.O_CREATE != 0 {
+		// ignored: only the file's owner may widen it, and its maker is the owner
+		_ = f.Chmod(0o666)
+	}
+	return f, nil
+}
+
 // osLock is flock(2) on path. The file is opened read-only (flock needs no
 // write access, so every user can lock a file another user made), and opened
 // before it is created, which a sticky /tmp refuses for another user's file.
 // Go opens it close-on-exec, so the command never inherits the lock.
 func osLock(path string, exclusive bool) (func(), bool, error) {
-	f, err := os.Open(path)
+	f, err := openIn(path, os.O_RDONLY)
 	if errors.Is(err, os.ErrNotExist) {
-		f, err = os.OpenFile(path, os.O_RDONLY|os.O_CREATE, 0o666)
+		f, err = openIn(path, os.O_RDONLY|os.O_CREATE)
 	}
 	if err != nil {
 		return nil, false, err

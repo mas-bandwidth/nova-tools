@@ -1,0 +1,27 @@
+#!/bin/bash
+# nova-go-cache-clean (macOS): the health role's trim of the login's Go build cache (fleet/health.yml), hourly from a
+# LaunchDaemon run as the login. A file of DISK_CLEAN_CACHE (the cache `go env GOCACHE` names, a dir named go-build)
+# unchanged for the age is removed: Go refreshes an entry's mtime when it uses one more than an hour old and rebuilds a
+# missing one, so a build loses nothing. The age is DISK_CLEAN_AGE_MIN minutes, or DISK_CLEAN_PRESSED_MIN on a volume
+# over DISK_WARN_PCT used. Nothing else is touched. One CLEAN line and a CLEAN-DONE line on stdout (the daemon's log);
+# DISK_CLEAN_DRY=1 removes nothing and says WOULD.
+set -u
+[ "$(id -u)" != 0 ] || { echo "nova-go-cache-clean: refusing to run as root (the daemon's UserName is the login)" >&2; exit 1; }
+AGE=${DISK_CLEAN_AGE_MIN:-2880}
+PRESSED=${DISK_CLEAN_PRESSED_MIN:-360}
+WARN=${DISK_WARN_PCT:-80}
+c=${DISK_CLEAN_CACHE:-}
+verb=CLEAN
+[ -n "${DISK_CLEAN_DRY:-}" ] && verb=WOULD
+say() { echo "$(date '+%Y-%m-%dT%H:%M:%S%z') $1"; }
+if [ "$(basename "$c")" != go-build ]; then say "CLEAN-REFUSED $c: the cache here is Go's build cache, named go-build"; exit 0; fi
+[ -d "$c" ] || { say "$verb-DONE $(hostname -s) 0KiB (no $c)"; exit 0; }
+pct=$(df -P "$c" 2>/dev/null | awk 'NR == 2 {sub("%", "", $5); print $5}')
+age=$AGE
+if [ -n "$pct" ] && [ "$pct" -gt "$WARN" ]; then age=$PRESSED; fi
+# stat -f %b: the 512-byte blocks a file holds
+read -r n kb < <(find "$c" -mindepth 2 -maxdepth 2 -path "$c/??/*" -type f -mmin "+$age" -exec stat -f %b {} + 2>/dev/null |
+  awk '{n++; s += $1} END {print n + 0, int(s / 2)}')
+[ "$verb" = CLEAN ] && find "$c" -mindepth 2 -maxdepth 2 -path "$c/??/*" -type f -mmin "+$age" -delete 2>/dev/null
+[ "$n" -gt 0 ] && say "$verb $c $n files ${kb}KiB unchanged ${age}m"
+say "$verb-DONE $(hostname -s) ${kb}KiB age=${age}m"

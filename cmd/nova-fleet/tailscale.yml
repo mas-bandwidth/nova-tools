@@ -4,7 +4,8 @@
 # the tailnet (cmd/nova-fleet/README.md, "tailscale"; join.yml imports it). nova-fleet up merges the policy
 # (cmd/nova-fleet/tailscale-acl.json) and mints a single-use auth key per machine with TAILSCALE_API_KEY; this play does the rest:
 #
-#   1. Tailscale installed: Tailscale's apt repository on Debian and Ubuntu, Homebrew's cask on macOS.
+#   1. Tailscale installed: Tailscale's apt repository on Debian and Ubuntu, Homebrew's cask on macOS (none where the
+#      open-source tailscaled, Homebrew's formula, already runs: that Mac is driven as Linux is, Tailscale SSH included).
 #   2. `tailscale up --auth-key=file:/dev/stdin --hostname <machine> --advertise-tags=tag:nova[,tag:runner] [--ssh]`,
 #      the key TAILSCALE_AUTHKEY from the control node's environment (up puts it there), on stdin, on a machine that is not Running. A Running
 #      machine is never brought up again: a hostname or Tailscale SSH that differs is set in place with no key, and
