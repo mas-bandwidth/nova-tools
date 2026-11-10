@@ -169,7 +169,7 @@ reached as root at the address given, as on the first run.
 | `join` | a new machine joins the fleet: its row, its login, the tailnet, the tools a seat needs, its seat | the machine as the argument; its row's fields; `NOVA_PG_DSN` and `NOVA_PG_PASSWORD` in the environment, and `TAILSCALE_AUTHKEY` for a machine not on the tailnet (`up` mints it) |
 | `postgres` | the PostgreSQL nova-config keeps the fleet in, on each machine of the services group | `nova_seal_*` to seal its password |
 | `redis` | the Redis nova-bus talks to, on each machine of the services group | `nova_seal_*` to seal its password |
-| `runner-packages` | the packages a CI runner's tests need, from `nova_runner_packages`, on each machine of the bench and runner groups (a sprint card's gate needs what a CI job needs); packages only, nothing started | nothing; `-l` the machines |
+| `runner-packages` | the packages a CI runner's tests need, from `nova_runner_packages` (a CI toolchain by default), on each machine of the bench and runner groups (a sprint card's gate needs what a CI job needs); packages only, nothing started. `up` does not run it | nothing; `-l` the machines |
 | `seat` | each machine's seat in the secrets store | `nova_seal_store` |
 | `secrets-refresh` | the control node's encrypted store pushed to every machine with `ansible.posix.synchronize` (`verify_host: true`, no `.git`, stale files deleted, 0700/0600); no machine runs a timer (pull mode is retired; one left is removed) | `nova_seal_store` (the control node's clone) to push |
 | `services` | one supervised unit per service record, on the machine the record names (bench, runner and services groups) | the inventory's `nova_services` |
@@ -918,20 +918,40 @@ tailnet=<interface> dry=False watchdog=<interval> device=yes panic=<n> oops=<n> 
 
 The packages a CI runner's tests need, on each machine of the `bench` and `runner` groups (a bench runs the same gates), from `nova_runner_packages`
 (`group_vars/all.yml`): a list per OS, Homebrew formulae on `darwin` (as the login; brew refuses root) and apt
-packages on `debian`. Today that is `postgresql@18` on macOS, for the functional tier on mini-m5, and nothing on
-Linux. A package already installed is adopted as it is: never reinstalled, upgraded or auto-updated, so a run over it
-reports `changed=0`. Only packages: no server is started, no `brew services`, no unit; the tests run their own
-`initdb` and `pg_ctl` (with `LC_ALL=C`). CI never installs: the macOS functional job refuses when `initdb` is missing
-and names this play.
+packages on `debian`. The default is the toolchain of a fleet whose repositories build C, C++, Go, .NET, Java, OCaml
+and Python and test them: on macOS `postgresql@18` (the functional tier), `cmake`, `libsodium` and `pkgconf`; on
+Debian and Ubuntu the compilers, assemblers and build systems (`build-essential`, `clang-18`, `lld`, `cmake`,
+`ninja-build`, `ccache`, `nasm`), the libraries the tests link (libsodium, libbpf, libxdp, liburing, libcurl, MPFR,
+zlib, OpenGL), the runtimes (`golang-go`, `dotnet-sdk-10.0`, Mono, a Java runtime, `opam`, Python's pip and venv),
+the analysers and provers (`cppcheck`, `valgrind`, `cbmc`, `cadical`, `z3`, `gappa`, `sollya`), the store clients
+(`postgresql-client-18`, `redis-tools`, `sqlite3`), containers, VMs and emulation (`podman`, `bubblewrap`, `virtme-ng`,
+`qemu-system-x86`, `qemu-user`, `qemu-system-s390x` with the s390x cross compilers) and `bats`, `tcpdump` and the
+archivers; the list in `group_vars/all.yml` is grouped that way. Every name resolves on Ubuntu 26.04; a Debian
+release or an older Ubuntu lacks some of the versioned ones (`clang-18`, `postgresql-client-18`, `dotnet-sdk-10.0`),
+and there apt fails the task naming the package, and the fix is your own list, below, without it. A package already
+installed is adopted as it is: never reinstalled, upgraded or auto-updated, so a run over it reports `changed=0`.
+Only packages: no server is started, no `brew services`, no unit; the tests run their own `initdb` and `pg_ctl` (with
+`LC_ALL=C`). CI never installs: the macOS functional job refuses when `initdb` is missing and names this play.
 
 ```
-nova-fleet runner-packages --check -- -l mini-m5    # WOULD-INSTALL brew install --formula <name>, per missing one
-nova-fleet runner-packages -- -l mini-m5
+nova-fleet runner-packages --check -- -l bench      # WOULD-INSTALL apt-get install <name> (brew install --formula <name>), per missing one
+nova-fleet runner-packages -- -l bench
+```
+
+A list given with `-e` replaces the default whole, not merged, so another list starts from a copy: a JSON value, or a
+vars file after `-e @`, read from the directory you run in (the plays are elsewhere, so a file of yours never shadows
+one). [docs/examples/runner-packages-s390x-vm.yml](../../docs/examples/runner-packages-s390x-vm.yml) in the
+repository, copied beside your inventory, is the default list with the two switches below on, the foreign architecture `s390x` and the kernel copies
+for a VM of the host's own kernel, and the s390x libraries a big-endian build links added as `<name>:s390x`:
+
+```
+nova-fleet runner-packages --check -- -e @runner-packages-s390x-vm.yml -l bench
+nova-fleet runner-packages -- -e @runner-packages-s390x-vm.yml -l bench
 ```
 
 | Variable | Default | |
 |---|---|---|
-| `nova_runner_packages` | `{darwin: ["postgresql@18"], debian: []}` | another OS with a non-empty list is refused |
+| `nova_runner_packages` | `darwin`: `postgresql@18`, `cmake`, `libsodium`, `pkgconf`; `debian`: the toolchain above (`group_vars/all.yml`) | another OS with a non-empty list is refused |
 | `nova_runner_foreign_architectures` | `[]` | Ubuntu: dpkg architectures the debian list may name packages of, as `<name>:<arch>` |
 | `nova_runner_ports_uri` | `http://ports.ubuntu.com/ubuntu-ports/` | the archive a foreign architecture comes from |
 | `nova_runner_vm_kernel` | `false` | Debian/Ubuntu: keep each kernel image readable by the login, for a VM of the host's own kernel |

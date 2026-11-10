@@ -57,10 +57,87 @@ nova_age_keygen: "{{ '/opt/homebrew/bin/age-keygen' if (nova_system | default(an
 
 # The packages a CI runner's tests need, per OS (runner-packages.yml; cmd/nova-fleet/README.md, "runner-packages"): Homebrew
 # formulae on darwin, apt packages on debian. Installed when missing, never upgraded, never started: the functional
-# tier runs its own initdb and pg_ctl.
+# tier runs its own initdb and pg_ctl. The debian list is the toolchain of a fleet whose repositories build C, C++, Go,
+# .NET, Java, OCaml and Python, prove with SMT and bounded model checkers, and test in containers, VMs and under
+# emulation. Every name resolves on Ubuntu 26.04; a Debian release or an older Ubuntu lacks some of the versioned ones
+# (clang-18, postgresql-client-18, dotnet-sdk-10.0). A list given with -e replaces this one whole (no merge): copy it
+# and edit, or start from docs/examples/runner-packages-s390x-vm.yml in the repository, the same list with the
+# foreign-architecture libraries added and nova_runner_vm_kernel on. A package of another dpkg architecture
+# (`libsodium-dev:s390x`) needs that architecture in nova_runner_foreign_architectures, so none is in the default list.
 nova_runner_packages:
-  darwin: ["postgresql@18"]
-  debian: []
+  darwin: ["postgresql@18", cmake, libsodium, pkgconf]
+  debian:
+    # compilers, assemblers, build systems and the tools a build calls
+    - build-essential
+    - clang
+    - clang-18
+    - clang-format-18
+    - clang-tidy-18
+    - lld
+    - lld-18
+    - llvm
+    - llvm-18-dev
+    - libclang-rt-dev
+    - cmake
+    - ninja-build
+    - ccache
+    - m4
+    - nasm
+    - patch
+    - pkg-config
+    - file
+    - xxd
+    - jq
+    - graphviz
+    # libraries the tests link
+    - libbpf-dev
+    - libcurl4-openssl-dev
+    - libmpfr-dev
+    - libsodium-dev
+    - liburing-dev
+    - libxdp-dev
+    - zlib1g-dev
+    - libopengl0
+    - libglx0
+    # languages and runtimes
+    - golang-go
+    - dotnet-sdk-10.0
+    - mono-runtime
+    - mono-devel
+    - openjdk-21-jre-headless
+    - opam
+    - python3-pip
+    - python3-venv
+    # analysis, proof and dynamic checking
+    - cppcheck
+    - valgrind
+    - cbmc
+    - cadical
+    - z3
+    - gappa
+    - sollya
+    # clients of the stores the functional tier talks to (the tests start their own servers)
+    - postgresql-client-18
+    - redis-tools
+    - sqlite3
+    # containers, VMs and emulation; the s390x cross compilers for a big-endian build
+    - podman
+    - uidmap
+    - bubblewrap
+    - virtme-ng
+    - qemu-system-x86
+    - qemu-utils
+    - virtiofsd
+    - qemu-user
+    - qemu-system-s390x
+    - gcc-s390x-linux-gnu
+    - g++-s390x-linux-gnu
+    # shells, archives and packet capture
+    - bats
+    - bzip2
+    - xz-utils
+    - unzip
+    - tcpdump
 # Foreign dpkg architectures the debian list may name packages of (`libfoo-dev:s390x`), Ubuntu only: each is enabled in
 # dpkg and fetched from nova_runner_ports_uri, and the native sources are restricted to the native architecture.
 nova_runner_foreign_architectures: []
