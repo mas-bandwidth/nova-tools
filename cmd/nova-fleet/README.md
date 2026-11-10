@@ -174,7 +174,7 @@ reached as root at the address given, as on the first run.
 | `seat` | each machine's seat in the secrets store | `nova_seal_store` |
 | `secrets-refresh` | the control node's encrypted store pushed to every machine with `ansible.posix.synchronize` (`verify_host: true`, no `.git`, stale files deleted, 0700/0600); no machine runs a timer (pull mode is retired; one left is removed) | `nova_seal_store` (the control node's clone) to push |
 | `services` | one supervised unit per service record, on the machine the record names (bench, runner and services groups) | the inventory's `nova_services` |
-| `ssh-names` | the owner's `ssh <machine>` by tailnet name from every machine, as root with his agent forwarded; workers locked out (all machines; one asleep or away is reported offline) | nothing |
+| `ssh-names` | the owner's `ssh <machine>` by tailnet name from every machine, as root with his agent forwarded, the control node's key (the argument, a `.pub`) added to each Linux root's `authorized_keys`; workers locked out (all machines; one asleep or away is reported offline) | nothing |
 | `windows-runners` | a WSL machine held running from boot, and its Windows-side GitHub Actions runners from its record's `windows_runners`, through WSL interop | the record's `windows_runners`; `gh` on the control node logged in with admin on each repository or organization |
 | `tailscale` | each machine on the tailnet, its address the MagicDNS name, its firewall closed to all but the tailnet | `TAILSCALE_AUTHKEY` in the environment for a machine not on the tailnet (`up` mints it) |
 
@@ -198,7 +198,8 @@ itself).
 
 By default the inventory is a script in the extracted directory that execs `nova-config inventory` (found on PATH),
 and `ANSIBLE_INVENTORY_UNPARSED_FAILED=true` is set so a failing script fails the run rather than reading as an
-empty fleet. nova-config (`cmd/nova-config/README.md`) keeps the machines and services as rows; `nova-config inventory`
+empty fleet. Every play's ssh also gets `ANSIBLE_SSH_EXTRA_ARGS=-o ForwardAgent=no` (ahead of yours): a play never
+forwards the control node's agent to a fleet login (`ssh-names`). nova-config (`cmd/nova-config/README.md`) keeps the machines and services as rows; `nova-config inventory`
 prints each machine as a host in the groups its roles name (`bench`, `runner`, `services`, so `-l bench` runs on
 every bench), with its service rows as the host variable `nova_services` (always present; empty means none).
 
@@ -658,7 +659,8 @@ one. On a Mac machine, open the Tailscale app once at its console and approve it
    that differs, or Tailscale SSH left on by an earlier release, is set in place with `tailscale set
    --hostname=<machine> --ssh=false`, with no key. Tailscale SSH stays off: it trusts the machine, not the person,
    so with it on every worker on a tagged machine is let in. Before turning it off on a machine, make sure the
-   control node's key is in that machine's login's `authorized_keys` (its sshd takes over port 22).
+   control node's key is in that machine's login's `authorized_keys` (its sshd takes over port 22): `ssh-names` puts
+   it there.
 3. Records `Self.DNSName` (`<machine>.<tailnet>.ts.net`) as the machine's address: `nova-config machine set <name>
    --address <dns name>`, then reads the inventory again, so the firewall play, every run after it, the bus and the
    services reach the machine by that name.
@@ -695,9 +697,7 @@ The owner's `ssh <machine>` by tailnet name, for his own interactive use, from a
 
 **The model.** He reaches a Linux machine as root (a Mac as its login, which is his) with his own key, and his ssh
 agent is forwarded, so from there `ssh <name>` to the next machine authenticates with the same key, still held only
-on his own machine: no private key is copied anywhere, and the play never reads one. Each machine's root must accept
-his public key in `/root/.ssh/authorized_keys` (a Mac: its login's); this play does not write `authorized_keys`.
-Tailscale SSH is off (the `tailscale` play, `--ssh=false`): it trusts the machine, not the person, so with it on every
+on his own machine: no private key is copied anywhere, and the play never reads one. Tailscale SSH is off (the `tailscale` play, `--ssh=false`): it trusts the machine, not the person, so with it on every
 worker or CI job on a tagged machine would get in. Fleet workers (the fleet login on a Linux machine, e.g. `nova`)
 get nothing from this play: no names, no pins, and no key that any root accepts.
 
@@ -717,12 +717,21 @@ On each machine the play writes into root's home on Linux (by sudo) and into the
   file is changed. An `Include` of it inside a `Host` or `Match` block applies to that block only; the file is left
   alone and the run prints `SSH-NAMES <machine> INCLUDE LEFT ALONE` with the line: move it by hand.
 
-On a Linux machine the fleet login's home is the workers': the play writes nothing there and removes what an earlier
-release wrote (`config.d/nova-fleet`, `nova-fleet.known_hosts`, the `Include` line); the rest of that config, such as
-the workers' own `config.d/*` files, is left alone.
+On a Linux machine the fleet login's home is the workers': the play writes none of these files there and removes what
+an earlier release wrote (`config.d/nova-fleet`, `nova-fleet.known_hosts`, the `Include` line); the rest of that
+config, such as the workers' own `config.d/*` files, is left alone.
+
+**The control node's key.** The play's argument is the control node's interactive public key file, the one its own
+`ssh root@<machine>` authenticates with (`ssh -v` names it: `Server accepts key: <file>`). It is read on the control
+node at play time and only from a `.pub`; it is never written into this repository. On each Linux machine its line is
+added to root's `~/.ssh/authorized_keys`, so the control node and the owner reach root, and to the fleet login's, so
+the play keeps its own way in with Tailscale SSH off (root's access already covers the login's). A line is only ever
+added, and only where no line holds that key already (options or comment aside); no line is changed or removed. A new
+`~/.ssh` is made `0700` and a new `authorized_keys` `0600`; existing ones keep their modes. A Mac's are left alone.
 
 Before anything is written anywhere, the run is refused (`SSH-NAMES REFUSED ...`, naming the machine and the field) on:
-an address that is not `<label>.<tailnet>.ts.net` or an IP; a user that is not a login name (`[a-z_][a-z0-9_-]*`); an
+no control key, a control key file that is not a `.pub` (never read), or one that is not a single public key line
+(`<type> <base64> [comment]`, no options; its contents are never printed); an address that is not `<label>.<tailnet>.ts.net` or an IP; a user that is not a login name (`[a-z_][a-z0-9_-]*`); an
 os that is not `linux` or `darwin`; a name nova-config would not take; a machine that answers with no sshd ed25519
 key. A write limited with `-l` is refused too: every machine's file holds every machine's key, so a write runs on all
 of them (`--check` takes `-l`).
@@ -730,33 +739,41 @@ of them (`--check` takes `-l`).
 ssh takes the first value it reads for an option, so for a fleet name the values of this file win over a
 hand-written `Host` block of the same name later in `~/.ssh/config`, and that block's other options still apply.
 
-Then three checks, none under `--check` and none forwarding an agent (the owner's is not the play's):
+No play's own ssh connection forwards an agent: nova-fleet passes `-o ForwardAgent=no` to Ansible's ssh
+(`ANSIBLE_SSH_EXTRA_ARGS`, ahead of any of yours), because the control node's own config now says `ForwardAgent yes`
+for every fleet name, and a play lands on the fleet login, where any worker could use a forwarded agent.
+
+Then three checks, none under `--check` and each with `-o ForwardAgent=no` (the owner's agent is not the play's):
 
 - **CONTROL**: from the control node, `ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -l <root, or a Mac's login>
   <address> true` to every machine, with the control node's own key: each `ok` or `failed` with ssh's last line.
 - **WORKERS**: on each Linux machine, as the fleet login, the same as root to every other machine: each must be
   `denied` by sshd. One that gets in fails the run (`got-in=`), and so does one whose answer is not a denial
-  (`unproven=`, e.g. a timeout: lockout not shown).
+  (`unproven=`, e.g. a timeout: lockout not shown), and so does an agent reaching the fleet login (`agent=forwarded`:
+  `SSH_AUTH_SOCK` set in the play's own session).
 - **CONFIG**: on each machine, as root (a Mac, its login), `ssh -G <name>` for every machine: the user, address and
   `ForwardAgent yes` the file says.
 
 A machine that did not answer the play (a laptop asleep or away) is `OFFLINE`, skipped, and never fails the run.
 
 ```
-nova-fleet ssh-names --check --diff
-nova-fleet ssh-names
+nova-fleet ssh-names ~/.ssh/<the control node's key>.pub --check --diff
+nova-fleet ssh-names ~/.ssh/<the control node's key>.pub
 ```
 
 **Check.** Per machine `SSH-NAMES <machine> as=<root|login> machines=<n> online=<n> config=<written|same>
-known_hosts=<written|same> include=<set|first|inside-a-block> removed=<n>`, `SSH-NAMES CONFIG <machine> ok=<n>
-wrong=<names>`, on Linux `SSH-NAMES WORKERS <machine> denied=<n> got-in=<names> unproven=<names>`, and once `SSH-NAMES
-CONTROL ok=<n> failed=<names> offline=<names>`. Under `--check` nothing is written or removed and nothing is tried.
-**Rollback.** Remove the `Include` line, `~/.ssh/config.d/nova-fleet` and `~/.ssh/nova-fleet.known_hosts` from root's
-home (a Mac, the login's).
+known_hosts=<written|same> include=<set|first|inside-a-block> removed=<n> key-added=<root,login|->`, `SSH-NAMES CONFIG
+<machine> ok=<n> wrong=<names>`, on Linux `SSH-NAMES WORKERS <machine> denied=<n> got-in=<names> unproven=<names>
+agent=<forwarded|->`, and once `SSH-NAMES CONTROL ok=<n> failed=<names> offline=<names>`. Under `--check` nothing is
+written or removed and nothing is tried. **Rollback.** Remove the `Include` line, `~/.ssh/config.d/nova-fleet` and
+`~/.ssh/nova-fleet.known_hosts` from root's home (a Mac, the login's); the control node's line in `authorized_keys`
+is removed by hand, if at all (the play's own way in may depend on it).
 
 **What it does not stop.** A fleet login with passwordless sudo can become root on its own machine, and while the
 owner is logged in there with his agent forwarded, root can use that agent. The WORKERS check proves the login's own
-keys open no root; it does not prove a worker cannot reach root locally.
+keys open no root; it does not prove a worker cannot reach root locally. The owner's own `ssh <login>@<name>` matches
+the same `Host` block and forwards his agent to that login too. `AddKeysToAgent confirm` in the owner's own ssh config
+makes each use of a forwarded key ask him first; the play does not set it.
 
 ## seat
 

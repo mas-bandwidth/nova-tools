@@ -409,6 +409,15 @@ func unmatched(list string) (groups []string) {
 	return slices.Compact(groups)
 }
 
+// playEnv is every play's environment: an inventory that fails to parse fails the run, and no ssh connection of the
+// play forwards an agent whatever the control node's ssh config says. ssh-names writes ForwardAgent yes there for the
+// owner's own ssh by name; a play's connection lands on the fleet login, where any worker could use a forwarded agent.
+// The caller's own ANSIBLE_SSH_EXTRA_ARGS follow it (ssh takes an option's first value).
+func playEnv() []string {
+	extra := strings.TrimSpace("-o ForwardAgent=no " + os.Getenv("ANSIBLE_SSH_EXTRA_ARGS"))
+	return append(os.Environ(), "ANSIBLE_INVENTORY_UNPARSED_FAILED=true", "ANSIBLE_SSH_EXTRA_ARGS="+extra)
+}
+
 func runPlay(play string, args []string, stdout, stderr io.Writer, refuse func(string, string, ...any) int) int {
 	var inventory string
 	var pass []string
@@ -492,7 +501,7 @@ func runPlay(play string, args []string, stdout, stderr io.Writer, refuse func(s
 	defer os.RemoveAll(dir)
 	ansible, _ := lookPath("ansible-playbook")
 	argv := append([]string{"-i", inventory, filepath.Join(dir, play+".yml")}, pass...)
-	env := append(os.Environ(), "ANSIBLE_INVENTORY_UNPARSED_FAILED=true")
+	env := playEnv()
 	// ansible-playbook exits 0 on a play that matched no host; ask it first. A listing that fails
 	// is left to the run itself, which reports the same failure (a -l that matches nothing).
 	if !slices.ContainsFunc(pass, func(a string) bool { return a == "--syntax-check" || strings.HasPrefix(a, "--list-") }) {

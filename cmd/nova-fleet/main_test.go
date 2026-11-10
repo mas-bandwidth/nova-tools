@@ -148,6 +148,28 @@ func TestPlaysAndShow(t *testing.T) {
 	}
 }
 
+// No play's ssh connection forwards an agent, whatever the control node's ssh config says (ssh-names writes ForwardAgent
+// yes there for the owner's names); ssh arguments of the caller's own are kept after it, and ssh takes the first value.
+func TestPlayEnvForwardsNoAgent(t *testing.T) {
+	t.Setenv("ANSIBLE_SSH_EXTRA_ARGS", "-o ServerAliveInterval=5")
+	env := playEnv()
+	var last string
+	for _, e := range env {
+		if v, ok := strings.CutPrefix(e, "ANSIBLE_SSH_EXTRA_ARGS="); ok {
+			last = v // os/exec keeps the last value of a name
+		}
+	}
+	if last != "-o ForwardAgent=no -o ServerAliveInterval=5" {
+		t.Errorf("ANSIBLE_SSH_EXTRA_ARGS=%q", last)
+	}
+	if !slices.Contains(env, "ANSIBLE_INVENTORY_UNPARSED_FAILED=true") {
+		t.Error("env lacks ANSIBLE_INVENTORY_UNPARSED_FAILED=true")
+	}
+	if !slices.Contains((&upRun{}).env(), "ANSIBLE_SSH_EXTRA_ARGS=-o ForwardAgent=no -o ServerAliveInterval=5") {
+		t.Error("up's plays forward an agent")
+	}
+}
+
 func TestPassThrough(t *testing.T) {
 	f := &fake{found: map[string]string{"ansible-playbook": "/opt/ansible/bin/ansible-playbook"}, code: 4}
 	f.install(t)
@@ -175,6 +197,9 @@ func TestPassThrough(t *testing.T) {
 	}
 	if !slices.Contains(f.env, "ANSIBLE_INVENTORY_UNPARSED_FAILED=true") {
 		t.Error("env lacks ANSIBLE_INVENTORY_UNPARSED_FAILED=true")
+	}
+	if !slices.Contains(f.env, "ANSIBLE_SSH_EXTRA_ARGS=-o ForwardAgent=no") {
+		t.Error("env lacks ANSIBLE_SSH_EXTRA_ARGS=-o ForwardAgent=no")
 	}
 	if _, err := os.Stat(filepath.Dir(play)); !os.IsNotExist(err) {
 		t.Errorf("extracted dir %s left behind after the run", filepath.Dir(play))

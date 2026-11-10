@@ -453,14 +453,16 @@ What each installs and its variables are in
 `ssh-names` gives the owner `ssh <machine>` by tailnet name from every
 machine to every other, as root (a Mac: its login) with his own key and his
 agent forwarded. Tailscale SSH stays off, because it trusts the machine and
-would let any worker in. The fleet logins (the workers) get no names and no
-root: the play checks that each is denied. A machine asleep or away is
-reported offline
+would let any worker in. Its argument is the control node's public key
+file; the play adds that key to root's `authorized_keys` and the fleet
+login's on each Linux machine, adding lines only. The fleet logins (the
+workers) get no names and no root: the play checks that each is denied and
+that no agent reaches them. A machine asleep or away is reported offline
 ([ssh-names](../cmd/nova-fleet/README.md#ssh-names)):
 
 ```text
-nova-fleet ssh-names --check --diff
-nova-fleet ssh-names
+nova-fleet ssh-names ~/.ssh/<the control node's key>.pub --check --diff
+nova-fleet ssh-names ~/.ssh/<the control node's key>.pub
 ```
 
 A tool whose release is laid out as nova-tools' is (assets

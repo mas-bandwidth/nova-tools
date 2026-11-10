@@ -1,4 +1,5 @@
-# purpose: the owner's ssh <machine> by tailnet name from every machine, as root with his agent forwarded; workers locked out (all machines; one asleep or away is reported offline)
+# purpose: the owner's ssh <machine> by tailnet name from every machine, as root with his agent forwarded, the control node's key (the argument, a .pub) added to each Linux root's authorized_keys; workers locked out (all machines; one asleep or away is reported offline)
+# argument: ssh_names_control_key
 #
 # ssh-names.yml (cmd/nova-fleet/README.md, "ssh-names"). The model: ssh between fleet machines by name is the owner's,
 # for his own interactive use. He lands on a Linux machine as root (on a Mac as its login, which is his) with his own
@@ -21,9 +22,17 @@
 #                                   Host or Match block is left alone and reported
 #
 # On a Linux machine the fleet login's home is the workers': what an earlier release wrote there (its
-# config.d/nova-fleet, the known hosts file, the Include line) is removed, and nothing is written.
+# config.d/nova-fleet, the known hosts file, the Include line) is removed, and none of the files above is written.
 #
-# Before anything is written, the run is refused (nothing written anywhere) on: a record whose address is not a
+# The control node's key. The play's argument names the control node's interactive public key file (a .pub, read on
+# the control node; the private key is never read). On each Linux machine its line is added to root's
+# ~/.ssh/authorized_keys, so the control node and the owner reach root, and to the fleet login's, so the play keeps its
+# own way in with Tailscale SSH off (root's access already covers the login's). A line is only ever added, and only
+# where no line holds that key already; no line is changed or removed. A new ~/.ssh is made 0700 and a new
+# authorized_keys 0600; existing ones keep their modes. A Mac's are left alone.
+#
+# Before anything is written, the run is refused (nothing written anywhere) on: no control key, a control key file that
+# is not a .pub, or one that is not a single public key line (<type> <base64> [comment], no options); a record whose address is not a
 # tailnet name (<label>.<tailnet>.ts.net) or an IP, whose user is not a login name, whose os is neither linux nor
 # darwin, or whose name nova-config would not take; a machine that answers with no sshd ed25519 key; a write limited
 # with -l (every machine's file holds every machine's key; --check takes -l). No private key is ever read.
@@ -32,13 +41,14 @@
 #   CONTROL  from the control node, `ssh -o BatchMode=yes -l <root|the Mac's login> <address> true` to every machine,
 #            with the control node's own key and its pinned host keys: each ok or failed
 #   WORKERS  on each Linux machine, as the fleet login, the same as root to every other machine: each must be DENIED
-#            (sshd's "Permission denied"); one that gets in, or that cannot be told, fails the run
+#            (sshd's "Permission denied"); one that gets in, or that cannot be told, fails the run; so does an agent
+#            reaching the fleet login (SSH_AUTH_SOCK set in the play's own session), which any worker there could use
 #   CONFIG   on each machine, as root (a Mac: its login), `ssh -G <name>` for every machine: the user, address and
 #            ForwardAgent the file says
 # A machine that does not answer the play (a laptop asleep) is reported OFFLINE and skipped, never a failure.
 #
-#   nova-fleet ssh-names --check --diff
-#   nova-fleet ssh-names
+#   nova-fleet ssh-names ~/.ssh/<the control node's key>.pub --check --diff
+#   nova-fleet ssh-names ~/.ssh/<the control node's key>.pub
 - name: the owner's ssh by name, as root with his agent forwarded; workers locked out
   hosts: all
   gather_facts: true
@@ -59,6 +69,16 @@
     ssh_names_home: "{{ nova_home if ssh_names_mac else (ssh_names_root_home | default('/root')) }}"
     ssh_names_sudo: "{{ not ssh_names_mac and (ssh_names_root_sudo | default(true) | bool) }}"
     ssh_names_known_file: "{{ ssh_names_home }}/.ssh/nova-fleet.known_hosts"
+    # the control node's key (the play's argument): read on the control node, and only from a .pub
+    ssh_names_control_path: "{{ ssh_names_control_key | default('') | string | expanduser }}"
+    ssh_names_control_pub: "{{ ssh_names_control_path is match('.*\\.pub\\Z') }}"
+    ssh_names_control_line: "{{ (lookup('file', ssh_names_control_path) | trim) if (ssh_names_control_pub | bool) and ssh_names_control_path is file else '' }}"
+    ssh_names_control_blob: "{{ ssh_names_control_line.split(' ')[1] if ssh_names_control_line is match(ssh_names_pubkey_re) else '' }}"
+    ssh_names_pubkey_re: '^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(256|384|521)|sk-ssh-ed25519@openssh\.com|sk-ecdsa-sha2-nistp256@openssh\.com) [A-Za-z0-9+/]+=*( [^\n]*)?\Z'
+    # where it goes: root's authorized_keys on Linux, and the fleet login's; nowhere on a Mac
+    ssh_names_key_homes: >-
+      {{ [] if ssh_names_mac else ([{'who': 'root', 'home': ssh_names_home, 'sudo': ssh_names_sudo | bool}]
+         + ([{'who': 'login', 'home': nova_home, 'sudo': false}] if nova_home != ssh_names_home else [])) }}
   tasks:
     - name: a write runs on every machine (each machine's file holds every machine's key)
       ansible.builtin.assert:
@@ -100,6 +120,13 @@
           {%- set ipv4_re = '^((25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])\.){3}(25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])\Z' -%}
           {%- set ipv6_re = '^[0-9a-f]*:[0-9a-f:]*\Z' -%}
           {%- set user_re = '^[a-z_][a-z0-9_-]*\Z' -%}
+          {%- if ssh_names_control_path == '' -%}
+          {%-   set _ = bad.append("control key: none given (nova-fleet ssh-names <the control node's public key file, ~/.ssh/<key>.pub>)") -%}
+          {%- elif not (ssh_names_control_pub | bool) -%}
+          {%-   set _ = bad.append('control key ' ~ ssh_names_control_path ~ ': not a .pub file (give the public key; a private key is never read)') -%}
+          {%- elif ssh_names_control_blob == '' -%}
+          {%-   set _ = bad.append('control key ' ~ ssh_names_control_path ~ ': not one public key line (<type> <base64> [comment], no options)') -%}
+          {%- endif -%}
           {%- for h in ssh_names_hosts -%}
           {%-   set a = hostvars[h].ansible_host | default('') | string -%}
           {%-   set u = hostvars[h].ansible_user | default('') | string -%}
@@ -125,6 +152,14 @@
     - name: the files, in root's home (Linux) or the login's (a Mac)
       become: "{{ ssh_names_sudo }}"
       block:
+        - name: the .ssh directory as it is
+          ansible.builtin.stat: { path: "{{ ssh_names_home }}/.ssh" }
+          register: ssh_names_dot_ssh
+
+        - name: a .ssh directory, made 0700 where there is none (an existing one keeps its mode)
+          ansible.builtin.file: { path: "{{ ssh_names_home }}/.ssh", state: directory, mode: "0700" }
+          when: not ssh_names_dot_ssh.stat.exists
+
         - name: the directory the play owns
           ansible.builtin.file: { path: "{{ ssh_names_home }}/.ssh/config.d", state: directory, mode: "0700" }
 
@@ -206,6 +241,27 @@
           register: ssh_names_removed_include
           failed_when: false   # no ssh config at all is fine
 
+    # Linux: the control node's key in root's authorized_keys and the fleet login's. Added only; nothing else touched.
+    - name: the authorized keys each holds now (root's, and the fleet login's)
+      ansible.builtin.slurp: { src: "{{ item.home }}/.ssh/authorized_keys" }
+      become: "{{ item.sudo }}"
+      loop: "{{ ssh_names_key_homes }}"
+      loop_control: { label: "{{ item.who }}" }
+      register: ssh_names_keys_was
+      failed_when: false   # none yet is fine
+
+    - name: the control node's key, added where no line holds it (0600 when the file is new)
+      ansible.builtin.lineinfile:
+        path: "{{ item.item.home }}/.ssh/authorized_keys"
+        line: "{{ ssh_names_control_line }}"
+        create: true
+        mode: "{{ omit if item.content is defined else '0600' }}"
+      become: "{{ item.item.sudo }}"
+      loop: "{{ ssh_names_keys_was.results }}"
+      loop_control: { label: "{{ item.item.who }}" }
+      when: ssh_names_control_blob not in (item.content | default('') | b64decode).split()
+      register: ssh_names_key_added
+
     - name: the receipt
       ansible.builtin.debug:
         msg: >-
@@ -215,9 +271,11 @@
           known_hosts={{ (w ~ 'written') if ssh_names_known is changed else 'same' }}
           include={{ 'inside-a-block' if ssh_names_include_inside | int > 0 else (w ~ 'set') if ssh_names_config_include is changed else 'first' }}
           removed={{ ((ssh_names_removed_files.results | default([]) | select('changed') | list | length) + (1 if ssh_names_removed_include is changed else 0)) or '-' }}
+          key-added={{ (w ~ added) if added else '-' }}
           {%- if ansible_check_mode %} (check: nothing changed){% endif %}
       vars:
         w: "{{ 'would-be-' if ansible_check_mode else '' }}"
+        added: "{{ ssh_names_key_added.results | default([]) | select('changed') | map(attribute='item.item.who') | join(',') }}"
 
     # ---- CONFIG: each machine's own ssh reads the names as the file says (no network) ----
     - name: CONFIG, ssh -G for every machine as root (a Mac, its login)
@@ -249,9 +307,10 @@
     # ---- WORKERS: the fleet login on a Linux machine gets in as root nowhere ----
     - name: WORKERS, ssh as root to every other machine as the fleet login (each must be denied)
       ansible.builtin.shell: |
+        [ -n "$SSH_AUTH_SOCK" ] && echo "agent forwarded to the fleet login: any worker here could use it"
         d=$(mktemp -d)
         {% for h in ssh_names_online | reject('equalto', inventory_hostname) %}
-        ( if ssh -n -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -l root {{ hostvars[h].ansible_host | quote }} true >/dev/null 2>"$d/{{ h }}"; then echo "in {{ h }}"
+        ( if ssh -n -o BatchMode=yes -o ForwardAgent=no -o ConnectTimeout=10 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -l root {{ hostvars[h].ansible_host | quote }} true >/dev/null 2>"$d/{{ h }}"; then echo "in {{ h }}"
           elif grep -q 'Permission denied' "$d/{{ h }}"; then echo "denied {{ h }}"
           else echo "unproven {{ h }}: $(tail -n 1 "$d/{{ h }}" | tr -s ' \t' '  ')"; fi ) &
         {% endfor %}
@@ -267,6 +326,7 @@
           SSH-NAMES WORKERS {{ inventory_hostname }} denied={{ ssh_names_workers.stdout_lines | select('match', '^denied ') | list | length }}
           got-in={{ ssh_names_workers.stdout_lines | select('match', '^in ') | map('regex_replace', '^in ', '') | sort | join(',') or '-' }}
           unproven={{ ssh_names_workers.stdout_lines | select('match', '^unproven ') | map('regex_replace', '^unproven ([^:]*):.*$', '\1') | sort | join(',') or '-' }}
+          agent={{ 'forwarded' if ssh_names_workers.stdout_lines | select('match', '^agent ') | list else '-' }}
       when: ssh_names_workers is not skipped
 
     # ---- CONTROL: the control node reaches every machine with its own key ----
@@ -274,7 +334,7 @@
       ansible.builtin.shell: |
         d=$(mktemp -d)
         {% for h in ssh_names_online %}
-        ( if ssh -n -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=yes -l {{ (hostvars[h].ansible_user if h in ssh_names_macs else 'root') | quote }} {{ hostvars[h].ansible_host | quote }} true >/dev/null 2>"$d/{{ h }}"; then echo "ok {{ h }}"
+        ( if ssh -n -o BatchMode=yes -o ForwardAgent=no -o ConnectTimeout=10 -o StrictHostKeyChecking=yes -l {{ (hostvars[h].ansible_user if h in ssh_names_macs else 'root') | quote }} {{ hostvars[h].ansible_host | quote }} true >/dev/null 2>"$d/{{ h }}"; then echo "ok {{ h }}"
           else echo "failed {{ h }}: $(tail -n 1 "$d/{{ h }}" | tr -s ' \t' '  ')"; fi ) &
         {% endfor %}
         wait
@@ -305,7 +365,7 @@
           {% set workers = ssh_names_workers.stdout_lines | default([]) | reject('match', '^denied ') | list %}
           {% set control = ssh_names_control.stdout_lines | default([]) | select('match', '^failed ') | list %}
           {% if wrong %}SSH-NAMES CONFIG {{ inventory_hostname }} FAILED {{ wrong | sort | join('; ') }} (root's ssh does not read the names as written: is the Include first?) {% endif %}
-          {% if workers %}SSH-NAMES WORKERS {{ inventory_hostname }} FAILED {{ workers | sort | join('; ') }} (the fleet login must be denied as root everywhere: find the key that let it in, in that machine's /root/.ssh/authorized_keys) {% endif %}
-          {% if control %}SSH-NAMES CONTROL FAILED {{ control | sort | join('; ') }} (the control node's key must be in that machine's root authorized_keys; a Mac, its login's) {% endif %}
+          {% if workers %}SSH-NAMES WORKERS {{ inventory_hostname }} FAILED {{ workers | sort | join('; ') }} (the fleet login must be denied as root everywhere and hold no agent: find the key that let it in, in that machine's /root/.ssh/authorized_keys; an agent comes from an ssh config forwarding one to the play's connection) {% endif %}
+          {% if control %}SSH-NAMES CONTROL FAILED {{ control | sort | join('; ') }} (this run put the control key into each Linux root's authorized_keys: is the argument the key this control node uses, and does sshd permit root by key? A Mac: its login's authorized_keys) {% endif %}
         quiet: true
       when: not ansible_check_mode

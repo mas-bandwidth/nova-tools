@@ -59,7 +59,11 @@ type sshNamesHost struct{ name, address, user, os string }
 type sshNamesFleet struct {
 	dir, inventory, bin, sshLog string
 	root, login, key            map[string]string // root's home (Linux), the fleet login's home, the host key
+	controlKey, controlLine     string            // the control node's public key file (the play's argument) and its line
 }
+
+// the control node's interactive public key; its blob is what marks it present in an authorized_keys file
+const sshNamesControlBlob = "AAAAC3NzaC1lZDI1NTE5AAAAIcontrolnodeKey"
 
 func sshNamesKey(h string) string {
 	return "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI" + strings.ReplaceAll(h, "-", "") + "Key"
@@ -78,6 +82,9 @@ func newSSHNamesFleet(t *testing.T, edit func(h *sshNamesHost)) *sshNamesFleet {
 	f.sshLog = filepath.Join(f.dir, "ssh.log")
 	require.NoError(t, os.MkdirAll(f.bin, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(f.bin, "ssh"), []byte(fakeSSH), 0o755))
+	f.controlKey = filepath.Join(f.dir, "control.pub")
+	f.controlLine = "ssh-ed25519 " + sshNamesControlBlob + " owner@control"
+	require.NoError(t, os.WriteFile(f.controlKey, []byte(f.controlLine+"\n"), 0o644))
 	var inv strings.Builder
 	inv.WriteString("all:\n  hosts:\n")
 	for _, h := range []sshNamesHost{{"bench-1", "", "alice", "linux"}, {"laptop-1", "", "carol", "linux"}, {"mac-1", "", "bob", "darwin"}} {
@@ -116,8 +123,16 @@ func (f *sshNamesFleet) run(t *testing.T, env []string, extra ...string) (string
 	require.NoError(t, err, "the play's config check runs the real ssh -G; the client must be installed")
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "ansible-playbook", append([]string{"-i", f.inventory, play}, extra...)...)
-	cmd.Env = append(append(os.Environ(), "ANSIBLE_NOCOLOR=1", "HOME="+f.dir, "TMPDIR="+f.dir,
+	// the control key is the play's argument, as nova-fleet passes it; a test's own -e after it wins
+	args := append([]string{"-i", f.inventory, play, "-e", "ssh_names_control_key=" + f.controlKey}, extra...)
+	cmd := exec.CommandContext(ctx, "ansible-playbook", args...)
+	var environ []string
+	for _, e := range os.Environ() {
+		if !strings.HasPrefix(e, "SSH_AUTH_SOCK=") { // the machine running the test may have an agent; a test sets its own
+			environ = append(environ, e)
+		}
+	}
+	cmd.Env = append(append(environ, "ANSIBLE_NOCOLOR=1", "HOME="+f.dir, "TMPDIR="+f.dir,
 		"ANSIBLE_LOCAL_TEMP="+filepath.Join(f.dir, "tmp"), "PATH="+f.bin+":"+os.Getenv("PATH"),
 		"FAKE_SSH_LOG="+f.sshLog, "REAL_SSH="+realSSH), env...)
 	out, err := cmd.CombinedOutput()
@@ -229,6 +244,7 @@ func TestSSHNamesWritesRootsFilesNotTheWorkers(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(alice, "config.d", "nova-github-read-x"), []byte("Host github-x\n"), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(alice, "nova-fleet.known_hosts"), []byte("old\n"), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(alice, "config"), []byte("Include ~/.ssh/config.d/nova-fleet\nInclude ~/.ssh/config.d/*\n"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(alice, "authorized_keys"), []byte("ssh-rsa AAAAold alice@x"), 0o640)) // no final newline
 	kept := "laptop-1,laptop-1.tail0test.ts.net " + f.key["laptop-1"]
 	require.NoError(t, os.WriteFile(filepath.Join(f.root["bench-1"], ".ssh", "nova-fleet.known_hosts"), []byte(kept+"\n"), 0o600))
 
@@ -248,6 +264,17 @@ func TestSSHNamesWritesRootsFilesNotTheWorkers(t *testing.T) {
 	assert.FileExists(t, filepath.Join(alice, "config.d", "nova-github-read-x"), "the worker's own files are left alone")
 	assert.Equal(t, "Include ~/.ssh/config.d/*\n", readFile(t, filepath.Join(alice, "config")), "the Include goes, the rest stays")
 
+	// the control node's key: root's authorized_keys made (0600) on Linux; the fleet login's added to, its own line and
+	// mode kept, so the play keeps its own way in; the Mac's left alone
+	assert.Equal(t, f.controlLine+"\n", readFile(t, filepath.Join(rootSSH, "authorized_keys")))
+	assert.Equal(t, "ssh-rsa AAAAold alice@x\n"+f.controlLine+"\n", readFile(t, filepath.Join(alice, "authorized_keys")))
+	for file, mode := range map[string]os.FileMode{filepath.Join(rootSSH, "authorized_keys"): 0o600, filepath.Join(alice, "authorized_keys"): 0o640} {
+		st, err := os.Stat(file)
+		require.NoError(t, err)
+		assert.Equal(t, mode, st.Mode().Perm(), file)
+	}
+	assert.NoFileExists(t, filepath.Join(bob, "authorized_keys"))
+
 	for home, users := range map[string]map[string]string{f.root["bench-1"]: {"bench-1": "root", "mac-1": "bob"}, f.login["mac-1"]: {"bench-1": "root", "laptop-1": "root", "mac-1": "bob"}} {
 		for name, user := range users {
 			g := f.sshG(t, home, name)
@@ -259,8 +286,8 @@ func TestSSHNamesWritesRootsFilesNotTheWorkers(t *testing.T) {
 	assert.Equal(t, "true", f.sshG(t, f.login["mac-1"], "bench-1")["addkeystoagent"])
 
 	assert.Contains(t, out, "SSH-NAMES laptop-1 OFFLINE")
-	assert.Contains(t, out, "SSH-NAMES bench-1 as=root machines=3 online=2 config=written known_hosts=written include=set removed=3")
-	assert.Contains(t, out, "SSH-NAMES mac-1 as=bob machines=3 online=2 config=written known_hosts=written include=set removed=-")
+	assert.Contains(t, out, "SSH-NAMES bench-1 as=root machines=3 online=2 config=written known_hosts=written include=set removed=3 key-added=root,login")
+	assert.Contains(t, out, "SSH-NAMES mac-1 as=bob machines=3 online=2 config=written known_hosts=written include=set removed=- key-added=-")
 	assert.Contains(t, out, "SSH-NAMES CONFIG bench-1 ok=3 wrong=-")
 	assert.Contains(t, out, "SSH-NAMES CONFIG mac-1 ok=3 wrong=-")
 	assert.Contains(t, out, "SSH-NAMES WORKERS bench-1 denied=1 got-in=- unproven=-")
@@ -271,10 +298,13 @@ func TestSSHNamesWritesRootsFilesNotTheWorkers(t *testing.T) {
 	assert.Contains(t, log, "-o StrictHostKeyChecking=yes -l bob mac-1.tail0test.ts.net true", "the control node, as the Mac's login")
 	assert.Contains(t, log, "-o UserKnownHostsFile=/dev/null -l root mac-1.tail0test.ts.net true", "the worker on bench-1, as root to mac-1")
 	assert.NotContains(t, log, "ForwardAgent=yes", "no check forwards an agent")
+	for _, line := range strings.Split(strings.TrimSpace(log), "\n") {
+		assert.Contains(t, line, "-o ForwardAgent=no", "every check refuses to forward an agent, whatever the config says")
+	}
 
 	out, err = f.run(t, nil)
 	require.NoError(t, err, out)
-	assert.Contains(t, out, "SSH-NAMES bench-1 as=root machines=3 online=2 config=same known_hosts=same include=first removed=-")
+	assert.Contains(t, out, "SSH-NAMES bench-1 as=root machines=3 online=2 config=same known_hosts=same include=first removed=- key-added=-")
 	for _, m := range []string{"bench-1", "mac-1"} {
 		assert.Regexp(t, m+` +: ok=\d+ +changed=0 `, out, "a second run changed something")
 	}
@@ -287,6 +317,67 @@ func TestSSHNamesFailsWhenAWorkerGetsIn(t *testing.T) {
 	out, err := f.run(t, []string{"FAKE_SSH_WORKER_IN=1"})
 	require.Error(t, err, out)
 	assert.Contains(t, out, "SSH-NAMES WORKERS bench-1 denied=0 got-in=mac-1 unproven=-")
+	assert.Contains(t, out, "SSH-NAMES WORKERS bench-1 FAILED")
+}
+
+// The control node's key goes in only where its key is absent: a line holding it already (here with options and another
+// comment) is left as it is. Root's .ssh, when there is none, is made 0700 and its authorized_keys 0600.
+func TestSSHNamesAddsTheControlKeyOnlyWhereAbsent(t *testing.T) {
+	t.Parallel()
+	f := newSSHNamesFleet(t, nil)
+	require.NoError(t, os.RemoveAll(filepath.Join(f.root["bench-1"], ".ssh")))
+	alice := filepath.Join(f.login["bench-1"], ".ssh", "authorized_keys")
+	held := "restrict,pty ssh-ed25519 " + sshNamesControlBlob + " another-comment\nssh-rsa AAAAold alice@x\n"
+	require.NoError(t, os.WriteFile(alice, []byte(held), 0o600))
+
+	out, err := f.run(t, nil)
+	require.NoError(t, err, out)
+	assert.Equal(t, held, readFile(t, alice), "a line already holding the key is never changed or doubled")
+	rootSSH := filepath.Join(f.root["bench-1"], ".ssh")
+	assert.Equal(t, f.controlLine+"\n", readFile(t, filepath.Join(rootSSH, "authorized_keys")))
+	for path, mode := range map[string]os.FileMode{rootSSH: 0o700, filepath.Join(rootSSH, "authorized_keys"): 0o600} {
+		st, err := os.Stat(path)
+		require.NoError(t, err)
+		assert.Equal(t, mode, st.Mode().Perm(), path)
+	}
+	assert.Contains(t, out, "removed=- key-added=root\"")
+}
+
+// The control key is the play's argument: none, a file that is not a .pub (it is never read), or a .pub that is not one
+// public key line is refused before anything is written, and the file's contents are never printed.
+func TestSSHNamesRefusesABadControlKey(t *testing.T) {
+	t.Parallel()
+	for name, c := range map[string]struct{ file, content, want string }{
+		"none":     {"", "", "SSH-NAMES REFUSED control key: none given"},
+		"private":  {"control", "-----BEGIN OPENSSH PRIVATE KEY-----\nsecretmaterial\n", "not a .pub file"},
+		"two keys": {"two.pub", "ssh-ed25519 AAAAone a\nssh-ed25519 AAAAtwo secretmaterial\n", "not one public key line"},
+		"options":  {"opts.pub", "command=\"sh\" ssh-ed25519 AAAAone secretmaterial\n", "not one public key line"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			f := newSSHNamesFleet(t, nil)
+			path := ""
+			if c.file != "" {
+				path = filepath.Join(f.dir, c.file)
+				require.NoError(t, os.WriteFile(path, []byte(c.content), 0o600))
+			}
+			out, err := f.run(t, nil, "-e", "ssh_names_control_key="+path)
+			require.Error(t, err, out)
+			assert.Contains(t, out, c.want)
+			assert.NotContains(t, out, "secretmaterial")
+			f.wroteNothing(t)
+		})
+	}
+}
+
+// An agent reaching the fleet login (an ssh config forwarding one to the play's own connection) fails the run: any
+// worker on that machine could use it as root anywhere.
+func TestSSHNamesFailsWhenAnAgentReachesTheWorker(t *testing.T) {
+	t.Parallel()
+	f := newSSHNamesFleet(t, nil)
+	out, err := f.run(t, []string{"SSH_AUTH_SOCK=" + filepath.Join(f.dir, "agent.sock")})
+	require.Error(t, err, out)
+	assert.Contains(t, out, "SSH-NAMES WORKERS bench-1 denied=1 got-in=- unproven=- agent=forwarded")
 	assert.Contains(t, out, "SSH-NAMES WORKERS bench-1 FAILED")
 }
 
@@ -306,7 +397,7 @@ func TestSSHNamesCheckWritesNothing(t *testing.T) {
 	f := newSSHNamesFleet(t, nil)
 	out, err := f.run(t, nil, "--check")
 	require.NoError(t, err, out)
-	assert.Contains(t, out, "SSH-NAMES bench-1 as=root machines=3 online=2 config=would-be-written known_hosts=would-be-written include=would-be-set removed=- (check: nothing changed)")
+	assert.Contains(t, out, "SSH-NAMES bench-1 as=root machines=3 online=2 config=would-be-written known_hosts=would-be-written include=would-be-set removed=- key-added=would-be-root,login (check: nothing changed)")
 	assert.NotContains(t, out, "SSH-NAMES CONTROL")
 	assert.NotContains(t, out, "SSH-NAMES WORKERS")
 	out, err = f.run(t, nil, "--check", "-l", "bench-1")
