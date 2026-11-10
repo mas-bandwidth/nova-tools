@@ -11,8 +11,8 @@ import (
 // hosts_play_test.go pins the hosts each play targets (D13, 2026-11-07: install reached a seat-only machine and the
 // VPN server, machine rows with roles=- and runners=0, because the software plays targeted all). A play that puts
 // software or units on a machine targets the fleet's worker groups, bench, runner and services; only the tailnet,
-// the seat, the join and the push of the secrets store may reach a managed-only host, which needs those and nothing
-// else. A new play adds its row here.
+// the seat, the join, the push of the secrets store and the login's ssh names may reach a managed-only host, which
+// needs those and nothing else. A new play adds its row here.
 func TestPlaysTargetTheirGroups(t *testing.T) {
 	t.Parallel()
 	const workers = "bench:runner:services"
@@ -32,6 +32,7 @@ func TestPlaysTargetTheirGroups(t *testing.T) {
 		"seat":            {"{{ nova_join_host | default('all') }}"},
 		"tailscale":       {"{{ nova_join_host | default('all') }}"},
 		"secrets-refresh": {"all"},
+		"ssh-names":       {"all"},
 		"windows-runners": {workers},
 	}
 	for _, name := range plays(tree) {

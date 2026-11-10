@@ -42,7 +42,7 @@ also used by the fleet walkthrough; release publishing checks that it matches
 the tag. In a Bash shell, choose a tool and make a temporary installation:
 
 ```sh
-NOVA_TOOLS_VERSION=v2.0.26
+NOVA_TOOLS_VERSION=v2.0.34
 tool=bus  # bus, cairn, config, fleet, reserve, sandbox or secrets
 work=$(mktemp -d)
 mkdir -p "$work/bin"
@@ -449,6 +449,16 @@ What each installs and its variables are in
 [cmd/nova-fleet/README.md](../cmd/nova-fleet/README.md#runner-packages),
 [sdk-toolchain](../cmd/nova-fleet/README.md#sdk-toolchain) and
 [netwatch](../cmd/nova-fleet/README.md#netwatch).
+
+`ssh-names` makes `ssh <machine>` work by its tailnet name from every machine
+to every other: each login's ssh config and the fleet's host keys, from the
+record, then every pair tried; a machine asleep or away is reported offline
+([ssh-names](../cmd/nova-fleet/README.md#ssh-names)):
+
+```text
+nova-fleet ssh-names --check --diff
+nova-fleet ssh-names
+```
 
 A tool whose release is laid out as nova-tools' is (assets
 `<name>_<tag>_<os>_<arch>` and one `SHA256SUMS`) puts its binaries on

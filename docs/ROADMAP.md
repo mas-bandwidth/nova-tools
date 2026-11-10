@@ -17,6 +17,7 @@ Ideas and future work for nova-tools. Nothing here is scheduled; the owner decid
 | A VM mock fleet so nova-fleet up can be run cold end to end | ❌ |
 | Verified commits: one GitHub account per friend and one for the fleet, each backed by a real email, so every commit shows Verified as the identity that made it | ❌ |
 | MicroVM sandboxing: nova-sandbox runs unattended work in a microVM with an egress allowlist, so a card branch carrying a malicious test cannot reach the host, its keys or the tailnet | ❌ |
+| Bug: the github-runner role's online check gives up after 60 s, but GitHub takes 2-4 min to release a restarted runner's session, so a good apply reports runners offline | ❌ |
 | complete | 0% |
 
 [Source data](roadmap.sexp)

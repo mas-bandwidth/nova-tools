@@ -1,0 +1,101 @@
+{
+	"tagOwners": {
+		"tag:nova": [
+			"autogroup:admin"
+		],
+		"tag:runner": [
+			"autogroup:admin"
+		],
+		"tag:control": [
+			"autogroup:admin"
+		]
+	},
+	"grants": [
+		{
+			"src": [
+				"tag:nova",
+				"tag:runner"
+			],
+			"dst": [
+				"tag:nova",
+				"tag:runner"
+			],
+			"ip": [
+				"tcp:22",
+				"tcp:6379",
+				"tcp:5432"
+			]
+		},
+		{
+			"src": [
+				"tag:control"
+			],
+			"dst": [
+				"tag:nova",
+				"tag:runner"
+			],
+			"ip": [
+				"tcp:22",
+				"tcp:6379",
+				"tcp:5432"
+			]
+		},
+		{
+			"src": [
+				"tag:nova",
+				"tag:runner"
+			],
+			"dst": [
+				"tag:control"
+			],
+			"ip": [
+				"tcp:6379",
+				"tcp:5432"
+			]
+		},
+		{
+			"src": [
+				"autogroup:admin"
+			],
+			"dst": [
+				"tag:nova",
+				"tag:runner",
+				"tag:control"
+			],
+			"ip": [
+				"*"
+			]
+		}
+	],
+	"ssh": [
+		{
+			"action": "accept",
+			"src": [
+				"tag:nova",
+				"tag:runner",
+				"tag:control"
+			],
+			"dst": [
+				"tag:nova",
+				"tag:runner"
+			],
+			"users": [
+				"autogroup:nonroot"
+			]
+		},
+		{
+			"action": "accept",
+			"src": [
+				"autogroup:admin"
+			],
+			"dst": [
+				"tag:nova",
+				"tag:runner"
+			],
+			"users": [
+				"autogroup:nonroot",
+				"root"
+			]
+		}
+	]
+}

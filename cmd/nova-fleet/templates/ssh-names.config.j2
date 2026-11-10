@@ -1,0 +1,11 @@
+# nova-fleet ssh-names: one block per machine of the fleet record, written by `nova-fleet ssh-names`; a run rewrites it.
+# ~/.ssh/config includes this file on its first line, so for these names the HostName and User here win over a Host
+# block of the same name there, and that block's other options still apply.
+{% for h in ssh_names_hosts %}
+{%   set address = hostvars[h].ansible_host %}
+
+Host {{ h }}{{ (' ' ~ address) if address != h else '' }}
+  HostName {{ address }}
+  User {{ hostvars[h].ansible_user }}
+  UserKnownHostsFile ~/.ssh/known_hosts ~/.ssh/nova-fleet.known_hosts
+{% endfor %}

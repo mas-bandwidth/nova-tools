@@ -113,7 +113,7 @@ machine is the one nova-config's rows say ("Adding a machine" below). Nothing he
 | 3 | reach | one `ssh -o BatchMode=yes ... true` per machine: as its login at its tailnet name once it has a row (join closed the address given then), else as root at the address given; `UP REACH <machine> OK <who>@<where>` | a run never starts a play on a machine it cannot reach |
 | 4 | first | on a new fleet's first machine, from a hand inventory: `tailscale` (no address recorded, firewall later), then `postgres` (nova-config's roles, grants and tables, loaded on the machine as `nova_admin`) and `redis`, their passwords sealed into your seat as `NOVA_PG_PASSWORD` and `NOVA_BUS_PASSWORD` | nova-config's rows live in this PostgreSQL, so it comes before any row |
 | 5 | join | `join` for each machine (`services,bench` for the first; the others `bench`; `runner` with `--runners`): its row, its login with passwordless sudo, its tailnet name and host key, its firewall, its seat; with `--runners`, a row that lacks the `runner` role gets it (`UP ROLE <machine> OK runner`). This node itself, named as a machine, is skipped (`UP JOIN <machine> SKIPPED this control node ...`): join's peer check cannot see the node it runs on, so its row must exist already (else the run stops with the `nova-config machine add` line) | the store exists now |
-| 6 | grant | `nova-secrets grant <--grant names> --to <machine> --pub <its seat key>` for each machine: the values written to that seat's grants file, encrypted to the seat's key (read from the machine over the tailnet with `age-keygen -y`, found in `nova_bin_dir` when `-- -e nova_bin_dir=...` sets it, then `~/.local/bin`; public half only, and pinned in `NOVA_SECRETS_PINS`) and the recovery key; your seat is never a recipient ([secrets guide](../nova-secrets/README.md)) | the seats exist now |
+| 6 | grant | `nova-secrets grant <--grant names> --to <machine> --pub <its seat key>` for each machine but this control node (its own seat holds the values; `UP GRANT <machine> SKIPPED`): the values written to that seat's grants file, encrypted to the seat's key (read from the machine over the tailnet with `age-keygen -y`, found in `nova_bin_dir` when `-- -e nova_bin_dir=...` sets it, then `~/.local/bin`; public half only, and pinned in `NOVA_SECRETS_PINS`) and the recovery key; your seat is never a recipient ([secrets guide](../nova-secrets/README.md)) | the seats exist now |
 | 7 | store | `git push` of your secrets store to its upstream, if it has one (else a NOTE): a copy off this node; the machines never read it. When the upstream refuses the push (`[remote rejected]`: a protected branch that takes changes only through a pull request), the commits are pushed to the branch `nova-fleet-up/<short commit>` instead, `UP STORE PUSH REFUSED: <upstream> is protected (...); pushed branch <name>; open a PR from it` is printed, the run goes on, and it exits 1 (`UP STORE FAILED`) at the end; open and merge that PR. Any other push failure stops the run here | |
 | 8 | refresh | `secrets-refresh` with `nova_seal_store` set to your clone: the encrypted store pushed over the tailnet with rsync to `~/.local/share/nova/secrets/` on each machine (no `.git`, stale files deleted, 0700/0600) | each seat opens what step 6 granted; a rerun of `up`, or `nova-fleet secrets-refresh -- -e nova_seal_store=S`, pushes again |
 | 9 | health | `health` on every machine of the bench, runner and services groups (Linux; a Mac is skipped) | the guards are in place before anything long-running starts |
@@ -174,7 +174,8 @@ reached as root at the address given, as on the first run.
 | `seat` | each machine's seat in the secrets store | `nova_seal_store` |
 | `secrets-refresh` | the control node's encrypted store pushed to every machine with `ansible.posix.synchronize` (`verify_host: true`, no `.git`, stale files deleted, 0700/0600); no machine runs a timer (pull mode is retired; one left is removed) | `nova_seal_store` (the control node's clone) to push |
 | `services` | one supervised unit per service record, on the machine the record names (bench, runner and services groups) | the inventory's `nova_services` |
-| `windows-runners` | a WSL machine's Windows-side GitHub Actions runners, from its record's `windows_runners`, through WSL interop | the record's `windows_runners`; `gh` on the control node logged in with admin on each repository or organization |
+| `ssh-names` | `ssh <machine>` by its tailnet name from every machine of the fleet: each login's ssh config and the fleet's host keys from the record, then every pair checked (all machines; one asleep or away is reported offline) | nothing |
+| `windows-runners` | a WSL machine held running from boot, and its Windows-side GitHub Actions runners from its record's `windows_runners`, through WSL interop | the record's `windows_runners`; `gh` on the control node logged in with admin on each repository or organization |
 | `tailscale` | each machine on the tailnet, its address the MagicDNS name, its firewall closed to all but the tailnet | `TAILSCALE_AUTHKEY` in the environment for a machine not on the tailnet (`up` mints it) |
 
 ```
@@ -340,7 +341,8 @@ what it is labelled), plus `github_runner_labels`; so a bench machine's runner i
 Linux (amd64, arm64; WSL2 with systemd counts as Linux) and macOS. On macOS the runner is a LaunchDaemon dropped to the login, not a
 LaunchAgent: a LaunchAgent runs only inside a logged-in GUI session, and a CI machine comes back from a reboot with
 none. Only a run needs sudo for that file (`/Library/LaunchDaemons` is world-readable, so `--check` reads and diffs it
-as the login and finishes without a password). Linux and macOS write the service files with sudo, so the login needs
+as the login and finishes without a password). The daemon's `ProcessType` is `Interactive`: launchd throttles the CPU and
+I/O of a job with no `ProcessType` as background work, and a CI job inherits its runner's limits. Linux and macOS write the service files with sudo, so the login needs
 passwordless sudo: `join.yml` sets it up on Linux (`/etc/sudoers.d/90-nova-<login>`); on macOS set it at the console.
 No command here asks for a sudo password: an interactive prompt is a stall for an AI running the play.
 A stop or restart ends the whole runner: on Linux the unit sets `RUNNER_MANUALLY_TRAP_SIG=1`, so the release's `run.sh`
@@ -440,7 +442,7 @@ nova-fleet windows-runners -- -l bench-1
 ```
 
 `windows_runners` is `<url>=<count>[:<label>+<label>]`, comma-separated (cmd/nova-config/README.md); the inventory hands it to
-the play as `nova_windows_runners`. A machine without it is skipped; one with it that is not WSL with interop is
+the play as `nova_windows_runners`. A machine without it gets no runners (only the keepalive below); one with it that is not WSL with interop is
 refused. **The channel** is the one `ci-rules` already uses: from the WSL login, `powershell.exe` by its full path
 runs the role's `files/runner-windows.ps1`, staged to `C:\ProgramData\nova-runner-stage`. It acts as the Windows account
 that started WSL, elevated; no Windows login, password or key is involved, and no port is opened. **Each runner** is
@@ -459,6 +461,21 @@ directory's own `retired-<yyyymmdd>\`, its service is removed, and it registers 
 cannot read GitHub's list for a target refuses, rather than take a whole runner for a half one. Each machine prints `GITHUB-RUNNERS host=<machine> windows=<n> registered=<n> online=<n>`
 from its directories and GitHub's own list; a run where any is short fails. `--check` reads both, asks for the tokens it
 would need, and prints `RUNNER-PLAN <machine> windows=<n> register=<names> repair=<names> labels=<labels>`.
+
+### WSL held running from boot
+
+WSL starts a distro only when something on Windows asks for one, and stops it when the last `wsl.exe` holding it ends
+(a WSL update from Windows Update does this). So the same play gives every WSL machine with interop, whether or not
+its record names `windows_runners`, one scheduled task on the Windows side: `WSL2 keepalive (<distro>)`, which runs
+`wsl.exe -d <distro> -u <login> --exec /bin/sleep infinity` (under `conhost.exe --headless`) as the Windows account that
+started WSL, logon type S4U: it runs with nobody logged in, and no password is stored. Its boot trigger repeats every
+minute with `IgnoreNew`, so WSL is up at boot and is started again within a minute after a WSL update, a `wsl
+--shutdown` or a reboot inside the distro; inside it systemd starts the services as at any boot (a login's units need
+lingering, which `join` sets). The distro is the running one whose `/etc/machine-id` is this machine's
+(`github_runner_wsl_machine_id_file`), read through `\\wsl.localhost`; none is `NO-DISTRO` and fails the run. A task
+of that name is set when what it does differs and started when it is not running; one line per machine: `KEEPALIVE
+<machine> <distro> ok|set|started|set,started task=<name>`. `--check` reads nothing on the Windows side and prints
+`KEEPALIVE-PLAN <machine> machine-id=<id> user=<login>`.
 
 ## CI rules
 
@@ -606,8 +623,12 @@ one. On a Mac machine, open the Tailscale app once at its console and approve it
    apply them; other owners stay); the fleet's grants and ssh rules are appended where an equal rule (the same JSON)
    is not already there. Among them, so your own devices keep reaching every tagged machine whatever the policy was
    built on (allow-all, or `autogroup:self`, which no tagged device is): a grant from `autogroup:admin` to `tag:nova`,
-   `tag:runner` and `tag:control` on every port (`ip: ["*"]`), and an ssh rule accepting `autogroup:admin` into
-   `tag:nova` and `tag:runner` as `autogroup:nonroot` and `root`. The members reach the store's ports
+   `tag:runner` and `tag:control` on every port (`ip: ["*"]`), an ssh rule accepting `autogroup:admin` into
+   `tag:nova` and `tag:runner` as `autogroup:nonroot` and `root`, and one into `tag:control` as `autogroup:nonroot`
+   only with Tailscale's `check` action (you confirm in a browser, then it holds for a while). Every fleet tag reaches
+   `tag:nova` and `tag:runner` on port 22 and over Tailscale SSH as a non-root login, never root (`ssh-names` below
+   checks every pair). Nothing reaches `tag:control` without a person: no tag has its port 22 or an ssh rule into it.
+   Nothing is opened to an untagged or member device. The members reach the store's ports
    (`tcp:5432`, `tcp:6379`) on `tag:control` too, for a fleet whose store is the control node itself, so the store
    does not depend on an allow-all rule staying in the policy. Nothing the policy has is removed or replaced, so
    the default policy's allow-all `acls` rule still allows all. It is written (`POST` with `If-Match`, HuJSON) only
@@ -623,9 +644,11 @@ one. On a Mac machine, open the Tailscale app once at its console and approve it
 **What the play does, per machine:**
 
 1. Installs Tailscale: Tailscale's apt repository on Debian and Ubuntu (the same key and source line its own install
-   script writes), Homebrew's cask on macOS.
+   script writes), Homebrew's cask on macOS. A Mac whose running daemon is the open-source `tailscaled` (Homebrew's
+   formula, run as root) gets no cask: the play drives it as it drives Linux, with the `tailscale` beside the daemon,
+   sudo and `--ssh`.
 2. `tailscale up --reset --auth-key=file:/dev/stdin --hostname=<machine> --advertise-tags=tag:nova[,tag:runner] --ssh`
-   (`--ssh` on Linux; the macOS client does not serve Tailscale SSH). `tag:runner` is added for a machine in
+   (`--ssh` on Linux and on the open-source `tailscaled`; the macOS app does not serve Tailscale SSH). `tag:runner` is added for a machine in
    the `runner` group. The key comes from `TAILSCALE_AUTHKEY` in the control node's environment (`up` puts the one it minted there; run
    alone, give one) and reaches the
    machine on the command's stdin only. A machine already Running with the same tags is not joined again; a hostname or
@@ -649,7 +672,7 @@ nova-secrets exec --only NOVA_PG_PASSWORD --store S --key K --as SEAT -- \
 | Variable | Default | |
 |---|---|---|
 | `nova_tailscale_tags` | `tag:nova`, plus `tag:runner` in the `runner` group | the tags the key must be allowed |
-| `nova_tailscale_ssh` | `true` | Tailscale SSH (Linux) |
+| `nova_tailscale_ssh` | `true` | Tailscale SSH (Linux, and a Mac on the open-source `tailscaled`) |
 | `nova_tailscale_record_address` | `true` | write the MagicDNS name into nova-config |
 | `nova_firewall` | `true` | ufw on Linux, the application firewall on macOS |
 | `nova_firewall_allow_udp` | `[41641]` | UDP ports open on every interface |
@@ -659,6 +682,59 @@ nova-secrets exec --only NOVA_PG_PASSWORD --store S --key K --as SEAT -- \
 declared`; `tailscale status` on the control node lists the machine. **Rollback.** On the machine `tailscale logout`
 and `ufw disable` (macOS: `socketfilterfw --setglobalstate off`); `nova-config machine set <name> --address <old
 address>`.
+
+## ssh-names
+
+`ssh <machine>` by its tailnet name, from every machine of the fleet to every other, over the tailnet. The play runs on
+every machine of the inventory, as its login, and writes three things there:
+
+- `~/.ssh/config.d/nova-fleet`: one block per machine of the inventory, `Host <name> <address>` with `HostName` the
+  record's address, `User` the record's login and `UserKnownHostsFile ~/.ssh/known_hosts
+  ~/.ssh/nova-fleet.known_hosts`. The address is the machine's MagicDNS name (the `tailscale` play records it), so
+  `ssh <name>` resolves through MagicDNS and travels over the tailnet whatever `/etc/hosts` maps the short name to.
+- `~/.ssh/nova-fleet.known_hosts`: each machine's ed25519 host key, as `<name>,<address> ssh-ed25519 ...`, read from
+  the machine itself (`/etc/ssh/ssh_host_ed25519_key.pub`) over the play's own connection, whose host key the control
+  node checks. Tailscale SSH presents the same key. A machine that does not answer this run keeps the line the file
+  held. It sits outside `config.d`, so a login that includes `~/.ssh/config.d/*` never reads it as config.
+- `Include ~/.ssh/config.d/nova-fleet` as the first line of `~/.ssh/config` (moved there from elsewhere at the top
+  level, CRLF lines too; the file made if there is none; through a symlink, the file it names); nothing else in the
+  file is changed. An `Include` of it inside a `Host` or `Match` block applies to that block only; the file is left
+  alone and the run prints `SSH-NAMES <machine> INCLUDE LEFT ALONE` with the line: move it by hand.
+
+Before anything is written anywhere, every machine checks the whole record and every key read against the tailnet as
+the control node's `tailscale status --json` shows it, and the run is refused (`SSH-NAMES REFUSED ...`, naming the
+machine and the field) on: an address that is not `<label>.<the tailnet's MagicDNS suffix>` or an IP; a user that is
+not a login name (`[a-z_][a-z0-9_-]*`); a host key that is not one the tailnet publishes for that machine; a tailnet
+that cannot be read. A machine that does not serve Tailscale SSH publishes no host key, so its key is written
+unchecked and named in the receipt. A write limited with `-l` is refused too: every machine's file holds every
+machine's key, so a write runs on all of them (`--check` takes `-l`).
+
+ssh takes the first value it reads for an option, so for a fleet name the `HostName` and `User` of this file win over
+a hand-written `Host` block of the same name later in `~/.ssh/config`, and that block's other options (an
+`IdentityFile`, a `HostKeyAlias`, `ControlMaster`) still apply. A machine added to the record has its name everywhere
+on the next run.
+
+Authentication is the target's: Tailscale SSH, where the `tailscale` play turned it on (`nova_tailscale_ssh`, Linux and
+a Mac on the open-source `tailscaled`), lets in every fleet tag as a non-root login with no key (the policy above);
+elsewhere the target's sshd wants the source login's key in its `authorized_keys`, which this play does not write. The
+control node takes a person's check, never a tag (the policy above).
+
+Then the mesh: from each machine, `ssh -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=yes -o
+UserKnownHostsFile=~/.ssh/nova-fleet.known_hosts <name> true` to every other machine that answered this run, all at
+once. A machine that did not answer (a laptop asleep or away) is `OFFLINE`, skipped, and never fails the run; a pair
+ending at the control node (`tag:control` on the tailnet) is `check-required` and not tried; any other pair that
+cannot connect fails the run with ssh's own last line.
+
+```
+nova-fleet ssh-names --check --diff
+nova-fleet ssh-names
+```
+
+**Check.** Per machine `SSH-NAMES <machine> machines=<n> online=<n> config=<written|same> known_hosts=<written|same>
+include=<set|first|inside-a-block> unchecked=<names>` and `SSH-NAMES MESH <machine> ok=<n> check-required=<names>
+offline=<names> failed=<names>`; a machine that did not answer prints `SSH-NAMES <machine> OFFLINE`. Under `--check`
+nothing is written and no pair is tried. **Rollback.** Remove the `Include` line, `~/.ssh/config.d/nova-fleet` and
+`~/.ssh/nova-fleet.known_hosts`.
 
 ## seat
 
@@ -852,7 +928,8 @@ cat ~/Library/Logs/nova-go-cache-clean.log         # a Mac: what the trim remove
 On a Mac the role does one thing: `nova-go-cache-clean`, hourly from the LaunchDaemon `com.nova.go-cache-clean` run as
 the login, removes the files of the Go build cache `go env GOCACHE` names in the login's shell that are unchanged for
 `nova_health_disk_clean_age_min` (`nova_health_disk_clean_pressed_min` on a volume over `nova_health_disk_warn_pct`).
-No temp or working directory is touched; `nova_health_disk_clean: false` turns it off. `DISK_CLEAN_DRY=1` with the
+No temp or working directory is touched; `nova_health_disk_clean: false` turns it off, and a cache under `/Volumes`
+gets no daemon (launchd cannot read a removable volume without a privacy grant; Go trims its own cache). `DISK_CLEAN_DRY=1` with the
 daemon's environment says `WOULD` and removes nothing.
 
 | Variable | Default | |
@@ -1047,8 +1124,8 @@ nova-fleet sdk-toolchain -- -l bench
 
 On x86_64 Linux and WSL: Go, Node, Dart, Erlang/OTP, Elixir, a Temurin JDK, .NET 10 with the .NET 8 SDK and runtime in
 the same directory, golangci-lint, staticcheck, nilaway, ESBMC, SpotBugs with find-sec-bugs, Deno, Jazzer,
-google-java-format, TypeScript, ESLint, sbcl, Lua, luacheck, Luau, Squirrel, clang-format, LLVM (as `~/sdk/llvm`, not
-on PATH), cppcheck, AFL++ and Frama-C with Alt-Ergo and Why3 in their own opam root (`~/sdk/opam`). A Mac gets the tools
+google-java-format, TypeScript, ESLint, sbcl, Lua, luacheck, Luau, Squirrel (and a second Squirrel built as sq64 with
+`SQUSEDOUBLE`, not on PATH, named by `SQ`), clang-format, LLVM (as `~/sdk/llvm`, not on PATH), cppcheck, AFL++ and Frama-C with Alt-Ergo and Why3 in their own opam root (`~/sdk/opam`). A Mac gets the tools
 with a `darwin` pin: Go, Node, Dart, Elixir, the JDK and .NET. Each tool has one of six kinds: an `archive` or a
 `file` (a URL and its sha256 or sha512), `git` (a tag, refused unless it is the pinned commit, then built), `go`
 (`go install` of a module version, which Go checks against its checksum database), `npm` (refused unless the lock file
@@ -1083,6 +1160,7 @@ version bump installs the new directory beside the old and moves the links.
 | `nova_sdk_rustup` | rustup 1.29.1; `1.98.1` with `clippy` and `rustfmt`, and `nightly-2026-10-01` | `version`, the `linux` rustup-init `url`, `sha256` and `host`, the `toolchains` (each `name`, `components`, `targets`; the first is on PATH) and the commands `links` puts in `~/sdk/bin` |
 | `nova_sdk_cargo_tools` | `cargo-fuzz` 0.13.1 | crates built with `cargo install --locked` |
 | `nova_sdk_env` | `DART`, `NODE`, `JAVA`, `JAVAC`, `ELIXIR`, `MIX` set to their commands | make variables `env.sh` exports |
+| `nova_sdk_env_files` | `SQ`: `squirrel-3.2-double/bin/sq` | make variables naming a file under the SDK; `env.sh` exports each only where that file is executable |
 | `nova_sdk_shell_rc` | `true` | Linux: `~/.bashrc` sources `env.sh` on its first line, unless a line of it already names `sdk/env.sh` |
 
 **Check.** `SDK-TOOLCHAIN host=<machine> platform=<linux|darwin> tools=<n> present=<n> installed=<n> dotnet=<runtimes>`,

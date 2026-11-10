@@ -16,8 +16,13 @@
 #             into <dir>\retired-<yyyymmdd>\ and its service removed: REPAIR <dir>
 #   ensure    -Dir                                    its service starts at boot and is running: SERVICE <dir> ok|started,
 #             or NO-SERVICE <dir> (the role counts it as not registered, and the next run repairs it)
+#   keepalive -MachineId -User                        the running distro whose /etc/machine-id is -MachineId held running
+#             from boot (tasks/wsl-keepalive.yml): the task "WSL2 keepalive (<distro>)" runs wsl.exe -d <distro> -u <user>
+#             --exec /bin/sleep infinity as this Windows account, logon type S4U (no password stored), at boot and each
+#             minute after while it is not running; set when it differs, started when it is not running:
+#             KEEPALIVE <distro> ok|set|started|set,started task=<name>, or NO-DISTRO (exit 6)
 param(
-  [Parameter(Mandatory = $true)][ValidateSet('install', 'register', 'ensure')][string]$Action,
+  [Parameter(Mandatory = $true)][ValidateSet('install', 'register', 'ensure', 'keepalive')][string]$Action,
   [string]$Dir = '',
   [string]$Cache = '',
   [string]$Version = '',
@@ -25,7 +30,9 @@ param(
   [string]$PathList = '',
   [string]$Url = '',
   [string]$Name = '',
-  [string]$Labels = ''
+  [string]$Labels = '',
+  [string]$MachineId = '',
+  [string]$User = ''
 )
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
@@ -140,5 +147,85 @@ switch ($Action) {
     if ($s.StartMode -ne 'Auto') { Set-Service -Name $s.Name -StartupType Automatic; $did = 'started' }
     if ($s.State -ne 'Running') { Start-Service -Name $s.Name; $did = 'started' }
     "SERVICE $Dir $did $($s.Name)"
+  }
+  'keepalive' {
+    Need-Admin
+    if ($MachineId -notmatch '^[0-9a-f]{32}$' -or $User -notmatch '^[a-z_][a-z0-9_-]*$') { 'BAD-ARGS -MachineId -User'; exit 2 }
+    # The running distros (wsl.exe writes UTF-16) and the one whose /etc/machine-id is this machine's: never a stopped
+    # one, which reading its files would start.
+    $enc = [Console]::OutputEncoding
+    [Console]::OutputEncoding = [Text.Encoding]::Unicode
+    try { $running = @(& wsl.exe --list --running --quiet | ForEach-Object { "$_".Trim() } | Where-Object { $_ }) } finally { [Console]::OutputEncoding = $enc }
+    $distro = $running | Where-Object {
+      try { (Get-Content -LiteralPath "\\wsl.localhost\$_\etc\machine-id" -TotalCount 1 -ErrorAction Stop).Trim() -eq $MachineId } catch { $false }
+    } | Select-Object -First 1
+    if (-not $distro -or $distro -notmatch '^[A-Za-z0-9._-]+$') { "NO-DISTRO machine-id=$MachineId running=$(@($running) -join ',')"; exit 6 }
+    $name = "WSL2 keepalive ($distro)"
+    $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    $exe = 'C:\Windows\System32\conhost.exe'
+    $arg = "--headless C:\Windows\System32\wsl.exe -d $distro -u $User --exec /bin/sleep infinity"
+    $xml = @"
+<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.3" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo>
+    <Description>Set by nova-fleet windows-runners: holds WSL ($distro) running from boot, with nobody logged in, and starts it again each minute it is not running.</Description>
+  </RegistrationInfo>
+  <Principals>
+    <Principal id="Author">
+      <UserId>$sid</UserId>
+      <LogonType>S4U</LogonType>
+    </Principal>
+  </Principals>
+  <Settings>
+    <Enabled>true</Enabled>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+  </Settings>
+  <Triggers>
+    <BootTrigger>
+      <Repetition>
+        <Interval>PT1M</Interval>
+        <StopAtDurationEnd>false</StopAtDurationEnd>
+      </Repetition>
+    </BootTrigger>
+  </Triggers>
+  <Actions Context="Author">
+    <Exec>
+      <Command>$exe</Command>
+      <Arguments>$arg</Arguments>
+    </Exec>
+  </Actions>
+</Task>
+"@
+    # What the task does, read from its exported definition; an element the export leaves out has the scheduler's default.
+    function Keepalive-Of([xml]$x) {
+      $s = $x.Task.Settings
+      $d = { param($v, $def) if ($null -eq $v -or "$v" -eq '') { $def } else { "$v" } }
+      @(
+        "user=$($x.Task.Principals.Principal.UserId)", "logon=$($x.Task.Principals.Principal.LogonType)",
+        "triggers=$(@($x.Task.Triggers.ChildNodes | ForEach-Object { $_.LocalName }) -join ',')",
+        "every=$($x.Task.Triggers.BootTrigger.Repetition.Interval)",
+        "exec=$(@($x.Task.Actions.Exec | ForEach-Object { "$($_.Command) $($_.Arguments)" }) -join ';')",
+        "enabled=$(& $d $s.Enabled 'true')", "multiple=$(& $d $s.MultipleInstancesPolicy 'IgnoreNew')",
+        "limit=$(& $d $s.ExecutionTimeLimit 'PT72H')", "battery=$(& $d $s.DisallowStartIfOnBatteries 'true')/$(& $d $s.StopIfGoingOnBatteries 'true')"
+      ) -join ' '
+    }
+    $did = @()
+    $have = ''
+    if (Get-ScheduledTask -TaskPath '\' -TaskName $name -ErrorAction SilentlyContinue) {
+      $have = Keepalive-Of ([xml](Export-ScheduledTask -TaskPath '\' -TaskName $name))
+    }
+    if ($have -ne (Keepalive-Of ([xml]$xml))) {
+      Register-ScheduledTask -TaskPath '\' -TaskName $name -Xml $xml -Force | Out-Null
+      $did += 'set'
+    }
+    if ((Get-ScheduledTask -TaskPath '\' -TaskName $name).State -ne 'Running') {
+      Start-ScheduledTask -TaskPath '\' -TaskName $name
+      $did += 'started'
+    }
+    if ($did.Count -eq 0) { $did = @('ok') }
+    "KEEPALIVE $distro $($did -join ',') task=$name"
   }
 }

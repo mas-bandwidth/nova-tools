@@ -39,6 +39,10 @@ case "$*" in
 	case $p in */*) f=$d/gh-repos-$(printf '%s' "$p" | tr / -) ;; *) f=$d/gh-orgs-$p ;; esac
 	grep -q "^$name " "$f" 2>/dev/null || printf '%s online false\n' "$name" >>"$f"
 	printf 'REGISTERED %s\r\n' "$name"; exit 0 ;;
+*"-Action keepalive"*)
+	printf 'KEEPALIVE machine=%s user=%s\n' "$(arg -MachineId "$@")" "$(arg -User "$@")" >>"$log"
+	[ -f "$d/nodistro" ] && { printf 'NO-DISTRO machine-id=%s running=-\r\n' "$(arg -MachineId "$@")"; exit 6; }
+	printf 'KEEPALIVE distro-a set,started task=WSL2 keepalive (distro-a)\r\n'; exit 0 ;;
 *"-Action install"*|*"-Action ensure"*) printf 'OK\r\n'; exit 0 ;;
 *" apply "*) printf 'CI-RULES x hooks=ok restart=no\r\n'; exit 0 ;;
 esac
@@ -86,7 +90,9 @@ func newWinRig(t *testing.T, record string, files map[string]string) winRig {
 	r.write(t, "inv.yml", "all:\n  hosts:\n    captain:\n      ansible_connection: local\n"+
 		"      ansible_python_interpreter: \"{{ ansible_playbook_python }}\""+record+"\n  children:\n    bench: {hosts: {captain: {}}}\n", 0o644)
 	r.write(t, "vars.yml", "github_runner_wsl_interop: "+r.dir+"/interop\ngithub_runner_wsl_powershell: "+r.dir+"/bin/powershell.exe\n"+
-		"github_runner_wsl_stage_unix: "+r.dir+"/stage\ngithub_runner_wsl_ci_stage_unix: "+r.dir+"/cistage\ngithub_runner_gh: "+r.dir+"/bin/gh\n", 0o644)
+		"github_runner_wsl_stage_unix: "+r.dir+"/stage\ngithub_runner_wsl_ci_stage_unix: "+r.dir+"/cistage\ngithub_runner_gh: "+r.dir+"/bin/gh\n"+
+		"github_runner_wsl_machine_id_file: "+r.dir+"/machine-id\n", 0o644)
+	r.write(t, "machine-id", "0123456789abcdef0123456789abcdef\n", 0o644)
 	for name, body := range files {
 		r.write(t, name, body, 0o644)
 	}
@@ -173,6 +179,56 @@ func TestWindowsRunnersPlayRepairsHalfRegistrations(t *testing.T) {
 			}
 			if !strings.Contains(out, "GITHUB-RUNNERS host=captain windows=5 registered=5 online=5") {
 				t.Errorf("no whole receipt:\n%s", out)
+			}
+		})
+	}
+}
+
+// TestFunctionalWSLKeepalive: the play holds every WSL machine running from boot, whether or not its record names
+// windows_runners: the keepalive verb gets this distro's machine-id and the login, the receipt names the distro, a
+// machine whose distro cannot be found fails the run, and --check changes nothing and calls nothing on Windows.
+func TestFunctionalWSLKeepalive(t *testing.T) {
+	t.Parallel()
+	const keepalive = "KEEPALIVE machine=0123456789abcdef0123456789abcdef user="
+	for _, tc := range []struct {
+		name, record string
+		files        map[string]string
+		check, fail  bool
+	}{
+		{"no windows_runners", "", nil, false, false},
+		{"with windows_runners", captainRecord, map[string]string{"reg": lines(allDirs...), "svc": lines(allDirs...),
+			"gh-repos-mas-bandwidth-rocketnet": ghRocketnet, "gh-orgs-robotgamedevelopers": ghRgd}, false, false},
+		{"distro not found", "", map[string]string{"nodistro": ""}, false, true},
+		{"check", "", nil, true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := newWinRig(t, tc.record, tc.files)
+			var extra []string
+			if tc.check {
+				extra = append(extra, "--check")
+			}
+			out, log, err := r.play(t, extra...)
+			if tc.fail {
+				if err == nil || !strings.Contains(out, "NO-DISTRO") {
+					t.Fatalf("a distro that cannot be found must fail the run with NO-DISTRO:\n%s", out)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("play failed: %v\n%s", err, out)
+			}
+			if tc.check {
+				if strings.Contains(log, "KEEPALIVE") || !strings.Contains(out, "KEEPALIVE-PLAN captain") {
+					t.Errorf("--check must print the plan and call nothing:\nlog %q\n%s", log, out)
+				}
+				return
+			}
+			if !strings.Contains(log, keepalive) {
+				t.Errorf("the keepalive verb was not called with the machine-id and the login:\n%q", log)
+			}
+			if !strings.Contains(out, "KEEPALIVE captain distro-a set,started") {
+				t.Errorf("no keepalive receipt:\n%s", out)
 			}
 		})
 	}

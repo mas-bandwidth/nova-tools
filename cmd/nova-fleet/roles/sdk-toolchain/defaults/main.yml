@@ -28,6 +28,10 @@ nova_sdk_env:
   ELIXIR: elixir
   MIX: mix
 
+# Make variables naming a file under the SDK, exported from env.sh only where that file is executable.
+nova_sdk_env_files:
+  SQ: squirrel-3.2-double/bin/sq
+
 # One entry per tool. A tool is installed on a platform (linux: x86_64 Linux and WSL; darwin: Apple silicon) only when
 # it has an entry for it. Keys:
 #   dir     the directory under nova_sdk_dir                probe  a file under it that exists once it is installed
@@ -117,19 +121,21 @@ nova_sdk_tools:
       home: Contents/Home
 
   # .NET: the 10.0 SDK here; the other SDKs (with their runtimes) go into the same directory from
-  # nova_sdk_dotnet_more, so one dotnet lists them all.
+  # nova_sdk_dotnet_more, so one dotnet lists them all. Bump both from one release day: this SDK builds net8.0 with the
+  # packs of that day's 8.0 patch (its sdk/<version>/Microsoft.NETCoreSdk.BundledVersions.props), which the 8.0 SDK
+  # brings; tasks/dotnet.yml fails the run when they differ.
   - name: dotnet
-    version: "10.0.401"
-    dir: dotnet-10.0.401
+    version: "10.0.403"
+    dir: dotnet-10.0.403
     probe: dotnet
     links: [dotnet]
     linux:
-      url: https://builds.dotnet.microsoft.com/dotnet/Sdk/10.0.401/dotnet-sdk-10.0.401-linux-x64.tar.gz
-      sha512: 51c8b999af9e8dd9998c9edc5944e19a90788862068acd38694e098889054ce8c23d4f0c5cccfa16bf187d044562359e5ee69a9f8ad0bbe913ba90311fbce25b
+      url: https://builds.dotnet.microsoft.com/dotnet/Sdk/10.0.403/dotnet-sdk-10.0.403-linux-x64.tar.gz
+      sha512: b7b3d8461cf98b07d2552ce9199702fa3ad010ac2671a5f8cd5136f7534e50f6855ba7bbb02b11494563f1d04156276a31cda1103b900e5eecd0d9473dc7b9c5
       root: .
     darwin:
-      url: https://builds.dotnet.microsoft.com/dotnet/Sdk/10.0.401/dotnet-sdk-10.0.401-osx-arm64.tar.gz
-      sha512: 69f64eb00dc045398755c440b152225d544301a345a146a16e86a56a0c52b7c94b2c331520e976dbb821f18d31930aafbd25bb85961e3517e0665414ce0cbcff
+      url: https://builds.dotnet.microsoft.com/dotnet/Sdk/10.0.403/dotnet-sdk-10.0.403-osx-arm64.tar.gz
+      sha512: 5893c66b48ea3674c7da18501059d606e96f3672fabe4d5e41762e692c7c83df3ee0b2b9dc5a0786191da2dc413d7335158101c14c935ab217f31ac2529770f3
       root: .
 
   - name: golangci-lint
@@ -252,7 +258,8 @@ nova_sdk_tools:
       mv "$dest" "$stage/s"
       mkdir -p "$dest"
       cd "$stage/s"
-      INSTALL_ROOT="$dest" sh install.sh >/dev/null
+      unset SBCL_HOME   # install.sh refuses an SBCL_HOME that is not under INSTALL_ROOT, as another sbcl's env sets
+      INSTALL_ROOT="$dest" sh install.sh >"$stage/install.log" || { cat "$stage/install.log"; exit 1; }
     linux:
       url: https://downloads.sourceforge.net/project/sbcl/sbcl/2.5.8/sbcl-2.5.8-x86-64-linux-binary.tar.bz2
       sha256: 103fa33b913341791f0f61f5d500e1723ac986125e665b584efba760006fed67
@@ -306,6 +313,20 @@ nova_sdk_tools:
       sha256: 211f1452f00b24b94f60ba44b50abe327fd2735600a7bacabc5b774b327c81db
       root: squirrel3   # the archive also carries a stray inner tar beside its one directory
 
+  # The interpreter serialize.nut pins (its Makefile's dist-squirrel): the v3.2 tag's archive, built as sq64 with
+  # SQUSEDOUBLE, so _intsize_ and _floatsize_ are both 8. The squirrel above is the float-32 build; this one is not
+  # linked into bin and is reached through SQ (nova_sdk_env_files).
+  - name: squirrel-double
+    version: "3.2"
+    dir: squirrel-3.2-double
+    probe: bin/sq
+    links: []
+    build: nice -n 15 make -s sq64 DEFS=-DSQUSEDOUBLE >/dev/null 2>&1
+    linux:
+      url: https://github.com/albertodemichelis/squirrel/archive/refs/tags/v3.2.tar.gz
+      file: squirrel-3.2-tag.tar.gz   # the URL's own name, v3.2.tar.gz, says nothing of what it is
+      sha256: 02805414cfadd5bbb921891d3599b83375a40650abd6404a8ab407dc5e86a996
+
   - name: clang-format
     version: "23.1.3"
     dir: clang-format-23.1.3
@@ -334,7 +355,7 @@ nova_sdk_tools:
     kind: git
     build: |
       cmake -S . -B b -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$dest" -DFILESDIR="$dest/share/cppcheck" -DBUILD_TESTS=OFF -DCMAKE_POLICY_VERSION_MINIMUM=3.5 >/dev/null
-      cmake --build b -j"$jobs" >/dev/null
+      cmake --build b --target cppcheck -j"$jobs" >/dev/null   # alone: dmake can race the match compiler's sources
       cmake --install b >/dev/null
     linux: { repo: https://github.com/danmar/cppcheck, ref: "2.13.0", commit: da29903ffcbde465b6c2b47e8dc38277743f47ec }
 
