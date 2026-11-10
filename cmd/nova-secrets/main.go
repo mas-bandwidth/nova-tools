@@ -518,7 +518,9 @@ func (t tool) bootstrap(o opts, check bool) error {
 			return nil
 		}
 		if b, err := os.ReadFile(filepath.Join(o.store, "recovery.pub")); err == nil { // absent: init stopped before writing it
-			if p, err := t.publicOf(opts{store: o.store, key: rk}); err != nil || string(b) != p+"\n" {
+			if p, err := t.publicOf(opts{store: o.store, key: rk}); err != nil {
+				return err // an unreadable recovery key is the cause to name, not the missing seat
+			} else if string(b) != p+"\n" {
 				return nil // a store made for another recovery key is not this bootstrap's to finish
 			}
 		}
