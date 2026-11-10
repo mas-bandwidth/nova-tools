@@ -1,0 +1,60 @@
+#!/bin/bash
+# nova-disk-clean: removes what jobs leave behind and nothing else removes (fleet/health.yml), run as the login.
+#   DISK_CLEAN_DIRS (colon-separated; /tmp and each runner's TMPDIR): a top-level entry the login owns is removed whole
+#     when nothing under it changed for the age, it holds no socket, and no process of the login works in it, runs from
+#     it or holds a file under it open. A job's temp directory is removed whole or kept, never cut into.
+#   DISK_CLEAN_CACHES (colon-separated; Go's build cache): a cache file unchanged for the age is removed. Go refreshes
+#     an entry's mtime when it uses one more than an hour old and rebuilds a missing one, so a build loses nothing.
+# The age is DISK_CLEAN_AGE_MIN minutes, or DISK_CLEAN_PRESSED_MIN on a filesystem over DISK_WARN_PCT used. One CLEAN
+# line per removal and a CLEAN-DONE line, in the journal (DISK_NO_LOG unset) and on stdout; DISK_CLEAN_DRY=1 removes
+# nothing and says WOULD.
+set -u
+AGE=${DISK_CLEAN_AGE_MIN:-2880}
+PRESSED=${DISK_CLEAN_PRESSED_MIN:-360}
+WARN=${DISK_WARN_PCT:-80}
+verb=CLEAN
+[ -n "${DISK_CLEAN_DRY:-}" ] && verb=WOULD
+say() {
+  [ -n "${DISK_NO_LOG:-}" ] || logger -t nova-disk-clean -p user.notice "$1"
+  echo "$1"
+}
+age_for() { # the age in minutes for the filesystem holding $1
+  local pct
+  pct=$(df -P "$1" 2>/dev/null | awk 'NR == 2 {sub("%", "", $5); print $5}')
+  if [ -n "$pct" ] && [ "$pct" -gt "$WARN" ]; then echo "$PRESSED"; else echo "$AGE"; fi
+}
+held=$(mktemp) || exit 1
+trap 'rm -f "$held"' EXIT
+# what the login's processes work in, run from and hold open (another user's are unreadable, and their files not ours)
+find /proc/[0-9]*/cwd /proc/[0-9]*/exe /proc/[0-9]*/fd -maxdepth 1 -type l -printf '%l\n' 2>/dev/null > "$held"
+freed=0
+IFS=: read -r -a dirs <<< "${DISK_CLEAN_DIRS:-}"
+for d in "${dirs[@]}"; do
+  [ -d "$d" ] || continue
+  age=$(age_for "$d")
+  while IFS= read -r -d '' e; do
+    # a socket's listener holds it as socket:[inode], not by path, so an entry with one (tmux, an agent) stays
+    [ -n "$(find "$e" -xdev \( -mmin "-$age" -o -type s \) -print -quit 2>/dev/null)" ] && continue
+    awk -v e="$e" '$0 == e || index($0, e "/") == 1 {found = 1; exit} END {exit !found}' "$held" && continue
+    kb=$(du -sxk "$e" 2>/dev/null | cut -f1)
+    if [ "$verb" = CLEAN ] && ! rm -rf --one-file-system -- "$e" 2>/dev/null; then
+      say "CLEAN-FAIL $e: rm -rf left part of it (run: ls -la $e)"
+      continue
+    fi
+    freed=$((freed + ${kb:-0}))
+    say "$verb $e ${kb:-0}KiB unchanged ${age}m"
+  done < <(find "$d" -xdev -mindepth 1 -maxdepth 1 -user "$(id -u)" -print0 2>/dev/null)
+done
+IFS=: read -r -a caches <<< "${DISK_CLEAN_CACHES:-}"
+for c in "${caches[@]}"; do
+  [ -d "$c" ] || continue
+  age=$(age_for "$c")
+  del=-delete
+  [ "$verb" = CLEAN ] || del=-true
+  read -r n kb < <(find "$c" -xdev -mindepth 2 -maxdepth 2 -path "$c/??/*" -type f -mmin "+$age" -printf '%k\n' "$del" 2>/dev/null |
+    awk '{n++; s += $1} END {print n + 0, s + 0}')
+  [ "$n" -gt 0 ] || continue
+  freed=$((freed + kb))
+  say "$verb $c ${n} files ${kb}KiB unchanged ${age}m"
+done
+say "$verb-DONE $(hostname -s) ${freed}KiB"
