@@ -121,19 +121,21 @@ nova_sdk_tools:
       home: Contents/Home
 
   # .NET: the 10.0 SDK here; the other SDKs (with their runtimes) go into the same directory from
-  # nova_sdk_dotnet_more, so one dotnet lists them all.
+  # nova_sdk_dotnet_more, so one dotnet lists them all. Bump both from one release day: this SDK builds net8.0 with the
+  # packs of that day's 8.0 patch (its sdk/<version>/Microsoft.NETCoreSdk.BundledVersions.props), which the 8.0 SDK
+  # brings; tasks/dotnet.yml fails the run when they differ.
   - name: dotnet
-    version: "10.0.401"
-    dir: dotnet-10.0.401
+    version: "10.0.403"
+    dir: dotnet-10.0.403
     probe: dotnet
     links: [dotnet]
     linux:
-      url: https://builds.dotnet.microsoft.com/dotnet/Sdk/10.0.401/dotnet-sdk-10.0.401-linux-x64.tar.gz
-      sha512: 51c8b999af9e8dd9998c9edc5944e19a90788862068acd38694e098889054ce8c23d4f0c5cccfa16bf187d044562359e5ee69a9f8ad0bbe913ba90311fbce25b
+      url: https://builds.dotnet.microsoft.com/dotnet/Sdk/10.0.403/dotnet-sdk-10.0.403-linux-x64.tar.gz
+      sha512: b7b3d8461cf98b07d2552ce9199702fa3ad010ac2671a5f8cd5136f7534e50f6855ba7bbb02b11494563f1d04156276a31cda1103b900e5eecd0d9473dc7b9c5
       root: .
     darwin:
-      url: https://builds.dotnet.microsoft.com/dotnet/Sdk/10.0.401/dotnet-sdk-10.0.401-osx-arm64.tar.gz
-      sha512: 69f64eb00dc045398755c440b152225d544301a345a146a16e86a56a0c52b7c94b2c331520e976dbb821f18d31930aafbd25bb85961e3517e0665414ce0cbcff
+      url: https://builds.dotnet.microsoft.com/dotnet/Sdk/10.0.403/dotnet-sdk-10.0.403-osx-arm64.tar.gz
+      sha512: 5893c66b48ea3674c7da18501059d606e96f3672fabe4d5e41762e692c7c83df3ee0b2b9dc5a0786191da2dc413d7335158101c14c935ab217f31ac2529770f3
       root: .
 
   - name: golangci-lint

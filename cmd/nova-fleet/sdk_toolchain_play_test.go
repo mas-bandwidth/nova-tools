@@ -269,6 +269,26 @@ func TestSDKToolchainDotnet8AndRustup(t *testing.T) {
 	}
 }
 
+// The .NET 10 SDK names the exact targeting and apphost packs it builds an older target with (its
+// Microsoft.NETCoreSdk.BundledVersions.props), and restore downloads any that are not in packs/, which a gate with no
+// network cannot. So the role pairs the 10 SDK with the 8 SDK of the same release day and checks after installing that
+// every pack the 10 SDK names for each extra SDK's target is there, failing the run when it is not.
+func TestSDKToolchainDotnetPacksMatchThe10SDK(t *testing.T) {
+	t.Parallel()
+	var guard map[string]any
+	for _, task := range sdkTasks(t)["dotnet.yml"] {
+		if strings.Contains(taskText(t, task), "BundledVersions.props") {
+			guard = task
+		}
+	}
+	require.NotNil(t, guard, "dotnet.yml checks the packs the 10 SDK's BundledVersions.props names")
+	text := taskText(t, guard)
+	for _, want := range []string{"KnownFrameworkReference", "KnownAppHostPack", "TargetingPackVersion", "AppHostPackVersion", "/packs/", "nova_sdk_dotnet_more", "exit 1"} {
+		assert.Contains(t, text, want)
+	}
+	assert.Contains(t, asText(guard["when"]), "not ansible_check_mode", "the packs are there only after a real run")
+}
+
 // The role installs only what the probe found missing, changes nothing under --check, and never becomes root.
 func TestSDKToolchainInstallsOnlyWhatIsMissing(t *testing.T) {
 	t.Parallel()
