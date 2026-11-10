@@ -50,6 +50,7 @@ type refusalCase struct {
 	match string
 	goos  string
 	why   string
+	needs string // a program the case reaches only when it is on PATH; without it the case skips
 }
 
 const (
@@ -120,7 +121,7 @@ var docRefusals = map[string]refusalCase{
 	`"bad-key" is not an environment variable name, or its value holds a NUL`:       {tool: "secrets", why: needsSeat},
 	`git not found on PATH`: {tool: "secrets", why: "a PATH without git, which the store commands look up first"},
 	`key file K does not exist`: {tool: "secrets", argv: []string{"exec", "--only", "X", "--store", "@tmp", "--key", "K", "--as", "s", "--", "true"},
-		files: []string{"s.yaml"}, vars: []string{"K"}},
+		files: []string{"s.yaml"}, vars: []string{"K"}, needs: "sops"},
 }
 
 // A docItem is one thing a doc quotes: a command or a refusal, and where.
@@ -475,6 +476,13 @@ func (h *docHarness) refusal(r docItem, rc refusalCase) {
 		}
 	}
 	if rc.why != "" || (rc.goos != "" && rc.goos != runtime.GOOS) {
+		return
+	}
+	if _, err := exec.LookPath(rc.needs); rc.needs != "" && err != nil {
+		if os.Getenv("NOVA_CONTRACT_STRICT") == "1" { // the CI functional job: a missing dependency fails
+			t.Errorf("%s: %q: NOVA_CONTRACT_STRICT=1 and %s is not on PATH", r.loc, r.text, rc.needs)
+		}
+		t.Logf("%s: %q skipped: %s is not on PATH", r.loc, r.text, rc.needs)
 		return
 	}
 	dir := t.TempDir()
