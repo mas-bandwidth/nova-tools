@@ -52,5 +52,7 @@
       {{ s | regex_replace(github_runner_token | regex_escape, 'REDACTED') if github_runner_token | default('') | length > 0 else s }}
   when: github_runner_removal is not skipped and github_runner_removal.rc | default(0) != 0
 
+# as root: the CI rules (tasks/ci-rules.yml) leave <dir>/.nova-ci-rules owned by root
 - name: delete the directory
   ansible.builtin.file: { path: "{{ github_runner_dir }}", state: absent }
+  become: "{{ not ansible_check_mode }}"

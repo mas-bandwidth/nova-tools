@@ -322,6 +322,30 @@ func TestSDKToolchainDotnetPacksMatchThe10SDK(t *testing.T) {
 	assert.Contains(t, asText(guard["when"]), "not ansible_check_mode", "the packs are there only after a real run")
 }
 
+// The CLI writes a sentinel per SDK version into <DOTNET_CLI_HOME>/.dotnet on its first run, and every dotnet command of
+// an SDK whose sentinels are missing fails where it cannot ("Access to the path ... toolpath.sentinel is denied"). So
+// the role holds the CLI home and its .dotnet writable by the login, whatever mode it finds them in.
+func TestSDKToolchainDotnetCLIHomeIsWritable(t *testing.T) {
+	t.Parallel()
+	modes := map[string]string{}
+	for _, task := range sdkTasks(t)["dotnet.yml"] {
+		f, ok := task["ansible.builtin.file"].(map[string]any)
+		if !ok || f["state"] != "directory" {
+			continue
+		}
+		paths := []any{f["path"]}
+		if f["path"] == "{{ item }}" {
+			paths, _ = task["loop"].([]any)
+		}
+		for _, p := range paths {
+			modes[asText(p)] = asText(f["mode"])
+		}
+	}
+	for _, dir := range []string{"{{ nova_sdk_dir }}/dotnet-home", "{{ nova_sdk_dir }}/dotnet-home/.dotnet"} {
+		assert.Equal(t, "0755", modes[dir], "%s is a directory the login can write", dir)
+	}
+}
+
 // The role installs only what the probe found missing, changes nothing under --check, and never becomes root.
 func TestSDKToolchainInstallsOnlyWhatIsMissing(t *testing.T) {
 	t.Parallel()
