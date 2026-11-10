@@ -806,11 +806,20 @@ applying it restarts only the daemon it configures, never the login's units. A d
   back (`user-<uid>.slice.d/90-nova-memory.conf`, `user@.service.d/90-nova-restart.conf`).
 - `nova-disk-report` every 6 hours from `nova-disk-report.timer`: one line in the journal for /, the home filesystem
   and swap, `DISK-WARN` at priority warning over `nova_health_disk_warn_pct`.
+- `nova-disk-clean` every hour from `nova-disk-clean.timer`, as the login: a top-level entry it owns in
+  `nova_health_disk_clean_dirs` (`/tmp`) or a runner's `TMPDIR` goes whole once nothing under it changed (ctime, which an unpack cannot set back) for
+  `nova_health_disk_clean_age_min`, it holds no socket, FIFO, `.git`, quarantine, pid or lock file, and no process of
+  the login works in it, runs from it, maps it or holds a file in it (checked again just before the removal). A root
+  that is `/`, the home or above it, or under a runner's `_work` or `actions-runner*` is refused (`CLEAN-REFUSED`); a file
+  of `nova_health_disk_clean_caches` (Go's build cache) unchanged that long goes too. On a filesystem over
+  `nova_health_disk_warn_pct` the age is `nova_health_disk_clean_pressed_min`. One `CLEAN` line per removal and a
+  `CLEAN-DONE` line in the journal.
 
 ```
 nova-fleet health --check --diff
 nova-fleet health
 journalctl -t nova-disk-report --since -1d        # the disk lines
+journalctl -t nova-disk-clean --since -1d         # what the clean removed
 ```
 
 | Variable | Default | |
@@ -821,6 +830,8 @@ journalctl -t nova-disk-report --since -1d        # the disk lines
 | `nova_health_log_maxsize`, `nova_health_log_trim`, `nova_health_log_files` | `1G`, 4 GiB, syslog and kern.log | `0` trim is off |
 | `nova_health_user_memory_max_pct` | `85` | `0` is no limit |
 | `nova_health_disk_report`, `nova_health_disk_warn_pct`, `nova_health_disk_on_calendar` | `true`, `80`, every 6 hours | |
+| `nova_health_disk_clean`, `nova_health_disk_clean_dirs`, `nova_health_disk_clean_caches` | `true`, `/tmp`, `~/.cache/go-build` | |
+| `nova_health_disk_clean_age_min`, `nova_health_disk_clean_pressed_min`, `nova_health_disk_clean_on_calendar` | `2880`, `360`, hourly | minutes |
 
 **Check.** `HEALTH <machine> journal=persistent panic=10 ssh_oom=0 slice_max=<bytes> | DISK <machine> root=<n>%
 swap=<n>%`. **Rollback.** Remove the file of the guard (named above), then `systemctl daemon-reload` and restart the
