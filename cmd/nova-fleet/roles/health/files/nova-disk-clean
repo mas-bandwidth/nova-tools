@@ -1,0 +1,87 @@
+#!/bin/bash
+# nova-disk-clean: removes what jobs leave behind and nothing else removes (fleet/health.yml), run as the login.
+#   DISK_CLEAN_DIRS (colon-separated; /tmp and each runner's TMPDIR): a top-level entry the login owns is removed whole
+#     when nothing under it changed (ctime) for the age, it holds no socket, FIFO, git repository (.git, *.git, HEAD: maybe unpushed work), mount point,
+#     quarantine, pid or lock file, and no process of the login works in it, runs from it, maps it or holds a file under
+#     it open (checked again just before the removal). A job's temp directory is removed whole or kept, never cut into.
+#     A root that is /, the home or above it, or under a runner's _work or actions-runner* directory is refused whole.
+#   DISK_CLEAN_CACHES (colon-separated; Go's build cache): a cache file unchanged for the age is removed. Go refreshes
+#     an entry's mtime when it uses one more than an hour old and rebuilds a missing one, so a build loses nothing.
+# The age is DISK_CLEAN_AGE_MIN minutes, or DISK_CLEAN_PRESSED_MIN on a filesystem over DISK_WARN_PCT used. One CLEAN
+# line per removal and a CLEAN-DONE line, in the journal (DISK_NO_LOG unset) and on stdout; DISK_CLEAN_DRY=1 removes
+# nothing and says WOULD.
+set -u
+[ "$(id -u)" != 0 ] || { echo "nova-disk-clean: refusing to run as root (the unit's User= is the login)" >&2; exit 1; }
+AGE=${DISK_CLEAN_AGE_MIN:-2880}
+PRESSED=${DISK_CLEAN_PRESSED_MIN:-360}
+WARN=${DISK_WARN_PCT:-80}
+verb=CLEAN
+[ -n "${DISK_CLEAN_DRY:-}" ] && verb=WOULD
+say() {
+  [ -n "${DISK_NO_LOG:-}" ] || logger -t nova-disk-clean -p user.notice "$1"
+  echo "$1"
+}
+age_for() { # the age in minutes for the filesystem holding $1
+  local pct
+  pct=$(df -P "$1" 2>/dev/null | awk 'NR == 2 {sub("%", "", $5); print $5}')
+  if [ -n "$pct" ] && [ "$pct" -gt "$WARN" ]; then echo "$PRESSED"; else echo "$AGE"; fi
+}
+held=$(mktemp) || exit 1
+trap 'rm -f "$held"' EXIT
+snapshot() { # what the login's processes work in, run from, map and hold open (another user's are unreadable, not ours)
+  { find /proc/[0-9]*/cwd /proc/[0-9]*/exe /proc/[0-9]*/fd -maxdepth 1 -type l -printf '%l\n'
+    cat /proc/[0-9]*/maps | awk '$6 ~ /^\// {print substr($0, index($0, $6))}'; } 2>/dev/null > "$held"
+}
+is_held() { E=$1 awk '$0 == ENVIRON["E"] || index($0, ENVIRON["E"] "/") == 1 {found = 1; exit} END {exit !found}' "$held"; }
+keeps() { # an entry changed within the age, or holding what must never go. ctime, not mtime: tar, cp -a and rsync -a
+  # restore an old mtime on what they write just now, and nothing can set a ctime back.
+  [ -n "$(find "$1" -xdev \( -cmin "-$2" -o -type s -o -type p -o -name '*.git' -o -name HEAD -o -name packed-refs -o -iname '*quarantine*' \
+    -o -name '*.pid' -o -name pid -o -name '*.pidfile' -o -name '*.lock' -o -name LOCK -o -name '*.lck' \) \
+    -print -quit 2>/dev/null)" ]
+}
+refused_root() { # $1 is a real path
+  local home
+  home=$(realpath -m "$HOME")
+  [ "$1" = / ] && return 0
+  [ "$home" = "$1" ] || [ "${home#"$1"/}" != "$home" ] && return 0
+  case "/$1/" in */_work/* | */actions-runner*) return 0 ;; esac
+  return 1
+}
+snapshot
+freed=0
+IFS=: read -r -a dirs <<< "${DISK_CLEAN_DIRS:-}"
+for d in "${dirs[@]}"; do
+  [ -d "$d" ] || continue
+  d=$(realpath -e "$d") || continue # /proc names real paths
+  if refused_root "$d"; then say "CLEAN-REFUSED $d: / , the home or above it, or a runner's work dir"; continue; fi
+  age=$(age_for "$d")
+  while IFS= read -r -d '' e; do
+    # a socket's listener holds it as socket:[inode], not by path, so an entry with one (tmux, an agent) stays
+    keeps "$e" "$age" && continue
+    is_held "$e" && continue
+    mountpoint -q "$e" 2>/dev/null && continue # a mount's contents are not this filesystem's leftovers
+    kb=$(du -sxk "$e" 2>/dev/null | cut -f1)
+    snapshot # again, just before the removal: a job may have come back to it
+    { is_held "$e" || keeps "$e" "$age"; } && continue
+    if [ "$verb" = CLEAN ] && ! rm -rf --one-file-system -- "$e" 2>/dev/null; then
+      say "CLEAN-FAIL $e: rm -rf left part of it (run: ls -la $e)"
+      continue
+    fi
+    freed=$((freed + ${kb:-0}))
+    say "$verb $e ${kb:-0}KiB unchanged ${age}m"
+  done < <(find "$d" -xdev -mindepth 1 -maxdepth 1 -user "$(id -u)" -print0 2>/dev/null)
+done
+IFS=: read -r -a caches <<< "${DISK_CLEAN_CACHES:-}"
+for c in "${caches[@]}"; do
+  [ -d "$c" ] || continue
+  [ "$(basename "$c")" = go-build ] || { say "CLEAN-REFUSED $c: a cache here is Go's build cache, named go-build"; continue; }
+  age=$(age_for "$c")
+  del=-delete
+  [ "$verb" = CLEAN ] || del=-true
+  read -r n kb < <(find "$c" -xdev -mindepth 2 -maxdepth 2 -path "$c/??/*" -type f -mmin "+$age" -printf '%k\n' "$del" 2>/dev/null |
+    awk '{n++; s += $1} END {print n + 0, s + 0}')
+  [ "$n" -gt 0 ] || continue
+  freed=$((freed + kb))
+  say "$verb $c ${n} files ${kb}KiB unchanged ${age}m"
+done
+say "$verb-DONE $(hostname -s) ${freed}KiB"
