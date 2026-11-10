@@ -18,12 +18,12 @@ type issue struct{ kind, detail string }
 var (
 	wikilink   = regexp.MustCompile(`\[\[([^\[\]]+?)\]\]`)
 	fence      = regexp.MustCompile("^[ \t]{0,3}(`{3,}|~{3,})")
-	quotedWiki = regexp.MustCompile("`[ \t]*\\[\\[[^\\[\\]]+?\\]\\][ \t]*`")
+	inlineCode = regexp.MustCompile("`[^`\n]*`")
 	mdLink     = regexp.MustCompile(`\]\(([^)\n]+)\)`)
 	scheme     = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9+.\-]*:`)
 )
 
-// maskCode blanks fenced code and backticked wikilinks, so a [[link]] shown as an example is not a link.
+// maskCode blanks fenced code and inline code spans, so a link shown as an example is not a link.
 func maskCode(s string) string {
 	lines := strings.Split(s, "\n")
 	open := ""
@@ -38,7 +38,7 @@ func maskCode(s string) string {
 		} else if open != "" {
 			lines[i] = ""
 		} else {
-			lines[i] = quotedWiki.ReplaceAllString(ln, " ")
+			lines[i] = inlineCode.ReplaceAllString(ln, " ")
 		}
 	}
 	return strings.Join(lines, "\n")
