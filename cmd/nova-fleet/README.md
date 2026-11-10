@@ -1013,7 +1013,7 @@ does it remove a foreign architecture, a ports source, the `Architectures` lines
 
 The language toolchains a bench's gates and a runner's CI jobs build and test with, in the login's own SDK directory
 (`nova_sdk_dir`, `~/sdk`), on each machine of the `bench` and `runner` groups. Every version is pinned in
-`roles/sdk-toolchain/defaults/main.yml` and checked against the publisher's own digest before it is unpacked. Each tool goes into
+`roles/sdk-toolchain/defaults/main.yml`; an archive is checked against the publisher's own digest before it is unpacked. Each tool goes into
 `~/sdk/<tool>-<version>`, its commands are linked into `~/sdk/bin`, and `~/sdk/env.sh` puts `~/sdk/bin` first on PATH
 (on Linux, `~/.bashrc` sources it on its first line, before an early return for a non-interactive shell). The play runs
 as the login and never as root; run `runner-packages` first, which brings the compilers, `cmake`, `opam` and LLVM 18
@@ -1028,10 +1028,11 @@ On x86_64 Linux and WSL: Go, Node, Dart, Erlang/OTP, Elixir, a Temurin JDK, .NET
 the same directory, golangci-lint, staticcheck, nilaway, ESBMC, SpotBugs with find-sec-bugs, Deno, Jazzer,
 google-java-format, TypeScript, ESLint, sbcl, Lua, luacheck, Luau, Squirrel, clang-format, LLVM (as `~/sdk/llvm`, not
 on PATH), cppcheck, AFL++ and Frama-C with Alt-Ergo and Why3 in their own opam root (`~/sdk/opam`). A Mac gets the tools
-with a `darwin` pin: Go, Node, Dart, Elixir, the JDK and .NET. Each tool has one of five kinds: an `archive` or a
+with a `darwin` pin: Go, Node, Dart, Elixir, the JDK and .NET. Each tool has one of six kinds: an `archive` or a
 `file` (a URL and its sha256 or sha512), `git` (a tag, refused unless it is the pinned commit, then built), `go`
 (`go install` of a module version, which Go checks against its checksum database), `npm` (refused unless the lock file
-the install writes has the pinned integrity) and `script` (a build alone, Frama-C's opam root).
+the install writes has the pinned integrity; the package's own dependencies resolve from the registry at install time)
+and `script` (a build alone: Frama-C's opam root, at pinned package versions from the opam repository as it is then).
 
 Rust, on Linux, comes through a pinned rustup: `rustup-init` at `nova_sdk_rustup.version`, checked against its
 `.sha256`, installs rustup into `~/sdk/rustup-<version>` with the first toolchain (a release, `1.98.1`) as the
@@ -1047,8 +1048,9 @@ one `~/sdk/bin/dotnet --list-runtimes` lists both and a `net8.0` target runs on 
 
 A tool whose probe (`dir`/`probe` in the defaults) is in its directory is adopted as it is: never downloaded,
 replaced or upgraded, so a second run reports `changed=0`. A missing one is fetched into `~/sdk/dl`, unpacked in a
-stage beside the SDK and moved into place; a directory there without its probe is a broken install of the same version
-and is replaced. Every link the defaults name is pointed at the pinned version, so a machine whose `~/sdk/bin` named
+stage beside the SDK and moved into place (a `git` or `script` tool builds into its directory); a directory there
+without its probe is moved aside to `<dir>.broken-<time>`, never deleted. `env.sh` keeps a dated backup of the file it
+replaces. Every link the defaults name is pointed at the pinned version, so a machine whose `~/sdk/bin` named
 another version of a tool names the pinned one after a run; the other version's directory is left where it is. A
 version bump installs the new directory beside the old and moves the links.
 
@@ -1063,7 +1065,8 @@ version bump installs the new directory beside the old and moves the links.
 | `nova_sdk_shell_rc` | `true` | Linux: `~/.bashrc` sources `env.sh` on its first line, unless a line of it already names `sdk/env.sh` |
 
 **Check.** `SDK-TOOLCHAIN host=<machine> platform=<linux|darwin> tools=<n> present=<n> installed=<n> dotnet=<runtimes>`,
-one line per machine (`would-install=<n>` under `--check`). Another platform is refused, naming `-l '!<machine>'`.
+one line per machine (`would-install=<n>` under `--check`, counting the tools; the .NET SDKs and Rust print their own
+`WOULD-INSTALL` lines). Another platform is refused, naming `-l '!<machine>'`.
 **Rollback.** The play removes nothing: set the old version back in the defaults (with its URL and digest) and run it
 again, and the links name the old directory, which is still there.
 

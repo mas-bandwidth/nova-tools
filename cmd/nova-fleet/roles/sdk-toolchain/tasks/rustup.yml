@@ -48,9 +48,20 @@
   when: not ansible_check_mode
 
 - name: rustup never updates itself
-  ansible.builtin.command: { argv: [rustup, set, auto-self-update, disable] }
+  ansible.builtin.shell:
+    cmd: |
+      set -eu
+      if grep -qx 'auto_self_update = "disable"' "$RUSTUP_HOME/settings.toml" 2>/dev/null; then exit 0; fi
+      {% if ansible_check_mode %}
+      echo "SDK-TOOLCHAIN WOULD-SET rustup auto-self-update disable"
+      {% else %}
+      rustup set auto-self-update disable
+      echo SDK-TOOLCHAIN-SET
+      {% endif %}
   environment: "{{ sdk_rustup_env }}"
-  when: sdk_rustup_init_run is changed
+  register: sdk_rustup_selfupdate
+  changed_when: sdk_rustup_selfupdate.stdout != ''
+  check_mode: false
 
 # Read-only under --check (it reports what it would install); otherwise installs what a toolchain lacks.
 - name: each toolchain, with its components and targets
@@ -76,7 +87,7 @@
         {% if ansible_check_mode %}
         echo "SDK-TOOLCHAIN WOULD-INSTALL host={{ inventory_hostname }} tool=rust version={{ tc.name }} components={{ tc.components | join(',') or '-' }} targets={{ tc.targets | join(',') or '-' }}"
         {% else %}
-        rustup toolchain install {{ tc.name | quote }} --profile minimal --no-self-update{% for c in tc.components %} --component {{ c | quote }}{% endfor %}{% for g in tc.targets %} --target {{ g | quote }}{% endfor %} >/dev/null 2>&1
+        rustup toolchain install {{ tc.name | quote }} --profile minimal --no-self-update{% for c in tc.components %} --component {{ c | quote }}{% endfor %}{% for g in tc.targets %} --target {{ g | quote }}{% endfor %} >"$RUSTUP_HOME/install.log" 2>&1 || { tail -20 "$RUSTUP_HOME/install.log"; exit 1; }
         echo "SDK-TOOLCHAIN-INSTALLED rust {{ tc.name }}"
         {% endif %}
       fi

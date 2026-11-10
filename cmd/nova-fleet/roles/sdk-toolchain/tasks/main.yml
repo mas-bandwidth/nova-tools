@@ -51,6 +51,20 @@
   loop: "{{ sdk_specs }}"
   loop_control: { label: "{{ item.name }} {{ item.version }}" }
 
+- name: every tool's directory and short name is one plain name inside the SDK
+  ansible.builtin.assert:
+    quiet: true
+    that:
+      - item.dest | basename is match('^[A-Za-z0-9][A-Za-z0-9._+-]*$')
+      - item.dest | dirname == nova_sdk_dir
+      - item.dest | basename not in ['bin', 'dl', 'dotnet-home', 'env.sh']
+      - item.alias == '' or (item.alias is match('^[A-Za-z0-9][A-Za-z0-9._+-]*$') and item.alias not in ['bin', 'dl', 'dotnet-home', 'env.sh'])
+    fail_msg: >-
+      sdk-toolchain: {{ item.name }}'s dir ({{ item.dest | basename }}) or alias ({{ item.alias }}) is not one plain name inside
+      {{ nova_sdk_dir }} other than bin, dl, dotnet-home and env.sh
+  loop: "{{ sdk_specs }}"
+  loop_control: { label: "{{ item.name }}" }
+
 - name: the SDK directory, its bin and its download cache
   ansible.builtin.file: { path: "{{ item }}", state: directory }
   loop: ["{{ nova_sdk_dir }}", "{{ nova_sdk_dir }}/bin", "{{ nova_sdk_dir }}/dl"]
@@ -96,15 +110,16 @@
   loop_control: { label: "{{ item.0.name }} {{ item.1.path }}" }
   when: not ansible_check_mode
 
-# A missing tool's directory is replaced whole: what was there without its probe is a broken install of the same
-# version. The tool is unpacked (or cloned, or installed) in a stage beside the SDK and moved into place.
+# A missing tool is unpacked (or installed) in a stage beside the SDK and moved into place; a git or script tool builds
+# into its directory. A directory already there without its probe is moved aside to <dir>.broken-<time>, never deleted.
 - name: each missing tool installed into its directory
   ansible.builtin.shell:
     cmd: |
       set -euo pipefail
       sdk={{ nova_sdk_dir | quote }}; dest={{ item.dest | quote }}
-      n=$(getconf _NPROCESSORS_ONLN); jobs=$(( n / 4 > 1 ? n / 4 : 1 )); export dest jobs
+      n=$(getconf _NPROCESSORS_ONLN); jobs=$(( n / 4 > 1 ? n / 4 : 1 ))
       stage=$(mktemp -d "$sdk/.stage-{{ item.name }}-XXXXXX"); trap 'rm -rf "$stage"' EXIT
+      export dest jobs stage
       mkdir "$stage/x"
       {% if item.kind == 'archive' %}
       case {{ item.archive | quote }} in
@@ -127,7 +142,7 @@
       got=$(git -C "$stage/src" rev-parse HEAD)
       [ "$got" = {{ item.src.commit | quote }} ] || { echo "SDK-TOOLCHAIN {{ item.name }}: tag {{ item.src.ref }} is $got, pinned {{ item.src.commit }}"; exit 1; }
       {% endif %}
-      rm -rf "$dest"
+      if [ -e "$dest" ] || [ -L "$dest" ]; then mv "$dest" "$dest.broken-$(date -u +%Y%m%dT%H%M%SZ)"; fi
       {% if item.kind in ['git', 'script'] %}
       mkdir -p "$stage/src"
       cd "$stage/src"
@@ -191,13 +206,13 @@
   when: nova_sdk_rustup[sdk_platform] is defined
 
 - name: env.sh, the SDK's environment
-  ansible.builtin.template: { src: env.sh.j2, dest: "{{ nova_sdk_dir }}/env.sh", mode: "0644" }
+  ansible.builtin.template: { src: env.sh.j2, dest: "{{ nova_sdk_dir }}/env.sh", mode: "0644", backup: true }
 
 - name: whether ~/.bashrc already sources env.sh (Linux)
   ansible.builtin.command: { argv: [grep, -q, sdk/env.sh, "{{ ansible_facts['user_dir'] }}/.bashrc"] }
   register: sdk_bashrc
   changed_when: false
-  failed_when: sdk_bashrc.rc > 1
+  failed_when: false
   check_mode: false
   when: sdk_platform == 'linux' and nova_sdk_shell_rc | bool
 

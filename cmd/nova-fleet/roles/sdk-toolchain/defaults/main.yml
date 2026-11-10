@@ -35,7 +35,7 @@ nova_sdk_env:
 #   alias   <sdk>/<alias> is a link to the directory        wrapper  a script written as <sdk>/bin/<name>
 #   kind    archive (the default), file (one file), git (a tag at a pinned commit), go (go install), npm (npm install),
 #           script (the build alone)
-#   build   shell run with $dest (the directory) and $jobs set: in the directory after the unpack (archive, file), or
+#   build   shell (set -euo pipefail) run with $dest (the directory), $stage (scratch) and $jobs set: in the directory after the unpack (archive, file), or
 #           in the git checkout (git) or an empty directory (script), where it must create "$dest" itself
 #   <platform>.home   the subdirectory probe and links are under (the macOS JDK's Contents/Home)
 #   <platform>.root   the archive's top directory (default: its one top directory, else the archive's whole content)
@@ -248,7 +248,11 @@ nova_sdk_tools:
     probe: bin/sbcl
     links: [bin/sbcl]
     # its installer writes into INSTALL_ROOT, so it runs from a copy of the unpacked tree set aside
-    build: 't=$(mktemp -d) && mv "$dest" "$t/s" && mkdir -p "$dest" && (cd "$t/s" && INSTALL_ROOT="$dest" sh install.sh >/dev/null) && rm -rf "$t"'
+    build: |
+      mv "$dest" "$stage/s"
+      mkdir -p "$dest"
+      cd "$stage/s"
+      INSTALL_ROOT="$dest" sh install.sh >/dev/null
     linux:
       url: https://downloads.sourceforge.net/project/sbcl/sbcl/2.5.8/sbcl-2.5.8-x86-64-linux-binary.tar.bz2
       sha256: 103fa33b913341791f0f61f5d500e1723ac986125e665b584efba760006fed67
@@ -384,8 +388,8 @@ nova_sdk_dotnet_more:
       sha512: 79786b93f249d233b15f1d6338d4798bd71c8143f267c5e84de76c9eb8a1054920e56ea5478f7bddfb74b951cc58aaca11fbd780cf134350b7cb7cdcb42a8c8c
 
 # Rust through a pinned rustup (Linux): rustup-init at this version, checked against its .sha256, installs rustup into
-# <sdk>/rustup-<version> (RUSTUP_HOME, with the proxies under cargo/bin) with no default toolchain and self-update off;
-# then each toolchain, with its components and targets (rustup checks every component against the channel manifest's
+# <sdk>/rustup-<version> (RUSTUP_HOME, with the proxies under cargo/bin) with the first toolchain as its default and
+# self-update off; then each toolchain, with its components and targets (rustup checks every component against the channel manifest's
 # digest). The first toolchain is the one on PATH: its own binaries are linked into <sdk>/bin, and <sdk>/bin/rustup is a
 # wrapper that names this RUSTUP_HOME unless the caller set one. The nightly is the one cargo fuzz runs on.
 nova_sdk_rustup:
