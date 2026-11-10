@@ -478,6 +478,21 @@ func TestVerifyBacklinksSkipFencedCode(t *testing.T) {
 	assert.Contains(t, out, "VERIFY OK gating=0")
 }
 
+// A wikilink inside an inline code span is an example, wherever it sits in the span; one outside code is a link.
+func TestVerifyWikilinksSkipInlineCode(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	note := filepath.Join(root, "note.md")
+	require.NoError(t, os.WriteFile(note, []byte("Run `grep [[MissingPage]] docs/` to find them.\n"), 0o644))
+	code, out, errs := do(t, "", "memory", "verify", "--root", root, "--links", "gate")
+	assert.Equal(t, 0, code, errs)
+	assert.Contains(t, out, "VERIFY OK gating=0")
+	require.NoError(t, os.WriteFile(note, []byte("Run `grep` on [[MissingPage]].\n"), 0o644))
+	code, _, errs = do(t, "", "memory", "verify", "--root", root, "--links", "gate")
+	assert.Equal(t, 1, code)
+	assert.Contains(t, errs, "VERIFY FAIL wikilink [[MissingPage]] resolves to no file (e.g. from note.md)")
+}
+
 // TestMemoryFindsStoreEntries: the words an AI appended are found by memory search,
 // stats and check, and a hit names what receipt needs. No real clock: the store is
 // written with a fixed time.
