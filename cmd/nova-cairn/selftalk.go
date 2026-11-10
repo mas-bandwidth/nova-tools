@@ -188,13 +188,18 @@ func sentences(text string) []sentence {
 			case '"':
 				open = !open
 			case '.', '!', '?', ';':
-				j := i + 1
-				for j < len(s) && strings.ContainsRune(`")'`, rune(s[j])) {
-					j++
-				}
+				j := len(s) - len(strings.TrimLeft(s[i+1:], `")'”’`)) // the closing marks after the stop end this sentence
 				if j >= len(s) || s[j] == ' ' {
 					emit(j)
-					wasOpen = open
+					for _, r := range s[i+1 : j] {
+						switch r {
+						case '"':
+							open = !open
+						case '”':
+							open = false
+						}
+					}
+					wasOpen, i = open, j-1
 				}
 			}
 			if strings.HasPrefix(s[i:], "“") {
