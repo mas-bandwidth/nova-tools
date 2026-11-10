@@ -256,7 +256,8 @@ nova_sdk_tools:
       mv "$dest" "$stage/s"
       mkdir -p "$dest"
       cd "$stage/s"
-      INSTALL_ROOT="$dest" sh install.sh >/dev/null
+      unset SBCL_HOME   # install.sh refuses an SBCL_HOME that is not under INSTALL_ROOT, as another sbcl's env sets
+      INSTALL_ROOT="$dest" sh install.sh >"$stage/install.log" || { cat "$stage/install.log"; exit 1; }
     linux:
       url: https://downloads.sourceforge.net/project/sbcl/sbcl/2.5.8/sbcl-2.5.8-x86-64-linux-binary.tar.bz2
       sha256: 103fa33b913341791f0f61f5d500e1723ac986125e665b584efba760006fed67
@@ -352,7 +353,7 @@ nova_sdk_tools:
     kind: git
     build: |
       cmake -S . -B b -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$dest" -DFILESDIR="$dest/share/cppcheck" -DBUILD_TESTS=OFF -DCMAKE_POLICY_VERSION_MINIMUM=3.5 >/dev/null
-      cmake --build b -j"$jobs" >/dev/null
+      cmake --build b --target cppcheck -j"$jobs" >/dev/null   # alone: dmake can race the match compiler's sources
       cmake --install b >/dev/null
     linux: { repo: https://github.com/danmar/cppcheck, ref: "2.13.0", commit: da29903ffcbde465b6c2b47e8dc38277743f47ec }
 
