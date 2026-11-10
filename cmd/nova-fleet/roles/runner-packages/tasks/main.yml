@@ -32,9 +32,14 @@
   ansible.builtin.include_tasks: debian.yml
   when: rp_os == 'debian' and rp_wanted | length > 0
 
-- name: the kernel image a VM of the host's own kernel boots (Debian, Ubuntu)
-  ansible.builtin.include_tasks: debian-vm-kernel.yml
+- name: a WSL machine (no /boot kernel image, no kvm)
+  ansible.builtin.stat: { path: /proc/sys/fs/binfmt_misc/WSLInterop, get_checksum: false }
+  register: rp_wsl
   when: rp_os == 'debian' and nova_runner_vm_kernel | bool
+
+- name: the kernel image a VM of the host's own kernel boots (Debian, Ubuntu; not WSL)
+  ansible.builtin.include_tasks: debian-vm-kernel.yml
+  when: rp_os == 'debian' and nova_runner_vm_kernel | bool and not rp_wsl.stat.exists
 
 - name: the receipt
   ansible.builtin.debug:
