@@ -109,14 +109,18 @@ func TestFunctionalPostgresPasswordFileIsWholeOrAbsent(t *testing.T) {
 	}
 	require.NotEmpty(t, line, "the task that makes the password files")
 	for _, c := range []struct {
-		openssl string
-		want    string // the file's content, or "" for no file
+		openssl, mv string // mv "" is the real one
+		want        string // the file's content, or "" for no file
 	}{
-		{"exit 1", ""},
-		{"printf '%064d\\n' 0", strings.Repeat("0", 64) + "\n"},
+		{"exit 1", "", ""},
+		{"printf '%064d\\n' 0", "exit 1", ""},
+		{"printf '%064d\\n' 0", "", strings.Repeat("0", 64) + "\n"},
 	} {
 		dir, bin := t.TempDir(), t.TempDir()
 		require.NoError(t, os.WriteFile(filepath.Join(bin, "openssl"), []byte("#!/bin/sh\n"+c.openssl+"\n"), 0o755))
+		if c.mv != "" {
+			require.NoError(t, os.WriteFile(filepath.Join(bin, "mv"), []byte("#!/bin/sh\n"+c.mv+"\n"), 0o755))
+		}
 		script := strings.NewReplacer("{{ nova_pg_dir }}", dir, "{{ item.name }}", "nova_config").Replace(line)
 		cmd := exec.Command("/bin/sh", "-c", script)
 		cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"))
@@ -124,7 +128,10 @@ func TestFunctionalPostgresPasswordFileIsWholeOrAbsent(t *testing.T) {
 		pass := filepath.Join(dir, "nova_config.pass")
 		if c.want == "" {
 			assert.Error(t, err, "%s", out)
-			assert.NoFileExists(t, pass, "a failed openssl leaves no password file")
+			assert.NoFileExists(t, pass, "a failed openssl or mv leaves no password file")
+			left, err := filepath.Glob(pass + ".*")
+			require.NoError(t, err)
+			assert.Empty(t, left, "a failed openssl or mv leaves no temporary file")
 			continue
 		}
 		require.NoError(t, err, "%s", out)
