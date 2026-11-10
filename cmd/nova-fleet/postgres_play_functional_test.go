@@ -7,11 +7,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 )
 
 // postgres_play_functional_test.go runs the postgres role's list check (roles/postgres/tasks/roles.yml) on localhost
@@ -87,5 +89,50 @@ func TestFunctionalPostgresRolesRefusals(t *testing.T) {
 		assert.Error(t, err, c.vars)
 		assert.Contains(t, out, c.want, c.vars)
 		assert.NotContains(t, out, "PGROLES", c.vars)
+	}
+}
+
+// The task that makes a role's password file, run by sh with a stand-in openssl: a failed openssl leaves no
+// file (the task's creates: would skip an empty one on every later run), and a good one leaves the whole value,
+// mode 0600.
+func TestFunctionalPostgresPasswordFileIsWholeOrAbsent(t *testing.T) {
+	t.Parallel()
+	b, err := os.ReadFile("roles/postgres/tasks/main.yml")
+	require.NoError(t, err)
+	var raw []any
+	require.NoError(t, yaml.Unmarshal(b, &raw))
+	var line string
+	for _, task := range flattenTasks(t, mapsOf(t, raw)) {
+		if strings.HasPrefix(asText(task["name"]), "a password per role") {
+			line = asText(task["ansible.builtin.shell"])
+		}
+	}
+	require.NotEmpty(t, line, "the task that makes the password files")
+	for _, c := range []struct {
+		openssl string
+		want    string // the file's content, or "" for no file
+	}{
+		{"exit 1", ""},
+		{"printf '%064d\\n' 0", strings.Repeat("0", 64) + "\n"},
+	} {
+		dir, bin := t.TempDir(), t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(bin, "openssl"), []byte("#!/bin/sh\n"+c.openssl+"\n"), 0o755))
+		script := strings.NewReplacer("{{ nova_pg_dir }}", dir, "{{ item.name }}", "nova_config").Replace(line)
+		cmd := exec.Command("/bin/sh", "-c", script)
+		cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"))
+		out, err := cmd.CombinedOutput()
+		pass := filepath.Join(dir, "nova_config.pass")
+		if c.want == "" {
+			assert.Error(t, err, "%s", out)
+			assert.NoFileExists(t, pass, "a failed openssl leaves no password file")
+			continue
+		}
+		require.NoError(t, err, "%s", out)
+		got, err := os.ReadFile(pass)
+		require.NoError(t, err)
+		assert.Equal(t, c.want, string(got))
+		fi, err := os.Stat(pass)
+		require.NoError(t, err)
+		assert.Equal(t, os.FileMode(0o600), fi.Mode().Perm())
 	}
 }
