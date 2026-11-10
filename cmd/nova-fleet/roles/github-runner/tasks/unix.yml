@@ -55,6 +55,16 @@
   register: github_runner_cache
   when: github_runner_want | length > 0
 
+# The TMPDIR the units name, made as the login before any unit starts: a runner whose TMPDIR is missing fails its jobs'
+# first mktemp. On macOS only when github_runner_env names one (the daemon otherwise has none and uses /tmp).
+- name: the runners' TMPDIR
+  ansible.builtin.file:
+    path: "{{ github_runner_env.get('TMPDIR', github_runner_tmpdir) }}"
+    state: directory
+    owner: "{{ ansible_facts['user_id'] }}"
+    mode: "0700"
+  when: github_runner_want | length > 0 and (ansible_facts['system'] == 'Linux' or 'TMPDIR' in github_runner_env)
+
 - name: the pinned runner release, checked against its digest
   ansible.builtin.get_url:
     url: "{{ github_runner_release_url }}/v{{ github_runner_version }}/actions-runner-{{ github_runner_os }}-{{ github_runner_arch }}-{{ github_runner_version }}.tar.gz"

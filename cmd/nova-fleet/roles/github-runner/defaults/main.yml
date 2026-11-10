@@ -8,6 +8,10 @@
 # github_runner_url:
 # github_runner_scope: repo | org
 github_runner_labels: []
+# The labels every runner gets: on Linux and macOS before the machine's roles, os and arch, on the Windows side of a WSL
+# machine before its name (github_runner_wsl_labels). A job selects any fleet runner of its os with
+# runs-on: [self-hosted, Linux, fleet].
+github_runner_base_labels: [fleet]
 
 # present converges the runners; absent retires every runner of this url on the host.
 github_runner_state: present
@@ -33,8 +37,15 @@ github_runner_release_url: "https://github.com/actions/runner/releases/download"
 # Where a host keeps them: <base>/<owner>-<repo>-<i> (or <org>-<i>), in the login's home.
 github_runner_base_dir: "{{ ansible_facts['user_dir'] ~ '/actions-runner' }}"
 
-# Extra environment for the service (Linux and macOS), name: value.
-github_runner_env: {}
+# The service's environment (Linux and macOS), name: value: the machine record's runner_env (nova-config machine set
+# <machine> --runner_env '<json-object>'), which the inventory gives as nova_runner_env; -e github_runner_env replaces
+# it for one run.
+github_runner_env: "{{ nova_runner_env | default({}) }}"
+
+# A Linux runner's TMPDIR when github_runner_env has none: one directory of the login (0700) for all its runners, made
+# before the units start. Its jobs' temporary files land there and not in /tmp, and the health play's disk clean reads
+# it from the units and removes what is left. A macOS daemon gets none (its jobs use /tmp, which macOS cleans).
+github_runner_tmpdir: "{{ ansible_facts['user_dir'] }}/.cache/runner-tmp"
 
 # The PATH the service starts with when github_runner_env has none; its jobs inherit it, so a step finds the nova
 # tools (`nova-reserve run ...`): nova_bin_dir first (group_vars/all.yml, where install.yml puts them), then the
@@ -77,10 +88,10 @@ github_runner_wsl_ci_stage_unix: /mnt/c/ProgramData/nova-ci-rules-stage
 github_runner_wsl_ci_script: 'C:\ProgramData\nova-ci-rules-stage\nova-ci-rules.ps1'
 github_runner_wsl_base_dir: 'C:\actions-runner'
 github_runner_wsl_cache: 'C:\actions-runner\.cache'
-# The labels every Windows-side runner gets, before the record's extras (GitHub adds self-hosted, X64 and Windows).
-# Not the machine's roles, os and arch as on Linux: a job that selects [self-hosted, bench] or [self-hosted, amd64]
+# The labels every Windows-side runner gets, before the record's extras (GitHub adds self-hosted, X64 and Windows): the
+# base labels and the machine's name. Not the machine's roles, os and arch as on Linux: a job that selects [self-hosted, bench] or [self-hosted, amd64]
 # must never land on Windows.
-github_runner_wsl_labels: "{{ ['fleet', inventory_hostname] }}"
+github_runner_wsl_labels: "{{ github_runner_base_labels + [inventory_hostname] }}"
 # The job PATH each Windows runner's .env and .path carry, so a job sees these and nothing of the machine PATH (console
 # SDKs, a second Visual Studio, WSL's System32\bash.exe ahead of Git's). Empty leaves PATH to the service.
 github_runner_windows_path:
