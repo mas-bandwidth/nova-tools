@@ -277,6 +277,15 @@ nova-secrets exec --only GH_GATE_TOKEN -- git -c credential.helper= -c credentia
 ```
 
 `git ls-remote` in place of `clone` checks access without fetching anything.
+A later `fetch` or `pull` in that clone takes the same two `-c` options inside
+the same `exec`. Through `ssh`, send the recipe on stdin so your local shell
+expands nothing and its single quotes stay intact:
+
+```sh
+ssh <machine> sh -s <<'END'
+nova-secrets exec --only GH_GATE_TOKEN -- git -c credential.helper= -c credential.helper='!f() { test "$1" = get && echo username=x-access-token && echo "password=$GH_GATE_TOKEN"; }; f' ls-remote https://github.com/<owner>/<repo>.git
+END
+```
 `unset NOVA_SECRETS_SEAT` or `--as` is never needed for this; a refusal names
 the store or seat it tried.
 
