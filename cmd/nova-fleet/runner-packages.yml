@@ -1,4 +1,4 @@
-# purpose: the packages a CI runner's tests need, from nova_runner_packages, on each machine of the runner group
+# purpose: the packages a CI runner's tests need, from nova_runner_packages, on each machine of the bench and runner groups
 #
 # runner-packages.yml: the packages a CI runner's tests need, per OS, from nova_runner_packages (group_vars/all.yml;
 # cmd/nova-fleet/README.md, "runner-packages"): Homebrew formulae on macOS, apt packages on Debian and Ubuntu. A package already
@@ -9,7 +9,7 @@
 #   nova-fleet runner-packages --check -- -l <machine>
 #   nova-fleet runner-packages -- -l <machine>
 - name: the packages the runners' tests need
-  hosts: runner
+  hosts: bench:runner
   gather_facts: true
   gather_subset: [min]
   roles:

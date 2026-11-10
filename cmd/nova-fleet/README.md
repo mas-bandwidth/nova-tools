@@ -169,7 +169,7 @@ reached as root at the address given, as on the first run.
 | `join` | a new machine joins the fleet: its row, its login, the tailnet, the tools a seat needs, its seat | the machine as the argument; its row's fields; `NOVA_PG_DSN` and `NOVA_PG_PASSWORD` in the environment, and `TAILSCALE_AUTHKEY` for a machine not on the tailnet (`up` mints it) |
 | `postgres` | the PostgreSQL nova-config keeps the fleet in, on each machine of the services group | `nova_seal_*` to seal its password |
 | `redis` | the Redis nova-bus talks to, on each machine of the services group | `nova_seal_*` to seal its password |
-| `runner-packages` | the packages a CI runner's tests need, from `nova_runner_packages`, on each machine of the runner group; packages only, nothing started | nothing; `-l` the machines |
+| `runner-packages` | the packages a CI runner's tests need, from `nova_runner_packages`, on each machine of the bench and runner groups (a sprint card's gate needs what a CI job needs); packages only, nothing started | nothing; `-l` the machines |
 | `seat` | each machine's seat in the secrets store | `nova_seal_store` |
 | `secrets-refresh` | the control node's encrypted store pushed to every machine with `ansible.posix.synchronize` (`verify_host: true`, no `.git`, stale files deleted, 0700/0600); no machine runs a timer (pull mode is retired; one left is removed) | `nova_seal_store` (the control node's clone) to push |
 | `services` | one supervised unit per service record, on the machine the record names (bench, runner and services groups) | the inventory's `nova_services` |
@@ -493,7 +493,10 @@ the row and reads the inventory again.
    `authorized_keys` copied to it (or the control node's file `nova_join_authorized_keys` names), linger on, the
    hostname set to the machine name. A darwin machine has no root login: set its login and sudo up at its console.
 3. **The tailnet**: `tailscale` (below). From here on the plays reach the machine over the tailnet.
-4. **The tools a seat needs** (as the login): `nova_bin_dir` on the login PATH; on Linux the pinned `age` and `sops`
+4. **The tools a seat needs** (as the login): `nova_bin_dir` on the login PATH, and `NOVA_SECRETS_STORE`
+   (`nova_secrets_store`, where the store is pushed) and `NOVA_SECRETS_SEAT` (`nova_seat`) exported in the login
+   profile, so a bare `nova-secrets exec --only NAME -- <cmd>` there opens the machine's own seat in the pushed store
+   (the key defaults to `~/.config/nova-secrets/<seat>.key`; the short hostname need not be the seat); on Linux the pinned `age` and `sops`
    release binaries, checked against their published digests. A darwin machine takes them from Homebrew
    (`brew install age sops`).
 5. **The tailnet check** (control node): the row's address is now the machine's MagicDNS name and the control node's
@@ -913,7 +916,7 @@ tailnet=<interface> dry=False watchdog=<interval> device=yes panic=<n> oops=<n> 
 
 ## runner-packages
 
-The packages a CI runner's tests need, on each machine of the `runner` group, from `nova_runner_packages`
+The packages a CI runner's tests need, on each machine of the `bench` and `runner` groups (a bench runs the same gates), from `nova_runner_packages`
 (`group_vars/all.yml`): a list per OS, Homebrew formulae on `darwin` (as the login; brew refuses root) and apt
 packages on `debian`. Today that is `postgresql@18` on macOS, for the functional tier on mini-m5, and nothing on
 Linux. A package already installed is adopted as it is: never reinstalled, upgraded or auto-updated, so a run over it

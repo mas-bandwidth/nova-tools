@@ -20,7 +20,7 @@ func TestPlaysTargetTheirGroups(t *testing.T) {
 	want := map[string][]string{
 		"ci-rules":        {workers},
 		"github-runners":  {"runner"},
-		"runner-packages": {"runner"},
+		"runner-packages": {"bench:runner"},
 		"health":          {workers},
 		"netwatch":        {workers},
 		"install":         {workers, "bench"}, // then the pinned opencode, bench only (roles/opencode)

@@ -259,6 +259,8 @@
         block: |
           case ":$PATH:" in *":{{ nova_bin_dir }}:"*) ;; *) PATH="{{ nova_bin_dir }}:$PATH"; export PATH;; esac
           NOVA_SECRETS_PINS="{{ nova_secrets_pins }}"; export NOVA_SECRETS_PINS
+          NOVA_SECRETS_STORE="{{ nova_secrets_store }}"; export NOVA_SECRETS_STORE
+          NOVA_SECRETS_SEAT="{{ nova_seat }}"; export NOVA_SECRETS_SEAT
 
     - name: "age {{ nova_age_version }} (Linux, the release archive at its pinned digest)"
       ansible.builtin.get_url:

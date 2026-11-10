@@ -45,7 +45,7 @@ func taskText(t *testing.T, task map[string]any) string {
 	return string(b)
 }
 
-func TestRunnerPackagesPlayTargetsTheRunnerGroup(t *testing.T) {
+func TestRunnerPackagesPlayTargetsTheBenchAndRunnerGroups(t *testing.T) {
 	t.Parallel()
 	b, err := os.ReadFile("runner-packages.yml")
 	require.NoError(t, err)
@@ -53,7 +53,7 @@ func TestRunnerPackagesPlayTargetsTheRunnerGroup(t *testing.T) {
 	var docs []map[string]any
 	require.NoError(t, yaml.Unmarshal(b, &docs))
 	require.Len(t, docs, 1)
-	assert.Equal(t, "runner", docs[0]["hosts"], "the play is for the runner group only")
+	assert.Equal(t, "bench:runner", docs[0]["hosts"], "a bench runs the same gates as a runner, so it has the same packages")
 	assert.NotContains(t, docs[0], "become", "brew refuses root: the play runs as the login, a task becomes root only where apt needs it")
 	roles, _ := docs[0]["roles"].([]any)
 	assert.Equal(t, []any{"runner-packages"}, roles)
