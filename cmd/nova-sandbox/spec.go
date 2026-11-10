@@ -246,7 +246,7 @@ func resolveCommand(name string) (spelled, target string, _ *refusal) {
 // developerDir is the directory the xcode-select link points at, when it is not under
 // a fixed root: the /usr/bin compiler and git shims read it to find the tools. The
 // shims also read Info.plist and SharedFrameworks beside Developer, so the grant is
-// its parent.
+// its parent. A quoted literal carries parentheses; a quote or backslash it cannot.
 func developerDir(link string) []string {
 	t, err := os.Readlink(link)
 	if err != nil || t == "" {
@@ -259,7 +259,7 @@ func developerDir(link string) []string {
 		t = got
 	}
 	t = strings.TrimSuffix(t, "/Developer")
-	if fi, err := os.Stat(t); err != nil || !fi.IsDir() || t == "/" || underAny(t, darwinRoots) || badPath("darwin", t) != "" {
+	if fi, err := os.Stat(t); err != nil || !fi.IsDir() || t == "/" || underAny(t, darwinRoots) || strings.ContainsAny(t, `"\`) || badPath("", t) != "" {
 		return nil
 	}
 	return []string{t}
