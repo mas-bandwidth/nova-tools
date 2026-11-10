@@ -92,40 +92,52 @@ func TestFunctionalPostgresRolesRefusals(t *testing.T) {
 	}
 }
 
-// The task that makes a role's password file, run by sh with a stand-in openssl: a failed openssl leaves no
-// file (the task's creates: would skip an empty one on every later run), and a good one leaves the whole value,
-// mode 0600.
+// The task that makes a role's password file, run by sh with a stand-in openssl, skipped as ansible skips it when
+// it has a creates: path that exists: a failed openssl leaves no file, a good one leaves the whole value, mode 0600,
+// an empty file left by an earlier run is made again, and a file holding a value is kept.
 func TestFunctionalPostgresPasswordFileIsWholeOrAbsent(t *testing.T) {
 	t.Parallel()
 	b, err := os.ReadFile("roles/postgres/tasks/main.yml")
 	require.NoError(t, err)
 	var raw []any
 	require.NoError(t, yaml.Unmarshal(b, &raw))
-	var line string
+	var line, creates string
 	for _, task := range flattenTasks(t, mapsOf(t, raw)) {
 		if strings.HasPrefix(asText(task["name"]), "a password per role") {
-			line = asText(task["ansible.builtin.shell"])
+			args, _ := task["args"].(map[string]any)
+			line, creates = asText(task["ansible.builtin.shell"]), asText(args["creates"])
 		}
 	}
 	require.NotEmpty(t, line, "the task that makes the password files")
 	for _, c := range []struct {
 		openssl, mv string // mv "" is the real one
+		had         bool   // a file holding before is there before the run
+		before      string
 		want        string // the file's content, or "" for no file
 	}{
-		{"exit 1", "", ""},
-		{"printf '%064d\\n' 0", "exit 1", ""},
-		{"printf '%064d\\n' 0", "", strings.Repeat("0", 64) + "\n"},
+		{"exit 1", "", false, "", ""},
+		{"printf '%064d\\n' 0", "exit 1", false, "", ""},
+		{"printf '%064d\\n' 0", "", false, "", strings.Repeat("0", 64) + "\n"},
+		{"printf '%064d\\n' 0", "", true, "", strings.Repeat("0", 64) + "\n"},
+		{"exit 1", "", true, "kept\n", "kept\n"},
 	} {
 		dir, bin := t.TempDir(), t.TempDir()
 		require.NoError(t, os.WriteFile(filepath.Join(bin, "openssl"), []byte("#!/bin/sh\n"+c.openssl+"\n"), 0o755))
 		if c.mv != "" {
 			require.NoError(t, os.WriteFile(filepath.Join(bin, "mv"), []byte("#!/bin/sh\n"+c.mv+"\n"), 0o755))
 		}
-		script := strings.NewReplacer("{{ nova_pg_dir }}", dir, "{{ item.name }}", "nova_config").Replace(line)
-		cmd := exec.Command("/bin/sh", "-c", script)
-		cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"))
-		out, err := cmd.CombinedOutput()
 		pass := filepath.Join(dir, "nova_config.pass")
+		if c.had {
+			require.NoError(t, os.WriteFile(pass, []byte(c.before), 0o600))
+		}
+		vars := strings.NewReplacer("{{ nova_pg_dir }}", dir, "{{ item.name }}", "nova_config")
+		var out []byte
+		var err error
+		if _, serr := os.Stat(vars.Replace(creates)); creates == "" || serr != nil {
+			cmd := exec.Command("/bin/sh", "-c", vars.Replace(line))
+			cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"))
+			out, err = cmd.CombinedOutput()
+		}
 		if c.want == "" {
 			assert.Error(t, err, "%s", out)
 			assert.NoFileExists(t, pass, "a failed openssl or mv leaves no password file")

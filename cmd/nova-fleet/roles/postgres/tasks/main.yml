@@ -83,9 +83,9 @@
     - { path: "{{ nova_pg_dir }}", owner: root, mode: "0755" }
     - { path: "{{ nova_pg_dir }}/dumps", owner: postgres, mode: "0700" }
 
-- name: a password per role, made once on this machine (it leaves only through nova-secrets)
-  ansible.builtin.shell: "umask 077; t=$(mktemp {{ nova_pg_dir }}/{{ item.name }}.pass.XXXXXX) && trap 'rm -f \"$t\"' EXIT && openssl rand -hex 32 > \"$t\" && mv \"$t\" {{ nova_pg_dir }}/{{ item.name }}.pass"
-  args: { creates: "{{ nova_pg_dir }}/{{ item.name }}.pass" }
+- name: a password per role, made once on this machine (it leaves only through nova-secrets; an empty file is made again)
+  ansible.builtin.shell: "test -s {{ nova_pg_dir }}/{{ item.name }}.pass && exit 0; umask 077; t=$(mktemp {{ nova_pg_dir }}/{{ item.name }}.pass.XXXXXX) && trap 'rm -f \"$t\"' EXIT && openssl rand -hex 32 > \"$t\" && mv \"$t\" {{ nova_pg_dir }}/{{ item.name }}.pass && echo made"
+  changed_when: pg_pass.stdout == 'made'
   loop: "{{ pg_roles }}"
   loop_control: { label: "{{ item.name }}" }
   no_log: true
