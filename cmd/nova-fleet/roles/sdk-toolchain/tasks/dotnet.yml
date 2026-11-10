@@ -52,6 +52,39 @@
   changed_when: "'SDK-TOOLCHAIN-INSTALLED' in sdk_dotnet_installed.stdout"
   when: not ansible_check_mode
 
+# The dotnet SDK builds an older target (net8.0) with the exact targeting and apphost packs its
+# Microsoft.NETCoreSdk.BundledVersions.props names, and restore downloads any not in packs/, which a gate with no
+# network cannot (NU1100/NU1301). The extra SDK brings its own release's packs, so the two are pinned from one release
+# day; this check fails the run, naming what is missing, when they are not.
+- name: every pack the dotnet SDK names for each extra SDK's target, in its packs
+  ansible.builtin.shell:
+    cmd: |
+      set -euo pipefail
+      home={{ sdk_dotnet_home | quote }}; tfs={{ nova_sdk_dotnet_more | selectattr(sdk_platform, 'defined')
+        | map(attribute='runtime') | map('regex_replace', '[.][0-9]+$', '') | map('regex_replace', '^', 'net') | join(' ') | quote }}
+      props="$home/sdk/{{ (sdk_specs | selectattr('name', 'equalto', 'dotnet') | first).version }}/Microsoft.NETCoreSdk.BundledVersions.props"
+      want=$(awk -v tfs="$tfs" -v rid={{ ('linux-x64' if sdk_platform == 'linux' else 'osx-arm64') | quote }} '
+        function attr(n,   r) { r = ""; if (match($0, n "=\"[^\"]*\"")) r = substr($0, RSTART + length(n) + 2, RLENGTH - length(n) - 3); return r }
+        /<KnownFrameworkReference |<KnownAppHostPack / { inc = attr("Include"); tf = ""; pack = ""; ver = "" }
+        attr("TargetFramework") != "" { tf = attr("TargetFramework") }
+        attr("TargetingPackName") != "" { pack = attr("TargetingPackName") }
+        attr("AppHostPackNamePattern") != "" { pack = attr("AppHostPackNamePattern"); sub(/\*\*RID\*\*/, rid, pack) }
+        attr("TargetingPackVersion") != "" { ver = attr("TargetingPackVersion") }
+        attr("AppHostPackVersion") != "" { ver = attr("AppHostPackVersion") }
+        /\/>/ {
+          if (index(" " tfs " ", " " tf " ") && (inc == "Microsoft.NETCore.App" || inc == "Microsoft.AspNetCore.App" || inc == "Microsoft.NETCore.App.Host") && pack != "" && ver != "") print pack "/" ver
+          inc = ""
+        }' "$props")
+      [ -n "$want" ] || { echo "SDK-TOOLCHAIN dotnet: $props names no KnownFrameworkReference or KnownAppHostPack for $tfs"; exit 1; }
+      gone=""
+      for p in $want; do [ -d "$home/packs/$p" ] || gone="$gone $p"; done
+      [ -z "$gone" ] || { echo "SDK-TOOLCHAIN dotnet: $props builds $tfs with packs (TargetingPackVersion, AppHostPackVersion) not in $home/packs:$gone; pin the dotnet SDK and nova_sdk_dotnet_more from one release day (roles/sdk-toolchain/defaults/main.yml)"; exit 1; }
+      echo "SDK-TOOLCHAIN-DOTNET-PACKS" $want
+    executable: /bin/bash
+  register: sdk_dotnet_packs
+  changed_when: false
+  when: not ansible_check_mode
+
 # DOTNET_CLI_HOME in env.sh: the CLI's first-run state lives here, beside the SDK, not in each job's home.
 - name: the dotnet CLI home
   ansible.builtin.file: { path: "{{ nova_sdk_dir }}/dotnet-home", state: directory }
