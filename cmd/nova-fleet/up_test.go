@@ -1038,6 +1038,21 @@ func TestUpTailscaleStatusFailureIsSaid(t *testing.T) {
 	}
 }
 
+// --check pins the host keys of machines already on the tailnet, the one thing it writes on this node, so its
+// ssh probes over the tailnet are checked against them.
+func TestUpCheckPinsHostKeys(t *testing.T) {
+	f := &upFake{peers: map[string]string{"first": "100.64.0.10", "second": "100.64.0.11"}}
+	f.install(t)
+	_, out, errs := runArgs("up", "--check", "--tools", "v2.0.0", "first=203.0.113.7", "second=203.0.113.8")
+	if !strings.Contains(out, "UP HOSTKEY first OK pinned=1") {
+		t.Errorf("stdout lacks the pin:\n%s\n%s", out, errs)
+	}
+	kh, _ := os.ReadFile(filepath.Join(os.Getenv("HOME"), ".ssh", "known_hosts")) // ignored: absent is checked below
+	if !strings.Contains(string(kh), "first,first.ts.example,100.64.0.10 ssh-ed25519 KEY-first\n") {
+		t.Errorf("known_hosts:\n%s", kh)
+	}
+}
+
 // A known_hosts that cannot be written leaves the host keys unpinned, and up says so.
 func TestUpUnpinnedHostKeyIsSaid(t *testing.T) {
 	f := &upFake{}
