@@ -340,7 +340,8 @@ what it is labelled), plus `github_runner_labels`; so a bench machine's runner i
 Linux (amd64, arm64; WSL2 with systemd counts as Linux) and macOS. On macOS the runner is a LaunchDaemon dropped to the login, not a
 LaunchAgent: a LaunchAgent runs only inside a logged-in GUI session, and a CI machine comes back from a reboot with
 none. Only a run needs sudo for that file (`/Library/LaunchDaemons` is world-readable, so `--check` reads and diffs it
-as the login and finishes without a password). Linux and macOS write the service files with sudo, so the login needs
+as the login and finishes without a password). The daemon's `ProcessType` is `Interactive`: launchd throttles the CPU and
+I/O of a job with no `ProcessType` as background work, and a CI job inherits its runner's limits. Linux and macOS write the service files with sudo, so the login needs
 passwordless sudo: `join.yml` sets it up on Linux (`/etc/sudoers.d/90-nova-<login>`); on macOS set it at the console.
 No command here asks for a sudo password: an interactive prompt is a stall for an AI running the play.
 A stop or restart ends the whole runner: on Linux the unit sets `RUNNER_MANUALLY_TRAP_SIG=1`, so the release's `run.sh`
