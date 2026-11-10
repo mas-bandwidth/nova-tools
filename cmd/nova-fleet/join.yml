@@ -232,6 +232,13 @@
   gather_subset: [min]
   vars:
     join_platform: "{{ (nova_system | default(ansible_facts['system'])) | lower }}-{{ 'arm64' if ansible_facts['architecture'] in ['arm64', 'aarch64'] else 'amd64' }}"
+    # a bare nova-secrets exec opens the machine's own seat in the pushed store, with sops (/opt/homebrew/bin on a Mac)
+    join_login_env: |
+      case ":$PATH:" in *":{{ nova_bin_dir }}:"*) ;; *) PATH="{{ nova_bin_dir }}:$PATH"; export PATH;; esac
+      NOVA_SECRETS_PINS="{{ nova_secrets_pins }}"; export NOVA_SECRETS_PINS
+      NOVA_SECRETS_STORE="{{ nova_secrets_store }}"; export NOVA_SECRETS_STORE
+      NOVA_SECRETS_SEAT="{{ nova_seat }}"; export NOVA_SECRETS_SEAT
+      case ":$PATH:" in *":{{ nova_sops | dirname }}:"*) ;; *) PATH="$PATH:{{ nova_sops | dirname }}"; export PATH;; esac
   tasks:
     - name: a Windows machine has no seat here
       ansible.builtin.meta: end_host
@@ -256,11 +263,18 @@
         mode: "0644"
         # The marker identifies existing shell blocks independently of the source directory.
         marker: "# {mark} nova bin directory (fleet/join.yml)"
-        block: |
-          case ":$PATH:" in *":{{ nova_bin_dir }}:"*) ;; *) PATH="{{ nova_bin_dir }}:$PATH"; export PATH;; esac
-          NOVA_SECRETS_PINS="{{ nova_secrets_pins }}"; export NOVA_SECRETS_PINS
-          NOVA_SECRETS_STORE="{{ nova_secrets_store }}"; export NOVA_SECRETS_STORE
-          NOVA_SECRETS_SEAT="{{ nova_seat }}"; export NOVA_SECRETS_SEAT
+        block: "{{ join_login_env }}"
+
+    # `ssh <machine> '<cmd>'` (how workers and gates run) reads no login profile: bash reads ~/.bashrc, whose
+    # non-interactive early return the block must come before, and zsh reads ~/.zshenv
+    - name: the same lines for a non-login shell (ssh <machine> '<cmd>')
+      ansible.builtin.blockinfile:
+        path: "{{ ansible_facts['user_dir'] }}/{{ '.zshenv' if (ansible_facts['user_shell'] | default('') | basename) == 'zsh' else '.bashrc' }}"
+        create: true
+        mode: "0644"
+        insertbefore: BOF
+        marker: "# {mark} nova bin directory, non-login (fleet/join.yml)"
+        block: "{{ join_login_env }}"
 
     - name: "age {{ nova_age_version }} (Linux, the release archive at its pinned digest)"
       ansible.builtin.get_url:
