@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -99,4 +100,8 @@ func TestJoinProfileGivesABareExecItsStoreSeatAndSops(t *testing.T) {
 	} {
 		assert.Contains(t, string(join), line)
 	}
+	// ssh <machine> '<cmd>' reads no login profile: the same lines go first in ~/.bashrc, or ~/.zshenv for zsh
+	assert.Contains(t, string(join), `insertbefore: BOF`)
+	assert.Contains(t, string(join), `'.zshenv' if (ansible_facts['user_shell'] | default('') | basename) == 'zsh' else '.bashrc'`)
+	assert.Equal(t, 2, strings.Count(string(join), `block: "{{ join_login_env }}"`), "the login profile and the non-login rc carry the same lines")
 }

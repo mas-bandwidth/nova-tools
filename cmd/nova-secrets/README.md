@@ -264,9 +264,10 @@ sops, which seals the file again to its own recipients:
 
 ## Clone a private repository on a fleet machine
 
-On a machine `nova-fleet join` set up, the login profile exports
-`NOVA_SECRETS_STORE` (the pushed store) and `NOVA_SECRETS_SEAT` (the machine's
-seat, its inventory name), so a bare `exec` from a fresh login opens that seat.
+On a machine `nova-fleet join` set up, every shell of the login, including a
+plain `ssh <machine> '<cmd>'`, has `NOVA_SECRETS_STORE` (the pushed store) and
+`NOVA_SECRETS_SEAT` (the machine's seat, its inventory name), so a bare `exec`
+opens that seat.
 This is the one way to clone a private repository there. The token reaches git
 only through a credential helper that reads it from the environment: it is
 never on argv, in a file, in git's config or in the output.
