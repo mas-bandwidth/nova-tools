@@ -14,18 +14,32 @@
     fail_msg: "{{ inventory_hostname }} is {{ ansible_facts['os_family'] }}: tailscale.yml installs on Debian/Ubuntu (apt) and macOS (brew)"
     quiet: true
 
+# A Mac runs either the app (its daemon is a network extension) or the open-source tailscaled, Homebrew's formula run
+# as root. The second is driven like Linux: its own CLI beside the daemon, sudo, and Tailscale SSH served.
+- name: the open-source tailscaled (macOS)
+  ansible.builtin.shell: "ps -axo comm= | grep '/tailscaled$' | head -n 1"
+  register: ts_daemon
+  changed_when: false
+  check_mode: false
+  when: ts_os == 'darwin'
+
+- name: the daemon this play drives
+  ansible.builtin.set_fact:
+    ts_root_daemon: "{{ ts_os == 'debian' or (ts_daemon.stdout | default('') | trim | length > 0) }}"
+    ts_bin: "{{ (ts_daemon.stdout | trim | dirname ~ '/tailscale') if (ts_daemon.stdout | default('') | trim | length > 0) else nova_tailscale_bin }}"
+
 - name: install (Debian, Ubuntu)
   ansible.builtin.include_tasks: install-debian.yml
   when: ts_os == 'debian'
 
-- name: install (macOS)
+- name: install (macOS; the app, unless the open-source tailscaled runs)
   ansible.builtin.include_tasks: install-darwin.yml
-  when: ts_os == 'darwin'
+  when: ts_os == 'darwin' and not ts_root_daemon
 
 - name: join (Linux, macOS)
   block:
     - name: the machine's tailnet state
-      ansible.builtin.command: "{{ nova_tailscale_bin }} status --json"
+      ansible.builtin.command: "{{ ts_bin }} status --json"
       register: ts_status
       changed_when: false
       failed_when: false
@@ -40,7 +54,7 @@
       ansible.builtin.set_fact:
         ts_join: "{{ ts_state != 'Running' }}"
         ts_retag: "{{ ts_state == 'Running' and (ts_self.Tags | default([], true) | sort) != ts_tags }}"
-        ts_ssh_flag: "{{ ['--ssh'] if (ts_os == 'debian' and nova_tailscale_ssh | bool) else [] }}"
+        ts_ssh_flag: "{{ ['--ssh'] if (ts_root_daemon and nova_tailscale_ssh | bool) else [] }}"
 
     # Changing a running node's tags needs `tailscale up --reset` with a new key: that drops the node's other
     # preferences and can cut the connection this run comes in on. The play never does it; it names the command.
@@ -66,13 +80,13 @@
 
     - name: "tailscale up as {{ inventory_hostname }} with {{ ts_tags | join(',') }} (the key on stdin)"
       ansible.builtin.command:
-        argv: "{{ [nova_tailscale_bin, 'up', '--reset', '--auth-key=file:/dev/stdin', '--hostname=' ~ inventory_hostname,
+        argv: "{{ [ts_bin, 'up', '--reset', '--auth-key=file:/dev/stdin', '--hostname=' ~ inventory_hostname,
                    '--advertise-tags=' ~ (ts_tags | join(','))] + ts_ssh_flag }}"
         stdin: "{{ lookup('ansible.builtin.env', 'TAILSCALE_AUTHKEY') }}"
         stdin_add_newline: false
       vars:
         ansible_pipelining: true
-      become: "{{ ts_os == 'debian' }}"
+      become: "{{ ts_root_daemon }}"
       register: ts_up
       failed_when: false
       no_log: true
@@ -98,25 +112,25 @@
       when: ts_up is not skipped
 
     # on a machine already joined: the hostname and Tailscale SSH set in place, with no new key
-    - name: the running node's preferences (Linux)
-      ansible.builtin.command: "{{ nova_tailscale_bin }} debug prefs"
+    - name: the running node's preferences (Linux, the open-source tailscaled on macOS)
+      ansible.builtin.command: "{{ ts_bin }} debug prefs"
       register: ts_prefs
       changed_when: false
       failed_when: false
       check_mode: false
-      when: not ts_join and ts_os == 'debian'
+      when: not ts_join and ts_root_daemon
 
     - name: tailscale set (hostname, ssh) where the running node differs
       ansible.builtin.command:
-        argv: "{{ [nova_tailscale_bin, 'set', '--hostname=' ~ inventory_hostname] + (['--ssh=' ~ ((nova_tailscale_ssh | bool) | string | lower)] if ts_os == 'debian' else []) }}"
-      become: "{{ ts_os == 'debian' }}"
+        argv: "{{ [ts_bin, 'set', '--hostname=' ~ inventory_hostname] + (['--ssh=' ~ ((nova_tailscale_ssh | bool) | string | lower)] if ts_root_daemon else []) }}"
+      become: "{{ ts_root_daemon }}"
       register: ts_set
       when: >-
         not ts_join and (ts_self.HostName | default('') != inventory_hostname
-        or (ts_os == 'debian' and ((ts_prefs.stdout | default('{}') | from_json).RunSSH | default(false)) != (nova_tailscale_ssh | bool)))
+        or (ts_root_daemon and ((ts_prefs.stdout | default('{}') | from_json).RunSSH | default(false)) != (nova_tailscale_ssh | bool)))
 
     - name: the state after the join
-      ansible.builtin.command: "{{ nova_tailscale_bin }} status --json"
+      ansible.builtin.command: "{{ ts_bin }} status --json"
       register: ts_after
       changed_when: false
       check_mode: false
