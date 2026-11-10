@@ -50,3 +50,17 @@ func TestRunnerDaemonStopKeepsTheProcessGroup(t *testing.T) {
 	assert.NotContains(t, string(b), "AbandonProcessGroup")
 	assert.NotContains(t, string(b), "RUNNER_MANUALLY_TRAP_SIG")
 }
+
+// launchd throttles a job with no ProcessType as background work (launchd.plist(5): "light resource limits ...
+// throttling its CPU usage and I/O bandwidth"): the listener and every job it runs sat at scheduling priority 20 against
+// a login's 31, and CI took 4-5x the time of the same work in a login session (studio, 2026-11-10). Interactive is the
+// one value that lifts the limits: "the same resource limitations as apps, that is to say, none".
+func TestRunnerDaemonRunsWithoutBackgroundLimits(t *testing.T) {
+	t.Parallel()
+	b, err := os.ReadFile("roles/github-runner/templates/runner.plist.j2")
+	require.NoError(t, err)
+	assert.Contains(t, string(b), "<key>ProcessType</key>\n  <string>Interactive</string>\n")
+	for _, limit := range []string{"<key>Nice</key>", "LowPriorityIO", "HardResourceLimits", "SoftResourceLimits"} {
+		assert.NotContains(t, string(b), limit)
+	}
+}

@@ -1,11 +1,15 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- {{ github_runner_label_id }}: managed by Ansible (fleet/github-runners.yml). Edits are overwritten.
-     A system LaunchDaemon dropped to the login: it starts at boot with nobody logged in. -->
+     A system LaunchDaemon dropped to the login: it starts at boot with nobody logged in.
+     ProcessType Interactive: without it launchd throttles the job's CPU and I/O as background work (launchd.plist(5)),
+     and every CI job the runner starts inherits that. -->
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
   <key>Label</key>
   <string>{{ github_runner_label_id }}</string>
+  <key>ProcessType</key>
+  <string>Interactive</string>
   <key>UserName</key>
   <string>{{ ansible_facts['user_id'] }}</string>
   <key>WorkingDirectory</key>
