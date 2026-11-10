@@ -207,6 +207,66 @@ func TestWindowsRunnersPlay(t *testing.T) {
 	}
 }
 
+// TestWSLKeepaliveTask: every WSL machine the play reaches, with or without windows_runners, is held running from boot
+// by one scheduled task: S4U as the Windows account that started WSL (no password stored), a boot trigger that repeats
+// every minute with IgnoreNew (so a wsl.exe ended by a WSL update, wsl --shutdown or a reboot inside the distro is
+// started again), no time limit, and the distro found by this machine's machine-id, never by a name the role ships.
+func TestWSLKeepaliveTask(t *testing.T) {
+	t.Parallel()
+	b, err := fs.ReadFile(tree, "windows-runners.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	play := string(b)
+	i := strings.Index(play, "tasks_from: wsl-keepalive.yml")
+	if i < 0 {
+		t.Fatal("windows-runners.yml does not include wsl-keepalive.yml")
+	}
+	if j := strings.Index(play[i:], "\n    - name:"); j >= 0 && strings.Contains(play[i:i+j], "nova_windows_runners") ||
+		j < 0 && strings.Contains(play[i:], "nova_windows_runners") {
+		t.Error("the keepalive must reach every WSL machine, not only those whose record names windows_runners")
+	}
+	kb, err := fs.ReadFile(tree, roleDir+"/tasks/wsl-keepalive.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	k := string(kb)
+	for _, want := range []string{"github_runner_wsl_interop", "github_runner_wsl_machine_id_file", "-Action keepalive", "-MachineId", "-User", "</dev/null"} {
+		if !strings.Contains(k, want) {
+			t.Errorf("wsl-keepalive.yml lacks %q", want)
+		}
+	}
+	ps, err := fs.ReadFile(tree, roleDir+"/files/runner-windows.ps1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(ps)
+	ka := s[strings.Index(s, "  'keepalive' {"):]
+	ka = ka[:strings.Index(ka, "\n  }\n")]
+	for _, want := range []string{
+		"<LogonType>S4U</LogonType>",
+		"<BootTrigger>",
+		"<Interval>PT1M</Interval>",
+		"<MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>",
+		"<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>",
+		"<DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>",
+		"<StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>",
+		`\etc\machine-id`,
+		"--exec /bin/sleep infinity",
+		"Start-ScheduledTask",
+		`"NO-DISTRO`,
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("runner-windows.ps1's keepalive lacks %q", want)
+		}
+	}
+	for _, never := range []string{"-Password", "<Password>", "Password", "SYSTEM", "Ubuntu"} {
+		if strings.Contains(ka, never) {
+			t.Errorf("the keepalive names %q: no password is stored, the task runs as the account that owns the distro, and no distro name ships", never)
+		}
+	}
+}
+
 // TestCIRulesUnchainRule: both scripts drop a chained hook naming a missing file,
 // and never chain such a hook (the functional TestCIRulesEnvEdit runs it).
 func TestCIRulesUnchainRule(t *testing.T) {

@@ -1,20 +1,26 @@
-# purpose: a WSL machine's Windows-side GitHub Actions runners, from its record's windows_runners, through WSL interop
+# purpose: a WSL machine held running from boot, and its Windows-side GitHub Actions runners from its record's windows_runners, through WSL interop
 #
-# The machines whose record names windows_runners (nova-config machine set <m> --windows_runners
-# '<url>=<count>[:<label>+<label>],...'); every other machine is skipped. Each runner is <machine>-win-<slug>-<i> in
-# C:\actions-runner\<slug>-<i>, a Windows service, with the CI rules. cmd/nova-fleet/README.md, "Windows runners of a WSL machine".
+# Every WSL machine with interop gets the keepalive: a scheduled task that holds its distro running from boot, with
+# nobody logged in, and starts it again within a minute when WSL stops (cmd/nova-fleet/README.md, "WSL held running from
+# boot"); a machine that is not WSL is skipped. The machines whose record names windows_runners (nova-config machine set
+# <m> --windows_runners '<url>=<count>[:<label>+<label>],...') also get their runners; every other machine has none.
+# Each runner is <machine>-win-<slug>-<i> in C:\actions-runner\<slug>-<i>, a Windows service, with the CI rules.
+# cmd/nova-fleet/README.md, "Windows runners of a WSL machine".
 #
 #   nova-fleet windows-runners --check -- -l <machine>
 #   nova-fleet windows-runners -- -l <machine>
-#   nova-fleet windows-runners -- -l <machine> -e @v1.json   # then retire v1's Windows side: v1.json names what
-#                                                            # v1 left there (cmd/nova-fleet/README.md has its shape)
 #
 # gh on the control node, logged in with admin on each repository or organization, asks GitHub for the tokens.
-- name: the Windows-side runners of WSL machines
-  hosts: bench:runner:services   # the fleet's workers, as ci-rules; a machine without windows_runners is skipped
+- name: the Windows side of WSL machines
+  hosts: bench:runner:services   # the fleet's workers, as ci-rules
   gather_facts: true
   gather_subset: [min]
   tasks:
+    - name: WSL held running from boot
+      ansible.builtin.include_role:
+        name: github-runner
+        tasks_from: wsl-keepalive.yml
+
     - name: the Windows-side runners
       ansible.builtin.include_role:
         name: github-runner

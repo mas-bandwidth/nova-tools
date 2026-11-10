@@ -1,0 +1,48 @@
+---
+# A WSL machine held running from boot (cmd/nova-fleet/README.md, "WSL held running from boot"): one scheduled task on
+# the Windows side, set through interop like the Windows runners (files/runner-windows.ps1 keepalive). It runs
+# wsl.exe holding this distro open as the Windows account that started WSL, logon type S4U (no password is stored), at
+# boot and again each minute it is not running, so WSL comes back with nobody logged in, and within a minute after a
+# WSL update, a wsl --shutdown or a reboot inside the distro. Every other machine (not WSL) is skipped. --check reads
+# nothing on the Windows side and prints the plan.
+
+- name: is this a WSL machine with interop (keepalive)
+  ansible.builtin.stat: { path: "{{ github_runner_wsl_interop }}" }
+  register: github_runner_keepalive_interop
+
+- name: WSL held running from boot
+  when: github_runner_keepalive_interop.stat.exists
+  block:
+    - name: this distro's machine-id
+      ansible.builtin.slurp: { src: "{{ github_runner_wsl_machine_id_file }}" }
+      register: github_runner_keepalive_mid
+
+    - name: the plan (keepalive)
+      ansible.builtin.debug:
+        msg: >-
+          KEEPALIVE-PLAN {{ inventory_hostname }} machine-id={{ github_runner_keepalive_mid.content | b64decode | trim }}
+          user={{ ansible_user_id }} (check: nothing changed)
+      when: ansible_check_mode
+
+    - name: the staging directory (keepalive)
+      ansible.builtin.file: { path: "{{ github_runner_wsl_stage_unix }}", state: directory, mode: "0755" }
+      when: not ansible_check_mode
+
+    - name: runner-windows.ps1 (keepalive)
+      ansible.builtin.copy: { src: runner-windows.ps1, dest: "{{ github_runner_wsl_stage_unix }}/runner-windows.ps1", mode: "0644" }
+      when: not ansible_check_mode
+
+    - name: the keepalive task, set and running
+      ansible.builtin.shell: >-
+        "{{ github_runner_wsl_powershell }}" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File {{ github_runner_wsl_script | quote }}
+        -Action keepalive -MachineId {{ github_runner_keepalive_mid.content | b64decode | trim | quote }}
+        -User {{ ansible_user_id | quote }} </dev/null
+      args: { executable: /bin/sh }
+      register: github_runner_keepalive
+      changed_when: github_runner_keepalive.stdout is search('^KEEPALIVE \S+ \S*(set|started)', multiline=True)
+      when: not ansible_check_mode
+
+    - name: the keepalive's receipt
+      ansible.builtin.debug:
+        msg: "{{ github_runner_keepalive.stdout_lines | map('regex_replace', '^KEEPALIVE ', 'KEEPALIVE ' ~ inventory_hostname ~ ' ') | join('\n') }}"
+      when: not ansible_check_mode
