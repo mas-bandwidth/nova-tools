@@ -50,6 +50,7 @@ optional (`--dry-run` runs the write and rolls it back, so it refuses what the w
 | `os`, `arch`, `cores` | Facts you set; `--cores default` unsets it. |
 | `runners`, `note` | CI runner count (default 0); one line of notes. |
 | `windows_runners` | A WSL machine's Windows-side runners: `<url>=<count>[:<label>+<label>]`, comma-separated, the url `https://github.com/<owner>/<repo>` or `https://github.com/<org>`, the count 1 to 99. Stored sorted by url with labels sorted; `''` is none. nova-fleet's `windows-runners` play converges them. |
+| `runner_env` | The environment the machine's GitHub Actions runners' services start with (every job inherits it): a JSON object of string values, default `{}`; a name is letters, digits and underscores, not starting with a digit. Values are literal, written per machine (`/home/alice/sdk/bin`, never `~` or a template). nova-fleet's `github-runners` play reads it from the inventory. |
 | `roles` | Comma-separated `bench`, `runner`, `services`; default `bench`. |
 
 ```sh
@@ -64,7 +65,7 @@ CONFIG ADD kind=machine name=bench-a rev=1
 next: nova-fleet join bench-a
 CONFIG SET kind=machine name=bench-a rev=2 changed=note
 CONFIG SET kind=machine name=bench-a changed=none rev=unchanged
-MACHINE name=bench-a address=- public=- user=nova os=linux arch=amd64 cores=16 roles=bench,services runners=0 windows_runners=- note="Example host" created=2026-11-05T23:51:58Z updated=2026-11-05T23:51:58Z services=-
+MACHINE name=bench-a address=- public=- user=nova os=linux arch=amd64 cores=16 roles=bench,services runners=0 windows_runners=- runner_env={} note="Example host" created=2026-11-05T23:51:58Z updated=2026-11-05T23:51:58Z services=-
 ```
 
 `rev` is the history ID; `changed=` lists only the fields whose value differs.
@@ -171,9 +172,9 @@ nova-config inventory --host bench-a
 roles put it in `bench` or `services`. A `runner` role or a positive runner
 count adds `runner`. `--host <name>` prints one host's variables:
 `ansible_host`, `ansible_user`, `runners`, `nova_services` (always a list of the
-service fields) and, when set, `nova_os`, `nova_arch`, `nova_public`, `cores` and `nova_windows_runners` (a list of
-`{url, count, labels}`).
-`argv`, `env` values and `log` are printed as `{"__ansible_unsafe": ...}`, so
+service fields) and, when set, `nova_os`, `nova_arch`, `nova_public`, `cores`, `nova_windows_runners` (a list of
+`{url, count, labels}`) and `nova_runner_env` (the `runner_env` object).
+`argv`, `env` and `runner_env` values and `log` are printed as `{"__ansible_unsafe": ...}`, so
 Ansible reads them as data and never as a template. The local host (the first label of the hostname,
 lower-cased) gets `ansible_connection: local`. As an Ansible script, use
 a file containing `exec nova-config inventory "$@"`.

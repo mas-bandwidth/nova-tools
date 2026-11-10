@@ -139,12 +139,17 @@ func build(machines []Row, services []Row, local string) (*inventory, error) {
 				hv[k] = val
 			}
 		}
-		if v["windows_runners"] != "" {
-			ws, err := parseWinRunners(v["windows_runners"])
-			if err != nil {
-				return nil, refused("machine %s has corrupt windows_runners (%v); run: nova-config machine set %s --windows_runners <value>", m, err, m)
+		for _, f := range []string{"windows_runners", "runner_env"} {
+			if _, err := kinds["machine"].findField(f).canonical(v[f]); err != nil {
+				return nil, refused("machine %s has corrupt %s (%v); run: nova-config machine set %s --%s <value>", m, f, err, m, f)
 			}
-			hv["nova_windows_runners"] = ws
+		}
+		if v["windows_runners"] != "" {
+			hv["nova_windows_runners"], _ = parseWinRunners(v["windows_runners"]) // ignored: checked above
+		}
+		if env := map[string]unsafeText{}; v["runner_env"] != "" && v["runner_env"] != "{}" {
+			_ = json.Unmarshal([]byte(v["runner_env"]), &env) // ignored: likewise
+			hv["nova_runner_env"] = env
 		}
 		if m == local {
 			hv["ansible_connection"] = "local"

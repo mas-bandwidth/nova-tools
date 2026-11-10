@@ -33,7 +33,7 @@ func TestVerbHelp(t *testing.T) {
 		}
 	}
 	_, out, _ := h.run(t, "machine", "add", "--help")
-	assert.Contains(t, out, "machine fields: name, address, public, user, os, arch, cores, roles, runners, windows_runners, note")
+	assert.Contains(t, out, "machine fields: name, address, public, user, os, arch, cores, roles, runners, windows_runners, runner_env, note")
 	assert.Contains(t, out, "--user <text>")
 	for _, p := range paths[6:] { // the banner names each verb path
 		assert.Contains(t, usage, "nova-config "+strings.Join(p, " "))
@@ -96,7 +96,7 @@ func TestEnvAndLog(t *testing.T) {
 	h.ok(t, "service", "set", "e1", "--env", "{}", "--log", "", "--actor", "t")
 	_, out, _ = h.run(t, "inventory", "--host", "bench-a")
 	assert.Contains(t, out, `"__ansible_unsafe": "~/.local/state/nova/services/e1.log"`)
-	for _, bad := range []string{`{"lower":"1"}`, `{"1A":"1"}`, `{"A-B":"1"}`, `{"A":1}`, `["A"]`, `A=1`, `{"A":"1"} x`} {
+	for _, bad := range []string{`{"1A":"1"}`, `{"A-B":"1"}`, `{"A":1}`, `["A"]`, `A=1`, `{"A":"1"} x`} {
 		code, _, errs := h.run(t, "service", "set", "e1", "--env", bad, "--actor", "t")
 		assert.Equal(t, 2, code, bad)
 		assert.Contains(t, errs, "--env", bad)

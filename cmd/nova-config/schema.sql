@@ -22,7 +22,9 @@ CREATE INDEX IF NOT EXISTS history_kind_name ON config.history (kind, name, id);
 -- tailnet address the fleet uses; public, NULL when unset, is the address the
 -- internet reaches it at (an IP literal or a DNS name), for services that face
 -- the internet. windows_runners is a WSL machine's Windows-side runners,
--- <url>=<count>[:<label>+<label>] comma-separated ('' is none).
+-- <url>=<count>[:<label>+<label>] comma-separated ('' is none). runner_env is
+-- the environment its runners' services start with, a JSON object of NAME to
+-- value ('{}' is none).
 CREATE TABLE IF NOT EXISTS config.machines (
     name       text PRIMARY KEY CONSTRAINT machines_name_pattern CHECK (name ~ '^[a-z0-9][a-z0-9-]*$'),
     "user"     text NOT NULL,
@@ -37,8 +39,11 @@ CREATE TABLE IF NOT EXISTS config.machines (
     arch       text NOT NULL DEFAULT '',
     cores      integer CHECK (cores >= 0),
     "public"   text,
-    windows_runners text NOT NULL DEFAULT ''
+    windows_runners text NOT NULL DEFAULT '',
+    runner_env text NOT NULL DEFAULT '{}' CHECK (runner_env LIKE '{%}')
 );
+-- A machines table made before the runner_env column gets it here; on one that has it this does nothing.
+ALTER TABLE config.machines ADD COLUMN IF NOT EXISTS runner_env text NOT NULL DEFAULT '{}' CHECK (runner_env LIKE '{%}');
 
 -- A service: a program one machine keeps running; with every n seconds it runs
 -- every n seconds instead of staying up.

@@ -67,7 +67,7 @@ func TestSnapshotReadsAllThreeInOneTransaction(t *testing.T) {
 	t.Parallel()
 	stamp := []string{"2026-11-06T00:00:00Z", "2026-11-06T00:00:01Z"}
 	tx := &fakeTx{tables: map[string][][]string{
-		"machines": {append([]string{"m1", "", "", "nova", "linux", "amd64", "8", "bench", "0", ""}, stamp...)},
+		"machines": {append([]string{"m1", "", "", "nova", "linux", "amd64", "8", "bench", "0", "", "{}", ""}, stamp...)},
 		"friends":  {append([]string{"alice", "claude", "opus", "4", "heavy,pro", "she/her", "", "true"}, stamp...)},
 		"services": {append([]string{"s1", "m1", `["/p"]`, "", "", "60", "false", "true", "{}", ""}, stamp...)},
 	}}

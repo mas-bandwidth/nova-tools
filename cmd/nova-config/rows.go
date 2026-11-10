@@ -47,7 +47,7 @@ var (
 	namePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 	roleWord    = regexp.MustCompile(`^(bench|runner|services)$`)
 	keyWord     = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
-	envName     = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
+	envName     = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 	tierWord    = regexp.MustCompile(`^(flash|pro|heavy|frontier)$`)
 )
 
@@ -63,6 +63,7 @@ var kinds = map[string]*kind{
 			{name: "roles", typ: "list", def: "bench", word: roleWord},
 			{name: "runners", typ: "int"},
 			{name: "windows_runners", typ: "winrunners"},
+			{name: "runner_env", typ: "env", def: "{}"},
 			{name: "note", typ: "text", cut: true, free: true},
 		}},
 	"service": {name: "service", table: "services", check: checkService,
@@ -160,7 +161,7 @@ func (f field) canonical(raw string) (string, error) {
 }
 
 // canonicalEnv is an env object as it is stored: keys sorted, one line; the
-// names are checked against envName, and every value must be a string.
+// names are POSIX names (envName), and every value must be a string.
 func canonicalEnv(f field, raw string) (string, error) {
 	if raw == "" {
 		return "{}", nil
@@ -172,7 +173,7 @@ func canonicalEnv(f field, raw string) (string, error) {
 	}
 	for _, n := range slices.Sorted(maps.Keys(m)) {
 		if !envName.MatchString(n) {
-			return "", fmt.Errorf("--%s name %q: want upper-case letters, digits and underscores, not starting with a digit (%s)", f.name, n, envName)
+			return "", fmt.Errorf("--%s name %q: want letters, digits and underscores, not starting with a digit (%s)", f.name, n, envName)
 		}
 	}
 	return marshal(m), nil
