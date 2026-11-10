@@ -495,7 +495,9 @@ the row and reads the inventory again.
 3. **The tailnet**: `tailscale` (below). From here on the plays reach the machine over the tailnet.
 4. **The tools a seat needs** (as the login): `nova_bin_dir` on the login PATH, and `NOVA_SECRETS_STORE`
    (`nova_secrets_store`, where the store is pushed) and `NOVA_SECRETS_SEAT` (`nova_seat`) exported in the login
-   profile, so a bare `nova-secrets exec --only NAME -- <cmd>` there opens the machine's own seat in the pushed store
+   profile, with the directory of `sops` on PATH (`/opt/homebrew/bin` on a Mac), so a bare
+   `nova-secrets exec --only NAME -- <cmd>` there opens the machine's own seat in the pushed store (the private-clone
+   recipe is in `nova-secrets help exec`)
    (the key defaults to `~/.config/nova-secrets/<seat>.key`; the short hostname need not be the seat); on Linux the pinned `age` and `sops`
    release binaries, checked against their published digests. A darwin machine takes them from Homebrew
    (`brew install age sops`).

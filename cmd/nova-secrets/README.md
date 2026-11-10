@@ -262,6 +262,23 @@ machine is not this tool's to find. A single value is removed from a seat with
 sops, which seals the file again to its own recipients:
 `sops unset "$secrets_dir/web.yaml" '["LABEL"]'`.
 
+## Clone a private repository on a fleet machine
+
+On a machine `nova-fleet join` set up, the login profile exports
+`NOVA_SECRETS_STORE` (the pushed store) and `NOVA_SECRETS_SEAT` (the machine's
+seat, its inventory name), so a bare `exec` from a fresh login opens that seat.
+This is the one way to clone a private repository there. The token reaches git
+only through a credential helper that reads it from the environment: it is
+never on argv, in a file, in git's config or in the output.
+
+```sh
+nova-secrets exec --only GH_GATE_TOKEN -- git -c credential.helper= -c credential.helper='!f() { test "$1" = get && echo username=x-access-token && echo "password=$GH_GATE_TOKEN"; }; f' clone https://github.com/<owner>/<repo>.git
+```
+
+`git ls-remote` in place of `clone` checks access without fetching anything.
+`unset NOVA_SECRETS_SEAT` or `--as` is never needed for this; a refusal names
+the store or seat it tried.
+
 ## Refusals
 
 Runtime refusals print one line, `SECRETS <VERB> REFUSED reason=<reason>: <why>`,

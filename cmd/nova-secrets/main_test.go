@@ -1252,3 +1252,14 @@ func TestUnreadableSeatFileSaysSo(t *testing.T) {
 	assert.Contains(t, h.stderr.String(), "reading "+filepath.Join(h.store, "ada.grants.yaml")+": ", "set reads the grants file's names")
 	assert.NotContains(t, h.stderr.String(), "does not parse")
 }
+
+// exec's help gives the one clone recipe: the token reaches git only through an env-reading credential helper.
+func TestExecHelpGivesTheCloneRecipe(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	assert.Equal(t, 0, h.main("help", "exec"))
+	out := h.stdout.String()
+	assert.Contains(t, out, "nova-secrets exec --only GH_GATE_TOKEN -- git -c credential.helper= -c credential.helper=")
+	assert.Contains(t, out, `password=$GH_GATE_TOKEN`)
+	assert.Contains(t, out, "NOVA_SECRETS_STORE and NOVA_SECRETS_SEAT")
+}

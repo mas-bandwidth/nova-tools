@@ -85,3 +85,18 @@ func TestPlayTextNamesNovaFleetCommands(t *testing.T) {
 	assert.NotContains(t, string(install), "-e nova_tools_version=vX.Y.Z")
 	assert.Contains(t, string(install), "--tag vX.Y.Z")
 }
+
+// join's login profile makes a bare nova-secrets exec work on a bench: the pushed store, the machine's seat, and sops's
+// directory on PATH (/opt/homebrew/bin on a Mac).
+func TestJoinProfileGivesABareExecItsStoreSeatAndSops(t *testing.T) {
+	t.Parallel()
+	join, err := os.ReadFile("join.yml")
+	require.NoError(t, err)
+	for _, line := range []string{
+		`NOVA_SECRETS_STORE="{{ nova_secrets_store }}"; export NOVA_SECRETS_STORE`,
+		`NOVA_SECRETS_SEAT="{{ nova_seat }}"; export NOVA_SECRETS_SEAT`,
+		`case ":$PATH:" in *":{{ nova_sops | dirname }}:"*) ;; *) PATH="$PATH:{{ nova_sops | dirname }}"; export PATH;; esac`,
+	} {
+		assert.Contains(t, string(join), line)
+	}
+}
