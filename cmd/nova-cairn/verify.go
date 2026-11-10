@@ -16,11 +16,11 @@ import (
 type issue struct{ kind, detail string }
 
 var (
-	wikilink   = regexp.MustCompile(`\[\[([^\[\]]+?)\]\]`)
-	fence      = regexp.MustCompile("^[ \t]{0,3}(`{3,}|~{3,})")
-	inlineCode = regexp.MustCompile("`[^`\n]*`")
-	mdLink     = regexp.MustCompile(`\]\(([^)\n]+)\)`)
-	scheme     = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9+.\-]*:`)
+	wikilink = regexp.MustCompile(`\[\[([^\[\]]+?)\]\]`)
+	fence    = regexp.MustCompile("^[ \t]{0,3}(`{3,}|~{3,})")
+	ticks    = regexp.MustCompile("`+")
+	mdLink   = regexp.MustCompile(`\]\(([^)\n]+)\)`)
+	scheme   = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9+.\-]*:`)
 )
 
 // maskCode blanks fenced code and inline code spans, so a link shown as an example is not a link.
@@ -38,10 +38,27 @@ func maskCode(s string) string {
 		} else if open != "" {
 			lines[i] = ""
 		} else {
-			lines[i] = inlineCode.ReplaceAllString(ln, " ")
+			lines[i] = maskSpans(ln)
 		}
 	}
 	return strings.Join(lines, "\n")
+}
+
+// maskSpans blanks inline code: a run of n backticks opens a span that closes at the
+// next run of exactly n; a run with no partner is literal text, as in CommonMark.
+func maskSpans(ln string) string {
+	var b strings.Builder
+	at, rs := 0, ticks.FindAllStringIndex(ln, -1)
+	for k := 0; k < len(rs); k++ {
+		for m := k + 1; m < len(rs); m++ {
+			if rs[m][1]-rs[m][0] == rs[k][1]-rs[k][0] {
+				b.WriteString(ln[at:rs[k][0]] + " ")
+				at, k = rs[m][1], m
+				break
+			}
+		}
+	}
+	return b.String() + ln[at:]
 }
 
 // linkTarget is the .md file a markdown link destination points at, if it is a relative one.
