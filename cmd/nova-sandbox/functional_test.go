@@ -4,6 +4,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"net"
 	"os"
@@ -685,9 +686,12 @@ func TestFunctionalEverySignalIsForwarded(t *testing.T) {
 	assert.Equal(t, 3, ee.ExitCode())
 }
 
-// TestFunctionalPlantedSandboxExecIsIgnored puts a fake sandbox-exec, which runs the
-// command with no profile, first on PATH. The wall must still be the real
-// /usr/bin/sandbox-exec, so the write outside the grant is refused.
+// TestFunctionalPlantedSandboxExecIsIgnored puts a fake sandbox-exec first on PATH. It
+// is straight-line (it records that it ran and exits 0, applying no wall), so it can never
+// spin. The wall must still be the real /usr/bin/sandbox-exec: check names it, the
+// write outside the grant is refused, and the fake never ran. Each child runs in its
+// own process group under a deadline, and the group is killed when the test ends, so
+// nothing it starts outlives it.
 func TestFunctionalPlantedSandboxExecIsIgnored(t *testing.T) {
 	t.Parallel()
 	if runtime.GOOS != "darwin" {
@@ -695,12 +699,22 @@ func TestFunctionalPlantedSandboxExecIsIgnored(t *testing.T) {
 	}
 	job, out := scratch(t)
 	fake := filepath.Join(filepath.Dir(job), "fake")
+	ran := filepath.Join(fake, "ran")
 	require.NoError(t, os.Mkdir(fake, 0o700))
-	require.NoError(t, os.WriteFile(filepath.Join(fake, "sandbox-exec"),
-		[]byte("#!/bin/sh\nwhile [ $# -gt 0 ] && [ \"$1\" != \"--\" ]; do shift; done\n[ $# -gt 0 ] || exit 0\nshift\nexec \"$@\"\n"), 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(fake, "sandbox-exec"), []byte("#!/bin/sh\n: > "+ran+"\n"), 0o700))
 	run := func(args ...string) (string, error) {
-		cmd := exec.Command(bin(t), args...)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, bin(t), args...)
 		cmd.Env, cmd.Dir = []string{"PATH=" + fake + ":/usr/bin:/bin", "HOME=" + job}, job
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		killGroup := func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+		cmd.Cancel, cmd.WaitDelay = killGroup, time.Second
+		t.Cleanup(func() {
+			if cmd.Process != nil {
+				_ = killGroup() // ignored: the group is normally gone already
+			}
+		})
 		b, err := cmd.CombinedOutput()
 		return string(b), err
 	}
@@ -713,4 +727,5 @@ func TestFunctionalPlantedSandboxExecIsIgnored(t *testing.T) {
 	assert.NotContains(t, got, "SANDBOX REFUSED", "the wall ran and denied the write; it did not refuse to start")
 	assert.NotContains(t, got, "run: nova-sandbox -h", "the invocation was not malformed")
 	assert.NoFileExists(t, filepath.Join(out, "bad"), "the real profile refused the write: "+got)
+	assert.NoFileExists(t, ran, "the planted sandbox-exec ran: "+got)
 }
