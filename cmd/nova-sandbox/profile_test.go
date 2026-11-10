@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -82,6 +84,21 @@ func TestDarwinLiteralsCarryThePathAsWritten(t *testing.T) {
 	assert.Contains(t, got, "(allow file-read* (literal \"/l/nb link\"))")
 	assert.NotContains(t, text, `\u`, "no Go escape reaches the profile")
 	assert.Equal(t, []string{"READ0=/r/nb sp/a"}, params)
+}
+
+// A developer directory with parentheses in its name, as a versioned Xcode has, is
+// granted: inside a quoted literal they are plain characters.
+func TestDarwinDeveloperDirWithParenthesesIsGranted(t *testing.T) {
+	t.Parallel()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	app := filepath.Join(dir, "Xcode (16.2).app", "Contents")
+	require.NoError(t, os.MkdirAll(filepath.Join(app, "Developer"), 0o755))
+	link := filepath.Join(dir, "xcode_select_link")
+	require.NoError(t, os.Symlink(filepath.Join(app, "Developer"), link))
+	text, _, err := darwinProfile(&wall{optRoots: developerDir(link)})
+	require.NoError(t, err)
+	assert.Contains(t, lines(text), "(allow file-read* (subpath \""+app+"\"))")
 }
 
 func TestDarwinRootsMatchTheTemplate(t *testing.T) {
