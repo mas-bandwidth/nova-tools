@@ -131,6 +131,9 @@ func (f *upFake) install(t *testing.T) {
 		if f.fail != "" && strings.Contains(line, f.fail) {
 			return 4, nil
 		}
+		if i := slices.Index(args, "--to"); args[0] == "grant" && i >= 0 && i+1 < len(args) && args[i+1] == os.Getenv("NOVA_SECRETS_SEAT") {
+			return 2, nil // nova-secrets refuses a grant to the granting seat
+		}
 		if strings.Contains(line, "up --reset --auth-key=file:/dev/stdin --advertise-tags=tag:control") {
 			f.offnet = false // this node joined the tailnet
 		}
@@ -938,7 +941,8 @@ func TestUpSeatKeyUsesTheBinDir(t *testing.T) {
 }
 
 // The control node named in the inventory is tailscale status Self, never a Peer: it gets no join key and
-// no join (join's peer check cannot see the node it runs on); every step after join runs on it as on any.
+// no join (join's peer check cannot see the node it runs on), and no grant (its own seat holds the values, and
+// nova-secrets refuses a grant to the granting seat); every other step runs on it as on any.
 func TestUpControlNodeInTheInventory(t *testing.T) {
 	f := &upFake{self: "control"}
 	existing(t, f, `,{"kind":"machine","fields":{"name":"control","address":"control.ts.example","user":"ops","os":"linux","arch":"amd64","roles":"bench"}}`)
@@ -946,9 +950,10 @@ func TestUpControlNodeInTheInventory(t *testing.T) {
 	all := strings.Join(f.calls, "\n")
 	if code != 0 || f.api.keys != 1 || strings.Contains(all, "nova_join_host=control") || !strings.Contains(all, "nova_join_host=second") ||
 		strings.Contains(strings.Join(f.api.calls, "\n"), "/device/n-control/tags  {\"tags\":[\"tag:control\",\"tag:nova\"]}") ||
-		!strings.Contains(all, "ssh -o BatchMode=yes ops@control.ts.example sh -c") || !strings.Contains(all, "nova-secrets grant NOVA_BUS_PASSWORD --to control") ||
+		strings.Contains(all, "nova-secrets grant NOVA_BUS_PASSWORD --to control") || !strings.Contains(all, "nova-secrets grant NOVA_BUS_PASSWORD --to second") ||
 		!strings.Contains(out, "UP REACH control OK ops@control.ts.example") || !strings.Contains(out, "UP JOIN control SKIPPED this control node (tailscale status Self): already joined") ||
-		!strings.Contains(out, "UP MACHINE control OK address=203.0.113.5 steps=grant,refresh,health,tools,services,bus") {
+		!strings.Contains(out, "UP GRANT control SKIPPED this control node (tailscale status Self): its own seat holds the values") ||
+		!strings.Contains(out, "UP MACHINE control OK address=203.0.113.5 steps=refresh,health,tools,services,bus") {
 		t.Errorf("code %d keys %d\n%s\n%s\n%s", code, f.api.keys, out, errs, all)
 	}
 	// with --runners, the control node gets no runner role and no runners: heavy work never defaults onto it
@@ -957,7 +962,7 @@ func TestUpControlNodeInTheInventory(t *testing.T) {
 	code, out, errs = runArgs("up", "--tools", "v2.0.0", "--runners", "https://github.com/o/r", "control=203.0.113.5", "second=203.0.113.8")
 	all = strings.Join(f.calls, "\n")
 	if code != 0 || strings.Contains(all, "machine set control") || !strings.Contains(all, "-e runner_count=cores -l second\n") ||
-		!strings.Contains(out, "UP MACHINE control OK address=203.0.113.5 steps=grant,refresh,health,tools,services,bus") {
+		!strings.Contains(out, "UP MACHINE control OK address=203.0.113.5 steps=refresh,health,tools,services,bus") {
 		t.Errorf("runners: code %d\n%s\n%s\n%s", code, out, errs, all)
 	}
 	// with no row, join cannot be skipped into one: the run stops with the line that adds it
