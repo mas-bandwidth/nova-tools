@@ -258,3 +258,15 @@ func TestRunnerPackagesReportsOneLinePerHost(t *testing.T) {
 	}
 	assert.Equal(t, 1, found, "one RUNNER-PACKAGES line per host")
 }
+
+// A WSL2 machine (captain) has no /boot/vmlinuz-<version> and no kvm group, so the VM tier's step is skipped there,
+// found the way the github-runner role finds WSL (/proc/sys/fs/binfmt_misc/WSLInterop), instead of stopping the run.
+func TestRunnerPackagesVMKernelSkipsWSL(t *testing.T) {
+	t.Parallel()
+	wsl := taskNamed(t, "main.yml", "a WSL machine (no /boot kernel image, no kvm)")
+	stat, _ := wsl["ansible.builtin.stat"].(map[string]any)
+	require.NotNil(t, stat)
+	assert.Equal(t, "/proc/sys/fs/binfmt_misc/WSLInterop", stat["path"])
+	vm := taskNamed(t, "main.yml", "the kernel image a VM of the host's own kernel boots (Debian, Ubuntu; not WSL)")
+	assert.Contains(t, asText(vm["when"]), "not rp_wsl.stat.exists")
+}
