@@ -1,0 +1,155 @@
+---
+# The machine's names match its record name (Linux, WSL included; included by main.yml after the join, so `join`,
+# `up` and every `nova-fleet tailscale` run keep them matched). The tailnet name is set in main.yml (`tailscale set
+# --hostname`); here:
+#
+#   - the OS hostname: /etc/hostname, and the running kernel's (`hostname <name>`); on WSL also [network] hostname in
+#     /etc/wsl.conf, which WSL sets the hostname from at every start;
+#   - /etc/hosts: exactly one 127.0.1.1 line, naming the machine (Debian's convention, so sudo and anything else that
+#     resolves the hostname finds it); every other 127.0.1.1 line (an old name, an installer's) goes;
+#   - cloud-init (where /etc/cloud exists): preserve_hostname true in 99-nova-hostname.cfg, so no boot puts the
+#     provider's name back.
+#
+# A name that is not a hostname, or a tailnet that gave the machine another DNS name (the name is held by another
+# node), is refused: the run fails for that machine and says how to fix it (HOSTNAME <machine> drift-refused).
+- name: the record name, as a hostname
+  ansible.builtin.set_fact:
+    hn_wsl: "{{ nova_wsl | default('microsoft' in (ansible_facts['kernel'] | default('') | lower)) | bool }}"
+    hn_valid: "{{ inventory_hostname is match('^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$') }}"
+
+- name: a record name that is not a hostname is refused
+  ansible.builtin.fail:
+    msg: >-
+      HOSTNAME {{ inventory_hostname }} drift-refused: the record name is not a hostname (lowercase letters, digits and
+      inner '-', at most 63); rename the record (nova-config machine set) or set nova_join_hostname=false for it
+  when: nova_join_hostname | bool and not hn_valid
+
+# The tailnet name: main.yml set it (`tailscale set --hostname`) where it differed. The MagicDNS label is what the
+# tailnet gave: another one means another node holds the name. (Under --check a rename not made yet is no drift.)
+- name: the tailnet name, as the tailnet gave it
+  ansible.builtin.set_fact:
+    hn_ts_would: "{{ ansible_check_mode and (ts_self.HostName | default('')) != inventory_hostname }}"
+    hn_ts_label: "{{ (ts_dns | default('')).split('.') | first }}"
+
+- name: a tailnet name another node holds is refused
+  ansible.builtin.fail:
+    msg: >-
+      HOSTNAME {{ inventory_hostname }} drift-refused: the tailnet gave this machine {{ ts_dns }}, not
+      {{ inventory_hostname }}.<tailnet>: another node holds the name. Remove or rename that node in the Tailscale
+      admin console (Machines), then run nova-fleet tailscale -- -l {{ inventory_hostname }} again
+  when: hn_ts_label | length > 0 and hn_ts_label != inventory_hostname and not hn_ts_would
+
+- name: the hostname now
+  ansible.builtin.command: hostname
+  register: hn_now
+  changed_when: false
+  check_mode: false
+  when: nova_join_hostname | bool
+
+- name: /etc/hosts now
+  ansible.builtin.slurp: { src: "{{ nova_etc }}/hosts" }
+  register: hn_hosts
+  when: nova_join_hostname | bool
+
+# Exactly one 127.0.1.1 line naming the machine is left as it is (WSL writes its own, `<name>.<domain> <name>`);
+# otherwise every 127.0.1.1 line goes and `127.0.1.1<tab><name>` is put after the 127.0.0.1 line (first, with none).
+- name: the 127.0.1.1 line wanted
+  ansible.builtin.set_fact:
+    hn_hosts_ok: "{{ (hn_loop | length) == 1 and inventory_hostname in hn_loop[0].split()[1:] }}"
+    hn_kept: "{{ hn_lines | reject('match', '127\\.0\\.1\\.1\\s') | list }}"
+  vars:
+    hn_lines: "{{ (hn_hosts.content | b64decode).splitlines() }}"
+    hn_loop: "{{ hn_lines | select('match', '127\\.0\\.1\\.1\\s') | list }}"
+  when: nova_join_hostname | bool
+
+- name: the hosts file wanted
+  ansible.builtin.set_fact:
+    hn_hosts_new: "{{ hn_kept[:hn_at | int] + ['127.0.1.1\t' ~ inventory_hostname] + hn_kept[hn_at | int:] }}"
+  vars:
+    hn_lo: "{{ hn_kept | select('match', '127\\.0\\.0\\.1\\s') | list }}"
+    hn_at: "{{ (hn_kept.index(hn_lo[0]) + 1) if hn_lo else 0 }}"
+  when: nova_join_hostname | bool and not hn_hosts_ok
+
+- name: "/etc/hostname is {{ inventory_hostname }}"
+  ansible.builtin.copy:
+    dest: "{{ nova_etc }}/hostname"
+    content: "{{ inventory_hostname }}\n"
+    mode: "0644"
+  become: true
+  register: hn_file
+  when: nova_join_hostname | bool
+
+- name: "WSL starts as {{ inventory_hostname }} ([network] hostname in /etc/wsl.conf)"
+  when: nova_join_hostname | bool and hn_wsl
+  block:
+    - name: /etc/wsl.conf now
+      ansible.builtin.slurp: { src: "{{ nova_etc }}/wsl.conf" }
+      register: hn_wslconf
+      failed_when: false
+
+    - name: the [network] section's hostname (the section there already)
+      ansible.builtin.lineinfile:
+        path: "{{ nova_etc }}/wsl.conf"
+        regexp: '^\s*hostname\s*='
+        line: "hostname = {{ inventory_hostname }}"
+        insertafter: '^\[network\]'
+      become: true
+      register: hn_wsl_line
+      when: (hn_wslconf.content | default('') | b64decode) is search('(?m)^\[network\]')
+
+    - name: a [network] section with the hostname (none there yet)
+      ansible.builtin.blockinfile:
+        path: "{{ nova_etc }}/wsl.conf"
+        create: true
+        mode: "0644"
+        marker: "# {mark} nova-fleet hostname (roles/tailscale)"
+        block: |
+          [network]
+          hostname = {{ inventory_hostname }}
+      become: true
+      register: hn_wsl_block
+      when: not ((hn_wslconf.content | default('') | b64decode) is search('(?m)^\[network\]'))
+
+- name: "the running hostname is {{ inventory_hostname }}"
+  ansible.builtin.command:
+    argv: [hostname, "{{ inventory_hostname }}"]
+  become: true
+  when: nova_join_hostname | bool and hn_now.stdout | trim != inventory_hostname
+
+- name: "/etc/hosts: one 127.0.1.1 line, {{ inventory_hostname }}"
+  ansible.builtin.copy:
+    dest: "{{ nova_etc }}/hosts"
+    content: "{{ hn_hosts_new | join('\n') }}\n"
+  become: true
+  register: hn_hosts_file
+  when: nova_join_hostname | bool and not hn_hosts_ok
+
+- name: cloud-init, there
+  ansible.builtin.stat: { path: "{{ nova_etc }}/cloud/cloud.cfg.d" }
+  register: hn_cloud
+  when: nova_join_hostname | bool
+
+- name: cloud-init keeps the hostname at boot
+  ansible.builtin.copy:
+    dest: "{{ nova_etc }}/cloud/cloud.cfg.d/99-nova-hostname.cfg"
+    content: |
+      # nova-fleet (roles/tailscale): the hostname is the machine's record name; no boot sets it from the provider's.
+      preserve_hostname: true
+    mode: "0644"
+  become: true
+  register: hn_cloud_file
+  when: nova_join_hostname | bool and hn_cloud.stat.isdir | default(false)
+
+- name: what changed
+  ansible.builtin.set_fact:
+    hn_os: >-
+      {{ 'left (nova_join_hostname=false)' if not (nova_join_hostname | bool) else
+         ('matched' if hn_now.stdout | trim == inventory_hostname and hn_file is not changed and
+                       (hn_wsl_line | default({})) is not changed and (hn_wsl_block | default({})) is not changed else
+          (('WOULD-RENAME' if ansible_check_mode else 'renamed') ~ ' from ' ~ (hn_now.stdout | trim))) }}
+    hn_hosts_state: >-
+      {{ 'left' if not (nova_join_hostname | bool) else
+         ('matched' if hn_hosts_ok else ('WOULD-SET' if ansible_check_mode else 'set')) }}
+    hn_cloud_state: >-
+      {{ 'none' if (hn_cloud_file | default({})) is skipped or hn_cloud_file is not defined else
+         ('matched' if hn_cloud_file is not changed else ('WOULD-SET' if ansible_check_mode else 'set')) }}

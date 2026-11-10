@@ -515,9 +515,13 @@ the row and reads the inventory again.
    name, since the login exists then and the policy lets no one in as root over the tailnet). The row's user: no
    password, in `nova_join_sudo_group` with
    passwordless sudo (`/etc/sudoers.d/90-nova-<login>`, checked by `visudo` before it lands), root's
-   `authorized_keys` copied to it (or the control node's file `nova_join_authorized_keys` names), linger on, the
-   hostname set to the machine name. A darwin machine has no root login: set its login and sudo up at its console.
-3. **The tailnet**: `tailscale` (below). From here on the plays reach the machine over the tailnet.
+   `authorized_keys` copied to it (or the control node's file `nova_join_authorized_keys` names), linger on. A darwin
+   machine has no root login: set its login and sudo up at its console.
+3. **The tailnet**: `tailscale` (below). It also makes the machine's names its machine name and sets the fleet's
+   prompt, with no separate step: on Linux and WSL the hostname, `/etc/hosts` and cloud-init; the tailnet name
+   everywhere; and the login's prompt `user@<machine>:<cwd>$` (the `user@<machine>` cyan) on every machine, Macs
+   included. A re-run of `tailscale` keeps all of it matched. From here on the plays reach the machine over the
+   tailnet.
 4. **The tools a seat needs** (as the login): `nova_bin_dir` on the login PATH, and `NOVA_SECRETS_STORE`
    (`nova_secrets_store`, where the store is pushed) and `NOVA_SECRETS_SEAT` (`nova_seat`) exported in the login
    profile and, for `ssh <machine> '<cmd>'`, first in `~/.bashrc` (`~/.zshenv` for zsh), with the directory of
@@ -570,7 +574,7 @@ running the same command again.
 | `nova_join_root_user` | `root` | the login a fresh Linux machine is reached with (`up` passes the login it reached the machine as) |
 | `nova_join_sudo_group` | `sudo` | the group the login joins (`wheel` on Red Hat) |
 | `nova_join_authorized_keys` | root's on the machine | a file on the control node to install instead |
-| `nova_join_hostname` | `true` | set the hostname to the machine name |
+| `nova_join_hostname` | `true` | make the hostname, `/etc/hosts` and cloud-init match the machine name (Linux, WSL; the `tailscale` play, at join and every run after) |
 | `nova_join_host_key` | unset | the machine's host key (`ssh-ed25519 AAAA...`) from the provider's console; without it the first connection's key is pinned |
 | `nova_tailnet` | `true` | `false` skips the tailnet checks (a private network); the rest of the join is unchanged |
 | `nova_seal_seat`, `nova_seal_key` | unset | the control seat and its key file on the control node; without them nothing is granted |
@@ -580,7 +584,7 @@ running the same command again.
 | `nova_age_version`, `nova_sops_version` and their `*_sha256` | the pinned releases | |
 | `nova_control_config`, `nova_control_secrets`, `nova_control_sops` | `nova-config`, `nova-secrets`, `sops` | the control node's binaries |
 
-**Check.** The receipts `JOIN ROW`, `HOSTKEY`, `TAILNET`, `FIREWALL`, `JOIN TOOLS`, `JOIN PEER`, `SEAT`,
+**Check.** The receipts `JOIN ROW`, `HOSTKEY`, `HOSTNAME`, `TAILNET`, `FIREWALL`, `JOIN TOOLS`, `JOIN PEER`, `SEAT`,
 `JOIN GRANT <seat> from=<control seat> to=<seat> names=<n> changed=<n> committed|unchanged`, `JOIN PIN`,
 `SECRETS-REFRESH` and `JOIN CHECK <machine> peer=online bus=WHO OK present=<n>`; a second run's `--check --diff`
 changes nothing. **Rollback.** `nova-config machine remove <name> --actor <you>`, the device removed in the Tailscale
@@ -591,8 +595,10 @@ under the same name is refused by the seat pin until it is removed.
 
 ## tailscale
 
-Each machine on the tailnet, its address in nova-config its MagicDNS name, and its firewall closed to everything but
-the tailnet. `join` runs it; run it alone for machines that already have a row.
+Each machine on the tailnet, its names its machine name (the record's name, which is its MagicDNS label), the
+fleet's prompt on its login, its address in nova-config its MagicDNS name, and its firewall closed to everything but
+the tailnet. `join` runs it; run it alone for machines that already have a row, and again whenever you like: a run
+puts back any name or prompt that drifted.
 
 **What is yours, once, in the Tailscale admin console:** the account, with MagicDNS on (the default), and one API
 access token: Settings > Keys > Generate API access token, stored once with `nova-secrets set TAILSCALE_API_KEY` (paste
@@ -638,10 +644,28 @@ one. On a Mac machine, open the Tailscale app once at its console and approve it
    alone, give one) and reaches the
    machine on the command's stdin only. A machine already Running with the same tags is not joined again; a hostname or
    Tailscale SSH setting that differs is set in place with `tailscale set`, with no key.
-3. Records `Self.DNSName` (`<machine>.<tailnet>.ts.net`) as the machine's address: `nova-config machine set <name>
+3. The machine's names and prompt (`roles/tailscale/tasks/names.yml`):
+   - Linux and WSL: the OS hostname is the machine name (`/etc/hostname`, and the running one with `hostname
+     <machine>`; on WSL also `hostname` in the `[network]` section of `/etc/wsl.conf`, which WSL starts from).
+     `/etc/hosts` has exactly one `127.0.1.1` line, and it names the machine: a single line that already does (WSL's
+     `<machine>.<domain> <machine>`) is kept; otherwise every `127.0.1.1` line goes and `127.0.1.1<tab><machine>` is
+     put after the `127.0.0.1` line. Where `/etc/cloud/cloud.cfg.d` exists, `99-nova-hostname.cfg` sets
+     `preserve_hostname: true`, so no boot puts the provider's name back. `nova_join_hostname=false` leaves all three.
+   - Refused (`HOSTNAME <machine> drift-refused: ...`, the machine fails before anything is written): a machine name
+     that is not a hostname (lowercase letters, digits, inner `-`, at most 63), and a tailnet that gave the machine
+     another MagicDNS name than `<machine>.<tailnet>.ts.net` (another node holds the name: remove or rename it in the
+     admin console, then run again).
+   - Every machine, Macs included: the login's prompt. The play owns `~/.config/nova/prompt.bash` or
+     `~/.config/nova/prompt.zsh` (the login shell's), rewrites it every run, and adds one line to the shell's rc file
+     (`~/.bashrc`; `~/.bash_profile` for bash on a Mac; `~/.zshrc`) that sources it:
+     `[ -f ~/.config/nova/prompt.bash ] && . ~/.config/nova/prompt.bash`. It applies to interactive shells only.
+     bash: `PS1='\[\033[36m\]\u@\h\[\033[00m\]:\w\$ '` (`\h` is the hostname, the machine name; on a Mac the machine
+     name in its place); zsh: `PROMPT='%F{cyan}%n@<machine>%f:%~%# '`. Either way `user@<machine>:<cwd>$`, the
+     `user@<machine>` cyan. Another login shell is left as it is. Macs keep their hostname (their Bonjour name).
+4. Records `Self.DNSName` (`<machine>.<tailnet>.ts.net`) as the machine's address: `nova-config machine set <name>
    --address <dns name>`, then reads the inventory again, so the firewall play, every run after it, the bus and the
    services reach the machine by that name.
-4. The firewall. Linux: ufw denies incoming on every interface but `tailscale0`, allows outgoing and UDP 41641
+5. The firewall. Linux: ufw denies incoming on every interface but `tailscale0`, allows outgoing and UDP 41641
    (Tailscale's direct connections). It is turned on only when the run itself comes in on the tailnet (or is local),
    so it cannot cut its own connection; otherwise it stops with `FIREWALL HELD` and says why. macOS: the application
    firewall on (sudo: the login needs passwordless sudo, set at the console).
@@ -663,10 +687,14 @@ nova-secrets exec --only NOVA_PG_PASSWORD --store S --key K --as SEAT -- \
 | `nova_firewall_allow_udp` | `[41641]` | UDP ports open on every interface |
 | `nova_tailscale_apt_url` | `https://pkgs.tailscale.com/stable` | |
 
-**Check.** `TAILNET <machine> dns=<name> ip=<100.x> tags=tag:nova address=kept` and `FIREWALL <machine> ufw as
-declared`; `tailscale status` on the control node lists the machine. **Rollback.** On the machine `tailscale logout`
-and `ufw disable` (macOS: `socketfilterfw --setglobalstate off`); `nova-config machine set <name> --address <old
-address>`.
+**Check.** `HOSTNAME <machine> matched|renamed|WOULD-RENAME os=... hosts=... cloud-init=... tailnet=... prompt=...`
+(`matched`: every name was the machine name already; `renamed`: one was set; the prompt has its own field, `matched`,
+`set` or `WOULD-SET`; a second run: `matched` on every field), `TAILNET <machine> dns=<name> ip=<100.x> tags=tag:nova address=kept` and
+`FIREWALL <machine> ufw as declared`; `tailscale status` on the control node lists the machine. **Rollback.** On the
+machine `tailscale logout` and `ufw disable` (macOS: `socketfilterfw --setglobalstate off`); `nova-config machine set
+<name> --address <old address>`; the old name with `hostnamectl set-hostname <old>` and the `127.0.1.1` line of
+`/etc/hosts` by hand, `rm /etc/cloud/cloud.cfg.d/99-nova-hostname.cfg`; the prompt by deleting the source line from
+the rc file and `rm ~/.config/nova/prompt.*`.
 
 ## ssh-names
 

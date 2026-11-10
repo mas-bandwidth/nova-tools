@@ -146,6 +146,10 @@
   ansible.builtin.set_fact:
     ts_dns: "{{ ts_self.DNSName | default('') | regex_replace('\\.$', '') }}"
 
+# ---- the machine's names and prompt, the same at join and at every run after ----
+- name: the hostname, /etc/hosts, cloud-init and the prompt
+  ansible.builtin.include_tasks: names.yml
+
 - name: nova-config's store is in the environment
   ansible.builtin.assert:
     that: lookup('ansible.builtin.env', 'NOVA_PG_DSN') | length > 0

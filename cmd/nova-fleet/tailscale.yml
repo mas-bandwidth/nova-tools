@@ -1,6 +1,6 @@
-# purpose: each machine on the tailnet, its address the MagicDNS name, its firewall closed to all but the tailnet
+# purpose: each machine on the tailnet, its hostname and tailnet name its machine name (Linux, WSL), the fleet's prompt, its address the MagicDNS name, its firewall closed to all but the tailnet
 #
-# tailscale.yml: each machine on the tailnet, its address the MagicDNS name, its firewall closed to everything but
+# tailscale.yml: each machine on the tailnet, its names its machine name and the fleet's prompt set, its address the MagicDNS name, its firewall closed to everything but
 # the tailnet (cmd/nova-fleet/README.md, "tailscale"; join.yml imports it). nova-fleet up merges the policy
 # (cmd/nova-fleet/tailscale-acl.json) and mints a single-use auth key per machine with TAILSCALE_API_KEY; this play does the rest:
 #
@@ -10,10 +10,17 @@
 #      the key TAILSCALE_AUTHKEY from the control node's environment (up puts it there), on stdin, on a machine that is not Running. A Running
 #      machine is never brought up again: a hostname or Tailscale SSH that differs is set in place with no key, and
 #      tags that differ stop the run with the command to retag it at its console.
-#   3. The machine's MagicDNS name (<machine>.<tailnet>.ts.net) recorded as its address in nova-config
+#   3. The machine's names and prompt (roles/tailscale/tasks/names.yml), so a re-run keeps them matched: on Linux and
+#      WSL the OS hostname is the machine name (/etc/hostname and the running one; /etc/wsl.conf [network] on WSL),
+#      /etc/hosts has one 127.0.1.1 line naming it, cloud-init keeps it (preserve_hostname), and a tailnet that gave
+#      the machine another DNS name stops the run (the name is held by another node). On every machine, Macs too, the
+#      login's prompt is user@<machine>:<cwd> with user@<machine> in cyan: ~/.config/nova/prompt.<bash|zsh>, written by
+#      the play, sourced by one line in the shell's rc file. Macs keep their hostname (their Bonjour name).
+#      Receipt: HOSTNAME <machine> matched|renamed|WOULD-RENAME os= hosts= cloud-init= tailnet= prompt=.
+#   4. The machine's MagicDNS name (<machine>.<tailnet>.ts.net) recorded as its address in nova-config
 #      (`nova-config machine set <name> --address ...`), then the inventory read again, so the next play, every later
 #      run, the bus and the services reach it there.
-#   4. The firewall: ufw denies incoming on Linux but on tailscale0 (only over a run that already comes in on the
+#   5. The firewall: ufw denies incoming on Linux but on tailscale0 (only over a run that already comes in on the
 #      tailnet, so it cannot lock itself out); the application firewall on macOS.
 #
 # The machine's host key is pinned into the control node's known_hosts at the first connection, and the MagicDNS

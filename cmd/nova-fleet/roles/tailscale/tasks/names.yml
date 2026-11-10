@@ -1,0 +1,30 @@
+---
+# The machine's names and prompt (main.yml includes this after the join, so `join`, `up` and every `nova-fleet
+# tailscale` run make them the same): on Linux and WSL the hostname, /etc/hosts and cloud-init match the record name
+# (hostname.yml; the tailnet name is set in main.yml), and on every machine the fleet's prompt (prompt.yml). Macs are
+# never renamed: a Mac's hostname is its Bonjour name.
+- name: the hostname, /etc/hosts and cloud-init match the machine name (Linux, WSL)
+  ansible.builtin.include_tasks: hostname.yml
+  when: ts_os == 'debian'
+
+- name: the fleet's prompt (every machine)
+  ansible.builtin.include_tasks: prompt.yml
+
+# matched: every name was the machine name already. renamed (WOULD-RENAME under --check): the hostname, the hosts line,
+# cloud-init or the tailnet name was set. The prompt has its own field. drift-refused stops the machine in
+# hostname.yml, before this line.
+- name: the names' receipt
+  ansible.builtin.debug:
+    msg: >-
+      HOSTNAME {{ inventory_hostname }}
+      {{ ('WOULD-RENAME' if ansible_check_mode else 'renamed') if hn_changed else 'matched' }}
+      os={{ hn_os | default('left (macOS: not renamed)') | trim }} hosts={{ hn_hosts_state | default('left') | trim }}
+      cloud-init={{ hn_cloud_state | default('none') | trim }} tailnet={{ hn_tailnet_now | trim }} prompt={{ pr_state | trim }}
+  vars:
+    hn_tailnet_now: >-
+      {{ ('WOULD-RENAME from ' ~ ts_self.HostName) if ansible_check_mode and (ts_self.HostName | default(inventory_hostname)) != inventory_hostname
+         else ('renamed' if (ts_set | default({})) is changed else 'matched') }}
+    hn_changed: >-
+      {{ (hn_os | default('') | trim) is match('renamed|WOULD') or (hn_hosts_state | default('') | trim) in ['set', 'WOULD-SET']
+         or (hn_cloud_state | default('') | trim) in ['set', 'WOULD-SET']
+         or (hn_tailnet_now | trim) is match('renamed|WOULD') }}

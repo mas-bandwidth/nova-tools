@@ -165,6 +165,8 @@ nova_join_roles: bench
 nova_join_actor: "{{ lookup('ansible.builtin.env', 'USER') or 'fleet' }}"
 nova_join_root_user: root
 nova_join_sudo_group: sudo
+# The hostname, /etc/hosts and cloud-init made to match the machine name on Linux (WSL included), by the tailscale
+# role at join and at every `nova-fleet tailscale` run after it; false leaves them as they are.
 nova_join_hostname: true
 # nova_join_host_key ("ssh-ed25519 AAAA...", from the provider's console) has no default: given, it is the host key
 # pinned for the row's address; else the key the address answers with at the first connection is.
