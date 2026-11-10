@@ -157,6 +157,22 @@ func TestGrokWakeNeedsAReader(t *testing.T) {
 	assert.Empty(t, entries, "nothing saved for a wake nobody would read")
 }
 
+// lsof that exits non-zero with text on stderr found no reader: the text is
+// its complaint (a missing file, a warning), never a pid.
+func TestGrokWakeNeedsAReaderWhenLsofFails(t *testing.T) {
+	t.Parallel()
+	home := grokHome(t)
+	failing := func(_ context.Context, _ []string, name string, _ ...string) ([]byte, error) {
+		return []byte("lsof: status error on " + name + ": No such file or directory\n"), errors.New("exit status 1")
+	}
+	w, err := newWaker(context.Background(), "grok", "beta", map[string]string{"grok-home": home}, sys{uid: os.Getuid(), exec: failing}, io.Discard)
+	require.NoError(t, err)
+	file := filepath.Join(home, "nova-hook.wake")
+	assert.EqualError(t, w.wake(context.Background(), testMsg), "no process has "+file+" open: start the Monitor first: tail -n 0 -F "+file)
+	entries, _ := os.ReadDir(filepath.Join(home, "nova-bus"))
+	assert.Empty(t, entries, "nothing saved for a wake nobody would read")
+}
+
 func TestGrokStartRefusals(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
