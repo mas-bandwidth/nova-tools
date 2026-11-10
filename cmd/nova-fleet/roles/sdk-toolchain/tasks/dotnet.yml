@@ -85,6 +85,8 @@
   changed_when: false
   when: not ansible_check_mode
 
-# DOTNET_CLI_HOME in env.sh: the CLI's first-run state lives here, beside the SDK, not in each job's home.
-- name: the dotnet CLI home
-  ansible.builtin.file: { path: "{{ nova_sdk_dir }}/dotnet-home", state: directory }
+# DOTNET_CLI_HOME in env.sh: the CLI's first-run state lives here, beside the SDK, not in each job's home. Its first run
+# of each SDK version writes that version's sentinels into .dotnet, and fails every command where it cannot.
+- name: the dotnet CLI home, writable by the login
+  ansible.builtin.file: { path: "{{ item }}", state: directory, mode: "0755" }
+  loop: ["{{ nova_sdk_dir }}/dotnet-home", "{{ nova_sdk_dir }}/dotnet-home/.dotnet"]
