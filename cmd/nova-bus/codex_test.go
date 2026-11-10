@@ -582,6 +582,30 @@ func TestCodexRetryQueuedBeforeAStopIsNotQueuedAgain(t *testing.T) {
 	assert.Empty(t, r.calls, "never queued again")
 }
 
+// A fault marked retry whose saved events are gone has nothing to queue: the
+// next live message still gets every try.
+func TestCodexRetryWithNoSavedEventsKeepsTheTries(t *testing.T) {
+	t.Parallel()
+	idle := rolloutMeta + rolloutTurn + rolloutComplete
+	c, r, _, _ := codexSetup(t, idle, time.Minute)
+	ctx := context.Background()
+	var out, errOut bytes.Buffer
+	r.err = &exec.Error{Name: "codex", Err: exec.ErrNotFound}
+	require.NoError(t, deliver(ctx, c, msgN("7-0", "one"), &out, &errOut))
+	for range codexTries - 1 {
+		_, err := c.poll(ctx, &out, &errOut)
+		require.NoError(t, err)
+	}
+	require.Equal(t, 0, codexResolve(c.s, "beta", testThread, "7-0=retry", &out, &errOut), errOut.String())
+	require.NoError(t, os.Remove(filepath.Join(c.dir, "7-0.json")))
+	_, err := c.poll(ctx, &out, &errOut) // idle: the retry has no saved event to queue
+	require.NoError(t, err)
+	errOut.Reset()
+	require.NoError(t, deliver(ctx, c, msgN("8-0", "two"), &out, &errOut))
+	assert.Contains(t, errOut.String(), fmt.Sprintf("id=8-0 try=1/%d ", codexTries))
+	assert.NotContains(t, errOut.String(), "HOOK WAKE FAULT", "one failure is not the last try")
+}
+
 // An intent left when the hook stopped is reported by show and settled by
 // resolve: woken records it as woken.
 func TestCodexResolveAnIntent(t *testing.T) {
