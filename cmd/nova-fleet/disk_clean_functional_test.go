@@ -172,7 +172,7 @@ func TestFunctionalDiskCleanKeepsWorkQuarantineAndProcessState(t *testing.T) {
 	}
 	tmp := filepath.Join(t.TempDir(), "tmp")
 	old := time.Now().Add(-3 * time.Hour)
-	for _, p := range []string{"checkout/.git/HEAD", "q/nova-quarantine/x", "daemon/run.pid", "locked/a.lock", "stale/x"} {
+	for _, p := range []string{"checkout/.git/HEAD", "bare/HEAD", "q/nova-quarantine/x", "daemon/run.pid", "locked/a.lock", "stale/x"} {
 		if err := os.MkdirAll(filepath.Join(tmp, filepath.Dir(p)), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -194,7 +194,7 @@ func TestFunctionalDiskCleanKeepsWorkQuarantineAndProcessState(t *testing.T) {
 		}
 	}
 	out := runClean(t, "DISK_CLEAN_DIRS="+tmp, "DISK_WARN_PCT=100", "DISK_CLEAN_AGE_MIN=0")
-	for _, e := range []string{"checkout", "q", "daemon", "locked", "fifo"} {
+	for _, e := range []string{"checkout", "bare", "q", "daemon", "locked", "fifo"} {
 		if _, err := os.Stat(filepath.Join(tmp, e)); err != nil {
 			t.Errorf("%s removed: %v: %s", e, err, out)
 		}
