@@ -1,0 +1,415 @@
+---
+# The sdk-toolchain role (cmd/nova-fleet/sdk-toolchain.yml; cmd/nova-fleet/README.md, "sdk-toolchain"): the language
+# toolchains a bench and a CI runner build and test with, each pinned, in the login's own SDK directory. Each tool lives
+# in <nova_sdk_dir>/<dir>, its commands are linked into <nova_sdk_dir>/bin, and <nova_sdk_dir>/env.sh puts that first on
+# PATH. A tool whose probe is already in its directory is adopted as it is (never re-downloaded); a missing one is
+# fetched, checked against its digest and installed. Change a version together with its URL, digest and directory.
+#
+# Digests are the publisher's own: nodejs.org SHASUMS256.txt, the dart-archive .sha256sum, builds.hex.pm builds.txt, the
+# elixir release .sha256sum, Adoptium's .sha256.txt, Microsoft's releases.json (SHA-512), go.dev/dl's JSON, a GitHub
+# release asset's digest, PyPI's digest, lua.org's download page and static.rust-lang.org's .sha256. A tool built from
+# a git tag is pinned by the tag's commit; a Go tool by its module version (go install checks it against the checksum
+# database); an npm package by the registry's integrity, checked in the lock file the install writes. sbcl and squirrel
+# publish no digest: theirs is the archive's, recorded when it was first pinned.
+
+nova_sdk_dir: "{{ ansible_facts['user_dir'] }}/sdk"
+
+# Linux: ~/.bashrc sources env.sh on its first line (before any early return for a non-interactive shell), unless a
+# line of it already names sdk/env.sh. A Mac's shell files are left as they are.
+nova_sdk_shell_rc: true
+
+# Make variables some repositories' Makefiles read with `?=`, exported from env.sh so a make run on the machine takes
+# the toolchain on PATH, as their CI passes it.
+nova_sdk_env:
+  DART: dart
+  NODE: node
+  JAVA: java
+  JAVAC: javac
+  ELIXIR: elixir
+  MIX: mix
+
+# One entry per tool. A tool is installed on a platform (linux: x86_64 Linux and WSL; darwin: Apple silicon) only when
+# it has an entry for it. Keys:
+#   dir     the directory under nova_sdk_dir                probe  a file under it that exists once it is installed
+#   links   commands linked into <sdk>/bin: a path under the directory (linked by its basename), or {name, path}
+#   alias   <sdk>/<alias> is a link to the directory        wrapper  a script written as <sdk>/bin/<name>
+#   kind    archive (the default), file (one file), git (a tag at a pinned commit), go (go install), npm (npm install),
+#           script (the build alone)
+#   build   shell (set -euo pipefail) run with $dest (the directory), $stage (scratch) and $jobs set: in the directory after the unpack (archive, file), or
+#           in the git checkout (git) or an empty directory (script), where it must create "$dest" itself
+#   <platform>.home   the subdirectory probe and links are under (the macOS JDK's Contents/Home)
+#   <platform>.root   the archive's top directory (default: its one top directory, else the archive's whole content)
+#   <platform>.extras more files fetched with the archive, each {url, sha256, path} placed at <dir>/<path>
+nova_sdk_tools:
+  - name: go
+    version: "1.26.10"
+    dir: go1.26.10
+    probe: bin/go
+    links: [bin/go, bin/gofmt]
+    linux:
+      url: https://go.dev/dl/go1.26.10.linux-amd64.tar.gz
+      sha256: ccfe7ae822d2c2f41f4fe7c956199967a4dac22d0ee0d2b2bfdb440aab3b20c5
+    darwin:
+      url: https://go.dev/dl/go1.26.10.darwin-arm64.tar.gz
+      sha256: 0b5183492292ada170f9b561a834863808dd02edba599e4ad0e89899330020b3
+
+  - name: node
+    version: "26.7.0"
+    dir: node-v26.7.0
+    probe: bin/node
+    links: [bin/node, bin/npm, bin/npx]
+    linux:
+      url: https://nodejs.org/dist/v26.7.0/node-v26.7.0-linux-x64.tar.xz
+      sha256: 982aa24dd8be4c889c6a8ab337ddff3b0896645b20f4239356e80552c16277ee
+    darwin:
+      url: https://nodejs.org/dist/v26.7.0/node-v26.7.0-darwin-arm64.tar.xz
+      sha256: 595d2f934e081b82961d1a5fd41c6dbd0c5a952d9e8be5b4566ab754426968d2
+
+  - name: dart
+    version: "3.13.2"
+    dir: dart-3.13.2
+    probe: bin/dart
+    links: [bin/dart]
+    linux:
+      url: https://storage.googleapis.com/dart-archive/channels/stable/release/3.13.2/sdk/dartsdk-linux-x64-release.zip
+      sha256: 28951c9f6bcca005a73aa24cd5e11478dd6555f53e8e96a33ef4d868b6efa9eb
+      file: dartsdk-linux-x64-release-3.13.2.zip
+    darwin:
+      url: https://storage.googleapis.com/dart-archive/channels/stable/release/3.13.2/sdk/dartsdk-macos-arm64-release.zip
+      sha256: 1e79f51341937f84cc1563a3fcad4a91706e35dee72bda69f4e955065c0e373a
+      file: dartsdk-macos-arm64-release-3.13.2.zip
+
+  # Erlang/OTP: the hex.pm prebuilt, which relocates itself in place (its Install names the final directory).
+  - name: otp
+    version: "29.0.5"
+    dir: otp-29.0.5
+    probe: bin/erl
+    links: [bin/erl, bin/erlc, bin/escript, bin/dialyzer, bin/typer]
+    build: ./Install -minimal "$dest" >/dev/null
+    linux:
+      url: https://builds.hex.pm/builds/otp/ubuntu-24.04/OTP-29.0.5.tar.gz
+      sha256: 1ecf8a20104afa053e6701e36ec1485cbce1a2fa4aef962d5e73f9eb5c6e9fc0
+      file: OTP-29.0.5-ubuntu-24.04.tar.gz
+
+  - name: elixir
+    version: "1.20.4"
+    dir: elixir-1.20.4
+    probe: bin/elixir
+    links: [bin/elixir, bin/elixirc, bin/mix, bin/iex]
+    linux: &elixir
+      url: https://github.com/elixir-lang/elixir/releases/download/v1.20.4/elixir-otp-29.zip
+      sha256: 7863c546cda13fecc949e562e326042451dacf8fd8698a36783cb71eeb223b46
+      file: elixir-1.20.4-otp-29.zip
+      root: .
+    darwin: *elixir
+
+  - name: jdk
+    version: "21.0.12.1_1"
+    dir: jdk-21.0.12.1_1
+    probe: bin/javac
+    links: [bin/java, bin/javac, bin/jar, bin/jshell]
+    linux:
+      url: https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.12.1%2B1/OpenJDK21U-jdk_x64_linux_hotspot_21.0.12.1_1.tar.gz
+      sha256: ce79869e1307ed8ee1e2baa86a412b1eb5b75d10a01006d788a6f968bcfaee94
+    darwin:
+      url: https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.12.1%2B1/OpenJDK21U-jdk_aarch64_mac_hotspot_21.0.12.1_1.tar.gz
+      sha256: 3623232f33a9c3baadf304480b2535f9a3cba8a58d42ecbb438ba267315d9998
+      home: Contents/Home
+
+  # .NET: the 10.0 SDK here; the other SDKs (with their runtimes) go into the same directory from
+  # nova_sdk_dotnet_more, so one dotnet lists them all.
+  - name: dotnet
+    version: "10.0.401"
+    dir: dotnet-10.0.401
+    probe: dotnet
+    links: [dotnet]
+    linux:
+      url: https://builds.dotnet.microsoft.com/dotnet/Sdk/10.0.401/dotnet-sdk-10.0.401-linux-x64.tar.gz
+      sha512: 51c8b999af9e8dd9998c9edc5944e19a90788862068acd38694e098889054ce8c23d4f0c5cccfa16bf187d044562359e5ee69a9f8ad0bbe913ba90311fbce25b
+      root: .
+    darwin:
+      url: https://builds.dotnet.microsoft.com/dotnet/Sdk/10.0.401/dotnet-sdk-10.0.401-osx-arm64.tar.gz
+      sha512: 69f64eb00dc045398755c440b152225d544301a345a146a16e86a56a0c52b7c94b2c331520e976dbb821f18d31930aafbd25bb85961e3517e0665414ce0cbcff
+      root: .
+
+  - name: golangci-lint
+    version: "2.12.2"
+    dir: golangci-lint-2.12.2
+    probe: golangci-lint
+    links: [golangci-lint]
+    linux:
+      url: https://github.com/golangci/golangci-lint/releases/download/v2.12.2/golangci-lint-2.12.2-linux-amd64.tar.gz
+      sha256: 8df580d2670fed8fa984aac0507099af8df275e665215f5c7a2ae3943893a553
+
+  - name: staticcheck
+    version: "0.8.2"
+    dir: staticcheck-0.8.2
+    probe: staticcheck
+    links: [staticcheck]
+    kind: go
+    linux: { package: honnef.co/go/tools/cmd/staticcheck, version: v0.8.2 }
+
+  - name: nilaway
+    version: "0.0.0-20260918162853-acb8859b9031"
+    dir: nilaway-0.0.0-20260918162853-acb8859b9031
+    probe: nilaway
+    links: [nilaway]
+    kind: go
+    linux: { package: go.uber.org/nilaway/cmd/nilaway, version: v0.0.0-20260918162853-acb8859b9031 }
+
+  - name: esbmc
+    version: "8.5"
+    dir: esbmc-8.5
+    probe: bin/esbmc
+    links: [bin/esbmc]
+    linux:
+      url: https://github.com/esbmc/esbmc/releases/download/v8.5/esbmc-linux.zip
+      sha256: d8da304dd0dfce6c9f488379f03a72e768bce8598c22478c980e1704247352f1
+      file: esbmc-8.5-linux.zip
+
+  - name: spotbugs
+    version: "4.10.5"
+    dir: spotbugs-4.10.5
+    probe: bin/spotbugs
+    links: [bin/spotbugs]
+    linux:
+      url: https://github.com/spotbugs/spotbugs/releases/download/4.10.5/spotbugs-4.10.5.tgz
+      sha256: cce3244900cc215ccd9f5a8db29ed9468fc47824faf662f4fad005343d96007e
+      extras:
+        # find-sec-bugs, the plugin from Maven Central (which publishes a SHA-1; this SHA-256 is of the file it matches)
+        - url: https://repo1.maven.org/maven2/com/h3xstream/findsecbugs/findsecbugs-plugin/1.14.0/findsecbugs-plugin-1.14.0.jar
+          sha256: 6fa340344fa433ff46c2985dab1010e8bc739f9395c983594a5240095e92abc8
+          path: findsecbugs-plugin.jar
+
+  - name: deno
+    version: "2.9.7"
+    dir: deno-2.9.7
+    probe: deno
+    links: [deno]
+    linux:
+      url: https://github.com/denoland/deno/releases/download/v2.9.7/deno-x86_64-unknown-linux-gnu.zip
+      sha256: c6527f24f4b16031d3ae4fa9f658d5f11534c8d84ce7dc8502420280919c3490
+      file: deno-2.9.7-x86_64-unknown-linux-gnu.zip
+      root: .
+
+  - name: jazzer
+    version: "0.30.0"
+    dir: jazzer-0.30.0
+    probe: jazzer
+    links: [jazzer]
+    linux:
+      url: https://github.com/CodeIntelligenceTesting/jazzer/releases/download/v0.30.0/jazzer-linux-x86-64.tar.gz
+      sha256: 6eeaf0026d75599b07527d93b576593ce847cfca8b337a579971a5a9cdf792d0
+      file: jazzer-0.30.0-linux-x86-64.tar.gz
+      root: .
+
+  - name: google-java-format
+    version: "1.37.0"
+    dir: google-java-format-1.37.0
+    probe: google-java-format-all-deps.jar
+    kind: file
+    wrapper: |
+      #!/bin/sh
+      # Written by the sdk-toolchain role: the pinned all-deps jar on the SDK's Java, else the Java on PATH. The
+      # --add-exports are what the formatter needs on JDK 16 and later.
+      if [ -x "{{ nova_sdk_dir }}/bin/java" ]; then JAVA="{{ nova_sdk_dir }}/bin/java"; else JAVA=java; fi
+      exec "$JAVA" \
+        --add-exports=jdk.compiler/com.sun.tools.javac.api=ALL-UNNAMED \
+        --add-exports=jdk.compiler/com.sun.tools.javac.file=ALL-UNNAMED \
+        --add-exports=jdk.compiler/com.sun.tools.javac.parser=ALL-UNNAMED \
+        --add-exports=jdk.compiler/com.sun.tools.javac.tree=ALL-UNNAMED \
+        --add-exports=jdk.compiler/com.sun.tools.javac.util=ALL-UNNAMED \
+        --add-exports=jdk.compiler/com.sun.tools.javac.code=ALL-UNNAMED \
+        -jar "{{ nova_sdk_dir }}/google-java-format-1.37.0/google-java-format-all-deps.jar" "$@"
+    linux:
+      url: https://github.com/google/google-java-format/releases/download/v1.37.0/google-java-format-1.37.0-all-deps.jar
+      sha256: 834b2a0c38cb774953322a84b5ca3f2f40dd3156650b3cd44d3b744345962f7a
+      file: google-java-format-all-deps.jar
+
+  - name: typescript
+    version: "5.9.3"
+    dir: typescript-5.9.3
+    probe: node_modules/.bin/tsc
+    links: [node_modules/.bin/tsc, node_modules/.bin/tsserver]
+    kind: npm
+    linux: { package: typescript, version: "5.9.3", integrity: "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==" }
+
+  - name: eslint
+    version: "9.39.5"
+    dir: eslint-9.39.5
+    probe: node_modules/.bin/eslint
+    links: [node_modules/.bin/eslint]
+    kind: npm
+    linux: { package: eslint, version: "9.39.5", integrity: "sha512-DgZS62aPLXKlnxILS/AYCoRvHaZeXceIzlXPkkGGzJWSow1aEk0lbTlxUSlyjC8jcaKxAdOnTDz+o1JFSBsyjw==" }
+
+  - name: sbcl
+    version: "2.5.8"
+    dir: sbcl-2.5.8
+    probe: bin/sbcl
+    links: [bin/sbcl]
+    # its installer writes into INSTALL_ROOT, so it runs from a copy of the unpacked tree set aside
+    build: |
+      mv "$dest" "$stage/s"
+      mkdir -p "$dest"
+      cd "$stage/s"
+      INSTALL_ROOT="$dest" sh install.sh >/dev/null
+    linux:
+      url: https://downloads.sourceforge.net/project/sbcl/sbcl/2.5.8/sbcl-2.5.8-x86-64-linux-binary.tar.bz2
+      sha256: 103fa33b913341791f0f61f5d500e1723ac986125e665b584efba760006fed67
+
+  - name: lua
+    version: "5.4.8"
+    dir: lua-5.4.8
+    probe: bin/lua
+    links: [bin/lua, bin/luac, {name: lua5.4, path: bin/lua}]
+    build: nice -n 15 make -s -j4 linux >/dev/null && make -s install INSTALL_TOP="$dest" >/dev/null
+    linux:
+      url: https://www.lua.org/ftp/lua-5.4.8.tar.gz
+      sha256: 4f18ddae154e793e46eeab727c59ef1c0c0c2b744e7b94219710d76f530629ae
+
+  - name: luacheck
+    version: "1.2.0"
+    dir: luacheck-1.2.0
+    probe: luacheck
+    links: [luacheck]
+    kind: file
+    linux:
+      url: https://github.com/lunarmodules/luacheck/releases/download/v1.2.0/luacheck
+      sha256: d68da17fca0697d9e2fb04201f3884abd259fa558b3a449bccaed47f1390defc
+      file: luacheck
+
+  - name: luau
+    version: "0.741"
+    dir: luau-0.741
+    probe: bin/luau
+    alias: luau
+    links: [bin/luau, bin/luau-analyze, bin/luau-compile, bin/luau-ast]
+    kind: git
+    # the command-line tools, and the libraries and headers an embedding build links
+    build: |
+      cmake -S . -B b -DCMAKE_BUILD_TYPE=Release -DLUAU_BUILD_TESTS=OFF >/dev/null
+      cmake --build b -j"$jobs" >/dev/null
+      mkdir -p "$dest/include" "$dest/lib" "$dest/bin"
+      for d in */include; do cp -a "$d/." "$dest/include/"; done
+      find b -maxdepth 1 -name 'lib*.a' -exec cp -a {} "$dest/lib/" \;
+      for c in luau luau-analyze luau-compile luau-ast; do cp -a "b/$c" "$dest/bin/"; done
+    linux: { repo: https://github.com/luau-lang/luau, ref: "0.741", commit: 2d88f9b5facaa9e4ec91247b39ae8251bd49a244 }
+
+  - name: squirrel
+    version: "3.2"
+    dir: squirrel-3.2
+    probe: bin/sq
+    links: [bin/sq]
+    build: nice -n 15 make -s sq64 >/dev/null 2>&1
+    linux:
+      url: https://github.com/albertodemichelis/squirrel/releases/download/v3.2/squirrel_3_2_stable.tar.gz
+      sha256: 211f1452f00b24b94f60ba44b50abe327fd2735600a7bacabc5b774b327c81db
+      root: squirrel3   # the archive also carries a stray inner tar beside its one directory
+
+  - name: clang-format
+    version: "23.1.3"
+    dir: clang-format-23.1.3
+    probe: clang_format/data/bin/clang-format
+    links: [clang_format/data/bin/clang-format]
+    linux:
+      url: https://files.pythonhosted.org/packages/11/d1/658d3da4dcbca98620956868c7cf6f4ba19fccecbdfc30cc055e19c9d4a7/clang_format-23.1.3-py2.py3-none-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl
+      sha256: 58bf1804216501669832a39f2415e14284337438a062ff564729792adec664ac
+      root: .
+
+  # LLVM with compiler-rt and libFuzzer, for fuzzing builds; reached as <sdk>/llvm, nothing linked into <sdk>/bin.
+  - name: llvm
+    version: "22.1.8"
+    dir: llvm-22.1.8
+    probe: bin/clang
+    alias: llvm
+    linux:
+      url: https://github.com/llvm/llvm-project/releases/download/llvmorg-22.1.8/LLVM-22.1.8-Linux-X64.tar.xz
+      sha256: df0e1ecf16caf3489a272a5eea4eec9b0d82878f6477fa309504f918a0006384
+
+  - name: cppcheck
+    version: "2.13.0"
+    dir: cppcheck-2.13.0
+    probe: bin/cppcheck
+    links: [bin/cppcheck]
+    kind: git
+    build: |
+      cmake -S . -B b -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$dest" -DFILESDIR="$dest/share/cppcheck" -DBUILD_TESTS=OFF -DCMAKE_POLICY_VERSION_MINIMUM=3.5 >/dev/null
+      cmake --build b -j"$jobs" >/dev/null
+      cmake --install b >/dev/null
+    linux: { repo: https://github.com/danmar/cppcheck, ref: "2.13.0", commit: da29903ffcbde465b6c2b47e8dc38277743f47ec }
+
+  # AFL++: the core tools built with gcc in gnu17 (this release predates C23), the LLVM compiler wrappers against LLVM 18
+  # (llvm-config-18: clang-18, llvm-18-dev and lld-18 come from runner-packages). afl-system-config and
+  # afl-persistent-config, which change the machine as root, are not linked.
+  - name: afl
+    version: "4.21c"
+    dir: afl-4.21c
+    probe: bin/afl-fuzz
+    links: [bin/afl-fuzz, bin/afl-showmap, bin/afl-tmin, bin/afl-gotcpu, bin/afl-analyze, bin/afl-plot, bin/afl-cmin, bin/afl-cmin.bash,
+            bin/afl-whatsup, bin/afl-addseeds, bin/afl-cc, bin/afl-c++, bin/afl-clang, bin/afl-clang++, bin/afl-clang-fast,
+            bin/afl-clang-fast++, bin/afl-clang-lto, bin/afl-clang-lto++, bin/afl-ld-lto, bin/afl-lto, bin/afl-lto++]
+    kind: git
+    build: |
+      env -u CC -u CXX -u CFLAGS -u CXXFLAGS nice -n 19 make -j"$jobs" PREFIX="$dest" CC=gcc CFLAGS_OPT=-std=gnu17 \
+        afl-fuzz afl-showmap afl-tmin afl-gotcpu afl-analyze >build.log 2>&1 || { tail -30 build.log; exit 1; }
+      env -u CC -u CXX -u CFLAGS -u CXXFLAGS nice -n 19 make -f GNUmakefile.llvm -j"$jobs" PREFIX="$dest" LLVM_CONFIG=llvm-config-18 \
+        >llvm.log 2>&1 || { tail -30 llvm.log; exit 1; }
+      make -f GNUmakefile.llvm PREFIX="$dest" LLVM_CONFIG=llvm-config-18 DESTDIR="$PWD/stage" install >install.log 2>&1 || { tail -30 install.log; exit 1; }
+      install -m 755 afl-fuzz afl-showmap afl-tmin afl-gotcpu afl-analyze afl-plot afl-cmin afl-cmin.bash afl-whatsup afl-addseeds "stage$dest/bin/"
+      mv "stage$dest" "$dest"
+    linux: { repo: https://github.com/AFLplusplus/AFLplusplus, ref: v4.21c, commit: 9f6b012fbfc8b79dda83e73a208e429aaf25e7ee }
+
+  # Frama-C with WP, Alt-Ergo and Why3 in their own opam root (the opam command comes from runner-packages). opam checks
+  # each package's archive against the checksum the opam repository publishes for it.
+  - name: frama-c
+    version: "33.0"
+    dir: opam
+    probe: default/bin/frama-c
+    links: [default/bin/frama-c, default/bin/alt-ergo, default/bin/why3]
+    kind: script
+    build: |
+      export OPAMROOT="$dest" OPAMYES=1 OPAMCONFIRMLEVEL=unsafe-yes OPAMJOBS="$jobs" OPAMASSUMEDEPEXTS=1
+      opam init --disable-sandboxing --bare -n >opam.log 2>&1 || { tail -20 opam.log; exit 1; }
+      opam switch create default ocaml-base-compiler.5.2.1 >>opam.log 2>&1 || { tail -20 opam.log; exit 1; }
+      opam install --switch=default frama-c.33.0 alt-ergo.2.6.4 why3.1.8.2 >>opam.log 2>&1 || { tail -20 opam.log; exit 1; }
+      # the login's prover list, written only where there is none: an existing one is the login's own
+      [ -e "$HOME/.why3.conf" ] || opam exec --switch=default -- why3 config detect >/dev/null 2>&1 || true
+    linux: {}
+
+# More .NET SDKs, each unpacked into the dotnet tool's directory beside its own SDK (its dotnet host is kept, the newer
+# one). An SDK brings its runtimes: 8.0's is what a net8.0 target runs on, rather than rolling forward to 10.0.
+nova_sdk_dotnet_more:
+  - version: "8.0.427"
+    runtime: "8.0.33"
+    linux:
+      url: https://builds.dotnet.microsoft.com/dotnet/Sdk/8.0.427/dotnet-sdk-8.0.427-linux-x64.tar.gz
+      sha512: 85725692f465f5024b9b42a159a29d9f73e8c57ad9e8bfe1e7028a505d18031d68931e8aa3f9de44145b08170dde897c8a78e1aa18d4219698b6891af7095d39
+    darwin:
+      url: https://builds.dotnet.microsoft.com/dotnet/Sdk/8.0.427/dotnet-sdk-8.0.427-osx-arm64.tar.gz
+      sha512: 79786b93f249d233b15f1d6338d4798bd71c8143f267c5e84de76c9eb8a1054920e56ea5478f7bddfb74b951cc58aaca11fbd780cf134350b7cb7cdcb42a8c8c
+
+# Rust through a pinned rustup (Linux): rustup-init at this version, checked against its .sha256, installs rustup into
+# <sdk>/rustup-<version> (RUSTUP_HOME, with the proxies under cargo/bin) with the first toolchain as its default and
+# self-update off; then each toolchain, with its components and targets (rustup checks every component against the channel manifest's
+# digest). The first toolchain is the one on PATH: its own binaries are linked into <sdk>/bin, and <sdk>/bin/rustup is a
+# wrapper that names this RUSTUP_HOME unless the caller set one. The nightly is the one cargo fuzz runs on.
+nova_sdk_rustup:
+  version: "1.29.1"
+  linux:
+    url: https://static.rust-lang.org/rustup/archive/1.29.1/x86_64-unknown-linux-gnu/rustup-init
+    sha256: dda7234360b7f578ca8b0ddcb80145646fa61a67c1720a5abc7051b35c9fcb71
+    host: x86_64-unknown-linux-gnu
+  toolchains:
+    - name: "1.98.1"
+      components: [clippy, rustfmt]
+      targets: []
+    - name: nightly-2026-10-01
+      components: []
+      targets: []
+  links: [cargo, rustc, rustdoc, rustfmt, cargo-fmt, cargo-clippy, clippy-driver]
+
+# Cargo tools, each built from crates.io with --locked by the first toolchain into <sdk>/<name>-<version> and linked
+# into <sdk>/bin.
+nova_sdk_cargo_tools:
+  - name: cargo-fuzz
+    version: "0.13.1"

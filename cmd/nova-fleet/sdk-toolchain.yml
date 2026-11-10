@@ -1,0 +1,22 @@
+# purpose: the pinned language toolchains in each bench and runner login's ~/sdk, from nova_sdk_tools, with Rust through a pinned rustup
+#
+# sdk-toolchain.yml: the toolchains a bench's gates and a runner's CI jobs build and test with (cmd/nova-fleet/README.md,
+# "sdk-toolchain"), every version pinned in roles/sdk-toolchain/defaults/main.yml and checked against the publisher's
+# digest: each in ~/sdk/<tool>-<version>, its commands linked into ~/sdk/bin, ~/sdk/env.sh putting that first on PATH
+# (sourced from ~/.bashrc on Linux). Go, Node, Dart, Erlang/OTP, Elixir, a JDK, .NET 10 with the .NET 8 SDK and runtime
+# beside it, Go and JavaScript linters, ESBMC, SpotBugs, Deno, Jazzer, sbcl, Lua, Luau, Squirrel, clang-format, LLVM,
+# cppcheck, AFL++ and Frama-C on x86_64 Linux and WSL; on Linux, Rust through a pinned rustup with its toolchains,
+# components and targets, and cargo-fuzz. A Mac gets the subset with a darwin pin (Go, Node, Dart, Elixir, the JDK and
+# .NET). A tool already in its directory is adopted as it is; only what is missing is downloaded. Runs as the login,
+# never as root. One line per machine: SDK-TOOLCHAIN host=<machine> platform=<p> tools=<n> present=<n> installed=<n>
+# dotnet=<runtimes>; --check prints SDK-TOOLCHAIN WOULD-INSTALL for each missing tool. nova-fleet up does not run this
+# play; run runner-packages first (it brings the compilers, cmake, opam and LLVM 18 the source builds need).
+#
+#   nova-fleet sdk-toolchain --check --diff -- -l <machine>
+#   nova-fleet sdk-toolchain -- -l <machine>
+- name: the pinned toolchains in each bench and runner login's SDK
+  hosts: bench:runner
+  gather_facts: true
+  gather_subset: [min]
+  roles:
+    - sdk-toolchain

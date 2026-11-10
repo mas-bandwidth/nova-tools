@@ -426,9 +426,11 @@ joins), at the version `nova_opencode_version` holds.
 
 After `up` (which registers the runners when given `--runners`, with the
 url and scope only; extra labels or an environment go through `nova-fleet
-github-runners` and its variables), two plays it does not run, in this order:
+github-runners` and its variables), three plays it does not run, in this order:
 `runner-packages`, the packages CI jobs and any other job a bench runs need
-(a CI toolchain by default; `nova_runner_packages` is the list), then `netwatch`, which lets a Linux machine that loses its
+(a CI toolchain by default; `nova_runner_packages` is the list), then
+`sdk-toolchain`, the pinned language toolchains in the login's `~/sdk` (with
+.NET 8 beside .NET 10, and Rust through a pinned rustup), then `netwatch`, which lets a Linux machine that loses its
 network or the tailnet recover by itself (a Mac is skipped). Each is
 idempotent and prints one receipt line per machine; run them again after a
 machine joins. `bench` is the inventory group `up` gives every machine it
@@ -437,12 +439,15 @@ joins:
 ```text
 nova-fleet runner-packages --check --diff -- -l bench
 nova-fleet runner-packages -- -l bench
+nova-fleet sdk-toolchain --check --diff -- -l bench
+nova-fleet sdk-toolchain -- -l bench
 nova-fleet netwatch --check --diff -- -l bench
 nova-fleet netwatch -- -l bench
 ```
 
 What each installs and its variables are in
-[cmd/nova-fleet/README.md](../cmd/nova-fleet/README.md#runner-packages) and
+[cmd/nova-fleet/README.md](../cmd/nova-fleet/README.md#runner-packages),
+[sdk-toolchain](../cmd/nova-fleet/README.md#sdk-toolchain) and
 [netwatch](../cmd/nova-fleet/README.md#netwatch).
 
 A tool whose release is laid out as nova-tools' is (assets

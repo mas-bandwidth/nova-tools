@@ -170,6 +170,7 @@ reached as root at the address given, as on the first run.
 | `postgres` | the PostgreSQL nova-config keeps the fleet in, on each machine of the services group | `nova_seal_*` to seal its password |
 | `redis` | the Redis nova-bus talks to, on each machine of the services group | `nova_seal_*` to seal its password |
 | `runner-packages` | the packages a CI runner's tests need, from `nova_runner_packages` (a CI toolchain by default), on each machine of the bench and runner groups (a sprint card's gate needs what a CI job needs); packages only, nothing started. `up` does not run it | nothing; `-l` the machines |
+| `sdk-toolchain` | the pinned language toolchains in each bench and runner login's `~/sdk` (Go, Node, Dart, Erlang/Elixir, Java, .NET 10 and 8, linters, fuzzers, provers), Rust through a pinned rustup; as the login, only what is missing. `up` does not run it | nothing; `-l` the machines |
 | `seat` | each machine's seat in the secrets store | `nova_seal_store` |
 | `secrets-refresh` | the control node's encrypted store pushed to every machine with `ansible.posix.synchronize` (`verify_host: true`, no `.git`, stale files deleted, 0700/0600); no machine runs a timer (pull mode is retired; one left is removed) | `nova_seal_store` (the control node's clone) to push |
 | `services` | one supervised unit per service record, on the machine the record names (bench, runner and services groups) | the inventory's `nova_services` |
@@ -1028,6 +1029,67 @@ restarts. Copies of kernels later removed stay until deleted.
 **Check.** `RUNNER-PACKAGES host=<machine> wanted=<n> present=<n> installed=<n>`, one line per machine.
 **Rollback.** The play never removes a package: one taken out of the list stays installed until a play removes it. Nor
 does it remove a foreign architecture, a ports source, the `Architectures` lines, the kernel hook or the copies.
+
+## sdk-toolchain
+
+The language toolchains a bench's gates and a runner's CI jobs build and test with, in the login's own SDK directory
+(`nova_sdk_dir`, `~/sdk`), on each machine of the `bench` and `runner` groups. Every version is pinned in
+`roles/sdk-toolchain/defaults/main.yml`; an archive is checked against the publisher's own digest before it is unpacked. Each tool goes into
+`~/sdk/<tool>-<version>`, its commands are linked into `~/sdk/bin`, and `~/sdk/env.sh` puts `~/sdk/bin` first on PATH
+(on Linux, `~/.bashrc` sources it on its first line, before an early return for a non-interactive shell). The play runs
+as the login and never as root; run `runner-packages` first, which brings the compilers, `cmake`, `opam` and LLVM 18
+that the source builds need.
+
+```
+nova-fleet sdk-toolchain --check --diff -- -l bench      # SDK-TOOLCHAIN WOULD-INSTALL tool=<name> version=<v>, per missing one
+nova-fleet sdk-toolchain -- -l bench
+```
+
+On x86_64 Linux and WSL: Go, Node, Dart, Erlang/OTP, Elixir, a Temurin JDK, .NET 10 with the .NET 8 SDK and runtime in
+the same directory, golangci-lint, staticcheck, nilaway, ESBMC, SpotBugs with find-sec-bugs, Deno, Jazzer,
+google-java-format, TypeScript, ESLint, sbcl, Lua, luacheck, Luau, Squirrel, clang-format, LLVM (as `~/sdk/llvm`, not
+on PATH), cppcheck, AFL++ and Frama-C with Alt-Ergo and Why3 in their own opam root (`~/sdk/opam`). A Mac gets the tools
+with a `darwin` pin: Go, Node, Dart, Elixir, the JDK and .NET. Each tool has one of six kinds: an `archive` or a
+`file` (a URL and its sha256 or sha512), `git` (a tag, refused unless it is the pinned commit, then built), `go`
+(`go install` of a module version, which Go checks against its checksum database), `npm` (refused unless the lock file
+the install writes has the pinned integrity; the package's own dependencies resolve from the registry at install time)
+and `script` (a build alone: Frama-C's opam root, at pinned package versions from the opam repository as it is then).
+
+Rust, on Linux, comes through a pinned rustup: `rustup-init` at `nova_sdk_rustup.version`, checked against its
+`.sha256`, installs rustup into `~/sdk/rustup-<version>` with the first toolchain (a release, `1.98.1`) as the
+default and self-update off; each toolchain then gets its components (`clippy`, `rustfmt`) and targets, and the dated
+nightly that `cargo fuzz` runs on is installed beside it. The first toolchain's own binaries (`cargo`, `rustc`,
+`rustdoc`, `rustfmt`, `cargo-fmt`, `cargo-clippy`, `clippy-driver`) are linked into `~/sdk/bin`; `~/sdk/bin/rustup` is a
+wrapper that uses this rustup's home unless the caller set `RUSTUP_HOME`, so a CI job that installs its own toolchain
+into its own home is unaffected. `cargo-fuzz` is built with `--locked` into `~/sdk/cargo-fuzz-<version>`.
+
+.NET 8: each SDK of `nova_sdk_dotnet_more` (8.0, with its 8.0 runtime) is unpacked from Microsoft's archive, held to
+its SHA-512 from `releases.json`, into the dotnet directory beside the 10.0 SDK, keeping the newer `dotnet` host, so
+one `~/sdk/bin/dotnet --list-runtimes` lists both and a `net8.0` target runs on .NET 8 rather than rolling forward.
+
+A tool whose probe (`dir`/`probe` in the defaults) is in its directory is adopted as it is: never downloaded,
+replaced or upgraded, so a second run reports `changed=0`. A missing one is fetched into `~/sdk/dl`, unpacked in a
+stage beside the SDK and moved into place (a `git` or `script` tool builds into its directory); a directory there
+without its probe is moved aside to `<dir>.broken-<time>`, never deleted. `env.sh` keeps a dated backup of the file it
+replaces. Every link the defaults name is pointed at the pinned version, so a machine whose `~/sdk/bin` named
+another version of a tool names the pinned one after a run; the other version's directory is left where it is. A
+version bump installs the new directory beside the old and moves the links.
+
+| Variable | Default | |
+|---|---|---|
+| `nova_sdk_dir` | `<home>/sdk` | the SDK directory |
+| `nova_sdk_tools` | the toolchain above | one entry per tool: `name`, `version`, `dir`, `probe`, `links`, `kind`, `build`, `alias`, `wrapper`, and a `linux` and/or `darwin` pin; a list given with `-e` replaces it whole |
+| `nova_sdk_dotnet_more` | the .NET 8.0 SDK | more SDKs in the dotnet directory, each a `version` and a `url` and `sha512` per platform |
+| `nova_sdk_rustup` | rustup 1.29.1; `1.98.1` with `clippy` and `rustfmt`, and `nightly-2026-10-01` | `version`, the `linux` rustup-init `url`, `sha256` and `host`, the `toolchains` (each `name`, `components`, `targets`; the first is on PATH) and the commands `links` puts in `~/sdk/bin` |
+| `nova_sdk_cargo_tools` | `cargo-fuzz` 0.13.1 | crates built with `cargo install --locked` |
+| `nova_sdk_env` | `DART`, `NODE`, `JAVA`, `JAVAC`, `ELIXIR`, `MIX` set to their commands | make variables `env.sh` exports |
+| `nova_sdk_shell_rc` | `true` | Linux: `~/.bashrc` sources `env.sh` on its first line, unless a line of it already names `sdk/env.sh` |
+
+**Check.** `SDK-TOOLCHAIN host=<machine> platform=<linux|darwin> tools=<n> present=<n> installed=<n> dotnet=<runtimes>`,
+one line per machine (`would-install=<n>` under `--check`, counting the tools; the .NET SDKs and Rust print their own
+`WOULD-INSTALL` lines). Another platform is refused, naming `-l '!<machine>'`.
+**Rollback.** The play removes nothing: set the old version back in the defaults (with its URL and digest) and run it
+again, and the links name the old directory, which is still there.
 
 ## Refusals
 
