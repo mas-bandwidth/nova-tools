@@ -355,6 +355,7 @@ events may use them.
 | `runner_count` | overrides the row's `runners` for one run; 0 retires every runner; `cores` is one runner per `github_runner_cores_per_runner` (4) of the row's `cores`, else the host's own, at least 1. A host with neither is refused |
 | `github_runner_state` | `present` (default) or `absent`, which retires every runner of that url |
 | `github_runner_deregister` | true: retiring removes the runner from GitHub (needs a removal token) |
+| `github_runner_env` | the service's environment, `{NAME: value}` (default none), inherited by every job: a `PATH` replaces the default (`nova_bin_dir` first, then the system's); a path under the login's home is written `{{ ansible_facts['user_dir'] }}/...`, rendered per machine. Nothing keeps it on the machine: a run for the same url without it writes the units without it and restarts the runners, so pass it on every run. [docs/examples/github-runners-env.yml](../../docs/examples/github-runners-env.yml) is a vars file with the url, scope, labels and an environment for Ubuntu runners, for `-e @github-runners-env.yml` (read from the directory you run in) |
 | `github_runner_version`, `github_runner_sha256` | the pinned actions/runner release and its digests |
 | `github_runner_ci_limit_seconds` | 120: the per-commit job limit every runner enforces ("CI rules") |
 | `github_runner_ci_push_branches` | `[main, sprint/*]`: the branches a push may run CI on, as globs where `*` and `?` stop at a `/` (tags always may); any other branch gets CI through its pull request |
