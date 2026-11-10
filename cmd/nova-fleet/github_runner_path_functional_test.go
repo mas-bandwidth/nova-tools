@@ -88,7 +88,7 @@ func TestRunnerEnvPathStillWins(t *testing.T) {
 }
 
 // The Linux unit's TMPDIR is the login's runner-tmp unless the environment names one; the environment is the machine
-// record's (the inventory's nova_runner_env) when no -e replaces it. The plist keeps the system's TMPDIR by default.
+// record's (the inventory's nova_runner_env) when no -e replaces it. The plist sets none by default.
 func TestRunnerTmpdirAndTheRecordsEnvironmentRender(t *testing.T) {
 	t.Parallel()
 	if _, err := exec.LookPath("ansible-playbook"); err != nil {

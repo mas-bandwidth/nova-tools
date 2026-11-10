@@ -350,7 +350,8 @@ A Linux unit sets `LimitMEMLOCK=infinity`: the kernel charges locked memory (io_
 runners, and systemd's 8 MiB default refuses that. It also sets `TMPDIR`, by default `<home>/.cache/runner-tmp`
 (`github_runner_tmpdir`), one directory for all the login's runners that the play makes (the login's, `0700`) before
 the units start: a job's temporary files land there and not in `/tmp`, and the health play's disk clean reads the
-directory from the units. A macOS daemon keeps the system's `TMPDIR` unless `github_runner_env` names one. A macOS daemon starts with `/opt/homebrew/bin` on its PATH, before the
+directory from the units. A macOS daemon gets no `TMPDIR` unless `github_runner_env` names one, so its jobs use `/tmp`,
+which macOS cleans. A macOS daemon starts with `/opt/homebrew/bin` on its PATH, before the
 system's, so a job finds Homebrew's formulae and its `python3`.
 
 **Public repositories.** A self-hosted runner runs the code of any workflow that reaches it, and on a public repository

@@ -11,7 +11,7 @@
 # inventory and pass it on every run for this url.
 github_runner_url: https://github.com/OWNER/REPO
 github_runner_scope: repo
-# Extra labels, added to the machine's groups, os and arch; a job selects them with runs-on.
+# Extra labels, added to fleet and the machine's groups, os and arch; a job selects them with runs-on.
 github_runner_labels: []
 # The service's environment, inherited by every job. A PATH here would replace the role's default (nova_bin_dir first,
 # then the system's); a path under the login's home is written "{{ ansible_facts['user_dir'] }}/...", rendered per

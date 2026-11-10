@@ -3,6 +3,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"os"
 	"os/exec"
@@ -166,8 +167,10 @@ func TestFunctionalRunnerGetsTheLabelsItLacks(t *testing.T) {
 		need           []any
 		check, fails   bool
 		post, record   string // the POST body sent ("" none); the record after ("" unchanged)
-		out            string
+		want, out      string // the wanted labels ("" is a,b); a line the run prints
 	}{
+		"GitHub's Linux is linux":     {labels: "a\n", github: "A", want: "a,linux", need: []any{}, record: "a,linux\n", out: "LABEL-ADD r1 added=- labels=a,linux"},
+		"an empty record":             {labels: "\n", github: "a,b", need: []any{}, record: "a,b\n", out: "LABEL-ADD r1 added=- labels=a,b"},
 		"same labels":                 {labels: "a,b\n", github: "a,b", need: []any{}, out: "ok="},
 		"lacks one":                   {labels: "a\n", github: "a", need: []any{}, post: `{"labels": ["b"]}`, record: "a,b\n", out: "LABEL-ADD r1 added=b labels=a,b"},
 		"no record":                   {labels: "", github: "a,c", need: []any{}, post: `{"labels": ["b"]}`, record: "a,b,c\n", out: "LABEL-ADD r1 added=b labels=a,b,c"},
@@ -189,7 +192,7 @@ func TestFunctionalRunnerGetsTheLabelsItLacks(t *testing.T) {
 				for _, l := range strings.Split(c.github, ",") {
 					ls = append(ls, `{"id":1,"name":"`+l+`","type":"custom"}`)
 				}
-				entry = `{"total_count":1,"runners":[{"id":42,"name":"r1","labels":[{"id":0,"name":"self-hosted","type":"read-only"},` + strings.Join(ls, ",") + `]}]}`
+				entry = `{"total_count":1,"runners":[{"id":42,"name":"r1","labels":[{"id":0,"name":"self-hosted","type":"read-only"},{"id":0,"name":"Linux","type":"read-only"},` + strings.Join(ls, ",") + `]}]}`
 			}
 			calls := filepath.Join(dir, "gh.calls")
 			gh := `echo "$*" >> ` + calls + `
@@ -203,7 +206,7 @@ esac`
 				extra = []string{"--check"}
 			}
 			out, err := runTasksLocally(t, tasks, map[string]any{
-				"github_runner_dir": dir, "github_runner_name": "r1", "github_runner_label_string": "a,b", "runner_index": 0, "github_runner_need": c.need,
+				"github_runner_dir": dir, "github_runner_name": "r1", "github_runner_label_string": cmp.Or(c.want, "a,b"), "runner_index": 0, "github_runner_need": c.need,
 				"github_runner_gh": "gh", "github_runner_scope": "repo", "github_runner_path": "o/r",
 			}, map[string]string{"gh": gh}, extra...)
 			if c.fails {

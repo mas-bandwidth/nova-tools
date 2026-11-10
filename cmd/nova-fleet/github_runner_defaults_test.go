@@ -46,7 +46,7 @@ func TestRunnerEnvDefaultsToTheMachineRecord(t *testing.T) {
 
 // The Linux unit sets TMPDIR once: github_runner_env's TMPDIR if it has one, else github_runner_tmpdir, one directory
 // of the login that the play creates (0700, as the login) before the units start. The macOS daemon writes a TMPDIR only
-// from github_runner_env: there the system's TMPDIR is cleaned by the OS, and the health play cleans no runner TMPDIR.
+// from github_runner_env: without one its jobs use /tmp, which macOS cleans, and the health play cleans no runner TMPDIR.
 func TestRunnerServiceFilesSetTmpdir(t *testing.T) {
 	t.Parallel()
 	d := runnerDefaults(t)
@@ -59,7 +59,7 @@ func TestRunnerServiceFilesSetTmpdir(t *testing.T) {
 	assert.Contains(t, service, "github_runner_env.items() | sort if k not in ['PATH', 'TMPDIR']", "the env loop writes PATH or TMPDIR a second time")
 	b, err = os.ReadFile("roles/github-runner/templates/runner.plist.j2")
 	require.NoError(t, err)
-	assert.NotContains(t, string(b), "github_runner_tmpdir", "the macOS daemon keeps the system's TMPDIR")
+	assert.NotContains(t, string(b), "github_runner_tmpdir", "the macOS daemon sets no TMPDIR of its own")
 
 	task := runnerTask(t, roleTaskFile(t, "unix.yml"), "the runners' TMPDIR")
 	file, _ := task["ansible.builtin.file"].(map[string]any)

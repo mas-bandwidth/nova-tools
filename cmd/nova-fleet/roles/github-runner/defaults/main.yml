@@ -44,7 +44,7 @@ github_runner_env: "{{ nova_runner_env | default({}) }}"
 
 # A Linux runner's TMPDIR when github_runner_env has none: one directory of the login (0700) for all its runners, made
 # before the units start. Its jobs' temporary files land there and not in /tmp, and the health play's disk clean reads
-# it from the units and removes what is left. macOS keeps the system's TMPDIR, which the OS cleans.
+# it from the units and removes what is left. A macOS daemon gets none (its jobs use /tmp, which macOS cleans).
 github_runner_tmpdir: "{{ ansible_facts['user_dir'] }}/.cache/runner-tmp"
 
 # The PATH the service starts with when github_runner_env has none; its jobs inherit it, so a step finds the nova

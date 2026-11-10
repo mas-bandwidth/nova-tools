@@ -87,15 +87,17 @@
 
 # A registered runner keeps its registration: a wanted label it lacks is added in GitHub (no config.sh, so it keeps its
 # session and the jobs queued for it), and a label it holds beyond the wanted is reported and kept. With no record of
-# its labels (no .labels: registered before the file, or the file lost), GitHub's list is the record.
+# its labels (no .labels: registered before the file, or the file lost), GitHub's list is the record. Labels compare
+# without case, as GitHub matches them: its own Linux, X64 and ARM64 are the wanted linux and arm64.
 - name: the labels it lacks, by its record
   ansible.builtin.set_fact:
     github_runner_lacks: >-
-      {{ github_runner_label_string.split(',') | difference((github_runner_held.stdout | trim).split(','))
-         if github_runner_held.rc == 0 else github_runner_label_string.split(',') }}
+      {{ github_runner_wanted | difference(github_runner_recorded) if github_runner_held.rc == 0 else github_runner_wanted }}
     github_runner_extra: >-
-      {{ (github_runner_held.stdout | trim).split(',') | difference(github_runner_label_string.split(','))
-         if github_runner_held.rc == 0 else [] }}
+      {{ github_runner_recorded | difference(github_runner_wanted) if github_runner_held.rc == 0 else [] }}
+  vars:
+    github_runner_wanted: "{{ github_runner_label_string | lower | split(',') | select | list }}"
+    github_runner_recorded: "{{ github_runner_held.stdout | default('') | trim | lower | split(',') | select | list }}"
 
 - name: the labels it lacks, planned
   ansible.builtin.debug:
@@ -120,19 +122,20 @@
       changed_when: false
       failed_when: false
 
-    - name: the runner's id and custom labels in GitHub
+    - name: the runner's id and labels in GitHub
       ansible.builtin.set_fact:
         github_runner_gh_entry: >-
           {{ ((github_runner_entry.stdout | from_json).runners | default([]) | selectattr('name', 'equalto', github_runner_name) | list)
-             if github_runner_entry.rc == 0 else [] }}
+             if github_runner_entry.rc | default(1) == 0 else [] }}
 
     - name: GitHub's entry for it was read
       ansible.builtin.assert:
         quiet: true
-        that: github_runner_entry.rc == 0 and github_runner_gh_entry | length == 1
+        that: github_runner_entry.rc | default(1) == 0 and github_runner_gh_entry | length == 1
         fail_msg: >-
-          {{ github_runner_name }}: {{ ('gh api on the control node failed, rc=' ~ github_runner_entry.rc ~ ': ' ~ (github_runner_entry.stderr | trim))
-          if github_runner_entry.rc != 0 else 'GitHub lists no runner of that name' }}; its labels were not changed;
+          {{ github_runner_name }}: {{ ('gh api on the control node failed, rc=' ~ (github_runner_entry.rc | default('-')) ~ ': '
+          ~ (github_runner_entry.stderr | default(github_runner_entry.msg | default('')) | trim))
+          if github_runner_entry.rc | default(1) != 0 else 'GitHub lists no runner of that name' }}; its labels were not changed;
           check: {{ github_runner_gh }} api {{ 'orgs' if github_runner_scope == 'org' else 'repos' }}/{{ github_runner_path }}/actions/runners
 
     - name: the labels it lacks, added in GitHub
@@ -145,27 +148,32 @@
           - "{{ 'orgs' if github_runner_scope == 'org' else 'repos' }}/{{ github_runner_path }}/actions/runners/{{ github_runner_gh_entry[0].id }}/labels"
           - --input
           - "-"
-        stdin: "{{ {'labels': github_runner_label_string.split(',') | difference(github_runner_gh_labels)} | to_json }}"
+        stdin: "{{ {'labels': github_runner_gh_adds} | to_json }}"
       delegate_to: localhost
       become: false
       register: github_runner_relabel
-      when: github_runner_label_string.split(',') | difference(github_runner_gh_labels) | length > 0
+      when: github_runner_gh_adds | length > 0
 
     - name: the labels it holds now, recorded
       ansible.builtin.copy:
-        content: "{{ (github_runner_gh_labels + github_runner_label_string.split(',')) | unique | sort | join(',') }}\n"
+        content: "{{ github_runner_gh_holds | join(',') }}\n"
         dest: "{{ github_runner_dir }}/.labels"
         mode: "0644"
 
     - name: the labels it was given
       ansible.builtin.debug:
-        msg: >-
-          LABEL-ADD {{ github_runner_name }} added={{ github_runner_label_string.split(',') | difference(github_runner_gh_labels) | join(',') or '-' }}
-          labels={{ (github_runner_gh_labels + github_runner_label_string.split(',')) | unique | sort | join(',') }}
+        msg: LABEL-ADD {{ github_runner_name }} added={{ github_runner_gh_adds | join(',') or '-' }} labels={{ github_runner_gh_holds | join(',') }}
   vars:
-    github_runner_gh_labels: >-
-      {{ github_runner_gh_entry[0].labels | default([]) | selectattr('type', 'equalto', 'custom') | map(attribute='name') | list
+    github_runner_wanted: "{{ github_runner_label_string | lower | split(',') | select | list }}"
+    # every label GitHub gives it (its own self-hosted, Linux, X64 too), lower-cased; the record keeps the custom ones
+    github_runner_gh_all: >-
+      {{ github_runner_gh_entry[0].labels | default([]) | map(attribute='name') | map('lower') | list
          if github_runner_gh_entry | default([]) | length == 1 else [] }}
+    github_runner_gh_custom: >-
+      {{ github_runner_gh_entry[0].labels | default([]) | selectattr('type', 'equalto', 'custom') | map(attribute='name') | map('lower') | list
+         if github_runner_gh_entry | default([]) | length == 1 else [] }}
+    github_runner_gh_adds: "{{ github_runner_wanted | difference(github_runner_gh_all) }}"
+    github_runner_gh_holds: "{{ (github_runner_gh_custom + github_runner_wanted) | unique | sort }}"
 
 - name: labels it holds beyond the wanted are reported, and kept
   ansible.builtin.debug:

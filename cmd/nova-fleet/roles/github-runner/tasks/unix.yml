@@ -56,7 +56,7 @@
   when: github_runner_want | length > 0
 
 # The TMPDIR the units name, made as the login before any unit starts: a runner whose TMPDIR is missing fails its jobs'
-# first mktemp. On macOS only when github_runner_env names one (the daemon otherwise keeps the system's).
+# first mktemp. On macOS only when github_runner_env names one (the daemon otherwise has none and uses /tmp).
 - name: the runners' TMPDIR
   ansible.builtin.file:
     path: "{{ github_runner_env.get('TMPDIR', github_runner_tmpdir) }}"
