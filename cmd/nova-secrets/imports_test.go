@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestSelfContained holds secrets to the standard library, golang.org/x/sys (Windows key checks) and
+// TestSelfContained holds secrets to the standard library, golang.org/x/sys (system calls) and
 // gopkg.in/yaml.v3 (seat add's .sops.yaml rewrite), so it can
 // be lifted out of this repository as it is: it reads the imports of every
 // .go file here; the tests may also import testify.
@@ -45,7 +45,7 @@ func TestAllowedRefusesTheRepository(t *testing.T) {
 	assert.False(t, allowed("github.com/mas-bandwidth/nova-tools/v2/pkg/tool", false))
 	assert.False(t, allowed("github.com/mas-bandwidth/nova-tools/v2/pkg/tool", true))
 	assert.False(t, allowed("github.com/stretchr/testify/require", false))
-	assert.True(t, allowed("golang.org/x/sys/windows", false))
+	assert.True(t, allowed("golang.org/x/sys/unix", false))
 	assert.False(t, allowed("github.com/redis/go-redis/v9", false))
 	assert.True(t, allowed("net/http", false))
 }

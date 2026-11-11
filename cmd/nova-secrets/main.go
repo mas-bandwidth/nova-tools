@@ -398,7 +398,7 @@ func (t tool) exec(args []string) error {
 	// must not arrive another way) and every sops identity variable.
 	drop := slices.Concat(slices.Collect(maps.Keys(values)), identityEnv)
 	env := envWhere(t.environ, func(k string) bool {
-		return !slices.ContainsFunc(drop, func(d string) bool { return d == k || runtime.GOOS == "windows" && strings.EqualFold(d, k) })
+		return !slices.ContainsFunc(drop, func(d string) bool { return d == k })
 	})
 	for _, k := range pick {
 		env = append(env, k+"="+values[k])
@@ -776,7 +776,7 @@ func (t tool) seatList(args []string) error {
 
 // sopsEnv is sops's whole environment: PATH, the one key file, and a HOME of its own.
 func (t tool) sopsEnv(key, home string) []string {
-	keep := []string{"PATH", "TMPDIR", "SYSTEMROOT", "TEMP", "TMP"}
+	keep := []string{"PATH", "TMPDIR", "TEMP", "TMP"}
 	return append([]string{"SOPS_AGE_KEY_FILE=" + key, "HOME=" + home, "XDG_CONFIG_HOME=" + home, "APPDATA=" + home},
 		envWhere(t.environ, func(k string) bool { return slices.Contains(keep, strings.ToUpper(k)) })...)
 }
@@ -1142,7 +1142,7 @@ func sealedTo(out []byte, file string, want []string) error {
 // gitRun runs git in dir without the caller's repository variables.
 func (t tool) gitRun(dir string, args ...string) ([]byte, error) {
 	if _, err := t.lookPath("git"); err != nil {
-		return nil, deny("git", "git not found on PATH; install it: apt install git (Debian, Ubuntu), brew install git (macOS), winget install Git.Git (Windows)")
+		return nil, deny("git", "git not found on PATH; install it: apt install git (Debian, Ubuntu), brew install git (macOS)")
 	}
 	repo := []string{"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"}
 	return t.run(nil, envWhere(t.environ, func(k string) bool { return !slices.Contains(repo, k) }), dir, "git", args...)
@@ -1466,7 +1466,7 @@ func pinned(dir, name, want string) (string, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", deny("no-pin", "pin directory %s: %v", dir, err)
 	}
-	if fi, err := os.Lstat(dir); err != nil || !fi.IsDir() || checkPrivate(dir, fi) != nil {
+	if fi, err := os.Lstat(dir); err != nil || !fi.IsDir() || checkPrivate(fi) != nil {
 		return "", deny("no-pin", "pin directory %s must be a directory of yours that no one else can write; run: chmod 700 %s", dir, dir)
 	}
 	p := filepath.Join(dir, name+".pub")
@@ -1482,7 +1482,7 @@ func pinned(dir, name, want string) (string, error) {
 	}
 	b, _ := os.ReadFile(p)
 	pin := strings.TrimSpace(string(b))
-	if err != nil || !fi.Mode().IsRegular() || checkPrivate(p, fi) != nil || !agePub.MatchString(pin) {
+	if err != nil || !fi.Mode().IsRegular() || checkPrivate(fi) != nil || !agePub.MatchString(pin) {
 		return "", deny("no-pin", "%s must be a regular file of yours, writable only by you, holding one age public key", p)
 	}
 	if want != "" && want != pin {
@@ -1550,7 +1550,7 @@ func (t tool) grant(args []string) error {
 		return err
 	}
 	ledgerPath := filepath.Join(o.pins, o.to+".ledger")
-	if fi, err := os.Lstat(ledgerPath); err == nil && (!fi.Mode().IsRegular() || checkPrivate(ledgerPath, fi) != nil) {
+	if fi, err := os.Lstat(ledgerPath); err == nil && (!fi.Mode().IsRegular() || checkPrivate(fi) != nil) {
 		return deny("not-regular", "%s is not a regular file of yours (a symlink?); the ledger is read only as itself: remove it, then run again", ledgerPath)
 	}
 	prior, _ := os.ReadFile(ledgerPath)
