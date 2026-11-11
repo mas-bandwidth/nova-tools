@@ -31,7 +31,9 @@
 \*                     job, and the child takes the terminal from the shell's
 \*                     prompt (PromptOwnsTerminal)
 \*   "kill-at-start"   a SIGKILL of nova-reserve before the watchdog starts
-\*                     leaves the command running (WholeGroupDies)
+\*                     leaves the command running (WholeGroupDies), and the
+\*                     child takes the terminal from the shell's prompt
+\*                     (PromptOwnsTerminal, which TLC reaches first)
 \* Each is a case in CASES.tsv that must fail as stated. Not modelled: Ctrl-C
 \* (the command's group ends: CmdExit), and fg of a job that bg left running,
 \* which gives the terminal to nova-reserve, not the command, until the

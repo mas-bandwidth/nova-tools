@@ -37,8 +37,8 @@ func init() {
 		Fault{Tool: "reserve", Name: "run: command not found", Setup: dir, Argv: []string{"run", "--dir", "{r}", "--slots", "2", "--", "nosuchcmd"},
 			Want: Want{Exit: []int{127}, Reason: []string{"not found"}, Remedy: None, Info: receipts}},
 		Fault{Tool: "reserve", Name: "run: command killed by SIGKILL", Setup: dir, Argv: killed("9"),
-			Want: Want{Exit: []int{137}, Reason: []string{"killed by signal 9"}, Remedy: None, Info: receipts}, Known: "signal-death-line"},
+			Want: Want{Exit: []int{137}, Reason: []string{"killed by signal 9"}, Remedy: None, Info: receipts}, Known: "signal-death-line", Gap: []string{`no reason token "killed by signal 9"`}},
 		Fault{Tool: "reserve", Name: "run: command killed by SIGTERM", Setup: dir, Argv: killed("TERM"),
-			Want: Want{Exit: []int{143}, Reason: []string{"killed by signal 15"}, Remedy: None, Info: receipts}, Known: "signal-death-line"},
+			Want: Want{Exit: []int{143}, Reason: []string{"killed by signal 15"}, Remedy: None, Info: receipts}, Known: "signal-death-line", Gap: []string{`no reason token "killed by signal 15"`}},
 	)
 }

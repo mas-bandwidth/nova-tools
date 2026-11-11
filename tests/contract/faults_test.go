@@ -13,9 +13,11 @@ package contract
 //     row's own command is rerun and must get past the failure;
 //  5. stdout is empty unless the row documents what it carries.
 //
-// A row that fails today carries Known, a short label for the gap. It still
-// runs: it is skipped with the printed reason while it fails, and fails the
-// build the day it passes, so the fix deletes its Known. Every table is in faults_<tool>_test.go.
+// A row that fails today carries Known, a short label for the gap, and Gap, the
+// problems it has. It still runs: it is skipped with the printed reason while it
+// has exactly those problems, and fails the build on any other outcome and the day
+// it passes, so the fix deletes its Known. A Known row with no Gap is skipped on
+// any problem. Every table is in faults_<tool>_test.go.
 
 import (
 	"bytes"
@@ -27,6 +29,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -61,7 +64,8 @@ type Fault struct {
 	Argv  []string // {name} is replaced by the Env variable of that name; {dir} is the row's directory
 	Stdin string
 	Want  Want
-	Known string // a short label for the known gap; empty when the row passes
+	Known string   // a short label for the known gap; empty when the row passes
+	Gap   []string // a Known row's problems today, as judge words them, each up to where an outside program's own words begin
 }
 
 var tables = map[string][]Fault{}
@@ -375,10 +379,13 @@ func runFault(t *testing.T, f Fault) {
 		t.Logf("exit %d stdout %q stderr %q", first.code, first.out, first.errs)
 	}
 	switch {
-	case len(problems) > 0 && f.Known != "":
+	case len(problems) > 0 && f.Known != "" && tolerated(f, problems):
 		known.Add(1)
 		t.Skipf("known gap %s: %s", f.Known, strings.Join(problems, "; "))
 	case len(problems) > 0:
+		if f.Known != "" {
+			t.Errorf("%s %s: its known gap %s is %q, and it has other problems", f.Tool, f.Name, f.Known, strings.Join(f.Gap, "; "))
+		}
 		for _, p := range problems {
 			t.Errorf("%s %s %s: %s\n  exit %d, stdout %q, stderr %q", f.Tool, f.Name, strings.Join(argv, " "), p, first.code, first.out, first.errs)
 		}
@@ -386,6 +393,43 @@ func runFault(t *testing.T, f Fault) {
 		t.Errorf("%s %s now meets the contract: delete its Known %q", f.Tool, f.Name, f.Known)
 	default:
 		pass.Add(1)
+	}
+}
+
+// tolerated says a Known row has the problems its Gap names and no other: as many,
+// in judge's order, each beginning with its entry. A row with no Gap tolerates any.
+func tolerated(f Fault, problems []string) bool {
+	return f.Gap == nil || slices.EqualFunc(problems, f.Gap, strings.HasPrefix)
+}
+
+// A Known row is held to its Gap. The tool is stood in for by the outcome handed to
+// judge: the refusal the row gets today is tolerated, and a silent exit 0, a hang, a
+// crash, a second stderr line and a refusal that names another reason are not.
+func TestKnownRowToleratesOnlyItsGap(t *testing.T) {
+	t.Parallel()
+	var f Fault
+	for _, r := range tables["bus"] {
+		if r.Name == "send: redis stopped" {
+			f = r
+		}
+	}
+	e := newEnv(t)
+	today := "nova-bus send: SEND FAILED to b: cannot reach redis at 127.0.0.1:1 (NOVA_BUS_REDIS): connection refused; check that NOVA_BUS_REDIS=127.0.0.1:1 is the fleet's Redis and that it is up\n"
+	for name, c := range map[string]struct {
+		o    outcome
+		want bool
+	}{
+		"the refusal it gets today": {outcome{code: 1, errs: today}, true},
+		"exit 0 and silent":         {outcome{}, false},
+		"exit 0 with the refusal":   {outcome{errs: today}, false},
+		"a hang":                    {outcome{code: -2}, false},
+		"a crash":                   {outcome{code: -1, sig: 11}, false},
+		"a second stderr line":      {outcome{code: 1, errs: today + "panic: x\n"}, false},
+		"another reason":            {outcome{code: 1, errs: "nova-bus send: SEND FAILED to b\n"}, false},
+	} {
+		if problems := judge(t, e, f, f.Argv, c.o); f.Gap == nil || tolerated(f, problems) != c.want {
+			t.Errorf("%s: tolerated is %v, want %v (gap %q, problems %q)", name, !c.want, c.want, f.Gap, problems)
+		}
 	}
 }
 

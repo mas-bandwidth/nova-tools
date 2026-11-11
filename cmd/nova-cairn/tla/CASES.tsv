@@ -1,0 +1,7 @@
+config	module	expected	property	deadlock
+MCCairnStore.cfg	CairnStore.tla	pass	-	check
+MCCairnStoreBrokenOverwrite.cfg	CairnStore.tla	invariant	NoOverwrite	check
+MCCairnStoreBrokenReportBeforeFsync.cfg	CairnStore.tla	invariant	DurableBeforeReported	check
+MCCairnStoreBrokenReopenOther.cfg	CairnStore.tla	invariant	OneOpenPolicy	check
+MCCairnStoreBrokenCrashBeforeFsync.cfg	CairnStore.tla	invariant	DurableBeforeReported	check
+MCCairnStoreBrokenDuplicateNoLog.cfg	CairnStore.tla	invariant	LoggedBeforeReported	check
