@@ -63,6 +63,14 @@ func onTerminal(t *testing.T, name string, args ...string) (*os.File, func(strin
 	return master, seen, count, done
 }
 
+// foreground is the terminal's foreground process group, read off the master.
+func foreground(t *testing.T, master *os.File) int {
+	t.Helper()
+	pgrp, err := unix.IoctlGetInt(int(master.Fd()), unix.TIOCGPGRP)
+	require.NoError(t, err)
+	return pgrp
+}
+
 // TestFunctionalCommandReadsTheTerminal runs nova-reserve as an interactive
 // shell would, in the foreground of its own terminal, with a command that
 // reads that terminal. A command in a background process group is stopped
@@ -100,10 +108,12 @@ func TestFunctionalCtrlZStopsTheJob(t *testing.T) {
 	}
 	typed(shellQuote(bin) + " --dir " + shellQuote(dir) + " --slots 1 -- sh -c 'echo re\"\"ady; read x; echo got:$x'\n")
 	require.Eventually(t, seen("ready"), patience, 20*time.Millisecond)
+	command := foreground(t, master) // started in the foreground: its own group
 	typed("\x1a")
 	require.Eventually(t, seen("Stopped"), 10*time.Second, 20*time.Millisecond, "Ctrl-Z never gave the shell its terminal back")
 	typed("fg\n")
-	time.Sleep(500 * time.Millisecond) // a guess: the shell continues the job before the line is typed
+	require.Eventually(t, func() bool { return foreground(t, master) == command }, 10*time.Second, 20*time.Millisecond,
+		"fg never gave the command the terminal")
 	typed("hi\n")
 	require.Eventually(t, seen("got:hi"), 10*time.Second, 20*time.Millisecond, "fg never gave the command the terminal")
 	typed("echo status=$?; exit\n")
@@ -130,28 +140,25 @@ func TestFunctionalBackgroundedWhileWaitingStillRelays(t *testing.T) {
 	}
 	bin, dir := build(t), t.TempDir()
 	holder := startHolder(t, bin, dir, "--slots", "1") // the slot is held
-	master, seen, count, done := onTerminal(t, bash, "--norc", "--noprofile", "-i")
+	// -b: the shell reports a job's change of state when it records it, not
+	// at its next prompt, so its report shows its job table has the stop.
+	master, seen, count, done := onTerminal(t, bash, "--norc", "--noprofile", "-i", "-b")
 	typed := func(s string) {
 		_, err := master.Write([]byte(s))
 		require.NoError(t, err)
-	}
-	foreground := func() int {
-		pgrp, err := unix.IoctlGetInt(int(master.Fd()), unix.TIOCGPGRP)
-		require.NoError(t, err)
-		return pgrp
 	}
 	ps := func(field string, pid int) string {
 		out, _ := exec.Command("ps", "-o", field+"=", "-p", strconv.Itoa(pid)).Output()
 		return strings.TrimSpace(string(out))
 	}
-	shell := foreground() // the session leader's group, foreground from the start
+	shell := foreground(t, master) // the session leader's group, foreground from the start
 	typed(shellQuote(bin) + " --dir " + shellQuote(dir) + " --slots 1 -- sh -c 'echo re\"\"ady; read x; echo got:$x'\n")
 	// Ctrl-Z only once the job's group is nova-reserve itself: before its exec
 	// the shell's child may still ignore SIGTSTP. One command, so the job's
 	// group is nova-reserve's pid. It waits there, as the slot is held.
 	reserve := 0
 	require.Eventually(t, func() bool {
-		reserve = foreground()
+		reserve = foreground(t, master)
 		return reserve != shell && strings.HasSuffix(ps("comm", reserve), "nova-reserve")
 	}, patience, 20*time.Millisecond, "the shell never ran nova-reserve in the foreground")
 	typed("\x1a")
@@ -159,20 +166,15 @@ func TestFunctionalBackgroundedWhileWaitingStillRelays(t *testing.T) {
 	typed("bg\n")
 	require.NoError(t, holder.Process.Kill()) // SIGKILL: the kernel frees its slot
 	require.Eventually(t, seen("ready"), patience, 20*time.Millisecond, "the backgrounded run never started its command")
-	// fg only once the command's read has stopped it and nova-reserve has
-	// relayed the stop by stopping itself. An fg before that continues a job
-	// that is still running, which takes the terminal to nova-reserve and not
-	// the command; the command's read then stops the job again
-	// (tla/JobControl.tla, not modelled: fg of a job bg left running). ps
-	// shows the stop before the kernel tells the shell (SIGCHLD follows the
-	// state change), so wait until the shell reports the stop at a prompt:
-	// the second "Stopped" in the output, the first being Ctrl-Z's.
-	require.Eventually(t, func() bool { return strings.HasPrefix(ps("stat", reserve), "T") }, patience, 20*time.Millisecond,
-		"nova-reserve never stopped when its backgrounded command read the terminal")
-	require.Eventually(t, func() bool { typed("\n"); return count("Stopped") >= 2 }, patience, 200*time.Millisecond,
-		"the shell never reported the job stopped")
+	// fg only once the command's read has stopped it, nova-reserve has
+	// relayed the stop by stopping itself, and the shell has recorded it: the
+	// shell's second "Stopped", the first being Ctrl-Z's. An fg before that
+	// reaches a shell whose job table says running, which does not continue
+	// the job (tla/JobControl.tla, not modelled: fg of a job bg left running).
+	require.Eventually(t, func() bool { return count("Stopped") >= 2 }, patience, 20*time.Millisecond,
+		"the shell never reported the job stopped when its backgrounded command read the terminal")
 	typed("fg\n")
-	require.Eventually(t, func() bool { g := foreground(); return g != shell && g != reserve }, 10*time.Second, 20*time.Millisecond,
+	require.Eventually(t, func() bool { g := foreground(t, master); return g != shell && g != reserve }, 10*time.Second, 20*time.Millisecond,
 		"fg never gave the command the terminal")
 	typed("hi\n")
 	require.Eventually(t, seen("got:hi"), 10*time.Second, 20*time.Millisecond, "fg never gave the command the terminal")
