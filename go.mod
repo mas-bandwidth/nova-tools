@@ -1,6 +1,6 @@
 module github.com/mas-bandwidth/nova-tools/v2
 
-go 1.26.10
+go 1.26.11
 
 // nova-tools is one module: every directory is a package of it, so an
 // outside module that requires nova-tools resolves every package from this one
