@@ -1,7 +1,8 @@
 ---
 # The sdk-toolchain role (cmd/nova-fleet/sdk-toolchain.yml): every tool of nova_sdk_tools that has an entry for this
 # platform, in <sdk_dir>/<dir>, its commands linked into <sdk_dir>/bin; the extra .NET SDKs inside the dotnet
-# directory; on Linux a pinned rustup with its toolchains and the cargo tools; env.sh. A tool whose probe exists is
+# directory; on Linux a pinned rustup with its toolchains and the cargo tools; env.sh, the one PATH (the hand-made Go
+# and gh entries that came before it are removed, each by its exact form). A tool whose probe exists is
 # adopted as it is. Runs as the login: nothing here becomes root. sdk_dir is nova_sdk_dir with every symlink followed,
 # and nothing else names nova_sdk_dir.
 - name: the SDK directory's real path
@@ -254,6 +255,45 @@
     create: true
     mode: "0644"
   when: sdk_platform == 'linux' and nova_sdk_shell_rc | bool and sdk_bashrc.rc != 0
+
+# Before this role, rowan-tools' fleet/bench.yml put a Go first by hand: a "fleet Go" block in ~/.bashrc naming one
+# <sdk>/go1.x.y/bin (go1.26.6 on some benches, an old pin), and ~/go/bin/go and gofmt linked to it. env.sh is the one
+# PATH now, so the block goes, and so do those links (env.sh puts <sdk>/bin, with the pinned go, ahead of ~/go/bin).
+- name: ~/.bashrc has no hand "fleet Go" block (Linux)
+  ansible.builtin.blockinfile:
+    path: "{{ ansible_facts['user_dir'] }}/.bashrc"
+    marker: "# {mark} fleet Go (rowan-tools fleet/bench.yml)"
+    state: absent
+  when: sdk_platform == 'linux'
+
+- name: the go links in ~/go/bin and the login's bin directory (a read; Linux)
+  ansible.builtin.stat: { path: "{{ ansible_facts['user_dir'] }}/{{ item }}", get_checksum: false }
+  loop: [go/bin/go, go/bin/gofmt, .local/bin/go]
+  register: sdk_go_links
+  when: sdk_platform == 'linux'
+
+# A link in ~/go/bin is kept while ~/.local/bin/go points at it: a runner unit whose PATH has ~/.local/bin and not
+# <sdk>/bin finds go through that link (amd-1 and hetzner2, until every runner's PATH comes from its record).
+- name: ~/go/bin has no go or gofmt linked to an SDK Go (Linux)
+  ansible.builtin.file: { path: "{{ item.stat.path }}", state: absent }
+  loop: "{{ sdk_go_links.results[:2] if sdk_platform == 'linux' else [] }}"
+  loop_control: { label: "{{ item.item }}" }
+  when:
+    - item.stat.islnk | default(false)
+    - item.stat.lnk_target is match('^/[^ ]*/sdk/go1[.][0-9]+[.][0-9]+/bin/(go|gofmt)$')
+    - (sdk_go_links.results[2].stat.lnk_target | default('')) != item.stat.path
+
+# An older SDK install linked gh 2.102.0 into <sdk>/bin (captain, hulk), ahead of the system's gh; no tool here installs
+# gh, so that link, and only that one, goes (its <sdk>/gh-2.102.0 directory is not on any PATH and stays).
+- name: the gh link in the SDK's bin (a read)
+  ansible.builtin.stat: { path: "{{ sdk_dir }}/bin/gh", get_checksum: false }
+  register: sdk_gh_link
+
+- name: <sdk>/bin has no hand gh link
+  ansible.builtin.file: { path: "{{ sdk_dir }}/bin/gh", state: absent }
+  when:
+    - sdk_gh_link.stat.islnk | default(false)
+    - sdk_gh_link.stat.lnk_target == sdk_dir ~ '/gh-2.102.0/gh_2.102.0_linux_amd64/bin/gh'
 
 - name: the runtimes dotnet lists
   ansible.builtin.command: { argv: ["{{ (sdk_specs | selectattr('name', 'equalto', 'dotnet') | first).home }}/dotnet", --list-runtimes] }

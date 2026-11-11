@@ -1,8 +1,9 @@
 ---
 # The opencode role (install.yml, the bench group): nova_opencode_version from the release archive at its pinned
-# digest, unpacked as <bin dir>/opencode.bin, with the wrapper <bin dir>/opencode beside it. Nothing else is touched:
-# another opencode on the machine (Homebrew's, /usr/local/bin's) stays where it is, behind nova_bin_dir on the units'
-# PATH. A second run downloads and changes nothing. One line per machine: OPENCODE <host> version=<v> path=<wrapper>.
+# digest, unpacked as <bin dir>/opencode.bin, with the wrapper <bin dir>/opencode beside it. The hand-installed copies
+# of this same opencode that came before the role (nova_opencode_hand_dir) are removed; any other opencode on the
+# machine (Homebrew's, another version) stays where it is, behind nova_bin_dir on the units' PATH. A second run
+# downloads and changes nothing. One line per machine: OPENCODE <host> version=<v> path=<wrapper>.
 - name: the platform
   ansible.builtin.set_fact:
     nova_opencode_platform: >-
@@ -105,3 +106,44 @@
           OPENCODE {{ inventory_hostname }}: {{ nova_opencode_bin_dir }}/opencode answers
           {{ (nova_opencode_answer.stdout | default('') | trim) or (nova_opencode_answer.msg | default('nothing')) }}, not {{ nova_opencode_version }}
       when: not ansible_check_mode
+
+    # Before this role (2026-11-08) each bench had this opencode put in /usr/local/bin by hand: opencode.bin with a
+    # wrapper beside it (Rowan, 2026-10-13 and 2026-11-07), or the bare binary as opencode (captain). Each is removed
+    # when it is exactly that copy: a file identical to this role's opencode.bin, or a hand wrapper whose opencode.bin
+    # beside it is one. Anything else there (another version, another wrapper) stays.
+    - name: this role's opencode.bin and the hand copies (a read)
+      ansible.builtin.stat: { path: "{{ item }}", get_checksum: true, checksum_algorithm: sha256 }
+      loop:
+        - "{{ nova_opencode_bin_dir }}/opencode.bin"
+        - "{{ nova_opencode_hand_dir }}/opencode.bin"
+        - "{{ nova_opencode_hand_dir }}/opencode"
+      register: nova_opencode_copies
+
+    - name: the hand wrapper's text (a read; a small regular file only)
+      ansible.builtin.slurp: { src: "{{ nova_opencode_hand_dir }}/opencode" }
+      register: nova_opencode_hand_text
+      when: >-
+        nova_opencode_copies.results[2].stat.exists and nova_opencode_copies.results[2].stat.isreg
+        and nova_opencode_copies.results[2].stat.size < 1024
+
+    - name: which hand copies are this opencode
+      ansible.builtin.set_fact:
+        nova_opencode_hand_copies: >-
+          {%- set ours = nova_opencode_copies.results[0].stat -%}
+          {%- set bin = nova_opencode_copies.results[1].stat -%}
+          {%- set top = nova_opencode_copies.results[2].stat -%}
+          {%- set same = ours.exists and ours.isreg -%}
+          {%- set bin_ours = same and bin.exists and bin.isreg and bin.checksum == ours.checksum -%}
+          {%- set text = (nova_opencode_hand_text.content | b64decode) if nova_opencode_hand_text.content is defined else '' -%}
+          {%- set top_wrapper = bin_ours and text is match(nova_opencode_hand_wrapper_re) -%}
+          {%- set top_ours = same and top.exists and top.isreg and top.checksum == ours.checksum -%}
+          {%- set out = [] -%}
+          {%- if bin_ours -%}{%- set _ = out.append(bin) -%}{%- endif -%}
+          {%- if top_ours or top_wrapper -%}{%- set _ = out.append(top) -%}{%- endif -%}
+          {{ out }}
+
+    - name: the hand copies of this opencode, removed
+      ansible.builtin.file: { path: "{{ item.path }}", state: absent }
+      become: "{{ nova_opencode_hand_copies | selectattr('uid', 'equalto', 0) | list | length > 0 }}"
+      loop: "{{ nova_opencode_hand_copies }}"
+      loop_control: { label: "{{ item.path }}" }

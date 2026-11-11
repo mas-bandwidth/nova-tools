@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -105,4 +106,55 @@ func TestServicePathPutsTheToolsDirFirst(t *testing.T) {
 	assert.Equal(t, "{{ nova_bin_dir }}", p[0])
 	assert.Contains(t, p, "/opt/homebrew/bin")
 	assert.Contains(t, p, "/usr/local/bin")
+}
+
+// The benches' hand-installed copies of this opencode (in /usr/local/bin before the role) are removed, each only when it
+// is exactly that copy: opencode.bin identical to the role's, and opencode either identical to it too (captain's bare
+// binary) or one of the hand wrappers, with an identical opencode.bin beside it.
+func TestOpencodeRoleRemovesOnlyItsOwnHandCopies(t *testing.T) {
+	t.Parallel()
+	d := opencodeDefaults(t)
+	assert.Equal(t, "/usr/local/bin", asText(d["nova_opencode_hand_dir"]))
+	re := regexp.MustCompile(asText(d["nova_opencode_hand_wrapper_re"]))
+	// The two wrappers the benches had, byte for byte (amd-1/2/3, hetzner1/2, vision, space; hulk and intel).
+	for _, w := range []string{
+		"#!/bin/sh\n# wrapper (Rowan 2026-10-13): mirrors the darwin harness wrapper so the output-token max reaches opencode\n" +
+			"export OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER=1\nexport OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX=128000\n" +
+			"exec \"$(dirname \"$0\")/opencode.bin\" \"$@\"\n",
+		"#!/bin/sh\n# wrapper (Rowan 2026-11-07): the same as the other benches; the file watcher off and the output-token max up\n" +
+			"export OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER=1\nexport OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX=128000\n" +
+			"exec \"$(dirname \"$0\")/opencode.bin\" \"$@\"\n",
+	} {
+		assert.True(t, re.MatchString(w), w)
+	}
+	for _, w := range []string{
+		"#!/bin/sh\nexec /opt/opencode/opencode \"$@\"\n",
+		"#!/bin/sh\n# wrapper (Rowan 2026-10-13): x\nexport OPENCODE_X=1\nrm -rf ~\nexec \"$(dirname \"$0\")/opencode.bin\" \"$@\"\n",
+		"#!/bin/sh\n# opencode 1.18.20, from nova-tools fleet/roles/opencode: the binary is opencode.bin beside it\n" +
+			"exec \"$(dirname \"$0\")/opencode.bin\" \"$@\"\n",
+	} {
+		assert.False(t, re.MatchString(w), w)
+	}
+
+	tasks := opencodeTasks(t)
+	s := taskIndex(tasks, "this role's opencode.bin and the hand copies")
+	require.GreaterOrEqual(t, s, 0)
+	assert.Greater(t, s, taskIndex(tasks, "opencode answers the pinned version"), "the role's own copy is checked first")
+	assert.Equal(t, []any{"{{ nova_opencode_bin_dir }}/opencode.bin", "{{ nova_opencode_hand_dir }}/opencode.bin",
+		"{{ nova_opencode_hand_dir }}/opencode"}, tasks[s]["loop"])
+	c := taskIndex(tasks, "which hand copies are this opencode")
+	require.GreaterOrEqual(t, c, 0)
+	sf, ok := tasks[c]["ansible.builtin.set_fact"].(map[string]any)
+	require.True(t, ok)
+	expr := asText(sf["nova_opencode_hand_copies"])
+	assert.Contains(t, expr, "bin.checksum == ours.checksum")
+	assert.Contains(t, expr, "top.checksum == ours.checksum")
+	assert.Contains(t, expr, "bin_ours and text is match(nova_opencode_hand_wrapper_re)", "a wrapper goes only with its identical opencode.bin")
+	r := taskIndex(tasks, "the hand copies of this opencode, removed")
+	require.GreaterOrEqual(t, r, 0)
+	assert.Greater(t, r, c)
+	f, ok := tasks[r]["ansible.builtin.file"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "absent", f["state"])
+	assert.Equal(t, "{{ nova_opencode_hand_copies }}", asText(tasks[r]["loop"]))
 }
