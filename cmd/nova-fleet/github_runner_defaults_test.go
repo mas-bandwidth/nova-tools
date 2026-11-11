@@ -80,7 +80,7 @@ func TestRunnersAreLabelledFleet(t *testing.T) {
 	d := runnerDefaults(t)
 	assert.Equal(t, []any{"fleet"}, d["github_runner_base_labels"])
 	assert.Equal(t, "{{ github_runner_base_labels + [inventory_hostname] }}", asText(d["github_runner_wsl_labels"]))
-	task := runnerTask(t, roleTaskFile(t, "main.yml"), "the labels")
+	task := runnerTask(t, roleTaskFile(t, "scope.yml"), "the labels")
 	assert.Contains(t, asText(task["ansible.builtin.set_fact"].(map[string]any)["github_runner_label_list"]), "github_runner_base_labels")
 }
 

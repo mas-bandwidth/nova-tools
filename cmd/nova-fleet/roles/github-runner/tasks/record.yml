@@ -1,0 +1,94 @@
+---
+# The host's runners are the machine record's runner_scopes (nova-config machine set <m> --runner_scopes
+# '<url>=<count>[:<label>+<label>],...'; the inventory's nova_runner_scopes), and nothing else:
+#   1. every runner on the host that no scope wants (a directory under github_runner_base_dir, or a github-runner unit or
+#      daemon, named <slug>-<i>) is retired: after the job it is running ends, its service is stopped and removed, it is
+#      removed from GitHub (its url read from its .runner) and its directory deleted (record-retire.yml);
+#   2. each scope's runners are made as one url's are (scope.yml), with the record's count and labels;
+#   3. GitHub's list of every scope the fleet's records name is read, and an entry named for this host that is offline
+#      and not wanted is deleted from GitHub (record-github.yml): a runner whose machine side is already gone.
+# A record with runners above 0 and no runner_scopes is refused: it does not say where they register, and reading it as
+# none would retire them.
+
+- name: the record names this host's runners
+  ansible.builtin.assert:
+    quiet: true
+    that:
+      - nova_runner_scopes | default([]) is sequence and nova_runner_scopes | default([]) is not string
+      - nova_runner_scopes | default([]) | length > 0 or (runners | default(0) | int) == 0
+      - github_runner_state == 'present'
+    fail_msg: >-
+      github-runner: {{ inventory_hostname }}'s record has runners={{ runners | default(0) }} and no runner_scopes, so it does not
+      say where they register; name them (nova-config machine set {{ inventory_hostname }} --runner_scopes
+      '<url>=<count>[:<label>+<label>],...'), or set --runners 0 to retire every runner here, or give -e github_runner_url and
+      -e github_runner_scope for one url. github_runner_state=absent is for one url (-e github_runner_url); for the record,
+      clear its runner_scopes.
+
+# Each wanted runner by its directory name, <slug>-<i>, as scope.yml names them.
+- name: the runners the record wants
+  ansible.builtin.set_fact:
+    github_runner_record_want: >-
+      {%- set out = [] -%}
+      {%- for t in nova_runner_scopes | default([]) -%}
+      {%- set slug = t.url | regex_replace('^https://[^/]+/', '') | regex_replace('/$', '') | replace('/', '-') -%}
+      {%- for i in range(1, (t.count | int) + 1) -%}{%- set _ = out.append(slug ~ '-' ~ i) -%}{%- endfor -%}
+      {%- endfor -%}
+      {{ out }}
+    github_runner_stray_urls: []
+
+- name: is there a runner base directory yet
+  ansible.builtin.stat: { path: "{{ github_runner_base_dir }}" }
+  register: github_runner_record_base
+
+- name: the runner directories on the host
+  ansible.builtin.find:
+    paths: "{{ github_runner_base_dir }}"
+    patterns: '^[A-Za-z0-9._-]+-[0-9]+$'
+    use_regex: true
+    file_type: directory
+    recurse: false
+  register: github_runner_record_dirs
+  when: github_runner_record_base.stat.isdir | default(false)
+
+- name: the runner services on the host
+  ansible.builtin.find:
+    paths: "{{ github_runner_unit_dir }}"
+    patterns: "{{ '^github-runner[.][A-Za-z0-9._-]+-[0-9]+[.]plist$' if ansible_facts['system'] == 'Darwin' else '^github-runner-[A-Za-z0-9._-]+-[0-9]+[.]service$' }}"
+    use_regex: true
+    file_type: file
+    recurse: false
+  register: github_runner_record_units
+
+- name: the runners on the host that the record does not want
+  ansible.builtin.set_fact:
+    github_runner_record_strays: >-
+      {{ ((github_runner_record_dirs.files | default([]) | map(attribute='path') | map('basename') | list)
+          + (github_runner_record_units.files | default([]) | map(attribute='path') | map('basename')
+             | map('regex_replace', '^github-runner[.-](.*)[.](service|plist)$', '\1') | list))
+         | unique | difference(github_runner_record_want) | sort }}
+
+- name: retire each runner the record does not want
+  ansible.builtin.include_tasks: record-retire.yml
+  loop: "{{ github_runner_record_strays }}"
+  loop_control: { loop_var: github_runner_stray }
+
+- name: each scope of the record
+  ansible.builtin.include_tasks: scope.yml
+  loop: "{{ nova_runner_scopes | default([]) }}"
+  loop_control: { loop_var: github_runner_record_scope, label: "{{ github_runner_record_scope.url }}" }
+  vars:
+    github_runner_url: "{{ github_runner_record_scope.url }}"
+    github_runner_scope: "{{ 'repo' if '/' in (github_runner_record_scope.url | regex_replace('^https://[^/]+/', '') | regex_replace('/$', '')) else 'org' }}"
+    runner_count: "{{ github_runner_record_scope.count }}"
+    github_runner_labels: "{{ github_runner_record_scope.labels | default([]) }}"
+
+- name: GitHub's entries for this host that the record does not want
+  ansible.builtin.include_tasks: record-github.yml
+  when: github_runner_deregister | bool
+
+- name: the record's receipt
+  ansible.builtin.debug:
+    msg: >-
+      RUNNERS-RECORD {{ inventory_hostname }} scopes={{ nova_runner_scopes | default([]) | length }}
+      want={{ github_runner_record_want | length }} retired={{ github_runner_record_strays | join(',') or '-' }}
+      {{ '(check: nothing changed)' if ansible_check_mode else '' }}

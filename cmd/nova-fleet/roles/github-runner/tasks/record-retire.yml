@@ -1,0 +1,46 @@
+---
+# One runner on the host that the record does not want, github_runner_stray (<slug>-<i>, a directory, a service, or
+# both): its url is read from its .runner, a removal token is asked for that url, and unix-retire.yml retires it (after
+# the job it is running ends). A directory with no .runner was never registered and is only removed.
+- name: the stray runner's registration
+  ansible.builtin.slurp: { src: "{{ github_runner_base_dir }}/{{ github_runner_stray }}/.runner" }
+  register: github_runner_stray_file
+  failed_when: false
+
+- name: the stray runner's names and url
+  ansible.builtin.set_fact:
+    github_runner_slug: "{{ github_runner_stray | regex_replace('-[0-9]+$', '') }}"
+    github_runner_stray_index: "{{ github_runner_stray | regex_replace('^.*-([0-9]+)$', '\\1') | int }}"
+    github_runner_stray_url: >-
+      {{ ((github_runner_stray_file.content | b64decode | regex_search('"gitHubUrl"[ ]*:[ ]*"(https://[^"]+)"', '\1') or ['']) | first)
+         if github_runner_stray_file.content is defined else '' }}
+
+- name: a registered stray names its url
+  ansible.builtin.assert:
+    quiet: true
+    that: github_runner_stray_file.content is not defined or github_runner_stray_url | length > 0
+    fail_msg: >-
+      github-runner: {{ inventory_hostname }}'s {{ github_runner_base_dir }}/{{ github_runner_stray }}/.runner names no
+      gitHubUrl, so it cannot be removed from GitHub; look at the file
+
+- name: the stray runner's scope
+  ansible.builtin.set_fact:
+    github_runner_path: "{{ github_runner_stray_url | regex_replace('^https://[^/]+/', '') | regex_replace('/$', '') }}"
+    github_runner_scope: "{{ 'repo' if '/' in (github_runner_stray_url | regex_replace('^https://[^/]+/', '') | regex_replace('/$', '')) else 'org' }}"
+    github_runner_need: []
+    github_runner_stray_urls: "{{ github_runner_stray_urls + ([github_runner_stray_url | regex_replace('/$', '')] if github_runner_stray_url else []) }}"
+
+- name: the stray runner, planned
+  ansible.builtin.debug:
+    msg: >-
+      RUNNER-STRAY {{ inventory_hostname }} {{ github_runner_stray }} url={{ github_runner_stray_url or '-' }}: not in the
+      record's runner_scopes; {{ 'a run retires it (check: nothing changed)' if ansible_check_mode else 'retiring it' }}
+
+- name: a removal token for its url
+  ansible.builtin.include_tasks: token.yml
+  when: github_runner_stray_url | length > 0 and github_runner_deregister | bool
+
+- name: retire it
+  ansible.builtin.include_tasks: unix-retire.yml
+  vars:
+    runner_index: "{{ github_runner_stray_index }}"

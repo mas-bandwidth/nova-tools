@@ -24,6 +24,8 @@ type Machine struct {
 	Cores   *int   `json:"cores"` // nil when unknown
 	Roles   string `json:"roles"` // of bench, runner, services
 	Runners int    `json:"runners"`
+	// RunnerScopes is its Linux and macOS GitHub Actions runners: <url>=<count>[:<label>+<label>], comma-separated
+	RunnerScopes string `json:"runner_scopes"`
 	// WindowsRunners is a WSL machine's Windows-side runners: <url>=<count>[:<label>+<label>], comma-separated
 	WindowsRunners string `json:"windows_runners"`
 	// RunnerEnv is the environment its GitHub Actions runners' services start with (the github-runners play)

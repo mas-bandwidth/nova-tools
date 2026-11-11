@@ -1,10 +1,14 @@
 ---
-# Retire runner number runner_index: stop and remove its service, remove it from GitHub, delete its directory.
+# Retire runner number runner_index: after the job it is running ends, stop and remove its service (and any drop-in
+# beside it), remove it from GitHub, delete its directory.
 - name: the retiring runner's names
   ansible.builtin.set_fact:
     github_runner_dir: "{{ github_runner_base_dir }}/{{ github_runner_slug }}-{{ runner_index }}"
     github_runner_unit: "github-runner-{{ github_runner_slug }}-{{ runner_index }}"
     github_runner_label_id: "github-runner.{{ github_runner_slug }}-{{ runner_index }}"
+
+- name: the job it is running ends first
+  ansible.builtin.include_tasks: wait-idle.yml
 
 - name: stop and remove the service
   ansible.builtin.shell: |
@@ -19,6 +23,7 @@
       [ -e "$f" ] || { echo ABSENT; exit 0; }
       systemctl disable --now {{ github_runner_unit }}.service
       rm -f "$f"
+      rm -rf "$f.d"
       systemctl daemon-reload
     fi
     echo REMOVED
