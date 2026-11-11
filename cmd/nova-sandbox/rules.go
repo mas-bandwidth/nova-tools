@@ -131,7 +131,7 @@ type linuxPlan struct {
 }
 
 // planLinux decides the wall for host, or refuses: it never plans a wall weaker than
-// the flags say. It is pure, so execWall and show apply and print the same plan.
+// the flags say. It is pure: what it reads of the host comes in as h.
 func planLinux(w *wall, h linuxHost) (*linuxPlan, []refusal) {
 	if !h.landlock {
 		return nil, []refusal{refuse("no_sandbox", "this kernel has no landlock; this tool does not run a command it cannot contain")}

@@ -159,7 +159,7 @@ func launch(args []string, stderr io.Writer, env []string, wait bool) int {
 	if w != nil {
 		bad = append(bad, cwdRefusal(w)...)
 	}
-	badUse := slices.ContainsFunc(bad, func(r refusal) bool { return slices.Contains(usageReasons, r.reason) })
+	badUse := malformedUse(bad)
 	if wait && w != nil && !badUse {
 		fmt.Fprintln(stderr, wallLine(w))
 	}
@@ -204,12 +204,17 @@ func beforeDashes(args []string) []string {
 // usageReasons are the refusals that mean the invocation itself is malformed.
 var usageReasons = []string{"bad_flag", "bad_value", "no_command", "bad_read", "bad_write", "bad_net", "bad_gpu", "bad_env"}
 
+// malformedUse reports whether any refusal in bad is one of usageReasons.
+func malformedUse(bad []refusal) bool {
+	return slices.ContainsFunc(bad, func(r refusal) bool { return slices.Contains(usageReasons, r.reason) })
+}
+
 // report prints the refusals and returns the exit status. A malformed invocation is one
 // refusal line naming every problem at once, exit 2. Otherwise each refusal is a
 // SANDBOX REFUSED line: 125 when the wall refused to start, and when the only problem
 // is the command itself, 126 not executable (shell convention) or 127 on no PATH entry.
 func report(stderr io.Writer, verb string, bad []refusal) int {
-	if slices.ContainsFunc(bad, func(r refusal) bool { return slices.Contains(usageReasons, r.reason) }) {
+	if malformedUse(bad) {
 		return malformed(stderr, verb, texts(bad)...)
 	}
 	wallRefused, notExec := false, false

@@ -100,7 +100,7 @@ func build(s spec, goos string) (*wall, []refusal) {
 		switch {
 		case rf != nil:
 			bad = append(bad, *rf)
-		case !underAny(target, slices.Concat(systemRoots(goos), w.optRoots, w.reads, w.writes)):
+		case !underAny(target, w.reach(goos)):
 			bad = append(bad, refuse("bad_read", "%s is under no system root, --read or --write; name its directory with --read", target))
 		case badPath(goos, spelled) != "":
 			bad = append(bad, refuse("bad_read", "the command %s %s", spelled, badPath(goos, spelled)))
@@ -126,6 +126,11 @@ func systemRoots(goos string) []string {
 		return darwinRoots
 	}
 	return linuxReadRoots
+}
+
+// reach is every directory the wall lets the command see: the system roots and every grant.
+func (w *wall) reach(goos string) []string {
+	return slices.Concat(systemRoots(goos), w.optRoots, w.reads, w.writes)
 }
 
 // resolveDir checks one caller directory: absolute, existing, a directory, and
@@ -197,7 +202,7 @@ func wallLine(w *wall) string {
 // outsideCwd reports a working directory outside the system roots and every grant.
 // The text names a directory to cd into, or tells the caller to --read this one.
 func outsideCwd(dir string, w *wall, goos string) (refusal, bool) {
-	if underAny(dir, slices.Concat(systemRoots(goos), w.optRoots, w.reads, w.writes)) {
+	if underAny(dir, w.reach(goos)) {
 		return refusal{}, false
 	}
 	grant := "a granted directory"

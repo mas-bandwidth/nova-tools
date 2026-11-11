@@ -152,7 +152,7 @@ func TestSeccompFilter(t *testing.T) {
 	}
 }
 
-// TestFilterNames: every rule the program holds is named, so show lists what applies.
+// TestFilterNames: every rule the program holds is named, in the order it applies.
 func TestFilterNames(t *testing.T) {
 	t.Parallel()
 	_, open := buildFilter(archTable["amd64"], filterOpts{})
