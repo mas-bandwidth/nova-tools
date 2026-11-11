@@ -28,7 +28,7 @@ func TestFunctionalRunnerEnv(t *testing.T) {
 
 	code, _, errs = realRun(t, env, "machine", "list")
 	assert.Equal(t, 2, code)
-	assert.Contains(t, errs, `store has no current schema; run: nova-config schema | psql "$NOVA_PG_DSN"`)
+	assert.Contains(t, errs, `store has no current schema; run: nova-config schema | PGPASSWORD="$NOVA_PG_PASSWORD" psql "$NOVA_PG_DSN"`)
 
 	schema, err := os.ReadFile("schema.sql")
 	require.NoError(t, err)
