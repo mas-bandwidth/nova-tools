@@ -7,10 +7,10 @@
 #
 # Digests are the publisher's own: nodejs.org SHASUMS256.txt, the dart-archive .sha256sum, builds.hex.pm builds.txt, the
 # elixir release .sha256sum, Adoptium's .sha256.txt, Microsoft's releases.json (SHA-512), go.dev/dl's JSON, a GitHub
-# release asset's digest, PyPI's digest, lua.org's download page and static.rust-lang.org's .sha256. A tool built from
-# a git tag is pinned by the tag's commit; a Go tool by its module version (go install checks it against the checksum
-# database); an npm package by the registry's integrity, checked in the lock file the install writes. sbcl and squirrel
-# publish no digest: theirs is the archive's, recorded when it was first pinned.
+# release asset's digest, PyPI's digest, python.org's release page, lua.org's download page and static.rust-lang.org's
+# .sha256. A tool built from a git tag is pinned by the tag's commit; a Go tool by its module version (go install checks
+# it against the checksum database); an npm package by the registry's integrity, checked in the lock file the install
+# writes. sbcl and squirrel publish no digest: theirs is the archive's, recorded when it was first pinned.
 
 nova_sdk_dir: "{{ ansible_facts['user_dir'] }}/sdk"
 
@@ -326,6 +326,56 @@ nova_sdk_tools:
       url: https://github.com/albertodemichelis/squirrel/archive/refs/tags/v3.2.tar.gz
       file: squirrel-3.2-tag.tar.gz   # the URL's own name, v3.2.tar.gz, says nothing of what it is
       sha256: 02805414cfadd5bbb921891d3599b83375a40650abd6404a8ab407dc5e86a996
+
+  # CPython from the python.org source tarball, configured with its own directory as the prefix (from a copy of the
+  # unpacked tree set aside, as sbcl's), with mypy installed offline from the extras: pure-Python wheels, each held to
+  # PyPI's sha256 by pip --require-hashes. Not linked as python3: a pin is named by its version.
+  - name: python3.11
+    version: "3.11.18"
+    dir: python-3.11.18
+    probe: bin/mypy
+    links: [bin/python3.11]
+    build: &python_build |
+      mv "$dest" "$stage/s"
+      mkdir -p "$dest" "$stage/w"
+      mv "$stage"/s/*.whl "$stage/w/"
+      cd "$stage/s"
+      { ./configure --prefix="$dest" --disable-test-modules --with-ensurepip=install && nice -n 15 make -j"$jobs" && make install; } \
+        >"$stage/build.log" 2>&1 || { tail -40 "$stage/build.log"; exit 1; }
+      printf '%s\n' \
+        'mypy==1.18.2 --hash=sha256:22a1748707dd62b58d2ae53562ffc4d7f8bcc727e8ac7cbc69c053ddc874d47e' \
+        'mypy-extensions==1.1.0 --hash=sha256:1be4cccdb0f2482337c4743e60421de3a356cd97508abadd57d47403e94f5505' \
+        'typing-extensions==4.15.0 --hash=sha256:f0fa19c6845758ab08074a0cfa8b7aecb71c999ca73d62883bc25cc018c4e548' \
+        'pathspec==0.12.1 --hash=sha256:a0d503e138a4c123b27490a4f7beda6a01c6f288df0e4a8b79c7eb0dc7b4cc08' >"$stage/mypy.lock"
+      "$dest/bin/python3" -I -m pip install --quiet --no-index --no-cache-dir --disable-pip-version-check \
+        --require-hashes --find-links "$stage/w" -r "$stage/mypy.lock"
+    linux:
+      url: https://www.python.org/ftp/python/3.11.18/Python-3.11.18.tgz
+      sha256: 5f62711b12470fd435f83f1451c1b1ef4a179aebc715c716874b0967567d814e
+      extras: &mypy_wheels
+        - url: https://files.pythonhosted.org/packages/87/e3/be76d87158ebafa0309946c4a73831974d4d6ab4f4ef40c3b53a385a66fd/mypy-1.18.2-py3-none-any.whl
+          sha256: 22a1748707dd62b58d2ae53562ffc4d7f8bcc727e8ac7cbc69c053ddc874d47e
+          path: mypy-1.18.2-py3-none-any.whl
+        - url: https://files.pythonhosted.org/packages/79/7b/2c79738432f5c924bef5071f933bcc9efd0473bac3b4aa584a6f7c1c8df8/mypy_extensions-1.1.0-py3-none-any.whl
+          sha256: 1be4cccdb0f2482337c4743e60421de3a356cd97508abadd57d47403e94f5505
+          path: mypy_extensions-1.1.0-py3-none-any.whl
+        - url: https://files.pythonhosted.org/packages/18/67/36e9267722cc04a6b9f15c7f3441c2363321a3ea07da7ae0c0707beb2a9c/typing_extensions-4.15.0-py3-none-any.whl
+          sha256: f0fa19c6845758ab08074a0cfa8b7aecb71c999ca73d62883bc25cc018c4e548
+          path: typing_extensions-4.15.0-py3-none-any.whl
+        - url: https://files.pythonhosted.org/packages/cc/20/ff623b09d963f88bfde16306a54e12ee5ea43e9b597108672ff3a408aad6/pathspec-0.12.1-py3-none-any.whl
+          sha256: a0d503e138a4c123b27490a4f7beda6a01c6f288df0e4a8b79c7eb0dc7b4cc08
+          path: pathspec-0.12.1-py3-none-any.whl
+
+  - name: python3.15
+    version: "3.15.2"
+    dir: python-3.15.2
+    probe: bin/mypy
+    links: [bin/python3.15]
+    build: *python_build
+    linux:
+      url: https://www.python.org/ftp/python/3.15.2/Python-3.15.2.tgz
+      sha256: f74e1db0eabd651cd01e4e2a00201bd41866abe74869ab716f9bf33cbbaa0943
+      extras: *mypy_wheels
 
   - name: clang-format
     version: "23.1.3"
