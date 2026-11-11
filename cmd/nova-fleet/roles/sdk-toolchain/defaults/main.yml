@@ -35,6 +35,13 @@ nova_sdk_env:
 nova_sdk_env_files:
   SQ: squirrel-3.2-double/bin/sq
   NOVA_SDK: "."
+  LUA: lua-5.4.8/bin/lua
+  LUAU: luau-0.741/bin/luau
+  LUAU_ANALYZE: luau-0.741/bin/luau-analyze
+  MOO: moo-v1.3.0/bin/moo
+  MOO_ANALYZE: moo-v1.3.0/bin/moo-analyze
+  GOOSE: goose-v2026.2/goose
+  LOBSTER: lobster-v2026.8/bin/lobster
 
 # One entry per tool. A tool is installed on a platform (linux: x86_64 Linux and WSL; darwin: Apple silicon) only when
 # it has an entry for it. Keys:
@@ -406,7 +413,8 @@ nova_sdk_tools:
       mkdir -p "$dest/bin"
       cp -a b/moo b/moo-analyze "$dest/bin/"
       git rev-parse HEAD >"$dest/PIN"
-    linux: { repo: https://github.com/mas-bandwidth/moo, ref: v1.3.0, commit: f60f0239f41c6c0a827ecee44a7f9539c5798068 }
+    linux: &moo { repo: https://github.com/mas-bandwidth/moo, ref: v1.3.0, commit: f60f0239f41c6c0a827ecee44a7f9539c5798068 }
+    darwin: *moo
 
   # The interpreter serialize.nut pins (its Makefile's dist-squirrel): the v3.2 tag's archive, built as sq64 with
   # SQUSEDOUBLE, so _intsize_ and _floatsize_ are both 8. The squirrel above is the float-32 build; this one is not
