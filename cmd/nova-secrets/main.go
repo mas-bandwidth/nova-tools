@@ -919,7 +919,7 @@ func (t tool) decrypt(o opts, seat string) (map[string]string, error) {
 		}
 		for k, v := range vs {
 			if _, dup := values[k]; dup {
-				return nil, deny("duplicate-name", "%s is in both %s.yaml and %s.grants.yaml; a name lives in one file: remove it with: sops unset %s '[\"%s\"]', or stop granting it", k, seat, seat, filepath.Join(o.store, seat+".yaml"), k)
+				return nil, inBoth(o, seat, k)
 			}
 			values[k] = v
 		}
@@ -928,6 +928,11 @@ func (t tool) decrypt(o opts, seat string) (map[string]string, error) {
 		return nil, noSeatFile(o, seat)
 	}
 	return values, nil
+}
+
+// inBoth refuses a name that is in both of a seat's files.
+func inBoth(o opts, seat, name string) error {
+	return deny("duplicate-name", "%s is in both %s.yaml and %s.grants.yaml; a name lives in one file: remove it with: sops unset %s '[\"%s\"]', or stop granting it", name, seat, seat, filepath.Join(o.store, seat+".yaml"), name)
 }
 
 // seatFile is the store's file name; ok is false when it is absent. Anything there but a regular file (a symlink to
@@ -946,17 +951,9 @@ func seatFile(o opts, name string) (string, bool, error) {
 
 // plainNames lists the names in a seat file's plaintext keys, with no key and no sops; none when it is absent.
 func plainNames(o opts, name string) ([]string, error) {
-	p, ok, err := seatFile(o, name)
+	top, ok, err := plainTop(o, name)
 	if err != nil || !ok {
 		return nil, err
-	}
-	b, err := os.ReadFile(p)
-	if err != nil {
-		return nil, refuse("reading %s: %v; run: ls -l %s", p, err, q(p))
-	}
-	_, top, err := parseTop(b)
-	if err != nil {
-		return nil, refuse("%s does not parse as a sops file (anchors, aliases and merge keys are refused)", p)
 	}
 	var names []string
 	for i := 0; i+1 < len(top.Content); i += 2 {
@@ -965,6 +962,23 @@ func plainNames(o opts, name string) ([]string, error) {
 		}
 	}
 	return names, nil
+}
+
+// plainTop reads a seat file's top-level map with no key and no sops; ok is false when it is absent.
+func plainTop(o opts, name string) (*yaml.Node, bool, error) {
+	p, ok, err := seatFile(o, name)
+	if err != nil || !ok {
+		return nil, ok, err
+	}
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return nil, false, refuse("reading %s: %v; run: ls -l %s", p, err, q(p))
+	}
+	_, top, err := parseTop(b)
+	if err != nil {
+		return nil, false, refuse("%s does not parse as a sops file (anchors, aliases and merge keys are refused)", p)
+	}
+	return top, true, nil
 }
 
 // decryptFile opens one seat file into its flat name -> value map.
@@ -1348,21 +1362,13 @@ func (t tool) names(args []string) error {
 	var seen []string
 	shown, refused, found := 0, 0, false
 	for _, file := range []string{o.as + ".yaml", o.as + ".grants.yaml"} {
-		p, ok, err := seatFile(o, file)
+		top, ok, err := plainTop(o, file)
 		if err != nil {
 			return err
 		} else if !ok {
 			continue
 		}
 		found = true
-		b, err := os.ReadFile(p)
-		if err != nil {
-			return refuse("reading %s: %v; run: ls -l %s", p, err, q(p))
-		}
-		_, top, err := parseTop(b)
-		if err != nil {
-			return refuse("%s does not parse as a sops file (anchors, aliases and merge keys are refused)", p)
-		}
 		for i := 0; i+1 < len(top.Content); i += 2 {
 			k, v := top.Content[i], top.Content[i+1]
 			switch {
@@ -1370,7 +1376,7 @@ func (t tool) names(args []string) error {
 			case k.Kind != yaml.ScalarNode || k.Tag != "!!str" || !envName.MatchString(k.Value) || v.Kind != yaml.ScalarNode:
 				refused++
 			case slices.Contains(seen, k.Value):
-				return deny("duplicate-name", "%s is in both %s.yaml and %s.grants.yaml; a name lives in one file: remove it with: sops unset %s '[\"%s\"]', or stop granting it", k.Value, o.as, o.as, filepath.Join(o.store, o.as+".yaml"), k.Value)
+				return inBoth(o, o.as, k.Value)
 			default:
 				seen = append(seen, k.Value)
 				out.WriteString(k.Value + "\n")
