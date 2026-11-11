@@ -304,7 +304,7 @@ func TestSDKToolchainMacPins(t *testing.T) {
 	for _, tool := range d.Tools {
 		byName[tool.Name] = tool
 	}
-	for _, name := range []string{"python3.11", "python3.15", "squirrel-double", "lua", "luau", "stylua", "goose", "lobster", "rust", "otp"} {
+	for _, name := range []string{"python3.11", "python3.15", "squirrel-double", "lua", "luau", "stylua", "goose", "lobster", "moo", "rust", "otp"} {
 		tool, ok := byName[name]
 		require.True(t, ok, "%s is in the defaults", name)
 		p := tool.Darwin
@@ -589,4 +589,43 @@ func TestSDKToolchainSQIsTheDoubleSquirrel(t *testing.T) {
 	env, err := os.ReadFile(sdkToolchainRole + "/templates/env.sh.j2")
 	require.NoError(t, err)
 	assert.Contains(t, string(env), `if [ -x "{{ sdk_dir }}/{{ v }}" ]; then export {{ k }}=`)
+}
+
+// Each make variable env.sh exports for a file under the SDK names a file the role installs there: a tool's probe or
+// one of its links, under that tool's directory, so it is executable exactly where the tool is installed.
+func TestSDKToolchainEnvFilesNameInstalledFiles(t *testing.T) {
+	t.Parallel()
+	b, err := os.ReadFile(sdkToolchainRole + "/defaults/main.yml")
+	require.NoError(t, err)
+	var files struct {
+		Env map[string]string `yaml:"nova_sdk_env_files"`
+	}
+	require.NoError(t, yaml.Unmarshal(b, &files))
+	for _, k := range []string{"SQ", "LUA", "LUAU", "LUAU_ANALYZE", "MOO", "MOO_ANALYZE", "GOOSE", "LOBSTER"} {
+		assert.Contains(t, files.Env, k, "env.sh exports %s where its file is", k)
+	}
+	d := readSDKDefaults(t)
+	for k, v := range files.Env {
+		if k == "NOVA_SDK" {
+			continue
+		}
+		dir, rest, _ := strings.Cut(v, "/")
+		var tool *sdkTool
+		for i := range d.Tools {
+			if d.Tools[i].Dir == dir {
+				tool = &d.Tools[i]
+			}
+		}
+		require.NotNil(t, tool, "%s=%s names a tool's directory", k, v)
+		installed := rest == tool.Probe
+		for _, l := range tool.Links {
+			switch p := l.(type) {
+			case string:
+				installed = installed || rest == p
+			case map[string]any:
+				installed = installed || rest == p["path"]
+			}
+		}
+		assert.True(t, installed, "%s=%s is %s's probe or one of its links", k, v, tool.Name)
+	}
 }
