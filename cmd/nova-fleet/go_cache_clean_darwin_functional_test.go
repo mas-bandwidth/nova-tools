@@ -59,6 +59,21 @@ func TestFunctionalGoCacheCleanDarwin(t *testing.T) {
 	if !strings.Contains(out, "CLEAN-DONE ") {
 		t.Errorf("no CLEAN-DONE line: %s", out)
 	}
+	// a cache find cannot read is said, never counted as nothing to remove
+	locked := filepath.Join(cache, "cd")
+	if err := os.MkdirAll(locked, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(locked, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) }) // ignored: lets TempDir remove it
+	if out := run(env...); !strings.Contains(out, "CLEAN-FAIL "+cache+": ") || !strings.Contains(out, "Permission denied") {
+		t.Errorf("an unreadable cache dir is not said: %s", out)
+	}
+	if err := os.Chmod(locked, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if out := run("DISK_CLEAN_CACHE="+filepath.Dir(cache), "DISK_CLEAN_AGE_MIN=0"); !strings.Contains(out, "CLEAN-REFUSED ") {
 		t.Errorf("a cache not named go-build was not refused: %s", out)
 	}

@@ -22,7 +22,7 @@ import (
 	"syscall"
 )
 
-// tree is this directory as shipped: every file but the Go sources.
+// embedded is this directory as shipped, Go sources included; files leaves them out.
 //
 //go:embed *
 var embedded embed.FS

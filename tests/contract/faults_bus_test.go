@@ -42,15 +42,16 @@ func busSenderHooked(e *Env) {
 func init() {
 	cannot := Want{Reason: []string{"redis"}}
 	auth := Want{Reason: []string{"NOVA_BUS_PASSWORD|NOVA_BUS_USER"}}
+	noRemedy := []string{`no remedy: the line has no "run: <command>"`}
 	register(
 		Fault{Tool: "bus", Name: "redis address unset", Argv: busSend,
 			Want: Want{Reason: []string{"NOVA_BUS_REDIS"}}},
 		Fault{Tool: "bus", Name: "user without password", Setup: func(e *Env) { busDead(e); e.Set("NOVA_BUS_USER", "u") }, Argv: []string{"who"},
 			Want: Want{Reason: []string{"NOVA_BUS_PASSWORD"}}},
-		Fault{Tool: "bus", Name: "send: redis stopped", Setup: busDead, Argv: busSend, Want: cannot, Known: "bus-redis-refusal"},
-		Fault{Tool: "bus", Name: "who: redis stopped", Setup: busDead, Argv: []string{"who"}, Want: cannot, Known: "bus-redis-refusal"},
-		Fault{Tool: "bus", Name: "pending: redis stopped", Setup: busDead, Argv: []string{"pending", "--as", "a"}, Want: cannot, Known: "bus-redis-refusal"},
-		Fault{Tool: "bus", Name: "send: redis frozen", Setup: busFrozen, Argv: busSend, Want: cannot, Known: "bus-redis-refusal"},
+		Fault{Tool: "bus", Name: "send: redis stopped", Setup: busDead, Argv: busSend, Want: cannot, Known: "bus-redis-refusal", Gap: noRemedy},
+		Fault{Tool: "bus", Name: "who: redis stopped", Setup: busDead, Argv: []string{"who"}, Want: cannot, Known: "bus-redis-refusal", Gap: noRemedy},
+		Fault{Tool: "bus", Name: "pending: redis stopped", Setup: busDead, Argv: []string{"pending", "--as", "a"}, Want: cannot, Known: "bus-redis-refusal", Gap: noRemedy},
+		Fault{Tool: "bus", Name: "send: redis frozen", Setup: busFrozen, Argv: busSend, Want: cannot, Known: "bus-redis-refusal", Gap: noRemedy},
 		Fault{Tool: "bus", Name: "who: redis wants a password", Setup: busAuth, Argv: []string{"who"}, Want: auth, Known: "bus-redis-refusal"},
 		Fault{Tool: "bus", Name: "send: redis wants a password", Setup: busAuth, Argv: busSend, Want: auth, Known: "bus-redis-refusal"},
 		Fault{Tool: "bus", Name: "who: wrong password", Setup: busWrongUser, Argv: []string{"who"}, Want: auth, Known: "bus-redis-refusal"},

@@ -52,7 +52,7 @@ func execWall(w *wall, env []string) []refusal {
 	return []refusal{refuse("sandbox_failed", "%s could not be started: %v", bin, err)}
 }
 
-// darwinPlan is the sandbox-exec binary and the profile execWall would apply.
+// darwinPlan is the sandbox-exec binary and the profile execWall applies.
 func darwinPlan(w *wall) (bin, text string, params []string, bad []refusal) {
 	bin, ok := sandboxExec()
 	if !ok {

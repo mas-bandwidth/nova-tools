@@ -178,7 +178,7 @@ func ident(s string) string { return `"` + s + `"` }
 
 // listSQL names every column it reads, never *, so a store that carries
 // columns this package does not know is read as it is; the columns are the
-// name, the given ones as text (” for NULL) and the two stamps.
+// name, the given ones as text (empty for NULL) and the two stamps.
 func listSQL(table string, columns []string) string {
 	cols := []string{"name"}
 	for _, c := range columns {

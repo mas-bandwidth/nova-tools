@@ -19,8 +19,8 @@ import (
 // onTerminal starts name with args as the session leader of a new
 // pseudo-terminal, in its foreground, as a login gives a shell. It returns
 // the master, whose writes are typed, a check that the output so far contains
-// a string, and the process's exit.
-func onTerminal(t *testing.T, name string, args ...string) (*os.File, func(string) func() bool, <-chan error) {
+// a string, a count of a string in the output so far, and the process's exit.
+func onTerminal(t *testing.T, name string, args ...string) (*os.File, func(string) func() bool, func(string) int, <-chan error) {
 	t.Helper()
 	master, slavePath, err := openPty()
 	require.NoError(t, err)
@@ -56,10 +56,11 @@ func onTerminal(t *testing.T, name string, args ...string) (*os.File, func(strin
 			t.Logf("terminal output: %q", out.String())
 		}
 	})
+	count := func(s string) int { mu.Lock(); defer mu.Unlock(); return strings.Count(out.String(), s) }
 	seen := func(s string) func() bool {
-		return func() bool { mu.Lock(); defer mu.Unlock(); return strings.Contains(out.String(), s) }
+		return func() bool { return count(s) > 0 }
 	}
-	return master, seen, done
+	return master, seen, count, done
 }
 
 // TestFunctionalCommandReadsTheTerminal runs nova-reserve as an interactive
@@ -69,7 +70,7 @@ func onTerminal(t *testing.T, name string, args ...string) (*os.File, func(strin
 func TestFunctionalCommandReadsTheTerminal(t *testing.T) {
 	t.Parallel()
 	bin, dir := build(t), t.TempDir()
-	master, seen, done := onTerminal(t, bin, "--dir", dir, "--slots", "1", "--", "sh", "-c", "read x; echo got:$x")
+	master, seen, _, done := onTerminal(t, bin, "--dir", dir, "--slots", "1", "--", "sh", "-c", "read x; echo got:$x")
 	require.Eventually(t, seen("HELD mode=shared slot=1/1"), patience, 20*time.Millisecond)
 	_, err := master.Write([]byte("hi\n"))
 	require.NoError(t, err)
@@ -92,7 +93,7 @@ func TestFunctionalCtrlZStopsTheJob(t *testing.T) {
 		t.Skip("no bash to drive job control")
 	}
 	bin, dir := build(t), t.TempDir()
-	master, seen, done := onTerminal(t, bash, "--norc", "--noprofile", "-i")
+	master, seen, _, done := onTerminal(t, bash, "--norc", "--noprofile", "-i")
 	typed := func(s string) {
 		_, err := master.Write([]byte(s))
 		require.NoError(t, err)
@@ -129,7 +130,7 @@ func TestFunctionalBackgroundedWhileWaitingStillRelays(t *testing.T) {
 	}
 	bin, dir := build(t), t.TempDir()
 	holder := startHolder(t, bin, dir, "--slots", "1") // the slot is held
-	master, seen, done := onTerminal(t, bash, "--norc", "--noprofile", "-i")
+	master, seen, count, done := onTerminal(t, bash, "--norc", "--noprofile", "-i")
 	typed := func(s string) {
 		_, err := master.Write([]byte(s))
 		require.NoError(t, err)
@@ -162,11 +163,14 @@ func TestFunctionalBackgroundedWhileWaitingStillRelays(t *testing.T) {
 	// relayed the stop by stopping itself. An fg before that continues a job
 	// that is still running, which takes the terminal to nova-reserve and not
 	// the command; the command's read then stops the job again
-	// (tla/JobControl.tla, not modelled: fg of a job bg left running). The
-	// shell's SIGCHLD is queued as nova-reserve stops, so the fg line reaches
-	// a shell that already knows the job is stopped and continues it.
+	// (tla/JobControl.tla, not modelled: fg of a job bg left running). ps
+	// shows the stop before the kernel tells the shell (SIGCHLD follows the
+	// state change), so wait until the shell reports the stop at a prompt:
+	// the second "Stopped" in the output, the first being Ctrl-Z's.
 	require.Eventually(t, func() bool { return strings.HasPrefix(ps("stat", reserve), "T") }, patience, 20*time.Millisecond,
 		"nova-reserve never stopped when its backgrounded command read the terminal")
+	require.Eventually(t, func() bool { typed("\n"); return count("Stopped") >= 2 }, patience, 200*time.Millisecond,
+		"the shell never reported the job stopped")
 	typed("fg\n")
 	require.Eventually(t, func() bool { g := foreground(); return g != shell && g != reserve }, 10*time.Second, 20*time.Millisecond,
 		"fg never gave the command the terminal")

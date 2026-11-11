@@ -19,9 +19,12 @@ if [ "$(basename "$c")" != go-build ]; then say "CLEAN-REFUSED $c: the cache her
 pct=$(df -P "$c" 2>/dev/null | awk 'NR == 2 {sub("%", "", $5); print $5}')
 age=$AGE
 if [ -n "$pct" ] && [ "$pct" -gt "$WARN" ]; then age=$PRESSED; fi
-# stat -f %b: the 512-byte blocks a file holds
-read -r n kb < <(find "$c" -mindepth 2 -maxdepth 2 -path "$c/??/*" -type f -mmin "+$age" -exec stat -f %b {} + 2>/dev/null |
+err=$(mktemp) || exit 1
+trap 'rm -f "$err"' EXIT
+# stat -f %b: the 512-byte blocks a file holds. find's errors are said (a daemon denied the volume finds nothing)
+read -r n kb < <(find "$c" -mindepth 2 -maxdepth 2 -path "$c/??/*" -type f -mmin "+$age" -exec stat -f %b {} + 2>"$err" |
   awk '{n++; s += $1} END {print n + 0, int(s / 2)}')
-[ "$verb" = CLEAN ] && find "$c" -mindepth 2 -maxdepth 2 -path "$c/??/*" -type f -mmin "+$age" -delete 2>/dev/null
+[ "$verb" = CLEAN ] && find "$c" -mindepth 2 -maxdepth 2 -path "$c/??/*" -type f -mmin "+$age" -delete 2>>"$err"
+[ -s "$err" ] && say "CLEAN-FAIL $c: $(sort -u "$err" | head -3 | tr '\n' ' ')(run: ls -la $c; a LaunchDaemon may need access to that volume)"
 [ "$n" -gt 0 ] && say "$verb $c $n files ${kb}KiB unchanged ${age}m"
 say "$verb-DONE $(hostname -s) ${kb}KiB age=${age}m"

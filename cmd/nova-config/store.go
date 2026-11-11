@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"maps"
 	"strconv"
 	"strings"
 	"time"
@@ -88,7 +87,7 @@ func (p pgStore) List(ctx context.Context, k *kind) ([]Row, error) {
 }
 
 // historySQL reads the history, newest first; $1 and $2 are a kind and a name
-// (” for any), $3 a time or NULL.
+// (empty for any), $3 a time or NULL, $4 a limit or NULL for all.
 const historySQL = `SELECT id::text, to_char(at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), actor, kind, name, op, coalesce(before::text, ''), coalesce(after::text, '')
  FROM config.history
  WHERE ($1::text = '' OR kind = $1::text) AND ($2::text = '' OR name = $2::text) AND ($3::timestamptz IS NULL OR at >= $3::timestamptz)
@@ -201,14 +200,7 @@ func (p pgStore) Write(ctx context.Context, k *kind, op string, before, after Ro
 	if tag.RowsAffected() == 0 {
 		return 0, refused("%s %s was changed or removed by another write since it was read; nothing written; run: nova-config %s show %s, then repeat the %s", k.name, name, k.name, name, op)
 	}
-	b, a := before.F, after.F
-	if reason != "" && a != nil {
-		a = maps.Clone(a)
-		a["reason"] = reason
-	} else if reason != "" {
-		b = maps.Clone(b)
-		b["reason"] = reason
-	}
+	b, a := withReason(before.F, after.F, reason)
 	if dry {
 		return 0, nil // the deferred rollback undoes the statement
 	}

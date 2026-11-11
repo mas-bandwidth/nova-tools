@@ -3,7 +3,7 @@ package main
 // The seccomp-bpf program, built for one architecture from the wall's options. It is
 // pure, so unit tests build and interpret it on every OS for every architecture.
 // seccomp_linux.go installs it. What each rule is for, and what was measured, is in
-// cmd/nova-sandbox/README.md; the rule names below are what show prints.
+// cmd/nova-sandbox/README.md; the tests check the rule names below.
 
 const (
 	// An action the kernel does not know is treated as a kill, so KILL_PROCESS is safe
@@ -140,7 +140,7 @@ func assemble(src []insn) []sockFilter {
 }
 
 // buildFilter assembles the program for arch and names its rules in the order they
-// apply, for show. Every rule the program holds is named here and nowhere else.
+// apply, for the tests. Every rule the program holds is named here and nowhere else.
 func buildFilter(arch archNums, o filterOpts) ([]sockFilter, []string) {
 	p := []insn{
 		{code: bpfLdWAbs, k: offArch},

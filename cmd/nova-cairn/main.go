@@ -92,7 +92,7 @@ func help(w io.Writer, path string) bool {
 	for _, g := range groups {
 		var lines []string
 		for _, v := range g.verbs {
-			if path == "" || v[0] == path || strings.HasPrefix(v[0], path+" ") {
+			if v[0] == path || strings.HasPrefix(v[0], path+" ") {
 				lines = append(lines, "  nova-cairn "+v[1])
 			}
 		}
