@@ -88,7 +88,7 @@ func (p pgStore) List(ctx context.Context, k *kind) ([]Row, error) {
 }
 
 // historySQL reads the history, newest first; $1 and $2 are a kind and a name
-// (” for any), $3 a time or NULL.
+// (empty for any), $3 a time or NULL, $4 a limit or NULL for all.
 const historySQL = `SELECT id::text, to_char(at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), actor, kind, name, op, coalesce(before::text, ''), coalesce(after::text, '')
  FROM config.history
  WHERE ($1::text = '' OR kind = $1::text) AND ($2::text = '' OR name = $2::text) AND ($3::timestamptz IS NULL OR at >= $3::timestamptz)
