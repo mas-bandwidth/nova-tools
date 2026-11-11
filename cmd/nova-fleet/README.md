@@ -283,10 +283,9 @@ nova-fleet install -- -e nova_tools_version=local -e nova_tools_local_dir=$PWD/d
 `nova-fleet up --tools $PWD/dist` does the same for every machine.
 
 **The v1 gh wrapper.** A `<nova_bin_dir>/gh` that names `GH_PUSH_TOKEN` is v1's push-credential wrapper, which runs gh
-under a secrets store v2 does not have, ahead of the real gh on PATH; the play removes it. While a git credential
-helper of the login still names it, it is kept and the run prints `GH-WRAPPER KEPT host=<machine> path=<file>`: point
-the helper at the real gh and run install again. Only the helpers' names are read, never their values. Any other
-`gh` there is left alone.
+under a secrets store v2 does not have, ahead of the real gh on PATH; the play removes it, with each git credential
+helper entry of the login that names it (such a helper can only fail; other entries stay). Only the helpers' names are
+read, never their values. Any other `gh` there is left alone.
 
 **opencode.** After the tools, the bench group gets the opencode nova-sprint's workers run (`roles/opencode`):
 `nova_opencode_version` (1.18.20; 1.x, since 2.x starts a background service on a fixed port) from sst/opencode's
