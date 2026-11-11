@@ -24,6 +24,7 @@ Type=oneshot
 User={{ ansible_facts['user_id'] }}
 {% endif %}
 WorkingDirectory={{ nova_home }}
+LimitMEMLOCK={{ nova_service_memlock }}
 {% for k, v in service_env | dictsort %}
 Environment="{{ k }}={{ v | string | replace('\\', '\\\\') | replace('"', '\\"') | replace('%', '%%') }}"
 {% endfor %}

@@ -23,6 +23,13 @@ nova_service_path: "{{ nova_bin_dir }}:/opt/homebrew/bin:/usr/local/bin:/usr/bin
 nova_launchd_domain: auto
 nova_systemd_scope: user
 
+# A linux service unit's locked-memory limit (LimitMEMLOCK, a size such as 1G). The kernel
+# charges io_uring's locked pages to the login across all its processes, and systemd's
+# 8 MiB default refuses concurrent rings; 1G is rocketnet's measured figure for a host
+# whose kernel is after 6.8 (its docs/LINUX.md). A user unit cannot go past its user
+# manager's limit, so the health play sets the manager's to this size too.
+nova_service_memlock: 1G
+
 # Units of another tool's (com.nova.service.<name>.plist, nova-service-<name>.service
 # not written by services.yml) to retire by name; every other such unit is left
 # alone and listed.

@@ -312,6 +312,9 @@ nova-fleet services -- -e nova_service_restart=reader
   wins over `HOME` and `PATH`. Env values are strings: write the string you mean. Output appends to the row's `log`.
 - launchd does not search `PATH`, so on macOS a bare `argv[0]` is resolved with `command -v` against the unit's
   `PATH`; not found fails the play before anything is written.
+- A Linux unit sets `LimitMEMLOCK=` `nova_service_memlock` (`1G`): the kernel charges io_uring's locked pages to the
+  login across all its processes, and systemd's 8 MiB default refuses concurrent rings. A user unit is held to its user
+  manager's limit, which the health play sets to the same size.
 - A row with `keys` is wrapped in `nova-secrets exec --store <store> --as <seat> --key <key_dir>/<seat>.key --sops
   <sops> --only <keys> --`, so values reach the command and never the unit file.
 - Rows without `every` are kept alive; `enabled` defaults to true; `enabled false` writes the unit and does not load it.
@@ -905,6 +908,13 @@ applying it restarts only the daemon it configures, never the login's units. A d
   `nova_health_log_trim` bytes is cut to its first and last 32 MiB (kept beside it as `.flood`) and emptied.
 - The login's user slice is killed inside at `nova_health_user_memory_max_pct` of RAM, and a killed user manager comes
   back (`user-<uid>.slice.d/90-nova-memory.conf`, `user@.service.d/90-nova-restart.conf`).
+- The login's user manager may lock `nova_service_memlock` (`user@<uid>.service.d/90-nova-memlock.conf`): a user
+  unit cannot go past its manager's limit, and the services play gives its units that `LimitMEMLOCK`. A running
+  manager's limit is raised in place (`prlimit`), so none of its units restarts.
+- Leftovers of older tooling are removed where found (a unit stopped and disabled first): rowan-tools'
+  `90-nova-host-memory.conf` drop-ins (ssh, tailscaled, user.slice), v1's member and reader `20-memory.conf`
+  drop-ins, a `nova-pg-dump.timer` with no `nova-pg-dump.service`, the hand `~/.config/systemd/user/service.d/90-nova-memlock.conf`,
+  v1's `actions.runner.mas-bandwidth-nova-sprint.*` units and an unregistered `~/actions-runner-nova-sprint-*`.
 - `nova-disk-report` every 6 hours from `nova-disk-report.timer`: one line in the journal for /, the home filesystem
   and swap, `DISK-WARN` at priority warning over `nova_health_disk_warn_pct`.
 - `nova-disk-clean` every hour from `nova-disk-clean.timer`, as the login: a top-level entry it owns in
@@ -942,7 +952,7 @@ daemon's environment says `WOULD` and removes nothing.
 | `nova_health_disk_clean`, `nova_health_disk_clean_dirs`, `nova_health_disk_clean_caches` | `true`, `/tmp`, `~/.cache/go-build` | |
 | `nova_health_disk_clean_age_min`, `nova_health_disk_clean_pressed_min`, `nova_health_disk_clean_on_calendar` | `2880`, `360`, hourly | minutes |
 
-**Check.** `HEALTH <machine> journal=persistent panic=10 ssh_oom=0 slice_max=<bytes> | DISK <machine> root=<n>%
+**Check.** `HEALTH <machine> journal=persistent panic=10 ssh_oom=0 slice_max=<bytes> user_memlock=<bytes> | DISK <machine> root=<n>%
 swap=<n>%`. **Rollback.** Remove the file of the guard (named above), then `systemctl daemon-reload` and restart the
 daemon it configures (`systemd-journald`, `ssh`) or `sysctl --system`; `systemctl disable --now nova-disk-report.timer`.
 

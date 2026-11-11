@@ -152,6 +152,88 @@
   notify: reload the system manager
   when: (nova_health_user_memory_max_pct | int) > 0
 
+# ---- the login's user manager may lock nova_service_memlock ----
+# A user unit's LimitMEMLOCK (services.yml writes nova_service_memlock) cannot go past its user manager's, and the
+# manager starts with systemd's 8 MiB. The drop-in sets it from the next start; a running manager's limit is raised in
+# place with prlimit, so none of its units is restarted (the services play restarts a unit whose file changed).
+- name: the login's user manager drop-in directory
+  ansible.builtin.file: { path: "/etc/systemd/system/user@{{ ansible_facts['user_uid'] }}.service.d", state: directory, mode: "0755" }
+  become: true
+
+- name: the login's user manager drop-in (LimitMEMLOCK)
+  ansible.builtin.copy:
+    dest: "/etc/systemd/system/user@{{ ansible_facts['user_uid'] }}.service.d/90-nova-memlock.conf"
+    mode: "0644"
+    content: |
+      # managed by Ansible (fleet/health.yml): io_uring's locked pages are charged to the login; its units may lock this much
+      [Service]
+      LimitMEMLOCK={{ nova_service_memlock }}
+  become: true
+  notify: reload the system manager
+
+- name: the running user manager may lock as much
+  ansible.builtin.shell: |
+    set -eu
+    pid=$(systemctl show -p MainPID --value user@{{ ansible_facts['user_uid'] }}.service)
+    [ "${pid:-0}" -gt 0 ] || exit 0
+    have=$(prlimit --pid "$pid" --memlock --raw --noheadings --output HARD)
+    [ "$have" = "{{ health_memlock_bytes }}" ] && exit 0
+    prlimit --pid "$pid" --memlock={{ health_memlock_bytes }}:{{ health_memlock_bytes }}
+    echo "MEMLOCK-RAISED user@{{ ansible_facts['user_uid'] }} from=$have to={{ health_memlock_bytes }}"
+  args: { executable: /bin/bash }
+  vars:
+    health_memlock_bytes: "{{ nova_service_memlock | human_to_bytes }}"
+  become: true
+  register: health_memlock
+  changed_when: "'MEMLOCK-RAISED' in health_memlock.stdout"
+
+# ---- leftovers of older tooling ----
+# Files that tools this play replaced wrote, removed where found (a unit is stopped and disabled first):
+# - rowan-tools host-memory.yml: ssh's OOMScoreAdjust=-1000 undoes "sessions at OOM score 0" above, and its
+#   user.slice MemoryMax stands beside the login's slice limit; tailscaled's floor is netwatch's to recover.
+# - rowan-tools member-memory.yml: drop-ins of v1's member and reader units, which are gone.
+# - rowan-tools postgres.yml: a nova-pg-dump.timer with no nova-pg-dump.service (the postgres play writes both).
+# - the hand drop-in that set LimitMEMLOCK on every user unit (2026-10-23): the user manager's limit above replaces it.
+# - v1's svc.sh nova-sprint runner units (actions.runner.mas-bandwidth-nova-sprint.*), and the install directory of
+#   one that is no longer registered (no .runner file); this play's runners are github-runner-* units.
+- name: the leftovers of older tooling on this machine
+  ansible.builtin.shell: |
+    shopt -s nullglob
+    for f in /etc/systemd/system/{ssh.service.d,tailscaled.service.d,user.slice.d}/90-nova-host-memory.conf \
+             {{ nova_home }}/.config/systemd/user/service.d/90-nova-memlock.conf \
+             {{ nova_home }}/.config/systemd/user/nova-{loop,service}-{member,reader}-*.service.d \
+             /etc/systemd/system/actions.runner.mas-bandwidth-nova-sprint.*; do
+      [ -e "$f" ] && echo "$f"
+    done
+    if [ -e /etc/systemd/system/nova-pg-dump.timer ] && [ ! -e /etc/systemd/system/nova-pg-dump.service ]; then
+      echo /etc/systemd/system/nova-pg-dump.timer
+    fi
+    for d in {{ nova_home }}/actions-runner-nova-sprint-*; do
+      [ -e "$d/.runner" ] || echo "$d"
+    done
+    true
+  args: { executable: /bin/bash }
+  register: health_leftovers
+  changed_when: false
+  check_mode: false
+
+- name: a leftover unit, stopped and disabled
+  ansible.builtin.systemd_service: { name: "{{ item | basename }}", state: stopped, enabled: false }
+  loop: "{{ health_leftovers.stdout_lines | select('match', '^/etc/systemd/system/[^/]+[.](service|timer)$') | list }}"
+  become: true
+
+- name: a leftover, removed
+  ansible.builtin.file: { path: "{{ item }}", state: absent }
+  loop: "{{ health_leftovers.stdout_lines }}"
+  become: true
+  register: health_removed
+  notify: reload the system manager
+
+- name: the login's manager reads its units again
+  ansible.builtin.systemd_service: { daemon_reload: true, scope: user }
+  environment: { XDG_RUNTIME_DIR: "/run/user/{{ ansible_facts['user_uid'] }}" }
+  when: health_removed is changed and not ansible_check_mode and (health_removed.results | map(attribute='item') | select('match', '^' ~ nova_home ~ '/') | list | length > 0)
+
 # ---- the disk report ----
 - name: the report script
   ansible.builtin.copy: { src: nova-disk-report, dest: /usr/local/sbin/nova-disk-report, mode: "0755", owner: root, group: root }
@@ -275,8 +357,9 @@
     p=$(sysctl -n kernel.panic 2>/dev/null || echo ?)
     s=$(systemctl show -p OOMScoreAdjust --value {{ nova_health_ssh_unit }}.service 2>/dev/null || echo ?)
     m=$(systemctl show -p MemoryMax --value user-{{ ansible_facts['user_uid'] }}.slice 2>/dev/null || echo ?)
+    l=$(prlimit --pid "$(systemctl show -p MainPID --value user@{{ ansible_facts['user_uid'] }}.service)" --memlock --raw --noheadings --output HARD 2>/dev/null || echo ?)
     d=$(DISK_NO_LOG=1 DISK_WARN_PCT={{ nova_health_disk_warn_pct }} bash -s {{ nova_home }} < /usr/local/sbin/nova-disk-report 2>/dev/null || df -P / | awk 'NR==2{print "DISK root=" $5}')
-    echo "journal=$j panic=$p ssh_oom=${s:-unset} slice_max=$m | $d"
+    echo "journal=$j panic=$p ssh_oom=${s:-unset} slice_max=$m user_memlock=$l | $d"
   args: { executable: /bin/bash }
   become: true
   register: health_show

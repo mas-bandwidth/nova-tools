@@ -3,7 +3,7 @@
 # health.yml: guards that let a Linux machine get itself out of trouble, and a disk report (cmd/nova-fleet/README.md,
 # "health"): the journal kept on disk, a kernel panic that reboots, ssh sessions the OOM killer may kill, rsyslog's
 # files rotated by size with an already flooded one cut down, a memory ceiling on the login's user slice with a user
-# manager that comes back, a DISK line in the journal every 6 hours (DISK-WARN over nova_health_disk_warn_pct), and an
+# manager that comes back and may lock nova_service_memlock, older tooling's leftovers removed, a DISK line in the journal every 6 hours (DISK-WARN over nova_health_disk_warn_pct), and an
 # hourly clean of what jobs leave in /tmp, the runners' TMPDIRs and the Go build cache.
 # On a Mac only the Go build cache (`go env GOCACHE` of the login) is trimmed, hourly from a LaunchDaemon run as the login.
 #
