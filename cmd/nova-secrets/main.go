@@ -511,11 +511,19 @@ func (t tool) ready(o opts) error {
 func (t tool) bootstrap(o opts, check bool) error {
 	dir := filepath.Dir(t.keyFile("x"))
 	rk := filepath.Join(dir, "recovery.key")
-	resume := false // a store this bootstrap made and stopped in before the seat (a failed commit): finished with its keys
+	resume := false // a store this bootstrap made after its keys and pin, and stopped in before the seat (a failed commit): finished with its keys
 	if _, err := os.Stat(o.store); err == nil {
 		cfg, _ := os.ReadFile(filepath.Join(o.store, ".sops.yaml")) // ignored: an unreadable one is no store to finish
-		if _, kerr := os.Lstat(rk); o.store != filepath.Join(dir, "store") || string(cfg) != "creation_rules: []\n" || kerr != nil {
+		has := func(p string) bool { _, err := os.Lstat(p); return err == nil }
+		if o.store != filepath.Join(dir, "store") || string(cfg) != "creation_rules: []\n" || !has(rk) || !has(o.key) || !has(filepath.Join(o.pins, "recovery.pub")) {
 			return nil
+		}
+		if b, err := os.ReadFile(filepath.Join(o.store, "recovery.pub")); err == nil { // absent: init stopped before writing it
+			if p, err := t.publicOf(opts{store: o.store, key: rk}); err != nil {
+				return err // an unreadable recovery key is the cause to name, not the missing seat
+			} else if string(b) != p+"\n" {
+				return nil // a store made for another recovery key is not this bootstrap's to finish
+			}
 		}
 		resume = true
 	}

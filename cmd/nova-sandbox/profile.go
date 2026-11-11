@@ -27,14 +27,14 @@ const metalGrants = `
 
 // darwinProfile fills the template for one run and returns the text and the -D
 // parameters it names. Caller paths enter as parameters, except the ancestor and
-// link literals, which is why badPath refuses profile metacharacters.
+// link literals, written as is, which is why badPath refuses profile metacharacters.
 func darwinProfile(w *wall) (text string, params []string, err error) {
 	var optRoots, anc, reads, writes, netLines []string
 	for _, r := range w.optRoots {
-		optRoots = append(optRoots, fmt.Sprintf("(allow file-read* (subpath %q))", r))
+		optRoots = append(optRoots, fmt.Sprintf("(allow file-read* (subpath \"%s\"))", r))
 	}
 	for _, d := range ancestors(slices.Concat(w.reads, w.writes, w.optRoots)...) {
-		anc = append(anc, fmt.Sprintf("(allow file-read-metadata (literal %q))", d))
+		anc = append(anc, fmt.Sprintf("(allow file-read-metadata (literal \"%s\"))", d))
 	}
 	for i, r := range w.reads {
 		reads = append(reads, fmt.Sprintf(`(allow file-read* (subpath (param "READ%d")))`, i))
@@ -43,7 +43,7 @@ func darwinProfile(w *wall) (text string, params []string, err error) {
 	// Following a symlink needs read on the link: the caller's own spelling of a granted
 	// path, and each link among its ancestors, is a literal.
 	for _, l := range linkLiterals(w.linkSpellings) {
-		reads = append(reads, fmt.Sprintf("(allow file-read* (literal %q))", l))
+		reads = append(reads, fmt.Sprintf("(allow file-read* (literal \"%s\"))", l))
 	}
 	for i, d := range w.writes {
 		writes = append(writes,

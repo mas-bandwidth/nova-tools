@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -67,6 +69,36 @@ func TestDarwinGPUAndLinks(t *testing.T) {
 	assert.Contains(t, text, `(iokit-user-client-class "AGXDeviceUserClient" "IOSurfaceRootUserClient")`)
 	assert.Contains(t, text, `"com.apple.MTLCompilerService"`)
 	assert.Contains(t, lines(text), `(allow file-read* (literal "/w/alias"))`)
+}
+
+// A literal carries the path's own UTF-8: the profile language has no \u escape,
+// so a no-break space must reach it as the character, as it does in a -D param.
+func TestDarwinLiteralsCarryThePathAsWritten(t *testing.T) {
+	t.Parallel()
+	w := &wall{reads: []string{"/r/nb sp/a"}, optRoots: []string{"/o/x y"}, linkSpellings: []string{"/l/nb link"}}
+	text, params, err := darwinProfile(w)
+	require.NoError(t, err)
+	got := lines(text)
+	assert.Contains(t, got, "(allow file-read-metadata (literal \"/r/nb sp\"))")
+	assert.Contains(t, got, "(allow file-read* (subpath \"/o/x y\"))")
+	assert.Contains(t, got, "(allow file-read* (literal \"/l/nb link\"))")
+	assert.NotContains(t, text, `\u`, "no Go escape reaches the profile")
+	assert.Equal(t, []string{"READ0=/r/nb sp/a"}, params)
+}
+
+// A developer directory with parentheses in its name, as a versioned Xcode has, is
+// granted: inside a quoted literal they are plain characters.
+func TestDarwinDeveloperDirWithParenthesesIsGranted(t *testing.T) {
+	t.Parallel()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	app := filepath.Join(dir, "Xcode (16.2).app", "Contents")
+	require.NoError(t, os.MkdirAll(filepath.Join(app, "Developer"), 0o755))
+	link := filepath.Join(dir, "xcode_select_link")
+	require.NoError(t, os.Symlink(filepath.Join(app, "Developer"), link))
+	text, _, err := darwinProfile(&wall{optRoots: developerDir(link)})
+	require.NoError(t, err)
+	assert.Contains(t, lines(text), "(allow file-read* (subpath \""+app+"\"))")
 }
 
 func TestDarwinRootsMatchTheTemplate(t *testing.T) {

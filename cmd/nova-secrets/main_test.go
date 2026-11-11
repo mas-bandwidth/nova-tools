@@ -179,6 +179,11 @@ func (h *harness) run(stdin io.Reader, env []string, dir, name string, args ...s
 	case name == "age-keygen" && args[0] == "-o":
 		return nil, os.WriteFile(args[1], []byte("AGE-SECRET-KEY-FAKE\n"), 0o644)
 	case name == "age-keygen" && args[0] == "-y" && filepath.Base(args[1]) == "recovery.key":
+		if _, err := os.Stat(args[1]); err == nil {
+			if _, err := os.ReadFile(args[1]); err != nil {
+				return nil, exitErr(1) // as age-keygen: a key it cannot read prints nothing
+			}
+		}
 		return []byte(pubRec + "\n"), nil
 	case name == "age-keygen" && args[0] == "-y":
 		return []byte(h.keyPub + "\n"), nil
@@ -1209,6 +1214,70 @@ func TestSetBootstrapFinishesAfterAFailedCommit(t *testing.T) {
 		for _, c := range h.calls {
 			assert.NotEqual(t, []string{"-o"}, c.args[:1], "no key is made again")
 		}
+	}
+}
+
+// A store at the default made for another recovery key is not a bootstrap to finish, even with a recovery
+// key beside it: set adds no seat, names no key to back up, and refuses as for any store without the seat.
+func TestSetFinishesNoStoreMadeForAnotherRecoveryKey(t *testing.T) {
+	t.Parallel()
+	h, dir := fresh(t)
+	require.Equal(t, 0, h.main("init", "--store", h.store, "--recovery", pubB, "--pins", h.pins), h.stderr.String())
+	for _, k := range []string{filepath.Join(dir, "recovery.key"), h.key} {
+		require.NoError(t, os.WriteFile(k, []byte("AGE-SECRET-KEY-FAKE\n"), 0o600))
+	}
+	h.stdout.Reset()
+	assert.Equal(t, 2, h.main("set", "TAILSCALE_API_KEY", "--sops", "sops"))
+	assert.NotContains(t, h.stdout.String(), "SECRETS SET NEW")
+	assert.Contains(t, h.stderr.String(), "SECRETS SET REFUSED reason=no-seat")
+	b, err := os.ReadFile(filepath.Join(h.store, ".sops.yaml"))
+	require.NoError(t, err)
+	assert.Equal(t, "creation_rules: []\n", string(b), "no seat is added")
+}
+
+// A store this bootstrap made, with a recovery key it cannot read: set says so, naming the key, and adds no seat.
+func TestSetNamesAnUnreadableRecoveryKey(t *testing.T) {
+	t.Parallel()
+	h, dir := fresh(t)
+	require.Equal(t, 0, h.main("init", "--store", h.store, "--recovery", pubRec, "--pins", h.pins), h.stderr.String())
+	rk := filepath.Join(dir, "recovery.key")
+	for _, k := range []string{rk, h.key} {
+		require.NoError(t, os.WriteFile(k, []byte("AGE-SECRET-KEY-FAKE\n"), 0o600))
+	}
+	require.NoError(t, os.Chmod(rk, 0o000))
+	h.stderr.Reset()
+	assert.Equal(t, 2, h.main("set", "TAILSCALE_API_KEY", "--sops", "sops"))
+	assert.Contains(t, h.stderr.String(), "reason=no-key")
+	assert.Contains(t, h.stderr.String(), "age-keygen -y "+rk+" did not print an age public key")
+	assert.NotContains(t, h.stderr.String(), "no-seat")
+}
+
+// A store at the default without this seat's key or without the recovery pin is not one a bootstrap stopped in
+// (a bootstrap makes both before the store): set refuses as for any store, adds no seat and names no key to back up.
+func TestSetFinishesNoStoreWithoutTheSeatKeyOrThePin(t *testing.T) {
+	t.Parallel()
+	for _, missing := range []string{"key", "pin"} {
+		h, dir := fresh(t)
+		init, keys := []string{"init", "--store", h.store, "--recovery", pubRec}, []string{filepath.Join(dir, "recovery.key")}
+		if missing == "key" {
+			init = append(init, "--pins", h.pins)
+			h.keyPub = "" // as age-keygen -y on a missing file: no key printed
+		} else {
+			keys = append(keys, h.key)
+			require.NoError(t, os.MkdirAll(dir, 0o700)) // init without --pins makes only the store
+		}
+		require.Equal(t, 0, h.main(init...), h.stderr.String())
+		for _, k := range keys {
+			require.NoError(t, os.WriteFile(k, []byte("AGE-SECRET-KEY-FAKE\n"), 0o600))
+		}
+		h.stdout.Reset()
+		h.stderr.Reset()
+		assert.Equal(t, 2, h.main("set", "TAILSCALE_API_KEY", "--sops", "sops"), missing)
+		assert.Contains(t, h.stderr.String(), "SECRETS SET REFUSED reason=no-"+missing, missing)
+		assert.NotContains(t, h.stdout.String(), "SECRETS SET NEW", missing)
+		b, err := os.ReadFile(filepath.Join(h.store, ".sops.yaml"))
+		require.NoError(t, err)
+		assert.Equal(t, "creation_rules: []\n", string(b), "%s: no seat is added", missing)
 	}
 }
 

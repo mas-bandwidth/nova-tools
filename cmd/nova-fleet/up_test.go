@@ -1038,6 +1038,39 @@ func TestUpTailscaleStatusFailureIsSaid(t *testing.T) {
 	}
 }
 
+// --check pins the host keys of machines already on the tailnet, the one thing it writes on this node, so its
+// ssh probes over the tailnet are checked against them.
+func TestUpCheckPinsHostKeys(t *testing.T) {
+	f := &upFake{peers: map[string]string{"first": "100.64.0.10", "second": "100.64.0.11"}}
+	f.install(t)
+	_, out, errs := runArgs("up", "--check", "--tools", "v2.0.0", "first=203.0.113.7", "second=203.0.113.8")
+	if !strings.Contains(out, "UP HOSTKEY first OK pinned=1") {
+		t.Errorf("stdout lacks the pin:\n%s\n%s", out, errs)
+	}
+	kh, _ := os.ReadFile(filepath.Join(os.Getenv("HOME"), ".ssh", "known_hosts")) // ignored: absent is checked below
+	if !strings.Contains(string(kh), "first,first.ts.example,100.64.0.10 ssh-ed25519 KEY-first\n") {
+		t.Errorf("known_hosts:\n%s", kh)
+	}
+}
+
+// A known_hosts whose last line has no newline keeps that line whole: the pins start on a line of their own.
+func TestUpPinsAfterALastLineWithoutNewline(t *testing.T) {
+	f := &upFake{peers: map[string]string{"first": "100.64.0.10", "second": "100.64.0.11"}}
+	f.install(t)
+	kh := filepath.Join(os.Getenv("HOME"), ".ssh", "known_hosts")
+	if err := os.MkdirAll(filepath.Dir(kh), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(kh, []byte("existing.example.com ssh-ed25519 KEY-existing"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runArgs("up", "--tools", "v2.0.0", "first=203.0.113.7", "second=203.0.113.8")
+	b, _ := os.ReadFile(kh) // ignored: written above
+	if !strings.HasPrefix(string(b), "existing.example.com ssh-ed25519 KEY-existing\nfirst,first.ts.example,100.64.0.10 ssh-ed25519 KEY-first\n") {
+		t.Errorf("known_hosts:\n%s", b)
+	}
+}
+
 // A known_hosts that cannot be written leaves the host keys unpinned, and up says so.
 func TestUpUnpinnedHostKeyIsSaid(t *testing.T) {
 	f := &upFake{}

@@ -360,13 +360,17 @@ func (c *codexWake) poll(ctx context.Context, out, stderr io.Writer) (string, er
 		return why, nil
 	}
 	if len(c.waiting) == 0 { // taken only once the chat is idle: the poll that takes a fault queues it and settles its record
-		retry, c.tries, c.limit = &faults[i], 0, 1
-		for _, id := range saved(c.dir, retry.first, retry.last) {
+		for _, id := range saved(c.dir, faults[i].first, faults[i].last) {
 			c.waiting = append(c.waiting, Msg{ID: id})
 		}
-		if len(c.waiting) == 0 {
+		if len(c.waiting) == 0 { // its saved events are gone: nothing to queue, and it holds back no later fault
+			if err := settle(c.dir, faults[i].last, c.mark); err != nil {
+				fmt.Fprintf(stderr, "HOOK WAKE FAILED harness=codex id=%s reason=%s\n", faults[i].last, escaper.Replace(err.Error()))
+				return "", wakeFailed{faults[i].last, err}
+			}
 			return "", nil
 		}
+		retry, c.tries, c.limit = &faults[i], 0, 1
 	}
 	msgs, first, last := c.waiting, c.waiting[0].ID, c.waiting[len(c.waiting)-1].ID
 	text, start := c.text(msgs)
@@ -550,16 +554,8 @@ func codexResolve(s sys, name, thread, arg string, stdout, stderr io.Writer) int
 		}
 	}
 	in, inOK := readRecord(dir, "intent")
-	if inOK && idCmp(id, in.first) >= 0 && idCmp(id, in.last) <= 0 {
+	if inOK = inOK && idCmp(id, in.first) >= 0 && idCmp(id, in.last) <= 0; inOK {
 		f = codexFault{last: in.last, first: in.first, result: "unknown", size: in.size, start: in.start, err: "the hook stopped during codex queue"}
-		w, _ := readRecord(dir, "woken") // ignored: absent is the zero record, nothing woken
-		w.last = maxID(w.last, in.last)
-		if err := settle(dir, "", func() error { return writeRecord(dir, "woken", w) }); err != nil {
-			return fail(stderr, "hook", "HOOK RESOLVE FAILED id=%s reason=%s", id, escaper.Replace(err.Error()))
-		}
-		if err := os.Remove(filepath.Join(dir, "intent")); err != nil {
-			return fail(stderr, "hook", "HOOK RESOLVE FAILED id=%s reason=%s", id, escaper.Replace(err.Error()))
-		}
 	}
 	var err error
 	switch {
@@ -577,6 +573,16 @@ func codexResolve(s sys, name, thread, arg string, stdout, stderr io.Writer) int
 	}
 	if err != nil {
 		return fail(stderr, "hook", "HOOK RESOLVE FAILED id=%s reason=%s", id, escaper.Replace(err.Error()))
+	}
+	if inOK { // the intent goes only once the result it is resolved to is recorded
+		w, _ := readRecord(dir, "woken") // ignored: absent is the zero record, nothing woken
+		w.last = maxID(w.last, in.last)
+		if err := settle(dir, "", func() error { return writeRecord(dir, "woken", w) }); err != nil {
+			return fail(stderr, "hook", "HOOK RESOLVE FAILED id=%s reason=%s", id, escaper.Replace(err.Error()))
+		}
+		if err := os.Remove(filepath.Join(dir, "intent")); err != nil {
+			return fail(stderr, "hook", "HOOK RESOLVE FAILED id=%s reason=%s", id, escaper.Replace(err.Error()))
+		}
 	}
 	fmt.Fprintf(stdout, "HOOK RESOLVE OK id=%s first=%s result=%s\n", f.last, f.first, how)
 	return 0

@@ -25,8 +25,9 @@
 \*
 \* A fault marked retry (by a start, for every definite failure, or by hook
 \* --resolve <id>=retry) gets one more try. Not modelled: --resolve
-\* <id>=woken, --resolve on an intent, and an unknown fault woken by its text
-\* showing in the rollout.
+\* <id>=woken, --resolve on an intent, an unknown fault woken by its text
+\* showing in the rollout, and a retry fault whose saved events are gone
+\* (every id here is saved; the code settles it with nothing to queue).
 \*
 \* Broken = "none" is the design. Reversed witnesses:
 \*   "nocheck"   Check does not wait for idle: a row is queued into a turn

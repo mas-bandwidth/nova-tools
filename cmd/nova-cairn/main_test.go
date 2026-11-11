@@ -312,6 +312,31 @@ func TestSelfTalkInstallationShapes(t *testing.T) {
 	}
 }
 
+// A sentence after a closed quotation is the writer's own, whichever quote
+// marks closed it; a sentence inside one is a quoted specimen.
+func TestSelfTalkAfterAClosedQuotation(t *testing.T) {
+	t.Parallel()
+	own := "My weakest instrument is patience."
+	for _, page := range []string{
+		`She wrote: "First." ` + own,
+		`She wrote: "First sentence. Second sentence." ` + own,
+		"She wrote: “First.” " + own,
+		"She wrote: “First sentence. Second sentence.” " + own,
+	} {
+		code, _, errs := do(t, page+"\n", "self-talk", "-")
+		assert.Equal(t, 1, code, page)
+		assert.Equal(t, `SELFTALK FAIL -:1: RANKING match="My weakest": `+own+"\n", errs, page)
+	}
+	for _, page := range []string{
+		`She wrote: "` + own + `" Then she left.`,
+		"She wrote: “" + own + "” Then she left.",
+	} {
+		code, _, errs := do(t, page+"\n", "self-talk", "-")
+		assert.Equal(t, 0, code, page)
+		assert.Empty(t, errs, page)
+	}
+}
+
 // TestBannerListsEachVerbOnce: the banner is one usage line per verb, names
 // where the long text lives, and carries none of the group notes.
 func TestBannerListsEachVerbOnce(t *testing.T) {
@@ -438,6 +463,65 @@ func TestVerifyCoverage(t *testing.T) {
 	assert.Contains(t, errs, "VERIFY FAIL backlink m/index-a.md links gone.md which does not exist (resolved m/gone.md)")
 	assert.NotContains(t, errs, "wikilink", "a wikilink resolves to a frontmatter name, and a backticked one is not a link")
 	assert.Contains(t, errs, "VERIFY FAIL gating=2 shown=2 info=0 coverage=2 frontmatter=0 links=gate")
+}
+
+// A Markdown link inside fenced code is an example, not a link: it needs no file.
+func TestVerifyBacklinksSkipFencedCode(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "m"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "m", "listed.md"), []byte("body\n"), 0o644))
+	index := "- [listed](listed.md)\n\n```markdown\n- [example](nonexistent-example.md)\n```\n"
+	require.NoError(t, os.WriteFile(filepath.Join(root, "m", "index-a.md"), []byte(index), 0o644))
+	code, out, errs := do(t, "", "memory", "verify", "--root", root, "--links", "gate", "--coverage", "m/*.md:m/index-*.md")
+	assert.Equal(t, 0, code, errs)
+	assert.Contains(t, out, "VERIFY OK gating=0")
+}
+
+// A Markdown link inside inline code is not a link: it needs no file, and a note
+// it names is still covered, because coverage reads names in the whole index.
+func TestVerifyCoverageAndBacklinksSkipInlineCode(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "m"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "m", "listed.md"), []byte("body\n"), 0o644))
+	index := "- `[listed](listed.md)`\n- `[example](nonexistent-example.md)`\n"
+	require.NoError(t, os.WriteFile(filepath.Join(root, "m", "index-a.md"), []byte(index), 0o644))
+	code, out, errs := do(t, "", "memory", "verify", "--root", root, "--links", "gate", "--coverage", "m/*.md:m/index-*.md")
+	assert.Equal(t, 0, code, errs)
+	assert.Contains(t, out, "VERIFY OK gating=0")
+}
+
+// A wikilink inside an inline code span is an example, wherever it sits in the span; one outside code is a link.
+func TestVerifyWikilinksSkipInlineCode(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	note := filepath.Join(root, "note.md")
+	require.NoError(t, os.WriteFile(note, []byte("Run `grep [[MissingPage]] docs/` to find them.\n"), 0o644))
+	code, out, errs := do(t, "", "memory", "verify", "--root", root, "--links", "gate")
+	assert.Equal(t, 0, code, errs)
+	assert.Contains(t, out, "VERIFY OK gating=0")
+	require.NoError(t, os.WriteFile(note, []byte("Run `grep` on [[MissingPage]].\n"), 0o644))
+	code, _, errs = do(t, "", "memory", "verify", "--root", root, "--links", "gate")
+	assert.Equal(t, 1, code)
+	assert.Contains(t, errs, "VERIFY FAIL wikilink [[MissingPage]] resolves to no file (e.g. from note.md)")
+}
+
+// TestVerifyWikilinksSkipDoubleBacktickCode: a code span closes only at a backtick
+// run of its own length, so a link inside a double-backtick span is code, and a
+// link after a closed span is still checked.
+func TestVerifyWikilinksSkipDoubleBacktickCode(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	note := filepath.Join(root, "note.md")
+	require.NoError(t, os.WriteFile(note, []byte("Run ``x [[MissingPage]] y`` and ``a ` [[MissingPage]] b``.\n"), 0o644))
+	code, out, errs := do(t, "", "memory", "verify", "--root", root, "--links", "gate")
+	assert.Equal(t, 0, code, errs)
+	assert.Contains(t, out, "VERIFY OK gating=0")
+	require.NoError(t, os.WriteFile(note, []byte("Run ``x`` on [[MissingPage]].\n"), 0o644))
+	code, _, errs = do(t, "", "memory", "verify", "--root", root, "--links", "gate")
+	assert.Equal(t, 1, code)
+	assert.Contains(t, errs, "VERIFY FAIL wikilink [[MissingPage]] resolves to no file (e.g. from note.md)")
 }
 
 // TestMemoryFindsStoreEntries: the words an AI appended are found by memory search,
@@ -596,6 +680,31 @@ func TestHealLogsTheHeadersPolicy(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(log), `"event":"open","publish":"never","session":"s1","source":"src"`)
 	assert.Equal(t, 1, strings.Count(string(log), "\n"), "healed once")
+	code, out, _ := do(t, "", "open", "--store", store, "--session", "s1", "--publish", "never")
+	assert.Equal(t, 0, code)
+	assert.Contains(t, out, "source=src publish=never reopened=true")
+}
+
+// A session whose header is gone and whose open record is in the log gets the
+// header back as the log has it, whatever a re-open names, and no second record.
+func TestALostHeaderIsWrittenBackFromTheLog(t *testing.T) {
+	t.Parallel()
+	store := t.TempDir()
+	code, _, _ := do(t, "", "open", "--store", store, "--session", "s1", "--source", "src", "--publish", "never")
+	require.Equal(t, 0, code)
+	path := filepath.Join(store, "sessions", "s1.md")
+	header, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.NoError(t, os.Remove(path))
+	code, _, errs := do(t, "", "open", "--store", store, "--session", "s1", "--publish", "immediate")
+	assert.Equal(t, 1, code)
+	assert.Contains(t, errs, "OPEN FAILED: session \"s1\" is already open with publish=never source=src")
+	got, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, string(header), string(got), "the header is the log's open record")
+	log, err := os.ReadFile(filepath.Join(store, "log.jsonl"))
+	require.NoError(t, err)
+	assert.Equal(t, 1, strings.Count(string(log), `"event":"open"`), "one open record")
 	code, out, _ := do(t, "", "open", "--store", store, "--session", "s1", "--publish", "never")
 	assert.Equal(t, 0, code)
 	assert.Contains(t, out, "source=src publish=never reopened=true")

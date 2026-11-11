@@ -303,9 +303,12 @@ func open(store, session, source string, now time.Time, publish string) (openRec
 	case flat:
 		return rec, before, nil
 	case !ok || !rec.found:
-		logSource, logPublish := source, cmp.Or(publish, "never")
+		logSource, logPublish, opened := source, cmp.Or(publish, "never"), now
+		if rec.found { // only the header is gone: it is written back as the log has it, and nothing is logged
+			logSource, logPublish, opened = rec.source, rec.publish, rec.opened
+		}
 		if !ok {
-			header := fmt.Sprintf("# cairn %s\n\nOpened: %s\nSource: %s\nPublish: %s\n", session, stamp(now), source, logPublish)
+			header := fmt.Sprintf("# cairn %s\n\nOpened: %s\nSource: %s\nPublish: %s\n", session, stamp(opened), logSource, logPublish)
 			if err := writeNew(sessionFile(store, session), []byte(header)); err != nil && !errors.Is(err, os.ErrExist) {
 				return rec, false, err
 			}
@@ -313,11 +316,13 @@ func open(store, session, source string, now time.Time, publish string) (openRec
 			// An open interrupted before its log line: log what its header recorded.
 			logSource, logPublish = hs, hp
 		}
-		if err := appendLog(store, "open", session, "", stamp(now), logPublish, logSource); err != nil {
-			return rec, false, err
-		}
-		if rec, err = readOpen(store, session); err != nil {
-			return rec, false, err
+		if !rec.found {
+			if err := appendLog(store, "open", session, "", stamp(now), logPublish, logSource); err != nil {
+				return rec, false, err
+			}
+			if rec, err = readOpen(store, session); err != nil {
+				return rec, false, err
+			}
 		}
 	}
 	if (publish != "" && rec.publish != publish) || (source != "" && source != rec.source) {
