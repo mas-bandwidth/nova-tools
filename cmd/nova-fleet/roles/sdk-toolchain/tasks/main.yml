@@ -43,7 +43,7 @@
             'digest': ('sha512:' ~ p.sha512) if p.sha512 is defined else (('sha256:' ~ p.sha256) if p.sha256 is defined else ''),
             'archive': sdk_dir ~ '/dl/' ~ (p.file | default((p.url | default('')) | basename)),
             'build': p.build | default(t.build | default('')), 'links': t.links | default([]), 'alias': t.alias | default(''),
-            'wrapper': t.wrapper | default('')}) -%}
+            'wrapper': t.wrapper | default(''), 'run': t.run | default('')}) -%}
       {%- endfor -%}
       {{ out }}
 
@@ -87,11 +87,29 @@
   loop_control: { label: "{{ item.name }} {{ item.version }}" }
   register: sdk_probe
 
-- name: the tools that are missing
+# A present tool whose run probe fails is installed as if missing; the install moves it aside to <dir>.broken-<time>.
+- name: each present tool's run probe
+  ansible.builtin.shell: { cmd: "cd {{ item.home | quote }} && dest={{ item.dest | quote }} && {{ item.run }}", executable: /bin/bash }
+  loop: "{{ sdk_probe.results | selectattr('stat.exists') | map(attribute='item') | rejectattr('run', 'equalto', '') | list }}"
+  loop_control: { label: "{{ item.name }} {{ item.version }}" }
+  register: sdk_run
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: the tools that are missing or broken
   ansible.builtin.set_fact:
-    sdk_missing: "{{ sdk_probe.results | rejectattr('stat.exists') | map(attribute='item') | list }}"
+    sdk_missing: >-
+      {{ (sdk_probe.results | rejectattr('stat.exists') | map(attribute='item') | list)
+         + (sdk_run.results | rejectattr('rc', 'equalto', 0) | map(attribute='item') | list) }}
     sdk_go: "{{ sdk_dir }}/{{ (nova_sdk_tools | selectattr('name', 'equalto', 'go') | first).dir }}/bin/go"
     sdk_node_bin: "{{ sdk_dir }}/{{ (nova_sdk_tools | selectattr('name', 'equalto', 'node') | first).dir }}/bin"
+
+- name: each broken tool
+  ansible.builtin.debug:
+    msg: "SDK-TOOLCHAIN BROKEN host={{ inventory_hostname }} tool={{ item.item.name }} rc={{ item.rc }}: {{ item.item.run | trim }}"
+  loop: "{{ sdk_run.results | rejectattr('rc', 'equalto', 0) | list }}"
+  loop_control: { label: "{{ item.item.name }}" }
 
 - name: what a run would install
   ansible.builtin.debug:

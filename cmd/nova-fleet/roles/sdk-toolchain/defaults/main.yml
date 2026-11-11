@@ -41,6 +41,8 @@ nova_sdk_env_files:
 #   dir     the directory under nova_sdk_dir                probe  a file under it that exists once it is installed
 #   links   commands linked into <sdk>/bin: a path under the directory (linked by its basename), or {name, path}
 #   alias   <sdk>/<alias> is a link to the directory        wrapper  a script written as <sdk>/bin/<name>
+#   run     shell run in an installed tool's directory with $dest its real path: a failure means it is broken, and it is
+#           moved aside to <dir>.broken-<time> and installed again
 #   kind    archive (the default), file (one file), git (a tag at a pinned commit), go (go install), npm (npm install),
 #           script (the build alone)
 #   build   shell (set -euo pipefail) run with $dest (the directory), $stage (scratch) and $jobs set: in the directory after the unpack (archive, file), or
@@ -91,11 +93,14 @@ nova_sdk_tools:
   # Erlang/OTP: on Linux the hex.pm prebuilt, which relocates itself in place (its Install names the final directory).
   # hex.pm builds none for macOS, so a Mac builds the release's source from a copy of the unpacked tree set aside, as
   # sbcl's, with crypto and ssl linked statically against Homebrew's openssl@3 (the host's: runner-packages'
-  # postgresql@18 brings it), so a job reaches no library outside the SDK. It needs the Xcode command-line tools.
+  # postgresql@18 brings it), so a job reaches no library outside the SDK. It needs the Xcode command-line tools. bin/erl
+  # falls back to the root its install named, so the run probe holds that root inside this directory's real path (an
+  # install made through a symlinked SDK names a path a sandbox cannot traverse) and starts the runtime.
   - name: otp
     version: "29.0.5"
     dir: otp-29.0.5
     probe: bin/erl
+    run: grep -qF "\"$dest" bin/erl && bin/erl -noshell -eval 'halt().'
     links: [bin/erl, bin/erlc, bin/escript, bin/dialyzer, bin/typer]
     build: ./Install -minimal "$dest" >/dev/null
     linux:

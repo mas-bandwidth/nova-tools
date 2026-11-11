@@ -1157,9 +1157,13 @@ its SHA-512 from `releases.json`, into the dotnet directory beside the 10.0 SDK,
 one `~/sdk/bin/dotnet --list-runtimes` lists both and a `net8.0` target runs on .NET 8 rather than rolling forward.
 
 A tool whose probe (`dir`/`probe` in the defaults) is in its directory is adopted as it is: never downloaded,
-replaced or upgraded, so a second run reports `changed=0`. A missing one is fetched into `~/sdk/dl`, unpacked in a
+replaced or upgraded, so a second run reports `changed=0`. A tool with a `run` probe must also pass it: a shell
+command run in its directory with `$dest` its real path, under `--check` too. One that fails is broken
+(`SDK-TOOLCHAIN BROKEN host=<machine> tool=<name> rc=<n>: <probe>`) and is installed again like a missing one. Erlang/OTP's
+holds the root `bin/erl` falls back to inside its own real directory and runs `erl -noshell -eval 'halt().'`, so an
+install made through a symlinked SDK is rebuilt. A missing one is fetched into `~/sdk/dl`, unpacked in a
 stage beside the SDK and moved into place (a `git` or `script` tool builds into its directory); a directory there
-without its probe is moved aside to `<dir>.broken-<time>`, never deleted. `env.sh` keeps a dated backup of the file it
+without its probe, or broken, is moved aside to `<dir>.broken-<time>`, never deleted. `env.sh` keeps a dated backup of the file it
 replaces. Every link the defaults name is pointed at the pinned version, so a machine whose `~/sdk/bin` named
 another version of a tool names the pinned one after a run; the other version's directory is left where it is. A
 version bump installs the new directory beside the old and moves the links.
@@ -1167,7 +1171,7 @@ version bump installs the new directory beside the old and moves the links.
 | Variable | Default | |
 |---|---|---|
 | `nova_sdk_dir` | `<home>/sdk` | the SDK directory, used by its real path |
-| `nova_sdk_tools` | the toolchain above | one entry per tool: `name`, `version`, `dir`, `probe`, `links`, `kind`, `build`, `alias`, `wrapper`, and a `linux` and/or `darwin` pin (a pin's own `build` replaces the tool's on that platform); a list given with `-e` replaces it whole |
+| `nova_sdk_tools` | the toolchain above | one entry per tool: `name`, `version`, `dir`, `probe`, `links`, `kind`, `build`, `alias`, `wrapper`, `run`, and a `linux` and/or `darwin` pin (a pin's own `build` replaces the tool's on that platform); a list given with `-e` replaces it whole |
 | `nova_sdk_dotnet_more` | the .NET 8.0 SDK | more SDKs in the dotnet directory, each a `version` and a `url` and `sha512` per platform |
 | `nova_sdk_rustup` | rustup 1.29.1; `1.98.1` with `clippy` and `rustfmt`, and `nightly-2026-10-01` | `version`, the `linux` rustup-init `url`, `sha256` and `host`, the `toolchains` (each `name`, `components`, `targets`; the first is on PATH) and the commands `links` puts in `~/sdk/bin` |
 | `nova_sdk_cargo_tools` | `cargo-fuzz` 0.13.1 | crates built with `cargo install --locked` |

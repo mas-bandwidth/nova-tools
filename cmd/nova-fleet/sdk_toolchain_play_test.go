@@ -49,6 +49,7 @@ type sdkTool struct {
 	Links   []any        `yaml:"links"`
 	Alias   string       `yaml:"alias"`
 	Wrapper string       `yaml:"wrapper"`
+	Run     string       `yaml:"run"`
 	Linux   *sdkPlatform `yaml:"linux"`
 	Darwin  *sdkPlatform `yaml:"darwin"`
 }
@@ -478,6 +479,28 @@ func TestSDKToolchainInstallsOnlyWhatIsMissing(t *testing.T) {
 		}
 	}
 	assert.GreaterOrEqual(t, installs, 6, "downloads and installs for the tools, the extra SDKs and rustup")
+}
+
+// A present tool whose run probe fails (run under --check too, never failing the play) joins the missing tools, and
+// the install moves its old directory aside, dated, never deleted. otp's probe holds bin/erl's fallback root inside its
+// own real directory and starts the runtime.
+func TestSDKToolchainRebuildsABrokenInstall(t *testing.T) {
+	t.Parallel()
+	all := ""
+	for _, task := range sdkTasks(t)["main.yml"] {
+		if task["register"] == "sdk_run" {
+			assert.Equal(t, false, task["check_mode"])
+			assert.Equal(t, false, task["failed_when"])
+		}
+		all += taskText(t, task)
+	}
+	assert.Contains(t, all, "sdk_run.results | rejectattr('rc', 'equalto', 0) | map(attribute='item')", "a broken tool is missing")
+	assert.Contains(t, all, `mv "$dest" "$dest.broken-$(date -u +%Y%m%dT%H%M%SZ)"`)
+	for _, tool := range readSDKDefaults(t).Tools {
+		if tool.Name == "otp" {
+			assert.Equal(t, `grep -qF "\"$dest" bin/erl && bin/erl -noshell -eval 'halt().'`, tool.Run)
+		}
+	}
 }
 
 // env.sh puts the SDK's bin first on PATH and is the file ~/.bashrc sources.
