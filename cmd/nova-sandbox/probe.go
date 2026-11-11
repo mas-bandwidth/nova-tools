@@ -99,12 +99,15 @@ func probe(stdout io.Writer, env []string) int {
 	exists := func(p string) func() bool { return func() bool { _, err := os.Stat(p); return err == nil } }
 	linux := backendName == "landlock"
 
-	if os.WriteFile(filepath.Join(out, "control"), []byte("x"), 0o600) == nil {
-		line("write_outside_control", "allow", "allow", "")
-	} else {
-		line("write_outside_control", "allow", "deny", " FAIL")
-		failed++
+	control := func(name string, ok bool) { // the act outside the wall, which must succeed
+		if ok {
+			line(name, "allow", "allow", "")
+		} else {
+			line(name, "allow", "deny", " FAIL")
+			failed++
+		}
 	}
+	control("write_outside_control", os.WriteFile(filepath.Join(out, "control"), []byte("x"), 0o600) == nil)
 	run(probeStep{name: "write_inside", expect: "allow", argv: []string{"/bin/sh", "-c", "echo x > " + filepath.Join(in, "inside")}, arrived: exists(filepath.Join(in, "inside"))})
 	run(probeStep{name: "write_outside", expect: "deny", argv: []string{"/bin/sh", "-c", "echo x > " + filepath.Join(out, "outside")}, arrived: exists(filepath.Join(out, "outside"))})
 	run(probeStep{name: "read_outside", expect: "deny", argv: []string{"/bin/sh", "-c", "cat " + secret}})
@@ -112,21 +115,17 @@ func probe(stdout io.Writer, env []string) int {
 
 	// A unix socket outside the grants: Landlock does not path-check a unix connect, so
 	// only the seccomp fence refuses it; dial reaches it by path, as an escape would.
-	// --unix is Linux-only: the macOS profile denies a socket outside the writes anyway.
+	// The control is the same dial made outside the wall.
 	sock := filepath.Join(out, "s")
 	if ul, err := net.Listen("unix", sock); err != nil {
 		note := " note=the probe could not listen on its own unix socket (" + err.Error() + "), so the step proves nothing"
+		line("unix_control", "allow", "untested", note)
 		line("unix_deny", "deny", "untested", note)
-		if linux {
-			line("unix_allow", "allow", "untested", note)
-		}
 	} else {
 		defer ul.Close()
 		go acceptClose(ul, nil)
+		control("unix_control", probeClient([]string{"dial", sock}) == 0)
 		run(probeStep{name: "unix_deny", expect: "deny", flags: readSelf, argv: client("dial", sock)})
-		if linux {
-			run(probeStep{name: "unix_allow", expect: "allow", flags: append(readSelf, "--unix"), argv: client("dial", sock)})
-		}
 	}
 
 	// TCP: allowed is a listener --net-allow names; other is one it does not, whose

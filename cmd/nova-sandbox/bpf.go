@@ -79,12 +79,11 @@ const (
 
 // filterOpts is what the wall asks of the filter.
 type filterOpts struct {
-	fenceUnix bool // not --unix
-	net       netRule
+	net netRule
 }
 
 func filterOptsOf(w *wall) filterOpts {
-	o := filterOpts{fenceUnix: !w.unix}
+	var o filterOpts
 	switch {
 	case w.netDeny && len(w.netPorts) > 0:
 		o.net = netTCPOnly
@@ -152,12 +151,9 @@ func buildFilter(arch archNums, o filterOpts) ([]sockFilter, []string) {
 		{code: bpfJgeK, k: x32Bit, jt: "kill"},
 	}
 	names := []string{"kill: another architecture's syscall (i386, x32 compat)", "kill: an x32 syscall number"}
-	sockets := o.fenceUnix || o.net != netOpen
-	if sockets {
-		p = append(p,
-			insn{code: bpfJeqK, k: arch.socket, jt: "socket"},
-			insn{code: bpfJeqK, k: arch.socketpair, jt: "pair"})
-	}
+	p = append(p,
+		insn{code: bpfJeqK, k: arch.socket, jt: "socket"},
+		insn{code: bpfJeqK, k: arch.socketpair, jt: "pair"})
 	for _, nr := range []uint32{arch.ptrace, arch.uringSetup, arch.uringEnter, arch.uringRegister} {
 		p = append(p, insn{code: bpfJeqK, k: nr, jt: "eperm"})
 	}
@@ -185,63 +181,51 @@ func buildFilter(arch archNums, o filterOpts) ([]sockFilter, []string) {
 			insn{label: "fastopen", code: bpfAndK, k: msgFastopen},
 			insn{code: bpfJeqK, k: 0, jt: "allow", jf: "eperm"})
 	}
-	if sockets {
-		unixTo := "allow"
-		if o.fenceUnix {
-			unixTo = "eperm"
-			names = append(names, "eperm: socket(AF_UNIX)")
-		}
+	names = append(names, "eperm: socket(AF_UNIX)")
+	p = append(p,
+		insn{label: "socket", code: bpfLdWAbs, k: offArg0},
+		insn{code: bpfJeqK, k: afUnix, jt: "eperm"})
+	switch o.net {
+	case netOpen:
+		p = append(p, insn{code: bpfJmpJA, jt: "allow"})
+	case netClosed:
 		p = append(p,
-			insn{label: "socket", code: bpfLdWAbs, k: offArg0},
-			insn{code: bpfJeqK, k: afUnix, jt: unixTo})
-		switch o.net {
-		case netOpen:
-			p = append(p, insn{code: bpfJmpJA, jt: "allow"})
-		case netClosed:
-			p = append(p,
-				insn{code: bpfJeqK, k: afNetlink, jt: "netlink"},
-				insn{code: bpfJmpJA, jt: "eperm"})
-			names = append(names, "eperm: socket of every family but AF_UNIX and AF_NETLINK (no TCP, UDP, raw or packet socket)")
-		case netTCPOnly:
-			p = append(p,
-				insn{code: bpfJeqK, k: afNetlink, jt: "netlink"},
-				insn{code: bpfJeqK, k: afInet, jt: "inet"},
-				insn{code: bpfJeqK, k: afInet6, jt: "inet", jf: "eperm"},
-				insn{label: "inet", code: bpfLdWAbs, k: offArg1},
-				insn{code: bpfAndK, k: sockTypeMsk},
-				insn{code: bpfJeqK, k: sockStream, jf: "eperm"},
-				insn{code: bpfLdWAbs, k: offArg2},
-				insn{code: bpfJeqK, k: 0, jt: "allow"},
-				insn{code: bpfJeqK, k: ipprotoTCP, jt: "allow", jf: "eperm"})
-			names = append(names,
-				"eperm: socket(AF_INET or AF_INET6) unless SOCK_STREAM with protocol 0 or IPPROTO_TCP (no UDP, raw, ICMP, SCTP or MPTCP)",
-				"eperm: socket of every other family but AF_UNIX and AF_NETLINK (no packet socket)")
-		}
-		if o.net != netOpen {
-			p = append(p,
-				insn{label: "netlink", code: bpfLdWAbs, k: offArg2},
-				insn{code: bpfJeqK, k: netlinkRoute, jt: "allow", jf: "eperm"})
-			names = append(names, "eperm: socket(AF_NETLINK) unless NETLINK_ROUTE (no sock_diag, which lists other processes' connections)")
-		}
-		pairNotUnix := "allow"
-		if o.net != netOpen {
-			pairNotUnix = "eperm"
-			names = append(names, "eperm: socketpair of any family but AF_UNIX")
-		}
+			insn{code: bpfJeqK, k: afNetlink, jt: "netlink"},
+			insn{code: bpfJmpJA, jt: "eperm"})
+		names = append(names, "eperm: socket of every family but AF_UNIX and AF_NETLINK (no TCP, UDP, raw or packet socket)")
+	case netTCPOnly:
 		p = append(p,
-			insn{label: "pair", code: bpfLdWAbs, k: offArg0},
-			insn{code: bpfJeqK, k: afUnix, jf: pairNotUnix})
-		if o.fenceUnix {
-			p = append(p,
-				insn{code: bpfLdWAbs, k: offArg1},
-				insn{code: bpfAndK, k: sockTypeMsk},
-				insn{code: bpfJeqK, k: sockStream, jt: "allow", jf: "eperm"})
-			names = append(names, "eperm: socketpair(AF_UNIX) unless SOCK_STREAM")
-		} else {
-			p = append(p, insn{code: bpfJmpJA, jt: "allow"})
-		}
+			insn{code: bpfJeqK, k: afNetlink, jt: "netlink"},
+			insn{code: bpfJeqK, k: afInet, jt: "inet"},
+			insn{code: bpfJeqK, k: afInet6, jt: "inet", jf: "eperm"},
+			insn{label: "inet", code: bpfLdWAbs, k: offArg1},
+			insn{code: bpfAndK, k: sockTypeMsk},
+			insn{code: bpfJeqK, k: sockStream, jf: "eperm"},
+			insn{code: bpfLdWAbs, k: offArg2},
+			insn{code: bpfJeqK, k: 0, jt: "allow"},
+			insn{code: bpfJeqK, k: ipprotoTCP, jt: "allow", jf: "eperm"})
+		names = append(names,
+			"eperm: socket(AF_INET or AF_INET6) unless SOCK_STREAM with protocol 0 or IPPROTO_TCP (no UDP, raw, ICMP, SCTP or MPTCP)",
+			"eperm: socket of every other family but AF_UNIX and AF_NETLINK (no packet socket)")
 	}
-	names = append(names, "allow: everything else")
+	if o.net != netOpen {
+		p = append(p,
+			insn{label: "netlink", code: bpfLdWAbs, k: offArg2},
+			insn{code: bpfJeqK, k: netlinkRoute, jt: "allow", jf: "eperm"})
+		names = append(names, "eperm: socket(AF_NETLINK) unless NETLINK_ROUTE (no sock_diag, which lists other processes' connections)")
+	}
+	pairNotUnix := "allow"
+	if o.net != netOpen {
+		pairNotUnix = "eperm"
+		names = append(names, "eperm: socketpair of any family but AF_UNIX")
+	}
+	p = append(p,
+		insn{label: "pair", code: bpfLdWAbs, k: offArg0},
+		insn{code: bpfJeqK, k: afUnix, jf: pairNotUnix},
+		insn{code: bpfLdWAbs, k: offArg1},
+		insn{code: bpfAndK, k: sockTypeMsk},
+		insn{code: bpfJeqK, k: sockStream, jt: "allow", jf: "eperm"})
+	names = append(names, "eperm: socketpair(AF_UNIX) unless SOCK_STREAM", "allow: everything else")
 	return assemble(append(p,
 		insn{label: "allow", code: bpfRetK, k: secRetAllow},
 		insn{label: "eperm", code: bpfRetK, k: secRetErrnoEPERM},
