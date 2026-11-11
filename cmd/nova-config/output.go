@@ -189,16 +189,24 @@ func changeLines(k *kind, op string, before, after map[string]string) []string {
 	return out
 }
 
+// withReason puts a write's reason in its after side, or in its before side
+// when there is no after (a remove); with no reason both are as given.
+func withReason(before, after map[string]string, reason string) (map[string]string, map[string]string) {
+	switch {
+	case reason == "":
+	case after != nil:
+		after = maps.Clone(after)
+		after["reason"] = reason
+	default:
+		before = maps.Clone(before)
+		before["reason"] = reason
+	}
+	return before, after
+}
+
 // planLines is a dry run: the event line, then what the write would change.
 func planLines(k *kind, op, name, actor, reason string, before, after map[string]string) string {
-	if reason != "" {
-		side := &after
-		if op == "remove" {
-			side = &before
-		}
-		*side = maps.Clone(*side)
-		(*side)["reason"] = reason
-	}
+	before, after = withReason(before, after, reason)
 	head := "CONFIG DRY-RUN op=" + op + " kind=" + k.name + " name=" + value(name) + " actor=" + value(actor) + " wrote=nothing"
 	return strings.Join(append([]string{head}, changeLines(k, op, before, after)...), "\n")
 }

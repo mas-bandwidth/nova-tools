@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"maps"
 	"strconv"
 	"strings"
 	"time"
@@ -201,14 +200,7 @@ func (p pgStore) Write(ctx context.Context, k *kind, op string, before, after Ro
 	if tag.RowsAffected() == 0 {
 		return 0, refused("%s %s was changed or removed by another write since it was read; nothing written; run: nova-config %s show %s, then repeat the %s", k.name, name, k.name, name, op)
 	}
-	b, a := before.F, after.F
-	if reason != "" && a != nil {
-		a = maps.Clone(a)
-		a["reason"] = reason
-	} else if reason != "" {
-		b = maps.Clone(b)
-		b["reason"] = reason
-	}
+	b, a := withReason(before.F, after.F, reason)
 	if dry {
 		return 0, nil // the deferred rollback undoes the statement
 	}
