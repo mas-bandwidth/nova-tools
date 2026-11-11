@@ -27,7 +27,7 @@ func TestStoreErrors(t *testing.T) {
 		"42P01": SchemaMissing, "42703": SchemaMissing, "3F000": SchemaMissing,
 		"28P01": login, "28000": login,
 		"42501": "nova may not add machines",
-		"57014": `store error (SQLSTATE 57014): canceling statement due to timeout; check the store answers, then try again; run: psql "$NOVA_PG_DSN" -c 'select 1'`,
+		"57014": `store error (SQLSTATE 57014): canceling statement due to timeout; check the store answers, then try again; run: PGPASSWORD="$NOVA_PG_PASSWORD" psql "$NOVA_PG_DSN" -c 'select 1'`,
 	} {
 		err := storeError(fmt.Errorf("list machine: %w", pe(code, "permission denied for table machines\nLINE 1: SELECT")), "nova", "add")
 		if code == "57014" {
@@ -40,13 +40,19 @@ func TestStoreErrors(t *testing.T) {
 	assert.NoError(t, storeError(nil, "u", "read"))
 }
 
+// The remedy is the command nova-config's help prints, with the password psql needs.
+func TestSchemaMissingRemedyPassesPassword(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, `store has no current schema; run: nova-config schema | PGPASSWORD="$NOVA_PG_PASSWORD" psql "$NOVA_PG_DSN"`, SchemaMissing)
+}
+
 func TestConnectErrors(t *testing.T) {
 	t.Parallel()
 	cfg, err := pgx.ParseConfig("postgres://nova@db.example:5432/mydb")
 	require.NoError(t, err)
 	assert.EqualError(t, connectError(cfg, pe("3D000", "database \"mydb\" does not exist")), "database mydb does not exist on db.example; run: createdb -h db.example -p 5432 -U nova mydb")
 	assert.EqualError(t, connectError(cfg, pe("28P01", "password authentication failed")), `postgres refused the login for nova: check NOVA_PG_PASSWORD; run: PGPASSWORD="$NOVA_PG_PASSWORD" psql "$NOVA_PG_DSN" -c 'select 1'`)
-	assert.EqualError(t, connectError(cfg, fmt.Errorf("dial: %w", syscall.ECONNREFUSED)), `cannot reach postgres at db.example:5432 (NOVA_PG_DSN): connection refused; check NOVA_PG_DSN or run: psql "$NOVA_PG_DSN" -c 'select 1'`)
+	assert.EqualError(t, connectError(cfg, fmt.Errorf("dial: %w", syscall.ECONNREFUSED)), `cannot reach postgres at db.example:5432 (NOVA_PG_DSN): connection refused; check NOVA_PG_DSN or run: PGPASSWORD="$NOVA_PG_PASSWORD" psql "$NOVA_PG_DSN" -c 'select 1'`)
 	notURL := "not a postgres:// URL (want postgres://USER@HOST:PORT/DB?sslmode=disable)"
 	for dsn, want := range map[string]string{"postgres://u@h:99999/x": "port 99999 out of range", "mysql://u@h/x": notURL, "h=1": notURL, "postgres://u@h:5432/x": ""} {
 		assert.Equal(t, want, DSNProblem(dsn), dsn)
