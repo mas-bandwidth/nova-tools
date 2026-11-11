@@ -1,5 +1,5 @@
 -- The tables nova-config reads and writes, in the schema config:
--- nova-config schema | psql "$NOVA_PG_DSN"
+-- nova-config schema | PGPASSWORD="$NOVA_PG_PASSWORD" psql "$NOVA_PG_DSN"
 -- Every statement is idempotent, so a store that has them already is left as
 -- it is.
 CREATE SCHEMA IF NOT EXISTS config;

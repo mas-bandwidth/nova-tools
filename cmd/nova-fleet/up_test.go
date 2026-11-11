@@ -970,7 +970,7 @@ func TestUpControlNodeInTheInventory(t *testing.T) {
 	existing(t, f, "")
 	code, out, errs = runArgs("up", "--tools", "v2.0.0", "control=203.0.113.5")
 	if code != 1 || !strings.Contains(errs, "nova-fleet up: control is this control node (tailscale status Self), so join skips it, and it has no row; run: nova-config machine add control --user nova --actor control") ||
-		!strings.Contains(errs, "UP join control FAILED exit=2;") || strings.Contains(strings.Join(f.calls, "\n"), "join.yml") {
+		!strings.Contains(errs, "UP join control FAILED exit=1;") || strings.Contains(strings.Join(f.calls, "\n"), "join.yml") {
 		t.Errorf("no row: code %d\n%s\n%s", code, out, errs)
 	}
 }
@@ -984,6 +984,18 @@ func TestUpRunnersOnlyOnTheControlNodeFails(t *testing.T) {
 	if code != 1 || strings.Contains(out, "WOULD-RUN") || strings.Contains(out, "UP MACHINE") ||
 		!strings.Contains(errs, "nova-fleet up: no runner was registered: --runners puts runners on the machines named but this control node (control), and no other machine is named; run: nova-fleet up --tools v2.0.0 --runners https://github.com/o/r <name>=<address>\n") ||
 		!strings.Contains(errs, "UP runners FAILED exit=1;") {
+		t.Errorf("code %d\n%s\n%s", code, out, errs)
+	}
+}
+
+// A --tools directory with no readable version stops the run at tools before the install play runs.
+func TestUpToolsDirWithoutVersionFails(t *testing.T) {
+	f := &upFake{}
+	existing(t, f, "")
+	dir := t.TempDir()
+	code, out, errs := runArgs("up", "--tools", dir, "second=203.0.113.8")
+	if code != 1 || !strings.Contains(errs, "nova-fleet up: --tools "+dir+": ") || !strings.Contains(errs, "UP tools FAILED exit=1;") ||
+		strings.Contains(strings.Join(f.calls, "\n"), "install.yml") || strings.Contains(out, "UP MACHINE") {
 		t.Errorf("code %d\n%s\n%s", code, out, errs)
 	}
 }
@@ -1123,7 +1135,7 @@ func TestUpFailuresSayWhy(t *testing.T) {
 	}
 	code, _, errs = runArgs("up", "--tools", "v2.0.0", "first=1.1.1.1")
 	if code != 1 || !strings.Contains(errs, "nova-fleet up: write the first machine's inventory: open ") ||
-		!strings.Contains(errs, "first.ini: is a directory; run: the same nova-fleet up with TMPDIR set to a writable directory\nUP first FAILED exit=2;") {
+		!strings.Contains(errs, "first.ini: is a directory; run: the same nova-fleet up with TMPDIR set to a writable directory\nUP first FAILED exit=1;") {
 		t.Errorf("first.ini: code %d\n%s", code, errs)
 	}
 }

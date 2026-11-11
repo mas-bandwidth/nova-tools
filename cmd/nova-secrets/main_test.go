@@ -815,7 +815,7 @@ func TestWrongKeyRemedies(t *testing.T) {
 	h.noGit = true
 	h.stdin = "value-x-xyz\n"
 	assert.Equal(t, 2, h.main(h.set("X")...))
-	assert.Contains(t, h.stderr.String(), "SECRETS SET REFUSED reason=git: git not found on PATH; install it: apt install git")
+	assert.Contains(t, h.stderr.String(), "SECRETS SET REFUSED reason=git: git not found on PATH; install it: apt install git (Debian, Ubuntu), brew install git (macOS)\n")
 	h.noGit = false
 	// No age-keygen: say so.
 	h.noAgeKeygen = true

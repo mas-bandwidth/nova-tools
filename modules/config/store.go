@@ -25,7 +25,7 @@ import (
 )
 
 // SchemaMissing is the error of a store the current schema was never applied to.
-const SchemaMissing = `store has no current schema; run: nova-config schema | psql "$NOVA_PG_DSN"`
+const SchemaMissing = `store has no current schema; run: nova-config schema | PGPASSWORD="$NOVA_PG_PASSWORD" psql "$NOVA_PG_DSN"`
 
 // Store is one open connection to the store.
 type Store struct {
@@ -93,7 +93,7 @@ func storeError(err error, user, op string) error {
 		return fmt.Errorf("%s may not %s %s", user, op, cmp.Or(pe.TableName, words[len(words)-1]))
 	}
 	msg, _, _ := strings.Cut(strings.Split(pe.Message, "\n")[0], ". ")
-	return fmt.Errorf("store error (SQLSTATE %s): %s; check the store answers, then try again; run: psql \"$NOVA_PG_DSN\" -c 'select 1'", pe.Code, strings.TrimSuffix(msg, "."))
+	return fmt.Errorf("store error (SQLSTATE %s): %s; check the store answers, then try again; run: PGPASSWORD=\"$NOVA_PG_PASSWORD\" psql \"$NOVA_PG_DSN\" -c 'select 1'", pe.Code, strings.TrimSuffix(msg, "."))
 }
 
 // DSNProblem says which part of a postgres:// URL is wrong, "" for none; it
@@ -118,7 +118,7 @@ func connectError(cfg *pgx.ConnConfig, err error) error {
 	case errors.As(err, &pe):
 		return storeError(err, cfg.User, "connect")
 	}
-	return fmt.Errorf("cannot reach postgres at %s (NOVA_PG_DSN): %s; check NOVA_PG_DSN or run: psql \"$NOVA_PG_DSN\" -c 'select 1'", net.JoinHostPort(cfg.Host, strconv.Itoa(int(cfg.Port))), cause(err))
+	return fmt.Errorf("cannot reach postgres at %s (NOVA_PG_DSN): %s; check NOVA_PG_DSN or run: PGPASSWORD=\"$NOVA_PG_PASSWORD\" psql \"$NOVA_PG_DSN\" -c 'select 1'", net.JoinHostPort(cfg.Host, strconv.Itoa(int(cfg.Port))), cause(err))
 }
 
 // Open connects to the store dsn names (postgres://USER@HOST:PORT/DB, no

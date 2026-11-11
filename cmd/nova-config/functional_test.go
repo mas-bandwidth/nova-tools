@@ -199,7 +199,7 @@ func TestFunctionalNoSchema(t *testing.T) {
 		code, out, errs := realRun(t, env, args...)
 		assert.Equal(t, 2, code, "%v", args)
 		assert.Empty(t, out)
-		assert.Contains(t, errs, `store has no current schema; run: nova-config schema | psql "$NOVA_PG_DSN"`)
+		assert.Contains(t, errs, `store has no current schema; run: nova-config schema | PGPASSWORD="$NOVA_PG_PASSWORD" psql "$NOVA_PG_DSN"`)
 		assert.Equal(t, 1, strings.Count(errs, "\n"), errs)
 	}
 }
@@ -213,7 +213,7 @@ func TestFunctionalUnreachable(t *testing.T) {
 	code, out, errs := realRun(t, map[string]string{"NOVA_PG_DSN": "postgres://nova@127.0.0.1:" + port + "/postgres?sslmode=disable"}, "machine", "list")
 	assert.Equal(t, 2, code)
 	assert.Empty(t, out)
-	assert.Regexp(t, `^nova-config machine list: cannot reach postgres at 127\.0\.0\.1:`+port+` \(NOVA_PG_DSN\): (connection refused|connect failed|timed out); check NOVA_PG_DSN or run: psql "\$NOVA_PG_DSN" -c 'select 1'\n$`, errs)
+	assert.Regexp(t, `^nova-config machine list: cannot reach postgres at 127\.0\.0\.1:`+port+` \(NOVA_PG_DSN\): (connection refused|connect failed|timed out); check NOVA_PG_DSN or run: PGPASSWORD="\$NOVA_PG_PASSWORD" psql "\$NOVA_PG_DSN" -c 'select 1'\n$`, errs)
 	assert.Equal(t, 1, strings.Count(errs, "\n"), errs)
 }
 
