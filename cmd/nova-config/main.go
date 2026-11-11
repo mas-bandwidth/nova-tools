@@ -230,9 +230,9 @@ func runKind(ctx context.Context, k *kind, verb string, args []string, d deps, s
 		} else if op == "add" {
 			after, err = k.newRow(name, given)
 		} else if op == "set" { // the values given, with no check of the row: it is checked whole once they are on the row the store holds
-			_, err = (&kind{fields: k.fields}).merge(Row{F: map[string]string{}}, given)
+			_, err = (&kind{fields: k.fields}).merge(Row{F: map[string]string{}}, given) // no check, so any error is a valueError
 		}
-		if err != nil && (op == "add" || errors.As(err, new(valueError))) {
+		if err != nil {
 			problems = append(problems, err.Error())
 		}
 		if _, sp := storeDSN(fs, d); sp != "" {
