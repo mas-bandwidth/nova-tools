@@ -12,7 +12,7 @@
       - github_runner_scope is defined
       - github_runner_scope in ['repo', 'org']
       - github_runner_url is match('^https://[^/]+/[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)?/?$')
-      - (github_runner_scope == 'repo' and github_runner_path.count('/') == 1) or (github_runner_scope == 'org' and github_runner_path.count('/') == 0)
+      - (github_runner_scope == 'repo' and github_runner_named_path.count('/') == 1) or (github_runner_scope == 'org' and github_runner_named_path.count('/') == 0)
       - github_runner_state in ['present', 'absent']
       - github_runner_state == 'absent' or runner_count is defined or runners is defined
       - (runner_count | default(runners | default(0)) | string) is match('^([0-9]+|cores)$')
@@ -21,7 +21,8 @@
       github-runner: give -e github_runner_url=https://github.com/<owner>/<repo> -e github_runner_scope=repo,
       or https://github.com/<org> with scope org (no defaults); state is present or absent; a host needs `runners` in the inventory or -e runner_count=<n> (a missing count is refused, not read as 0 and retired); the count is a number of 0 or more, or cores
   vars:
-    github_runner_path: "{{ (github_runner_url | default('') | regex_replace('^https://[^/]+/', '') | regex_replace('/$', '')) }}"
+    # not github_runner_path: a fact of that name, set below for the previous url of a record run, would outrank a task var
+    github_runner_named_path: "{{ (github_runner_url | default('') | regex_replace('^https://[^/]+/', '') | regex_replace('/$', '')) }}"
 
 # runner_count=cores (nova-fleet up's default): one runner per github_runner_cores_per_runner cores, at least 1. The cores
 # are the machine row's `cores` when set, else the host's own count.

@@ -128,6 +128,9 @@ esac`
 		}
 		assert.Contains(t, out, "GITHUB-STRAY localhost localhost-30 o/r online: online, so something still runs it; left")
 		assert.NotContains(t, out, "other-1")
+		assert.NotContains(t, out, "GITHUB-STRAY localhost localhost-1 o/r", "a wanted runner is no stray")
+		assert.NotContains(t, out, "GITHUB-STRAY localhost localhost-2 o/r", "a wanted runner is no stray")
+		assert.NotContains(t, out, "GITHUB-STRAY localhost localhost-1 org", "a wanted runner is no stray")
 	}
 }
 

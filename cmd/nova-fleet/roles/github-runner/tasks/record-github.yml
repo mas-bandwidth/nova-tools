@@ -41,7 +41,7 @@
       {%- for line in r.stdout_lines | default([]) -%}
       {%- set f = line.split(' ') -%}
       {%- if f | length == 3 and f[1] is match('^' ~ (inventory_hostname | regex_escape) ~ '-[0-9]+$')
-            and (path | replace('/', '-')) ~ '-' ~ (f[1] | regex_replace('^.*-([0-9]+)$', '\1')) not in github_runner_record_want -%}
+            and (path | replace('/', '-')) ~ '-' ~ (f[1].split('-') | last) not in github_runner_record_want -%}
       {%- set _ = out.append({'path': path, 'kind': 'repos' if '/' in path else 'orgs', 'id': f[0], 'name': f[1], 'status': f[2]}) -%}
       {%- endif -%}
       {%- endfor -%}
