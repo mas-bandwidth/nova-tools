@@ -25,7 +25,7 @@ import (
 )
 
 // SchemaMissing is the error of a store the current schema was never applied to.
-const SchemaMissing = `store has no current schema; run: nova-config schema | psql "$NOVA_PG_DSN"`
+const SchemaMissing = `store has no current schema; run: nova-config schema | PGPASSWORD="$NOVA_PG_PASSWORD" psql "$NOVA_PG_DSN"`
 
 // Store is one open connection to the store.
 type Store struct {

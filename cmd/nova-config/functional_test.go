@@ -199,7 +199,7 @@ func TestFunctionalNoSchema(t *testing.T) {
 		code, out, errs := realRun(t, env, args...)
 		assert.Equal(t, 2, code, "%v", args)
 		assert.Empty(t, out)
-		assert.Contains(t, errs, `store has no current schema; run: nova-config schema | psql "$NOVA_PG_DSN"`)
+		assert.Contains(t, errs, `store has no current schema; run: nova-config schema | PGPASSWORD="$NOVA_PG_PASSWORD" psql "$NOVA_PG_DSN"`)
 		assert.Equal(t, 1, strings.Count(errs, "\n"), errs)
 	}
 }

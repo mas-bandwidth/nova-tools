@@ -40,6 +40,12 @@ func TestStoreErrors(t *testing.T) {
 	assert.NoError(t, storeError(nil, "u", "read"))
 }
 
+// The remedy is the command nova-config's help prints, with the password psql needs.
+func TestSchemaMissingRemedyPassesPassword(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, `store has no current schema; run: nova-config schema | PGPASSWORD="$NOVA_PG_PASSWORD" psql "$NOVA_PG_DSN"`, SchemaMissing)
+}
+
 func TestConnectErrors(t *testing.T) {
 	t.Parallel()
 	cfg, err := pgx.ParseConfig("postgres://nova@db.example:5432/mydb")
