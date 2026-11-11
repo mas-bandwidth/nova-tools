@@ -424,7 +424,9 @@ github_runner_verify=false` skips it.
 
 **What it does.** Per runner: the pinned release, checked against GitHub's digest, unpacked in
 `<home>/actions-runner/<owner>-<repo>-<i>`; registered as `<machine>-<i>` unless
-`.runner` is there; one service per runner, enabled at boot. The labels a runner was registered with are recorded in
+`.runner` is there; one service per runner, enabled at boot. A runner gives its jobs the PATH in its `.path` (which
+`config.sh` fills from the registering shell), not its service's, so `.path` is written from the service's PATH, and a
+change to it restarts the runner like a changed unit. The labels a runner was registered with are recorded in
 its `.labels`. A registered runner that lacks a wanted label (or has no `.labels`) gets it from the control node's gh,
 `gh api -X POST <repos|orgs>/<path>/actions/runners/<id>/labels` with the body on stdin, never by registering again,
 so it keeps its session and the jobs queued for it; `.labels` is then rewritten from what GitHub holds, and the run
