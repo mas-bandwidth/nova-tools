@@ -414,6 +414,30 @@ func TestSDKToolchainRustcLinksWithAnAbsoluteLinker(t *testing.T) {
 		"the old link is removed before the wrapper is written, so the copy never writes through it")
 }
 
+// A CI job's rustup-init (CARGO_HOME under the runner's _work/_temp) wrote `. "<temp>/cargo/env"` into the login's
+// shell files; the role takes that line out, and only that line.
+func TestSDKToolchainRemovesACIJobsCargoEnvLine(t *testing.T) {
+	t.Parallel()
+	b, err := os.ReadFile(sdkToolchainRole + "/tasks/rustup.yml")
+	require.NoError(t, err)
+	var raw []any
+	require.NoError(t, yaml.Unmarshal(b, &raw))
+	var found map[string]any
+	for _, task := range mapsOf(t, raw) {
+		if task["name"] == "no shell file sources a CI job's cargo env" {
+			found = task
+		}
+	}
+	require.NotNil(t, found, "the role removes a CI job's cargo env line")
+	li, ok := found["ansible.builtin.lineinfile"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "absent", li["state"])
+	re := regexp.MustCompile(asText(li["regexp"]))
+	assert.True(t, re.MatchString(`. "/home/nova/actions-runner/mas-bandwidth-2/_work/_temp/cargo/env"`))
+	assert.False(t, re.MatchString(`. "$HOME/.cargo/env"`), "a login's own cargo env stays")
+	assert.Subset(t, found["loop"], []any{".profile", ".bashrc"}, "the files rustup-init writes on these benches")
+}
+
 // The .NET 10 SDK names the exact targeting and apphost packs it builds an older target with (its
 // Microsoft.NETCoreSdk.BundledVersions.props), and restore downloads any that are not in packs/, which a gate with no
 // network cannot. So the role pairs the 10 SDK with the 8 SDK of the same release day and checks after installing that

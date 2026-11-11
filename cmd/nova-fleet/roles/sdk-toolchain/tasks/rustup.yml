@@ -150,3 +150,13 @@
     force: true
   loop: "{{ nova_sdk_cargo_tools }}"
   loop_control: { label: "{{ item.name }}" }
+
+# A CI job that ran rustup-init with CARGO_HOME under its runner's _work/_temp (dtolnay/rust-toolchain, before this
+# rustup was on the runner's PATH) left `. "<that>/cargo/env"` in the login's shell files; the job's temp is gone, so
+# every login shell printed an error. The pinned rustup in <sdk>/bin now keeps such a job from running rustup-init.
+- name: no shell file sources a CI job's cargo env
+  ansible.builtin.lineinfile:
+    path: "{{ ansible_facts['user_dir'] }}/{{ item }}"
+    regexp: '^\. "[^"]*/actions-runner/[^"]*/_work/_temp/cargo/env"$'
+    state: absent
+  loop: [.profile, .bashrc, .bash_profile, .zshenv]
