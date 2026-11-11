@@ -2,7 +2,8 @@
 # GitHub's own list of every scope the fleet's records name (every machine's runner_scopes, and the urls of the strays
 # retired here), read on the control node with gh. An entry named for this host (<host>-<i>) that the record does not
 # want is a runner whose machine side is gone: offline, it is deleted from GitHub (gh api -X DELETE); online, something
-# still runs it, so it is reported and left. --check reads and reports, and deletes nothing.
+# still runs it, so it is reported and left. So is an entry named for a machine outside the runner group (its record names
+# no runners), taken by the first host of the run only. --check reads and reports, and deletes nothing.
 
 - name: the scopes the fleet's records name
   ansible.builtin.set_fact:
@@ -32,16 +33,18 @@
   check_mode: false
   failed_when: github_runner_gh_lists.rc != 0
 
-- name: this host's entries that the record does not want
+- name: this host's entries that the record does not want (and the first host's, those of machines with no runners)
   ansible.builtin.set_fact:
     github_runner_gh_strays: >-
+      {%- set gone = groups['all'] | difference(groups['runner'] | default([])) if inventory_hostname == ansible_play_hosts | first else [] -%}
       {%- set out = [] -%}
       {%- for r in github_runner_gh_lists.results | default([]) -%}
       {%- set path = r.item | regex_replace('^https://[^/]+/', '') -%}
       {%- for line in r.stdout_lines | default([]) -%}
       {%- set f = line.split(' ') -%}
-      {%- if f | length == 3 and f[1] is match('^' ~ (inventory_hostname | regex_escape) ~ '-[0-9]+$')
-            and (path | replace('/', '-')) ~ '-' ~ (f[1].split('-') | last) not in github_runner_record_want -%}
+      {%- if f | length == 3 and ((f[1] is match('^' ~ (inventory_hostname | regex_escape) ~ '-[0-9]+$')
+            and (path | replace('/', '-')) ~ '-' ~ (f[1].split('-') | last) not in github_runner_record_want)
+            or (f[1] is match('^.+-[0-9]+$') and f[1] | regex_replace('-[0-9]+$', '') in gone)) -%}
       {%- set _ = out.append({'path': path, 'kind': 'repos' if '/' in path else 'orgs', 'id': f[0], 'name': f[1], 'status': f[2]}) -%}
       {%- endif -%}
       {%- endfor -%}
