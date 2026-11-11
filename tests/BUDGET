@@ -4,6 +4,6 @@ cmd/nova-config  1979
 cmd/nova-reserve  1315
 cmd/nova-sandbox  1843
 cmd/nova-secrets  1803
-cmd/nova-fleet  2036
+cmd/nova-fleet  2038
 tests/boundary  400
 tests/contract  50
