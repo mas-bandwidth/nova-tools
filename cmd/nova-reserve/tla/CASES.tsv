@@ -22,6 +22,8 @@ JobControlBrokenNoWatchdog.cfg	JobControl.tla	temporal	WholeGroupDies	check
 JobControlBrokenFgOnly.cfg	JobControl.tla	temporal	NoHungShell	check
 JobControlGapCtrlZAtStart.cfg	JobControl.tla	invariant	PromptOwnsTerminal	check
 JobControlGapKillAtStart.cfg	JobControl.tla	invariant	PromptOwnsTerminal	check
+JobControlBrokenNoWaitCont.cfg	JobControl.tla	invariant	OwnStopLandsFirst	check
+JobControlGapContAtStop.cfg	JobControl.tla	invariant	OwnStopLandsFirst	check
 SlotFilesTrace.cfg	SlotFilesTrace.tla	pass	-	ignore-terminal
 SlotFilesTraceBrokenNoLock.cfg	SlotFilesTrace.tla	invariant	TraceAccepted	ignore-terminal
 SlotCountTrace.cfg	SlotCountTrace.tla	pass	-	ignore-terminal

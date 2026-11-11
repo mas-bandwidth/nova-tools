@@ -126,8 +126,8 @@ func passTerminal(from, to int) {
 // can be put in the background while it waits for a slot), it relays job
 // control: when the command stops (Ctrl-Z; SIGTTIN after bg), nova-reserve
 // takes back the terminal it had and stops its own group, so the shell sees
-// the job stop; continued, it passes on the terminal if the shell gave it one
-// (fg), and continues the command. tla/JobControl.tla is the model.
+// the job stop; at the shell's SIGCONT, it passes on the terminal if the
+// shell gave it one (fg), and continues the command. tla/JobControl.tla.
 func wait(cmd *exec.Cmd) (ws syscall.WaitStatus, err error) {
 	if !cmd.SysProcAttr.Setpgid || terminalGroup() < 0 {
 		if err = cmd.Wait(); cmd.ProcessState != nil {
@@ -142,8 +142,12 @@ func wait(cmd *exec.Cmd) (ws syscall.WaitStatus, err error) {
 		}
 		if err == nil {
 			passTerminal(pid, self)
+			conts := make(chan os.Signal, 1) // Drain: no earlier SIGCONT
+			signal.Notify(conts, syscall.SIGCONT)
 			// ignored: stopping this process's own group cannot fail
 			_ = syscall.Kill(0, syscall.SIGSTOP)
+			<-conts // kill returns before the stop lands: OwnStopLandsFirst
+			signal.Stop(conts)
 			passTerminal(self, pid)
 			// ignored: a group that has already ended needs no SIGCONT
 			_ = syscall.Kill(-pid, syscall.SIGCONT)
