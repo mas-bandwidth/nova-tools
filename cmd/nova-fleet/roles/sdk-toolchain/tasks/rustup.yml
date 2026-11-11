@@ -7,8 +7,8 @@
 - name: rustup's paths
   ansible.builtin.set_fact:
     sdk_rust_host: "{{ nova_sdk_rustup[sdk_platform].host }}"
-    sdk_rustup_home: "{{ nova_sdk_dir }}/rustup-{{ nova_sdk_rustup.version }}"
-    sdk_rustup_init: "{{ nova_sdk_dir }}/dl/rustup-init-{{ nova_sdk_rustup.version }}-{{ nova_sdk_rustup[sdk_platform].host }}"
+    sdk_rustup_home: "{{ sdk_dir }}/rustup-{{ nova_sdk_rustup.version }}"
+    sdk_rustup_init: "{{ sdk_dir }}/dl/rustup-init-{{ nova_sdk_rustup.version }}-{{ nova_sdk_rustup[sdk_platform].host }}"
     sdk_rust_first: "{{ nova_sdk_rustup.toolchains | first }}"
 
 - name: rustup's environment
@@ -100,22 +100,22 @@
   check_mode: false
 
 - name: the first toolchain's commands in the SDK's bin
-  ansible.builtin.file: { src: "{{ sdk_rust_bin }}/{{ item }}", dest: "{{ nova_sdk_dir }}/bin/{{ item }}", state: link, force: true }
+  ansible.builtin.file: { src: "{{ sdk_rust_bin }}/{{ item }}", dest: "{{ sdk_dir }}/bin/{{ item }}", state: link, force: true }
   loop: "{{ nova_sdk_rustup.links }}"
 
 # rustc is a wrapper naming an absolute linker (defaults/main.yml says why). A link left by an earlier run is removed
 # first, so the wrapper replaces the link and never writes through it into the toolchain.
 - name: rustc's entry in the SDK's bin
-  ansible.builtin.stat: { path: "{{ nova_sdk_dir }}/bin/rustc", follow: false, get_checksum: false }
+  ansible.builtin.stat: { path: "{{ sdk_dir }}/bin/rustc", follow: false, get_checksum: false }
   register: sdk_rustc_entry
 
 - name: an earlier rustc link goes
-  ansible.builtin.file: { path: "{{ nova_sdk_dir }}/bin/rustc", state: absent }
+  ansible.builtin.file: { path: "{{ sdk_dir }}/bin/rustc", state: absent }
   when: sdk_rustc_entry.stat.islnk | default(false)
 
 - name: rustc in the SDK's bin, with an absolute linker
   ansible.builtin.copy:
-    dest: "{{ nova_sdk_dir }}/bin/rustc"
+    dest: "{{ sdk_dir }}/bin/rustc"
     mode: "0755"
     content: |
       #!/bin/sh
@@ -124,7 +124,7 @@
 
 - name: rustup in the SDK's bin
   ansible.builtin.copy:
-    dest: "{{ nova_sdk_dir }}/bin/rustup"
+    dest: "{{ sdk_dir }}/bin/rustup"
     mode: "0755"
     content: |
       #!/bin/sh
@@ -135,17 +135,17 @@
 
 - name: each cargo tool, built with --locked by the first toolchain
   ansible.builtin.command:
-    argv: [nice, -n, "15", "{{ sdk_rust_bin }}/cargo", install, --locked, --quiet, --root, "{{ nova_sdk_dir }}/{{ item.name }}-{{ item.version }}",
+    argv: [nice, -n, "15", "{{ sdk_rust_bin }}/cargo", install, --locked, --quiet, --root, "{{ sdk_dir }}/{{ item.name }}-{{ item.version }}",
            "{{ item.name }}", --version, "{{ item.version }}"]
-    creates: "{{ nova_sdk_dir }}/{{ item.name }}-{{ item.version }}/bin/{{ item.name }}"
+    creates: "{{ sdk_dir }}/{{ item.name }}-{{ item.version }}/bin/{{ item.name }}"
   environment: { PATH: "{{ sdk_rust_bin }}:/usr/local/bin:/usr/bin:/bin" }
   loop: "{{ nova_sdk_cargo_tools }}"
   loop_control: { label: "{{ item.name }} {{ item.version }}" }
 
 - name: each cargo tool in the SDK's bin
   ansible.builtin.file:
-    src: "{{ nova_sdk_dir }}/{{ item.name }}-{{ item.version }}/bin/{{ item.name }}"
-    dest: "{{ nova_sdk_dir }}/bin/{{ item.name }}"
+    src: "{{ sdk_dir }}/{{ item.name }}-{{ item.version }}/bin/{{ item.name }}"
+    dest: "{{ sdk_dir }}/bin/{{ item.name }}"
     state: link
     force: true
   loop: "{{ nova_sdk_cargo_tools }}"

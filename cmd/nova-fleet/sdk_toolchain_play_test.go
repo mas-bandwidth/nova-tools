@@ -30,6 +30,7 @@ type sdkPlatform struct {
 	Package   string `yaml:"package"`
 	Version   string `yaml:"version"`
 	Integrity string `yaml:"integrity"`
+	Build     string `yaml:"build"`
 	Linker    string `yaml:"linker"`
 	Extras    []struct {
 		URL    string `yaml:"url"`
@@ -48,8 +49,29 @@ type sdkTool struct {
 	Links   []any        `yaml:"links"`
 	Alias   string       `yaml:"alias"`
 	Wrapper string       `yaml:"wrapper"`
+	Run     string       `yaml:"run"`
 	Linux   *sdkPlatform `yaml:"linux"`
 	Darwin  *sdkPlatform `yaml:"darwin"`
+}
+
+// platforms is each platform the tool has an entry for, by name.
+func (tool sdkTool) platforms() map[string]*sdkPlatform {
+	out := map[string]*sdkPlatform{}
+	if tool.Linux != nil {
+		out["linux"] = tool.Linux
+	}
+	if tool.Darwin != nil {
+		out["darwin"] = tool.Darwin
+	}
+	return out
+}
+
+// build is the build the role runs on a platform: the platform's own, else the tool's.
+func (tool sdkTool) build(p *sdkPlatform) string {
+	if p.Build != "" {
+		return p.Build
+	}
+	return tool.Build
 }
 
 type sdkDefaults struct {
@@ -159,19 +181,20 @@ func TestSDKToolchainPlayTargetsTheBenchAndRunnerGroups(t *testing.T) {
 	assert.True(t, slices.Contains(plays(tree), "sdk-toolchain"), "nova-fleet lists the play")
 }
 
-// Every tool is pinned for each platform it names, its directory and commands are its own, and the probe is in the
-// directory, so an installed tool is found and a second run changes nothing.
+// Every tool is pinned for each platform it names, its directory and commands are its own on each platform, and the
+// probe is in the directory, so an installed tool is found and a second run changes nothing.
 func TestSDKToolchainEveryToolIsPinned(t *testing.T) {
 	t.Parallel()
 	d := readSDKDefaults(t)
 	assert.Equal(t, "{{ ansible_facts['user_dir'] }}/sdk", d.Dir)
 	require.Greater(t, len(d.Tools), 20, "the defaults are the toolchain the benches run, not a stub")
-	dirs, names := map[string]string{}, map[string]string{}
-	claim := func(name, owner string) {
-		if prev, ok := names[name]; ok {
-			t.Errorf("%s/bin/%s is claimed by %s and %s", "<sdk>", name, prev, owner)
+	dirs := map[string]string{}
+	names := map[string]map[string]string{"linux": {}, "darwin": {}}
+	claim := func(platform, name, owner string) {
+		if prev, ok := names[platform][name]; ok {
+			t.Errorf("<sdk>/bin/%s is claimed by %s and %s on %s", name, prev, owner, platform)
 		}
-		names[name] = owner
+		names[platform][name] = owner
 	}
 	for _, tool := range d.Tools {
 		require.NotEmpty(t, tool.Name)
@@ -186,39 +209,37 @@ func TestSDKToolchainEveryToolIsPinned(t *testing.T) {
 		if tool.Kind != "script" {
 			assert.Contains(t, tool.Dir, tool.Version, "%s: a version's directory names its version, so a bump installs beside it", tool.Name)
 		}
-		require.NotNil(t, tool.Linux, "%s: every tool is on Linux", tool.Name)
-		if why := pinned(tool.Kind, tool.Linux, tool.Build); why != "" {
-			t.Errorf("%s (linux) needs %s", tool.Name, why)
-		}
-		if tool.Darwin != nil {
-			if why := pinned(tool.Kind, tool.Darwin, tool.Build); why != "" {
-				t.Errorf("%s (darwin) needs %s", tool.Name, why)
+		require.NotEmpty(t, tool.platforms(), "%s: a tool is on Linux, macOS or both", tool.Name)
+		for platform, p := range tool.platforms() {
+			if why := pinned(tool.Kind, p, tool.build(p)); why != "" {
+				t.Errorf("%s (%s) needs %s", tool.Name, platform, why)
 			}
-		}
-		for _, l := range tool.Links {
-			name := ""
-			switch v := l.(type) {
-			case string:
-				name = filepath.Base(v)
-			case map[string]any:
-				name, _ = v["name"].(string)
-				assert.NotEmpty(t, v["path"], "%s: a named link has a path", tool.Name)
+			for _, l := range tool.Links {
+				name := ""
+				switch v := l.(type) {
+				case string:
+					name = filepath.Base(v)
+				case map[string]any:
+					name, _ = v["name"].(string)
+					assert.NotEmpty(t, v["path"], "%s: a named link has a path", tool.Name)
+				}
+				require.NotEmpty(t, name, "%s: a link with no name", tool.Name)
+				claim(platform, name, tool.Name)
 			}
-			require.NotEmpty(t, name, "%s: a link with no name", tool.Name)
-			claim(name, tool.Name)
-		}
-		if tool.Wrapper != "" {
-			claim(tool.Name, tool.Name+" (wrapper)")
-			assert.True(t, strings.HasPrefix(tool.Wrapper, "#!/bin/sh\n"), "%s: the wrapper is a shell script", tool.Name)
+			if tool.Wrapper != "" {
+				claim(platform, tool.Name, tool.Name+" (wrapper)")
+				assert.True(t, strings.HasPrefix(tool.Wrapper, "#!/bin/sh\n"), "%s: the wrapper is a shell script", tool.Name)
+			}
 		}
 	}
+	require.NotNil(t, d.Rustup.Linux, "rustup is a Linux pin")
 	for _, n := range d.Rustup.Links {
-		claim(n, "rustup")
+		claim("linux", n, "rustup")
 	}
-	claim("rustup", "rustup (wrapper)")
-	claim("rustc", "rustc (wrapper)")
+	claim("linux", "rustup", "rustup (wrapper)")
+	claim("linux", "rustc", "rustc (wrapper)")
 	for _, c := range d.CargoTools {
-		claim(c.Name, "cargo tool")
+		claim("linux", c.Name, "cargo tool")
 		assert.NotEmpty(t, c.Version, "%s is pinned", c.Name)
 	}
 	for _, want := range []string{"go", "node", "dart", "otp", "elixir", "jdk", "dotnet", "golangci-lint", "staticcheck", "esbmc",
@@ -256,16 +277,88 @@ func TestSDKToolchainPythonMypyIsHashLocked(t *testing.T) {
 		assert.Contains(t, tool.Build, "--no-index")
 		assert.Contains(t, tool.Build, "--require-hashes")
 		locked := regexp.MustCompile(`--hash=sha256:([0-9a-f]{64})`).FindAllStringSubmatch(tool.Build, -1)
-		var lock, wheels []string
+		var lock []string
 		for _, m := range locked {
 			lock = append(lock, m[1])
 		}
-		for _, e := range tool.Linux.Extras {
-			assert.True(t, strings.HasSuffix(e.Path, ".whl"), "%s: %s is a wheel", name, e.Path)
-			wheels = append(wheels, e.SHA256)
+		require.NotNil(t, tool.Darwin, "%s: a Mac bench builds it too", name)
+		for platform, p := range tool.platforms() {
+			assert.Empty(t, p.Build, "%s (%s): one build on every platform", name, platform)
+			var wheels []string
+			for _, e := range p.Extras {
+				assert.True(t, strings.HasSuffix(e.Path, "-py3-none-any.whl"), "%s (%s): %s is a pure-Python wheel, the same on every platform", name, platform, e.Path)
+				wheels = append(wheels, e.SHA256)
+			}
+			require.NotEmpty(t, wheels, "%s (%s): mypy's wheels are fetched as extras", name, platform)
+			assert.ElementsMatch(t, wheels, lock, "%s (%s): the hash lock names exactly the wheels fetched", name, platform)
 		}
-		require.NotEmpty(t, wheels, "%s: mypy's wheels are fetched as extras", name)
-		assert.ElementsMatch(t, wheels, lock, "%s: the hash lock names exactly the wheels fetched", name)
+	}
+}
+
+// A Mac bench holds every pin a schema leg stages from the SDK, and Rust and Erlang/OTP, each held to a digest or a
+// tag's commit. Rust there is the release's standalone installer, giving the commands Linux links from rustup.
+func TestSDKToolchainMacPins(t *testing.T) {
+	t.Parallel()
+	d := readSDKDefaults(t)
+	byName := map[string]sdkTool{}
+	for _, tool := range d.Tools {
+		byName[tool.Name] = tool
+	}
+	for _, name := range []string{"python3.11", "python3.15", "squirrel-double", "lua", "luau", "stylua", "goose", "lobster", "rust", "otp"} {
+		tool, ok := byName[name]
+		require.True(t, ok, "%s is in the defaults", name)
+		p := tool.Darwin
+		require.NotNil(t, p, "%s has a darwin pin", name)
+		if tool.Kind == "git" {
+			assert.Regexp(t, hex40, p.Commit, "%s (darwin): the tag's commit", name)
+		} else {
+			assert.True(t, hex64.MatchString(p.SHA256) || hex128.MatchString(p.SHA512), "%s (darwin): the archive's digest", name)
+		}
+		assert.NotEmpty(t, tool.build(p)+tool.Probe, "%s (darwin): a probe and, for a source pin, a build", name)
+	}
+	rust := byName["rust"]
+	assert.Nil(t, rust.Linux, "Linux gets Rust through rustup")
+	assert.Equal(t, "https://static.rust-lang.org/dist/rust-"+rust.Version+"-aarch64-apple-darwin.tar.xz", rust.Darwin.URL)
+	assert.Equal(t, d.Rustup.Toolchains[0].Name, rust.Version, "the Mac's Rust is the toolchain Linux has on PATH")
+	var links []string
+	for _, l := range rust.Links {
+		s, _ := l.(string)
+		links = append(links, filepath.Base(s))
+	}
+	assert.ElementsMatch(t, append([]string{"rustc"}, d.Rustup.Links...), links, "the same commands in <sdk>/bin as Linux (where rustc is the wrapper)")
+	assert.Contains(t, rust.Build, "--components=rustc,rust-std-aarch64-apple-darwin,cargo,rustfmt-preview,clippy-preview")
+	otp := byName["otp"]
+	assert.NotEmpty(t, otp.Darwin.Build, "otp: macOS builds the source, Linux unpacks hex.pm's build")
+	assert.Contains(t, otp.Darwin.Build, "--disable-dynamic-ssl-lib", "otp: crypto reaches no library outside the SDK")
+}
+
+// The role follows every symlink in nova_sdk_dir before it uses it, so env.sh and every link it writes name the real
+// directory; every task, the template and the defaults use the resolved sdk_dir, never nova_sdk_dir itself.
+func TestSDKToolchainResolvesTheSDKDirectory(t *testing.T) {
+	t.Parallel()
+	b, err := os.ReadFile(sdkToolchainRole + "/tasks/main.yml")
+	require.NoError(t, err)
+	var raw []any
+	require.NoError(t, yaml.Unmarshal(b, &raw))
+	tasks := mapsOf(t, raw)
+	require.GreaterOrEqual(t, len(tasks), 2)
+	resolve := taskText(t, tasks[0])
+	assert.Contains(t, resolve, "os.path.realpath")
+	assert.Contains(t, resolve, "{{ nova_sdk_dir }}")
+	assert.Equal(t, false, tasks[0]["check_mode"], "resolved under --check too")
+	fact, _ := tasks[1]["ansible.builtin.set_fact"].(map[string]any)
+	assert.Equal(t, "{{ sdk_dir_real.stdout }}", fact["sdk_dir"], "sdk_dir is the resolved path")
+	files, err := filepath.Glob(sdkToolchainRole + "/*/*")
+	require.NoError(t, err)
+	require.NotEmpty(t, files)
+	for _, f := range files {
+		b, err := os.ReadFile(f)
+		require.NoError(t, err)
+		want := 0
+		if strings.HasSuffix(f, "tasks/main.yml") {
+			want = 1 // the resolution itself
+		}
+		assert.Equal(t, want, strings.Count(string(b), "{{ nova_sdk_dir }}"), "%s uses the resolved sdk_dir", f)
 	}
 }
 
@@ -360,7 +453,7 @@ func TestSDKToolchainDotnetCLIHomeIsWritable(t *testing.T) {
 			modes[asText(p)] = asText(f["mode"])
 		}
 	}
-	for _, dir := range []string{"{{ nova_sdk_dir }}/dotnet-home", "{{ nova_sdk_dir }}/dotnet-home/.dotnet"} {
+	for _, dir := range []string{"{{ sdk_dir }}/dotnet-home", "{{ sdk_dir }}/dotnet-home/.dotnet"} {
 		assert.Equal(t, "0755", modes[dir], "%s is a directory the login can write", dir)
 	}
 }
@@ -388,14 +481,36 @@ func TestSDKToolchainInstallsOnlyWhatIsMissing(t *testing.T) {
 	assert.GreaterOrEqual(t, installs, 6, "downloads and installs for the tools, the extra SDKs and rustup")
 }
 
+// A present tool whose run probe fails (run under --check too, never failing the play) joins the missing tools, and
+// the install moves its old directory aside, dated, never deleted. otp's probe holds bin/erl's fallback root inside its
+// own real directory and starts the runtime.
+func TestSDKToolchainRebuildsABrokenInstall(t *testing.T) {
+	t.Parallel()
+	all := ""
+	for _, task := range sdkTasks(t)["main.yml"] {
+		if task["register"] == "sdk_run" {
+			assert.Equal(t, false, task["check_mode"])
+			assert.Equal(t, false, task["failed_when"])
+		}
+		all += taskText(t, task)
+	}
+	assert.Contains(t, all, "sdk_run.results | rejectattr('rc', 'equalto', 0) | map(attribute='item')", "a broken tool is missing")
+	assert.Contains(t, all, `mv "$dest" "$dest.broken-$(date -u +%Y%m%dT%H%M%SZ)"`)
+	for _, tool := range readSDKDefaults(t).Tools {
+		if tool.Name == "otp" {
+			assert.Equal(t, `grep -qF "\"$dest" bin/erl && bin/erl -noshell -eval 'halt().'`, tool.Run)
+		}
+	}
+}
+
 // env.sh puts the SDK's bin first on PATH and is the file ~/.bashrc sources.
 func TestSDKToolchainEnvPutsTheSDKFirst(t *testing.T) {
 	t.Parallel()
 	b, err := os.ReadFile(sdkToolchainRole + "/templates/env.sh.j2")
 	require.NoError(t, err)
 	env := string(b)
-	assert.Contains(t, env, `PATH="{{ nova_sdk_dir }}/bin:`)
-	assert.Contains(t, env, `export DOTNET_CLI_HOME="{{ nova_sdk_dir }}/dotnet-home"`)
+	assert.Contains(t, env, `PATH="{{ sdk_dir }}/bin:`)
+	assert.Contains(t, env, `export DOTNET_CLI_HOME="{{ sdk_dir }}/dotnet-home"`)
 	assert.NotContains(t, env, "RUSTUP_HOME", "a CI job's own rustup keeps its own home; <sdk>/bin/rustup names the SDK's")
 	rc := ""
 	for _, task := range sdkTasks(t)["main.yml"] {
@@ -404,7 +519,48 @@ func TestSDKToolchainEnvPutsTheSDKFirst(t *testing.T) {
 			assert.Equal(t, "BOF", li["insertbefore"], "first, before a non-interactive shell's early return")
 		}
 	}
-	assert.Contains(t, rc, `. "{{ nova_sdk_dir }}/env.sh"`)
+	assert.Contains(t, rc, `. "{{ sdk_dir }}/env.sh"`)
+}
+
+// A Makefile that stages a pin from the SDK (a sandboxed job has no network) finds it by directory: NOVA_SDK names the
+// SDK itself, each interpreter is in <name>-<version> with the command at the path the Makefile looks for, and moo,
+// built from a tag, records the commit it was built from in PIN, written last so it is also the probe.
+func TestSDKToolchainPinsAreWhereAMakefileStagesThem(t *testing.T) {
+	t.Parallel()
+	b, err := os.ReadFile(sdkToolchainRole + "/defaults/main.yml")
+	require.NoError(t, err)
+	var files struct {
+		Env map[string]string `yaml:"nova_sdk_env_files"`
+	}
+	require.NoError(t, yaml.Unmarshal(b, &files))
+	assert.Equal(t, ".", files.Env["NOVA_SDK"], "NOVA_SDK names the SDK directory, exported where it is")
+	d := readSDKDefaults(t)
+	tool := func(name string) *sdkTool {
+		for i := range d.Tools {
+			if d.Tools[i].Name == name {
+				return &d.Tools[i]
+			}
+		}
+		t.Fatalf("%s is not in the defaults", name)
+		return nil
+	}
+	for name, probe := range map[string]string{"lua": "bin/lua", "luau": "bin/luau", "goose": "goose", "lobster": "bin/lobster",
+		"stylua": "stylua", "moo": "PIN"} {
+		tl := tool(name)
+		dir := strings.TrimSuffix(tl.Dir, "-"+tl.Version)
+		if dir == tl.Dir {
+			dir = strings.TrimSuffix(tl.Dir, "-v"+tl.Version)
+		}
+		assert.Equal(t, name, dir, "%s: its directory is <name>-<version> or <name>-v<version>", name)
+		assert.Equal(t, probe, tl.Probe, "%s: the probe is the file the Makefile stages", name)
+	}
+	moo := tool("moo")
+	assert.Equal(t, "git", moo.Kind)
+	assert.Contains(t, moo.Build, `git rev-parse HEAD >"$dest/PIN"`)
+	assert.Equal(t, []any{"bin/moo", "bin/moo-analyze"}, moo.Links, "moo: the CLI and the analyzer, both built")
+	for _, name := range []string{"goose", "lobster", "stylua", "lua"} {
+		assert.NotNil(t, tool(name).Darwin, "%s: a Mac bench stages it too", name)
+	}
 }
 
 // SQ names a Squirrel built with 64-bit integers and floats (sq64 with SQUSEDOUBLE), the interpreter a float64 survives,
@@ -432,5 +588,5 @@ func TestSDKToolchainSQIsTheDoubleSquirrel(t *testing.T) {
 	assert.Contains(t, tool.Build, "-DSQUSEDOUBLE")
 	env, err := os.ReadFile(sdkToolchainRole + "/templates/env.sh.j2")
 	require.NoError(t, err)
-	assert.Contains(t, string(env), `if [ -x "{{ nova_sdk_dir }}/{{ v }}" ]; then export {{ k }}=`)
+	assert.Contains(t, string(env), `if [ -x "{{ sdk_dir }}/{{ v }}" ]; then export {{ k }}=`)
 }
