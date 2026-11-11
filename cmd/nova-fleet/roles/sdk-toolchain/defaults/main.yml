@@ -463,13 +463,18 @@ nova_sdk_dotnet_more:
 # <sdk>/rustup-<version> (RUSTUP_HOME, with the proxies under cargo/bin) with the first toolchain as its default and
 # self-update off; then each toolchain, with its components and targets (rustup checks every component against the channel manifest's
 # digest). The first toolchain is the one on PATH: its own binaries are linked into <sdk>/bin, and <sdk>/bin/rustup is a
-# wrapper that names this RUSTUP_HOME unless the caller set one. The nightly is the one cargo fuzz runs on.
+# wrapper that names this RUSTUP_HOME unless the caller set one. <sdk>/bin/rustc is a wrapper too: it runs the first
+# toolchain's rustc with `-C linker=<linker>`, an absolute path, because rustc runs a bare `cc` through a PATH it changed,
+# which Rust's std starts by fork with a SEQPACKET socketpair that a seccomp sandbox refuses ("could not exec the linker
+# `cc`"); a linker given as a path is started by posix_spawn. A later -C linker (cargo's) wins. The nightly is the one
+# cargo fuzz runs on.
 nova_sdk_rustup:
   version: "1.29.1"
   linux:
     url: https://static.rust-lang.org/rustup/archive/1.29.1/x86_64-unknown-linux-gnu/rustup-init
     sha256: dda7234360b7f578ca8b0ddcb80145646fa61a67c1720a5abc7051b35c9fcb71
     host: x86_64-unknown-linux-gnu
+    linker: /usr/bin/cc
   toolchains:
     - name: "1.98.1"
       components: [clippy, rustfmt]
@@ -477,7 +482,7 @@ nova_sdk_rustup:
     - name: nightly-2026-10-01
       components: []
       targets: []
-  links: [cargo, rustc, rustdoc, rustfmt, cargo-fmt, cargo-clippy, clippy-driver]
+  links: [cargo, rustdoc, rustfmt, cargo-fmt, cargo-clippy, clippy-driver]
 
 # Cargo tools, each built from crates.io with --locked by the first toolchain into <sdk>/<name>-<version> and linked
 # into <sdk>/bin.
