@@ -27,9 +27,6 @@ variable; the command and its children can read the ones it keeps. The wall does
 not limit CPU and memory use. A granted directory can contain private data; a
 read grant allows the command to read that data.
 
-On Linux, `--unix` permits Unix-domain socket creation. Use it only when the
-command may contact the local services those sockets expose.
-
 The install play checks downloaded assets against the selected release's
 `SHA256SUMS`. This detects a mismatch with that file; it is not an independent
 signature of the release or protection against a compromised release account.

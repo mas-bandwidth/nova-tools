@@ -63,12 +63,11 @@ func wallCheck() (abi string, netOK bool, note string, err error) {
 	if !h.landlock {
 		return "-", false, "", fmt.Errorf("no landlock in this kernel: below 5.13, not compiled in, or not in the boot-time lsm= list")
 	}
-	sec, net := "available", "landlock_tcp+seccomp"
 	if !h.seccomp {
-		sec, net = "unavailable: the default wall and --net-deny are refused; only --unix runs, without the filter", "refused_without_seccomp"
+		return strconv.Itoa(h.abi), false, "", fmt.Errorf("no seccomp filter mode in this kernel, so the unix-socket escape cannot be closed and every run is refused")
 	}
-	note = "landlock abi " + strconv.Itoa(h.abi) + "; seccomp " + sec + "; net-deny " + net + "; signals scoped to the wall at abi 6+"
-	return strconv.Itoa(h.abi), h.abi >= 4 && h.seccomp, note, nil
+	note = "landlock abi " + strconv.Itoa(h.abi) + "; seccomp available; net-deny landlock_tcp+seccomp; signals scoped to the wall at abi 6+"
+	return strconv.Itoa(h.abi), h.abi >= 4, note, nil
 }
 
 // execWall applies the wall and execs the command. It returns only on failure.
@@ -111,10 +110,8 @@ func execWall(w *wall, env []string) []refusal {
 	}
 	// seccomp after Landlock and on the same locked thread, so it too is in force at
 	// exec.
-	if p.seccomp {
-		if err := installSeccomp(p.filter); err != nil {
-			return fail("sandbox_failed", "the seccomp filter could not be installed: %v", err)
-		}
+	if err := installSeccomp(p.filter); err != nil {
+		return fail("sandbox_failed", "the seccomp filter could not be installed: %v", err)
 	}
 	err := syscall.Exec(w.command, w.argv, env)
 	return fail("sandbox_failed", "%s could not be started inside the wall: %v", w.command, err)

@@ -815,7 +815,7 @@ func TestWrongKeyRemedies(t *testing.T) {
 	h.noGit = true
 	h.stdin = "value-x-xyz\n"
 	assert.Equal(t, 2, h.main(h.set("X")...))
-	assert.Contains(t, h.stderr.String(), "SECRETS SET REFUSED reason=git: git not found on PATH; install it: apt install git")
+	assert.Contains(t, h.stderr.String(), "SECRETS SET REFUSED reason=git: git not found on PATH; install it: apt install git (Debian, Ubuntu), brew install git (macOS)\n")
 	h.noGit = false
 	// No age-keygen: say so.
 	h.noAgeKeygen = true
@@ -1112,6 +1112,19 @@ func TestSetBootstrapsAFreshNode(t *testing.T) {
 	h2.stdin = "\n"
 	assert.Equal(t, 2, h2.main("set", "X", "--sops", "sops"))
 	assert.NoDirExists(t, dir2)
+}
+
+// The store and pins default under ~/.config/nova-secrets whatever this node's seat is called, even
+// "x" with $NOVA_SECRETS_KEY set elsewhere.
+func TestStoreAndPinsDefaultUnderHomeForAnySeat(t *testing.T) {
+	t.Parallel()
+	h, dir := fresh(t)
+	h.key = filepath.Join(t.TempDir(), "x.key")
+	h.environ = append(h.environ[:2:2], "NOVA_SECRETS_SEAT=x", "NOVA_SECRETS_KEY="+h.key) // PATH, HOME
+	require.Equal(t, 0, h.main("set", "TAILSCALE_API_KEY", "--sops", "sops"), h.stderr.String())
+	assert.Contains(t, h.stdout.String(), "SECRETS SET NEW store="+filepath.Join(dir, "store")+" seat=x key="+h.key+":")
+	assert.FileExists(t, filepath.Join(dir, "pins", "recovery.pub"))
+	assert.NoDirExists(t, filepath.Join(filepath.Dir(h.key), "store"))
 }
 
 // Every verb that takes --key or --pins defaults them as set does, to this seat's key and the pins

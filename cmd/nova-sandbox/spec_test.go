@@ -21,10 +21,10 @@ func reasons(bad []refusal) []string {
 func TestParseArgs(t *testing.T) {
 	t.Parallel()
 	s, bad := parseArgs([]string{"--read", "/r", "--read", "/r2", "--write", "/w", "--net-deny",
-		"--net-allow", "localhost:1", "--gpu", "--unix", "--env", "TMPDIR", "--", "ls", "--read", "-l"})
+		"--net-allow", "localhost:1", "--gpu", "--env", "TMPDIR", "--", "ls", "--read", "-l"})
 	require.Empty(t, bad)
 	assert.Equal(t, spec{reads: []string{"/r", "/r2"}, writes: []string{"/w"}, netAllow: []string{"localhost:1"},
-		netDeny: true, gpu: true, unix: true, passEnv: []string{"TMPDIR"},
+		netDeny: true, gpu: true, passEnv: []string{"TMPDIR"},
 		argv: []string{"ls", "--read", "-l"}}, s, "everything after -- is the command, verbatim")
 
 	for _, c := range []struct {
@@ -33,6 +33,7 @@ func TestParseArgs(t *testing.T) {
 	}{
 		{[]string{"--write", "/w", "--bogus", "--", "ls"}, []string{"bad_flag"}},
 		{[]string{"--cwd", "/w", "--", "ls"}, []string{"bad_flag", "bad_flag"}}, // a removed flag and its value
+		{[]string{"--unix", "--", "ls"}, []string{"bad_flag"}},                  // no flag reopens unix sockets
 		{[]string{"--write", "/w", "ls"}, []string{"bad_flag", "no_command"}},
 		{[]string{"--write"}, []string{"bad_flag", "no_command"}},
 		{[]string{"--write", "/w", "--"}, []string{"no_command"}},
@@ -91,7 +92,6 @@ func TestBuildRefusals(t *testing.T) {
 		{"net-allow port 0", "linux", spec{netDeny: true, netAllow: []string{"localhost:0"}}, "bad_net"},
 		{"net-allow without net-deny", "linux", spec{netAllow: []string{"localhost:1"}}, "bad_net"},
 		{"gpu off macOS", "linux", spec{gpu: true}, "bad_gpu"},
-		{"unix on macOS", "darwin", spec{unix: true}, "bad_unix"},
 		{"command not found", "linux", spec{argv: []string{"no-such-command-here"}}, "not_found"},
 		{"command not executable", "linux", spec{argv: []string{file}}, "not_executable"},
 		{"command outside every grant", "linux", spec{argv: []string{script}}, "bad_read"},
