@@ -323,7 +323,7 @@ func (u *upRun) control(out io.Writer) int {
 		case c != 0:
 			miss("NOVA_PG_DSN", u.bin["nova-secrets"]+" names --as "+u.seat, "the seat's names cannot be read, so whether a fleet exists is unknown:", why)
 		case slices.Contains(strings.Fields(names), "NOVA_PG_PASSWORD"):
-			fmt.Fprintf(out, "CHECK NOTE NOVA_PG_DSN unset, and seat %s holds NOVA_PG_PASSWORD: up takes the first machine named for the store it made; for nova-config, and to add machines: export NOVA_PG_DSN=postgres://nova_config@<the store machine's tailnet name>:5432/nova\n", u.seat)
+			fmt.Fprintf(out, "CHECK NOTE NOVA_PG_DSN unset, and seat %s holds NOVA_PG_PASSWORD: up takes the first machine named for the store it made; for nova-config, and to add machines: "+dsnHow+"\n", u.seat)
 		default:
 			fmt.Fprintln(out, "CHECK OK NOVA_PG_DSN none yet (a new fleet: up prints it)")
 		}

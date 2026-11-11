@@ -370,6 +370,8 @@ func (u *upRun) reach(m *machine) {
 	}(), ", ") + ")"
 }
 
+const dsnHow = "export NOVA_PG_DSN=postgres://nova_config@<the store machine's tailnet name>:5432/nova" // the remedy when the store is unknown
+
 // steps runs the fixed order; it returns the exit code.
 func (u *upRun) steps() int {
 	pass := map[string][]string{}
@@ -399,11 +401,11 @@ func (u *upRun) steps() int {
 	if u.dsn = os.Getenv("NOVA_PG_DSN"); u.dsn == "" && haveStore {
 		first = u.machines[0]
 		if _, on := u.status(); !on {
-			fmt.Fprintf(u.stderr, "nova-fleet up: seat %s holds NOVA_PG_PASSWORD, so a fleet exists, and this control node cannot look its store up on the tailnet (%s); run: export NOVA_PG_DSN=postgres://nova_config@<the store machine's tailnet name>:5432/nova\n", u.seat, u.tsWhy())
+			fmt.Fprintf(u.stderr, "nova-fleet up: seat %s holds NOVA_PG_PASSWORD, so a fleet exists, and this control node cannot look its store up on the tailnet (%s); run: "+dsnHow+"\n", u.seat, u.tsWhy())
 			return 2
 		}
 		if !u.peer(first) {
-			fmt.Fprintf(u.stderr, "nova-fleet up: seat %s holds NOVA_PG_PASSWORD, so a fleet exists, and %s is not on the tailnet, so it is not its store; run: export NOVA_PG_DSN=postgres://nova_config@<the store machine's tailnet name>:5432/nova\n", u.seat, first.name)
+			fmt.Fprintf(u.stderr, "nova-fleet up: seat %s holds NOVA_PG_PASSWORD, so a fleet exists, and %s is not on the tailnet, so it is not its store; run: "+dsnHow+"\n", u.seat, first.name)
 			return 2
 		}
 		u.dsn = "postgres://nova_config@" + first.dns + ":5432/nova"
@@ -411,7 +413,7 @@ func (u *upRun) steps() int {
 	if u.dsn != "" {
 		rows, why, c := u.config("machine", "list", "--json")
 		if c != 0 {
-			fmt.Fprintf(u.stderr, "nova-fleet up: the fleet's rows (nova-config machine list via NOVA_PG_DSN=%s): %s; run: export NOVA_PG_DSN=postgres://nova_config@<the store machine's tailnet name>:5432/nova\n", u.dsn, why)
+			fmt.Fprintf(u.stderr, "nova-fleet up: the fleet's rows (nova-config machine list via NOVA_PG_DSN=%s): %s; run: "+dsnHow+"\n", u.dsn, why)
 			return 2
 		}
 		for _, r := range rows {
