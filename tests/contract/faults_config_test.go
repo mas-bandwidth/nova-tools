@@ -108,7 +108,7 @@ func init() {
 		}
 		e.Set("NOVA_PG_DSN", "postgres://u@"+e.Dead()+"/db?sslmode=disable")
 	}
-	psqlFails := []string{`remedy "psql \"$NOVA_PG_DSN\" -c 'select 1'" exits 2: `} // then psql's own words
+	psqlFails := []string{`remedy "PGPASSWORD=\"$NOVA_PG_PASSWORD\" psql \"$NOVA_PG_DSN\" -c 'select 1'" starts with "PGPASSWORD=\"$NOVA_PG_PASSWORD\"", which is not a tool of this repository or a standard command`}
 	register(
 		Fault{Tool: "config", Name: "store unset", Argv: list, Want: Want{Reason: []string{"NOVA_PG_DSN"}}},
 		Fault{Tool: "config", Name: "store unset and a flag missing", Argv: []string{"machine", "add", "m1", "--actor", "a"},
