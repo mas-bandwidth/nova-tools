@@ -268,7 +268,7 @@ func (t tool) parse(verb string, args []string, npos int, needKey bool, also ...
 	}
 	if o.store == "" {
 		if o.store = envValue(t.environ, "NOVA_SECRETS_STORE"); o.store == "" {
-			o.store = filepath.Join(filepath.Dir(t.keyFile("x")), "store")
+			o.store = filepath.Join(t.configDir(), "store")
 		}
 	}
 	if verb == "init" && o.recovery == "" {
@@ -279,7 +279,7 @@ func (t tool) parse(verb string, args []string, npos int, needKey bool, also ...
 	}
 	if o.pins == "" && slices.Contains([]string{"grant", "set", "seat remove"}, verb) {
 		if o.pins = envValue(t.environ, "NOVA_SECRETS_PINS"); o.pins == "" {
-			o.pins = filepath.Join(filepath.Dir(t.keyFile("x")), "pins")
+			o.pins = filepath.Join(t.configDir(), "pins")
 		}
 	}
 	if needKey && o.key == "" {
@@ -327,8 +327,13 @@ func (t tool) keyFile(seat string) string {
 	if k := envValue(t.environ, "NOVA_SECRETS_KEY"); k != "" && seat == t.ownSeat() {
 		return k
 	}
+	return filepath.Join(t.configDir(), seat+".key")
+}
+
+// configDir is $HOME/.config/nova-secrets, where the default keys, store and pins live.
+func (t tool) configDir() string {
 	home, _ := os.UserHomeDir()
-	return filepath.Join(cmp.Or(envValue(t.environ, "HOME"), home), ".config", "nova-secrets", seat+".key")
+	return filepath.Join(cmp.Or(envValue(t.environ, "HOME"), home), ".config", "nova-secrets")
 }
 
 // next is the command to run next, each word shell-quoted (q); an OK line is followed by it on a line "next: <command>".
@@ -509,7 +514,7 @@ func (t tool) ready(o opts) error {
 // absent elsewhere is no-store; absent with a key, the recovery key or the pin there is partial: a store made now
 // would not match them, and nothing that exists is ever overwritten. With check it refuses the same and makes nothing.
 func (t tool) bootstrap(o opts, check bool) error {
-	dir := filepath.Dir(t.keyFile("x"))
+	dir := t.configDir()
 	rk := filepath.Join(dir, "recovery.key")
 	resume := false // a store this bootstrap made after its keys and pin, and stopped in before the seat (a failed commit): finished with its keys
 	if _, err := os.Stat(o.store); err == nil {
@@ -611,8 +616,7 @@ func (t tool) seatAdd(args []string) error {
 	if err := t.commit(o, "", "seat "+seat, ".sops.yaml is written: run:", ".sops.yaml"); err != nil {
 		return err
 	}
-	home, _ := os.UserHomeDir()
-	pins := cmp.Or(envValue(t.environ, "NOVA_SECRETS_PINS"), filepath.Join(cmp.Or(envValue(t.environ, "HOME"), home), ".config", "nova-secrets", "pins"))
+	pins := cmp.Or(envValue(t.environ, "NOVA_SECRETS_PINS"), filepath.Join(t.configDir(), "pins"))
 	// where init --pins put this store's recovery pin, as the guide does: beside the store
 	beside := filepath.Join(filepath.Dir(o.store), "pins")
 	if b, _ := os.ReadFile(filepath.Join(beside, "recovery.pub")); envValue(t.environ, "NOVA_SECRETS_PINS") == "" && strings.TrimSpace(string(b)) == rec { // ignored: no pin there
