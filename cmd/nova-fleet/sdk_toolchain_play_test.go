@@ -423,7 +423,7 @@ func TestSDKToolchainPinsAreWhereAMakefileStagesThem(t *testing.T) {
 	moo := tool("moo")
 	assert.Equal(t, "git", moo.Kind)
 	assert.Contains(t, moo.Build, `git rev-parse HEAD >"$dest/PIN"`)
-	assert.Contains(t, moo.Build, "bin/moo-analyze")
+	assert.Equal(t, []any{"bin/moo", "bin/moo-analyze"}, moo.Links, "moo: the CLI and the analyzer, both built")
 	for _, name := range []string{"goose", "lobster", "stylua", "lua"} {
 		assert.NotNil(t, tool(name).Darwin, "%s: a Mac bench stages it too", name)
 	}
