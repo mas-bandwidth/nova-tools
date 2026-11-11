@@ -120,11 +120,11 @@ func TestCheckAndProbe(t *testing.T) {
 	assert.Contains(t, out, "name=write_outside expect=deny got=deny")
 	assert.Contains(t, out, "name=read_named expect=allow got=allow")
 	assert.Contains(t, out, "name=unix_deny expect=deny got=deny")
-	steps := []string{"net_deny expect=deny got=deny", "tcp_allow expect=allow got=allow",
+	steps := []string{"unix_control expect=allow got=allow", "net_deny expect=deny got=deny", "tcp_allow expect=allow got=allow",
 		"udp_control expect=allow got=allow", "udp_deny expect=deny got=deny", "tcp_other_deny expect=deny got=deny",
 		"udp_deny_allowmode expect=deny got=deny"}
-	if runtime.GOOS == "linux" { // the macOS probe has no unix_allow or listen steps
-		steps = append(steps, "unix_allow expect=allow got=allow", "listen_control expect=allow got=allow", "listen_deny expect=deny got=deny")
+	if runtime.GOOS == "linux" { // the macOS probe has no listen steps
+		steps = append(steps, "listen_control expect=allow got=allow", "listen_deny expect=deny got=deny")
 	}
 	for _, step := range steps {
 		assert.Contains(t, out, "name="+step+"\n")
@@ -317,12 +317,9 @@ except PermissionError: print("socket eperm")`)
 	})
 }
 
-func TestUnixSocketIsFencedByDefault(t *testing.T) {
+func TestUnixSocketIsFenced(t *testing.T) {
 	t.Parallel()
 	linuxOnly(t)
-	if _, out, _ := sandbox(t, os.TempDir(), "check"); strings.Contains(out, "seccomp UNAVAILABLE") {
-		t.Skip("no seccomp on this kernel")
-	}
 	job, out := scratch(t)
 	sock := filepath.Join(out, "s")
 	l, err := net.Listen("unix", sock)
@@ -345,12 +342,13 @@ func TestUnixSocketIsFencedByDefault(t *testing.T) {
 	code, _, stderr := sandbox(t, job, args()...)
 	assert.NotEqual(t, 0, code, "AF_UNIX is refused, so the connect cannot be made: "+stderr)
 	code, _, stderr = sandbox(t, job, args("--unix")...)
-	assert.Equal(t, 0, code, "--unix reopens AF_UNIX: "+stderr)
+	assert.Equal(t, 2, code, "no flag reopens AF_UNIX: "+stderr)
+	assert.Equal(t, 1, strings.Count(stderr, "\n"), "an unknown flag is one line: "+stderr)
 }
 
 // TestSystemdRunEscapeIsClosed reproduces the reported escape: systemd-run --user hands
 // the command off to a service that runs outside the wall. The hand-off travels over a
-// unix socket, which the default fence refuses, so the command cannot start the service.
+// unix socket, which the fence refuses, so the command cannot start the service.
 func TestSystemdRunEscapeIsClosed(t *testing.T) {
 	t.Parallel()
 	sr, err := exec.LookPath("systemd-run")
@@ -632,10 +630,6 @@ print("listening", l.getsockname()[1])`
 	assert.NotEqual(t, 0, code, out)
 	assert.Contains(t, stderr, "PermissionError")
 	assert.NotContains(t, out, "listening")
-	code, out, _ = sandbox(t, job, "--write", job, "--net-deny", "--unix", "--", "python3", "-c", `import socket as s, os
-p = os.path.join(os.getcwd(), "srv")
-l = s.socket(s.AF_UNIX, s.SOCK_STREAM); l.bind(p); l.listen(1); print("unix listening")`)
-	assert.Equal(t, 0, code, "--net-deny --unix without --net-allow still serves a unix socket: "+out)
 }
 
 // TestFunctionalProbeReportsAStepItCannotSetUpAsUntested runs the probe under a
@@ -648,10 +642,8 @@ func TestFunctionalProbeReportsAStepItCannotSetUpAsUntested(t *testing.T) {
 	deep := filepath.Join(root, strings.Repeat("d", 110))
 	require.NoError(t, os.Mkdir(deep, 0o700))
 	_, out, _ := sandbox(t, deep, "probe")
+	assert.Contains(t, out, "PROBE STEP name=unix_control expect=allow got=untested note=")
 	assert.Contains(t, out, "PROBE STEP name=unix_deny expect=deny got=untested note=")
-	if runtime.GOOS == "linux" {
-		assert.Contains(t, out, "PROBE STEP name=unix_allow expect=allow got=untested note=")
-	}
 }
 
 // TestFunctionalEverySignalIsForwarded sends the waiter SIGINT, then SIGTERM. The

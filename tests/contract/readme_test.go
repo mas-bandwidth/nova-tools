@@ -109,7 +109,6 @@ var docRefusals = map[string]refusalCase{
 	`cwd`:            {tool: "sandbox", why: "a working directory outside the system roots, which the test's own directory may not be"},
 	`bad_net`:        {tool: "sandbox", argv: []string{"--net-allow", "127.0.0.1:1", "--", "true"}},
 	`bad_gpu`:        {tool: "sandbox", argv: []string{"--gpu", "--", "true"}, goos: "linux"},
-	`bad_unix`:       {tool: "sandbox", argv: []string{"--unix", "--", "true"}, goos: "darwin"},
 	`bad_env`:        {tool: "sandbox", argv: []string{"--env", "1x", "--", "true"}},
 	`not_found`:      {tool: "sandbox", argv: []string{"--", "nosuchcmd-for-the-doc-test"}},
 	`not_executable`: {tool: "sandbox", argv: []string{"--read", "@tmp", "--", "@tmp/plain"}, files: []string{"plain"}},

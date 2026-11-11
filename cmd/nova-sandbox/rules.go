@@ -123,12 +123,11 @@ type linuxHost struct {
 }
 
 // linuxPlan is the wall as it will be applied: the ruleset at the ABI used, and the
-// seccomp filter if one is installed.
+// seccomp filter.
 type linuxPlan struct {
-	abi     int // the ABI the ruleset is built for: the kernel's, capped at maxABI
-	rs      *ruleset
-	seccomp bool
-	filter  filterOpts
+	abi    int // the ABI the ruleset is built for: the kernel's, capped at maxABI
+	rs     *ruleset
+	filter filterOpts
 }
 
 // planLinux decides the wall for host, or refuses: it never plans a wall weaker than
@@ -149,17 +148,14 @@ func planLinux(w *wall, h linuxHost) (*linuxPlan, []refusal) {
 	}
 	// The unix-socket escape (Landlock does not path-check a unix connect) is closed by
 	// the seccomp filter. Without seccomp the wall refuses rather than stand weaker than
-	// it says, unless --unix opts into leaving the socket open.
-	if !w.unix && !h.seccomp {
-		bad = append(bad, refuse("no_seccomp", "this kernel has no seccomp filter mode, so the same-uid unix-socket escape cannot be closed; pass --unix to run without that fence"))
+	// it says.
+	if !h.seccomp {
+		bad = append(bad, refuse("no_seccomp", "this kernel has no seccomp filter mode, so the same-uid unix-socket escape cannot be closed; this tool does not run a command it cannot contain"))
 	}
 	if len(bad) > 0 {
 		return nil, bad
 	}
-	// With seccomp, --unix still installs the filter, minus the AF_UNIX rules, so ptrace
-	// and io_uring stay refused. Without seccomp only --unix without --net-deny gets
-	// here, and nothing is installed: the caller accepted a wall without those fences.
-	return &linuxPlan{abi: used, rs: buildRuleset(w, used, h.resolverDir), seccomp: h.seccomp, filter: filterOptsOf(w)}, nil
+	return &linuxPlan{abi: used, rs: buildRuleset(w, used, h.resolverDir), filter: filterOptsOf(w)}, nil
 }
 
 // resolverDirOf is the directory the resolver config at conf resolves to, or "": some

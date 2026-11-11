@@ -70,14 +70,8 @@ const (
 )
 
 var (
-	open      = filterOpts{}
-	strict    = filterOpts{fenceUnix: true}
-	closed    = filterOpts{fenceUnix: true, net: netClosed}
-	closedU   = filterOpts{net: netClosed} // --unix --net-deny
-	tcpOnly   = filterOpts{fenceUnix: true, net: netTCPOnly}
-	tcpOnlyU  = filterOpts{net: netTCPOnly}
-	allOpts   = []filterOpts{open, strict, closed, closedU, tcpOnly, tcpOnlyU}
-	optsNames = []string{"--unix", "default", "--net-deny", "--unix --net-deny", "--net-allow", "--unix --net-allow"}
+	allOpts   = []filterOpts{{}, {net: netClosed}, {net: netTCPOnly}}
+	optsNames = []string{"default", "--net-deny", "--net-allow"}
 )
 
 const (
@@ -87,8 +81,8 @@ const (
 )
 
 // TestSeccompFilter runs every rule through the interpreter, for each architecture's
-// numbers and each set of flags. The want column is, in allOpts order: --unix,
-// default, --net-deny, --unix --net-deny, --net-allow, --unix --net-allow.
+// numbers and each set of flags. The want column is, in allOpts order: default,
+// --net-deny, --net-allow.
 func TestSeccompFilter(t *testing.T) {
 	t.Parallel()
 	for goarch, arch := range archTable {
@@ -103,53 +97,53 @@ func TestSeccompFilter(t *testing.T) {
 		for _, c := range []struct {
 			name string
 			d    data
-			want [6]uint32
+			want [3]uint32
 		}{
-			{"wrong arch", data{arch: arch.audit ^ 1, nr: sysGetpid}, [6]uint32{K, K, K, K, K, K}},
-			{"x32 nr", data{arch: arch.audit, nr: x32Bit | arch.socket, arg0: afInet}, [6]uint32{K, K, K, K, K, K}},
-			{"getpid", data{arch: arch.audit, nr: sysGetpid}, [6]uint32{A, A, A, A, A, A}},
-			{"ptrace", data{arch: arch.audit, nr: arch.ptrace}, [6]uint32{E, E, E, E, E, E}},
-			{"io_uring_setup", data{arch: arch.audit, nr: arch.uringSetup}, [6]uint32{E, E, E, E, E, E}},
-			{"io_uring_enter", data{arch: arch.audit, nr: arch.uringEnter}, [6]uint32{E, E, E, E, E, E}},
-			{"io_uring_register", data{arch: arch.audit, nr: arch.uringRegister}, [6]uint32{E, E, E, E, E, E}},
+			{"wrong arch", data{arch: arch.audit ^ 1, nr: sysGetpid}, [3]uint32{K, K, K}},
+			{"x32 nr", data{arch: arch.audit, nr: x32Bit | arch.socket, arg0: afInet}, [3]uint32{K, K, K}},
+			{"getpid", data{arch: arch.audit, nr: sysGetpid}, [3]uint32{A, A, A}},
+			{"ptrace", data{arch: arch.audit, nr: arch.ptrace}, [3]uint32{E, E, E}},
+			{"io_uring_setup", data{arch: arch.audit, nr: arch.uringSetup}, [3]uint32{E, E, E}},
+			{"io_uring_enter", data{arch: arch.audit, nr: arch.uringEnter}, [3]uint32{E, E, E}},
+			{"io_uring_register", data{arch: arch.audit, nr: arch.uringRegister}, [3]uint32{E, E, E}},
 
-			{"socket unix stream", sock(afUnix, sockStream, 0), [6]uint32{A, E, E, A, E, A}},
-			{"socket unix dgram", sock(afUnix, sockDgram, 0), [6]uint32{A, E, E, A, E, A}},
-			{"socket netlink", sock(afNetlink, sockRaw|sockCloexec, 0), [6]uint32{A, A, A, A, A, A}},
+			{"socket unix stream", sock(afUnix, sockStream, 0), [3]uint32{E, E, E}},
+			{"socket unix dgram", sock(afUnix, sockDgram, 0), [3]uint32{E, E, E}},
+			{"socket netlink", sock(afNetlink, sockRaw|sockCloexec, 0), [3]uint32{A, A, A}},
 
-			{"socket inet tcp", sock(afInet, sockStream, 0), [6]uint32{A, A, E, E, A, A}},
-			{"socket inet tcp explicit", sock(afInet, sockStream|sockNonblock|sockCloexec, ipprotoTCP), [6]uint32{A, A, E, E, A, A}},
-			{"socket inet6 tcp", sock(afInet6, sockStream|sockCloexec, 0), [6]uint32{A, A, E, E, A, A}},
-			{"socket inet udp", sock(afInet, sockDgram, 0), [6]uint32{A, A, E, E, E, E}},
-			{"socket inet6 udp", sock(afInet6, sockDgram|sockNonblock, ipprotoUDP), [6]uint32{A, A, E, E, E, E}},
-			{"socket inet icmp ping", sock(afInet, sockDgram, ipprotoICMP), [6]uint32{A, A, E, E, E, E}},
-			{"socket inet raw", sock(afInet, sockRaw, ipprotoUDP), [6]uint32{A, A, E, E, E, E}},
-			{"socket inet sctp stream", sock(afInet, sockStream, ipprotoSCTP), [6]uint32{A, A, E, E, E, E}},
-			{"socket inet sctp seqpacket", sock(afInet6, sockSeqpacket, ipprotoSCTP), [6]uint32{A, A, E, E, E, E}},
-			{"socket inet mptcp", sock(afInet, sockStream, ipprotoMPTCP), [6]uint32{A, A, E, E, E, E}},
-			{"socket packet", sock(afPacket, sockRaw, 0x0300), [6]uint32{A, A, E, E, E, E}},
-			{"socket smc", sock(afSMC, sockStream, 0), [6]uint32{A, A, E, E, E, E}},
-			{"socket vsock", sock(afVsock, sockStream, 0), [6]uint32{A, A, E, E, E, E}},
-			{"socket alg", sock(afAlg, 5, 0), [6]uint32{A, A, E, E, E, E}},
+			{"socket inet tcp", sock(afInet, sockStream, 0), [3]uint32{A, E, A}},
+			{"socket inet tcp explicit", sock(afInet, sockStream|sockNonblock|sockCloexec, ipprotoTCP), [3]uint32{A, E, A}},
+			{"socket inet6 tcp", sock(afInet6, sockStream|sockCloexec, 0), [3]uint32{A, E, A}},
+			{"socket inet udp", sock(afInet, sockDgram, 0), [3]uint32{A, E, E}},
+			{"socket inet6 udp", sock(afInet6, sockDgram|sockNonblock, ipprotoUDP), [3]uint32{A, E, E}},
+			{"socket inet icmp ping", sock(afInet, sockDgram, ipprotoICMP), [3]uint32{A, E, E}},
+			{"socket inet raw", sock(afInet, sockRaw, ipprotoUDP), [3]uint32{A, E, E}},
+			{"socket inet sctp stream", sock(afInet, sockStream, ipprotoSCTP), [3]uint32{A, E, E}},
+			{"socket inet sctp seqpacket", sock(afInet6, sockSeqpacket, ipprotoSCTP), [3]uint32{A, E, E}},
+			{"socket inet mptcp", sock(afInet, sockStream, ipprotoMPTCP), [3]uint32{A, E, E}},
+			{"socket packet", sock(afPacket, sockRaw, 0x0300), [3]uint32{A, E, E}},
+			{"socket smc", sock(afSMC, sockStream, 0), [3]uint32{A, E, E}},
+			{"socket vsock", sock(afVsock, sockStream, 0), [3]uint32{A, E, E}},
+			{"socket alg", sock(afAlg, 5, 0), [3]uint32{A, E, E}},
 
-			{"socket netlink sock_diag", sock(afNetlink, sockRaw, 4), [6]uint32{A, A, E, E, E, E}},
-			{"socket netlink uevent", sock(afNetlink, sockDgram, 15), [6]uint32{A, A, E, E, E, E}},
+			{"socket netlink sock_diag", sock(afNetlink, sockRaw, 4), [3]uint32{A, E, E}},
+			{"socket netlink uevent", sock(afNetlink, sockDgram, 15), [3]uint32{A, E, E}},
 
-			{"sendto", data{arch: arch.audit, nr: arch.sendto, arg3: 0x40}, [6]uint32{A, A, A, A, A, A}},
-			{"sendto fastopen", data{arch: arch.audit, nr: arch.sendto, arg3: msgFastopen | 0x40}, [6]uint32{A, A, A, A, E, E}},
-			{"sendto fastopen in arg2 only", data{arch: arch.audit, nr: arch.sendto, arg2: msgFastopen}, [6]uint32{A, A, A, A, A, A}},
-			{"sendmsg", data{arch: arch.audit, nr: arch.sendmsg, arg2: 0x4000}, [6]uint32{A, A, A, A, A, A}},
-			{"sendmsg fastopen", data{arch: arch.audit, nr: arch.sendmsg, arg2: msgFastopen}, [6]uint32{A, A, A, A, E, E}},
-			{"sendmmsg fastopen", data{arch: arch.audit, nr: arch.sendmmsg, arg3: msgFastopen}, [6]uint32{A, A, A, A, E, E}},
-			{"sendmmsg", data{arch: arch.audit, nr: arch.sendmmsg, arg2: msgFastopen}, [6]uint32{A, A, A, A, A, A}},
-			{"listen", data{arch: arch.audit, nr: arch.listen}, [6]uint32{A, A, A, A, E, E}},
-			{"accept", data{arch: arch.audit, nr: arch.accept}, [6]uint32{A, A, A, A, E, E}},
-			{"accept4", data{arch: arch.audit, nr: arch.accept4}, [6]uint32{A, A, A, A, E, E}},
+			{"sendto", data{arch: arch.audit, nr: arch.sendto, arg3: 0x40}, [3]uint32{A, A, A}},
+			{"sendto fastopen", data{arch: arch.audit, nr: arch.sendto, arg3: msgFastopen | 0x40}, [3]uint32{A, A, E}},
+			{"sendto fastopen in arg2 only", data{arch: arch.audit, nr: arch.sendto, arg2: msgFastopen}, [3]uint32{A, A, A}},
+			{"sendmsg", data{arch: arch.audit, nr: arch.sendmsg, arg2: 0x4000}, [3]uint32{A, A, A}},
+			{"sendmsg fastopen", data{arch: arch.audit, nr: arch.sendmsg, arg2: msgFastopen}, [3]uint32{A, A, E}},
+			{"sendmmsg fastopen", data{arch: arch.audit, nr: arch.sendmmsg, arg3: msgFastopen}, [3]uint32{A, A, E}},
+			{"sendmmsg", data{arch: arch.audit, nr: arch.sendmmsg, arg2: msgFastopen}, [3]uint32{A, A, A}},
+			{"listen", data{arch: arch.audit, nr: arch.listen}, [3]uint32{A, A, E}},
+			{"accept", data{arch: arch.audit, nr: arch.accept}, [3]uint32{A, A, E}},
+			{"accept4", data{arch: arch.audit, nr: arch.accept4}, [3]uint32{A, A, E}},
 
-			{"pair unix stream", pair(afUnix, sockStream|sockCloexec), [6]uint32{A, A, A, A, A, A}},
-			{"pair unix seqpacket", pair(afUnix, sockSeqpacket|sockNonblock), [6]uint32{A, E, E, A, E, A}},
-			{"pair unix dgram", pair(afUnix, sockDgram), [6]uint32{A, E, E, A, E, A}},
-			{"pair inet", pair(afInet, sockStream), [6]uint32{A, A, E, E, E, E}},
+			{"pair unix stream", pair(afUnix, sockStream|sockCloexec), [3]uint32{A, A, A}},
+			{"pair unix seqpacket", pair(afUnix, sockSeqpacket|sockNonblock), [3]uint32{E, E, E}},
+			{"pair unix dgram", pair(afUnix, sockDgram), [3]uint32{E, E, E}},
+			{"pair inet", pair(afInet, sockStream), [3]uint32{A, E, E}},
 		} {
 			for i := range allOpts {
 				assert.Equal(t, c.want[i], verdict(t, progs[i], c.d), "%s %s under %s", goarch, c.name, optsNames[i])
@@ -163,22 +157,22 @@ func TestFilterNames(t *testing.T) {
 	t.Parallel()
 	_, open := buildFilter(archTable["amd64"], filterOpts{})
 	assert.Equal(t, []string{"kill: another architecture's syscall (i386, x32 compat)", "kill: an x32 syscall number",
-		"eperm: ptrace", "eperm: io_uring_setup, io_uring_enter, io_uring_register", "allow: everything else"}, open)
-	_, closed := buildFilter(archTable["amd64"], filterOpts{fenceUnix: true, net: netClosed})
+		"eperm: ptrace", "eperm: io_uring_setup, io_uring_enter, io_uring_register", "eperm: socket(AF_UNIX)",
+		"eperm: socketpair(AF_UNIX) unless SOCK_STREAM", "allow: everything else"}, open, "AF_UNIX is refused under every set of flags")
+	_, closed := buildFilter(archTable["amd64"], filterOpts{net: netClosed})
 	assert.Contains(t, closed, "eperm: socket(AF_UNIX)")
 	assert.Contains(t, closed, "eperm: socket of every family but AF_UNIX and AF_NETLINK (no TCP, UDP, raw or packet socket)")
 	assert.Contains(t, closed, "eperm: socketpair of any family but AF_UNIX")
 	assert.Contains(t, closed, "eperm: socketpair(AF_UNIX) unless SOCK_STREAM")
 	_, tcp := buildFilter(archTable["arm64"], filterOpts{net: netTCPOnly})
-	assert.NotContains(t, tcp, "eperm: socket(AF_UNIX)", "--unix leaves AF_UNIX open")
 	assert.Contains(t, tcp, "eperm: socket(AF_INET or AF_INET6) unless SOCK_STREAM with protocol 0 or IPPROTO_TCP (no UDP, raw, ICMP, SCTP or MPTCP)")
 }
 
 func TestFilterOptsOf(t *testing.T) {
 	t.Parallel()
-	assert.Equal(t, filterOpts{fenceUnix: true}, filterOptsOf(&wall{}))
-	assert.Equal(t, filterOpts{net: netClosed}, filterOptsOf(&wall{unix: true, netDeny: true}))
-	assert.Equal(t, filterOpts{fenceUnix: true, net: netTCPOnly}, filterOptsOf(&wall{netDeny: true, netPorts: []uint16{8080}}))
+	assert.Equal(t, filterOpts{}, filterOptsOf(&wall{}))
+	assert.Equal(t, filterOpts{net: netClosed}, filterOptsOf(&wall{netDeny: true}))
+	assert.Equal(t, filterOpts{net: netTCPOnly}, filterOptsOf(&wall{netDeny: true, netPorts: []uint16{8080}}))
 }
 
 func TestAssembleRefusesABadJump(t *testing.T) {

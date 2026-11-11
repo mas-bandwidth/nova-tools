@@ -28,7 +28,7 @@ process counts and disk use are not limited by this tool.
 ## Run a command
 
 ```text
-nova-sandbox [--read <dir>]... [--write <dir>]... [--net-deny [--net-allow <host:port>]...] [--gpu] [--unix] [--env <name>]... -- <cmd> <args...>
+nova-sandbox [--read <dir>]... [--write <dir>]... [--net-deny [--net-allow <host:port>]...] [--gpu] [--env <name>]... -- <cmd> <args...>
 ```
 
 | Flag | Effect |
@@ -38,7 +38,6 @@ nova-sandbox [--read <dir>]... [--write <dir>]... [--net-deny [--net-allow <host
 | `--net-deny` | Close the network, or refuse to start if the host cannot. |
 | `--net-allow <host:port>` | Under `--net-deny`, allow a port named with a loopback host. Linux permits TCP to that port on every destination address; macOS permits TCP and UDP to localhost on it. |
 | `--gpu` | macOS only: allow Metal and video services. On Linux, use `--write /dev/dri`. |
-| `--unix` | Linux only: leave Unix-domain sockets open. |
 | `--env <name>` | Pass this variable by name. `PATH`, `HOME`, `LANG` and `TERM` pass without it. Repeatable. An unset name is refused. |
 
 Flags go before `--`; everything after it is the command. Directories must be
@@ -136,7 +135,6 @@ If the command is killed by signal N, stderr gains
 | `cwd` | 125 | The working directory is outside the system roots and every grant. cd into a granted directory, or add `--read` of the working directory. Exit 2 is the tool's usage code, so this refusal is not 2. |
 | `bad_net` | 2 | Bad loopback `host:port`, or `--net-allow` without `--net-deny`. |
 | `bad_gpu` | 2 | `--gpu` on Linux. Use `--write /dev/dri`. |
-| `bad_unix` | 2 | `--unix` on macOS. A socket inside a `--write` grant is reachable without it; drop `--unix`. |
 | `bad_env` | 2 | `--env` is not a name of letters, digits and underscores, or the name is unset on a run. Set it in the environment; the value is never an argument. |
 | `not_found` | 127 | Command is on no PATH entry. Fix PATH or the path. |
 | `not_executable` | 126 | Not an executable file. Fix its permissions. |
@@ -148,12 +146,11 @@ If the command is killed by signal N, stderr gains
 - Restrictions pass to every child process.
 - Without `--net-deny` the network is unrestricted. With it, Linux allows no TCP, UDP or raw sockets, and macOS no outbound IP or DNS socket. Names in `/etc/hosts` resolve on Linux. If the host cannot enforce this, the tool refuses to start.
 - With `--net-allow`, Linux allows TCP connect to that port on every address; listen and accept are refused. macOS allows TCP and UDP to localhost on it.
-- Linux also refuses `ptrace`, `io_uring` and, unless you pass `--unix`, Unix-domain sockets (syslog, D-Bus and agents fail).
+- Linux also refuses `ptrace`, `io_uring` and Unix-domain sockets (syslog, D-Bus and agents fail). No flag opens them.
 
 ## Limits
 
-- Needs Linux 5.13 or later (Landlock; `--net-deny` needs ABI 4). `check` reports yours.
-- `--unix` lets the command reach any local socket by path, so use it only for trusted commands.
+- Needs Linux 5.13 or later with seccomp filter mode (Landlock; `--net-deny` needs ABI 4). `check` reports yours.
 - CPU, memory, processes and disk use are not limited.
 - nova-sandbox waits for the command, in the same process group, so a terminal read keeps working. SIGINT, SIGTERM, SIGHUP and SIGQUIT are forwarded to the command. On Linux the command is killed when the waiter dies. On macOS, SIGKILL of the waiter can leave the command running. See Reference below.
 
@@ -221,32 +218,25 @@ follow the separate rules below.
 With `--net-allow`, TCP client connections to the named ports are permitted
 on every destination address. UDP, raw sockets and other network protocols
 remain denied. Listening, accepting connections and TCP Fast Open are also
-refused in this mode. The listen and accept restrictions apply to Unix sockets
-too. Use `--unix` with `--net-deny` alone when a command needs to serve a local
-Unix socket.
+refused in this mode.
 
 Under `--net-deny`, ordinary DNS over UDP is unavailable. Names in
 `/etc/hosts` work; with an allowed port, a command can use a resolver that
 supports TCP on that port. Without `--net-deny`, network access is unrestricted.
 
 From ABI 6, signals and abstract Unix sockets are scoped to processes created
-inside the wall. Earlier ABIs do not provide that scope. The default seccomp
+inside the wall. Earlier ABIs do not provide that scope. The seccomp
 socket restriction still applies on those hosts.
 
-By default, seccomp refuses Unix-domain socket creation except connected
-stream socket pairs. Local services that need Unix-domain sockets will fail.
+Seccomp refuses Unix-domain socket creation except connected stream socket
+pairs, and no flag lifts that: Landlock does not check a Unix connection
+against filesystem grants, so an open socket family would reach every local
+service by path. Local services that need Unix-domain sockets will fail.
 This includes syslog, socket-based NSS lookups, D-Bus and agents. Plain
 `/etc/passwd` lookups remain available. DNS also depends on the network flags.
 
-`--unix` relaxes that restriction. Landlock does not check a Unix connection
-against filesystem grants, so keeping a service's socket outside a grant does
-not isolate it. Use this flag only when the command can be trusted with the
-local services it can reach.
-
-When seccomp is available, it also refuses `ptrace` and `io_uring`, including
-under `--unix`. Without seccomp, the default wall refuses to start.
-`--unix` permits a Landlock-only run on such a host; those extra restrictions
-are then absent. Such a run cannot use `--net-deny`.
+Seccomp also refuses `ptrace` and `io_uring`. Without seccomp filter mode,
+the wall refuses to start (`no_seccomp`) and `check` fails.
 
 ### Probe steps
 
@@ -262,8 +252,8 @@ checks through the same binary. It removes those directories afterward.
 | `write_outside` | A write outside the grant is denied. |
 | `read_outside` | A read outside the grant is denied. |
 | `read_named` | An added read grant permits the read. |
-| `unix_deny` | A Unix-domain connection outside the grants is denied. |
-| `unix_allow` | On Linux, the same connection succeeds with `--unix`. |
+| `unix_control` | An unwalled connection to the probe's Unix-domain listener succeeds. |
+| `unix_deny` | The same connection, outside the grants, is denied inside the wall. |
 | `net_control` | A connection to the probe's TCP listener succeeds. |
 | `net_deny` | The connection is denied under `--net-deny`. |
 | `tcp_allow`, `tcp_other_deny` | The selected TCP port is allowed; another port is denied. |

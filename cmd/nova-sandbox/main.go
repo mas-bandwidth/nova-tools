@@ -16,24 +16,24 @@ import (
 const runFlags = `  --read <dir>          readable and executable, recursively. Repeatable.
   --write <dir>         readable, writable and executable, recursively. Repeatable.
   --net-deny            the network is closed, or the wall refuses to start. Linux: no
-                        socket but unix and netlink-route (no TCP, UDP or raw); DNS works
-                        only from /etc/hosts. macOS: no outbound IP and no DNS socket.
-                        Without it nothing is promised about the network.
+                        socket but netlink-route (no TCP, UDP or raw); DNS works only
+                        from /etc/hosts. macOS: no outbound IP and no DNS socket.
+                        Without it nothing is promised about the network. Linux closes
+                        unix sockets with or without it: only a connected stream pair
+                        (socketpair) can be made, so /dev/log, NSS sockets, agents and
+                        local daemons fail.
   --net-allow <h:port>  under --net-deny, reopen connect to one loopback port. Linux: TCP
                         connect only, on every address with that port; UDP stays closed,
                         and listen, accept and TCP Fast Open are refused on every socket.
                         macOS: TCP and UDP to localhost on that port. Repeatable.
   --gpu                 macOS: open the Metal and IOSurface IOKit clients and the
                         MTLCompiler, CoreMedia videoencoder and videodecoder services.
-  --unix                Linux: leave AF_UNIX sockets open, which reopens the same-uid
-                        escape (any local socket reachable by path). Without it /dev/log,
-                        NSS sockets, agents and local daemons fail.
   --env <name>          pass NAME from the environment, never as an argument. Repeatable. PATH, HOME, LANG, TERM pass without it; unset is refused.
 `
 
 const usage = `nova-sandbox: run one command inside a kernel-enforced wall.
 
-  nova-sandbox [--read <dir>]... [--write <dir>]... [--net-deny [--net-allow <host:port>]...] [--gpu] [--unix] [--env <name>]... -- <cmd> <args...>
+  nova-sandbox [--read <dir>]... [--write <dir>]... [--net-deny [--net-allow <host:port>]...] [--gpu] [--env <name>]... -- <cmd> <args...>
   nova-sandbox check
   nova-sandbox probe
   nova-sandbox help [<verb>]
@@ -202,7 +202,7 @@ func beforeDashes(args []string) []string {
 }
 
 // usageReasons are the refusals that mean the invocation itself is malformed.
-var usageReasons = []string{"bad_flag", "bad_value", "no_command", "bad_read", "bad_write", "bad_net", "bad_gpu", "bad_unix", "bad_env"}
+var usageReasons = []string{"bad_flag", "bad_value", "no_command", "bad_read", "bad_write", "bad_net", "bad_gpu", "bad_env"}
 
 // report prints the refusals and returns the exit status. A malformed invocation is one
 // refusal line naming every problem at once, exit 2. Otherwise each refusal is a
@@ -272,14 +272,11 @@ func parseArgs(args []string) (s spec, bad []refusal) {
 		case "--gpu":
 			s.gpu = true
 			continue
-		case "--unix":
-			s.unix = true
-			continue
 		}
 		dst := map[string]*[]string{"--read": &s.reads, "--write": &s.writes, "--net-allow": &s.netAllow, "--env": &s.passEnv}[a]
 		switch {
 		case dst == nil:
-			bad = append(bad, refuse("bad_flag", "unknown flag %s; the flags are --read --write --net-deny --net-allow --gpu --unix --env", a))
+			bad = append(bad, refuse("bad_flag", "unknown flag %s; the flags are --read --write --net-deny --net-allow --gpu --env", a))
 		case i+1 >= len(args):
 			bad = append(bad, refuse("bad_flag", "%s wants a value", a))
 		case strings.HasPrefix(args[i+1], "--"):
