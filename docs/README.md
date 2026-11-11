@@ -599,6 +599,17 @@ nova-fleet github-runners --check --diff -- -e github_runner_url=https://github.
 nova-fleet github-runners -- -e github_runner_url=https://github.com/OWNER/REPO -e github_runner_scope=repo
 ```
 
+Once a machine serves more than one repository, write what it serves on its
+row, and a run with no url makes its runners exactly that: each scope's count,
+with the scope's extra labels, and any other runner on the machine retired and
+removed from GitHub:
+
+```text
+nova-config machine set MACHINE --runner_scopes 'https://github.com/OWNER/REPO=2,https://github.com/ORG=1:long'
+nova-fleet github-runners --check --diff -- -l MACHINE
+nova-fleet github-runners -- -l MACHINE
+```
+
 To see the plan on this machine with the throwaway rows above, stand a stub in
 for gh that prints a placeholder token (a placeholder repository has no real
 one), and skip the check of GitHub's own list of runners. The plan prints one
@@ -643,10 +654,11 @@ play asks gh for the same way:
 nova-fleet github-runners -- -e github_runner_url=https://github.com/OWNER/REPO -e github_runner_scope=repo -e github_runner_state=absent
 ```
 
-The refusal you will meet first is
-`github-runner: give -e github_runner_url=... -e github_runner_scope=repo, ...`:
-name the repository or organization and its scope, and give each host a
-`runners` value or pass `-e runner_count=N`. The others are in
+The refusal you will meet first, running with no url, is
+`github-runner: <machine>'s record has runners=N and no runner_scopes`:
+write the row's `--runner_scopes`, or name one repository or organization
+with `-e github_runner_url=... -e github_runner_scope=repo` and give each
+host a `runners` value or pass `-e runner_count=N`. The others are in
 [cmd/nova-fleet/README.md](../cmd/nova-fleet/README.md#github-runners).
 
 ## Deploy secrets to machines in your fleet automatically

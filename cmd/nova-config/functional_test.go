@@ -130,7 +130,7 @@ func TestFunctionalStore(t *testing.T) {
 	assert.Equal(t, "CONFIG SET kind=machine name=m1 changed=none rev=unchanged\n", ok("machine", "set", "m1", "--user", "nova", "--actor", "a1"), "a no-op set")
 	assert.Equal(t, "CONFIG SET kind=service name=r-m1 rev=3 changed=enabled\nnext: nova-fleet services --check\n", ok("service", "set", "r-m1", "--enabled", "false", "--actor", "a1", "--reason", "why"))
 	assert.Equal(t, `SERVICE name=r-m1 machine=m1 argv=["prog","a b"] seat=- keys=- every=0 keepalive=true enabled=false env={} log=-`+"\nCONFIG LIST kind=service rows=1\n", ok("service", "list"))
-	assert.Equal(t, "MACHINE name=m1 address=- public=- user=nova os=- arch=- cores=- roles=bench runners=0 windows_runners=- runner_env={} note=-\nCONFIG LIST kind=machine rows=1\n", ok("machine", "list"))
+	assert.Equal(t, "MACHINE name=m1 address=- public=- user=nova os=- arch=- cores=- roles=bench runners=0 runner_scopes=- windows_runners=- runner_env={} note=-\nCONFIG LIST kind=machine rows=1\n", ok("machine", "list"))
 	show := ok("machine", "show", "m1")
 	assert.Regexp(t, `created=20\d\d-\d\d-\d\dT\d\d:\d\d:\d\dZ updated=20\d\d-.*Z services=r-m1\n$`, show)
 	ok("machine", "set", "m1", "--cores", "4", "--note", "a note", "--actor", "a1")

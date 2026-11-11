@@ -22,8 +22,8 @@ import (
 // sorted comma list of words matching word), argv (a JSON array of strings),
 // env (a JSON object of NAME to value), path (an absolute or ~/ path), ref
 // (the name of a machine row, NULL when empty), public (a public IP literal
-// or a DNS name) or winrunners (the Windows side's runners of a WSL machine,
-// see canonicalWinRunners).
+// or a DNS name) or scopes (GitHub Actions runners per repository or organization,
+// see canonicalScopes).
 type field struct {
 	name, typ string
 	required  bool
@@ -62,7 +62,8 @@ var kinds = map[string]*kind{
 			{name: "cores", typ: "int", null: true},
 			{name: "roles", typ: "list", def: "bench", word: roleWord},
 			{name: "runners", typ: "int"},
-			{name: "windows_runners", typ: "winrunners"},
+			{name: "runner_scopes", typ: "scopes"},
+			{name: "windows_runners", typ: "scopes"},
 			{name: "runner_env", typ: "env", def: "{}"},
 			{name: "note", typ: "text", cut: true, free: true},
 		}},
@@ -148,8 +149,8 @@ func (f field) canonical(raw string) (string, error) {
 		if raw != "" {
 			return canonicalPublic(f, raw)
 		}
-	case "winrunners":
-		return canonicalWinRunners(f, raw)
+	case "scopes":
+		return canonicalScopes(f, raw)
 	}
 	if strings.ContainsAny(raw, "\r\n") {
 		return "", fmt.Errorf("--%s: want one line", f.name)
@@ -179,55 +180,56 @@ func canonicalEnv(f field, raw string) (string, error) {
 	return marshal(m), nil
 }
 
-// winTarget is where a Windows runner registers (a repository or an organization on github.com); winLabel one label.
+// scopeTarget is where a runner registers (a repository or an organization on github.com); scopeLabel one label.
 var (
-	winTarget = regexp.MustCompile(`^https://github\.com/[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)?$`)
-	winLabel  = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
+	scopeTarget = regexp.MustCompile(`^https://github\.com/[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)?$`)
+	scopeLabel  = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 )
 
-// winRunners is one target of windows_runners: count runners on url (a repository or an organization), and the
-// labels added to the ones the role always gives. Its json is the inventory's nova_windows_runners entry.
-type winRunners struct {
+// runnerScope is one target of runner_scopes or windows_runners: count runners on url (a repository or an
+// organization), and the labels added to the ones the role always gives. Its json is the inventory's
+// nova_runner_scopes or nova_windows_runners entry.
+type runnerScope struct {
 	URL    string   `json:"url"`
 	Count  int      `json:"count"`
 	Labels []string `json:"labels"`
 }
 
-// parseWinRunners reads `<url>=<count>[:<label>+<label>...]`, comma-separated: the targets sorted by url, each url
+// parseScopes reads `<url>=<count>[:<label>+<label>...]`, comma-separated: the targets sorted by url, each url
 // once, labels sorted and unique; empty is none.
-func parseWinRunners(raw string) ([]winRunners, error) {
-	out := []winRunners{}
+func parseScopes(raw string) ([]runnerScope, error) {
+	out := []runnerScope{}
 	for _, e := range strings.FieldsFunc(raw, func(r rune) bool { return r == ',' || unicode.IsSpace(r) }) {
 		rest, https := strings.CutPrefix(e, "https://")
 		target, labels, colon := strings.Cut(rest, ":")
 		u, n, eq := strings.Cut(target, "=")
-		w := winRunners{URL: "https://" + strings.TrimSuffix(u, "/"), Labels: []string{}}
+		w := runnerScope{URL: "https://" + strings.TrimSuffix(u, "/"), Labels: []string{}}
 		count, err := strconv.Atoi(n)
-		if !https || !eq || !winTarget.MatchString(w.URL) || err != nil || count < 1 || count > 99 {
+		if !https || !eq || !scopeTarget.MatchString(w.URL) || err != nil || count < 1 || count > 99 {
 			return nil, fmt.Errorf("%q: want <url>=<count>[:<label>+<label>], the url https://github.com/<owner>[/<repo>], the count 1 to 99", e)
 		}
 		if w.Count = count; colon {
 			w.Labels = strings.Split(labels, "+")
 		}
 		for _, l := range w.Labels {
-			if !winLabel.MatchString(l) {
+			if !scopeLabel.MatchString(l) {
 				return nil, fmt.Errorf("%q: label %q: want letters, digits, dot, dash and underscore", e, l)
 			}
 		}
 		slices.Sort(w.Labels)
 		w.Labels = slices.Compact(w.Labels)
-		if slices.ContainsFunc(out, func(o winRunners) bool { return strings.EqualFold(o.URL, w.URL) }) {
+		if slices.ContainsFunc(out, func(o runnerScope) bool { return strings.EqualFold(o.URL, w.URL) }) {
 			return nil, fmt.Errorf("%s is named twice; give each url once", w.URL)
 		}
 		out = append(out, w)
 	}
-	slices.SortFunc(out, func(a, b winRunners) int { return strings.Compare(a.URL, b.URL) })
+	slices.SortFunc(out, func(a, b runnerScope) int { return strings.Compare(a.URL, b.URL) })
 	return out, nil
 }
 
-// canonicalWinRunners is a windows_runners value as it is stored: parseWinRunners' targets, written back.
-func canonicalWinRunners(f field, raw string) (string, error) {
-	ws, err := parseWinRunners(raw)
+// canonicalScopes is a runner_scopes or windows_runners value as it is stored: parseScopes' targets, written back.
+func canonicalScopes(f field, raw string) (string, error) {
+	ws, err := parseScopes(raw)
 	parts := []string{}
 	for _, w := range ws {
 		parts = append(parts, w.URL+"="+strconv.Itoa(w.Count)+strings.TrimSuffix(":"+strings.Join(w.Labels, "+"), ":"))

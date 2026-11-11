@@ -1,10 +1,10 @@
 ---
-# Defaults of the github-runner role (cmd/nova-fleet/github-runners.yml). Three values have
-# no default and must be given: github_runner_url, github_runner_scope and, for the
-# labels, whatever extra ones the jobs select on (github_runner_labels, may be empty).
+# Defaults of the github-runner role (cmd/nova-fleet/github-runners.yml). Where the runners register is the machine
+# record's runner_scopes (the inventory's nova_runner_scopes: url, count and extra labels per scope); a run for one url
+# gives github_runner_url and github_runner_scope instead, with github_runner_labels for the extra labels (may be empty).
 
-# Where to register: https://github.com/<owner>/<repo> (scope repo) or
-# https://github.com/<org> (scope org). No default; the play refuses to run without it.
+# One url (a run with -e): https://github.com/<owner>/<repo> (scope repo) or https://github.com/<org> (scope org).
+# No default: without it the run is the record's (tasks/record.yml).
 # github_runner_url:
 # github_runner_scope: repo | org
 github_runner_labels: []
@@ -36,6 +36,8 @@ github_runner_release_url: "https://github.com/actions/runner/releases/download"
 
 # Where a host keeps them: <base>/<owner>-<repo>-<i> (or <org>-<i>), in the login's home.
 github_runner_base_dir: "{{ ansible_facts['user_dir'] ~ '/actions-runner' }}"
+# Where a host keeps the runners' services, read by a run of the record (tasks/record.yml) to find the ones it does not want.
+github_runner_unit_dir: "{{ '/Library/LaunchDaemons' if ansible_facts['system'] == 'Darwin' else '/etc/systemd/system' }}"
 
 # The service's environment (Linux and macOS), name: value: the machine record's runner_env (nova-config machine set
 # <machine> --runner_env '<json-object>'), which the inventory gives as nova_runner_env; -e github_runner_env replaces
@@ -61,6 +63,12 @@ github_runner_install_dependencies: true
 # Retiring a runner also removes it from GitHub, with a removal token asked of GitHub by gh on the
 # control node; false skips that and leaves the entry for you to delete.
 github_runner_deregister: true
+
+# Before a runner is stopped (retired) or restarted onto a changed unit, the job it is running ends (tasks/wait-idle.yml):
+# checked every github_runner_idle_delay seconds, this many times (an hour), then the run fails and the runner is left
+# running. A job is never cancelled by a run.
+github_runner_idle_retries: 240
+github_runner_idle_delay: 15
 
 # gh on the control node, logged in (gh auth login) with admin on the repository or organization:
 # it asks GitHub for the registration and removal tokens (tasks/token.yml), and after a run reads

@@ -162,7 +162,7 @@ reached as root at the address given, as on the first run.
 | Play | Purpose | Needs |
 |---|---|---|
 | `ci-rules` | the CI rules on every GitHub Actions runner a machine runs, whoever registered it (bench, runner and services groups) | nothing; `-l` the machines |
-| `github-runners` | GitHub Actions runners on every machine of the runner group, registered to one repository or organization | `github_runner_url`, `github_runner_scope`; `gh` on the control node logged in with admin on the repository |
+| `github-runners` | GitHub Actions runners on every machine of the runner group, as its record's runner_scopes name them | the machine records' `runner_scopes` (or `github_runner_url`, `github_runner_scope` for one url); `gh` on the control node logged in with admin on each repository or organization |
 | `health` | guards that let a Linux machine get itself out of trouble, a disk report and clean, and a Mac's Go build cache trim (bench, runner and services groups) | nothing |
 | `install` | install one nova-tools release, by tag, on the machines named (bench, runner and services groups) | `nova_tools_version` (a tag `vX.Y.Z`; no default) |
 | `netwatch` | a Linux machine that loses its network or the tailnet recovers by itself, and a hung one resets (bench, runner and services groups) | nothing; `-l` the machines |
@@ -335,8 +335,26 @@ nova-fleet services -- -e nova_service_restart=reader
 
 ## github-runners
 
-GitHub Actions runners on every machine of the `runner` group: as many as the machine row's `runners` says, each
-registered to one repository or organization, run as a service that starts at boot. **Labels:** a runner's labels are
+GitHub Actions runners on every machine of the `runner` group, each registered to one repository or organization and
+run as a service that starts at boot.
+
+**The record.** A run without `-e github_runner_url` makes each machine's runners exactly its record's `runner_scopes`
+(`nova-config machine set <machine> --runner_scopes '<url>=<count>[:<label>+<label>],...'`; cmd/nova-config/README.md),
+with the record's `runner_env`: each scope's `count` runners, labelled as below plus the scope's labels. A runner on the
+machine that no scope wants (a directory under `<home>/actions-runner` or a `github-runner` unit or daemon named
+`<slug>-<i>`: above a scope's count, or of a url the record does not name) is retired and removed from GitHub, its url
+read from its `.runner`, and prints `RUNNER-STRAY <machine> <slug>-<i> url=<url>`. Then GitHub's list of every scope the
+fleet's records name is read: an entry named `<machine>-<i>` that the record does not want is deleted from GitHub when
+it is offline (its machine side is gone) and left when online, each printing `GITHUB-STRAY <machine> <name> <path>
+<status>`. Each machine ends with `RUNNERS-RECORD <machine> scopes=<n> want=<n> retired=<names>`. A record with
+`runners` above 0 and no `runner_scopes` is refused, not read as none. A Linux unit is the whole of its service: a
+drop-in directory beside it (`<unit>.service.d`) is removed. Before a runner is stopped or restarted onto a changed
+unit, the job it is running ends (`tasks/wait-idle.yml`: a `Runner.Worker` from its `bin`, polled every
+`github_runner_idle_delay` (15) seconds `github_runner_idle_retries` (240) times; still busy then, the run fails and
+the runner keeps running). `-e github_runner_url` with `-e github_runner_scope` is a run for that one url instead, with
+`runners` (or `runner_count`) as its count; the machine's other runners are left as they are.
+
+**Labels:** a runner's labels are
 `fleet` (`github_runner_base_labels`, which the Windows side carries too), its machine's inventory groups (the row's
 roles: `bench`, `runner`, `services`; `ungrouped` and `all` are left out), the host's own os (`linux`, `darwin`) and
 arch (`amd64`, `arm64`) as its facts report them (a machine row's `os` and `arch` fields say how it is reached, never
@@ -370,8 +388,8 @@ events may use them.
 | `github_runner_url` | no default. `https://github.com/<owner>/<repo>`, or `https://github.com/<org>` |
 | `github_runner_scope` | no default. `repo` or `org`; refused if the url is the other shape |
 | `github_runner_labels` | extra labels, a list (default none), added to the machine's labels |
-| `runner_count` | overrides the row's `runners` for one run; 0 retires every runner; `cores` is one runner per `github_runner_cores_per_runner` (4) of the row's `cores`, else the host's own, at least 1. A host with neither is refused |
-| `github_runner_state` | `present` (default) or `absent`, which retires every runner of that url |
+| `runner_count` | one url: overrides the row's `runners` for one run; 0 retires every runner; `cores` is one runner per `github_runner_cores_per_runner` (4) of the row's `cores`, else the host's own, at least 1. A host with neither is refused |
+| `github_runner_state` | one url: `present` (default) or `absent`, which retires every runner of that url |
 | `github_runner_deregister` | true: retiring removes the runner from GitHub (needs a removal token) |
 | `github_runner_env` | the service's environment, `{NAME: value}`, inherited by every job; default the machine record's `runner_env` (the inventory's `nova_runner_env`; `nova-config machine set <machine> --runner_env '<json-object>'`, cmd/nova-config/README.md), so every run for any url writes it. A `PATH` replaces the default (`nova_bin_dir` first, then the system's); a `TMPDIR` replaces `github_runner_tmpdir`. `-e github_runner_env` replaces the record's for one run; there a path under the login's home may be written `{{ ansible_facts['user_dir'] }}/...`, rendered per machine (the record holds literal values). [docs/examples/github-runners-env.yml](../../docs/examples/github-runners-env.yml) is a vars file with the url, scope, labels and an environment for Ubuntu runners, for `-e @github-runners-env.yml` (read from the directory you run in) |
 | `github_runner_tmpdir` | a Linux runner's `TMPDIR` when the environment names none: `<home>/.cache/runner-tmp` |
@@ -392,6 +410,8 @@ api on the control node failed, rc=<n>: <gh's stderr>` and `gh auth login`. `-e 
 another gh.
 
 ```
+nova-fleet github-runners --check --diff -- -l MACHINE
+nova-fleet github-runners -- -l MACHINE
 nova-fleet github-runners --check --diff -- -e github_runner_url=https://github.com/OWNER/REPO -e github_runner_scope=repo
 nova-fleet github-runners -- -e github_runner_url=https://github.com/OWNER/REPO -e github_runner_scope=repo
 ```
@@ -411,7 +431,7 @@ so it keeps its session and the jobs queued for it; `.labels` is then rewritten 
 prints `LABEL-ADD <runner> added=<labels> labels=<labels>`. A runner GitHub does not list fails the run, its labels
 untouched. A label it holds beyond the wanted is reported as `LABEL-EXTRA` and kept: pass it in `github_runner_labels`,
 or retire the runner (`-e github_runner_state=absent`) and converge again to drop it. A changed unit restarts its
-runner, ending any job on it. A
+runner once the job it is running has ended. A
 machine whose count drops has its highest-numbered runners retired and removed from GitHub, with a removal
 token (`.../actions/runners/remove-token`, asked for the same way). A second run changes nothing.
 

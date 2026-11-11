@@ -195,16 +195,34 @@
   register: github_runner_unit_file
   when: ansible_facts['system'] == 'Linux'
 
+# The unit is the whole of the service: a drop-in beside it (a hand-made <unit>.service.d) would override the record's
+# environment, so it is removed and the unit read again.
+- name: no drop-in beside the unit (Linux)
+  ansible.builtin.file:
+    path: "/etc/systemd/system/{{ github_runner_unit }}.service.d"
+    state: absent
+  become: "{{ not ansible_check_mode }}"
+  register: github_runner_dropins
+  when: ansible_facts['system'] == 'Linux'
+
+- name: the job it is running ends before the changed unit restarts it (Linux)
+  ansible.builtin.include_tasks: wait-idle.yml
+  when: >-
+    ansible_facts['system'] == 'Linux' and not ansible_check_mode
+    and (github_runner_unit_file is changed or github_runner_dropins is changed) and runner_index not in github_runner_need
+
 - name: systemd reads the unit (Linux)
   ansible.builtin.systemd: { daemon_reload: true }
   become: true
-  when: ansible_facts['system'] == 'Linux' and github_runner_unit_file is changed and not ansible_check_mode
+  when: >-
+    ansible_facts['system'] == 'Linux' and not ansible_check_mode
+    and (github_runner_unit_file is changed or github_runner_dropins is changed)
 
 - name: the service is enabled at boot and running (Linux)
   ansible.builtin.systemd:
     name: "{{ github_runner_unit }}.service"
     enabled: true
-    state: "{{ 'restarted' if github_runner_unit_file is changed else 'started' }}"
+    state: "{{ 'restarted' if (github_runner_unit_file is changed or github_runner_dropins is changed) else 'started' }}"
   become: true
   when: ansible_facts['system'] == 'Linux' and not (ansible_check_mode and github_runner_unit_file is changed)
 
@@ -234,6 +252,12 @@
   failed_when: false
   check_mode: false
   when: ansible_facts['system'] == 'Darwin'
+
+- name: the job it is running ends before the changed daemon reloads it (macOS)
+  ansible.builtin.include_tasks: wait-idle.yml
+  when: >-
+    ansible_facts['system'] == 'Darwin' and not ansible_check_mode
+    and github_runner_loaded.rc == 0 and github_runner_unit_file is changed
 
 - name: load the daemon, or reload it where its file changed (macOS)
   ansible.builtin.shell: |

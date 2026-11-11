@@ -139,12 +139,14 @@ func build(machines []Row, services []Row, local string) (*inventory, error) {
 				hv[k] = val
 			}
 		}
-		if v["windows_runners"] != "" {
-			ws, err := parseWinRunners(v["windows_runners"])
-			if err != nil {
-				return nil, refused("machine %s has corrupt windows_runners (%v); run: nova-config machine set %s --windows_runners <value>", m, err, m)
+		for _, f := range [][2]string{{"runner_scopes", "nova_runner_scopes"}, {"windows_runners", "nova_windows_runners"}} {
+			if v[f[0]] != "" {
+				ws, err := parseScopes(v[f[0]])
+				if err != nil {
+					return nil, refused("machine %s has corrupt %s (%v); run: nova-config machine set %s --%s <value>", m, f[0], err, m, f[0])
+				}
+				hv[f[1]] = ws
 			}
-			hv["nova_windows_runners"] = ws
 		}
 		if env := map[string]unsafeText{}; v["runner_env"] != "" && v["runner_env"] != "{}" {
 			if _, err := kinds["machine"].findField("runner_env").canonical(v["runner_env"]); err != nil {
@@ -166,7 +168,7 @@ func build(machines []Row, services []Row, local string) (*inventory, error) {
 				groups[role] = append(groups[role], m)
 			}
 		}
-		if runners > 0 && !slices.Contains(groups["runner"], m) {
+		if (runners > 0 || v["runner_scopes"] != "") && !slices.Contains(groups["runner"], m) {
 			groups["runner"] = append(groups["runner"], m)
 		}
 	}

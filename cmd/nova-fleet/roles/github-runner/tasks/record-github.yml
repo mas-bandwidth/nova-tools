@@ -1,0 +1,73 @@
+---
+# GitHub's own list of every scope the fleet's records name (every machine's runner_scopes, and the urls of the strays
+# retired here), read on the control node with gh. An entry named for this host (<host>-<i>) that the record does not
+# want is a runner whose machine side is gone: offline, it is deleted from GitHub (gh api -X DELETE); online, something
+# still runs it, so it is reported and left. --check reads and reports, and deletes nothing.
+
+- name: the scopes the fleet's records name
+  ansible.builtin.set_fact:
+    github_runner_gh_urls: >-
+      {%- set out = [] -%}
+      {%- for h in groups['all'] -%}
+      {%- for t in hostvars[h].nova_runner_scopes | default([]) -%}{%- set _ = out.append(t.url | regex_replace('/$', '')) -%}{%- endfor -%}
+      {%- endfor -%}
+      {{ (out + github_runner_stray_urls | default([])) | unique | sort }}
+
+- name: each scope's runners, as GitHub lists them
+  ansible.builtin.command:
+    argv:
+      - "{{ github_runner_gh }}"
+      - api
+      - "{{ 'repos' if '/' in github_runner_gh_path else 'orgs' }}/{{ github_runner_gh_path }}/actions/runners"
+      - --paginate
+      - -q
+      - '.runners[] | "\(.id) \(.name) \(.status)"'
+  loop: "{{ github_runner_gh_urls }}"
+  vars:
+    github_runner_gh_path: "{{ item | regex_replace('^https://[^/]+/', '') }}"
+  delegate_to: localhost
+  become: false
+  register: github_runner_gh_lists
+  changed_when: false
+  check_mode: false
+  failed_when: github_runner_gh_lists.rc != 0
+
+- name: this host's entries that the record does not want
+  ansible.builtin.set_fact:
+    github_runner_gh_strays: >-
+      {%- set out = [] -%}
+      {%- for r in github_runner_gh_lists.results | default([]) -%}
+      {%- set path = r.item | regex_replace('^https://[^/]+/', '') -%}
+      {%- for line in r.stdout_lines | default([]) -%}
+      {%- set f = line.split(' ') -%}
+      {%- if f | length == 3 and f[1] is match('^' ~ (inventory_hostname | regex_escape) ~ '-[0-9]+$')
+            and (path | replace('/', '-')) ~ '-' ~ (f[1] | regex_replace('^.*-([0-9]+)$', '\1')) not in github_runner_record_want -%}
+      {%- set _ = out.append({'path': path, 'kind': 'repos' if '/' in path else 'orgs', 'id': f[0], 'name': f[1], 'status': f[2]}) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: each, planned
+  ansible.builtin.debug:
+    msg: >-
+      GITHUB-STRAY {{ inventory_hostname }} {{ item.name }} {{ item.path }} {{ item.status }}:
+      {{ ('deleted from GitHub' if not ansible_check_mode else 'a run deletes it from GitHub (check: nothing changed)')
+         if item.status == 'offline' else 'online, so something still runs it; left' }}
+  loop: "{{ github_runner_gh_strays }}"
+  loop_control: { label: "{{ item.path }} {{ item.name }}" }
+
+- name: an offline entry the record does not want is deleted from GitHub
+  ansible.builtin.command:
+    argv:
+      - "{{ github_runner_gh }}"
+      - api
+      - -X
+      - DELETE
+      - "{{ item.kind }}/{{ item.path }}/actions/runners/{{ item.id }}"
+  loop: "{{ github_runner_gh_strays | selectattr('status', 'equalto', 'offline') | list }}"
+  loop_control: { label: "{{ item.path }} {{ item.name }}" }
+  delegate_to: localhost
+  become: false
+  changed_when: true
+  when: not ansible_check_mode
