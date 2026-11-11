@@ -3,6 +3,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,7 +20,8 @@ import (
 
 // The functional tests run the real binary on real locks. The commands it
 // runs are this test binary again, as a child: NOVA_RESERVE_CHILD=sleep writes
-// its pid to NOVA_RESERVE_PIDFILE when that is set, and sleeps; =exit7 exits 7.
+// its pid to NOVA_RESERVE_PIDFILE when that is set, and sleeps; =exit7 exits 7;
+// =cpus prints how many CPUs it may run on.
 func TestMain(m *testing.M) {
 	switch os.Getenv("NOVA_RESERVE_CHILD") {
 	case "sleep":
@@ -30,6 +32,9 @@ func TestMain(m *testing.M) {
 		os.Exit(0)
 	case "exit7":
 		os.Exit(7)
+	case "cpus":
+		fmt.Println(runtime.NumCPU()) // as nproc counts: the CPUs it may run on
+		os.Exit(0)
 	}
 	os.Exit(m.Run())
 }
