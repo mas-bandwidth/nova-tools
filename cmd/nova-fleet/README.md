@@ -1136,8 +1136,11 @@ and `script` (a build alone: Frama-C's opam root, at pinned package versions fro
 Rust, on Linux, comes through a pinned rustup: `rustup-init` at `nova_sdk_rustup.version`, checked against its
 `.sha256`, installs rustup into `~/sdk/rustup-<version>` with the first toolchain (a release, `1.98.1`) as the
 default and self-update off; each toolchain then gets its components (`clippy`, `rustfmt`) and targets, and the dated
-nightly that `cargo fuzz` runs on is installed beside it. The first toolchain's own binaries (`cargo`, `rustc`,
-`rustdoc`, `rustfmt`, `cargo-fmt`, `cargo-clippy`, `clippy-driver`) are linked into `~/sdk/bin`; `~/sdk/bin/rustup` is a
+nightly that `cargo fuzz` runs on is installed beside it. The first toolchain's own binaries (`cargo`, `rustdoc`,
+`rustfmt`, `cargo-fmt`, `cargo-clippy`, `clippy-driver`) are linked into `~/sdk/bin`. `~/sdk/bin/rustc` is a wrapper
+that runs the toolchain's `rustc` with `-C linker=/usr/bin/cc` (`nova_sdk_rustup.linux.linker`): given a bare `cc`,
+rustc starts it by fork with a socketpair that a seccomp sandbox such as `nova-sandbox` refuses, and the link fails
+with `could not exec the linker`; cargo's own `-C linker` comes later and wins. `~/sdk/bin/rustup` is a
 wrapper that uses this rustup's home unless the caller set `RUSTUP_HOME`, so a CI job that installs its own toolchain
 into its own home is unaffected. `cargo-fuzz` is built with `--locked` into `~/sdk/cargo-fuzz-<version>`.
 
