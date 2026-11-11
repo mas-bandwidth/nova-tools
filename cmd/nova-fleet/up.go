@@ -370,7 +370,7 @@ func (u *upRun) reach(m *machine) {
 	}(), ", ") + ")"
 }
 
-// steps runs the fixed order; it returns the exit code and the steps each machine passed.
+// steps runs the fixed order; it returns the exit code.
 func (u *upRun) steps() int {
 	pass := map[string][]string{}
 	mark := func(step string, ms ...*machine) {
