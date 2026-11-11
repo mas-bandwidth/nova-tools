@@ -74,7 +74,7 @@ type upRun struct {
 	machines             []*machine
 	pass                 []string
 	dir, store, seat     string
-	key, pins, dsn       string
+	key, dsn             string
 	bus                  string            // the Redis the bus is at, host:port
 	keys                 map[string]string // the join keys minted for the machines not on the tailnet, by name
 	tskey                string            // the key the next play gets in its environment

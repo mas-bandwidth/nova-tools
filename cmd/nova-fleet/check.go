@@ -170,7 +170,7 @@ func goVersion(s string) (int, int) {
 	return a, b
 }
 
-// control checks this node and fills u.bin, u.store, u.key, u.seat and u.pins; it returns how
+// control checks this node and fills u.bin, u.store, u.key and u.seat; it returns how
 // many prerequisites are missing. Tailscale and Ansible are required here; PostgreSQL and
 // Redis are what up puts on the first machine and requires after.
 func (u *upRun) control(out io.Writer) int {
@@ -275,7 +275,7 @@ func (u *upRun) control(out io.Writer) int {
 		{"NOVA_SECRETS_SEAT", "seat", seat, "export NOVA_SECRETS_SEAT=<this node's seat>", "this node has no hostname", &u.seat},
 		{"NOVA_SECRETS_STORE", "store", filepath.Join(dir, "store"), "nova-secrets init --recovery <age public key> --pins " + filepath.Join(dir, "pins"), "a new store; the recovery key's private half is kept offline", &u.store},
 		{"NOVA_SECRETS_KEY", "key", filepath.Join(dir, seat+".key"), "age-keygen -o " + filepath.Join(dir, seat+".key") + " && nova-secrets seat add " + seat + ` "$(age-keygen -y ` + filepath.Join(dir, seat+".key") + `)"`, "this seat's key", &u.key},
-		{"NOVA_SECRETS_PINS", "pins", filepath.Join(dir, "pins"), "mkdir -p " + filepath.Join(dir, "pins"), "nova-secrets init --pins writes recovery.pub there", &u.pins},
+		{"NOVA_SECRETS_PINS", "pins", filepath.Join(dir, "pins"), "mkdir -p " + filepath.Join(dir, "pins"), "nova-secrets init --pins writes recovery.pub there", new(string)},
 	}
 	// A fresh node (none of them set, none there) prints none of them: nova-secrets set makes them all.
 	fresh := true
