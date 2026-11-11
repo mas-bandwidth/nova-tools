@@ -345,8 +345,7 @@ machine that no scope wants (a directory under `<home>/actions-runner` or a `git
 `<slug>-<i>`: above a scope's count, or of a url the record does not name) is retired and removed from GitHub, its url
 read from its `.runner`, and prints `RUNNER-STRAY <machine> <slug>-<i> url=<url>`. Then GitHub's list of every scope the
 fleet's records name is read: an entry named `<machine>-<i>` that the record does not want is deleted from GitHub when
-it is offline (its machine side is gone) and left when online; the first machine of the run does the same for entries
-named for a machine outside the runner group (its record names no runners); each prints `GITHUB-STRAY <machine> <name> <path>
+it is offline (its machine side is gone) and left when online, each printing `GITHUB-STRAY <machine> <name> <path>
 <status>`. Each machine ends with `RUNNERS-RECORD <machine> scopes=<n> want=<n> retired=<names>`. A record with
 `runners` above 0 and no `runner_scopes` is refused, not read as none. A Linux unit is the whole of its service: a
 drop-in directory beside it (`<unit>.service.d`) is removed. Before a runner is stopped or restarted onto a changed
