@@ -92,8 +92,8 @@ nova_sdk_tools:
 
   # Erlang/OTP: on Linux the hex.pm prebuilt, which relocates itself in place (its Install names the final directory).
   # hex.pm builds none for macOS, so a Mac builds the release's source from a copy of the unpacked tree set aside, as
-  # sbcl's, with crypto and ssl linked statically against Homebrew's openssl@3 (the host's: runner-packages'
-  # postgresql@18 brings it), so a job reaches no library outside the SDK. It needs the Xcode command-line tools. bin/erl
+  # sbcl's, with crypto and ssl linked statically against Homebrew's openssl@3 or openssl@4 (the host's: runner-packages'
+  # postgresql@18 brings one), so a job reaches no library outside the SDK. It needs the Xcode command-line tools. bin/erl
   # falls back to the root its install named, so the run probe holds that root inside this directory's real path (an
   # install made through a symlinked SDK names a path a sandbox cannot traverse) and starts the runtime.
   - name: otp
@@ -112,8 +112,12 @@ nova_sdk_tools:
       sha256: 86f6f40d4638852b0383235b02a70d8450184e441e83a06a108bf8e5bf1b2e04
       build: |
         brew=$(command -v brew || ls /opt/homebrew/bin/brew /usr/local/bin/brew 2>/dev/null | head -1 || true)
-        ssl=$([ -z "$brew" ] || "$brew" --prefix openssl@3)
-        [ -e "$ssl/lib/libcrypto.a" ] || { echo "otp: no Homebrew openssl@3 (libcrypto.a) to build crypto and ssl with; run: brew install openssl@3"; exit 1; }
+        ssl=""
+        for f in openssl@3 openssl@4; do
+          p=$([ -z "$brew" ] || "$brew" --prefix "$f")
+          if [ -e "$p/lib/libcrypto.a" ]; then ssl=$p; break; fi
+        done
+        [ -n "$ssl" ] || { echo "otp: no Homebrew openssl@3 or openssl@4 (libcrypto.a) to build crypto and ssl with; run: brew install openssl@3"; exit 1; }
         mv "$dest" "$stage/s"
         cd "$stage/s"
         { ./configure --prefix="$dest" --with-ssl="$ssl" --disable-dynamic-ssl-lib --without-javac --without-wx --without-odbc \

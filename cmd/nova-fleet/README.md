@@ -1132,8 +1132,8 @@ built from in `~/sdk/moo-v<version>/PIN`), Goose, Lobster, Squirrel (and a secon
 wheels (`python3.11`, `python3.15`, as `~/sdk/python-<version>`), clang-format, LLVM (as `~/sdk/llvm`, not on PATH), cppcheck, AFL++ and Frama-C with Alt-Ergo and Why3 in their own opam root (`~/sdk/opam`). A Mac gets the tools
 with a `darwin` pin: Go, Node, Dart, Erlang/OTP, Elixir, the JDK, .NET, Lua, StyLua, Luau, Goose, Lobster, the
 double Squirrel, CPython 3.11 and 3.15 with mypy, and Rust. Erlang/OTP there is built from the release's source (hex.pm
-publishes no macOS build), with crypto and ssl linked statically against Homebrew's `openssl@3`, which must be on the
-host (`postgresql@18` from `runner-packages` brings it), as must the Xcode command-line tools. Rust there is the
+publishes no macOS build), with crypto and ssl linked statically against Homebrew's `openssl@3` or `openssl@4`, one of which must be on the
+host (`postgresql@18` from `runner-packages` brings one), as must the Xcode command-line tools. Rust there is the
 release's standalone installer (`static.rust-lang.org`, held to its `.sha256`) with `clippy` and `rustfmt`, giving the
 same commands in `~/sdk/bin` as the rustup below. Each tool has one of six kinds: an `archive` or a
 `file` (a URL and its sha256 or sha512), `git` (a tag, refused unless it is the pinned commit, then built), `go`
