@@ -51,6 +51,8 @@ Wait for a slot, run the command, free the slot; exit with the command's status.
   --why TEXT   a label for status and refusals
 The command is found before a slot is taken (127, 126). It dies with nova-reserve, even on SIGKILL (a watchdog
 process kills its group within about a second).
+On Linux the command runs on its slot's share of the CPUs nova-reserve may use, less the kernel's isolated ones (an
+--exclusive run: all of them), so nproc, Go and make -j count that share; HELD names them (cpus=0-3). macOS and the BSDs: no pinning.
 `,
 	"status": `nova-reserve status [--dir DIR]
 
@@ -273,6 +275,8 @@ type world struct {
 	running        func(pid int) bool
 	pid            int
 	cpus           int
+	usable         func() ([]int, error) // the CPUs a command may be pinned to; none where the OS pins none
+	pin            func(cpus []int) error
 	stdout, stderr io.Writer
 }
 
@@ -282,7 +286,7 @@ const poll = time.Second
 
 func main() {
 	os.Exit(run(os.Args[1:], world{os.Getenv, osLock, time.Now, time.Sleep,
-		exec.LookPath, runCommand, running, os.Getpid(), runtime.NumCPU(), os.Stdout, os.Stderr}))
+		exec.LookPath, runCommand, running, os.Getpid(), runtime.NumCPU(), usableCPUs, pin, os.Stdout, os.Stderr}))
 }
 
 func run(args []string, w world) int {
@@ -385,7 +389,8 @@ func do(o options, w world) error {
 	if t.capSet > 0 {
 		fmt.Fprintf(w.stderr, "nova-reserve: CAPACITY SET slots=%d\n", t.capSet)
 	}
-	fmt.Fprintf(w.stderr, "nova-reserve: HELD %s\n", t.describe())
+	cpus := t.pin()
+	fmt.Fprintf(w.stderr, "nova-reserve: HELD %s%s\n", t.describe(), cpus)
 	if code := w.exec(path, o.argv); code != 0 {
 		return &exitError{code: code}
 	}
@@ -741,6 +746,60 @@ func (t *taker) describe() string {
 		return fmt.Sprintf("mode=exclusive slot=all pid=%d", t.w.pid)
 	}
 	return fmt.Sprintf("mode=shared slot=%d/%d pid=%d", t.slot, t.cap, t.w.pid)
+}
+
+// pin starts the command on its slot's share of the usable CPUs, or all of
+// them for an exclusive hold, so tools that size themselves by the CPUs they
+// may use (nproc, Go, make -j) count that share. It returns " cpus=LIST", or
+// "" where the OS pins nothing. A failure is one stderr line; the command
+// then runs unpinned.
+func (t *taker) pin() string {
+	cpus, err := t.w.usable()
+	if !t.o.exclusive {
+		cpus = share(cpus, t.cap, t.slot)
+	}
+	if err == nil && len(cpus) > 0 {
+		err = t.w.pin(cpus)
+	}
+	switch {
+	case err != nil:
+		fmt.Fprintf(t.w.stderr, "nova-reserve: running unpinned: %v\n", err)
+	case len(cpus) > 0:
+		return " cpus=" + cpuList(cpus)
+	}
+	return ""
+}
+
+// share is slot k's part (k in 1..n) of the usable CPUs, in ascending order:
+// n contiguous parts as near equal as they can be. With more slots than CPUs
+// the parts wrap, one CPU each, so every slot has one.
+func share(usable []int, n, k int) []int {
+	switch m := len(usable); {
+	case m == 0:
+		return nil
+	case n > m:
+		i := (k - 1) % m
+		return usable[i : i+1]
+	default:
+		return usable[(k-1)*m/n : k*m/n]
+	}
+}
+
+// cpuList is ascending CPUs in the kernel's list form, such as 0,2,4-5.
+func cpuList(cpus []int) string {
+	var parts []string
+	for i := 0; i < len(cpus); {
+		j := i
+		for j+1 < len(cpus) && cpus[j+1] == cpus[j]+1 {
+			j++
+		}
+		parts = append(parts, strconv.Itoa(cpus[i]))
+		if j > i {
+			parts[len(parts)-1] += "-" + strconv.Itoa(cpus[j])
+		}
+		i = j + 1
+	}
+	return strings.Join(parts, ",")
 }
 
 // --- who holds what --------------------------------------------------------

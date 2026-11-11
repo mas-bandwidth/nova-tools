@@ -96,6 +96,8 @@ func newHarness(t *testing.T) *harness {
 		running: func(pid int) bool { return !h.dead[pid] },
 		pid:     42,
 		cpus:    8,
+		usable:  func() ([]int, error) { return nil, nil }, // an OS that pins nothing
+		pin:     func([]int) error { panic("pinned with no usable CPUs") },
 		stdout:  &h.out,
 		stderr:  &h.err,
 	}

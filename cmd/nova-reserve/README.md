@@ -8,7 +8,7 @@ slots is the machine's **capacity**.
 
 [Install one tool](../../docs/README.md#install-one-tool), choosing `reserve`.
 It needs no server or database. Use it to limit cooperating build or test
-jobs on one machine; it does not limit CPU or memory use, and jobs that do
+jobs on one machine; it does not limit memory use, and jobs that do
 not reserve a slot are unaffected. `nova-reserve help run` prints the command
 syntax and changes nothing.
 
@@ -54,6 +54,13 @@ nova-reserve: HELD mode=shared slot=1/4 pid=811078
 The command runs once a slot is free, its output passes through, and
 nova-reserve exits with its status. The `HELD` line goes to stderr. Process IDs
 and times in these examples will differ on your machine.
+
+On Linux the command runs on its slot's share of the CPUs nova-reserve may
+use, less the kernel's isolated ones (slot k of N gets the k-th of N
+near-equal runs; an exclusive job gets them all), so `nproc`, Go and `make -j`
+count that share, and the `HELD` line ends with them, such as `cpus=2-3`. If
+they cannot be set, one stderr line says why and the command runs unpinned;
+macOS and the BSDs do not pin.
 
 `--wait D` gives up after a time such as `90s` or `15m`; the default waits for
 ever. `--why TEXT` labels the job in `status`. Flags take `--wait 1s`,
