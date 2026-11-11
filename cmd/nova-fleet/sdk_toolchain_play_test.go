@@ -388,6 +388,47 @@ func TestSDKToolchainEnvPutsTheSDKFirst(t *testing.T) {
 	assert.Contains(t, rc, `. "{{ nova_sdk_dir }}/env.sh"`)
 }
 
+// A Makefile that stages a pin from the SDK (a sandboxed job has no network) finds it by directory: NOVA_SDK names the
+// SDK itself, each interpreter is in <name>-<version> with the command at the path the Makefile looks for, and moo,
+// built from a tag, records the commit it was built from in PIN, written last so it is also the probe.
+func TestSDKToolchainPinsAreWhereAMakefileStagesThem(t *testing.T) {
+	t.Parallel()
+	b, err := os.ReadFile(sdkToolchainRole + "/defaults/main.yml")
+	require.NoError(t, err)
+	var files struct {
+		Env map[string]string `yaml:"nova_sdk_env_files"`
+	}
+	require.NoError(t, yaml.Unmarshal(b, &files))
+	assert.Equal(t, ".", files.Env["NOVA_SDK"], "NOVA_SDK names the SDK directory, exported where it is")
+	d := readSDKDefaults(t)
+	tool := func(name string) *sdkTool {
+		for i := range d.Tools {
+			if d.Tools[i].Name == name {
+				return &d.Tools[i]
+			}
+		}
+		t.Fatalf("%s is not in the defaults", name)
+		return nil
+	}
+	for name, probe := range map[string]string{"lua": "bin/lua", "luau": "bin/luau", "goose": "goose", "lobster": "bin/lobster",
+		"stylua": "stylua", "moo": "PIN"} {
+		tl := tool(name)
+		dir := strings.TrimSuffix(tl.Dir, "-"+tl.Version)
+		if dir == tl.Dir {
+			dir = strings.TrimSuffix(tl.Dir, "-v"+tl.Version)
+		}
+		assert.Equal(t, name, dir, "%s: its directory is <name>-<version> or <name>-v<version>", name)
+		assert.Equal(t, probe, tl.Probe, "%s: the probe is the file the Makefile stages", name)
+	}
+	moo := tool("moo")
+	assert.Equal(t, "git", moo.Kind)
+	assert.Contains(t, moo.Build, `git rev-parse HEAD >"$dest/PIN"`)
+	assert.Contains(t, moo.Build, "bin/moo-analyze")
+	for _, name := range []string{"goose", "lobster", "stylua", "lua"} {
+		assert.NotNil(t, tool(name).Darwin, "%s: a Mac bench stages it too", name)
+	}
+}
+
 // SQ names a Squirrel built with 64-bit integers and floats (sq64 with SQUSEDOUBLE), the interpreter a float64 survives,
 // and env.sh exports it only where that binary is.
 func TestSDKToolchainSQIsTheDoubleSquirrel(t *testing.T) {
