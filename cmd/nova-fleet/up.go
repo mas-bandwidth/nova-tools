@@ -464,7 +464,7 @@ func (u *upRun) steps() int {
 		hand := fmt.Sprintf("[services]\n%s ansible_host=%s ansible_user=%s nova_os=%s nova_arch=%s\n", first.name, first.host, first.sshUser, first.os, first.arch)
 		if err := os.WriteFile(filepath.Join(u.dir, "first.ini"), []byte(hand), 0o600); err != nil {
 			fmt.Fprintf(u.stderr, "nova-fleet up: write the first machine's inventory: %v; run: the same nova-fleet up with TMPDIR set to a writable directory\n", err)
-			return fail("first", 2)
+			return fail("first", 1)
 		}
 		switch {
 		case first.unreachable != "":
@@ -520,7 +520,7 @@ func (u *upRun) steps() int {
 		if m.self { // this control node: on the tailnet already, and join's peer check cannot see itself
 			if m.row == nil && !u.check {
 				fmt.Fprintf(u.stderr, "nova-fleet up: %s is this control node (tailscale status Self), so join skips it, and it has no row; run: nova-config machine add %s --user %s --actor %s, then the same nova-fleet up\n", m.name, m.name, m.user, u.seat)
-				return fail("join "+m.name, 2)
+				return fail("join "+m.name, 1)
 			}
 			u.say("UP JOIN %s SKIPPED this control node (tailscale status Self): already joined", m.name)
 		} else {
@@ -649,7 +649,7 @@ func (u *upRun) steps() int {
 		v, err := localVersion(abs)
 		if err != nil {
 			fmt.Fprintf(u.stderr, "nova-fleet up: --tools %s: %v\n", u.tools, err)
-			return fail("tools", 2)
+			return fail("tools", 1)
 		}
 		tools = []string{"-e", "nova_tools_version=" + v, "-e", "nova_tools_local_dir=" + abs}
 	}
