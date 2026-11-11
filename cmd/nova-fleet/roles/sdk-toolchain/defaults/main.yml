@@ -12,6 +12,8 @@
 # it against the checksum database); an npm package by the registry's integrity, checked in the lock file the install
 # writes. sbcl and squirrel publish no digest: theirs is the archive's, recorded when it was first pinned.
 
+# The role follows every symlink in this path before it uses it, so env.sh and every link in <sdk>/bin name the real
+# directory: a sandbox that grants the SDK by its real path cannot traverse a symlink outside its grants.
 nova_sdk_dir: "{{ ansible_facts['user_dir'] }}/sdk"
 
 # Linux: ~/.bashrc sources env.sh on its first line (before any early return for a non-interactive shell), unless a
@@ -39,10 +41,13 @@ nova_sdk_env_files:
 #   dir     the directory under nova_sdk_dir                probe  a file under it that exists once it is installed
 #   links   commands linked into <sdk>/bin: a path under the directory (linked by its basename), or {name, path}
 #   alias   <sdk>/<alias> is a link to the directory        wrapper  a script written as <sdk>/bin/<name>
+#   run     shell run in an installed tool's directory with $dest its real path: a failure means it is broken, and it is
+#           moved aside to <dir>.broken-<time> and installed again
 #   kind    archive (the default), file (one file), git (a tag at a pinned commit), go (go install), npm (npm install),
 #           script (the build alone)
 #   build   shell (set -euo pipefail) run with $dest (the directory), $stage (scratch) and $jobs set: in the directory after the unpack (archive, file), or
 #           in the git checkout (git) or an empty directory (script), where it must create "$dest" itself
+#   <platform>.build  the build on that platform, in place of build
 #   <platform>.home   the subdirectory probe and links are under (the macOS JDK's Contents/Home)
 #   <platform>.root   the archive's top directory (default: its one top directory, else the archive's whole content)
 #   <platform>.extras more files fetched with the archive, each {url, sha256, path} placed at <dir>/<path>
@@ -85,17 +90,39 @@ nova_sdk_tools:
       sha256: 1e79f51341937f84cc1563a3fcad4a91706e35dee72bda69f4e955065c0e373a
       file: dartsdk-macos-arm64-release-3.13.2.zip
 
-  # Erlang/OTP: the hex.pm prebuilt, which relocates itself in place (its Install names the final directory).
+  # Erlang/OTP: on Linux the hex.pm prebuilt, which relocates itself in place (its Install names the final directory).
+  # hex.pm builds none for macOS, so a Mac builds the release's source from a copy of the unpacked tree set aside, as
+  # sbcl's, with crypto and ssl linked statically against Homebrew's openssl@3 or openssl@4 (the host's: runner-packages'
+  # postgresql@18 brings one), so a job reaches no library outside the SDK. It needs the Xcode command-line tools. bin/erl
+  # falls back to the root its install named, so the run probe holds that root inside this directory's real path (an
+  # install made through a symlinked SDK names a path a sandbox cannot traverse) and starts the runtime.
   - name: otp
     version: "29.0.5"
     dir: otp-29.0.5
     probe: bin/erl
+    run: grep -qF "\"$dest" bin/erl && bin/erl -noshell -eval 'halt().'
     links: [bin/erl, bin/erlc, bin/escript, bin/dialyzer, bin/typer]
     build: ./Install -minimal "$dest" >/dev/null
     linux:
       url: https://builds.hex.pm/builds/otp/ubuntu-24.04/OTP-29.0.5.tar.gz
       sha256: 1ecf8a20104afa053e6701e36ec1485cbce1a2fa4aef962d5e73f9eb5c6e9fc0
       file: OTP-29.0.5-ubuntu-24.04.tar.gz
+    darwin:
+      url: https://github.com/erlang/otp/releases/download/OTP-29.0.5/otp_src_29.0.5.tar.gz
+      sha256: 86f6f40d4638852b0383235b02a70d8450184e441e83a06a108bf8e5bf1b2e04
+      build: |
+        brew=$(command -v brew || ls /opt/homebrew/bin/brew /usr/local/bin/brew 2>/dev/null | head -1 || true)
+        ssl=""
+        for f in openssl@3 openssl@4; do
+          p=$([ -z "$brew" ] || "$brew" --prefix "$f")
+          if [ -e "$p/lib/libcrypto.a" ]; then ssl=$p; break; fi
+        done
+        [ -n "$ssl" ] || { echo "otp: no Homebrew openssl@3 or openssl@4 (libcrypto.a) to build crypto and ssl with; run: brew install openssl@3"; exit 1; }
+        mv "$dest" "$stage/s"
+        cd "$stage/s"
+        { ./configure --prefix="$dest" --with-ssl="$ssl" --disable-dynamic-ssl-lib --without-javac --without-wx --without-odbc \
+            && nice -n 15 make -j"$jobs" && make install DESTDIR="$stage/d"; } >"$stage/build.log" 2>&1 || { tail -40 "$stage/build.log"; exit 1; }
+        mv "$stage/d$dest" "$dest"
 
   - name: elixir
     version: "1.20.4"
@@ -220,7 +247,7 @@ nova_sdk_tools:
       #!/bin/sh
       # Written by the sdk-toolchain role: the pinned all-deps jar on the SDK's Java, else the Java on PATH. The
       # --add-exports are what the formatter needs on JDK 16 and later.
-      if [ -x "{{ nova_sdk_dir }}/bin/java" ]; then JAVA="{{ nova_sdk_dir }}/bin/java"; else JAVA=java; fi
+      if [ -x "{{ sdk_dir }}/bin/java" ]; then JAVA="{{ sdk_dir }}/bin/java"; else JAVA=java; fi
       exec "$JAVA" \
         --add-exports=jdk.compiler/com.sun.tools.javac.api=ALL-UNNAMED \
         --add-exports=jdk.compiler/com.sun.tools.javac.file=ALL-UNNAMED \
@@ -228,7 +255,7 @@ nova_sdk_tools:
         --add-exports=jdk.compiler/com.sun.tools.javac.tree=ALL-UNNAMED \
         --add-exports=jdk.compiler/com.sun.tools.javac.util=ALL-UNNAMED \
         --add-exports=jdk.compiler/com.sun.tools.javac.code=ALL-UNNAMED \
-        -jar "{{ nova_sdk_dir }}/google-java-format-1.37.0/google-java-format-all-deps.jar" "$@"
+        -jar "{{ sdk_dir }}/google-java-format-1.37.0/google-java-format-all-deps.jar" "$@"
     linux:
       url: https://github.com/google/google-java-format/releases/download/v1.37.0/google-java-format-1.37.0-all-deps.jar
       sha256: 834b2a0c38cb774953322a84b5ca3f2f40dd3156650b3cd44d3b744345962f7a
@@ -305,7 +332,8 @@ nova_sdk_tools:
       for d in */include; do cp -a "$d/." "$dest/include/"; done
       find b -maxdepth 1 -name 'lib*.a' -exec cp -a {} "$dest/lib/" \;
       for c in luau luau-analyze luau-compile luau-ast; do cp -a "b/$c" "$dest/bin/"; done
-    linux: { repo: https://github.com/luau-lang/luau, ref: "0.741", commit: 2d88f9b5facaa9e4ec91247b39ae8251bd49a244 }
+    linux: &luau { repo: https://github.com/luau-lang/luau, ref: "0.741", commit: 2d88f9b5facaa9e4ec91247b39ae8251bd49a244 }
+    darwin: *luau
 
   - name: squirrel
     version: "3.2"
@@ -382,21 +410,23 @@ nova_sdk_tools:
 
   # The interpreter serialize.nut pins (its Makefile's dist-squirrel): the v3.2 tag's archive, built as sq64 with
   # SQUSEDOUBLE, so _intsize_ and _floatsize_ are both 8. The squirrel above is the float-32 build; this one is not
-  # linked into bin and is reached through SQ (nova_sdk_env_files).
+  # linked into bin and is reached through SQ (nova_sdk_env_files). Apple's clang takes the makefiles' -m64 on arm64.
   - name: squirrel-double
     version: "3.2"
     dir: squirrel-3.2-double
     probe: bin/sq
     links: []
     build: nice -n 15 make -s sq64 DEFS=-DSQUSEDOUBLE >/dev/null 2>&1
-    linux:
+    linux: &squirrel_double
       url: https://github.com/albertodemichelis/squirrel/archive/refs/tags/v3.2.tar.gz
       file: squirrel-3.2-tag.tar.gz   # the URL's own name, v3.2.tar.gz, says nothing of what it is
       sha256: 02805414cfadd5bbb921891d3599b83375a40650abd6404a8ab407dc5e86a996
+    darwin: *squirrel_double
 
   # CPython from the python.org source tarball, configured with its own directory as the prefix (from a copy of the
   # unpacked tree set aside, as sbcl's), with mypy installed offline from the extras: pure-Python wheels, each held to
-  # PyPI's sha256 by pip --require-hashes. Not linked as python3: a pin is named by its version.
+  # PyPI's sha256 by pip --require-hashes; each wheel is py3-none-any, so the same lock serves Linux and macOS. Not linked
+# as python3: a pin is named by its version.
   - name: python3.11
     version: "3.11.18"
     dir: python-3.11.18
@@ -416,7 +446,7 @@ nova_sdk_tools:
         'pathspec==0.12.1 --hash=sha256:a0d503e138a4c123b27490a4f7beda6a01c6f288df0e4a8b79c7eb0dc7b4cc08' >"$stage/mypy.lock"
       "$dest/bin/python3" -I -m pip install --quiet --no-index --no-cache-dir --disable-pip-version-check \
         --require-hashes --find-links "$stage/w" -r "$stage/mypy.lock"
-    linux:
+    linux: &python311
       url: https://www.python.org/ftp/python/3.11.18/Python-3.11.18.tgz
       sha256: 5f62711b12470fd435f83f1451c1b1ef4a179aebc715c716874b0967567d814e
       extras: &mypy_wheels
@@ -432,6 +462,7 @@ nova_sdk_tools:
         - url: https://files.pythonhosted.org/packages/cc/20/ff623b09d963f88bfde16306a54e12ee5ea43e9b597108672ff3a408aad6/pathspec-0.12.1-py3-none-any.whl
           sha256: a0d503e138a4c123b27490a4f7beda6a01c6f288df0e4a8b79c7eb0dc7b4cc08
           path: pathspec-0.12.1-py3-none-any.whl
+    darwin: *python311
 
   - name: python3.15
     version: "3.15.2"
@@ -439,10 +470,29 @@ nova_sdk_tools:
     probe: bin/mypy
     links: [bin/python3.15]
     build: *python_build
-    linux:
+    linux: &python315
       url: https://www.python.org/ftp/python/3.15.2/Python-3.15.2.tgz
       sha256: f74e1db0eabd651cd01e4e2a00201bd41866abe74869ab716f9bf33cbbaa0943
       extras: *mypy_wheels
+    darwin: *python315
+
+  # Rust on a Mac (Linux gets it through rustup, nova_sdk_rustup): the release's standalone installer for the first
+  # toolchain there, with clippy and rustfmt, installed into a stage and moved into place whole, so a cut-short install
+  # leaves no probe. The commands in <sdk>/bin are the ones Linux links from rustup.
+  - name: rust
+    version: "1.98.1"
+    dir: rust-1.98.1
+    probe: bin/rustc
+    links: [bin/cargo, bin/rustc, bin/rustdoc, bin/rustfmt, bin/cargo-fmt, bin/cargo-clippy, bin/clippy-driver]
+    build: |
+      mv "$dest" "$stage/s"
+      "$stage/s/install.sh" --prefix="$dest" --destdir="$stage/d" --disable-ldconfig \
+        --components=rustc,rust-std-aarch64-apple-darwin,cargo,rustfmt-preview,clippy-preview \
+        >"$stage/install.log" 2>&1 || { tail -20 "$stage/install.log"; exit 1; }
+      mv "$stage/d$dest" "$dest"
+    darwin:
+      url: https://static.rust-lang.org/dist/rust-1.98.1-aarch64-apple-darwin.tar.xz
+      sha256: 8f7c9de34c12c66dc55a6dbdd63b2b9645d4418775d4b975b0078a602f66e3e8
 
   - name: clang-format
     version: "23.1.3"
@@ -530,13 +580,18 @@ nova_sdk_dotnet_more:
 # <sdk>/rustup-<version> (RUSTUP_HOME, with the proxies under cargo/bin) with the first toolchain as its default and
 # self-update off; then each toolchain, with its components and targets (rustup checks every component against the channel manifest's
 # digest). The first toolchain is the one on PATH: its own binaries are linked into <sdk>/bin, and <sdk>/bin/rustup is a
-# wrapper that names this RUSTUP_HOME unless the caller set one. The nightly is the one cargo fuzz runs on.
+# wrapper that names this RUSTUP_HOME unless the caller set one. <sdk>/bin/rustc is a wrapper too: it runs the first
+# toolchain's rustc with `-C linker=<linker>`, an absolute path, because rustc runs a bare `cc` through a PATH it changed,
+# which Rust's std starts by fork with a SEQPACKET socketpair that a seccomp sandbox refuses ("could not exec the linker
+# `cc`"); a linker given as a path is started by posix_spawn. A later -C linker (cargo's) wins. The nightly is the one
+# cargo fuzz runs on.
 nova_sdk_rustup:
   version: "1.29.1"
   linux:
     url: https://static.rust-lang.org/rustup/archive/1.29.1/x86_64-unknown-linux-gnu/rustup-init
     sha256: dda7234360b7f578ca8b0ddcb80145646fa61a67c1720a5abc7051b35c9fcb71
     host: x86_64-unknown-linux-gnu
+    linker: /usr/bin/cc
   toolchains:
     - name: "1.98.1"
       components: [clippy, rustfmt]
@@ -544,7 +599,7 @@ nova_sdk_rustup:
     - name: nightly-2026-10-01
       components: []
       targets: []
-  links: [cargo, rustc, rustdoc, rustfmt, cargo-fmt, cargo-clippy, clippy-driver]
+  links: [cargo, rustdoc, rustfmt, cargo-fmt, cargo-clippy, clippy-driver]
 
 # Cargo tools, each built from crates.io with --locked by the first toolchain into <sdk>/<name>-<version> and linked
 # into <sdk>/bin.

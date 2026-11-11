@@ -1115,7 +1115,9 @@ The language toolchains a bench's gates and a runner's CI jobs build and test wi
 `~/sdk/<tool>-<version>`, its commands are linked into `~/sdk/bin`, and `~/sdk/env.sh` puts `~/sdk/bin` first on PATH
 (on Linux, `~/.bashrc` sources it on its first line, before an early return for a non-interactive shell). The play runs
 as the login and never as root; run `runner-packages` first, which brings the compilers, `cmake`, `opam` and LLVM 18
-that the source builds need.
+that the source builds need. The play follows every symlink in `nova_sdk_dir` first and works on the real directory,
+so `env.sh` and every link in `~/sdk/bin` name real paths: a sandbox that grants the SDK by its real path cannot
+traverse a symlink outside its grants.
 
 ```
 nova-fleet sdk-toolchain --check --diff -- -l bench      # SDK-TOOLCHAIN WOULD-INSTALL tool=<name> version=<v>, per missing one
@@ -1128,7 +1130,12 @@ google-java-format, TypeScript, ESLint, sbcl, Lua, luacheck, StyLua, Luau, moo (
 built from in `~/sdk/moo-v<version>/PIN`), Goose, Lobster, Squirrel (and a second Squirrel built as sq64 with
 `SQUSEDOUBLE`, not on PATH, named by `SQ`), CPython 3.11 and 3.15 built from source, each with mypy from hash-locked
 wheels (`python3.11`, `python3.15`, as `~/sdk/python-<version>`), clang-format, LLVM (as `~/sdk/llvm`, not on PATH), cppcheck, AFL++ and Frama-C with Alt-Ergo and Why3 in their own opam root (`~/sdk/opam`). A Mac gets the tools
-with a `darwin` pin: Go, Node, Dart, Elixir, the JDK, .NET, Lua, StyLua, Goose and Lobster. Each tool has one of six kinds: an `archive` or a
+with a `darwin` pin: Go, Node, Dart, Erlang/OTP, Elixir, the JDK, .NET, Lua, StyLua, Luau, Goose, Lobster, the
+double Squirrel, CPython 3.11 and 3.15 with mypy, and Rust. Erlang/OTP there is built from the release's source (hex.pm
+publishes no macOS build), with crypto and ssl linked statically against Homebrew's `openssl@3` or `openssl@4`, one of which must be on the
+host (`postgresql@18` from `runner-packages` brings one), as must the Xcode command-line tools. Rust there is the
+release's standalone installer (`static.rust-lang.org`, held to its `.sha256`) with `clippy` and `rustfmt`, giving the
+same commands in `~/sdk/bin` as the rustup below. Each tool has one of six kinds: an `archive` or a
 `file` (a URL and its sha256 or sha512), `git` (a tag, refused unless it is the pinned commit, then built), `go`
 (`go install` of a module version, which Go checks against its checksum database), `npm` (refused unless the lock file
 the install writes has the pinned integrity; the package's own dependencies resolve from the registry at install time)
@@ -1137,8 +1144,11 @@ and `script` (a build alone: Frama-C's opam root, at pinned package versions fro
 Rust, on Linux, comes through a pinned rustup: `rustup-init` at `nova_sdk_rustup.version`, checked against its
 `.sha256`, installs rustup into `~/sdk/rustup-<version>` with the first toolchain (a release, `1.98.1`) as the
 default and self-update off; each toolchain then gets its components (`clippy`, `rustfmt`) and targets, and the dated
-nightly that `cargo fuzz` runs on is installed beside it. The first toolchain's own binaries (`cargo`, `rustc`,
-`rustdoc`, `rustfmt`, `cargo-fmt`, `cargo-clippy`, `clippy-driver`) are linked into `~/sdk/bin`; `~/sdk/bin/rustup` is a
+nightly that `cargo fuzz` runs on is installed beside it. The first toolchain's own binaries (`cargo`, `rustdoc`,
+`rustfmt`, `cargo-fmt`, `cargo-clippy`, `clippy-driver`) are linked into `~/sdk/bin`. `~/sdk/bin/rustc` is a wrapper
+that runs the toolchain's `rustc` with `-C linker=/usr/bin/cc` (`nova_sdk_rustup.linux.linker`): given a bare `cc`,
+rustc starts it by fork with a socketpair that a seccomp sandbox such as `nova-sandbox` refuses, and the link fails
+with `could not exec the linker`; cargo's own `-C linker` comes later and wins. `~/sdk/bin/rustup` is a
 wrapper that uses this rustup's home unless the caller set `RUSTUP_HOME`, so a CI job that installs its own toolchain
 into its own home is unaffected. `cargo-fuzz` is built with `--locked` into `~/sdk/cargo-fuzz-<version>`.
 
@@ -1147,17 +1157,21 @@ its SHA-512 from `releases.json`, into the dotnet directory beside the 10.0 SDK,
 one `~/sdk/bin/dotnet --list-runtimes` lists both and a `net8.0` target runs on .NET 8 rather than rolling forward.
 
 A tool whose probe (`dir`/`probe` in the defaults) is in its directory is adopted as it is: never downloaded,
-replaced or upgraded, so a second run reports `changed=0`. A missing one is fetched into `~/sdk/dl`, unpacked in a
+replaced or upgraded, so a second run reports `changed=0`. A tool with a `run` probe must also pass it: a shell
+command run in its directory with `$dest` its real path, under `--check` too. One that fails is broken
+(`SDK-TOOLCHAIN BROKEN host=<machine> tool=<name> rc=<n>: <probe>`) and is installed again like a missing one. Erlang/OTP's
+holds the root `bin/erl` falls back to inside its own real directory and runs `erl -noshell -eval 'halt().'`, so an
+install made through a symlinked SDK is rebuilt. A missing one is fetched into `~/sdk/dl`, unpacked in a
 stage beside the SDK and moved into place (a `git` or `script` tool builds into its directory); a directory there
-without its probe is moved aside to `<dir>.broken-<time>`, never deleted. `env.sh` keeps a dated backup of the file it
+without its probe, or broken, is moved aside to `<dir>.broken-<time>`, never deleted. `env.sh` keeps a dated backup of the file it
 replaces. Every link the defaults name is pointed at the pinned version, so a machine whose `~/sdk/bin` named
 another version of a tool names the pinned one after a run; the other version's directory is left where it is. A
 version bump installs the new directory beside the old and moves the links.
 
 | Variable | Default | |
 |---|---|---|
-| `nova_sdk_dir` | `<home>/sdk` | the SDK directory |
-| `nova_sdk_tools` | the toolchain above | one entry per tool: `name`, `version`, `dir`, `probe`, `links`, `kind`, `build`, `alias`, `wrapper`, and a `linux` and/or `darwin` pin; a list given with `-e` replaces it whole |
+| `nova_sdk_dir` | `<home>/sdk` | the SDK directory, used by its real path |
+| `nova_sdk_tools` | the toolchain above | one entry per tool: `name`, `version`, `dir`, `probe`, `links`, `kind`, `build`, `alias`, `wrapper`, `run`, and a `linux` and/or `darwin` pin (a pin's own `build` replaces the tool's on that platform); a list given with `-e` replaces it whole |
 | `nova_sdk_dotnet_more` | the .NET 8.0 SDK | more SDKs in the dotnet directory, each a `version` and a `url` and `sha512` per platform |
 | `nova_sdk_rustup` | rustup 1.29.1; `1.98.1` with `clippy` and `rustfmt`, and `nightly-2026-10-01` | `version`, the `linux` rustup-init `url`, `sha256` and `host`, the `toolchains` (each `name`, `components`, `targets`; the first is on PATH) and the commands `links` puts in `~/sdk/bin` |
 | `nova_sdk_cargo_tools` | `cargo-fuzz` 0.13.1 | crates built with `cargo install --locked` |

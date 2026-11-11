@@ -6,8 +6,9 @@
 # (sourced from ~/.bashrc on Linux). Go, Node, Dart, Erlang/OTP, Elixir, a JDK, .NET 10 with the .NET 8 SDK and runtime
 # beside it, Go and JavaScript linters, ESBMC, SpotBugs, Deno, Jazzer, sbcl, Lua, Luau, Squirrel, clang-format, LLVM,
 # cppcheck, AFL++ and Frama-C on x86_64 Linux and WSL; on Linux, Rust through a pinned rustup with its toolchains,
-# components and targets, and cargo-fuzz. A Mac gets the subset with a darwin pin (Go, Node, Dart, Elixir, the JDK and
-# .NET). A tool already in its directory is adopted as it is; only what is missing is downloaded. Runs as the login,
+# components and targets, and cargo-fuzz. A Mac gets the subset with a darwin pin (among them Erlang/OTP from source
+# and Rust from its standalone installer). ~/sdk is used by its real path, every symlink followed. A tool already in
+# its directory is adopted as it is; only what is missing is downloaded. Runs as the login,
 # never as root. One line per machine: SDK-TOOLCHAIN host=<machine> platform=<p> tools=<n> present=<n> installed=<n>
 # dotnet=<runtimes>; --check prints SDK-TOOLCHAIN WOULD-INSTALL for each missing tool. nova-fleet up does not run this
 # play; run runner-packages first (it brings the compilers, cmake, opam and LLVM 18 the source builds need).
