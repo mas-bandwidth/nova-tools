@@ -341,7 +341,7 @@ func (c *codexWake) poll(ctx context.Context, out, stderr io.Writer) (string, er
 		if !grown || f.result != "unknown" || f.start == "" {
 			continue
 		}
-		if has, _ := c.rolloutHas(f.size, f.start); f.result == "unknown" && f.start != "" && has { // ignored: unreadable is no evidence
+		if has, _ := c.rolloutHas(f.size, f.start); has { // ignored: unreadable is no evidence
 			c.woken = maxID(c.woken, f.last)
 			if err := settle(c.dir, f.last, c.mark); err != nil {
 				fmt.Fprintf(stderr, "HOOK WAKE FAILED harness=codex id=%s reason=%s\n", f.last, escaper.Replace(err.Error()))

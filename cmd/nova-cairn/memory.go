@@ -75,7 +75,7 @@ func normalize(s string) string {
 	return strings.TrimSpace(b.String())
 }
 
-// tokenize: alphanumeric-or-apostrophe runs of two or more bytes. No stemming, no stopwords.
+// tokenize: runs of letters, digits and apostrophes in the normalized text. No stemming.
 func tokenize(s string) []string {
 	return strings.FieldsFunc(normalize(s), func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '\'' })
 }

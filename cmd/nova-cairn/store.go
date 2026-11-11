@@ -11,7 +11,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -212,11 +211,8 @@ func mkdir(dir string) error {
 }
 
 // syncDir syncs a directory, so a name just linked or created in it survives a
-// crash. Windows has no directory sync, so there it does nothing.
+// crash.
 func syncDir(dir string) error {
-	if runtime.GOOS == "windows" {
-		return nil
-	}
 	d, err := os.Open(dir)
 	if err != nil {
 		return err
