@@ -142,7 +142,7 @@ func TestFunctionalWaitIdleWaitsForTheJob(t *testing.T) {
 	n := filepath.Join(dir, "n")
 	// busy twice, then idle
 	pgrep := `c=$(cat ` + n + ` 2>/dev/null || echo 0); c=$((c+1)); echo $c > ` + n + `
-case "$*" in "-f /r/x-1/bin/Runner.Worker") ;; *) exit 3 ;; esac
+case "$*" in "-f /r/x-1/bin/[R]unner.Worker") ;; *) exit 3 ;; esac
 [ $c -le 2 ] && { echo 4242; exit 0; }
 exit 1`
 	out, err := runTasksLocally(t, tasks, map[string]any{"github_runner_dir": "/r/x-1", "github_runner_idle_retries": 5, "github_runner_idle_delay": 0}, map[string]string{"pgrep": pgrep})
