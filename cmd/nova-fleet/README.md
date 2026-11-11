@@ -293,7 +293,9 @@ release archive for the platform, checked against `nova_opencode_sha256` (the di
 unpacked as `<nova_bin_dir>/opencode.bin`, with `<nova_bin_dir>/opencode` a wrapper that sets `nova_opencode_env` and
 execs it. The archive is kept in `~/.cache/nova/opencode`, so a second run downloads and changes nothing. Every service
 unit's PATH starts with `nova_bin_dir` (`nova_service_path`), so a worker finds this one ahead of Homebrew's or
-`/usr/local/bin`'s, which are left alone. One line per machine: `OPENCODE <host> version=<v> path=<wrapper>`; a Windows
+`/usr/local/bin`'s, which are left alone, except the hand copies of this same opencode each bench had there before the
+role (`nova_opencode_hand_dir`): a file identical to the role's `opencode.bin`, or a hand wrapper with an identical
+`opencode.bin` beside it, is removed. One line per machine: `OPENCODE <host> version=<v> path=<wrapper>`; a Windows
 machine is skipped.
 
 ## services
@@ -1122,7 +1124,10 @@ The language toolchains a bench's gates and a runner's CI jobs build and test wi
 (`nova_sdk_dir`, `~/sdk`), on each machine of the `bench` and `runner` groups. Every version is pinned in
 `roles/sdk-toolchain/defaults/main.yml`; an archive is checked against the publisher's own digest before it is unpacked. Each tool goes into
 `~/sdk/<tool>-<version>`, its commands are linked into `~/sdk/bin`, and `~/sdk/env.sh` puts `~/sdk/bin` first on PATH
-(on Linux, `~/.bashrc` sources it on its first line, before an early return for a non-interactive shell). The play runs
+(on Linux, `~/.bashrc` sources it on its first line, before an early return for a non-interactive shell). It is the one
+PATH: on Linux the play removes the hand Go that came before it (the "fleet Go" block in `~/.bashrc`, and `~/go/bin/go`
+and `gofmt` linked to an SDK Go, unless `~/.local/bin/go` points at the link) and the hand `~/sdk/bin/gh` link to
+gh 2.102.0. The play runs
 as the login and never as root; run `runner-packages` first, which brings the compilers, `cmake`, `opam` and LLVM 18
 that the source builds need. The play follows every symlink in `nova_sdk_dir` first and works on the real directory,
 so `env.sh` and every link in `~/sdk/bin` name real paths: a sandbox that grants the SDK by its real path cannot
