@@ -28,9 +28,11 @@ nova_sdk_env:
   ELIXIR: elixir
   MIX: mix
 
-# Make variables naming a file under the SDK, exported from env.sh only where that file is executable.
+# Make variables naming a file under the SDK, exported from env.sh only where that file is executable. NOVA_SDK names
+# the SDK itself, for a Makefile that stages a pinned toolchain from <sdk>/<tool>-<version> instead of downloading it.
 nova_sdk_env_files:
   SQ: squirrel-3.2-double/bin/sq
+  NOVA_SDK: "."
 
 # One entry per tool. A tool is installed on a platform (linux: x86_64 Linux and WSL; darwin: Apple silicon) only when
 # it has an entry for it. Keys:
@@ -269,10 +271,13 @@ nova_sdk_tools:
     dir: lua-5.4.8
     probe: bin/lua
     links: [bin/lua, bin/luac, {name: lua5.4, path: bin/lua}]
-    build: nice -n 15 make -s -j4 linux >/dev/null && make -s install INSTALL_TOP="$dest" >/dev/null
-    linux:
+    build: |
+      if [ "$(uname -s)" = Darwin ]; then target=macosx; else target=linux; fi
+      nice -n 15 make -s -j4 "$target" >/dev/null && make -s install INSTALL_TOP="$dest" >/dev/null
+    linux: &lua
       url: https://www.lua.org/ftp/lua-5.4.8.tar.gz
       sha256: 4f18ddae154e793e46eeab727c59ef1c0c0c2b744e7b94219710d76f530629ae
+    darwin: *lua
 
   - name: luacheck
     version: "1.2.0"
@@ -312,6 +317,68 @@ nova_sdk_tools:
       url: https://github.com/albertodemichelis/squirrel/releases/download/v3.2/squirrel_3_2_stable.tar.gz
       sha256: 211f1452f00b24b94f60ba44b50abe327fd2735600a7bacabc5b774b327c81db
       root: squirrel3   # the archive also carries a stray inner tar beside its one directory
+
+  # StyLua, the Lua formatter: the release's own binary, the one file in its zip.
+  - name: stylua
+    version: "2.5.2"
+    dir: stylua-2.5.2
+    probe: stylua
+    links: [stylua]
+    build: chmod 0755 stylua
+    linux:
+      url: https://github.com/JohnnyMorganz/StyLua/releases/download/v2.5.2/stylua-linux-x86_64.zip
+      sha256: bcb0d855e91f102f28a370e850f8566b3b44b79e6274d806ea5246837c0fd5ab
+      file: stylua-2.5.2-linux-x86_64.zip
+    darwin:
+      url: https://github.com/JohnnyMorganz/StyLua/releases/download/v2.5.2/stylua-macos-aarch64.zip
+      sha256: 92ff0889e16324801bc072692974bb67f8161e62010fc90f96c62a17f81f32c7
+      file: stylua-2.5.2-macos-aarch64.zip
+
+  # Goose: the compiler with its stdlib/ and tcclib/ beside it, as the release unpacks.
+  - name: goose
+    version: "2026.2"
+    dir: goose-v2026.2
+    probe: goose
+    links: [goose]
+    linux:
+      url: https://github.com/aardappel/goose/releases/download/v2026.2/goose-v2026.2-linux-x64.tar.gz
+      sha256: f9f0b448800b27b9d86fcd8341a08e8cda790ff86cd500c90e287fa1a616197c
+    darwin:
+      url: https://github.com/aardappel/goose/releases/download/v2026.2/goose-v2026.2-macos-arm64.tar.gz
+      sha256: d945c8cc1ce35f964ebde9a9e0a40e62533ff55010ed30bf2412af87aa44552a
+
+  # Lobster: bin/lobster with its modules/ and data/ beside it, as the release unpacks.
+  - name: lobster
+    version: "2026.8"
+    dir: lobster-v2026.8
+    probe: bin/lobster
+    links: [bin/lobster]
+    linux:
+      url: https://github.com/aardappel/lobster/releases/download/v2026.8/lobster_linux_release.zip
+      sha256: 2f03fb96fdaf6935469c99e43ffb182cab0d797faec7b26eccc9a732df32ad31
+      file: lobster-v2026.8-linux-release.zip
+      root: .
+    darwin:
+      url: https://github.com/aardappel/lobster/releases/download/v2026.8/lobster_osx_arm_release.zip
+      sha256: 18088b1bfdfa4e93f972b806e240aa2eece6528a183124884e74b698c8218f31
+      file: lobster-v2026.8-osx-arm-release.zip
+      root: .
+
+  # moo, the deterministic fork of Luau, which publishes no binary: the CLI and the analyzer built from the tag, with the
+  # commit they were built from in PIN, written last (the probe), so a Makefile can check it is its pin.
+  - name: moo
+    version: "1.3.0"
+    dir: moo-v1.3.0
+    probe: PIN
+    links: [bin/moo, bin/moo-analyze]
+    kind: git
+    build: |
+      cmake -S . -B b -DCMAKE_BUILD_TYPE=Release >/dev/null
+      cmake --build b --target Luau.Repl.CLI Luau.Analyze.CLI -j"$jobs" >/dev/null
+      mkdir -p "$dest/bin"
+      cp -a b/moo b/moo-analyze "$dest/bin/"
+      git rev-parse HEAD >"$dest/PIN"
+    linux: { repo: https://github.com/mas-bandwidth/moo, ref: v1.3.0, commit: f60f0239f41c6c0a827ecee44a7f9539c5798068 }
 
   # The interpreter serialize.nut pins (its Makefile's dist-squirrel): the v3.2 tag's archive, built as sq64 with
   # SQUSEDOUBLE, so _intsize_ and _floatsize_ are both 8. The squirrel above is the float-32 build; this one is not
