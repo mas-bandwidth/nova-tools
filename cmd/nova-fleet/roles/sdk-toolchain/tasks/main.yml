@@ -1,8 +1,20 @@
 ---
 # The sdk-toolchain role (cmd/nova-fleet/sdk-toolchain.yml): every tool of nova_sdk_tools that has an entry for this
-# platform, in <nova_sdk_dir>/<dir>, its commands linked into <nova_sdk_dir>/bin; the extra .NET SDKs inside the dotnet
+# platform, in <sdk_dir>/<dir>, its commands linked into <sdk_dir>/bin; the extra .NET SDKs inside the dotnet
 # directory; on Linux a pinned rustup with its toolchains and the cargo tools; env.sh. A tool whose probe exists is
-# adopted as it is. Runs as the login: nothing here becomes root.
+# adopted as it is. Runs as the login: nothing here becomes root. sdk_dir is nova_sdk_dir with every symlink followed,
+# and nothing else names nova_sdk_dir.
+- name: the SDK directory's real path
+  ansible.builtin.command:
+    argv: ["{{ ansible_facts['python']['executable'] }}", -I, -c, "import os, sys; print(os.path.realpath(sys.argv[1]))", "{{ nova_sdk_dir }}"]
+  register: sdk_dir_real
+  changed_when: false
+  check_mode: false
+
+- name: the SDK directory, by its real path
+  ansible.builtin.set_fact:
+    sdk_dir: "{{ sdk_dir_real.stdout }}"
+
 - name: the platform
   ansible.builtin.set_fact:
     sdk_platform: >-
@@ -23,14 +35,14 @@
       {%- set out = [] -%}
       {%- for t in nova_sdk_tools if t[sdk_platform] is defined -%}
       {%- set p = t[sdk_platform] -%}
-      {%- set dest = nova_sdk_dir ~ '/' ~ t.dir -%}
+      {%- set dest = sdk_dir ~ '/' ~ t.dir -%}
       {%- set home = dest ~ (('/' ~ p.home) if p.home is defined else '') -%}
       {%- set _ = out.append({
             'name': t.name, 'version': t.version, 'kind': t.kind | default('archive'), 'src': p,
             'dest': dest, 'home': home, 'probe': home ~ '/' ~ t.probe,
             'digest': ('sha512:' ~ p.sha512) if p.sha512 is defined else (('sha256:' ~ p.sha256) if p.sha256 is defined else ''),
-            'archive': nova_sdk_dir ~ '/dl/' ~ (p.file | default((p.url | default('')) | basename)),
-            'build': t.build | default(''), 'links': t.links | default([]), 'alias': t.alias | default(''),
+            'archive': sdk_dir ~ '/dl/' ~ (p.file | default((p.url | default('')) | basename)),
+            'build': p.build | default(t.build | default('')), 'links': t.links | default([]), 'alias': t.alias | default(''),
             'wrapper': t.wrapper | default('')}) -%}
       {%- endfor -%}
       {{ out }}
@@ -56,18 +68,18 @@
     quiet: true
     that:
       - item.dest | basename is match('^[A-Za-z0-9][A-Za-z0-9._+-]*$')
-      - item.dest | dirname == nova_sdk_dir
+      - item.dest | dirname == sdk_dir
       - item.dest | basename not in ['bin', 'dl', 'dotnet-home', 'env.sh']
       - item.alias == '' or (item.alias is match('^[A-Za-z0-9][A-Za-z0-9._+-]*$') and item.alias not in ['bin', 'dl', 'dotnet-home', 'env.sh'])
     fail_msg: >-
       sdk-toolchain: {{ item.name }}'s dir ({{ item.dest | basename }}) or alias ({{ item.alias }}) is not one plain name inside
-      {{ nova_sdk_dir }} other than bin, dl, dotnet-home and env.sh
+      {{ sdk_dir }} other than bin, dl, dotnet-home and env.sh
   loop: "{{ sdk_specs }}"
   loop_control: { label: "{{ item.name }}" }
 
 - name: the SDK directory, its bin and its download cache
   ansible.builtin.file: { path: "{{ item }}", state: directory }
-  loop: ["{{ nova_sdk_dir }}", "{{ nova_sdk_dir }}/bin", "{{ nova_sdk_dir }}/dl"]
+  loop: ["{{ sdk_dir }}", "{{ sdk_dir }}/bin", "{{ sdk_dir }}/dl"]
 
 - name: each tool's probe
   ansible.builtin.stat: { path: "{{ item.probe }}", get_checksum: false }
@@ -78,8 +90,8 @@
 - name: the tools that are missing
   ansible.builtin.set_fact:
     sdk_missing: "{{ sdk_probe.results | rejectattr('stat.exists') | map(attribute='item') | list }}"
-    sdk_go: "{{ nova_sdk_dir }}/{{ (nova_sdk_tools | selectattr('name', 'equalto', 'go') | first).dir }}/bin/go"
-    sdk_node_bin: "{{ nova_sdk_dir }}/{{ (nova_sdk_tools | selectattr('name', 'equalto', 'node') | first).dir }}/bin"
+    sdk_go: "{{ sdk_dir }}/{{ (nova_sdk_tools | selectattr('name', 'equalto', 'go') | first).dir }}/bin/go"
+    sdk_node_bin: "{{ sdk_dir }}/{{ (nova_sdk_tools | selectattr('name', 'equalto', 'node') | first).dir }}/bin"
 
 - name: what a run would install
   ansible.builtin.debug:
@@ -102,7 +114,7 @@
 - name: the extra files of each missing tool, checked against their digests
   ansible.builtin.get_url:
     url: "{{ item.1.url }}"
-    dest: "{{ nova_sdk_dir }}/dl/{{ item.1.url | basename }}"
+    dest: "{{ sdk_dir }}/dl/{{ item.1.url | basename }}"
     checksum: "sha256:{{ item.1.sha256 }}"
     mode: "0644"
     timeout: 300
@@ -116,7 +128,7 @@
   ansible.builtin.shell:
     cmd: |
       set -euo pipefail
-      sdk={{ nova_sdk_dir | quote }}; dest={{ item.dest | quote }}
+      sdk={{ sdk_dir | quote }}; dest={{ item.dest | quote }}
       n=$(getconf _NPROCESSORS_ONLN); jobs=$(( n / 4 > 1 ? n / 4 : 1 ))
       stage=$(mktemp -d "$sdk/.stage-{{ item.name }}-XXXXXX"); trap 'rm -rf "$stage"' EXIT
       export dest jobs stage
@@ -157,7 +169,7 @@
       esac
       mv "$src" "$dest"
       {% for e in item.src.extras | default([]) %}
-      cp {{ (nova_sdk_dir ~ '/dl/' ~ (e.url | basename)) | quote }} "$dest/{{ e.path }}"
+      cp {{ (sdk_dir ~ '/dl/' ~ (e.url | basename)) | quote }} "$dest/{{ e.path }}"
       {% endfor %}
       {% if item.build %}
       cd "$dest"
@@ -176,7 +188,7 @@
 - name: each tool's commands in the SDK's bin
   ansible.builtin.file:
     src: "{{ item.src }}"
-    dest: "{{ nova_sdk_dir }}/bin/{{ item.name }}"
+    dest: "{{ sdk_dir }}/bin/{{ item.name }}"
     state: link
     force: true
   loop: >-
@@ -188,12 +200,12 @@
   loop_control: { label: "{{ item.name }}" }
 
 - name: each tool's short name for its directory
-  ansible.builtin.file: { src: "{{ item.dest }}", dest: "{{ nova_sdk_dir }}/{{ item.alias }}", state: link, force: true }
+  ansible.builtin.file: { src: "{{ item.dest }}", dest: "{{ sdk_dir }}/{{ item.alias }}", state: link, force: true }
   loop: "{{ sdk_specs | rejectattr('alias', 'equalto', '') | list }}"
   loop_control: { label: "{{ item.alias }}" }
 
 - name: each tool's wrapper in the SDK's bin
-  ansible.builtin.copy: { dest: "{{ nova_sdk_dir }}/bin/{{ item.name }}", content: "{{ item.wrapper }}", mode: "0755" }
+  ansible.builtin.copy: { dest: "{{ sdk_dir }}/bin/{{ item.name }}", content: "{{ item.wrapper }}", mode: "0755" }
   loop: "{{ sdk_specs | rejectattr('wrapper', 'equalto', '') | list }}"
   loop_control: { label: "{{ item.name }}" }
 
@@ -206,7 +218,7 @@
   when: nova_sdk_rustup[sdk_platform] is defined
 
 - name: env.sh, the SDK's environment
-  ansible.builtin.template: { src: env.sh.j2, dest: "{{ nova_sdk_dir }}/env.sh", mode: "0644", backup: true }
+  ansible.builtin.template: { src: env.sh.j2, dest: "{{ sdk_dir }}/env.sh", mode: "0644", backup: true }
 
 - name: whether ~/.bashrc already sources env.sh (Linux)
   ansible.builtin.command: { argv: [grep, -q, sdk/env.sh, "{{ ansible_facts['user_dir'] }}/.bashrc"] }
@@ -219,7 +231,7 @@
 - name: ~/.bashrc sources env.sh first (Linux)
   ansible.builtin.lineinfile:
     path: "{{ ansible_facts['user_dir'] }}/.bashrc"
-    line: '[ -f "{{ nova_sdk_dir }}/env.sh" ] && . "{{ nova_sdk_dir }}/env.sh"   # the SDK toolchain PATH, before any early return'
+    line: '[ -f "{{ sdk_dir }}/env.sh" ] && . "{{ sdk_dir }}/env.sh"   # the SDK toolchain PATH, before any early return'
     insertbefore: BOF
     create: true
     mode: "0644"

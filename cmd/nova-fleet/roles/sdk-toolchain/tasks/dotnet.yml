@@ -26,7 +26,7 @@
 - name: each missing SDK's archive, checked against its SHA-512
   ansible.builtin.get_url:
     url: "{{ item[sdk_platform].url }}"
-    dest: "{{ nova_sdk_dir }}/dl/{{ item[sdk_platform].url | basename }}"
+    dest: "{{ sdk_dir }}/dl/{{ item[sdk_platform].url | basename }}"
     checksum: "sha512:{{ item[sdk_platform].sha512 }}"
     mode: "0644"
     timeout: 300
@@ -39,8 +39,8 @@
     cmd: |
       set -euo pipefail
       home={{ sdk_dotnet_home | quote }}
-      stage=$(mktemp -d {{ (nova_sdk_dir ~ '/.stage-dotnet-XXXXXX') | quote }}); trap 'rm -rf "$stage"' EXIT
-      tar -xzf {{ (nova_sdk_dir ~ '/dl/' ~ (item[sdk_platform].url | basename)) | quote }} -C "$stage"
+      stage=$(mktemp -d {{ (sdk_dir ~ '/.stage-dotnet-XXXXXX') | quote }}); trap 'rm -rf "$stage"' EXIT
+      tar -xzf {{ (sdk_dir ~ '/dl/' ~ (item[sdk_platform].url | basename)) | quote }} -C "$stage"
       rm -f "$stage/dotnet" "$stage/LICENSE.txt" "$stage/ThirdPartyNotices.txt"
       cp -Rp "$stage/." "$home/"
       test -e "$home/sdk/{{ item.version }}/dotnet.dll"
@@ -89,4 +89,4 @@
 # of each SDK version writes that version's sentinels into .dotnet, and fails every command where it cannot.
 - name: the dotnet CLI home, writable by the login
   ansible.builtin.file: { path: "{{ item }}", state: directory, mode: "0755" }
-  loop: ["{{ nova_sdk_dir }}/dotnet-home", "{{ nova_sdk_dir }}/dotnet-home/.dotnet"]
+  loop: ["{{ sdk_dir }}/dotnet-home", "{{ sdk_dir }}/dotnet-home/.dotnet"]
