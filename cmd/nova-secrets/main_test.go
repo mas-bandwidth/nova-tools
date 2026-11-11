@@ -1114,6 +1114,19 @@ func TestSetBootstrapsAFreshNode(t *testing.T) {
 	assert.NoDirExists(t, dir2)
 }
 
+// The store and pins default under ~/.config/nova-secrets whatever this node's seat is called, even
+// "x" with $NOVA_SECRETS_KEY set elsewhere.
+func TestStoreAndPinsDefaultUnderHomeForAnySeat(t *testing.T) {
+	t.Parallel()
+	h, dir := fresh(t)
+	h.key = filepath.Join(t.TempDir(), "x.key")
+	h.environ = append(h.environ[:2:2], "NOVA_SECRETS_SEAT=x", "NOVA_SECRETS_KEY="+h.key) // PATH, HOME
+	require.Equal(t, 0, h.main("set", "TAILSCALE_API_KEY", "--sops", "sops"), h.stderr.String())
+	assert.Contains(t, h.stdout.String(), "SECRETS SET NEW store="+filepath.Join(dir, "store")+" seat=x key="+h.key+":")
+	assert.FileExists(t, filepath.Join(dir, "pins", "recovery.pub"))
+	assert.NoDirExists(t, filepath.Join(filepath.Dir(h.key), "store"))
+}
+
 // Every verb that takes --key or --pins defaults them as set does, to this seat's key and the pins
 // under ~/.config/nova-secrets, so a node set bootstrapped needs neither flag nor variable.
 func TestEveryVerbDefaultsKeyAndPinsAsSetDoes(t *testing.T) {
