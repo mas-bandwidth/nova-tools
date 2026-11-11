@@ -15,8 +15,8 @@ import (
 
 // install_gh_wrapper_functional_test.go runs the install play from a local build on localhost (a runner, so no
 // opencode) with a file at <bin>/gh, and checks what the play leaves there: the v1 wrapper goes, a real gh stays, and a
-// wrapper a git credential helper names stays with a GH-WRAPPER KEPT line. install_gh_wrapper_test.go is the
-// structural half.
+// wrapper a git credential helper names goes with the helper entries that name it, while another helper entry of the
+// same name stays. install_gh_wrapper_test.go is the structural half.
 
 const v1GhWrapper = "#!/usr/bin/env bash\n# Written by rowan-tools fleet/push-credential.yml\n" +
 	"exec nova-secrets exec --only GH_PUSH_TOKEN -- /bin/sh -c 'GH_TOKEN=$GH_PUSH_TOKEN exec \"$0\" \"$@\"' /usr/bin/gh \"$@\"\n"
@@ -54,11 +54,10 @@ func TestInstallGhWrapper(t *testing.T) {
 	for _, c := range []struct {
 		name, gh, helper string
 		kept             bool
-		says             string
 	}{
 		{name: "the v1 wrapper goes", gh: v1GhWrapper},
 		{name: "a real gh stays", gh: "#!/bin/sh\necho gh version 2.46.0\n", kept: true},
-		{name: "a wrapper a helper names stays", gh: v1GhWrapper, helper: "!{{gh}} auth git-credential", kept: true, says: "GH-WRAPPER KEPT host=localhost"},
+		{name: "a wrapper a helper names goes with the helper", gh: v1GhWrapper, helper: "!{{gh}} auth git-credential"},
 	} {
 		home := t.TempDir()
 		binDir := filepath.Join(home, ".local", "bin")
@@ -70,7 +69,7 @@ func TestInstallGhWrapper(t *testing.T) {
 			t.Fatal(err)
 		}
 		if c.helper != "" {
-			cfg := "[credential \"https://github.com\"]\n\thelper = " + strings.ReplaceAll(c.helper, "{{gh}}", gh) + "\n"
+			cfg := "[credential \"https://github.com\"]\n\thelper = \n\thelper = " + strings.ReplaceAll(c.helper, "{{gh}}", gh) + "\n\thelper = !/usr/bin/gh auth git-credential\n"
 			if err := os.WriteFile(filepath.Join(home, ".gitconfig"), []byte(cfg), 0o644); err != nil {
 				t.Fatal(err)
 			}
@@ -87,8 +86,14 @@ func TestInstallGhWrapper(t *testing.T) {
 		case !c.kept && !os.IsNotExist(err):
 			t.Errorf("%s: <bin>/gh is still there (%v)", c.name, err)
 		}
-		if c.says != "" && !strings.Contains(out, c.says) {
-			t.Errorf("%s: the run does not say %q:\n%s", c.name, c.says, out)
+		if c.helper != "" {
+			cfg, err := os.ReadFile(filepath.Join(home, ".gitconfig"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(string(cfg), gh) || !strings.Contains(string(cfg), "/usr/bin/gh auth git-credential") {
+				t.Errorf("%s: want only the entry naming <bin>/gh gone, got:\n%s", c.name, cfg)
+			}
 		}
 	}
 }
