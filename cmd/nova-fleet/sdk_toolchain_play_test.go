@@ -31,6 +31,7 @@ type sdkPlatform struct {
 	Version   string `yaml:"version"`
 	Integrity string `yaml:"integrity"`
 	Build     string `yaml:"build"`
+	Linker    string `yaml:"linker"`
 	Extras    []struct {
 		URL    string `yaml:"url"`
 		SHA256 string `yaml:"sha256"`
@@ -235,6 +236,7 @@ func TestSDKToolchainEveryToolIsPinned(t *testing.T) {
 		claim("linux", n, "rustup")
 	}
 	claim("linux", "rustup", "rustup (wrapper)")
+	claim("linux", "rustc", "rustc (wrapper)")
 	for _, c := range d.CargoTools {
 		claim("linux", c.Name, "cargo tool")
 		assert.NotEmpty(t, c.Version, "%s is pinned", c.Name)
@@ -322,7 +324,7 @@ func TestSDKToolchainMacPins(t *testing.T) {
 		s, _ := l.(string)
 		links = append(links, filepath.Base(s))
 	}
-	assert.ElementsMatch(t, d.Rustup.Links, links, "the same commands in <sdk>/bin as Linux")
+	assert.ElementsMatch(t, append([]string{"rustc"}, d.Rustup.Links...), links, "the same commands in <sdk>/bin as Linux (where rustc is the wrapper)")
 	assert.Contains(t, rust.Build, "--components=rustc,rust-std-aarch64-apple-darwin,cargo,rustfmt-preview,clippy-preview")
 	otp := byName["otp"]
 	assert.NotEmpty(t, otp.Darwin.Build, "otp: macOS builds the source, Linux unpacks hex.pm's build")
@@ -392,6 +394,23 @@ func TestSDKToolchainDotnet8AndRustup(t *testing.T) {
 	for _, tc := range d.Rustup.Toolchains {
 		assert.NotContains(t, []string{"stable", "beta", "nightly"}, tc.Name, "%s moves: pin a version or a dated nightly", tc.Name)
 	}
+}
+
+// A bare rustc runs a bare `cc` through a PATH it changed, which Rust's std starts by fork with a SEQPACKET socketpair
+// that a seccomp sandbox refuses; a linker named by path is started by posix_spawn. So <sdk>/bin/rustc is a wrapper
+// naming an absolute linker, never the toolchain's rustc linked in, and an earlier link is removed before it is written.
+func TestSDKToolchainRustcLinksWithAnAbsoluteLinker(t *testing.T) {
+	t.Parallel()
+	d := readSDKDefaults(t)
+	require.NotNil(t, d.Rustup.Linux)
+	assert.True(t, filepath.IsAbs(d.Rustup.Linux.Linker), "the linker is a path, not a name looked up on PATH: %q", d.Rustup.Linux.Linker)
+	assert.NotContains(t, d.Rustup.Links, "rustc", "rustc is the wrapper, never a link")
+	b, err := os.ReadFile(sdkToolchainRole + "/tasks/rustup.yml")
+	require.NoError(t, err)
+	text := string(b)
+	assert.Contains(t, text, `exec "{{ sdk_rust_bin }}/rustc" -C linker={{ nova_sdk_rustup[sdk_platform].linker | quote }} "$@"`)
+	assert.Less(t, strings.Index(text, "an earlier rustc link goes"), strings.Index(text, "rustc in the SDK's bin, with an absolute linker"),
+		"the old link is removed before the wrapper is written, so the copy never writes through it")
 }
 
 // The .NET 10 SDK names the exact targeting and apphost packs it builds an older target with (its
