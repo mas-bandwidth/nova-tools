@@ -15,7 +15,8 @@ import (
 // github_runner_record_functional_test.go runs the github-runner role's record tasks (tasks/record.yml and the files it
 // includes) on localhost against the test's temp dir, with fakes for gh and pgrep: which runners on a host the record
 // does not want, the refusal of a record that names runners but no scopes, a stray's url read from its .runner, the
-// GitHub entries of the host that are deleted (offline and not wanted) and left (online), and the wait for a running job.
+// GitHub entries of the host (and of a machine outside the runner group) that are deleted (offline and not wanted) and
+// left (online), and the wait for a running job.
 
 var recordScopes = []any{
 	map[string]any{"url": "https://github.com/o/r", "count": 2, "labels": []any{}},
@@ -96,12 +97,18 @@ func TestFunctionalRecordDeletesOfflineGitHubEntriesItDoesNotWant(t *testing.T) 
       nova_runner_scopes: [{url: "https://github.com/o/r", count: 2, labels: []}, {url: "https://github.com/org", count: 1, labels: []}]
     other:
       nova_runner_scopes: [{url: "https://github.com/p/q", count: 1, labels: []}]
+    gone: {}
+  children:
+    runner:
+      hosts:
+        localhost:
+        other:
 `), 0o644))
 		calls := filepath.Join(dir, "gh.calls")
 		gh := `echo "$*" >> ` + calls + `
 [ "$2" = "-X" ] && exit 0
 case "$2" in
-  orgs/org/actions/runners) printf '11 localhost-1 online\n12 localhost-2 offline\n13 other-1 offline\n' ;;
+  orgs/org/actions/runners) printf '11 localhost-1 online\n12 localhost-2 offline\n13 other-1 offline\n14 gone-1 offline\n15 gone-2 online\n16 gone-win-1 offline\n' ;;
   repos/o/r/actions/runners) printf '21 localhost-1 online\n22 localhost-2 online\n23 localhost-3 offline\n24 localhost-30 online\n' ;;
   repos/p/q/actions/runners) printf '31 localhost-1 offline\n32 other-1 online\n' ;;
   *) echo "unexpected: $*" >&2; exit 9 ;;
@@ -124,10 +131,12 @@ esac`
 		if check {
 			assert.Empty(t, deletes, "--check deletes nothing")
 		} else {
-			assert.ElementsMatch(t, []string{"orgs/org/actions/runners/12", "repos/o/r/actions/runners/23", "repos/p/q/actions/runners/31"}, deletes)
+			assert.ElementsMatch(t, []string{"orgs/org/actions/runners/12", "repos/o/r/actions/runners/23", "repos/p/q/actions/runners/31", "orgs/org/actions/runners/14"}, deletes)
 		}
 		assert.Contains(t, out, "GITHUB-STRAY localhost localhost-30 o/r online: online, so something still runs it; left")
 		assert.NotContains(t, out, "other-1")
+		assert.Contains(t, out, "GITHUB-STRAY localhost gone-2 org online: online, so something still runs it; left")
+		assert.NotContains(t, out, "gone-win-1", "only <machine>-<i> names a machine's runner")
 		assert.NotContains(t, out, "GITHUB-STRAY localhost localhost-1 o/r", "a wanted runner is no stray")
 		assert.NotContains(t, out, "GITHUB-STRAY localhost localhost-2 o/r", "a wanted runner is no stray")
 		assert.NotContains(t, out, "GITHUB-STRAY localhost localhost-1 org", "a wanted runner is no stray")
