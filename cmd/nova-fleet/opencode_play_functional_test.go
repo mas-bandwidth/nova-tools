@@ -182,3 +182,78 @@ func TestOpencodeRoleCheckWritesNothing(t *testing.T) {
 	_, err = os.Stat(filepath.Join(home, ".local"))
 	assert.True(t, os.IsNotExist(err), "--check wrote into HOME")
 }
+
+// handOpencodeWrapper is the wrapper the benches had in /usr/local/bin before the role (amd-1, 2026-10-13).
+const handOpencodeWrapper = "#!/bin/sh\n# wrapper (Rowan 2026-10-13): mirrors the darwin harness wrapper so the output-token max reaches opencode\n" +
+	"export OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER=1\nexport OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX=128000\n" +
+	"exec \"$(dirname \"$0\")/opencode.bin\" \"$@\"\n"
+
+// The hand copies of this opencode (an identical opencode.bin with a hand wrapper, or the bare binary as opencode)
+// are removed; a copy that differs stays, and so does a wrapper whose opencode.bin differs. --check removes nothing.
+func TestOpencodeRoleRemovesItsHandCopies(t *testing.T) {
+	t.Parallel()
+	skipWithoutAnsible(t)
+	cases := []struct {
+		name          string
+		bin, top      string // "" is no file
+		wantBin, keep bool
+	}{
+		{name: "wrapper and identical binary", bin: fakeOpencode, top: handOpencodeWrapper},
+		{name: "bare identical binary", top: fakeOpencode},
+		{name: "another binary", bin: "#!/bin/sh\necho 1.17.0\n", top: handOpencodeWrapper, keep: true},
+		{name: "another wrapper", bin: fakeOpencode, top: "#!/bin/sh\nexec /opt/x/opencode \"$@\"\n", wantBin: true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			home := t.TempDir()
+			hand := t.TempDir()
+			if c.bin != "" {
+				require.NoError(t, os.WriteFile(filepath.Join(hand, "opencode.bin"), []byte(c.bin), 0o755))
+			}
+			require.NoError(t, os.WriteFile(filepath.Join(hand, "opencode"), []byte(c.top), 0o755))
+			vars := opencodeRelease(t, false)
+			handVar := `{"nova_opencode_hand_dir": "` + hand + `"}`
+
+			out, err := runOpencodePlay(t, home, vars, "-e", handVar)
+			require.NoError(t, err, out)
+			_, errTop := os.Stat(filepath.Join(hand, "opencode"))
+			_, errBin := os.Stat(filepath.Join(hand, "opencode.bin"))
+			if c.keep {
+				assert.NoError(t, errTop, out)
+				assert.NoError(t, errBin, out)
+				return
+			}
+			if c.wantBin {
+				assert.NoError(t, errTop, "a wrapper that is not the hand one stays: "+out)
+				assert.True(t, os.IsNotExist(errBin), "the identical opencode.bin goes: "+out)
+				return
+			}
+			assert.True(t, os.IsNotExist(errTop), out)
+			assert.True(t, os.IsNotExist(errBin), out)
+			out, err = runOpencodePlay(t, home, vars, "-e", handVar)
+			require.NoError(t, err, out)
+			assert.Contains(t, out, "changed=0", "a second run changed something")
+		})
+	}
+}
+
+// --check names the hand copies it would remove and removes none.
+func TestOpencodeRoleCheckKeepsHandCopies(t *testing.T) {
+	t.Parallel()
+	skipWithoutAnsible(t)
+	home := t.TempDir()
+	hand := t.TempDir()
+	vars := opencodeRelease(t, false)
+	out, err := runOpencodePlay(t, home, vars)
+	require.NoError(t, err, out)
+	require.NoError(t, os.WriteFile(filepath.Join(hand, "opencode.bin"), []byte(fakeOpencode), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(hand, "opencode"), []byte(handOpencodeWrapper), 0o755))
+	out, err = runOpencodePlay(t, home, vars, "-e", `{"nova_opencode_hand_dir": "`+hand+`"}`, "--check")
+	require.NoError(t, err, out)
+	assert.Contains(t, out, hand+"/opencode.bin")
+	_, err = os.Stat(filepath.Join(hand, "opencode"))
+	assert.NoError(t, err, "--check removed the wrapper")
+	_, err = os.Stat(filepath.Join(hand, "opencode.bin"))
+	assert.NoError(t, err, "--check removed opencode.bin")
+}

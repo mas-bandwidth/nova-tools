@@ -653,3 +653,93 @@ func TestSDKToolchainEnvFilesNameInstalledFiles(t *testing.T) {
 		assert.True(t, installed, "%s=%s is %s's probe or one of its links", k, v, tool.Name)
 	}
 }
+
+// matchRe is the regexp inside a `<x> is match('<re>')` condition (Python's re; these patterns read the same in RE2).
+func matchRe(t *testing.T, cond string) *regexp.Regexp {
+	t.Helper()
+	m := regexp.MustCompile(`is match\('([^']*)'\)`).FindStringSubmatch(cond)
+	require.Len(t, m, 2, "no match('...') in %q", cond)
+	return regexp.MustCompile(m[1])
+}
+
+// rowan-tools' fleet/bench.yml put a Go first by hand: a marked "fleet Go" block in ~/.bashrc and ~/go/bin/go and
+// gofmt linked to one SDK Go (go1.26.6 on amd-3, hulk and intel). The role takes out that block and those links, and
+// only them; a link ~/.local/bin/go resolves through stays, since a runner unit's PATH may reach go only that way.
+func TestSDKToolchainRemovesTheHandGoBlockAndLinks(t *testing.T) {
+	t.Parallel()
+	tasks := sdkTasks(t)["main.yml"]
+
+	i := taskIndex(tasks, `~/.bashrc has no hand "fleet Go" block`)
+	require.GreaterOrEqual(t, i, 0)
+	bi, ok := tasks[i]["ansible.builtin.blockinfile"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "absent", bi["state"])
+	assert.Equal(t, "# {mark} fleet Go (rowan-tools fleet/bench.yml)", bi["marker"], "the markers bench.yml wrote, exactly")
+	assert.Equal(t, "{{ ansible_facts['user_dir'] }}/.bashrc", bi["path"])
+	assert.Equal(t, "sdk_platform == 'linux'", asText(tasks[i]["when"]))
+	assert.Greater(t, i, taskIndex(tasks, "~/.bashrc sources env.sh first"), "env.sh's line is in place before the block goes")
+
+	s := taskIndex(tasks, "the go links in ~/go/bin")
+	require.GreaterOrEqual(t, s, 0)
+	assert.Equal(t, []any{"go/bin/go", "go/bin/gofmt", ".local/bin/go"}, tasks[s]["loop"])
+
+	r := taskIndex(tasks, "~/go/bin has no go or gofmt linked to an SDK Go")
+	require.GreaterOrEqual(t, r, 0)
+	assert.Greater(t, r, s)
+	f, ok := tasks[r]["ansible.builtin.file"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "absent", f["state"])
+	assert.Equal(t, "{{ sdk_go_links.results[:2] if sdk_platform == 'linux' else [] }}", asText(tasks[r]["loop"]),
+		"only the two ~/go/bin links are candidates; ~/.local/bin/go is never removed here")
+	when := mapsOrText(tasks[r]["when"])
+	require.Len(t, when, 3)
+	assert.Equal(t, "item.stat.islnk | default(false)", when[0], "a real binary in ~/go/bin is never removed")
+	re := matchRe(t, when[1])
+	for _, target := range []string{
+		"/home/nova/sdk/go1.26.6/bin/go", "/home/nova/sdk/go1.26.10/bin/gofmt",
+		"/home/glenn/nova-bench/sdk/go1.26.10/bin/gofmt", "/home/glenn/sdk/go1.26.10/bin/go",
+	} {
+		assert.True(t, re.MatchString(target), target)
+	}
+	for _, target := range []string{
+		"/home/nova/go/bin/go1.26.6", "/usr/lib/go-1.26/bin/go", "/home/nova/sdk/go1.26.10/bin/go.old",
+		"/home/nova/sdk/golangci-lint-2.12.2/golangci-lint", "go1.26.6/bin/go",
+	} {
+		assert.False(t, re.MatchString(target), target)
+	}
+	assert.Equal(t, "(sdk_go_links.results[2].stat.lnk_target | default('')) != item.stat.path", when[2],
+		"a ~/go/bin link that ~/.local/bin/go points at stays")
+}
+
+// An older SDK install linked gh 2.102.0 into <sdk>/bin on captain and hulk; no tool of the role installs gh. The role
+// removes that link when it points exactly there, and nothing else named gh.
+func TestSDKToolchainRemovesTheHandGhLink(t *testing.T) {
+	t.Parallel()
+	tasks := sdkTasks(t)["main.yml"]
+	i := taskIndex(tasks, "<sdk>/bin has no hand gh link")
+	require.GreaterOrEqual(t, i, 0)
+	f, ok := tasks[i]["ansible.builtin.file"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "{{ sdk_dir }}/bin/gh", f["path"])
+	assert.Equal(t, "absent", f["state"])
+	when := mapsOrText(tasks[i]["when"])
+	assert.Equal(t, []string{
+		"sdk_gh_link.stat.islnk | default(false)",
+		"sdk_gh_link.stat.lnk_target == sdk_dir ~ '/gh-2.102.0/gh_2.102.0_linux_amd64/bin/gh'",
+	}, when)
+	for _, tool := range readSDKDefaults(t).Tools {
+		assert.NotEqual(t, "gh", tool.Name, "a gh tool would put the link back each run; this removal would then go")
+	}
+}
+
+// mapsOrText is a task's when as a list of strings (a single condition is a list of one).
+func mapsOrText(v any) []string {
+	if l, ok := v.([]any); ok {
+		out := make([]string, 0, len(l))
+		for _, c := range l {
+			out = append(out, asText(c))
+		}
+		return out
+	}
+	return []string{asText(v)}
+}

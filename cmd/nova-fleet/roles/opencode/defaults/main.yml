@@ -31,3 +31,9 @@ nova_opencode_cache_dir: "{{ nova_home }}/.cache/nova/opencode"
 nova_opencode_env:
   OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER: "1"
   OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX: "128000"
+
+# Where each bench had this opencode put by hand before the role (opencode.bin and its wrapper, or the bare binary as
+# opencode). The role removes a copy there only when it is exactly this opencode (tasks/main.yml).
+nova_opencode_hand_dir: /usr/local/bin
+# The hand wrapper: a shebang, a "# wrapper (Rowan <date>): ..." line, its exports, and the exec of opencode.bin beside it.
+nova_opencode_hand_wrapper_re: '^#!/bin/sh\n# wrapper \(Rowan 2026-[0-9]{2}-[0-9]{2}\): [^\n]*\n(export OPENCODE_[A-Z_]+=[0-9]+\n)*exec "\$\(dirname "\$0"\)/opencode\.bin" "\$@"\n?$'
