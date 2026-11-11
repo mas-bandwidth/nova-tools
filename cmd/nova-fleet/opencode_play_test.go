@@ -141,7 +141,7 @@ func TestOpencodeRoleRemovesOnlyItsOwnHandCopies(t *testing.T) {
 	require.GreaterOrEqual(t, s, 0)
 	assert.Greater(t, s, taskIndex(tasks, "opencode answers the pinned version"), "the role's own copy is checked first")
 	assert.Equal(t, []any{"{{ nova_opencode_bin_dir }}/opencode.bin", "{{ nova_opencode_hand_dir }}/opencode.bin",
-		"{{ nova_opencode_hand_dir }}/opencode"}, tasks[s]["loop"])
+		"{{ nova_opencode_hand_dir }}/opencode", "{{ nova_opencode_hand_dir }}"}, tasks[s]["loop"])
 	c := taskIndex(tasks, "which hand copies are this opencode")
 	require.GreaterOrEqual(t, c, 0)
 	sf, ok := tasks[c]["ansible.builtin.set_fact"].(map[string]any)
@@ -157,4 +157,7 @@ func TestOpencodeRoleRemovesOnlyItsOwnHandCopies(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "absent", f["state"])
 	assert.Equal(t, "{{ nova_opencode_hand_copies }}", asText(tasks[r]["loop"]))
+	// Unlinking takes write on the directory, not ownership of the file: on space the copies were nova's, in root's
+	// /usr/local/bin, and a removal without root failed there ("Unlinking failed").
+	assert.Equal(t, "{{ not (nova_opencode_copies.results[3].stat.writeable | default(false)) }}", asText(tasks[r]["become"]))
 }

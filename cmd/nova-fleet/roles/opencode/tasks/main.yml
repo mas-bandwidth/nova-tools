@@ -117,6 +117,7 @@
         - "{{ nova_opencode_bin_dir }}/opencode.bin"
         - "{{ nova_opencode_hand_dir }}/opencode.bin"
         - "{{ nova_opencode_hand_dir }}/opencode"
+        - "{{ nova_opencode_hand_dir }}"
       register: nova_opencode_copies
 
     - name: the hand wrapper's text (a read; a small regular file only)
@@ -144,6 +145,7 @@
 
     - name: the hand copies of this opencode, removed
       ansible.builtin.file: { path: "{{ item.path }}", state: absent }
-      become: "{{ nova_opencode_hand_copies | selectattr('uid', 'equalto', 0) | list | length > 0 }}"
+      # Removing a file takes write on its directory (root's /usr/local/bin), whoever owns the file (space's are nova's).
+      become: "{{ not (nova_opencode_copies.results[3].stat.writeable | default(false)) }}"
       loop: "{{ nova_opencode_hand_copies }}"
       loop_control: { label: "{{ item.path }}" }
