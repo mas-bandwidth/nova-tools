@@ -57,10 +57,12 @@ and times in these examples will differ on your machine.
 
 On Linux the command runs on its slot's share of the CPUs nova-reserve may
 use, less the kernel's isolated ones (slot k of N gets the k-th of N
-near-equal runs; an exclusive job gets them all), so `nproc`, Go and `make -j`
-count that share, and the `HELD` line ends with them, such as `cpus=2-3`. If
-they cannot be set, one stderr line says why and the command runs unpinned;
-macOS and the BSDs do not pin.
+near-equal runs; an exclusive job gets them all), so `nproc`,
+`make -j$(nproc)` and Go count that share, and the `HELD` line ends with them,
+such as `cpus=2-3`. The pin is advisory: a job can widen its own mask again
+(for example with `taskset`), so it steers tools that size themselves by the
+CPUs they may use and is not a limit. If they cannot be set, one stderr line
+says why and the command runs unpinned; macOS and the BSDs do not pin.
 
 `--wait D` gives up after a time such as `90s` or `15m`; the default waits for
 ever. `--why TEXT` labels the job in `status`. Flags take `--wait 1s`,

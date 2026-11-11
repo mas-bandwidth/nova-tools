@@ -37,17 +37,19 @@ func usableCPUs() ([]int, error) {
 			allowed, n = append(allowed, c), n-1
 		}
 	}
-	isolated, err := os.ReadFile(isolatedPath)
+	return withoutIsolated(allowed, isolatedPath)
+}
+
+// withoutIsolated is allowed less the CPUs the file at path lists in the
+// kernel's list form (1-15 or 0,4-7); a missing file lists none.
+func withoutIsolated(allowed []int, path string) ([]int, error) {
+	b, err := os.ReadFile(path)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return nil, err
 	}
-	return withoutIsolated(allowed, string(isolated))
-}
-
-// withoutIsolated is allowed less the CPUs in isolated, the kernel's list form (1-15 or 0,4-7).
-func withoutIsolated(allowed []int, isolated string) ([]int, error) {
+	isolated := strings.TrimSpace(string(b))
 	gone := map[int]bool{}
-	for _, r := range strings.FieldsFunc(strings.TrimSpace(isolated), func(c rune) bool { return c == ',' }) {
+	for _, r := range strings.FieldsFunc(isolated, func(c rune) bool { return c == ',' }) {
 		lo, hi, isRange := strings.Cut(r, "-")
 		a, err := strconv.Atoi(lo)
 		b := a
@@ -55,7 +57,7 @@ func withoutIsolated(allowed []int, isolated string) ([]int, error) {
 			b, err = strconv.Atoi(hi)
 		}
 		if err != nil {
-			return nil, fmt.Errorf("%s holds %q, not a CPU list", isolatedPath, strings.TrimSpace(isolated))
+			return nil, fmt.Errorf("%s holds %q, not a CPU list", path, isolated)
 		}
 		for c := a; c <= b; c++ {
 			gone[c] = true

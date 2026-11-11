@@ -52,7 +52,11 @@ Wait for a slot, run the command, free the slot; exit with the command's status.
 The command is found before a slot is taken (127, 126). It dies with nova-reserve, even on SIGKILL (a watchdog
 process kills its group within about a second).
 On Linux the command runs on its slot's share of the CPUs nova-reserve may use, less the kernel's isolated ones (an
---exclusive run: all of them), so nproc, Go and make -j count that share; HELD names them (cpus=0-3). macOS and the BSDs: no pinning.
+--exclusive run: all of them), so nproc, make -j$(nproc) and Go count that share; HELD names them (cpus=0-3).
+The pin is advisory: a job can widen its own mask again (taskset), so it steers honest tools and is not a limit.
+A share is fixed by the slot count, not by how many slots are busy: set slots to CPUs / the CPUs one job should get.
+Shares are per directory: the machine's and a private --dir each give their slot 1 the first CPUs, so use one
+directory per machine for work that should not overlap. macOS and the BSDs: no pinning.
 `,
 	"status": `nova-reserve status [--dir DIR]
 
@@ -750,7 +754,7 @@ func (t *taker) describe() string {
 
 // pin starts the command on its slot's share of the usable CPUs, or all of
 // them for an exclusive hold, so tools that size themselves by the CPUs they
-// may use (nproc, Go, make -j) count that share. It returns " cpus=LIST", or
+// may use (nproc, Go) count that share. It returns " cpus=LIST", or
 // "" where the OS pins nothing. A failure is one stderr line; the command
 // then runs unpinned.
 func (t *taker) pin() string {
