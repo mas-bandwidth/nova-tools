@@ -1165,8 +1165,8 @@ big-endian build links, `libsodium-dev:s390x`, `libbpf-dev:s390x`, `libxdp-dev:s
 foreign architecture `s390x`) and `bats`, `tcpdump`, GNU `time` and the archivers; the list in `group_vars/all.yml` is
 grouped that way. Every name resolves on Ubuntu 26.04; a Debian release or an older Ubuntu lacks some of the versioned
 ones (`clang-18`, `postgresql-client-18`, `dotnet-sdk-10.0`), and there apt fails the task naming the package, and the
-fix is your own list, below, without it. Debian has no Ubuntu ports archive, so there the foreign architecture is
-refused with the run that turns it off; your own list then leaves out the `:s390x` names. A package already
+fix is your own list, below, without it. Debian has no Ubuntu ports archive, so there the play refuses the foreign
+architecture; the fix is your own list without the `:s390x` names, run with the architecture turned off. A package already
 installed is adopted as it is: never reinstalled, upgraded or auto-updated, so a run over it reports `changed=0`.
 Only packages: no server is started, no `brew services`, no unit; the tests run their own `initdb` and `pg_ctl` (with
 `LC_ALL=C`). CI never installs: the macOS functional job refuses when `initdb` is missing and names this play.

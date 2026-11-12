@@ -77,9 +77,9 @@ nova_age_keygen: "{{ '/opt/homebrew/bin/age-keygen' if (nova_system | default(an
 # .NET, Java, OCaml and Python, prove with SMT and bounded model checkers, and test in containers, VMs and under
 # emulation, big-endian builds included: the s390x libraries those link are `<name>:s390x`, which apt fetches because
 # s390x is in nova_runner_foreign_architectures below. Every name resolves on Ubuntu 26.04; a Debian release or an
-# older Ubuntu lacks some of the versioned ones (clang-18, postgresql-client-18, dotnet-sdk-10.0) and has no Ubuntu
-# ports archive. A list given with -e replaces this one whole (no merge): copy it and edit, and drop the `:s390x`
-# names with the architecture.
+# older Ubuntu lacks some of the versioned ones (clang-18, postgresql-client-18, dotnet-sdk-10.0), and Debian has no
+# Ubuntu ports archive. A list given with -e replaces this one whole (no merge): copy it and edit, and drop the
+# `:s390x` names when the architecture is turned off.
 # The Windows side of a WSL machine with Windows runners (its record's windows_runners): ccache for MSVC, from ccache's own
 # release zip, checked against its sha256 (read from the GitHub release 2026-11-12), unpacked to the directory below
 # with msvc\cl.exe beside it (runner-packages, "Windows ccache"). An empty version skips it.
