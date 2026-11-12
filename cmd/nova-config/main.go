@@ -288,6 +288,21 @@ func runKind(ctx context.Context, k *kind, verb string, args []string, d deps, s
 			return refusal{err.Error()}
 		}
 	}
+	if k.name == "machine" && op != "remove" { // an admin runner label is checked against every machine's runners, the row as written
+		fleetRows := []Row{after}
+		for _, r := range rows {
+			if r.Name != name {
+				fleetRows = append(fleetRows, r)
+			}
+		}
+		if cs := adminClashes(fleetRows, name); len(cs) > 0 {
+			msgs := []string{}
+			for _, c := range cs {
+				msgs = append(msgs, c.msg)
+			}
+			return refusal{strings.Join(msgs, "; ")}
+		}
+	}
 	if str(fs, "dry-run") == "true" {
 		if _, err := st.Write(ctx, k, op, before, after, actor, reason, true); err != nil {
 			return err

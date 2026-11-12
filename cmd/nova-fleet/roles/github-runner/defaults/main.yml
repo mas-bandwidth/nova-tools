@@ -101,6 +101,15 @@ github_runner_wsl_ci_stage_unix: /mnt/c/ProgramData/nova-ci-rules-stage
 github_runner_wsl_ci_script: 'C:\ProgramData\nova-ci-rules-stage\nova-ci-rules.ps1'
 github_runner_wsl_base_dir: 'C:\actions-runner'
 github_runner_wsl_cache: 'C:\actions-runner\.cache'
+# Where admin runners live (windows_admin_runners): <dir>\<owner>-<repo>-<account>, the directory and each runner's made
+# sealed by runner-windows.ps1 (SYSTEM and Administrators, and the runner's account on its own), outside C:\actions-runner
+# and C:\ProgramData\nova, which NETWORK SERVICE can write.
+github_runner_wsl_admin_dir: 'C:\ProgramData\nova-admin-runners'
+# An admin runner's job PATH: the ordinary one without the shared ccache directory (every runner writes there).
+# runner-windows.ps1 install refuses any entry NETWORK SERVICE, Authenticated Users, Users or Everyone may write.
+github_runner_win_admin_path: >-
+  {{ github_runner_windows_path | reject('match', '(?i)' ~ (nova_runner_windows_ccache_dir | default('C:\ProgramData\nova\ccache') | regex_escape))
+     | list }}
 # An admin runner's password is opened from this machine's own seat (as services.yml opens a service's keys): the
 # machine's nova-secrets, and the exec that hands one --only name to the command after it (the name follows).
 github_runner_nova_secrets: "{{ nova_bin_dir }}/nova-secrets"

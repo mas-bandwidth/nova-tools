@@ -476,37 +476,93 @@ func checkService(r Row) error {
 }
 
 // checkMachine refuses an admin runner whose account is the machine's login, or whose label another runner of the
-// machine carries, or is the machine's name: a job meant for that runner could then land on the admin one. A field
-// that does not parse is left to its own refusal.
+// machine carries (adminClashes). A field that does not parse is left to its own refusal.
 func checkMachine(r Row) error {
 	admins, err := parseAdmins(r.F["windows_admin_runners"])
 	if err != nil {
 		return nil
-	}
-	taken := map[string]string{strings.ToLower(r.Name): "the machine's name"}
-	for _, f := range []string{"windows_runners", "runner_scopes"} {
-		ws, _ := parseScopes(r.F[f]) // ignored: a bad value has no labels and is refused by its own check
-		for _, w := range ws {
-			for _, l := range w.Labels {
-				taken[strings.ToLower(l)] = f + " of " + w.URL
-			}
-		}
 	}
 	var p []string
 	for _, a := range admins {
 		if strings.EqualFold(a.Account, r.F["user"]) {
 			p = append(p, fmt.Sprintf("machine %s: admin runner account %s is the machine's user; give the runner its own account", r.Name, a.Account))
 		}
-		for _, l := range a.Labels {
-			if by, ok := taken[strings.ToLower(l)]; ok {
-				p = append(p, fmt.Sprintf("machine %s: admin runner label %s is also %s; give the admin runner a label of its own", r.Name, l, by))
-			}
-		}
+	}
+	for _, c := range adminClashes([]Row{r}, "") {
+		p = append(p, c.msg)
 	}
 	if len(p) > 0 {
 		return fmt.Errorf("%s", strings.Join(p, "; "))
 	}
 	return nil
+}
+
+// adminClash is one admin runner label another runner carries: machine is the admin runner's.
+type adminClash struct{ machine, msg string }
+
+// adminClashes are the admin runner labels that another runner a job of the same repository could select carries:
+// that job could then land on the admin runner. Taken are, on the admin runner's own machine, every label of its
+// windows_runners and runner_scopes (whatever their url), its name, and where it has runner_scopes its roles, os and
+// arch (the Linux runners' labels); on every machine with a runner of the repository or its owner, those labels of that
+// runner and the machine's name; and the labels of every other admin runner of the repository, on any machine. With
+// only, just the clashes that involve that machine. A field that does not parse has no labels.
+func adminClashes(rows []Row, only string) []adminClash {
+	var out []adminClash
+	for _, r := range rows {
+		admins, _ := parseAdmins(r.F["windows_admin_runners"]) // ignored: a bad value is refused by its own check
+		for _, a := range admins {
+			owner := a.URL[:strings.LastIndex(a.URL, "/")]
+			for _, o := range rows {
+				if only != "" && r.Name != only && o.Name != only {
+					continue
+				}
+				self, on := o.Name == r.Name, " on machine "+o.Name
+				if self {
+					on = ""
+				}
+				taken := map[string]string{}
+				reached := false
+				for _, f := range []string{"windows_runners", "runner_scopes"} {
+					ws, _ := parseScopes(o.F[f]) // ignored: a bad value is refused by its own check
+					for _, w := range ws {
+						if !self && !strings.EqualFold(w.URL, a.URL) && !strings.EqualFold(w.URL, owner) {
+							continue
+						}
+						reached = true
+						for _, l := range w.Labels {
+							taken[strings.ToLower(l)] = f + " of " + w.URL + on
+						}
+						if f == "runner_scopes" {
+							for _, l := range append(strings.Split(o.F["roles"], ","), o.F["os"], o.F["arch"]) {
+								if l != "" {
+									taken[strings.ToLower(l)] = "a role, os or arch label of the runner_scopes runners" + on
+								}
+							}
+						}
+					}
+				}
+				if self {
+					taken[strings.ToLower(o.Name)] = "the machine's name"
+				} else if reached {
+					taken[strings.ToLower(o.Name)] = "the name of machine " + o.Name + ", a label of its runners of " + a.URL
+				}
+				others, _ := parseAdmins(o.F["windows_admin_runners"]) // ignored: as above
+				for _, b := range others {
+					if strings.EqualFold(b.URL, a.URL) && !(self && b.Account == a.Account) {
+						for _, l := range b.Labels {
+							taken[strings.ToLower(l)] = "a label of the admin runner " + b.Account + " of " + b.URL + on
+						}
+					}
+				}
+				for _, l := range a.Labels {
+					if by, ok := taken[strings.ToLower(l)]; ok {
+						out = append(out, adminClash{r.Name, fmt.Sprintf("machine %s: admin runner label %s is also %s; give the admin runner a label of its own", r.Name, l, by)})
+					}
+				}
+			}
+		}
+	}
+	return out
 }
 
 func checkFriend(r Row) error {

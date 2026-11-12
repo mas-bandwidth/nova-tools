@@ -96,7 +96,7 @@
       {%- set slug = path | replace('/', '-') -%}
       {%- set _ = out.append({'url': t.url, 'scope': 'repo', 'path': path, 'index': t.account,
             'name': inventory_hostname ~ '-win-' ~ slug ~ '-' ~ t.account,
-            'dir': github_runner_wsl_base_dir ~ '\\' ~ slug ~ '-' ~ t.account,
+            'dir': github_runner_wsl_admin_dir ~ '\\' ~ slug ~ '-' ~ t.account,
             'labels': t.labels | unique | sort | join(','),
             'account': t.account, 'secret': t.secret}) -%}
       {%- endfor -%}
@@ -215,13 +215,19 @@
     fail_msg: "GITHUB-RUNNERS {{ inventory_hostname }}: an admin runner's account could not be set; its receipt is above"
   when: not ansible_check_mode
 
+# An admin runner (-Account) is unpacked into a directory made sealed before anything is in it, from a copy of the zip
+# hashed inside it, its files checked against that copy on every run, its PATH checked writable by no ordinary runner,
+# and its .env the role's whole, CCACHE_DISABLE=1 among it (runner-windows.ps1, install).
 - name: each wanted runner unpacked, with the .env lines the role owns
   ansible.builtin.shell: >-
     "{{ github_runner_wsl_powershell }}" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File {{ github_runner_wsl_script | quote }}
     -Action install -Dir {{ item.dir | quote }} -Cache {{ github_runner_wsl_cache | quote }}
     -Version {{ github_runner_version | quote }} -Sha {{ github_runner_sha256['win-x64'] | quote }}
-    {{ ('-PathList ' ~ (github_runner_windows_path | join(';') | quote)) if github_runner_windows_path | length > 0 else '' }} </dev/null
+    {{ ('-PathList ' ~ (github_runner_win_path | join(';') | quote)) if github_runner_win_path | length > 0 else '' }}
+    {{ ('-Account ' ~ (item.account | quote)) if item.account else '' }} </dev/null
   args: { executable: /bin/sh }
+  vars:
+    github_runner_win_path: "{{ github_runner_win_admin_path if item.account else github_runner_windows_path }}"
   loop: "{{ github_runner_win_want }}"
   loop_control: { label: "{{ item.name }}" }
   register: github_runner_win_installed
@@ -233,18 +239,19 @@
   loop: "{{ github_runner_win_need | map(attribute='url') | unique | list }}"
   loop_control: { loop_var: github_runner_win_url }
 
-# register leaves the service as NETWORK SERVICE (config.cmd's --windowslogonpassword would put the password in an
-# argument): on every run this sets an admin runner's service to .\<account> (ChangeServiceConfig inside powershell,
-# the password from its environment as above), so a run cut off after the account step never leaves the old password.
-# Then the runner's directory is protected on every run, register's /reset undone: nothing inherited, full control for
-# SYSTEM, Administrators and the account only, checked for NETWORK SERVICE, Authenticated Users, Users and Everyone
-# (acl=protected), so no job on another runner can change its binaries or .env or read its credentials. The service
-# restarts while idle when the account step set a new password (-Relogon) or it ran as another account.
+# register gives an admin runner no service (--runasservice would grant NETWORK SERVICE its directory and run the
+# listener as NETWORK SERVICE; --windowslogonpassword would put the password in an argument). On every run this first
+# proves the admin root and the runner's whole directory sealed (acl=protected; nothing repaired, an unsealed one
+# refused), then makes the service logging on as .\<account> or sets that logon (CreateService or ChangeServiceConfig
+# inside powershell, the password from its environment as above), so a run cut off after the account step never leaves
+# the old password. The service restarts while idle when the account step set a new password (-Relogon) or it ran as
+# another account.
 - name: each admin runner's service logs on as its account
   ansible.builtin.shell: >-
     {{ github_runner_win_secrets_exec }} {{ item.secret | quote }} -- env WSLENV={{ item.secret | quote }}
     "{{ github_runner_wsl_powershell }}" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File {{ github_runner_wsl_script | quote }}
-    -Action logon -Dir {{ item.dir | quote }} -Account {{ item.account | quote }} -SecretEnv {{ item.secret | quote }}
+    -Action logon -Dir {{ item.dir | quote }} -Url {{ item.url | quote }} -Name {{ item.name | quote }}
+    -Account {{ item.account | quote }} -SecretEnv {{ item.secret | quote }}
     {{ '-Relogon' if (github_runner_win_account.results | selectattr('item.account', 'equalto', item.account) | map(attribute='stdout')
        | first | default('')) is search('account=updated') else '' }} </dev/null
   args: { executable: /bin/sh }
@@ -253,13 +260,13 @@
   no_log: true
   failed_when: false
   register: github_runner_win_logon
-  changed_when: github_runner_win_logon.stdout is search(' set account=|restart=done|aclset=yes')
+  changed_when: github_runner_win_logon.stdout is search(' (set|created) account=|restart=done')
   when: not ansible_check_mode
 
 - name: the services' logon receipt
   ansible.builtin.debug:
     msg: >-
-      {{ (item.stdout_lines | default([]) | select('match', '^(LOGON|NO-SERVICE|NO-SECRET|LOGON-FAILED|ACL-FAILED|ACL-OPEN|ACCOUNT-NOT-OURS|NEEDS-ELEVATION|BAD-ARGS) ') | list
+      {{ (item.stdout_lines | default([]) | select('match', '^(LOGON|NO-SECRET|LOGON-FAILED|ACL-OPEN|ACCOUNT-NOT-OURS|NEEDS-ELEVATION|BAD-ARGS) ') | list
           + (item.stderr_lines | default([]) | select('match', '^(SECRETS |nova-secrets)') | list)) | join(' ')
          | default('rc=' ~ item.rc | default('-'), true) | regex_replace('^LOGON ', 'LOGON ' ~ inventory_hostname ~ ' ') }}
   loop: "{{ github_runner_win_logon.results | default([]) }}"

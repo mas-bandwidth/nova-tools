@@ -154,3 +154,39 @@ func TestWindowsAdminRunnersCorruptRefusesTheInventory(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "nova-config machine set m1 --windows_admin_runners")
 }
+
+// A label any runner a job of the same repository could select carries, on any machine, is refused, from either side:
+// the admin runner's write, or the other runner's. A runner of another owner never clashes.
+func TestWindowsAdminRunnersRefuseClashesAcrossTheFleet(t *testing.T) {
+	t.Parallel()
+	h := fleet(t)
+	h.ok(t, "machine", "set", "bench-a", "--runner_scopes", "https://github.com/o=1:gpu,https://github.com/p=1:other",
+		"--windows_admin_runners", "https://github.com/o/r=other-acct:nightly", "--actor", "t")
+	for value, want := range map[string]string{
+		"https://github.com/o/r=acct:GPU":                       "is also runner_scopes of https://github.com/o on machine bench-a",
+		"https://github.com/o/r=acct:nightly":                   "is also a label of the admin runner other-acct of https://github.com/o/r on machine bench-a",
+		"https://github.com/o/r=acct:bench-a":                   "is also the name of machine bench-a, a label of its runners of https://github.com/o/r",
+		"https://github.com/o/r=acct:services":                  "is also a role, os or arch label of the runner_scopes runners on machine bench-a",
+		"https://github.com/o/r=a:x,https://github.com/o/r=b:x": "admin runner label x is also a label of the admin runner b of https://github.com/o/r",
+	} {
+		code, _, stderr := h.run(t, "machine", "set", "bench-b", "--windows_admin_runners", value, "--actor", "t")
+		assert.Equal(t, 1, code, value)
+		assert.Contains(t, stderr, want, value)
+	}
+	assert.Contains(t, h.ok(t, "machine", "show", "bench-b"), " windows_admin_runners=- ")
+	h.ok(t, "machine", "set", "bench-b", "--windows_admin_runners", "https://github.com/o/r=acct:other+solo", "--actor", "t")
+
+	code, _, stderr := h.run(t, "machine", "set", "bench-a", "--runner_scopes", "https://github.com/o/r=1:solo", "--actor", "t")
+	assert.Equal(t, 1, code)
+	assert.Contains(t, stderr, "machine bench-b: admin runner label solo is also runner_scopes of https://github.com/o/r on machine bench-a")
+	code, _, stderr = h.run(t, "machine", "add", "bench-c", "--user", "nova", "--windows_runners", "https://github.com/o=1:solo", "--actor", "t")
+	assert.Equal(t, 1, code)
+	assert.Contains(t, stderr, "is also windows_runners of https://github.com/o on machine bench-c")
+
+	_, err := build([]Row{
+		{Name: "m1", F: map[string]string{"windows_admin_runners": "https://github.com/o/r=a:x"}},
+		{Name: "m2", F: map[string]string{"windows_runners": "https://github.com/O=1:X"}},
+	}, nil, "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "is also windows_runners of https://github.com/O on machine m2; give the admin runner a label of its own; run: nova-config machine set m1 --windows_admin_runners")
+}

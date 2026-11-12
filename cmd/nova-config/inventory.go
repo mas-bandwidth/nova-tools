@@ -124,6 +124,9 @@ func build(machines []Row, services []Row, local string) (*inventory, error) {
 		il.Keepalive, il.Enabled = l.F["keepalive"] == "true", l.F["enabled"] == "true"
 		byMachine[l.F["machine"]] = append(byMachine[l.F["machine"]], il)
 	}
+	if cs := adminClashes(machines, ""); len(cs) > 0 {
+		return nil, refused("%s; run: nova-config machine set %s --windows_admin_runners <value>", cs[0].msg, cs[0].machine)
+	}
 	groups := map[string][]string{"bench": {}, "runner": {}, "services": {}}
 	all := []string{}
 	for _, r := range machines {

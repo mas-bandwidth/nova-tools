@@ -35,6 +35,7 @@ case "$*" in
 	grep -qxF "$dir" "$d/reg" 2>/dev/null && { repair=yes; printf 'REPAIR %s\r\n' "$dir"; }
 	printf 'REGISTER %s repair=%s toklen=%s\n' "$name" "$repair" "${#tok}" >>"$log"
 	printf 'LABELS %s %s %s\n' "$name" "$dir" "$(arg -Labels "$@")" >>"$log"
+	printf 'REGACCT %s account=%s\n' "$name" "$(arg -Account "$@")" >>"$log"
 	grep -qxF "$dir" "$d/reg" 2>/dev/null || printf '%s\n' "$dir" >>"$d/reg"
 	grep -qxF "$dir" "$d/svc" 2>/dev/null || printf '%s\n' "$dir" >>"$d/svc"
 	p=$(printf '%s' "$url" | sed 's|^https://github.com/||')
@@ -57,11 +58,11 @@ case "$*" in
 		printf 'ACCOUNT %s account=%s rights=ok admin=ok\r\n' "$(arg -Account "$@")" "$st"
 	else
 		[ -f "$d/aclopen" ] && { printf 'ACL-OPEN %s ace=S-1-5-11 owner=S-1-5-32-544\r\n' "$(arg -Dir "$@")"; exit 10; }
-		[ -f "$d/aclsilent" ] && { printf 'LOGON %s ok account=.\\%s restart=no aclset=no service=s\r\n' "$(arg -Dir "$@")" "$(arg -Account "$@")"; exit 0; }
-		printf 'LOGON %s set account=.\\%s restart=done acl=protected aclset=yes service=s\r\n' "$(arg -Dir "$@")" "$(arg -Account "$@")"
+		[ -f "$d/aclsilent" ] && { printf 'LOGON %s ok account=.\\%s restart=no service=s\r\n' "$(arg -Dir "$@")" "$(arg -Account "$@")"; exit 0; }
+		printf 'LOGON %s set account=.\\%s restart=done acl=protected service=s\r\n' "$(arg -Dir "$@")" "$(arg -Account "$@")"
 	fi
 	exit 0 ;;
-*"-Action install"*) printf 'INSTALL %s\n' "$(arg -Dir "$@")" >>"$log"; printf 'OK\r\n'; exit 0 ;;
+*"-Action install"*) printf 'INSTALL %s account=%s path=%s\n' "$(arg -Dir "$@")" "$(arg -Account "$@")" "$(arg -PathList "$@")" >>"$log"; printf 'OK\r\n'; exit 0 ;;
 *"-Action ensure"*) printf 'OK\r\n'; exit 0 ;;
 *" apply "*) printf 'CI-RULES x hooks=ok restart=no\r\n'; exit 0 ;;
 esac
@@ -271,7 +272,7 @@ func TestFunctionalWSLKeepalive(t *testing.T) {
 
 const (
 	adminSecret = "NOVA_WINRUNNER_VERIFIER_PASSWORD"
-	adminDir    = `C:\actions-runner\mas-bandwidth-rocketnet-verifier`
+	adminDir    = `C:\ProgramData\nova-admin-runners\mas-bandwidth-rocketnet-verifier`
 	adminName   = "captain-win-mas-bandwidth-rocketnet-verifier"
 	adminRecord = captainRecord + `
       nova_windows_admin_runners:
@@ -380,6 +381,39 @@ func TestFunctionalWindowsAdminRunner(t *testing.T) {
 				t.Errorf("no whole receipt:\n%s", out)
 			}
 		})
+	}
+}
+
+// TestFunctionalWindowsAdminRunnerInstallArgs: the admin runner alone is installed and registered with its account
+// (sealed directory, no service from config.cmd), in the admin directory, with a job PATH that leaves out the shared
+// ccache directory the ordinary runners keep; its logon names its url and runner name (the service it makes).
+func TestFunctionalWindowsAdminRunnerInstallArgs(t *testing.T) {
+	t.Parallel()
+	r := newWinRig(t, adminRecord, map[string]string{"names": lines(adminSecret)})
+	out, log, err := r.play(t, "-e", `{"github_runner_windows_path": ["C:\\Go\\bin", "C:\\ProgramData\\nova\\ccache\\msvc"]}`)
+	if err != nil {
+		t.Fatalf("play failed: %v\n%s", err, out)
+	}
+	installs := logLines(log, "INSTALL ")
+	slices.Sort(installs)
+	for _, w := range []string{
+		"INSTALL " + adminDir + ` account=verifier path=C:\Go\bin`,
+		"INSTALL " + rn1 + ` account= path=C:\Go\bin;C:\ProgramData\nova\ccache\msvc`,
+	} {
+		if !slices.Contains(installs, w) {
+			t.Errorf("no install %q among:\n%s", w, strings.Join(installs, "\n"))
+		}
+	}
+	if n := len(slices.DeleteFunc(slices.Clone(installs), func(l string) bool { return !strings.Contains(l, "account=verifier") })); n != 1 {
+		t.Errorf("%d installs with the account; want the admin runner's alone", n)
+	}
+	regs := logLines(log, "REGACCT ")
+	if !slices.Contains(regs, "REGACCT "+adminName+" account=verifier") || !slices.Contains(regs, "REGACCT captain-win-mas-bandwidth-rocketnet-1 account=") {
+		t.Errorf("register passes -Account for the admin runner alone:\n%s", strings.Join(regs, "\n"))
+	}
+	logon := logLines(log, "LOGON ")
+	if len(logon) != 1 || !strings.Contains(logon[0], "-Url https://github.com/mas-bandwidth/rocketnet -Name "+adminName+" -Account verifier") {
+		t.Errorf("the logon step names the runner's url and name:\n%s", strings.Join(logon, "\n"))
 	}
 }
 

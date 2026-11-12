@@ -522,13 +522,19 @@ nova-fleet windows-runners -- -l bench-1
 hands it to the play as `nova_windows_admin_runners`, each entry with `secret`, the nova-secrets name of the account's
 password (`NOVA_WINRUNNER_<ACCOUNT>_PASSWORD`, the account upper-cased with `-` as `_`). **The url is a repository**,
 never an organization: every repository of an organization could send an organization's runner jobs. **The runner** is
-`<machine>-win-<slug>-<account>` in `C:\actions-runner\<slug>-<account>`, with its own work folder, the same job `PATH`,
-`.env` lines and CI rules as the other Windows runners, and the same install, registration, repair and counts: it is
-one more runner in the `windows=` of the receipt. **Its labels** are only the entry's (GitHub adds `self-hosted`,
-`Windows` and `X64`), and must be its own: before anything changes, the run fails on a label (compared without case)
-that is one of the role's Windows labels (`fleet`, the machine's name), any of the machine's `windows_runners` or
-`runner_scopes` labels, or one GitHub gives runners (`self-hosted`, `windows`, `x64`, `linux`, `macos`), naming the
-clash; nova-config refuses the same on the write. So no job meant for another runner lands on it. **The account** is
+`<machine>-win-<slug>-<account>` in `C:\ProgramData\nova-admin-runners\<slug>-<account>` (`github_runner_wsl_admin_dir`),
+with its own work folder and the CI rules of the other Windows runners, and the same registration, repair and counts: it
+is one more runner in the `windows=` of the receipt. Its job `PATH` is the other runners' without the shared ccache
+directory, and its `.env` holds only the role's lines, `CCACHE_DISABLE=1` among them (every runner writes the shared
+cache, so a job here would link what any of them put there) and the CI rules' hooks; any other line is dropped. **Its
+labels** are only the entry's (GitHub adds `self-hosted`, `Windows` and `X64`), and must be its own: nova-config refuses
+on the write, and the inventory refuses when the store holds one, a label (compared without case) that a job of the same
+repository could select on another runner: any label of the machine's own `windows_runners` or `runner_scopes`, its
+name, and with `runner_scopes` its roles, os and arch; on any machine with a runner of the repository or its owner, that
+runner's labels and the machine's name; any other admin runner's label of the repository, on any machine; and one GitHub
+gives runners (`self-hosted`, `windows`, `x64`, `linux`, `macos`). A write to the other runner is refused the same way.
+The run also fails, before anything changes, on one of the role's Windows labels (`fleet`, the machine's name). So no
+job meant for another runner lands on it. **The account** is
 the local user `<account>`, made by the play with a fixed description (`$AccountMarker` in the script): in
 `Administrators` (by its SID, `S-1-5-32-544`), allowed to log on as a service, denied interactive and
 remote-interactive logon, its password never expiring and not changeable by the user. A user of that name without the
@@ -536,12 +542,24 @@ description (a person's, or a built-in one) is never changed: the run fails with
 refuses Windows' built-in names and the machine's user. A service runs with its account's full administrator token
 (services are not filtered by UAC).
 
-**The directory** is the admin's alone. Under `C:\` a runner directory inherits write access for every signed-in
-account, and registering resets it to that, so a job on any other runner of the machine could replace the admin
-runner's binaries or `.env`, or read its credentials. On every run the logon step protects it: nothing inherited,
-full control for SYSTEM, `Administrators` and the account and no other entry, owned by `Administrators`, everything
-under it reset to inherit only that. It then checks the directory and everything at its top level: an entry for
-`NETWORK SERVICE`, Authenticated Users, Users or Everyone, or another owner, fails the run (`ACL-OPEN`).
+**The directory** is the admin's alone, and it is never opened, not even for a moment. Every other runner's job runs
+as `NETWORK SERVICE`, which may make folders in `C:\ProgramData`, and under `C:\` a folder inherits write access for
+every signed-in account: a file such a job put in the admin runner's directory, or a binary it changed there, would run
+as an administrator. So the install step makes `C:\ProgramData\nova-admin-runners` and the runner's directory sealed in
+the call that creates them: owned by `Administrators`, nothing inherited, full control for SYSTEM and `Administrators`,
+and on the runner's directory its account. One that was already there and is not sealed so was made by someone else
+and is never used or changed: `PLANTED <path> ...` fails the run and names the command that deletes it. Nothing in
+the directory is ever reset or repaired. The runner zip is copied from the cache into the directory, that copy is
+hashed against the pin, and the runner is extracted from that same copy. Registration passes `--disableupdate` and not
+`--runasservice` (which would grant `NETWORK SERVICE` the directory and start the listener as `NETWORK SERVICE`); the
+logon step makes the service. On every run, before the service is given the account, the whole tree is proved: the two
+directories hold only those entries, and everything under the runner's directory is owned by SYSTEM, `Administrators`
+or the account, inherits, and has no entry of its own; else `ACL-OPEN <path> ...` fails the run. Every file the copied
+zip lists must still be that file, with nothing else in `bin` or `externals`, else `TAMPERED <path> missing|changed|extra`.
+A new pin replaces `bin` and `externals` from a new copy while the runner is idle (`UPGRADE-OWED <dir> busy` while a
+job runs). Every entry of its job `PATH` (the machine's `PATH` when `github_runner_windows_path` is empty) must be
+writable by none of `NETWORK SERVICE`, Authenticated Users, Users and Everyone (where an entry is missing, the folder
+above it, where it could be made): else `PATH-WRITABLE <entry> sid=<sid> at=<folder>` fails the run.
 
 **The password** is a value in the machine's own seat, never typed and never shown. The play reads the seat's names
 first (`nova-secrets names`, no value read); a seat without it stops the run before anything changes, naming the
@@ -558,12 +576,13 @@ nova-fleet secrets-refresh -- -e nova_seal_store=S
 On the machine the value reaches `powershell.exe` only in its environment: `nova-secrets exec --only <secret> -- env
 WSLENV=<secret> powershell.exe ...`, where `WSLENV` hands that one variable through interop. The script removes it from
 its environment as it reads it and hands it only to method calls inside its own process (a `SecureString` built a
-character at a time, `LogonUser`, `ChangeServiceConfig`), never to a cmdlet parameter, which module logging would
-record; the tasks are `no_log`. `config.cmd --windowslogonpassword` is never used, since it would put the password in
-an argument. Two lines per admin runner: `ACCOUNT <machine> <account> account=created|updated|ok rights=ok|+<right>,...
-admin=added|ok` (an existing account whose stored password does not log it on as a service gets the stored one:
-`updated`), then `LOGON <machine> <dir> ok|set account=.\<account> restart=no|done|busy acl=protected aclset=yes|no
-service=<name>`. The service's logon (account and password) is set on every run, so a run cut off between the two
+character at a time, `LogonUser`, `CreateService`, `ChangeServiceConfig`), never to a cmdlet parameter, which module
+logging would record; the tasks are `no_log`. `config.cmd --windowslogonpassword` is never used, since it would put the
+password in an argument. Two lines per admin runner: `ACCOUNT <machine> <account> account=created|updated|ok
+rights=ok|+<right>,... admin=added|ok` (an existing account whose stored password does not log it on as a service gets
+the stored one: `updated`), then `LOGON <machine> <dir> ok|set|created account=.\<account> restart=no|done|busy
+acl=protected service=<name>` (`created`: the service was made, with the name `config.cmd` gives one). The service's
+logon (account and password) is set on every run, so a run cut off between the two
 steps never leaves the service on an old password. It is restarted only while no job runs, and only when the account
 step said `updated`, the service had logged on as another account, or its listener runs as another user;
 `restart=busy` leaves that to the next run. `--check` reads the names and prints the plan; it changes no account.
@@ -573,13 +592,17 @@ looks at them. Retire one by hand. Take a removal token with the control node's 
 repos/<owner>/<repo>/actions/runners/remove-token -q .token`) and hand it to `config.cmd remove` in the runner
 directory on its stdin, as `ACTIONS_RUNNER_INPUT_TOKEN` (never an argument). Then, in an elevated PowerShell on the
 machine, delete the service (`sc.exe delete <service>`; `Get-CimInstance Win32_Service` finds it by the directory in
-its path), the directory (`Remove-Item -Recurse -Force C:\actions-runner\<slug>-<account>`) and the account
-(`Remove-LocalUser -Name <account>`).
+its path), the directory (`Remove-Item -Recurse -Force C:\ProgramData\nova-admin-runners\<slug>-<account>`) and the
+account (`Remove-LocalUser -Name <account>`).
 
-**Which jobs reach it** is the repository's rule: no workflow that a pull request triggers may name the runner's
-label, since a pull request's code would then run as an administrator. The repository checks that class in CI; in a
+**Which jobs reach it** is the repository's rule. GitHub gives the runner `self-hosted`, `Windows` and `X64` and they
+cannot be taken off, so a job of the repository that selects only those (`runs-on: [self-hosted, Windows]`) can land on
+it: in a repository with an admin runner, every ordinary Windows job must name a label of its own runners as well
+(such as `fleet` or a `windows_runners` label), and no workflow that a pull request triggers may name the admin
+runner's label, since a pull request's code would then run as an administrator. The repository checks both in CI; in a
 repository whose nightly runs on such a runner, a check such as `tools/check_privileged_runner.py` refuses the label in
-any workflow other than the scheduled or dispatched nightly (rocketnet's is one).
+any workflow other than the scheduled or dispatched nightly (rocketnet's is one). That check is the guard on the
+repository's side; nothing in the play can see the repository's workflows.
 
 ### The Windows page file at a fixed size
 

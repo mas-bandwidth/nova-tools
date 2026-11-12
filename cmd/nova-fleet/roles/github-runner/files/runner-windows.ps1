@@ -3,15 +3,28 @@
 # account that started WSL, elevated). The role stages this file to C:\ProgramData\nova-runner-stage and calls one verb
 # at a time; every line it prints starts with a word the role matches. fleet/README.md, "Windows runners of a WSL machine".
 #
-#   install   -Dir -Cache -Version -Sha [-PathList]   the pinned runner zip in -Cache (its sha256 checked before it is
+#   install   -Dir -Cache -Version -Sha [-PathList] [-Account]
+#             the pinned runner zip in -Cache (its sha256 checked before it is
 #             used), unpacked into -Dir where config.cmd is missing (a dir with files but no config.cmd, an
 #             interrupted unpack, is moved aside first: PARTIAL <dir> -> <where>), and the .env lines the role owns (PATH, GOCACHE,
 #             DOTNET_INSTALL_DIR, DOTNET_CLI_TELEMETRY_OPTOUT) set in place, every other line (the CI-rules hooks) kept:
-#             DOWNLOADED, EXTRACTED, ENV-CHANGED <dir> when something moved
-#   register  -Dir -Url -Name -Labels                 stdin carries ONE registration token; it reaches config.cmd as
+#             DOWNLOADED, EXTRACTED, ENV-CHANGED <dir> when something moved.
+#             With -Account (an admin runner, whose -Dir is <admin root>\<name>): the admin root and -Dir are created
+#             sealed (Seal-Dir: owned by Administrators, nothing inherited, full control for SYSTEM, Administrators and,
+#             on -Dir, the account), and one that was there unsealed is refused, never changed: PLANTED (exit 11); the
+#             whole tree under -Dir is proved sealed ([NovaTree]::Open), else ACL-OPEN (exit 10). The zip is copied into
+#             -Dir (.nova-runner.zip), that copy hashed, and extracted from that same copy (overwriting; a new pin
+#             replaces bin and externals while the runner is idle: UPGRADE-OWED <dir> busy while a job runs); on every
+#             run the copy holds its recorded hash and every file it lists is that file, with nothing else in bin or
+#             externals, else TAMPERED (exit 11). Every PATH entry (the machine PATH when -PathList is empty) is checked
+#             writable by none of NETWORK SERVICE, Authenticated Users, Users and Everyone, else PATH-WRITABLE (exit 12).
+#             Its .env holds only the role's lines, CCACHE_DISABLE=1 among them, and the CI-rules hooks in -Dir.
+#   register  -Dir -Url -Name -Labels [-Account]      stdin carries ONE registration token; it reaches config.cmd as
 #             ACTIONS_RUNNER_INPUT_TOKEN, never an argument, a file or a line of output. Registers the runner as a
 #             Windows service (config.cmd --runasservice --replace: NT AUTHORITY\NETWORK SERVICE, automatic start):
-#             REGISTERED. The role calls it only for a runner that is not whole (no .runner, no service, or not in
+#             REGISTERED. With -Account, registered only (--disableupdate, no service and no change to -Dir's ACL, so
+#             NETWORK SERVICE is never granted anything there): logon makes the service. The role calls it only for a
+#             runner that is not whole (no .runner, no service, or not in
 #             GitHub's list): a half registration (.runner there) is repaired first, its .runner and credentials moved
 #             into <dir>\retired-<yyyymmdd>\ and its service removed: REPAIR <dir>
 #   ensure    -Dir                                    its service starts at boot and is running: SERVICE <dir> ok|started,
@@ -34,14 +47,15 @@
 #             by SID (S-1-5-32-544); granted SeServiceLogonRight and denied interactive and remote-interactive logon
 #             (SeDenyInteractiveLogonRight, SeDenyRemoteInteractiveLogonRight) through the LSA:
 #             ACCOUNT <account> account=created|updated|ok rights=ok|+<right>,... admin=added|ok
-#   logon     -Dir -Account -SecretEnv [-Relogon]     the runner's service in -Dir set to log on as .\<account> with the
-#             password from the environment as above (ChangeServiceConfig, on every call); then -Dir protected: nothing
-#             inherited, full control for SYSTEM, Administrators and the account only, owned by Administrators, what is
-#             under it reset to inherit that, and checked: an ACE for NETWORK SERVICE, Authenticated Users, Users or
-#             Everyone, or another owner, is ACL-OPEN (exit 10). The service is restarted while idle when -Relogon (the
-#             password was set), its logon was another account, or its listener runs as another user:
-#             LOGON <dir> ok|set account=.\<account> restart=no|done|busy acl=protected aclset=yes|no service=<name>,
-#             or NO-SERVICE <dir> (exit 7)
+#   logon     -Dir -Url -Name -Account -SecretEnv [-Relogon]
+#             the admin root and the whole tree under -Dir proved sealed first ([NovaTree]::Open; nothing is
+#             repaired): an owner other than SYSTEM, Administrators or the account, an explicit ACE below -Dir, or on the
+#             two directories an ACE for anyone else or inheritance on, is ACL-OPEN (exit 10). Then the runner's service
+#             logs on as .\<account> with the password from the environment as above: made (CreateService, the name
+#             config.cmd gives, written to .service) where there is none, else set (ChangeServiceConfig, on every
+#             call). The service is restarted while idle when -Relogon (the password was set), its logon was another
+#             account, or its listener runs as another user:
+#             LOGON <dir> ok|set|created account=.\<account> restart=no|done|busy acl=protected service=<name>
 param(
   [Parameter(Mandatory = $true)][ValidateSet('install', 'register', 'ensure', 'keepalive', 'pagefile', 'account', 'logon')][string]$Action,
   [string]$Dir = '',
@@ -224,8 +238,186 @@ public static class NovaAccount {
       CloseServiceHandle(m);
     }
   }
+  [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+  static extern IntPtr CreateServiceW(IntPtr manager, string name, string display, uint access, uint type, uint start,
+    uint error, string path, string group, IntPtr tag, string dependencies, string account, string password);
+  const uint ManagerCreate = 0x0002;      // SC_MANAGER_CREATE_SERVICE
+  const uint OwnProcess = 0x00000010;     // SERVICE_WIN32_OWN_PROCESS
+  const uint AutoStart = 0x00000002;      // SERVICE_AUTO_START
+  const uint ErrorNormal = 0x00000001;    // SERVICE_ERROR_NORMAL
+  // CreateService: a service that starts at boot and logs on as account with password; 0, else the Windows error.
+  public static int CreateService(string name, string display, string path, string account, string password) {
+    IntPtr m = OpenSCManagerW(null, null, ManagerConnect | ManagerCreate);
+    if (m == IntPtr.Zero) { return Marshal.GetLastWin32Error(); }
+    try {
+      IntPtr s = CreateServiceW(m, name, display, ServiceChangeConfig, OwnProcess, AutoStart, ErrorNormal, path, null,
+        IntPtr.Zero, null, account, password);
+      if (s == IntPtr.Zero) { return Marshal.GetLastWin32Error(); }
+      CloseServiceHandle(s);
+      return 0;
+    } finally {
+      CloseServiceHandle(m);
+    }
+  }
 }
 '@
+}
+# Add-TreeApi: an admin runner's directory, walked and checked in-process (thousands of files under _work), and the
+# pinned zip extracted and compared file by file.
+function Add-TreeApi {
+  if ('NovaTree' -as [type]) { return }
+  Add-Type -ReferencedAssemblies 'System.IO.Compression', 'System.IO.Compression.FileSystem' -TypeDefinition @'
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.IO.Compression;
+using System.Security.AccessControl;
+using System.Security.Cryptography;
+using System.Security.Principal;
+public static class NovaTree {
+  // Open: null when dir is sealed, else "<path> <why>" for the first place that is not. dir itself: inheritance off,
+  // its owner and every ACE's SID in allowed. With deep, everything under it too, walked without following a reparse
+  // point: its owner in allowed, inheritance on and no explicit ACE (so it holds exactly what dir gives). A place that
+  // cannot be read is not sealed.
+  public static string Open(string dir, string[] allowed, bool deep) {
+    DirectoryInfo d = new DirectoryInfo(dir);
+    string why = Check(d, allowed, true);
+    if (why != null || !deep) { return why; }
+    Stack<DirectoryInfo> todo = new Stack<DirectoryInfo>();
+    todo.Push(d);
+    while (todo.Count > 0) {
+      DirectoryInfo cur = todo.Pop();
+      FileSystemInfo[] items;
+      try {
+        items = cur.GetFileSystemInfos();
+      } catch (Exception e) {
+        return cur.FullName + " unreadable=" + e.GetType().Name;
+      }
+      foreach (FileSystemInfo i in items) {
+        why = Check(i, allowed, false);
+        if (why != null) { return why; }
+        DirectoryInfo sub = i as DirectoryInfo;
+        if (sub != null && (i.Attributes & FileAttributes.ReparsePoint) == 0) { todo.Push(sub); }
+      }
+    }
+    return null;
+  }
+  static string Check(FileSystemInfo i, string[] allowed, bool top) {
+    string at = i.FullName;
+    FileSystemSecurity s;
+    try {
+      DirectoryInfo d = i as DirectoryInfo;
+      s = d != null ? (FileSystemSecurity)d.GetAccessControl() : ((FileInfo)i).GetAccessControl();
+    } catch (Exception e) {
+      return at + " unreadable=" + e.GetType().Name;
+    }
+    string owner = s.GetOwner(typeof(SecurityIdentifier)).Value;
+    if (Array.IndexOf(allowed, owner) < 0) { return at + " owner=" + owner; }
+    if (top != s.AreAccessRulesProtected) { return at + (top ? " inherited=yes" : " protected=yes"); }
+    foreach (FileSystemAccessRule r in s.GetAccessRules(true, true, typeof(SecurityIdentifier))) {
+      string sid = r.IdentityReference.Value;
+      if (top ? Array.IndexOf(allowed, sid) < 0 : !r.IsInherited) { return at + " ace=" + sid; }
+    }
+    return null;
+  }
+  // Extract: every entry of zip written under dir, overwriting; an entry naming a place outside dir is refused.
+  public static void Extract(string zip, string dir) {
+    string root = Path.GetFullPath(dir).TrimEnd('\\') + "\\";
+    using (ZipArchive z = ZipFile.OpenRead(zip)) {
+      foreach (ZipArchiveEntry e in z.Entries) {
+        string p = Path.GetFullPath(Path.Combine(root, e.FullName.Replace('/', '\\')));
+        if (!p.StartsWith(root, StringComparison.OrdinalIgnoreCase)) { throw new IOException("zip entry outside the directory: " + e.FullName); }
+        if (e.FullName.EndsWith("/")) {
+          Directory.CreateDirectory(p);
+          continue;
+        }
+        Directory.CreateDirectory(Path.GetDirectoryName(p));
+        e.ExtractToFile(p, true);
+      }
+    }
+  }
+  // Verify: null when every file zip lists is under dir with the same sha256 and the directories closed hold no file it
+  // does not list; else "<path> missing|changed|extra".
+  public static string Verify(string zip, string dir, string[] closed) {
+    HashSet<string> listed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    using (SHA256 h = SHA256.Create())
+    using (ZipArchive z = ZipFile.OpenRead(zip)) {
+      foreach (ZipArchiveEntry e in z.Entries) {
+        if (e.FullName.EndsWith("/")) { continue; }
+        string rel = e.FullName.Replace('/', '\\');
+        listed.Add(rel);
+        string p = Path.Combine(dir, rel);
+        if (!File.Exists(p)) { return p + " missing"; }
+        byte[] want, got;
+        using (Stream a = e.Open()) { want = h.ComputeHash(a); }
+        using (FileStream b = new FileStream(p, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete)) { got = h.ComputeHash(b); }
+        if (Convert.ToBase64String(want) != Convert.ToBase64String(got)) { return p + " changed"; }
+      }
+    }
+    foreach (string c in closed) {
+      string cd = Path.Combine(dir, c);
+      if (!Directory.Exists(cd)) { continue; }
+      foreach (string f in Directory.EnumerateFiles(cd, "*", SearchOption.AllDirectories)) {
+        if (!listed.Contains(f.Substring(dir.TrimEnd('\\').Length + 1))) { return f + " extra"; }
+      }
+    }
+    return null;
+  }
+}
+'@
+}
+# The SIDs an admin runner's directories may hold: SYSTEM and Administrators (and, on -Dir, the account). The ones no
+# admin runner's PATH may be writable by: NETWORK SERVICE (every ordinary runner), Authenticated Users, Users, Everyone.
+$Sealers = @('S-1-5-18', 'S-1-5-32-544')
+$Openers = @('S-1-5-20', 'S-1-5-11', 'S-1-5-32-545', 'S-1-1-0')
+# Seal-Dir PATH SIDS: PATH created sealed where it is missing (in one call, so it is never there unsealed: owned by
+# Administrators, nothing inherited, full control for SYSTEM, Administrators and SIDS); then, made here or found,
+# checked sealed. One that is not was there before this play sealed it (anyone could have put a file in it): PLANTED,
+# exit 11, nothing changed.
+function Seal-Dir([string]$p, [string[]]$sids) {
+  $allowed = $Sealers + $sids
+  if (-not (Test-Path -LiteralPath $p)) {
+    $ds = New-Object Security.AccessControl.DirectorySecurity
+    $ds.SetAccessRuleProtection($true, $false)
+    $ds.SetOwner((New-Object Security.Principal.SecurityIdentifier 'S-1-5-32-544'))
+    foreach ($s in $allowed) {
+      $ds.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule((New-Object Security.Principal.SecurityIdentifier $s),
+        'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow')))
+    }
+    [void][IO.Directory]::CreateDirectory($p, $ds)
+  }
+  $why = [NovaTree]::Open($p, $allowed, $false)
+  if ($why) { "PLANTED ${why}: it was not made sealed by this play; delete it and run the play again: Remove-Item -LiteralPath '$p' -Recurse -Force"; exit 11 }
+}
+# Find-OpenPath DIRS: the first DIR (or, where it is missing, the nearest folder above it, where it could be made) that
+# NETWORK SERVICE, Authenticated Users, Users or Everyone may write, as "<dir> sid=<sid> at=<folder>"; else nothing.
+# An ACE counts where it applies to the folder itself or to the files in it.
+function Find-OpenPath([string[]]$dirs) {
+  $write = 0x2 -bor 0x4 -bor 0x40 -bor 0x10000 -bor 0x40000 -bor 0x80000 -bor 0x10000000 -bor 0x40000000
+  foreach ($d in $dirs) {
+    $p = $d
+    while ($p -and -not (Test-Path -LiteralPath $p)) { $p = Split-Path $p }
+    if (-not $p) { continue }
+    foreach ($r in (Get-Acl -LiteralPath $p).GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
+      $here = ([int]$r.PropagationFlags -band 2) -eq 0 -or ([int]$r.InheritanceFlags -band 2) -ne 0
+      if ("$($r.AccessControlType)" -eq 'Allow' -and $Openers -contains $r.IdentityReference.Value -and
+          ([int64]$r.FileSystemRights -band $write) -ne 0 -and $here) {
+        return "$d sid=$($r.IdentityReference.Value) at=$p"
+      }
+    }
+  }
+}
+# Test-Busy DIR: the runner in DIR is running a job (its listener has a Runner.Worker child).
+function Test-Busy([string]$d) {
+  $exe = Join-Path $d 'bin\Runner.Listener.exe'
+  $l = Get-CimInstance Win32_Process -Filter "Name = 'Runner.Listener.exe'" | Where-Object { $_.ExecutablePath -eq $exe } | Select-Object -First 1
+  return [bool]($l -and (Get-CimInstance Win32_Process -Filter "ParentProcessId = $($l.ProcessId) AND Name = 'Runner.Worker.exe'"))
+}
+# Get-OurUser NAME: the local user an admin runner runs as, which must carry $AccountMarker.
+function Get-OurUser([string]$n) {
+  $u = Get-LocalUser -Name $n -ErrorAction Stop
+  if ("$($u.Description)" -cne $AccountMarker) { "ACCOUNT-NOT-OURS ${n}: no description '$AccountMarker'; nothing was changed"; exit 9 }
+  return $u
 }
 
 switch ($Action) {
@@ -277,62 +469,38 @@ switch ($Action) {
   }
   'logon' {
     Need-Admin
-    if (-not $Dir -or -not (Test-AccountName $Account)) { 'BAD-ARGS -Dir -Account'; exit 2 }
+    if (-not $Dir -or -not $Url -or -not $Name -or -not (Test-AccountName $Account)) { 'BAD-ARGS -Dir -Url -Name -Account'; exit 2 }
     $pw = Take-Secret $SecretEnv
     try {
-      $s = Service-Of $Dir
-      if (-not $s) { "NO-SERVICE $Dir"; exit 7 }
-      $u = Get-LocalUser -Name $Account -ErrorAction Stop
-      if ("$($u.Description)" -cne $AccountMarker) { "ACCOUNT-NOT-OURS ${Account}: no description '$AccountMarker'; nothing was changed"; exit 9 }
+      $u = Get-OurUser $Account
       Add-AccountApi
+      Add-TreeApi
+      # The proof, before the service is given the account: the admin root holds only SYSTEM and Administrators, and
+      # the runner's directory and everything under it hold what install sealed it with. Nothing is repaired: a
+      # directory that is not sealed may hold a file a job on another runner put there, which this account would run.
+      foreach ($why in [NovaTree]::Open((Split-Path $Dir), $Sealers, $false), [NovaTree]::Open($Dir, $Sealers + @($u.SID.Value), $true)) {
+        if ($why) { "ACL-OPEN ${why}: stop its service, delete the runner's directory and run the play again"; exit 10 }
+      }
       $want = ".\$Account"
-      $moved = @($want, "$env:COMPUTERNAME\$Account") -notcontains "$($s.StartName)"
-      # applied on every run, so a run cut off between the account step and this one never leaves the old password
-      $rc = [NovaAccount]::SetServiceLogon($s.Name, $want, $pw)
-      if ($rc -ne 0) { "LOGON-FAILED $Dir rc=$rc"; exit 8 }
+      $s = Service-Of $Dir
+      if (-not $s) {
+        # config.cmd's name for a repository's service; RunnerService.exe starts the listener as the service's account
+        $svc = "actions.runner.$($Url -replace '^https://[^/]+/', '' -replace '/', '-').$Name"
+        $rc = [NovaAccount]::CreateService($svc, "GitHub Actions Runner ($svc)", "`"$Dir\bin\RunnerService.exe`"", $want, $pw)
+        if ($rc -ne 0) { "LOGON-FAILED $Dir create=$svc rc=$rc"; exit 8 }
+        [IO.File]::WriteAllText((Join-Path $Dir '.service'), $svc)
+        & sc.exe failure $svc reset= 86400 actions= restart/60000/restart/60000/restart/60000 | Out-Null
+        $s = Service-Of $Dir
+        $did, $moved = 'created', $false
+      } else {
+        $moved = @($want, "$env:COMPUTERNAME\$Account") -notcontains "$($s.StartName)"
+        # applied on every run, so a run cut off between the account step and this one never leaves the old password
+        $rc = [NovaAccount]::SetServiceLogon($s.Name, $want, $pw)
+        if ($rc -ne 0) { "LOGON-FAILED $Dir rc=$rc"; exit 8 }
+        $did = if ($moved) { 'set' } else { 'ok' }
+      }
     } finally {
       $pw = $null
-    }
-    $did = if ($moved) { 'set' } else { 'ok' }
-    # The directory, on every run (register's icacls /reset puts inheritance back): protected, nothing inherited from
-    # C:\ (whose Authenticated Users may modify), full control for SYSTEM, Administrators and the account and no other
-    # ACE, owned by Administrators; everything under it reset to inherit only that. _work is reset only when the
-    # service had not logged on as the account (after a register: its listener ran as NETWORK SERVICE) or _work is not
-    # clean, since after that nothing but these three can write in it. No job on another runner can then change the
-    # runner's binaries, .env or .path, or read its credentials.
-    $sid = $u.SID.Value
-    $allowed = @('S-1-5-18', 'S-1-5-32-544', $sid)
-    $forbidden = @('S-1-5-20', 'S-1-5-11', 'S-1-5-32-545', 'S-1-1-0')
-    $before = Get-Acl -LiteralPath $Dir
-    $aclset = 'no'
-    if (-not $before.AreAccessRulesProtected -or @($before.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]) |
-        Where-Object { $allowed -notcontains $_.IdentityReference.Value }).Count -gt 0) { $aclset = 'yes' }
-    & icacls.exe $Dir /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' "*${sid}:(OI)(CI)F" /C /Q | Out-Null
-    if ($LASTEXITCODE -ne 0) { "ACL-FAILED $Dir rc=$LASTEXITCODE"; exit $LASTEXITCODE }
-    foreach ($other in @((Get-Acl -LiteralPath $Dir).GetAccessRules($true, $false, [Security.Principal.SecurityIdentifier]) |
-        ForEach-Object { $_.IdentityReference.Value } | Where-Object { $allowed -notcontains $_ } | Sort-Object -Unique)) {
-      & icacls.exe $Dir /remove "*$other" /C /Q | Out-Null
-      if ($LASTEXITCODE -ne 0) { "ACL-FAILED $Dir remove=$other rc=$LASTEXITCODE"; exit $LASTEXITCODE }
-    }
-    & icacls.exe $Dir /setowner '*S-1-5-32-544' /C /Q | Out-Null
-    $work = Join-Path $Dir '_work'
-    $workClean = -not (Test-Path -LiteralPath $work) -or ((Get-Acl -LiteralPath $work).GetOwner([Security.Principal.SecurityIdentifier]).Value -in $allowed -and
-      @((Get-Acl -LiteralPath $work).GetAccessRules($true, $false, [Security.Principal.SecurityIdentifier])).Count -eq 0)
-    foreach ($child in @(Get-ChildItem -LiteralPath $Dir -Force | Where-Object { $_.Name -ne '_work' -or $moved -or -not $workClean })) {
-      & icacls.exe $child.FullName /setowner '*S-1-5-32-544' /T /C /Q | Out-Null
-      & icacls.exe $child.FullName /reset /T /C /Q | Out-Null
-      if ($LASTEXITCODE -ne 0) { "ACL-FAILED $($child.FullName) rc=$LASTEXITCODE"; exit $LASTEXITCODE }
-    }
-    # the proof: no ACE for NETWORK SERVICE, Authenticated Users, Users or Everyone on the directory or anything at its
-    # top level, the directory holds only the three, and every owner there is one of them
-    foreach ($p in @($Dir) + @(Get-ChildItem -LiteralPath $Dir -Force | ForEach-Object { $_.FullName })) {
-      $a = Get-Acl -LiteralPath $p
-      $ids = @($a.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]) | ForEach-Object { $_.IdentityReference.Value })
-      $open = @($ids | Where-Object { $forbidden -contains $_ -or ($p -eq $Dir -and $allowed -notcontains $_) })
-      $owner = $a.GetOwner([Security.Principal.SecurityIdentifier]).Value
-      if ($open.Count -gt 0 -or $allowed -notcontains $owner -or ($p -eq $Dir -and -not $a.AreAccessRulesProtected)) {
-        "ACL-OPEN $p ace=$(($open | Sort-Object -Unique) -join ',') owner=$owner"; exit 10
-      }
     }
     # A restart is owed when the password was set anew, the service had another logon, or its listener runs as
     # someone else; it is taken only while no job runs (a busy runner keeps the old logon until the next run).
@@ -341,16 +509,29 @@ switch ($Action) {
     $stale = $false
     if ($listener) { $stale = "$((Invoke-CimMethod -InputObject $listener -MethodName GetOwner).User)" -ne $Account }
     $restart = 'no'
-    $s = Service-Of $Dir
     if (($Relogon -or $moved -or $stale) -and $s.State -eq 'Running') {
-      if ($listener -and (Get-CimInstance Win32_Process -Filter "ParentProcessId = $($listener.ProcessId) AND Name = 'Runner.Worker.exe'")) { $restart = 'busy' }
+      if (Test-Busy $Dir) { $restart = 'busy' }
       else { Restart-Service -Name $s.Name -Force; $restart = 'done' }
     }
-    "LOGON $Dir $did account=$want restart=$restart acl=protected aclset=$aclset service=$($s.Name)"
+    "LOGON $Dir $did account=$want restart=$restart acl=protected service=$($s.Name)"
   }
   'install' {
     Need-Admin
     if (-not $Dir -or -not $Cache -or -not $Version -or $Sha -notmatch '^[0-9a-f]{64}$') { 'BAD-PIN'; exit 2 }
+    if ($Account -and -not (Test-AccountName $Account)) { 'BAD-ARGS -Account'; exit 2 }
+    if ($Account) {
+      # sealed before anything is put in it, and proved sealed before anything in it is trusted
+      $u = Get-OurUser $Account
+      Add-TreeApi
+      Seal-Dir (Split-Path $Dir) @()
+      Seal-Dir $Dir @($u.SID.Value)
+      $why = [NovaTree]::Open($Dir, $Sealers + @($u.SID.Value), $true)
+      if ($why) { "ACL-OPEN ${why}: stop its service, delete the runner's directory and run the play again"; exit 10 }
+      $paths = @($PathList -split ';' | Where-Object { $_ })
+      if ($paths.Count -eq 0) { $paths = @([Environment]::GetEnvironmentVariable('Path', 'Machine') -split ';' | Where-Object { $_ }) }
+      $open = Find-OpenPath $paths
+      if ($open) { "PATH-WRITABLE ${open}: a job on another runner could put a program there that this administrator's jobs run; take it out of github_runner_windows_path or close it"; exit 12 }
+    }
     New-Item -ItemType Directory -Force -Path $Cache | Out-Null
     $zip = Join-Path $Cache "actions-runner-win-x64-$Version.zip"
     if (-not (Test-Path $zip) -or (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower() -ne $Sha) {
@@ -361,23 +542,64 @@ switch ($Action) {
       Move-Item -Force $part $zip
       "DOWNLOADED $zip"
     }
-    if (-not (Test-Path (Join-Path $Dir 'config.cmd')) -and @(Get-ChildItem -LiteralPath $Dir -Force -ErrorAction SilentlyContinue).Count -gt 0) {
-      "PARTIAL $Dir -> $(Move-Aside $Dir (Join-Path (Split-Path $Dir) "retired-$(Get-Date -Format yyyyMMdd)"))"
-    }
-    if (-not (Test-Path (Join-Path $Dir 'config.cmd'))) {
-      New-Item -ItemType Directory -Force -Path $Dir | Out-Null
-      Add-Type -AssemblyName System.IO.Compression.FileSystem
-      [System.IO.Compression.ZipFile]::ExtractToDirectory($zip, $Dir)
-      "EXTRACTED $Dir"
+    if ($Account) {
+      # The zip copied into the sealed -Dir, that copy hashed, and extracted from that same copy: the cache is not
+      # sealed, so the file hashed there could be swapped before it is read again. A new pin replaces bin and externals
+      # (moved into retired-<yyyymmdd>) while the runner is idle; a busy one keeps the copy it has until a later run.
+      $pinned, $pinnedSha = (Join-Path $Dir '.nova-runner.zip'), (Join-Path $Dir '.nova-runner.sha256')
+      $have = if (Test-Path -LiteralPath $pinnedSha) { (Get-Content -Raw -LiteralPath $pinnedSha).Trim() } else { '' }
+      $fresh = -not (Test-Path -LiteralPath (Join-Path $Dir 'config.cmd'))
+      $s = Service-Of $Dir
+      if (-not $fresh -and $have -ne $Sha -and $s -and $s.State -eq 'Running' -and (Test-Busy $Dir)) {
+        "UPGRADE-OWED $Dir busy: it keeps the runner it has until a run finds it idle"
+      } elseif ($fresh -or $have -ne $Sha) {
+        if ($s -and $s.State -eq 'Running') { Stop-Service -Name $s.Name -Force }
+        Copy-Item -Force -LiteralPath $zip -Destination $pinned
+        $got = (Get-FileHash -LiteralPath $pinned -Algorithm SHA256).Hash.ToLower()
+        if ($got -ne $Sha) { Remove-Item -Force -LiteralPath $pinned; "SHA-MISMATCH want $Sha got $got"; exit 5 }
+        if (-not $fresh) {
+          $to = Join-Path $Dir "retired-$(Get-Date -Format yyyyMMdd)"
+          New-Item -ItemType Directory -Force -Path $to | Out-Null
+          foreach ($f in 'bin', 'externals') {
+            if (Test-Path -LiteralPath (Join-Path $Dir $f)) { Move-Item -LiteralPath (Join-Path $Dir $f) -Destination (Join-Path $to "$f.$([DateTime]::UtcNow.ToString('HHmmss'))") }
+          }
+        }
+        [NovaTree]::Extract($pinned, $Dir)
+        [IO.File]::WriteAllText($pinnedSha, $Sha)
+        "EXTRACTED $Dir"
+      }
+      # every run: the copy is the one that was hashed, and every file it lists is that file, nothing more in bin or
+      # externals (the runner never updates itself: register gave it --disableupdate)
+      $rec = (Get-Content -Raw -LiteralPath $pinnedSha).Trim()
+      $why = if ((Get-FileHash -LiteralPath $pinned -Algorithm SHA256).Hash.ToLower() -ne $rec) { "$pinned changed" } else { [NovaTree]::Verify($pinned, $Dir, @('bin', 'externals')) }
+      if ($why) { "TAMPERED ${why}: stop its service, delete the runner's directory and run the play again"; exit 11 }
+    } else {
+      if (-not (Test-Path (Join-Path $Dir 'config.cmd')) -and @(Get-ChildItem -LiteralPath $Dir -Force -ErrorAction SilentlyContinue).Count -gt 0) {
+        "PARTIAL $Dir -> $(Move-Aside $Dir (Join-Path (Split-Path $Dir) "retired-$(Get-Date -Format yyyyMMdd)"))"
+      }
+      if (-not (Test-Path (Join-Path $Dir 'config.cmd'))) {
+        New-Item -ItemType Directory -Force -Path $Dir | Out-Null
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        [System.IO.Compression.ZipFile]::ExtractToDirectory($zip, $Dir)
+        "EXTRACTED $Dir"
+      }
     }
     # each runner's own Go build cache and dotnet install dir, never shared; DOTNET_INSTALL_DIR because NETWORK SERVICE
     # cannot write C:\Program Files\dotnet, where actions/setup-dotnet installs by default
     $own = [ordered]@{ GOCACHE = "$Dir\_cache\go-build"; DOTNET_INSTALL_DIR = "$Dir\_cache\dotnet"; DOTNET_CLI_TELEMETRY_OPTOUT = '1' }
     $pathText = ($PathList -split ';' | Where-Object { $_ }) -join ';'
     if ($pathText) { $own.Insert(0, 'PATH', $pathText) }
+    if ($Account) {
+      # an admin runner's .env is the role's whole: no shared ccache (every runner writes its cache, and a job here
+      # would link what they put there), and the CI-rules hooks as nova-ci-rules apply writes them, so no other line
+      # (a hook or a variable some earlier hand put there) reaches an administrator's jobs
+      $own['CCACHE_DISABLE'] = '1'
+      $own['ACTIONS_RUNNER_HOOK_JOB_STARTED'] = "$Dir\.nova-ci-rules\job-started.ps1"
+      $own['ACTIONS_RUNNER_HOOK_JOB_COMPLETED'] = "$Dir\.nova-ci-rules\job-completed.ps1"
+    }
     $envFile = Join-Path $Dir '.env'
     $lines = @(); if (Test-Path $envFile) { $lines = @(Get-Content $envFile) }
-    $kept = @($lines | Where-Object { $_ -notmatch '^([A-Z_]+)=' -or -not $own.Contains($Matches[1]) })
+    $kept = @($lines | Where-Object { -not $Account -and ($_ -notmatch '^([A-Z_]+)=' -or -not $own.Contains($Matches[1])) })
     $new = @($own.Keys | ForEach-Object { "$_=$($own[$_])" }) + $kept
     $changed = $false
     if (($new -join "`n") -ne ($lines -join "`n")) {
@@ -402,11 +624,20 @@ switch ($Action) {
       if ($s) { Stop-Service -Name $s.Name -Force -ErrorAction SilentlyContinue; & sc.exe delete $s.Name | Out-Null }
       "REPAIR $Dir -> $to"
     }
-    # A directory made through WSL carries an ACL that is not in canonical form, and config.cmd's service step cannot
-    # change it ("This access control list is not in canonical form"): put it back to the inherited ACL first.
-    & icacls.exe $Dir /reset /T /C /Q | Out-Null
-    if ($LASTEXITCODE -ne 0) { "ACL-RESET-FAILED $Dir rc=$LASTEXITCODE"; exit $LASTEXITCODE }
-    $rc = Invoke-Config @('--unattended', '--url', $Url, '--name', $Name, '--labels', $Labels, '--work', '_work', '--replace', '--runasservice')
+    $a = @('--unattended', '--url', $Url, '--name', $Name, '--labels', $Labels, '--work', '_work', '--replace')
+    if ($Account) {
+      # An admin runner's directory is sealed (install) and stays so: --runasservice would grant NETWORK SERVICE full
+      # control of it and start the listener as NETWORK SERVICE, so it is registered only, and logon makes the service.
+      # --disableupdate keeps bin and externals the pinned zip's, which install checks on every run.
+      $a += '--disableupdate'
+    } else {
+      # A directory made through WSL carries an ACL that is not in canonical form, and config.cmd's service step cannot
+      # change it ("This access control list is not in canonical form"): put it back to the inherited ACL first.
+      & icacls.exe $Dir /reset /T /C /Q | Out-Null
+      if ($LASTEXITCODE -ne 0) { "ACL-RESET-FAILED $Dir rc=$LASTEXITCODE"; exit $LASTEXITCODE }
+      $a += '--runasservice'
+    }
+    $rc = Invoke-Config $a
     if ($rc -ne 0) { "REGISTER-FAILED $Dir rc=$rc"; exit $rc }
     "REGISTERED $Name $Dir"
   }

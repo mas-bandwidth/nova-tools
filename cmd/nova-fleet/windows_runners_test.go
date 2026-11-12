@@ -167,7 +167,7 @@ func TestRunnerWindowsRepairs(t *testing.T) {
 		`$to = Join-Path $Dir "retired-$(Get-Date -Format yyyyMMdd)"`,
 		`foreach ($f in '.runner', '.credentials', '.credentials_rsaparams', '.service') {`,
 		`"REPAIR $Dir -> $to"`,
-		`'--replace', '--runasservice'`,
+		`'--work', '_work', '--replace')`, `$a += '--runasservice'`,
 		`"PARTIAL $Dir -> $(Move-Aside $Dir`,
 		`if (-not $s) { "NO-SERVICE $Dir"; exit 0 }`,
 	} {
@@ -406,7 +406,8 @@ func TestWindowsAdminPasswordOnlyInTheEnvironment(t *testing.T) {
 		}
 	}
 	allowed := []string{"$pw = Take-Secret $SecretEnv", "$pw = $null", "foreach ($c in $pw.ToCharArray()) { $sec.AppendChar($c) }",
-		"[NovaAccount]::ServiceLogon($Account, $pw)", "$rc = [NovaAccount]::SetServiceLogon($s.Name, $want, $pw)"}
+		"[NovaAccount]::ServiceLogon($Account, $pw)", "$rc = [NovaAccount]::SetServiceLogon($s.Name, $want, $pw)",
+		"$rc = [NovaAccount]::CreateService($svc, \"GitHub Actions Runner ($svc)\", \"`\"$Dir\\bin\\RunnerService.exe`\"\", $want, $pw)"}
 	uses := 0
 	for _, l := range strings.Split(ps, "\n") {
 		if !strings.Contains(l, "$pw") {
@@ -484,10 +485,9 @@ func psAction(t *testing.T, ps, action string) string {
 }
 
 // TestWindowsAdminRunnerGuards: the account action changes nothing on a user it did not make (no marker), checked
-// before any right, group or password; the logon action sets the service's logon on every call (never only after a
-// password change), then protects the directory (protected, grants replaced by SYSTEM, Administrators and the
-// account) and proves it: an ACE for NETWORK SERVICE, Authenticated Users, Users or Everyone fails the action; and the
-// play fails a logon whose receipt does not say acl=protected.
+// before any right, group or password; the logon action proves the admin root and the whole runner tree sealed before
+// it makes the service or sets its logon (on every call, never only after a password change), repairs nothing, and
+// restarts only an idle runner; and the play fails a logon whose receipt does not say acl=protected.
 func TestWindowsAdminRunnerGuards(t *testing.T) {
 	t.Parallel()
 	b, err := fs.ReadFile(tree, roleDir+"/files/runner-windows.ps1")
@@ -509,16 +509,20 @@ func TestWindowsAdminRunnerGuards(t *testing.T) {
 		t.Error("the account action makes its user with the marker, and refuses another with exit 9")
 	}
 	logon := psAction(t, ps, "logon")
-	set := strings.Index(logon, "\n      $rc = [NovaAccount]::SetServiceLogon($s.Name, $want, $pw)\n")
-	protect := strings.Index(logon, `& icacls.exe $Dir /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' "*${sid}:(OI)(CI)F" /C /Q`)
-	proof := strings.Index(logon, `"ACL-OPEN $p ace=`)
-	if set < 0 || protect < set || proof < protect {
-		t.Errorf("the logon action must set the logon on every call, then protect the directory, then prove it (at %d, %d, %d)", set, protect, proof)
+	proof := strings.Index(logon, "foreach ($why in [NovaTree]::Open((Split-Path $Dir), $Sealers, $false), [NovaTree]::Open($Dir, $Sealers + @($u.SID.Value), $true)) {")
+	refuse := strings.Index(logon, `if ($why) { "ACL-OPEN ${why}: `)
+	create := strings.Index(logon, "$rc = [NovaAccount]::CreateService(")
+	set := strings.Index(logon, "\n        $rc = [NovaAccount]::SetServiceLogon($s.Name, $want, $pw)\n")
+	if proof < 0 || refuse < proof || create < refuse || set < refuse {
+		t.Errorf("the logon action must prove the tree sealed, refuse when it is not, and only then make the service or set its logon on every call (at %d, %d, %d, %d)",
+			proof, refuse, create, set)
 	}
-	if !strings.Contains(logon, "$forbidden = @('S-1-5-20', 'S-1-5-11', 'S-1-5-32-545', 'S-1-1-0')") ||
-		!strings.Contains(logon, "$open = @($ids | Where-Object { $forbidden -contains $_") ||
-		!strings.Contains(logon, `& icacls.exe $Dir /remove "*$other" /C /Q`) {
-		t.Error("the logon action must remove every other ACE and fail on NETWORK SERVICE, Authenticated Users, Users or Everyone")
+	if strings.Contains(logon, "icacls") || strings.Contains(logon, "Set-Acl") {
+		t.Error("the logon action repairs nothing: a tree that is not sealed is refused")
+	}
+	if !strings.Contains(logon, "if (Test-Busy $Dir) { $restart = 'busy' }") ||
+		!strings.Contains(ps, `(Get-CimInstance Win32_Process -Filter "ParentProcessId = $($l.ProcessId) AND Name = 'Runner.Worker.exe'")`) {
+		t.Error("the logon action restarts the service only while no job runs (no Runner.Worker under its listener)")
 	}
 	if !strings.Contains(logon, " acl=protected ") {
 		t.Error("the logon receipt says acl=protected")
@@ -529,5 +533,105 @@ func TestWindowsAdminRunnerGuards(t *testing.T) {
 	}
 	if !strings.Contains(string(y), "rejectattr('stdout', 'search', ' acl=protected ')") {
 		t.Error("the play must fail a logon whose receipt does not say acl=protected")
+	}
+}
+
+// inOrder fails unless each of steps is in s, each after the one before.
+func inOrder(t *testing.T, what, s string, steps ...string) {
+	t.Helper()
+	at := -1
+	for _, step := range steps {
+		i := strings.Index(s, step)
+		if i < 0 || i < at {
+			t.Errorf("%s: %q is missing or out of order", what, step)
+			return
+		}
+		at = i
+	}
+}
+
+// TestWindowsAdminRunnerSealed: an admin runner's directories are created sealed in one call (owned by
+// Administrators, nothing inherited) and a found one that is not sealed is refused; the proof walks the whole tree
+// (owner, an explicit ACE, inheritance); install seals and proves before it unpacks, hashes the copy it extracts and
+// extracts that copy, and checks the files against it on every run; register gives NETWORK SERVICE nothing; the .env
+// is the role's whole with CCACHE_DISABLE=1; and every PATH entry is checked writable by no ordinary runner.
+func TestWindowsAdminRunnerSealed(t *testing.T) {
+	t.Parallel()
+	b, err := fs.ReadFile(tree, roleDir+"/files/runner-windows.ps1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ps := string(b)
+	seal := ps[strings.Index(ps, "function Seal-Dir("):]
+	seal = seal[:strings.Index(seal, "\n}\n")]
+	inOrder(t, "Seal-Dir", seal,
+		"$ds.SetAccessRuleProtection($true, $false)",
+		"$ds.SetOwner((New-Object Security.Principal.SecurityIdentifier 'S-1-5-32-544'))",
+		"[void][IO.Directory]::CreateDirectory($p, $ds)",
+		"$why = [NovaTree]::Open($p, $allowed, $false)",
+		`if ($why) { "PLANTED ${why}: `, "exit 11")
+	if !strings.Contains(ps, "$Sealers = @('S-1-5-18', 'S-1-5-32-544')") {
+		t.Error("only SYSTEM and Administrators seal an admin runner's directories")
+	}
+	for _, want := range []string{
+		"if (Array.IndexOf(allowed, owner) < 0) { return at + \" owner=\" + owner; }",
+		"if (top != s.AreAccessRulesProtected) {",
+		"if (top ? Array.IndexOf(allowed, sid) < 0 : !r.IsInherited) { return at + \" ace=\" + sid; }",
+		"if (sub != null && (i.Attributes & FileAttributes.ReparsePoint) == 0) { todo.Push(sub); }",
+	} {
+		if !strings.Contains(ps, want) {
+			t.Errorf("NovaTree.Open lacks %q (the owner, inheritance, explicit-ACE and whole-tree checks)", want)
+		}
+	}
+	install := psAction(t, ps, "install")
+	inOrder(t, "install, an admin runner", install,
+		"$u = Get-OurUser $Account",
+		"Seal-Dir (Split-Path $Dir) @()",
+		"Seal-Dir $Dir @($u.SID.Value)",
+		"$why = [NovaTree]::Open($Dir, $Sealers + @($u.SID.Value), $true)",
+		"$open = Find-OpenPath $paths",
+		`if ($open) { "PATH-WRITABLE ${open}: `,
+		"Copy-Item -Force -LiteralPath $zip -Destination $pinned",
+		"$got = (Get-FileHash -LiteralPath $pinned -Algorithm SHA256).Hash.ToLower()",
+		"if ($got -ne $Sha) { Remove-Item -Force -LiteralPath $pinned;",
+		"[NovaTree]::Extract($pinned, $Dir)",
+		"[NovaTree]::Verify($pinned, $Dir, @('bin', 'externals'))",
+		`if ($why) { "TAMPERED ${why}: `,
+		"$own['CCACHE_DISABLE'] = '1'")
+	if !strings.Contains(install, "$kept = @($lines | Where-Object { -not $Account -and (") {
+		t.Error("an admin runner's .env keeps no line the role does not own")
+	}
+	if !strings.Contains(install, "if ($paths.Count -eq 0) { $paths = @([Environment]::GetEnvironmentVariable('Path', 'Machine')") ||
+		!strings.Contains(ps, "$Openers = @('S-1-5-20', 'S-1-5-11', 'S-1-5-32-545', 'S-1-1-0')") ||
+		!strings.Contains(ps, "if (\"$($r.AccessControlType)\" -eq 'Allow' -and $Openers -contains $r.IdentityReference.Value -and") {
+		t.Error("every PATH entry of an admin runner (the machine's PATH without a list) is checked for NETWORK SERVICE, Authenticated Users, Users and Everyone")
+	}
+	register := psAction(t, ps, "register")
+	inOrder(t, "register", register, "if ($Account) {", "$a += '--disableupdate'", "} else {", "& icacls.exe $Dir /reset /T /C /Q", "$a += '--runasservice'")
+
+	y, err := fs.ReadFile(tree, roleDir+"/tasks/wsl-windows.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err := fs.ReadFile(tree, roleDir+"/defaults/main.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"'dir': github_runner_wsl_admin_dir ~ '\\\\' ~ slug ~ '-' ~ t.account,",
+		"{{ ('-Account ' ~ (item.account | quote)) if item.account else '' }} </dev/null",
+		"github_runner_win_path: \"{{ github_runner_win_admin_path if item.account else github_runner_windows_path }}\"",
+	} {
+		if !strings.Contains(string(y), want) {
+			t.Errorf("wsl-windows.yml lacks %q", want)
+		}
+	}
+	for _, want := range []string{
+		`github_runner_wsl_admin_dir: 'C:\ProgramData\nova-admin-runners'`,
+		"{{ github_runner_windows_path | reject('match', '(?i)' ~ (nova_runner_windows_ccache_dir",
+	} {
+		if !strings.Contains(string(d), want) {
+			t.Errorf("defaults/main.yml lacks %q", want)
+		}
 	}
 }

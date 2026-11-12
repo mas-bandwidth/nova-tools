@@ -1,5 +1,6 @@
 ---
-# Register the wanted Windows runners of one target, github_runner_win_url, that are not registered yet. The token
+# Register the wanted Windows runners of one target, github_runner_win_url, that are not registered yet (an admin runner
+# is registered only: its service is made by the logon step in wsl-windows.yml). The token
 # (token.yml, gh on the control node) reaches runner-windows.ps1 on its stdin and config.cmd in its environment only:
 # never an argument, a file or a line of output. The task is pipelined (ansible_pipelining), so the module that carries
 # it runs from the ssh pipe and is never a file on the machine's disk. Under --check the token is still asked for.
@@ -18,6 +19,7 @@
   ansible.builtin.shell: >-
     "{{ github_runner_wsl_powershell }}" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File {{ github_runner_wsl_script | quote }}
     -Action register -Dir {{ item.dir | quote }} -Url {{ item.url | quote }} -Name {{ item.name | quote }} -Labels {{ item.labels | quote }}
+    {{ ('-Account ' ~ (item.account | quote)) if item.account else '' }}
   args:
     executable: /bin/sh
     stdin: "{{ github_runner_token }}"
