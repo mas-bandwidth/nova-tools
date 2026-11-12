@@ -32,6 +32,10 @@
   ansible.builtin.include_tasks: debian.yml
   when: rp_os == 'debian' and rp_wanted | length > 0
 
+- name: TLC's jar, for the Java runtime above (Debian, Ubuntu)
+  ansible.builtin.include_tasks: tla.yml
+  when: rp_os == 'debian' and nova_runner_tla_jar_sha256 | length > 0
+
 - name: a WSL machine (no /boot kernel image, no kvm)
   ansible.builtin.stat: { path: /proc/sys/fs/binfmt_misc/WSLInterop, get_checksum: false }
   register: rp_wsl

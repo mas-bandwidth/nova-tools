@@ -27,6 +27,14 @@ import (
 // vars (which win over it), and returns its output directory. HOME is a temp dir, so nothing reaches the real one.
 func runPackagesPlay(t *testing.T, vars map[string]any, tasks []any) string {
 	t.Helper()
+	dir, out, err := runPackagesPlayResult(t, vars, tasks)
+	require.NoError(t, err, out)
+	return dir
+}
+
+// runPackagesPlayResult is runPackagesPlay for a play that may fail: its output directory, its output and its error.
+func runPackagesPlayResult(t *testing.T, vars map[string]any, tasks []any) (string, string, error) {
+	t.Helper()
 	if _, err := exec.LookPath("ansible-playbook"); err != nil {
 		t.Skip("ansible-core is not installed on this machine; runner_packages_play_test.go still runs")
 	}
@@ -54,8 +62,7 @@ func runPackagesPlay(t *testing.T, vars map[string]any, tasks []any) string {
 	cmd := exec.CommandContext(ctx, "ansible-playbook", "-i", "localhost,", "-e", "@"+extraPath, path)
 	cmd.Env = append(os.Environ(), "ANSIBLE_NOCOLOR=1", "HOME="+home, "ANSIBLE_LOCAL_TEMP="+filepath.Join(dir, "tmp"))
 	out, err := cmd.CombinedOutput()
-	require.NoError(t, err, string(out))
-	return dir
+	return dir, string(out), err
 }
 
 // renderRunnerPackagesTemplate renders one of the role's templates with vars.

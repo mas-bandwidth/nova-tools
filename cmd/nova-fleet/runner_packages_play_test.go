@@ -209,8 +209,8 @@ func TestRunnerPackagesStartsNoServer(t *testing.T) {
 	t.Parallel()
 	modules := []string{"ansible.builtin.service", "ansible.builtin.systemd", "ansible.builtin.systemd_service", "community.general.launchd",
 		"ansible.builtin.cron", "community.general.homebrew_services", "ansible.windows.win_service"}
-	// The files the role writes: apt sources, the kernel hook and the VM tier's kernel copies; never a unit or an agent.
-	writes := []string{"/etc/apt/sources.list.d/", "/etc/kernel/postinst.d/", "{{ nova_runner_vm_kernel_dir }}/"}
+	// The files the role writes: apt sources, the kernel hook, the VM tier's kernel copies and TLC's jar; never a unit or an agent.
+	writes := []string{"/etc/apt/sources.list.d/", "/etc/kernel/postinst.d/", "{{ nova_runner_vm_kernel_dir }}/", "{{ nova_runner_tla_jar }}"}
 	for file, tasks := range runnerPackagesTasks(t) {
 		for _, task := range tasks {
 			name := asText(task["name"])
