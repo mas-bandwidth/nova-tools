@@ -26,6 +26,8 @@
 #      Then the store is pushed to the machine (secrets-refresh, push mode) with the recovery pin its own `set` seals to.
 #   8. the check: the control node sees the machine as an online tailnet peer. The bus is not checked here (the login
 #      has no nova-bus until the tools are installed); nova-fleet does that after install and refresh.
+#   9. a bench or runner: runner-packages, sdk-toolchain (Linux and macOS), then the audit against
+#      runner-requirements.tsv, which stops the join by name (FLEET-AUDIT FAILED) on anything still missing.
 #
 # The machine's SSH host key is pinned into the control node's known_hosts at the first connection (the address
 # given; or the key given as nova_join_host_key, from the provider's console, which proves which machine it is), and
@@ -502,3 +504,13 @@
     - name: the check's receipt
       ansible.builtin.debug:
         msg: "JOIN CHECK {{ inventory_hostname }} peer={{ 'online' if check_peer.Online | default(false) else ('WOULD-CHECK' if ansible_check_mode else 'missing') }} seat={{ {'present': 'present', 'add': ('WOULD-ADD' if ansible_check_mode else 'added'), 'no-key': 'WOULD-MAKE'}.get(seat_state | default(''), 'none') }}"
+
+# a bench or runner joins with everything runner-requirements.tsv names, and the audit stops the join by name on a gap
+- name: the packages the runners' tests need (a bench or runner)
+  ansible.builtin.import_playbook: runner-packages.yml
+
+- name: the pinned toolchains (a bench or runner)
+  ansible.builtin.import_playbook: sdk-toolchain.yml
+
+- name: the audit against runner-requirements.tsv (a bench or runner)
+  ansible.builtin.import_playbook: audit.yml

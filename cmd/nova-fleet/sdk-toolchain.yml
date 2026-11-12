@@ -10,14 +10,24 @@
 # and Rust from its standalone installer). ~/sdk is used by its real path, every symlink followed. A tool already in
 # its directory is adopted as it is; only what is missing is downloaded. Runs as the login,
 # never as root. One line per machine: SDK-TOOLCHAIN host=<machine> platform=<p> tools=<n> present=<n> installed=<n>
-# dotnet=<runtimes>; --check prints SDK-TOOLCHAIN WOULD-INSTALL for each missing tool. nova-fleet up does not run this
-# play; run runner-packages first (it brings the compilers, cmake, opam and LLVM 18 the source builds need).
+# dotnet=<runtimes>; --check prints SDK-TOOLCHAIN WOULD-INSTALL for each missing tool. join runs it, after
+# runner-packages, for a machine joining as a bench or runner; run runner-packages first (it brings the compilers,
+# cmake, opam and LLVM 18 the source builds need).
 #
 #   nova-fleet sdk-toolchain --check --diff -- -l <machine>
 #   nova-fleet sdk-toolchain -- -l <machine>
 - name: the pinned toolchains in each bench and runner login's SDK
-  hosts: bench:runner
+  hosts: "{{ ('bench:runner:&' ~ nova_join_host) if nova_join_host is defined else 'bench:runner' }}"   # join: the machine joining, when it is a bench or runner
   gather_facts: true
   gather_subset: [min]
+  pre_tasks:
+    # a Windows runner joining reaches here through join; its toolchain is its own (windows-runners)
+    - name: a Windows machine has no SDK here
+      ansible.builtin.debug: { msg: "SDK-TOOLCHAIN host={{ inventory_hostname }} skipped: Windows" }
+      when: ansible_facts['os_family'] == 'Windows'
+
+    - name: only Linux and macOS get the SDK
+      ansible.builtin.meta: end_host
+      when: ansible_facts['os_family'] == 'Windows'
   roles:
     - sdk-toolchain

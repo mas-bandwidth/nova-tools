@@ -188,8 +188,8 @@ line: ubuntu ALL=(ALL) NOPASSWD:ALL`.
 | `join` | a new machine joins the fleet: its row, its login, the tailnet, the tools a seat needs, its seat | the machine as the argument; its row's fields; `NOVA_PG_DSN` and `NOVA_PG_PASSWORD` in the environment, and `NOVA_FLEET_AUTHKEY` (`up` mints it) or `TAILSCALE_AUTHKEY` for a machine not on the tailnet |
 | `postgres` | the PostgreSQL nova-config keeps the fleet in, on each machine of the services group | `nova_seal_*` to seal its password |
 | `redis` | the Redis nova-bus talks to, on each machine of the services group | `nova_seal_*` to seal its password |
-| `runner-packages` | the packages a CI runner's tests need, from `nova_runner_packages` (a CI toolchain by default), on each machine of the bench and runner groups (a sprint card's gate needs what a CI job needs); packages only, nothing started. `up` does not run it | nothing; `-l` the machines |
-| `sdk-toolchain` | the pinned language toolchains in each bench and runner login's `~/sdk` (Go, Node, Dart, Erlang/Elixir, Java, .NET 10 and 8, linters, fuzzers, provers), Rust through a pinned rustup; as the login, only what is missing. `up` does not run it | nothing; `-l` the machines |
+| `runner-packages` | the packages a CI runner's tests need, from `nova_runner_packages` (a CI toolchain by default), on each machine of the bench and runner groups (a sprint card's gate needs what a CI job needs); packages only, nothing started. `join` runs it for a bench or runner | nothing; `-l` the machines |
+| `sdk-toolchain` | the pinned language toolchains in each bench and runner login's `~/sdk` (Go, Node, Dart, Erlang/Elixir, Java, .NET 10 and 8, linters, fuzzers, provers), Rust through a pinned rustup; as the login, only what is missing. `join` runs it for a bench or runner | nothing; `-l` the machines |
 | `seat` | each machine's seat in the secrets store | `nova_seal_store` |
 | `secrets-refresh` | the control node's encrypted store pushed to every machine with `ansible.posix.synchronize` (`verify_host: true`, no `.git`, stale files deleted, 0700/0600); no machine runs a timer (pull mode is retired; one left is removed) | `nova_seal_store` (the control node's clone) to push |
 | `services` | one supervised unit per service record, on the machine the record names (bench, runner and services groups) | the inventory's `nova_services` |
@@ -823,8 +823,11 @@ the row and reads the inventory again.
 8. **The check**: the control node's `tailscale status` shows the machine as an online peer, and `nova-bus who` from
    the machine reaches the bus. Without `nova_bus_redis`, or before the seat holds `NOVA_BUS_PASSWORD`, the bus check
    is a `NOTE`, not a failure.
+9. **The toolchain** (a bench or runner): `runner-packages`, `sdk-toolchain` (Linux and macOS), then `audit` against
+   `runner-requirements.tsv`, which stops the join, `FLEET-AUDIT FAILED host=<machine> missing=<names>`, on anything
+   still missing. A machine of neither group skips this step.
 
-A Windows machine gets 1 and 3.
+A Windows machine gets 1 and 3 (and `runner-packages` with nothing to install, as a runner).
 
 ```
 nova-secrets exec --only NOVA_PG_PASSWORD --store S --key K --as SEAT -- \

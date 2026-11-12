@@ -175,7 +175,7 @@ func TestSDKToolchainPlayTargetsTheBenchAndRunnerGroups(t *testing.T) {
 	var docs []map[string]any
 	require.NoError(t, yaml.Unmarshal(b, &docs))
 	require.Len(t, docs, 1)
-	assert.Equal(t, "bench:runner", docs[0]["hosts"], "a bench runs the same gates as a runner, so it has the same toolchains")
+	assert.Equal(t, "{{ ('bench:runner:&' ~ nova_join_host) if nova_join_host is defined else 'bench:runner' }}", docs[0]["hosts"], "a bench runs the same gates as a runner, so it has the same toolchains")
 	assert.NotContains(t, docs[0], "become", "the SDK is the login's: nothing in the play runs as root")
 	assert.Equal(t, []any{"sdk-toolchain"}, docs[0]["roles"])
 	assert.True(t, slices.Contains(plays(tree), "sdk-toolchain"), "nova-fleet lists the play")
