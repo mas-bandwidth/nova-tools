@@ -293,21 +293,19 @@ func TestDefaultInventoryExecsNovaConfig(t *testing.T) {
 // A store nova-config cannot reach stops the play before ansible-playbook: one line, the cause first, then the fix,
 // and ansible-playbook never runs (it would bury the cause under pages of warnings and "No inventory was parsed").
 func TestInventoryFailureSaysItsCauseFirst(t *testing.T) {
-	for _, tc := range []struct{ stderr, cause, fix string }{
+	fix := "; nova-config inventory --list shows the whole error; run: NOVA_PG_DSN=" + `'postgres://nova_config@<the store machine>:5432/nova?sslmode=disable'` + " nova-secrets exec --only NOVA_PG_PASSWORD -- nova-fleet windows-runners ...\n"
+	for _, tc := range []struct{ stderr, cause string }{
 		{"nova-config inventory: no store: set NOVA_PG_DSN or --pg (postgres://USER@HOST:PORT/DB?sslmode=disable)\n",
-			"nova-config inventory: no store: set NOVA_PG_DSN or --pg (postgres://USER@HOST:PORT/DB?sslmode=disable)",
-			"run: NOVA_PG_DSN='postgres://nova_config@<the store machine>:5432/nova?sslmode=disable' nova-secrets exec --only NOVA_PG_PASSWORD -- nova-fleet windows-runners ..."},
+			"nova-config inventory: no store: set NOVA_PG_DSN or --pg (postgres://USER@HOST:PORT/DB?sslmode=disable)"},
 		{"some warning\nnova-config inventory: dial tcp 127.0.0.1:5432: connect: connection refused\n\n",
-			"nova-config inventory: dial tcp 127.0.0.1:5432: connect: connection refused",
-			"run: nova-config inventory --list, read its whole error, then nova-fleet windows-runners again"},
-		{"\n", "no output", "run: nova-config inventory --list"},
+			"nova-config inventory: dial tcp 127.0.0.1:5432: connect: connection refused"},
 	} {
 		f := &fake{found: map[string]string{"ansible-playbook": "/a/ansible-playbook", "nova-config": "/b/nova-config"}, invFail: tc.stderr}
 		f.install(t)
 		code, out, errs := runArgs("windows-runners", "--", "-l", "captain")
-		want := "nova-fleet windows-runners: the inventory (nova-config inventory --list) failed: " + tc.cause + "; " + tc.fix
-		if code != 2 || out != "" || !strings.HasPrefix(errs, want) || strings.Count(errs, "\n") != 1 {
-			t.Errorf("stderr %q: exit %d, stdout %q, stderr %q; want exit 2 and one line starting %q", tc.stderr, code, out, errs, want)
+		want := "nova-fleet windows-runners: the inventory (nova-config inventory --list) failed: " + tc.cause + fix
+		if code != 2 || out != "" || errs != want {
+			t.Errorf("stderr %q: exit %d, stdout %q, stderr %q; want exit 2 and %q", tc.stderr, code, out, errs, want)
 		}
 		if f.bin != "" {
 			t.Errorf("stderr %q: ansible-playbook ran (%s) after the inventory failed", tc.stderr, f.bin)

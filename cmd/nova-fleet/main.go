@@ -5,7 +5,6 @@
 package main
 
 import (
-	"cmp"
 	"embed"
 	"encoding/json"
 	"errors"
@@ -217,21 +216,6 @@ func extract(fsys fs.FS) (string, error) {
 		}
 	}
 	return dir, nil
-}
-
-// lastLine is the last non-blank line of a command's stderr, on one line: nova-config's refusal is its last line.
-func lastLine(s string) string {
-	lines := strings.Split(strings.TrimSpace(s), "\n")
-	return cmp.Or(oneLine(lines[len(lines)-1]), "no output")
-}
-
-// inventoryFix is the line that fixes a failed nova-config inventory: the store's address and its password, given the
-// fleet's way (the password only through nova-secrets exec), or the command that shows the whole failure.
-func inventoryFix(why, play string) string {
-	if strings.Contains(why, "NOVA_PG_DSN") || strings.Contains(why, "NOVA_PG_PASSWORD") || strings.Contains(why, "password") {
-		return "run: NOVA_PG_DSN='postgres://nova_config@<the store machine>:5432/nova?sslmode=disable' nova-secrets exec --only NOVA_PG_PASSWORD -- nova-fleet " + play + " ...; nova-fleet check says what else this control node lacks"
-	}
-	return "run: nova-config inventory --list, read its whole error, then nova-fleet " + play + " again (or --inventory <file|script>)"
 }
 
 // inventoryScript writes dir/inventory, a script that execs nova-config inventory.
@@ -492,10 +476,10 @@ func runPlay(play string, args []string, stdout, stderr io.Writer, refuse func(s
 			cfg = abs
 		}
 		inventory, wrap = cfg, true
-		// Ask the store first: an inventory script that fails leaves ansible-playbook printing pages of warnings and
-		// "No inventory was parsed", with the one line that says why buried at their top (2026-11-12, captain).
+		// A failing inventory script buries its cause under pages of ansible warnings (captain, 2026-11-12): say it first.
 		if _, why, c := outCmd(cfg, []string{"inventory", "--list"}, os.Environ()); c != 0 {
-			fmt.Fprintf(stderr, "nova-fleet %s: the inventory (nova-config inventory --list) failed: %s; %s\n", play, lastLine(why), inventoryFix(why, play))
+			why = strings.TrimSpace(why)
+			fmt.Fprintf(stderr, "nova-fleet %s: the inventory (nova-config inventory --list) failed: %s; nova-config inventory --list shows the whole error; run: NOVA_PG_DSN='postgres://nova_config@<the store machine>:5432/nova?sslmode=disable' nova-secrets exec --only NOVA_PG_PASSWORD -- nova-fleet %s ...\n", play, oneLine(why[strings.LastIndex(why, "\n")+1:]), play)
 			return 2
 		}
 	}
