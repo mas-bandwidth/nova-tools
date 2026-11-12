@@ -547,6 +547,16 @@ every runner running on the machines named, whoever registered it (`nova-fleet c
 | `schedule`, `workflow_dispatch` | nightly or manual: no limit |
 | any, on a Mac drawing from its battery | refused at the job-started hook, before the first step (`pmset -g batt` says `'Battery Power'`): a laptop on battery is about to be carried and may sleep with the job in flight; on AC, or without `pmset`, nothing changes. `::error::CI rule: <host> is on battery power ...; rerun it and another runner takes it` |
 
+**Measured, never enforced** (`.sh` hooks: Linux and macOS). At its end every job prints, into its own log and onto
+the host's `~/.local/state/nova/ci-jobs.log`:
+- On Linux, `MEMORY-PEAK host= runner= repo= workflow= job= run= secs= peak_mib= anon_mib=`: the largest memory.current
+  and memory.stat `anon` of the runner's cgroup, sampled each second while the job ran.
+- For a job over 100 s, `JOB-LOAD` with the same fields plus `load1= holders= why=`: the machine's load and its
+  nova-reserve holders at the job's end.
+
+Measuring runs in a subshell whose failure is dropped, so it never fails or delays a job. The sampler runs only under a
+real `Runner.Worker` and ends with it.
+
 The hooks enforce only these rows. That unit tests use no real time, sleep or network, and that unit and functional jobs
 run in parallel, is the rule repositories follow; no hook checks it.
 

@@ -13,6 +13,9 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 const ciRulesDir = "roles/github-runner/files/ci-rules"
@@ -269,6 +272,76 @@ func TestCIRulesChainedHookFailureFailsTheJob(t *testing.T) {
 }
 
 // A job the watchdog stopped fails at completion with the rule's line; the limit text follows the limit file.
+// The job's memory is sampled from its runner's cgroup: cgroup-of reads the caller's cgroup v2 path, and sample keeps
+// the larger of the maxima so far and the cgroup's memory.current and memory.stat anon.
+func TestCIRulesSampleKeepsTheMaxima(t *testing.T) {
+	sh := ciShells(t)[0]
+	if code, out := ciRun(t, sh, ciRulesDir, "0::/system.slice/github-runner-o-r-1.service\n", nil, "cgroup-of"); code != 0 || out != "/system.slice/github-runner-o-r-1.service\n" {
+		t.Errorf("cgroup-of = %d %q", code, out)
+	}
+	cg := t.TempDir()
+	write := func(cur, anon string) {
+		t.Helper()
+		require.NoError(t, os.WriteFile(filepath.Join(cg, "memory.current"), []byte(cur+"\n"), 0o644))
+		require.NoError(t, os.WriteFile(filepath.Join(cg, "memory.stat"), []byte("anon "+anon+"\nfile 9999999\n"), 0o644))
+	}
+	write("5000", "3000")
+	for _, c := range []struct{ peak, anon, want string }{
+		{"0", "0", "5000 3000\n"},
+		{"7000", "1000", "7000 3000\n"},
+		{"1000", "4000", "5000 4000\n"},
+	} {
+		if code, out := ciRun(t, sh, ciRulesDir, "", nil, "sample", c.peak, c.anon, cg); code != 0 || out != c.want {
+			t.Errorf("sample %s %s = %d %q, want %q", c.peak, c.anon, code, out, c.want)
+		}
+	}
+	if code, _ := ciRun(t, sh, ciRulesDir, "", nil, "sample", "0", "0", filepath.Join(cg, "gone")); code == 0 {
+		t.Error("sample of a cgroup with no memory.current succeeded; the sampler would never stop")
+	}
+}
+
+// completed prints the job's MEMORY-PEAK line into its log and the host's ci-jobs log, and a JOB-LOAD line (load and
+// nova-reserve holders) for a job over 100 s; neither ever changes the job's result, even when nothing can be read or
+// written.
+func TestCIRulesCompletedPrintsTheMeasurement(t *testing.T) {
+	sh := ciShells(t)[0]
+	dir := ciCopy(t, "")
+	state := filepath.Join(dir, "state")
+	require.NoError(t, os.MkdirAll(state, 0o755))
+	reserve := filepath.Join(t.TempDir(), "reserve")
+	require.NoError(t, os.WriteFile(reserve, []byte("#!/bin/sh\necho 'capacity=2 set_by_pid=1'\necho 'slot1 held pid=7 since=x why=fix-a cmd=make'\necho 'slot2 held pid=8 since=x why=hunt-b cmd=test'\necho 'slot3 free'\n"), 0o755))
+	log := filepath.Join(t.TempDir(), "ci-jobs.log")
+	env := []string{"NOVA_CI_CHAIN_JOB_COMPLETED=", "NOVA_CI_JOBS_LOG=" + log, "NOVA_CI_RESERVE=" + reserve,
+		"RUNNER_NAME=h-1", "GITHUB_REPOSITORY=o/r", "GITHUB_WORKFLOW=CI", "GITHUB_JOB=unit", "GITHUB_RUN_ID=42"}
+
+	require.NoError(t, os.WriteFile(filepath.Join(state, "job.start"), []byte("1\n"), 0o644)) // long ago: over 100 s
+	require.NoError(t, os.WriteFile(filepath.Join(state, "mem"), []byte("3221225472 2147483648\n"), 0o644))
+	code, out := ciRun(t, sh, dir, "", env, "completed")
+	assert.Equal(t, 0, code, out)
+	assert.Regexp(t, `MEMORY-PEAK host=\S+ runner=h-1 repo=o/r workflow="CI" job=unit run=42 secs=\d+ peak_mib=3072 anon_mib=2048\n`, out)
+	assert.Regexp(t, `JOB-LOAD host=\S+ runner=h-1 .* load1=\S+ holders=2 why=fix-a,hunt-b\n`, out)
+	b, err := os.ReadFile(log)
+	require.NoError(t, err)
+	assert.Equal(t, 2, strings.Count(string(b), "\n"), "both lines are in the host's log")
+	assert.NoFileExists(t, filepath.Join(state, "mem"))
+	assert.NoFileExists(t, filepath.Join(state, "job.start"))
+
+	// garbage in the state, an unwritable log, no nova-reserve: the job's result is untouched
+	require.NoError(t, os.WriteFile(filepath.Join(state, "job.start"), []byte("not-a-time\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(state, "mem"), []byte("x y\n"), 0o644))
+	bad := []string{"NOVA_CI_CHAIN_JOB_COMPLETED=", "NOVA_CI_JOBS_LOG=/dev/null/nope/ci-jobs.log", "NOVA_CI_RESERVE=/nonexistent"}
+	code, out = ciRun(t, sh, dir, "", bad, "completed")
+	assert.Equal(t, 0, code, out)
+	assert.NotContains(t, out, "::error::")
+
+	// a failing chained hook still decides the result, as before
+	hook := filepath.Join(t.TempDir(), "hook.sh")
+	require.NoError(t, os.WriteFile(hook, []byte("exit 3\n"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(state, "job.start"), []byte("1\n"), 0o644))
+	code, _ = ciRun(t, sh, dir, "", []string{"NOVA_CI_CHAIN_JOB_COMPLETED=" + hook, "NOVA_CI_JOBS_LOG=" + log, "NOVA_CI_RESERVE=" + reserve}, "completed")
+	assert.Equal(t, 3, code)
+}
+
 func TestCIRulesCompletedFailsAStoppedJob(t *testing.T) {
 	for _, sh := range ciShells(t) {
 		for limit, text := range map[string]string{"": "2m", "90": "90s"} {
