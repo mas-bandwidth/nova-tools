@@ -1,0 +1,88 @@
+---
+# nova_sdk_shared, once every tool is in <nova_shared_dir>/sdk (the run reached the end of main.yml). Another login runs
+# from the shared SDK, so nothing in it may be writable by others (a tool's installer can leave a mode 0777 script that
+# the login later runs) and everything in it must be readable by them. Then nova_sdk_dir becomes a link to it: the
+# login's own SDK is moved aside to <nova_sdk_dir>.home and the link made in one command, and the old SDK is deleted
+# (Go's module cache in it is read-only, so it is made writable first). An old SDK holding anything the shared one lacks
+# (an older version a link still names, a directory put there by hand) is left in use and the run fails naming it.
+- name: nothing in the shared SDK is writable by other logins
+  ansible.builtin.shell: |
+    set -eu
+    d={{ (nova_shared_dir ~ '/sdk') | quote }}
+    find "$d" -xdev ! -type l -perm -o+w -print -exec chmod o-w {} +
+  args: { executable: /bin/sh }
+  register: sdk_shared_others_write
+  changed_when: sdk_shared_others_write.stdout | length > 0
+  when: not ansible_check_mode
+
+- name: everything in the shared SDK is readable by other logins
+  ansible.builtin.shell: |
+    set -eu
+    d={{ (nova_shared_dir ~ '/sdk') | quote }}
+    find "$d" -xdev ! -type l \( ! -perm -o+r -o \( -type d ! -perm -o+x \) \) -print | head -20
+  args: { executable: /bin/sh }
+  register: sdk_shared_unreadable
+  changed_when: false
+  failed_when: sdk_shared_unreadable.rc != 0 or sdk_shared_unreadable.stdout | length > 0
+  check_mode: false
+
+- name: what nova_sdk_dir is now
+  ansible.builtin.stat: { path: "{{ nova_sdk_dir }}", follow: false, get_checksum: false }
+  register: sdk_dir_now
+
+- name: what the login's own SDK holds that the shared one lacks
+  ansible.builtin.shell: |
+    set -eu
+    cd {{ nova_sdk_dir | quote }}
+    for e in * .[!.]*; do
+      [ -e "$e" ] || [ -L "$e" ] || continue
+      [ -e {{ (nova_shared_dir ~ '/sdk') | quote }}/"$e" ] || [ -L {{ (nova_shared_dir ~ '/sdk') | quote }}/"$e" ] || echo "$e"
+    done
+  args: { executable: /bin/sh }
+  register: sdk_dir_extra
+  changed_when: false
+  check_mode: false
+  when: sdk_dir_now.stat.isdir | default(false) and not sdk_dir_now.stat.islnk | default(false)
+
+- name: the link, planned
+  ansible.builtin.debug:
+    msg: >-
+      SDK-TOOLCHAIN SHARE host={{ inventory_hostname }} {{ nova_sdk_dir }} -> {{ nova_shared_dir }}/sdk
+      {{ '(the SDK there now is deleted once the link is made)' if sdk_dir_now.stat.isdir | default(false) else '' }}
+      {{ '(check: nothing changed)' if ansible_check_mode else '' }}
+  when: not (sdk_dir_now.stat.islnk | default(false) and sdk_dir_now.stat.lnk_target == nova_shared_dir ~ '/sdk')
+
+- name: an old SDK holding what the shared one lacks is kept
+  ansible.builtin.fail:
+    msg: >-
+      SDK-TOOLCHAIN SHARE-HELD host={{ inventory_hostname }}: {{ nova_sdk_dir }} holds {{ sdk_dir_extra.stdout_lines | join(', ') }},
+      which {{ nova_shared_dir }}/sdk lacks; it stays in use. Move or delete them (or install them into the shared SDK) and run again.
+  when: sdk_dir_extra.stdout_lines | default([]) | length > 0
+
+- name: the login's own SDK is moved aside and nova_sdk_dir names the shared SDK
+  ansible.builtin.shell: |
+    set -eu
+    sdk={{ nova_sdk_dir | quote }}
+    shared={{ (nova_shared_dir ~ '/sdk') | quote }}
+    [ "$(readlink "$sdk" 2>/dev/null)" = "$shared" ] && exit 0
+    if [ -L "$sdk" ] || [ ! -e "$sdk" ]; then ln -sfn "$shared" "$sdk"; echo SET; exit 0; fi
+    [ ! -e "$sdk.home" ] || { echo "$sdk.home is in the way" >&2; exit 1; }
+    mv -T "$sdk" "$sdk.home" && ln -s "$shared" "$sdk"
+    echo SET
+  args: { executable: /bin/sh }
+  register: sdk_link
+  changed_when: "'SET' in sdk_link.stdout"
+  when: not ansible_check_mode
+
+- name: the SDK moved aside is deleted
+  ansible.builtin.shell: |
+    set -eu
+    old={{ (nova_sdk_dir ~ '.home') | quote }}
+    [ -d "$old" ] && [ ! -L "$old" ] || { echo ABSENT; exit 0; }
+    chmod -R u+w "$old"
+    rm -rf -- "$old"
+    echo REMOVED
+  args: { executable: /bin/sh }
+  register: sdk_aside_removed
+  changed_when: "'REMOVED' in sdk_aside_removed.stdout"
+  when: not ansible_check_mode

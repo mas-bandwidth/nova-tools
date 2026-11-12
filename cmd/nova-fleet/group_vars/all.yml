@@ -11,6 +11,9 @@ nova_tools_names: [nova-bus, nova-cairn, nova-config, nova-sandbox, nova-secrets
 # Where a machine keeps the tools: its login's home.
 nova_home: "{{ ansible_facts['env']['HOME'] }}"
 nova_bin_dir: "{{ nova_home }}/.local/bin"
+# What the fleet login shares with a runner login of its own (Linux), outside its home: root's copies of the tools in
+# <dir>/bin (roles/nova-tools-install/tasks/shared.yml) and the SDK in <dir>/sdk (sdk-toolchain with nova_sdk_shared).
+nova_shared_dir: /opt/nova
 # The login a machine's GitHub runners run as (github-runners.yml; cmd/nova-fleet/README.md, "The runner login"), and its
 # home. The fleet login by default; on Linux another name (-e github_runner_user=ghrunner) is a login of its own that
 # the play makes, with no sudo, no ssh and no way into the fleet login's home, so a CI job has no root. macOS runs its
