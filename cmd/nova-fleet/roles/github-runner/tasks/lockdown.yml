@@ -1,0 +1,66 @@
+---
+# With a runner login of its own (unix-login.yml), nothing outside its own home and the shared scratch places is its to
+# write or own, and the fleet login's home is closed to it: its seat key, its store, its tools and rc files.
+- name: the fleet login's home is closed to other logins (0750)
+  ansible.builtin.shell: |
+    set -eu
+    d={{ ansible_facts['user_dir'] | quote }}
+    [ "$(stat -c %a "$d")" = 750 ] && exit 0
+    chmod 0750 "$d"
+    echo SET
+  args: { executable: /bin/sh }
+  become: true
+  register: github_runner_home_closed
+  changed_when: "'SET' in github_runner_home_closed.stdout"
+  when: not ansible_check_mode
+
+# The proof, as the runner login, over every local filesystem (findmnt --real, network ones aside): each path it can
+# write or owns, but its home, the kernel's (/proc, /sys, /dev), the scratch places every login shares (/tmp, /var/tmp)
+# and the ones the system keeps a login's own files in (/var/crash, /var/lib/php/sessions, /var/mail/<login>). In /run
+# (a tmpfs) the same but for sockets, which systemd and dbus give every login and guard themselves, and for the shared
+# /run/lock, /run/screen and the login's own /run/user/<uid>; a container engine's socket it can write is named. Any
+# such path is a way for a job to change what another login (root among them) runs or reads, and fails the run naming
+# it; nothing is changed here, so a file a job planted is never adopted. The scan ends with SCAN-DONE only when each
+# find ran to its end (1 is find's code for the directories it may not read), and a mount it cannot start from fails
+# the run, so a scan that did not run never passes.
+- name: the runner login can write no system path
+  ansible.builtin.shell: |
+    set -eu
+    mounts=
+    for m in $(findmnt --real -rn -o TARGET -t nonfs,nfs4,cifs,smb3,9p,fuse.sshfs); do
+      [ -d "$m" ] || { echo "a mount the scan cannot start from: $m" >&2; exit 1; }
+      mounts="$mounts $m"
+    done
+    [ -n "$mounts" ]
+    cd /
+    timeout 1800 runuser -u {{ github_runner_user | quote }} -- sh -c '
+      home=$1; shift
+      me=$(id -un); uid=$(id -u)
+      find "$@" -xdev \( -path /proc -o -path /sys -o -path /dev -o -path /run -o -path /tmp -o -path /var/tmp \
+          -o -path /var/crash -o -path /var/lib/php/sessions -o -path "/var/mail/$me" -o -path "$home" \) -prune \
+        -o \( -writable -o -user "$me" \) ! -type l -print 2>/dev/null
+      r1=$?
+      find /run -xdev \( -path "/run/user/$uid" -o -path /run/lock -o -path /run/screen \) -prune \
+        -o \( -writable -o -user "$me" \) ! -type l ! -type s -print 2>/dev/null
+      r2=$?
+      for s in /run/docker.sock /run/podman/podman.sock /run/containerd/containerd.sock; do
+        if [ -S "$s" ] && [ -w "$s" ]; then echo "$s"; fi
+      done
+      [ $r1 -le 1 ] && [ $r2 -le 1 ] && echo SCAN-DONE' sh {{ github_runner_home | quote }} $mounts
+  args: { executable: /bin/sh }
+  become: true
+  register: github_runner_writable
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: not (ansible_check_mode and 'ABSENT' in github_runner_existing.stdout)
+
+- name: a scan that did not run to its end fails the run
+  ansible.builtin.fail:
+    msg: "RUNNER-LOGIN-SCAN {{ inventory_hostname }} {{ github_runner_user }}: the scan did not finish (rc={{ github_runner_writable.rc }}): {{ github_runner_writable.stderr | default('') }}"
+  when: github_runner_writable.rc is defined and (github_runner_writable.rc != 0 or (github_runner_writable.stdout_lines | last | default('')) != 'SCAN-DONE')
+
+- name: a path the runner login can write or owns fails the run
+  ansible.builtin.fail:
+    msg: "RUNNER-LOGIN-WRITABLE {{ inventory_hostname }} {{ github_runner_user }}: {{ (github_runner_writable.stdout_lines | reject('equalto', 'SCAN-DONE') | list)[:50] | join(' ') }}"
+  when: github_runner_writable.stdout_lines | default([]) | reject('equalto', 'SCAN-DONE') | list | length > 0
