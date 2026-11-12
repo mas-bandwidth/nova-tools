@@ -24,6 +24,24 @@
   failed_when: github_runner_protected.stdout_lines != ['1', '1']
   check_mode: false
 
+# WSL's interop runs Windows programs for any login, wsl.exe -u root among them: there a login of its own is no barrier.
+- name: WSL's interop is off
+  ansible.builtin.shell: |
+    for f in /proc/sys/fs/binfmt_misc/WSLInterop*; do [ -e "$f" ] && echo "$f"; done
+    exit 0
+  args: { executable: /bin/sh }
+  register: github_runner_login_wsl
+  changed_when: false
+  check_mode: false
+
+- name: a runner login of its own is refused where WSL's interop is on
+  ansible.builtin.fail:
+    msg: >-
+      RUNNER-LOGIN-WSL-INTEROP {{ inventory_hostname }}: {{ github_runner_login_wsl.stdout_lines | join(' ') }}: any login
+      runs wsl.exe -u root through it, so {{ github_runner_user }} would have root; turn interop off ([interop] enabled=false
+      in /etc/wsl.conf) or run the runners as the fleet login (-e github_runner_user={{ ansible_facts['user_id'] }})
+  when: github_runner_login_wsl.stdout | length > 0
+
 - name: the kvm group
   ansible.builtin.command: getent group kvm
   register: github_runner_kvm
@@ -264,3 +282,7 @@
   failed_when: "'is not allowed to run sudo' not in github_runner_sudo.stdout"
   check_mode: false
   when: not (ansible_check_mode and 'ABSENT' in github_runner_existing.stdout)
+
+# Nothing else of the machine is the runner login's to write, and the fleet login's home is closed to it.
+- name: the machine, locked down for the runner login
+  ansible.builtin.include_tasks: lockdown.yml
