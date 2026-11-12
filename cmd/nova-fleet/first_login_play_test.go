@@ -56,6 +56,28 @@ func TestFirewallAllowInIsCheckedThenApplied(t *testing.T) {
 	assert.Equal(t, []any{}, defaults["nova_firewall_allow_in"], "empty by default: the tailnet only")
 }
 
+// TestTailscaleRoleReadsUpsKeyFirst: up hands its minted key over as NOVA_FLEET_AUTHKEY, since nova-secrets exec drops
+// an inherited TAILSCALE_AUTHKEY when the control seat holds one; the role reads that name first, then
+// TAILSCALE_AUTHKEY for a run alone, and only where the key is used (never a fact).
+func TestTailscaleRoleReadsUpsKeyFirst(t *testing.T) {
+	t.Parallel()
+	b, err := os.ReadFile("roles/tailscale/tasks/main.yml")
+	require.NoError(t, err)
+	var tasks []map[string]any
+	require.NoError(t, yaml.Unmarshal(b, &tasks))
+	i := taskIndex(tasks, "join (Linux, macOS)")
+	require.GreaterOrEqual(t, i, 0)
+	assert.Equal(t, "{{ lookup('ansible.builtin.env', 'NOVA_FLEET_AUTHKEY') or lookup('ansible.builtin.env', 'TAILSCALE_AUTHKEY') }}",
+		asText(tasks[i]["vars"].(map[string]any)["ts_authkey"]))
+	up := roleTask(t, "roles/tailscale/tasks/main.yml", "tailscale up as")
+	assert.Equal(t, "{{ ts_authkey }}", asText(up["ansible.builtin.command"].(map[string]any)["stdin"]))
+	assert.NotContains(t, string(b), "set_fact:\n        ts_authkey")
+	u := &upRun{tskey: "tskey-auth-x"}
+	env := u.env()
+	assert.Contains(t, env, "NOVA_FLEET_AUTHKEY=tskey-auth-x")
+	assert.Empty(t, u.tskey, "the key reaches one play only")
+}
+
 func toTasks(v any) []map[string]any {
 	var out []map[string]any
 	for _, x := range v.([]any) {

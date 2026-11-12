@@ -129,7 +129,9 @@ func (f *upFake) install(t *testing.T) {
 	}
 	runCmd = func(bin string, args, env []string) (int, error) {
 		line := record(bin, slices.Clone(args))
-		if k := slices.IndexFunc(env, func(e string) bool { return strings.HasPrefix(e, "TAILSCALE_AUTHKEY=") }); k >= 0 {
+		if k := slices.IndexFunc(env, func(e string) bool {
+			return strings.HasPrefix(e, "TAILSCALE_AUTHKEY=") || strings.HasPrefix(e, "NOVA_FLEET_AUTHKEY=")
+		}); k >= 0 {
 			f.calls[len(f.calls)-1] += " [env " + env[k] + "]"
 		}
 		if f.fail != "" && strings.Contains(line, f.fail) {
@@ -352,11 +354,11 @@ func TestUpOrder(t *testing.T) {
 		"gh auth status",
 		"ssh -o BatchMode=yes -o ConnectTimeout=10 root@203.0.113.7 true",
 		"ssh -o BatchMode=yes -o ConnectTimeout=10 root@203.0.113.8 true",
-		"ansible-playbook -i first.ini tailscale.yml -e nova_tailscale_record_address=false -e nova_firewall=false [env TAILSCALE_AUTHKEY=" + fakeKey("auth", "SECRET1") + "]",
+		"ansible-playbook -i first.ini tailscale.yml -e nova_tailscale_record_address=false -e nova_firewall=false [env NOVA_FLEET_AUTHKEY=" + fakeKey("auth", "SECRET1") + "]",
 		"ansible-playbook -i first.ini postgres.yml -e nova_seal_store=" + f.store + " -e nova_seal_seat=control -e nova_seal_key=" + f.key + " -e nova_store_hosts=first\n",
 		"ansible-playbook -i first.ini redis.yml -e nova_seal_store=",
 		"nova-secrets exec --only NOVA_PG_PASSWORD -- /bin/ansible-playbook -i inventory join.yml -e nova_join_host=first -e nova_join_user=nova -e nova_join_address=203.0.113.7 -e nova_join_root_user=root -e nova_join_os=linux -e nova_join_arch=amd64 -e nova_join_roles=services,bench,runner -e nova_seal_store=" + f.store + " -e nova_bus_redis=first.ts.example:6379",
-		"-e nova_join_host=second -e nova_join_user=nova -e nova_join_address=203.0.113.8 -e nova_join_root_user=root -e nova_join_os=linux -e nova_join_arch=amd64 -e nova_join_roles=bench,runner -e nova_seal_store=" + f.store + " -e nova_bus_redis=first.ts.example:6379 [env TAILSCALE_AUTHKEY=" + fakeKey("auth", "SECRET2") + "]",
+		"-e nova_join_host=second -e nova_join_user=nova -e nova_join_address=203.0.113.8 -e nova_join_root_user=root -e nova_join_os=linux -e nova_join_arch=amd64 -e nova_join_roles=bench,runner -e nova_seal_store=" + f.store + " -e nova_bus_redis=first.ts.example:6379 [env NOVA_FLEET_AUTHKEY=" + fakeKey("auth", "SECRET2") + "]",
 		"ssh -o BatchMode=yes nova@first.ts.example sh -c 'PATH=$HOME/.local/bin:/opt/homebrew/bin:$PATH age-keygen -y $HOME/.config/nova-secrets/first.key'",
 		"nova-secrets grant NOVA_BUS_PASSWORD --to first --pub age1fakenova@first.ts.example\n",
 		"nova-secrets grant NOVA_BUS_PASSWORD --to second --pub age1fake",

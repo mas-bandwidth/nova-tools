@@ -265,8 +265,10 @@ func (u *upRun) env() []string {
 	if u.dsn != "" {
 		env = append(env, "NOVA_PG_DSN="+u.dsn)
 	}
-	if u.tskey != "" { // the join key a play needs, in its environment only; never an argument
-		env, u.tskey = append(env, "TAILSCALE_AUTHKEY="+u.tskey), ""
+	// the join key a play needs, in its environment only, never an argument; under a name of up's own, since
+	// nova-secrets exec drops every inherited name its seat holds, and a seat may hold a TAILSCALE_AUTHKEY
+	if u.tskey != "" {
+		env, u.tskey = append(env, "NOVA_FLEET_AUTHKEY="+u.tskey), ""
 	}
 	return env
 }
