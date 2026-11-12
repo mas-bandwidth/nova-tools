@@ -257,7 +257,7 @@ func TestUpParse(t *testing.T) {
 		{[]string{"--tools"}, "nova-fleet up: --tools wants a value"},
 		{[]string{"--tools", "v1", "a=1", "--", "-v"}, "nova-fleet up: after -- only -e name=value is passed on, got -v"},
 		{[]string{"--tools", "v1", "a=1", "--", "-e"}, "nova-fleet up: -e wants name=value"},
-		{[]string{"--tools", "v1", "a=1", "--", "-e", "@vars.yml"}, "nova-fleet up: -e wants name=value, got @vars.yml"},
+		{[]string{"--tools", "v1", "a=1", "--", "-e", "@vars.yml"}, "nova-fleet up: -e wants name=value or a JSON object with one name, got @vars.yml"},
 		{[]string{"--tools", "v1", "a=1", "--", "-e", "nova_tailnet=false"}, "nova-fleet up: -e nova_tailnet is up's own (or skips a pillar: Tailscale, PostgreSQL, Redis and Ansible are not optional)"},
 		{[]string{"--tools", "v1", "a=1", "--", "-e", "nova_join_user=x"}, "nova-fleet up: -e nova_join_user is up's own"},
 	} {

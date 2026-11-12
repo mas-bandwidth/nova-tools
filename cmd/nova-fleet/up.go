@@ -48,7 +48,8 @@ Ansible are not optional: nothing here skips one.
   --runner-count N  runners per machine; default cores: one per 4 cores of each machine, at least 1
                     (github_runner_cores_per_runner). Every machine named gets them except this control node
   --check           every step under ansible --check; the secrets are read all the same
-  -- -e name=value  passed to every play (a variable up sets itself, or one that skips a pillar, is refused)
+  -- -e name=value  passed to every play (a variable up sets itself, or one that skips a pillar, is refused);
+                    a list or mapping as a JSON object with one name: -e '{"name": ["a", "b"]}'
 A fleet that exists is read from NOVA_PG_DSN (nova-config's rows): its store machine stays the store, and
 the machines named join it ("Adding a machine"). Each step prints the plays' receipts and a line
 UP <step> OK|WOULD-RUN|FAILED, then one UP MACHINE line per machine. A failed step stops the run; every
@@ -120,14 +121,20 @@ func parseUp(args []string, stderr io.Writer) (*upRun, int) {
 				if j+1 >= len(rest) {
 					return refuse("-e wants name=value")
 				}
-				name, _, ok := strings.Cut(rest[j+1], "=")
+				name, val, ok := strings.Cut(rest[j+1], "=")
+				var obj map[string]any // a JSON object with one name, for a list or a mapping (-e '{"name": [...]}')
+				if json.Unmarshal([]byte(rest[j+1]), &obj) == nil && len(obj) == 1 {
+					for k, v := range obj {
+						name, val, ok = k, fmt.Sprint(v), true
+					}
+				}
 				if !ok || name == "" || strings.ContainsAny(name, "{@ ") {
-					return refuse("-e wants name=value, got %s", rest[j+1])
+					return refuse("-e wants name=value or a JSON object with one name, got %s", rest[j+1])
 				}
 				if slices.Contains(own, name) {
 					return refuse("-e %s is up's own (or skips a pillar: Tailscale, PostgreSQL, Redis and Ansible are not optional)", name)
 				}
-				if v, ok := strings.CutPrefix(rest[j+1], "nova_bin_dir="); ok {
+				if v := val; name == "nova_bin_dir" {
 					u.binDir = strings.NewReplacer("{{ nova_home }}", "$HOME", "~", "$HOME").Replace(v)
 					if !binDirRE.MatchString(u.binDir) {
 						return refuse("-e nova_bin_dir wants a plain path (or one under {{ nova_home }} or ~), got %s", v)

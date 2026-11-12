@@ -128,6 +128,22 @@ func TestUpFirstLoginParse(t *testing.T) {
 			t.Errorf("up %q: code %d stdout %q stderr %q, want %q", tc.args, code, out, errs, tc.want)
 		}
 	}
+	// a list goes as a JSON object with one name; its name is held to the same rule as name=value
+	rule := `{"nova_firewall_allow_in": ["in on eno2 proto udp from 10.0.0.0/24"]}`
+	if u, code := parseUp([]string{"--tools", "v1", "a=1", "--", "-e", rule}, nil); code != 0 || len(u.pass) != 2 || u.pass[1] != rule {
+		t.Errorf("a JSON -e: code %d %+v", code, u)
+	}
+	for arg, want := range map[string]string{
+		`{"nova_firewall": false}`: "nova-fleet up: -e nova_firewall is up's own",
+		`{"a": 1, "b": 2}`:         "nova-fleet up: -e wants name=value or a JSON object with one name, got {\"a\": 1, \"b\": 2}",
+	} {
+		if code, _, errs := runArgs("up", "--tools", "v1", "a=1", "--", "-e", arg); code != 2 || !strings.HasPrefix(errs, want) {
+			t.Errorf("-e %s: code %d stderr %q, want %q", arg, code, errs, want)
+		}
+	}
+	if u, _ := parseUp([]string{"--tools", "v1", "a=1", "--", "-e", `{"nova_bin_dir": "/opt/nova/bin"}`}, nil); u == nil || u.binDir != "/opt/nova/bin" {
+		t.Errorf("a JSON nova_bin_dir: %+v", u)
+	}
 	u, _ := parseUp([]string{"--tools", "v1", "--first-login", "ubuntu", "a=10.0.0.1", "b=ec2-user@b.example/linux/arm64", "c=root@10.0.0.3"}, nil)
 	if u == nil || u.machines[0].first != "ubuntu" || u.machines[0].address != "10.0.0.1" || u.machines[1].first != "ec2-user" || u.machines[1].address != "b.example" ||
 		u.machines[1].arch != "arm64" || u.machines[2].first != "root" {
