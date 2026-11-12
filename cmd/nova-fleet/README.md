@@ -518,14 +518,30 @@ nova-fleet github-runners --check -- -l MACHINE -e nova_runner_git_probe=true
 ```
 
 Only a clone that is both shallow and a promisor is probed (the others print `not-probed`), and only while its runner
-is idle (no `Runner.Worker` from its `bin`, checked before and after the copy; a busy one prints `skipped=busy`; run
-again later). The clone's `.git` is copied under `<home>/.cache/nova-git-probe` (`github_runner_git_probe_scratch`),
-the checkout's fetch is run on the copy with the token from the machine's seat (`nova-secrets exec --only
-GH_GATE_TOKEN`, through the credential helper of `nova-secrets help exec`), and the copy is deleted. The fetch's output
-is searched for the BUG and never printed. The probe never writes, moves or deletes a workspace. Each clone prints
-`GIT-PROBE <machine> <runner> <workspace> BUG|clean|skipped=busy|not-probed|error=<why>`. A `BUG` fails the run, naming
-the machine, the runner and the workspace, with the fix as `GIT-PROBE-FIX <machine> <runner>: <command>`; an `error`
-(the fetch failed another way, or the copy could not be made) fails it too.
+is idle (no `Runner.Worker` from its `bin`, checked before and after the copy). The clone's `.git` is copied under
+`<home>/.cache/nova-git-probe` (`github_runner_git_probe_scratch`) when that filesystem has free space of three times
+its size, the checkout's fetch is run on the copy for at most 600 seconds with the token from the machine's seat
+(`nova-secrets exec --only GH_GATE_TOKEN`, through the credential helper of `nova-secrets help exec`), and the copy is
+deleted, also when the probe is interrupted; a copy an earlier run left behind is removed at the start. The probe never
+writes, moves or deletes a workspace. `GH_GATE_TOKEN` must be able to read every repository whose workspace is probed.
+
+Each clone prints one line, `GIT-PROBE <machine> <runner> <workspace> <result>`, and each machine ends with `GIT-PROBE
+<machine> done bug=<n> clean=<n> skipped-busy=<runners>`:
+
+| Result | |
+|---|---|
+| `BUG` | the fetch printed a line starting `BUG:`, or `died of signal 6`. Red: the failure names the machine, runner and workspace, with the fix as `GIT-PROBE-FIX <machine> <runner>: <command>` |
+| `clean` | the fetch finished |
+| `not-probed` | not both shallow and a promisor |
+| `skipped=busy` | the runner was running a job. Green, but not checked: the done line names the runner; run again later |
+| `skipped=disk free=<n>K need=<n>K on <dir>` | too little free space for the copy. Red |
+| `error=auth repo=<url>: <line>` | the fetch was refused (a 403, failed authentication, a repository the token cannot see). Red; the line is git's, any token in it redacted |
+| `error=network repo=<url>: <line>` | GitHub could not be reached. Red |
+| `error=fetch-timeout` | the fetch ran past 600 seconds. Red |
+| `error=secrets rc=<n>: <line>` | `nova-secrets exec` itself failed. Red, and only then the failure says `run: <bin>/nova-secrets exec --only GH_GATE_TOKEN -- true` |
+| `error=fetch-rc-<n> repo=<url>: <line>`, `error=pgrep-rc-<n>`, `error=copy`, `error=scratch`, `error=df` | the probe could not check the clone. Red |
+
+A scratch directory that cannot be made stops the probe on that machine (red, `the probe stopped`).
 
 **The fix** is a separate step, by hand, on the machine: move the clone aside while its runner is idle, and the next
 job clones again. The command the failure prints moves it only if no job is running there:

@@ -2,12 +2,12 @@
 # Detection only, asked for with -e nova_runner_git_probe=true (cmd/nova-fleet/README.md, "github-runners", "A workspace
 # clone git cannot fetch into"). A runner's persistent workspace clone (<runner dir>/_work/<repo>/<repo>) that is shallow
 # and a promisor (partial clone) can make git abort in actions/checkout's fetch: "BUG: builtin/pack-objects.c ...
-# should_include_obj should only be called on existing objects", exit 128. git 2.53.0 and 2.56.1 both do it, and a
-# repack first does not help. Each such clone of an idle runner is copied under the login's home and the checkout's
-# fetch run on the copy, the token given to git by the env-reading helper of `nova-secrets help exec`; the copy is
-# deleted and the fetch's output is only searched, never printed. The workspace is never written, moved or deleted; a
-# clone that aborts fails the run, naming the step that moves it aside. Linux only: a macOS or Windows runner is not
-# probed.
+# should_include_obj should only be called on existing objects", pack-objects dying of signal 6, exit 128. git 2.53.0
+# and 2.56.1 both do it, and a repack first does not help. Each such clone of an idle runner is copied under the login's
+# home and the checkout's fetch run on the copy, the token given to git by the env-reading helper of `nova-secrets help
+# exec`; the copy is deleted. Of the fetch's output only the line that names a failure is printed, any token in it
+# redacted. The workspace is never written, moved or deleted; a clone that aborts fails the run, naming the step that
+# moves it aside. Linux only: a macOS or Windows runner is not probed.
 
 - name: the git probe is for Linux runners
   ansible.builtin.debug:
@@ -17,8 +17,10 @@
 - name: the runners' workspace clones, probed on a copy (Linux)
   when: ansible_facts['system'] == 'Linux'
   block:
-    # One line per clone: GIT-PROBE <machine> <runner> <workspace> BUG | clean | skipped=busy | not-probed | error=<why>.
-    # A runner is idle when no Runner.Worker runs from its bin (tasks/wait-idle.yml), checked before and after the copy.
+    # One line per clone: GIT-PROBE <machine> <runner> <workspace> BUG | clean | not-probed | skipped=busy |
+    # skipped=disk ... | error=<why> ..., then GIT-PROBE <machine> done bug=<n> clean=<n> skipped-busy=<runners>.
+    # A runner is idle when no Runner.Worker runs from its bin (tasks/wait-idle.yml), checked before and after the copy;
+    # a pgrep that fails (rc above 1) is an error. A copy needs free space of three times the clone's .git there.
     - name: each idle runner's shallow promisor clones, the checkout's fetch run on a copy
       ansible.builtin.shell: |
         set -u
@@ -26,10 +28,38 @@
         scratch={{ github_runner_git_probe_scratch | quote }}
         secrets={{ (nova_bin_dir ~ '/nova-secrets') | quote }}
         copy=
-        trap 'if [ -n "$copy" ]; then rm -rf "$copy"; fi' EXIT
-        busy() { pgrep -f "$1/bin/[R]unner.Worker" >/dev/null; }
+        stamp=
+        cleanup() { if [ -n "$copy" ]; then rm -rf "$copy"; fi; if [ -n "$stamp" ]; then rm -f "$stamp"; fi; }
+        trap cleanup EXIT
+        trap 'exit 129' HUP
+        trap 'exit 130' INT
+        trap 'exit 143' TERM
+        if ! mkdir -p "$scratch" || ! stamp=$(mktemp "$scratch/.stamp.XXXXXX"); then
+          stamp=
+          echo "cannot write the scratch directory $scratch" >&2
+          exit 1
+        fi
+        # Copies an earlier run left behind (one killed outright); the copies of this run are all newer than its stamp.
+        find "$scratch" -mindepth 1 -maxdepth 1 -type d -name 'probe.*' ! -newer "$stamp" -exec rm -rf {} +
         say() { echo "GIT-PROBE $host $r $w $1"; }
         drop() { rm -rf "$copy"; copy=; }
+        redact() { sed -E 's/(gh[pousr]_|github_pat_)[A-Za-z0-9_]+/\1REDACTED/g; s#(://)[^/@[:space:]]+@#\1REDACTED@#g'; }
+        state() {
+          pgrep -f "$1/bin/[R]unner.Worker" >/dev/null
+          p=$?
+          case $p in 0) echo busy ;; 1) echo idle ;; *) echo "error=pgrep-rc-$p" ;; esac
+        }
+        not_idle() {
+          if [ "$1" = busy ]; then
+            say skipped=busy
+            case " $busy " in *" $r "*) ;; *) busy="${busy:+$busy,}$r" ;; esac
+          else
+            say "$1"
+          fi
+        }
+        bugs=0
+        clean=0
+        busy=
         for g in {{ github_runner_base_dir | quote }}/*/_work/*/*/.git; do
           [ -d "$g" ] || continue
           w=${g%/.git}
@@ -39,21 +69,41 @@
             say not-probed
             continue
           fi
-          if busy "$d"; then say skipped=busy; continue; fi
-          if ! mkdir -p "$scratch" || ! copy=$(mktemp -d "$scratch/probe.XXXXXX"); then copy=; say error=scratch; continue; fi
+          s=$(state "$d")
+          if [ "$s" != idle ]; then not_idle "$s"; continue; fi
+          need=$(( $(du -sk "$g" | cut -f1) * 3 ))
+          free=$(df -Pk "$scratch" | awk 'NR == 2 { print $4 }')
+          case $free in ''|*[!0-9]*) say "error=df free=$free"; continue ;; esac
+          if [ "$free" -lt "$need" ]; then say "skipped=disk free=${free}K need=${need}K on $scratch"; continue; fi
+          if ! copy=$(mktemp -d "$scratch/probe.XXXXXX"); then copy=; say error=scratch; continue; fi
           if ! cp -a "$g" "$copy/.git"; then drop; say error=copy; continue; fi
-          if busy "$d"; then drop; say skipped=busy; continue; fi
+          s=$(state "$d")
+          if [ "$s" != idle ]; then drop; not_idle "$s"; continue; fi
           git config --file "$copy/.git/config" --unset-all http.https://github.com/.extraheader
-          out=$(cd "$copy" && "$secrets" exec --only GH_GATE_TOKEN -- git -c credential.helper= -c credential.helper='!f() { test "$1" = get && echo username=x-access-token && echo "password=$GH_GATE_TOKEN"; }; f' -c protocol.version=2 fetch --prune --no-recurse-submodules --filter=tree:0 --unshallow origin '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*' 2>&1)
+          url=$(git config --file "$g/config" --get remote.origin.url | redact)
+          out=$(cd "$copy" && timeout 600 "$secrets" exec --only GH_GATE_TOKEN -- git -c credential.helper= -c credential.helper='!f() { test "$1" = get && echo username=x-access-token && echo "password=$GH_GATE_TOKEN"; }; f' -c protocol.version=2 fetch --prune --no-recurse-submodules --filter=tree:0 --unshallow origin '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*' 2>&1)
           rc=$?
           drop
-          case $out in
-            *should_include_obj*)
-              say BUG
-              echo "GIT-PROBE-FIX $host $r: pgrep -f '$d/bin/[R]unner.Worker' || mv '$w' '$w.git-bug'" ;;
-            *) if [ "$rc" = 0 ]; then say clean; else say "error=fetch-rc-$rc"; fi ;;
+          if printf '%s\n' "$out" | grep -qE '^BUG:|died of signal 6'; then
+            bugs=$((bugs + 1))
+            say BUG
+            echo "GIT-PROBE-FIX $host $r: pgrep -f '$d/bin/[R]unner.Worker' || mv '$w' '$w.git-bug'"
+            continue
+          fi
+          if [ "$rc" = 0 ]; then clean=$((clean + 1)); say clean; continue; fi
+          why=$(printf '%s\n' "$out" | grep -E '^(fatal|error|remote|nova-secrets|timeout):' | head -n 1 | redact)
+          [ -n "$why" ] || why=$(printf '%s\n' "$out" | tail -n 1 | redact)
+          case $rc:$why in
+            124:*) say error=fetch-timeout ;;
+            *nova-secrets*) say "error=secrets rc=$rc: $why" ;;
+            *403*|*'Authentication failed'*|*'could not read Username'*|*'Permission denied'*|*'Repository not found'*|*'terminal prompts disabled'*)
+              say "error=auth repo=$url: $why" ;;
+            *'Could not resolve'*|*'unable to access'*|*'Failed to connect'*|*'timed out'*|*'Connection'*)
+              say "error=network repo=$url: $why" ;;
+            *) say "error=fetch-rc-$rc repo=$url: $why" ;;
           esac
         done
+        echo "GIT-PROBE $host done bug=$bugs clean=$clean skipped-busy=${busy:--}"
       args: { executable: /bin/sh }
       register: github_runner_git_probe
       changed_when: false
@@ -62,20 +112,27 @@
 
     - name: the probe's receipt
       ansible.builtin.debug:
-        msg: "{{ github_runner_git_probe.stdout_lines or ['GIT-PROBE ' ~ inventory_hostname ~ ' no workspace clones'] }}"
+        msg: "{{ github_runner_git_probe.stdout_lines }}"
 
+    # Red: a BUG, a clone skipped for disk, an error; the probe itself stopping. A busy runner stays green and is named
+    # in the done line, so the run is not read as a clean check of it.
     - name: no workspace clone makes git abort in the checkout's fetch
       ansible.builtin.assert:
         quiet: true
         that:
           - github_runner_git_probe.rc == 0
-          - github_runner_git_probe.stdout_lines | select('search', ' (BUG|error=[^ ]*)$') | list | length == 0
+          - github_runner_git_probe_red | length == 0
         fail_msg: >-
           GIT-PROBE {{ inventory_hostname }}:
-          {% if github_runner_git_probe.stdout_lines | select('search', ' BUG$') | list %}a runner's workspace clone makes git
-          abort in actions/checkout's fetch (pack-objects BUG; a newer git has it too). On {{ inventory_hostname }},
+          {% if github_runner_git_probe_red | select('search', ' BUG$') | list %}a runner's workspace clone makes git
+          abort in actions/checkout's fetch (git's BUG in pack-objects; a newer git has it too). On {{ inventory_hostname }},
           move each aside while its runner is idle, and the next job clones again:
           {{ github_runner_git_probe.stdout_lines | select('match', '^GIT-PROBE(-FIX)? .* (BUG$|pgrep )') | join(' ; ') }}.
-          {% endif %}{% if github_runner_git_probe.stdout_lines | select('search', ' error=[^ ]*$') | list or github_runner_git_probe.rc != 0 %}the probe
-          could not run on: {{ github_runner_git_probe.stdout_lines | select('search', ' error=[^ ]*$') | join(' ; ') or 'rc=' ~ github_runner_git_probe.rc ~ ' ' ~ (github_runner_git_probe.stderr | default('') | trim) }};
-          run: {{ nova_bin_dir }}/nova-secrets exec --only GH_GATE_TOKEN -- true{% endif %}
+          {% endif %}{% if github_runner_git_probe_red | reject('search', ' BUG$') | list %}not checked:
+          {{ github_runner_git_probe_red | reject('search', ' BUG$') | join(' ; ') }}.
+          {% endif %}{% if github_runner_git_probe.rc != 0 %}the probe stopped, rc={{ github_runner_git_probe.rc }}:
+          {{ github_runner_git_probe.stderr | default('') | trim }}.
+          {% endif %}{% if github_runner_git_probe_red | select('search', ' error=secrets ') | list %}run:
+          {{ nova_bin_dir }}/nova-secrets exec --only GH_GATE_TOKEN -- true{% endif %}
+      vars:
+        github_runner_git_probe_red: "{{ github_runner_git_probe.stdout_lines | select('match', '^GIT-PROBE [^ ]+ [^ ]+ [^ ]+ (BUG$|error=|skipped=disk)') | list }}"
