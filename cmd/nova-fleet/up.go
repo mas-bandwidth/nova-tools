@@ -13,7 +13,7 @@ import (
 	"strings"
 )
 
-const upHelp = `nova-fleet up [--check] [--user LOGIN] [--grant NAME[,NAME]] --tools TAG|DIR [--runners URL [--runner-count N|cores]] <name>=<address>[/<os>/<arch>]... [-- -e name=value ...]
+const upHelp = `nova-fleet up [--check] [--user LOGIN] [--first-login LOGIN] [--first-key FILE] [--grant NAME[,NAME]] --tools TAG|DIR [--runners URL [--runner-count N|cores]] <name>=[<login>@]<address>[/<os>/<arch>]... [-- -e name=value ...]
 
 From nothing to a fleet, in a fixed order (cmd/nova-fleet/README.md, "up"). Tailscale, PostgreSQL, Redis and
 Ansible are not optional: nothing here skips one.
@@ -21,7 +21,8 @@ Ansible are not optional: nothing here skips one.
    2 tailnet   through the Tailscale API with the API access token: the policy merged, this node tagged
                tag:control (joined first if it is not on the tailnet), a single-use key for each machine
                not on it, the tags set on each that is
-   3 reach     each machine answers ssh: as its login over the tailnet once it is there, else as root
+   3 reach     each machine answers ssh: as its login over the tailnet once it is there, else as its
+               first login (root, or a login that can sudo without a password)
    4 first     a new fleet's first machine: the tailnet, PostgreSQL (nova-config's tables), Redis
    5 join      every machine joins: its row, login, tailnet name and host key, firewall, seat
    6 grant     nova-secrets grant: the --grant values written to each machine's seat
@@ -32,15 +33,23 @@ Ansible are not optional: nothing here skips one.
   11 services  the service units
   12 runners   GitHub Actions runners (only with --runners)
   13 bus       list present inboxes over the bus
-  <name>=<address>  a machine, reached at first as root over ssh at <address>; os/arch default linux/amd64
+  <name>=<address>  a machine, reached at first over ssh at <address> as its first login; os/arch default
+                    linux/amd64; <name>=<login>@<address> names that machine's own first login
   --user LOGIN      the login join makes on each machine (default nova)
+  --first-login LOGIN  the login a new Linux machine's provider gives (default root): root, or one that
+                    can sudo without a password (ubuntu, debian, ec2-user, admin); join makes --user
+                    through it, and nothing after join uses it. A login that answers but cannot sudo
+                    without a password is refused before any play runs, with the line that fixes it
+  --first-key FILE  the private key for the first login (ssh -i FILE -o IdentitiesOnly=yes); default:
+                    ssh's own keys and agent. join's plays use it until the machine is on the tailnet
   --grant NAMES     the values each machine's seat is granted (default NOVA_BUS_PASSWORD)
   --tools TAG|DIR   a release tag (vX.Y.Z) or a directory laid out as a release
   --runners URL     https://github.com/<owner>/<repo> or https://github.com/<org>
   --runner-count N  runners per machine; default cores: one per 4 cores of each machine, at least 1
                     (github_runner_cores_per_runner). Every machine named gets them except this control node
   --check           every step under ansible --check; the secrets are read all the same
-  -- -e name=value  passed to every play (a variable up sets itself, or one that skips a pillar, is refused)
+  -- -e name=value  passed to every play (a variable up sets itself, or one that skips a pillar, is refused);
+                    a list or mapping as a JSON object with one name: -e '{"name": ["a", "b"]}'
 A fleet that exists is read from NOVA_PG_DSN (nova-config's rows): its store machine stays the store, and
 the machines named join it ("Adding a machine"). Each step prints the plays' receipts and a line
 UP <step> OK|WOULD-RUN|FAILED, then one UP MACHINE line per machine. A failed step stops the run; every
@@ -56,10 +65,12 @@ var own = []string{"nova_join_host", "nova_join_user", "nova_join_address", "nov
 
 type machine struct {
 	name, address, os, arch string
+	first                   string // the provider's login at the address given: root, or a login that sudoes
 	user, dns               string // its login, and its tailnet name once it has one
 	sshUser, host           string // how up reaches it now: root at the address given, or the login over the tailnet
 	row                     map[string]any
 	unreachable             string // the reason, under --check
+	nosudo                  string // the refusal when the first login answers and cannot sudo without a password
 	later                   bool   // under --check, a machine with no row yet: the steps after join wait for it
 	roleLater               bool   // under --check, a row that lacks the runner role: the runners wait for it
 	self                    bool   // this control node (tailscale status Self): already joined, so join skips it
@@ -69,6 +80,7 @@ type machine struct {
 type upRun struct {
 	check                bool
 	user, tools, runners string
+	firstLogin, firstKey string // the first login of a machine named without its own, and its private key
 	grant                string
 	runnerCount          string // N, or cores (the default): sized to each machine's cores by the role
 	machines             []*machine
@@ -85,7 +97,7 @@ type upRun struct {
 }
 
 func parseUp(args []string, stderr io.Writer) (*upRun, int) {
-	u := &upRun{user: "nova", grant: "NOVA_BUS_PASSWORD", runnerCount: "cores", stderr: stderr, binDir: "$HOME/.local/bin"}
+	u := &upRun{user: "nova", firstLogin: "root", grant: "NOVA_BUS_PASSWORD", runnerCount: "cores", stderr: stderr, binDir: "$HOME/.local/bin"}
 	refuse := func(format string, a ...any) (*upRun, int) {
 		fmt.Fprintf(stderr, "nova-fleet up: %s; run: nova-fleet up -h\n", fmt.Sprintf(format, a...))
 		return nil, 2
@@ -93,7 +105,8 @@ func parseUp(args []string, stderr io.Writer) (*upRun, int) {
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		flag, val, hasVal := strings.Cut(a, "=")
-		takes := map[string]*string{"--user": &u.user, "--tools": &u.tools, "--runners": &u.runners, "--grant": &u.grant}
+		takes := map[string]*string{"--user": &u.user, "--tools": &u.tools, "--runners": &u.runners, "--grant": &u.grant,
+			"--first-login": &u.firstLogin, "--first-key": &u.firstKey}
 		switch {
 		case a == "-h" || a == "--help":
 			return nil, -1
@@ -108,14 +121,20 @@ func parseUp(args []string, stderr io.Writer) (*upRun, int) {
 				if j+1 >= len(rest) {
 					return refuse("-e wants name=value")
 				}
-				name, _, ok := strings.Cut(rest[j+1], "=")
+				name, val, ok := strings.Cut(rest[j+1], "=")
+				var obj map[string]any // a JSON object with one name, for a list or a mapping (-e '{"name": [...]}')
+				if json.Unmarshal([]byte(rest[j+1]), &obj) == nil && len(obj) == 1 {
+					for k, v := range obj {
+						name, val, ok = k, fmt.Sprint(v), true
+					}
+				}
 				if !ok || name == "" || strings.ContainsAny(name, "{@ ") {
-					return refuse("-e wants name=value, got %s", rest[j+1])
+					return refuse("-e wants name=value or a JSON object with one name, got %s", rest[j+1])
 				}
 				if slices.Contains(own, name) {
 					return refuse("-e %s is up's own (or skips a pillar: Tailscale, PostgreSQL, Redis and Ansible are not optional)", name)
 				}
-				if v, ok := strings.CutPrefix(rest[j+1], "nova_bin_dir="); ok {
+				if v := val; name == "nova_bin_dir" {
 					u.binDir = strings.NewReplacer("{{ nova_home }}", "$HOME", "~", "$HOME").Replace(v)
 					if !binDirRE.MatchString(u.binDir) {
 						return refuse("-e nova_bin_dir wants a plain path (or one under {{ nova_home }} or ~), got %s", v)
@@ -145,10 +164,14 @@ func parseUp(args []string, stderr io.Writer) (*upRun, int) {
 		default:
 			name, addr, ok := strings.Cut(a, "=")
 			parts := strings.Split(addr, "/")
-			if !ok || name == "" || addr == "" || (len(parts) != 1 && len(parts) != 3) || !nameRE.MatchString(name) {
-				return refuse("want a machine as <name>=<address>[/<os>/<arch>] (a lowercase name), got %s", a)
+			login, host, hasLogin := strings.Cut(parts[0], "@")
+			if !hasLogin {
+				login, host = "", parts[0]
 			}
-			m := &machine{name: name, address: parts[0], os: "linux", arch: "amd64"}
+			if !ok || name == "" || host == "" || (len(parts) != 1 && len(parts) != 3) || !nameRE.MatchString(name) || (hasLogin && !loginRE.MatchString(login)) {
+				return refuse("want a machine as <name>=[<login>@]<address>[/<os>/<arch>] (a lowercase name and login), got %s", a)
+			}
+			m := &machine{name: name, address: host, first: login, os: "linux", arch: "amd64"}
 			if len(parts) == 3 {
 				m.os, m.arch = parts[1], parts[2]
 			}
@@ -174,10 +197,29 @@ func parseUp(args []string, stderr io.Writer) (*upRun, int) {
 	if u.runners != "" && runnerScope(u.runners) == "" {
 		return refuse("--runners wants https://github.com/<owner>/<repo> or https://github.com/<org>, got %s", u.runners)
 	}
+	if !loginRE.MatchString(u.firstLogin) {
+		return refuse("--first-login wants a login such as root or ubuntu, got %q", u.firstLogin)
+	}
+	for _, m := range u.machines {
+		m.first = cmp.Or(m.first, u.firstLogin)
+		if m.first == u.user && m.os != "darwin" {
+			return refuse("%s's first login is %s, the login join makes (--user %s): name the provider's login with --first-login, or another with --user", m.name, m.first, u.user)
+		}
+	}
+	if u.firstKey != "" {
+		if fi, err := os.Stat(u.firstKey); err != nil || !fi.Mode().IsRegular() {
+			fmt.Fprintf(stderr, "nova-fleet up: --first-key %s is not a readable file; run: ls -l %s\n", u.firstKey, u.firstKey)
+			return nil, 2
+		}
+		if abs, err := filepath.Abs(u.firstKey); err == nil { // the plays run from another directory
+			u.firstKey = abs
+		}
+	}
 	return u, 0
 }
 
 var nameRE, binDirRE = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`), regexp.MustCompile(`^(\$HOME)?[A-Za-z0-9_./-]+$`)
+var loginRE = regexp.MustCompile(`^[a-z_][a-z0-9_-]*$`)
 
 // runnerScope is repo or org for a GitHub URL, "" for anything else.
 func runnerScope(url string) string {
@@ -223,8 +265,10 @@ func (u *upRun) env() []string {
 	if u.dsn != "" {
 		env = append(env, "NOVA_PG_DSN="+u.dsn)
 	}
-	if u.tskey != "" { // the join key a play needs, in its environment only; never an argument
-		env, u.tskey = append(env, "TAILSCALE_AUTHKEY="+u.tskey), ""
+	// the join key a play needs, in its environment only, never an argument; under a name of up's own, since
+	// nova-secrets exec drops every inherited name its seat holds, and a seat may hold a TAILSCALE_AUTHKEY
+	if u.tskey != "" {
+		env, u.tskey = append(env, "NOVA_FLEET_AUTHKEY="+u.tskey), ""
 	}
 	return env
 }
@@ -330,9 +374,27 @@ func (u *upRun) tsWhy() string {
 	return fmt.Sprintf("tailscale status exit %d: %s", c, oneLine(e+" "+o))
 }
 
+// firstSSH are the ssh options for a machine's first login at the address given: its key, and only
+// that key, when --first-key names one. Any other login, or the tailnet, uses ssh's own keys.
+func (u *upRun) firstSSH(m *machine, user, host string) []string {
+	if u.firstKey == "" || user != m.first || host != m.address {
+		return nil
+	}
+	return []string{"-i", u.firstKey, "-o", "IdentitiesOnly=yes"}
+}
+
+// keyVar is the play variable that hands --first-key on, when up reached the machine as its first login with it.
+func (u *upRun) keyVar(m *machine) string {
+	if u.firstSSH(m, m.sshUser, m.host) == nil {
+		return ""
+	}
+	return "ansible_ssh_private_key_file=" + u.firstKey
+}
+
 // reach finds how a machine answers: its login over the tailnet once it has a row (join closed
-// the address given then), else root at the address given. A machine that answers nowhere is
-// unreachable.
+// the address given then), else its first login at the address given. A first login other than
+// root must sudo without a password, since join makes the fleet's login through it. A machine
+// that answers nowhere is unreachable.
 func (u *upRun) reach(m *machine) {
 	m.user = u.user
 	if user, _ := m.row["user"].(string); user != "" {
@@ -346,21 +408,33 @@ func (u *upRun) reach(m *machine) {
 		try = append(try, [2]string{m.user, addr})
 	}
 	if m.os != "darwin" {
-		try = append(try, [2]string{"root", m.address})
+		try = append(try, [2]string{m.first, m.address})
 	} else {
 		try = append(try, [2]string{m.user, m.address})
 	}
 	if m.dns != "" && m.row == nil {
 		try = append(try, [2]string{m.user, m.dns})
 	}
+	ssh := func(user, host string, cmd ...string) (string, int) {
+		args := append([]string{"-o", "BatchMode=yes", "-o", "ConnectTimeout=10"}, u.firstSSH(m, user, host)...)
+		_, e, c := outCmd(u.bin["ssh"], append(append(args, user+"@"+host), cmd...), os.Environ())
+		return oneLine(e), c
+	}
 	var why string
 	for _, t := range try {
-		_, e, c := outCmd(u.bin["ssh"], []string{"-o", "BatchMode=yes", "-o", "ConnectTimeout=10", t[0] + "@" + t[1], "true"}, os.Environ())
-		if c == 0 {
-			m.sshUser, m.host = t[0], t[1]
-			return
+		e, c := ssh(t[0], t[1], "true")
+		if c != 0 {
+			why = e
+			continue
 		}
-		why = oneLine(e)
+		if t[0] != "root" && t[0] == m.first && t[1] == m.address && m.os != "darwin" {
+			if e, c := ssh(t[0], t[1], "sudo", "-n", "true"); c != 0 {
+				m.nosudo = fmt.Sprintf("%s answers ssh as %s at %s, and %s cannot sudo without a password (%s): join makes the fleet's login through it; run: ssh -t %s%s@%s sudo visudo -f /etc/sudoers.d/90-%s  # the one line: %s ALL=(ALL) NOPASSWD:ALL",
+					m.name, t[0], t[1], t[0], cmp.Or(e, fmt.Sprintf("sudo -n true exit %d", c)), strings.Join(append(u.firstSSH(m, t[0], t[1]), ""), " "), t[0], t[1], t[0], t[0])
+			}
+		}
+		m.sshUser, m.host = t[0], t[1]
+		return
 	}
 	m.unreachable = why + " (tried " + strings.Join(func() (s []string) {
 		for _, t := range try {
@@ -449,8 +523,13 @@ func (u *upRun) steps() int {
 	for _, m := range u.machines {
 		u.reach(m)
 		switch {
+		case m.nosudo != "": // a refusal under --check too: no play can make the login through it
+			fmt.Fprintf(u.stderr, "nova-fleet up: %s\n", m.nosudo)
+			return fail("reach "+m.name, 1)
 		case m.unreachable != "" && !u.check:
-			fmt.Fprintf(u.stderr, "nova-fleet up: %s does not answer ssh: %s\n", m.name, m.unreachable)
+			first := map[bool]string{true: m.user, false: m.first}[m.os == "darwin"]
+			fmt.Fprintf(u.stderr, "nova-fleet up: %s does not answer ssh: %s; run: ssh %s%s@%s true  # a provider whose first login is not %s: --first-login <login> or %s=<login>@%s, and --first-key <file> for its key\n",
+				m.name, m.unreachable, strings.Join(append(u.firstSSH(m, m.first, m.address), ""), " "), first, m.address, first, m.name, m.address)
 			return fail("reach "+m.name, 1)
 		case m.unreachable != "":
 			u.say("UP %s UNREACHABLE %s", m.name, m.unreachable)
@@ -463,7 +542,7 @@ func (u *upRun) steps() int {
 	// 4. a new fleet's first machine: the tailnet (no row yet, so no address recorded and the
 	// firewall waits for the join), then PostgreSQL and Redis sealing their passwords into this seat.
 	if first != nil {
-		hand := fmt.Sprintf("[services]\n%s ansible_host=%s ansible_user=%s nova_os=%s nova_arch=%s\n", first.name, first.host, first.sshUser, first.os, first.arch)
+		hand := fmt.Sprintf("[services]\n%s ansible_host=%s ansible_user=%s nova_os=%s nova_arch=%s %s\n", first.name, first.host, first.sshUser, first.os, first.arch, u.keyVar(first))
 		if err := os.WriteFile(filepath.Join(u.dir, "first.ini"), []byte(hand), 0o600); err != nil {
 			fmt.Fprintf(u.stderr, "nova-fleet up: write the first machine's inventory: %v; run: the same nova-fleet up with TMPDIR set to a writable directory\n", err)
 			return fail("first", 1)
@@ -527,10 +606,14 @@ func (u *upRun) steps() int {
 			u.say("UP JOIN %s SKIPPED this control node (tailscale status Self): already joined", m.name)
 		} else {
 			u.tskey = u.keys[m.name]
-			c := u.play("join", false, pg, "-e", "nova_join_host="+m.name, "-e", "nova_join_user="+m.user,
-				"-e", "nova_join_address="+m.host, "-e", "nova_join_root_user="+m.sshUser,
-				"-e", "nova_join_os="+m.os, "-e", "nova_join_arch="+m.arch, "-e", "nova_join_roles="+roles,
-				"-e", "nova_seal_store="+u.store, "-e", "nova_bus_redis="+u.bus)
+			args := []string{"-e", "nova_join_host=" + m.name, "-e", "nova_join_user=" + m.user,
+				"-e", "nova_join_address=" + m.host, "-e", "nova_join_root_user=" + m.sshUser,
+				"-e", "nova_join_os=" + m.os, "-e", "nova_join_arch=" + m.arch, "-e", "nova_join_roles=" + roles,
+				"-e", "nova_seal_store=" + u.store, "-e", "nova_bus_redis=" + u.bus}
+			if k := u.keyVar(m); k != "" { // the first login's key, until the tailnet takes over
+				args = append(args, "-e", k)
+			}
+			c := u.play("join", false, pg, args...)
 			if c != 0 {
 				return fail("join "+m.name, c)
 			}

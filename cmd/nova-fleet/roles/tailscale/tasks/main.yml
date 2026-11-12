@@ -1,6 +1,6 @@
 ---
 # The tailscale role (cmd/nova-fleet/tailscale.yml): install, join with the adopter's auth key, record the MagicDNS name.
-# The key is TAILSCALE_AUTHKEY in the control node's environment (the run is under nova-secrets exec); it reaches the
+# The key is NOVA_FLEET_AUTHKEY (up mints it) or TAILSCALE_AUTHKEY in the control node's environment; it reaches the
 # machine only on the module's stdin (pipelining, so never on its disk, argv or environment). A machine Running with
 # the wanted tags is not joined again.
 - name: the platform
@@ -37,6 +37,10 @@
   when: ts_os == 'darwin' and not ts_root_daemon
 
 - name: join (Linux, macOS)
+  vars:
+    # nova-fleet up's minted key, under its own name (nova-secrets exec drops inherited names its seat holds); else
+    # TAILSCALE_AUTHKEY, from a run under nova-secrets exec --only TAILSCALE_AUTHKEY. Templated where used, never a fact.
+    ts_authkey: "{{ lookup('ansible.builtin.env', 'NOVA_FLEET_AUTHKEY') or lookup('ansible.builtin.env', 'TAILSCALE_AUTHKEY') }}"
   block:
     - name: the machine's tailnet state
       ansible.builtin.command: "{{ ts_bin }} status --json"
@@ -71,7 +75,7 @@
 
     - name: the join has its key (refused before anything runs when it has not)
       ansible.builtin.assert:
-        that: lookup('ansible.builtin.env', 'TAILSCALE_AUTHKEY') | length > 0
+        that: ts_authkey | length > 0
         fail_msg: >-
           {{ inventory_hostname }}: tailnet state {{ ts_state }} (tags {{ ts_self.Tags | default([], true) }}, want {{ ts_tags }}) and no
           TAILSCALE_AUTHKEY in the environment; run the play under nova-secrets exec --only TAILSCALE_AUTHKEY (cmd/nova-fleet/README.md, "tailscale.yml")
@@ -82,7 +86,7 @@
       ansible.builtin.command:
         argv: "{{ [ts_bin, 'up', '--reset', '--auth-key=file:/dev/stdin', '--hostname=' ~ inventory_hostname,
                    '--advertise-tags=' ~ (ts_tags | join(','))] + ts_ssh_flag }}"
-        stdin: "{{ lookup('ansible.builtin.env', 'TAILSCALE_AUTHKEY') }}"
+        stdin: "{{ ts_authkey }}"
         stdin_add_newline: false
       vars:
         ansible_pipelining: true

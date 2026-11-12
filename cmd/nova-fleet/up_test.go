@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -24,6 +25,9 @@ type upFake struct {
 	peers       map[string]string   // tailnet peers: name -> ip
 	bytes       map[string][2]int64 // a peer's TxBytes and RxBytes in tailscale status, 0 0 when unnamed
 	unreachable map[string]bool     // addresses that answer no ssh at all
+	first       map[string]string   // an address's first login when it is not root
+	keyed       map[string]bool     // addresses that answer only ssh -i <key> -o IdentitiesOnly=yes
+	nosudo      map[string]bool     // addresses whose first login cannot sudo without a password
 	fail        string              // a call containing this word exits 4
 	store       string
 	key         string
@@ -125,7 +129,15 @@ func (f *upFake) install(t *testing.T) {
 	}
 	runCmd = func(bin string, args, env []string) (int, error) {
 		line := record(bin, slices.Clone(args))
-		if k := slices.IndexFunc(env, func(e string) bool { return strings.HasPrefix(e, "TAILSCALE_AUTHKEY=") }); k >= 0 {
+		if filepath.Base(bin) == "nova-secrets" && len(args) > 0 && args[0] == "exec" { // as the real one: the inherited environment loses every name the seat holds
+			env = slices.DeleteFunc(slices.Clone(env), func(e string) bool {
+				name, _, _ := strings.Cut(e, "=")
+				return slices.Contains(strings.Fields(f.names), name)
+			})
+		}
+		if k := slices.IndexFunc(env, func(e string) bool {
+			return strings.HasPrefix(e, "TAILSCALE_AUTHKEY=") || strings.HasPrefix(e, "NOVA_FLEET_AUTHKEY=")
+		}); k >= 0 {
 			f.calls[len(f.calls)-1] += " [env " + env[k] + "]"
 		}
 		if f.fail != "" && strings.Contains(line, f.fail) {
@@ -194,11 +206,16 @@ func (f *upFake) install(t *testing.T) {
 			}
 			return `{"BackendState":"Running","Self":{"ID":"n-control","HostName":"control","Tags":` + tags + self + `},"Peer":{` + strings.Join(peers, ",") + `}}`, "", 0
 		case strings.HasPrefix(line, "ssh -o BatchMode=yes -o ConnectTimeout=10 "):
-			target := strings.Fields(line)[5]
-			user, host, _ := strings.Cut(target, "@")
+			w := strings.Fields(line)
+			at := slices.IndexFunc(w, func(s string) bool { return strings.Contains(s, "@") })
+			user, host, _ := strings.Cut(w[at], "@")
 			name := strings.TrimSuffix(host, ".ts.example")
-			if f.unreachable[host] || (user != "root" && f.peers[name] == "" && name != f.self) {
+			first := cmp.Or(f.first[host], "root")
+			if f.unreachable[host] || (user != first && f.peers[name] == "" && name != f.self) || (f.keyed[host] && !strings.Contains(line, " -o IdentitiesOnly=yes ")) {
 				return "", "ssh: connect to host " + host + " port 22: Operation timed out", 255
+			}
+			if strings.HasSuffix(line, " sudo -n true") && f.nosudo[host] {
+				return "", "sudo: a password is required", 1
 			}
 			return "", "", 0
 		case strings.Contains(line, "age-keygen -y"):
@@ -240,7 +257,7 @@ func TestUpParse(t *testing.T) {
 		{nil, "nova-fleet up: missing <name>=<address> and --tools; run: nova-fleet up -h\n"},
 		{[]string{"--tools", "v1.0.0"}, "nova-fleet up: missing <name>=<address>; run: nova-fleet up -h\n"},
 		{[]string{"--bogus"}, "nova-fleet up: unknown flag --bogus; run: nova-fleet up -h\n"},
-		{[]string{"--tools", "v1", "Web=1.2.3.4"}, "nova-fleet up: want a machine as <name>=<address>[/<os>/<arch>] (a lowercase name), got Web=1.2.3.4; run: nova-fleet up -h\n"},
+		{[]string{"--tools", "v1", "Web=1.2.3.4"}, "nova-fleet up: want a machine as <name>=[<login>@]<address>[/<os>/<arch>] (a lowercase name and login), got Web=1.2.3.4; run: nova-fleet up -h\n"},
 		{[]string{"--tools", "v1", "a=1.2.3.4/linux"}, "nova-fleet up: want a machine as"},
 		{[]string{"--tools", "v1", "a=1", "a=2"}, "nova-fleet up: machine a is named twice"},
 		{[]string{"--tools", "v1", "--runners", "https://gitlab.com/x", "a=1"}, "nova-fleet up: --runners wants"},
@@ -248,7 +265,7 @@ func TestUpParse(t *testing.T) {
 		{[]string{"--tools"}, "nova-fleet up: --tools wants a value"},
 		{[]string{"--tools", "v1", "a=1", "--", "-v"}, "nova-fleet up: after -- only -e name=value is passed on, got -v"},
 		{[]string{"--tools", "v1", "a=1", "--", "-e"}, "nova-fleet up: -e wants name=value"},
-		{[]string{"--tools", "v1", "a=1", "--", "-e", "@vars.yml"}, "nova-fleet up: -e wants name=value, got @vars.yml"},
+		{[]string{"--tools", "v1", "a=1", "--", "-e", "@vars.yml"}, "nova-fleet up: -e wants name=value or a JSON object with one name, got @vars.yml"},
 		{[]string{"--tools", "v1", "a=1", "--", "-e", "nova_tailnet=false"}, "nova-fleet up: -e nova_tailnet is up's own (or skips a pillar: Tailscale, PostgreSQL, Redis and Ansible are not optional)"},
 		{[]string{"--tools", "v1", "a=1", "--", "-e", "nova_join_user=x"}, "nova-fleet up: -e nova_join_user is up's own"},
 	} {
@@ -343,11 +360,11 @@ func TestUpOrder(t *testing.T) {
 		"gh auth status",
 		"ssh -o BatchMode=yes -o ConnectTimeout=10 root@203.0.113.7 true",
 		"ssh -o BatchMode=yes -o ConnectTimeout=10 root@203.0.113.8 true",
-		"ansible-playbook -i first.ini tailscale.yml -e nova_tailscale_record_address=false -e nova_firewall=false [env TAILSCALE_AUTHKEY=" + fakeKey("auth", "SECRET1") + "]",
+		"ansible-playbook -i first.ini tailscale.yml -e nova_tailscale_record_address=false -e nova_firewall=false [env NOVA_FLEET_AUTHKEY=" + fakeKey("auth", "SECRET1") + "]",
 		"ansible-playbook -i first.ini postgres.yml -e nova_seal_store=" + f.store + " -e nova_seal_seat=control -e nova_seal_key=" + f.key + " -e nova_store_hosts=first\n",
 		"ansible-playbook -i first.ini redis.yml -e nova_seal_store=",
 		"nova-secrets exec --only NOVA_PG_PASSWORD -- /bin/ansible-playbook -i inventory join.yml -e nova_join_host=first -e nova_join_user=nova -e nova_join_address=203.0.113.7 -e nova_join_root_user=root -e nova_join_os=linux -e nova_join_arch=amd64 -e nova_join_roles=services,bench,runner -e nova_seal_store=" + f.store + " -e nova_bus_redis=first.ts.example:6379",
-		"-e nova_join_host=second -e nova_join_user=nova -e nova_join_address=203.0.113.8 -e nova_join_root_user=root -e nova_join_os=linux -e nova_join_arch=amd64 -e nova_join_roles=bench,runner -e nova_seal_store=" + f.store + " -e nova_bus_redis=first.ts.example:6379 [env TAILSCALE_AUTHKEY=" + fakeKey("auth", "SECRET2") + "]",
+		"-e nova_join_host=second -e nova_join_user=nova -e nova_join_address=203.0.113.8 -e nova_join_root_user=root -e nova_join_os=linux -e nova_join_arch=amd64 -e nova_join_roles=bench,runner -e nova_seal_store=" + f.store + " -e nova_bus_redis=first.ts.example:6379 [env NOVA_FLEET_AUTHKEY=" + fakeKey("auth", "SECRET2") + "]",
 		"ssh -o BatchMode=yes nova@first.ts.example sh -c 'PATH=$HOME/.local/bin:/opt/homebrew/bin:$PATH age-keygen -y $HOME/.config/nova-secrets/first.key'",
 		"nova-secrets grant NOVA_BUS_PASSWORD --to first --pub age1fakenova@first.ts.example\n",
 		"nova-secrets grant NOVA_BUS_PASSWORD --to second --pub age1fake",

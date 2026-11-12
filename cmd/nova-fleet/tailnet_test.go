@@ -375,8 +375,8 @@ func TestUpTailnet(t *testing.T) {
 		t.Errorf("keys minted = %d, want 2 (first, third)", f.api.keys)
 	}
 	all := strings.Join(f.calls, "\n")
-	if strings.Count(all, "TAILSCALE_AUTHKEY=") != 2 || !strings.Contains(all, "tailscale.yml -e nova_tailscale_record_address=false -e nova_firewall=false [env TAILSCALE_AUTHKEY="+fakeKey("auth", "SECRET1")+"]") ||
-		!strings.Contains(all, "nova_join_host=third") || !strings.Contains(all, "[env TAILSCALE_AUTHKEY="+fakeKey("auth", "SECRET2")+"]") {
+	if strings.Count(all, "NOVA_FLEET_AUTHKEY=") != 2 || !strings.Contains(all, "tailscale.yml -e nova_tailscale_record_address=false -e nova_firewall=false [env NOVA_FLEET_AUTHKEY="+fakeKey("auth", "SECRET1")+"]") ||
+		!strings.Contains(all, "nova_join_host=third") || !strings.Contains(all, "[env NOVA_FLEET_AUTHKEY="+fakeKey("auth", "SECRET2")+"]") {
 		t.Errorf("the keys' plays:\n%s", all)
 	}
 	for _, c := range f.calls {
