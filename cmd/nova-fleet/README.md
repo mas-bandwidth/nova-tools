@@ -445,6 +445,7 @@ events may use them.
 | `github_runner_version`, `github_runner_sha256` | the pinned actions/runner release and its digests |
 | `github_runner_ci_limit_seconds` | 120: the per-commit job limit every runner enforces ("CI rules") |
 | `github_runner_ci_push_branches` | `[main, sprint/*]`: the branches a push may run CI on, as globs where `*` and `?` stop at a `/` (tags always may); any other branch gets CI through its pull request |
+| `nova_runner_git_probe` | false: true probes the Linux runners' workspace clones for the checkout's git abort ("A workspace clone git cannot fetch into" below) |
 
 **The token.** The play asks GitHub for it on the control node with that node's own `gh` login, `gh api -X POST
 <repos|orgs>/<path>/actions/runners/registration-token -q .token` (`remove-token` to retire), never a pasted token,
@@ -501,6 +502,40 @@ nova-fleet github-runners -- -e github_runner_url=https://github.com/OWNER/REPO 
 That stops and removes the services, removes the runners from GitHub and deletes their directories. With `-e
 github_runner_deregister=false` no token is read and the GitHub entries stay for you to delete. A removal token also
 expires in an hour.
+
+**A workspace clone git cannot fetch into.** A runner keeps each repository's clone between jobs, in
+`<runner dir>/_work/<repo>/<repo>`. A clone that is shallow (`.git/shallow`) and a promisor partial clone
+(`remote.origin.promisor=true`, `partialclonefilter=tree:0`) can make git abort in actions/checkout's fetch (`git -c
+protocol.version=2 fetch --prune --no-recurse-submodules --filter=tree:0 --unshallow origin ...`) with `BUG:
+builtin/pack-objects.c: ... should_include_obj should only be called on existing objects`, `index-pack failed` and exit
+128, so every job that lands on that runner fails at checkout. git 2.56.1 aborts on the same clone as 2.53.0, and a
+repack first does not help: a newer git is not the fix. `-e nova_runner_git_probe=true` asks the play to look, after
+the runners are converged; it is off by default, since each clone it probes is copied and fetched. Linux runners only:
+on macOS the run prints `GIT-PROBE <machine> skipped`, and the Windows side of a WSL machine is not probed.
+
+```
+nova-fleet github-runners --check -- -l MACHINE -e nova_runner_git_probe=true
+```
+
+Only a clone that is both shallow and a promisor is probed (the others print `not-probed`), and only while its runner
+is idle (no `Runner.Worker` from its `bin`, checked before and after the copy; a busy one prints `skipped=busy`; run
+again later). The clone's `.git` is copied under `<home>/.cache/nova-git-probe` (`github_runner_git_probe_scratch`),
+the checkout's fetch is run on the copy with the token from the machine's seat (`nova-secrets exec --only
+GH_GATE_TOKEN`, through the credential helper of `nova-secrets help exec`), and the copy is deleted. The fetch's output
+is searched for the BUG and never printed. The probe never writes, moves or deletes a workspace. Each clone prints
+`GIT-PROBE <machine> <runner> <workspace> BUG|clean|skipped=busy|not-probed|error=<why>`. A `BUG` fails the run, naming
+the machine, the runner and the workspace, with the fix as `GIT-PROBE-FIX <machine> <runner>: <command>`; an `error`
+(the fetch failed another way, or the copy could not be made) fails it too.
+
+**The fix** is a separate step, by hand, on the machine: move the clone aside while its runner is idle, and the next
+job clones again. The command the failure prints moves it only if no job is running there:
+
+```
+pgrep -f '<runner dir>/bin/[R]unner.Worker' || mv '<workspace>' '<workspace>.git-bug'
+```
+
+If `pgrep` prints a process, a job is running: wait and run it again. Delete `<workspace>.git-bug` once a job on that
+runner has checked out again.
 
 ## Windows runners of a WSL machine
 

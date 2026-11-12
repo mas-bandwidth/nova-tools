@@ -63,7 +63,8 @@ func TestRunnerStopsOnlyWhenIdle(t *testing.T) {
 	assert.Less(t, taskIndex(runner, "the job it is running ends before the changed daemon"), taskIndex(runner, "load the daemon, or reload it"))
 }
 
-// Without -e github_runner_url the run is the machine record's (record.yml); with it, that one url's (scope.yml).
+// Without -e github_runner_url the run is the machine record's (record.yml); with it, that one url's (scope.yml). Only
+// the workspace git probe, run when asked (TestRunnerGitProbeIsOffByDefault), comes after them.
 func TestRunnerRunIsTheRecordsWithoutAURL(t *testing.T) {
 	t.Parallel()
 	main := roleTaskFile(t, "main.yml")
@@ -73,7 +74,7 @@ func TestRunnerRunIsTheRecordsWithoutAURL(t *testing.T) {
 	record := runnerTask(t, main, "every runner of the machine record")
 	assert.Equal(t, "record.yml", asText(record["ansible.builtin.include_tasks"]))
 	assert.Equal(t, "github_runner_url is not defined", asText(record["when"]))
-	assert.Equal(t, len(main)-1, taskIndex(main, "every runner of the machine record"), "the runs are the last tasks")
+	assert.Equal(t, len(main)-2, taskIndex(main, "every runner of the machine record"), "the runs are the last tasks but the probe")
 }
 
 // A held runner (github_runner_hold, e.g. one running a multi-hour model check nothing resumes) is neither waited on nor
