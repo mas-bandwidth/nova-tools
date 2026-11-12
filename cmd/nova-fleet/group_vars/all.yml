@@ -169,6 +169,14 @@ nova_runner_packages:
     - bzip2
     - xz-utils
     - unzip
+    # the base tools CI steps call, listed so a minimal image gets them too, and cloud-localds (a VM's seed image)
+    - curl
+    - git
+    - gnupg
+    - iproute2
+    - openssh-client
+    - python3
+    - cloud-image-utils
     - tcpdump
 # Foreign dpkg architectures the debian list may name packages of (`libfoo-dev:s390x`), Ubuntu only: each is enabled in
 # dpkg and fetched from nova_runner_ports_uri, and the native sources are restricted to the native architecture.
