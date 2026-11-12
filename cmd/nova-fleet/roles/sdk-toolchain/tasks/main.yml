@@ -198,6 +198,8 @@
       test -e {{ item.probe | quote }} || { echo "SDK-TOOLCHAIN {{ item.name }} {{ item.version }}: installed, but {{ item.probe }} is missing"; exit 1; }
       echo "SDK-TOOLCHAIN-INSTALLED {{ item.name }} {{ item.version }}"
     executable: /bin/bash
+  # git (a git tool, go's direct module fetches) asks no system credential helper (a Mac's is the keychain) and never prompts
+  environment: { GIT_CONFIG_NOSYSTEM: "1", GIT_TERMINAL_PROMPT: "0" }
   loop: "{{ sdk_missing }}"
   loop_control: { label: "{{ item.name }} {{ item.version }}" }
   register: sdk_installed

@@ -40,9 +40,10 @@ type upFake struct {
 	namesErr    string // nova-secrets names exits 2 with this stderr
 	busErr      string // nova-bus who exits 1 with this stderr
 	api         *fakeAPI
-	self        string // this control node's own MagicDNS label (tailscale status Self), when it has one
-	pushErr     string // the store's plain git push exits 1 with this stderr
-	branchErr   string // and a push to a branch exits 1 with this one
+	self        string   // this control node's own MagicDNS label (tailscale status Self), when it has one
+	pushErr     string   // the store's plain git push exits 1 with this stderr
+	branchErr   string   // and a push to a branch exits 1 with this one
+	pushEnv     []string // the environment of the last git push
 }
 
 // fakeAPI is the Tailscale API: the policy and its ETag, the calls made, the keys minted.
@@ -166,6 +167,9 @@ func (f *upFake) install(t *testing.T) {
 	}
 	outCmd = func(bin string, args, env []string) (string, string, int) {
 		line := record(bin, slices.Clone(args))
+		if strings.Contains(line, " push --quiet") {
+			f.pushEnv = env
+		}
 		switch {
 		case strings.Contains(line, "import ensurepip, venv") && f.noVenv:
 			return "", "ModuleNotFoundError: No module named 'ensurepip'", 1
@@ -929,6 +933,10 @@ func TestUpStorePushRefused(t *testing.T) {
 		!strings.Contains(errs, "UP STORE FAILED") || strings.Contains(out, "UP STORE OK") ||
 		!strings.Contains(out, "UP SERVICES OK") || !strings.Contains(out, "UP BUS OK") || !strings.Contains(out, "UP MACHINE second OK") {
 		t.Errorf("code %d\n%s\n%s", code, out, errs)
+	}
+	// git on the control node never asks a system credential helper (a Mac's is the keychain) and never prompts
+	if !slices.Contains(f.pushEnv, "GIT_CONFIG_NOSYSTEM=1") || !slices.Contains(f.pushEnv, "GIT_TERMINAL_PROMPT=0") {
+		t.Errorf("the store's git push ran without GIT_CONFIG_NOSYSTEM=1 and GIT_TERMINAL_PROMPT=0")
 	}
 	// a refused branch too, or a push that fails some other way (the network), stops the run at the store
 	for _, g := range []*upFake{{pushErr: f.pushErr, branchErr: "fatal: could not read from remote"}, {pushErr: "fatal: unable to access: Could not resolve host"}} {
