@@ -179,7 +179,7 @@ func build(machines []Row, services []Row, local string) (*inventory, error) {
 		inv.Meta.Hostvars[m] = hv
 		// a plain Windows host (not the Windows side of WSL): reached over its OpenSSH, whose shell is PowerShell, and
 		// in the windows group only, never a worker group, so no play written for Linux or macOS reaches it
-		if v["os"] == "windows" {
+		if strings.EqualFold(v["os"], "windows") {
 			hv["ansible_shell_type"] = "powershell"
 			groups["windows"] = append(groups["windows"], m)
 			continue

@@ -56,6 +56,7 @@
   ansible.builtin.set_fact:
     github_runner_win_registration: "{{ github_runner_win_registration_native if github_runner_win_native | bool else github_runner_win_registration }}"
   when: not ansible_check_mode
+  no_log: true   # the registration results: config.cmd's raw output, printed only by the redacting debug below
 
 # no_log hides the whole result, the cause with it: each outcome is printed with the token redacted
 - name: the registrations' outcome (token redacted)
