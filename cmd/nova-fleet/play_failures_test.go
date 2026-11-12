@@ -37,7 +37,7 @@ func roleTask(t *testing.T, file, prefix string) map[string]any {
 // step's exit code was tr's and a failing powershell passed.
 func TestCIRulesWSLStepFailsWhenPowerShellFails(t *testing.T) {
 	t.Parallel()
-	task := roleTask(t, "roles/github-runner/tasks/ci-rules.yml", "the WSL machine's Windows runners")
+	task := roleTask(t, "roles/github-runner/tasks/ci-rules.yml", "apply them to the Windows runners")
 	script := asText(task["ansible.builtin.shell"])
 	require.Contains(t, script, "| tr -d '\\r'")
 	assert.Contains(t, script, "pipefail", "the pipeline's exit code is powershell's")

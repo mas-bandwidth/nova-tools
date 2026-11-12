@@ -2,7 +2,7 @@
 # A WSL machine's Windows-side runners (cmd/nova-fleet/README.md, "Windows runners of a WSL machine"): what its machine record's
 # windows_runners names (the inventory's nova_windows_runners, a list of {url, scope, count, labels}), set up from the
 # WSL login through interop: powershell.exe by its full path runs files/runner-windows.ps1, staged to
-# C:\ProgramData\nova-runner-stage, as the Windows account that started WSL (elevated). No Windows login, password or
+# C:\nova-stage (sealed, proved before every elevated call: tasks/wsl-stage.yml), as the Windows account that started WSL (elevated). No Windows login, password or
 # key is involved. Each runner is <host>-win-<slug>-<i> in C:\actions-runner\<slug>-<i>, a Windows service run as
 # NETWORK SERVICE (config.cmd --runasservice), registered with a token from token.yml on its stdin. An existing
 # registered runner is left alone. --check reads, asks for the tokens it would need, and prints the plan.
@@ -75,16 +75,12 @@
       labels={{ github_runner_win_want | map(attribute='labels') | unique | join(' ') }} (check: nothing changed)
   when: ansible_check_mode
 
-- name: the script, staged on the Windows side
-  when: not ansible_check_mode
-  block:
-    - name: the staging directory
-      ansible.builtin.file: { path: "{{ github_runner_wsl_stage_unix }}", state: directory, mode: "0755" }
-    - name: runner-windows.ps1
-      ansible.builtin.copy: { src: runner-windows.ps1, dest: "{{ github_runner_wsl_stage_unix }}/runner-windows.ps1", mode: "0644" }
+- name: the scripts, staged on the Windows side where only Administrators can change them
+  ansible.builtin.include_tasks: wsl-stage.yml
 
 - name: each wanted runner unpacked, with the .env lines the role owns
   ansible.builtin.shell: >-
+    {{ github_runner_win_stage_check }} &&
     "{{ github_runner_wsl_powershell }}" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File {{ github_runner_wsl_script | quote }}
     -Action install -Dir {{ item.dir | quote }} -Cache {{ github_runner_wsl_cache | quote }}
     -Version {{ github_runner_version | quote }} -Sha {{ github_runner_sha256['win-x64'] | quote }}
@@ -103,6 +99,7 @@
 
 - name: each wanted runner's service starts at boot and is running
   ansible.builtin.shell: >-
+    {{ github_runner_win_stage_check }} &&
     "{{ github_runner_wsl_powershell }}" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File {{ github_runner_wsl_script | quote }}
     -Action ensure -Dir {{ item.dir | quote }} </dev/null
   args: { executable: /bin/sh }
@@ -117,13 +114,9 @@
 - name: the CI rules on these runners
   when: not ansible_check_mode
   block:
-    - name: the hooks' staging directory
-      ansible.builtin.file: { path: "{{ github_runner_wsl_ci_stage_unix }}", state: directory, mode: "0755" }
-    - name: the hooks, staged
-      ansible.builtin.copy: { src: "ci-rules/{{ item }}", dest: "{{ github_runner_wsl_ci_stage_unix }}/{{ item }}", mode: "0644" }
-      loop: [nova-ci-rules.ps1, job-started.ps1, job-completed.ps1]
-    - name: apply them
+    - name: apply them (the hooks were staged with the script)
       ansible.builtin.shell: >-
+        {{ github_runner_win_stage_check }} &&
         "{{ github_runner_wsl_powershell }}" -NoProfile -NonInteractive -ExecutionPolicy Bypass
         -File {{ github_runner_wsl_ci_script | quote }} apply {{ github_runner_ci_limit_seconds }}
         {{ github_runner_ci_push_branches | join(' ') | quote }} {{ github_runner_win_want | map(attribute='dir') | map('quote') | join(' ') }}
