@@ -684,6 +684,6 @@ func TestWindowsAdminRunnerSealed(t *testing.T) {
 		"failed_when: rp_win_ccache_is.rc != 0 or rp_win_ccache_is.stdout != 'EXACT'")
 	inOrder(t, "the ccache exactness check", string(c),
 		"if [ ! -e \"$d\" ] && [ ! -L \"$d\" ]; then echo ABSENT; exit 0; fi",
-		"[ \"$have\" = 'f ./VERSION f ./ccache.exe d ./msvc f ./msvc/cl.exe ' ]",
+		"[ \"$have\" = 'd ./msvc f ./VERSION f ./ccache.exe f ./msvc/cl.exe ' ]",
 		"cmp -s \"$src/ccache.exe\" \"$d/ccache.exe\" && cmp -s \"$src/ccache.exe\" \"$d/msvc/cl.exe\"")
 }

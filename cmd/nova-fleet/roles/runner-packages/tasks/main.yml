@@ -57,7 +57,7 @@
       src={{ (rp_win_ccache_stage.path | default('') ~ '/ccache-' ~ nova_runner_windows_ccache.version ~ '-windows-x86_64') | quote }}
       if [ ! -e "$d" ] && [ ! -L "$d" ]; then echo ABSENT; exit 0; fi
       have=$(cd "$d" && find . -mindepth 1 -printf '%y %p\n' | LC_ALL=C sort | tr '\n' ' ')
-      if [ ! -L "$d" ] && [ "$have" = 'f ./VERSION f ./ccache.exe d ./msvc f ./msvc/cl.exe ' ] &&
+      if [ ! -L "$d" ] && [ "$have" = 'd ./msvc f ./VERSION f ./ccache.exe f ./msvc/cl.exe ' ] &&
         cmp -s "$src/ccache.exe" "$d/ccache.exe" && cmp -s "$src/ccache.exe" "$d/msvc/cl.exe" &&
         [ "$(cat "$d/VERSION")" = {{ nova_runner_windows_ccache.version | quote }} ]; then echo EXACT; else echo DIFFERS; fi
     # icacls from the WSL login (the elevated Windows account): owner Administrators throughout; on the directory nothing
