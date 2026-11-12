@@ -52,7 +52,7 @@ var (
 )
 
 var kinds = map[string]*kind{
-	"machine": {name: "machine", table: "machines",
+	"machine": {name: "machine", table: "machines", check: checkMachine,
 		fields: []field{
 			{name: "address", typ: "text"},
 			{name: "public", typ: "public", null: true},
@@ -244,7 +244,13 @@ func canonicalScopes(f field, raw string) (string, error) {
 }
 
 // adminAccount is a Windows local user name an admin runner runs as (at most 20 characters, Windows' limit).
-var adminAccount = regexp.MustCompile(`^[a-z][a-z0-9-]{0,19}$`)
+// builtinAccounts are Windows' own local users, never an admin runner's: the play would take one over.
+// reservedLabels are labels GitHub gives runners for their OS and kind: a job selecting one would reach the admin runner.
+var (
+	adminAccount    = regexp.MustCompile(`^[a-z][a-z0-9-]{0,19}$`)
+	builtinAccounts = []string{"administrator", "guest", "defaultaccount", "wdagutilityaccount"}
+	reservedLabels  = []string{"self-hosted", "windows", "x64", "linux", "macos"}
+)
 
 // adminRunner is one entry of windows_admin_runners: one Windows runner on url (a repository) run as the local
 // administrator account, carrying only labels (GitHub adds self-hosted, Windows and X64). Secret is the nova-secrets
@@ -269,9 +275,15 @@ func parseAdmins(raw string) ([]adminRunner, error) {
 		if !https || !eq || !colon || !scopeTarget.MatchString(w.URL) || strings.Count(w.URL, "/") != 4 || !adminAccount.MatchString(account) {
 			return nil, fmt.Errorf("%q: want <url>=<account>:<label>[+<label>], the url https://github.com/<owner>/<repo> (a repository, never an organization), the account a lower-case letter then at most 19 lower-case letters, digits and dashes", e)
 		}
+		if slices.Contains(builtinAccounts, account) {
+			return nil, fmt.Errorf("%q: account %s is a Windows built-in account; give the runner its own account", e, account)
+		}
 		for _, l := range w.Labels {
 			if !scopeLabel.MatchString(l) {
 				return nil, fmt.Errorf("%q: label %q: want letters, digits, dot, dash and underscore", e, l)
+			}
+			if slices.Contains(reservedLabels, strings.ToLower(l)) {
+				return nil, fmt.Errorf("%q: label %q is one GitHub gives runners (%s); give a label of the runner's own", e, l, strings.Join(reservedLabels, ", "))
 			}
 		}
 		slices.Sort(w.Labels)
@@ -456,6 +468,40 @@ func checkService(r Row) error {
 	}
 	if r.F["keys"] != "" && r.F["seat"] == "" {
 		p = append(p, fmt.Sprintf("service %s names secrets (--keys %s) and no --seat to open them from", r.Name, r.F["keys"]))
+	}
+	if len(p) > 0 {
+		return fmt.Errorf("%s", strings.Join(p, "; "))
+	}
+	return nil
+}
+
+// checkMachine refuses an admin runner whose account is the machine's login, or whose label another runner of the
+// machine carries, or is the machine's name: a job meant for that runner could then land on the admin one. A field
+// that does not parse is left to its own refusal.
+func checkMachine(r Row) error {
+	admins, err := parseAdmins(r.F["windows_admin_runners"])
+	if err != nil {
+		return nil
+	}
+	taken := map[string]string{strings.ToLower(r.Name): "the machine's name"}
+	for _, f := range []string{"windows_runners", "runner_scopes"} {
+		ws, _ := parseScopes(r.F[f]) // ignored: a bad value has no labels and is refused by its own check
+		for _, w := range ws {
+			for _, l := range w.Labels {
+				taken[strings.ToLower(l)] = f + " of " + w.URL
+			}
+		}
+	}
+	var p []string
+	for _, a := range admins {
+		if strings.EqualFold(a.Account, r.F["user"]) {
+			p = append(p, fmt.Sprintf("machine %s: admin runner account %s is the machine's user; give the runner its own account", r.Name, a.Account))
+		}
+		for _, l := range a.Labels {
+			if by, ok := taken[strings.ToLower(l)]; ok {
+				p = append(p, fmt.Sprintf("machine %s: admin runner label %s is also %s; give the admin runner a label of its own", r.Name, l, by))
+			}
+		}
 	}
 	if len(p) > 0 {
 		return fmt.Errorf("%s", strings.Join(p, "; "))

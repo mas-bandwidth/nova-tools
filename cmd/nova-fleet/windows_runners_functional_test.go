@@ -56,7 +56,9 @@ case "$*" in
 		st=ok; [ -f "$d/account" ] && st=$(cat "$d/account")
 		printf 'ACCOUNT %s account=%s rights=ok admin=ok\r\n' "$(arg -Account "$@")" "$st"
 	else
-		printf 'LOGON %s set account=.\\%s acl=set service=s\r\n' "$(arg -Dir "$@")" "$(arg -Account "$@")"
+		[ -f "$d/aclopen" ] && { printf 'ACL-OPEN %s ace=S-1-5-11 owner=S-1-5-32-544\r\n' "$(arg -Dir "$@")"; exit 10; }
+		[ -f "$d/aclsilent" ] && { printf 'LOGON %s ok account=.\\%s restart=no aclset=no service=s\r\n' "$(arg -Dir "$@")" "$(arg -Account "$@")"; exit 0; }
+		printf 'LOGON %s set account=.\\%s restart=done acl=protected aclset=yes service=s\r\n' "$(arg -Dir "$@")" "$(arg -Account "$@")"
 	fi
 	exit 0 ;;
 *"-Action install"*) printf 'INSTALL %s\n' "$(arg -Dir "$@")" >>"$log"; printf 'OK\r\n'; exit 0 ;;
@@ -416,5 +418,58 @@ func TestFunctionalWindowsAdminRunnerWithoutPassword(t *testing.T) {
 		if !strings.Contains(flat, want) {
 			t.Errorf("the refusal lacks %q:\n%s", want, out)
 		}
+	}
+}
+
+// TestFunctionalWindowsAdminRunnerLabelClash: an admin runner whose label another runner of the machine carries (the
+// role's Windows labels, windows_runners' or runner_scopes'), or one GitHub gives runners, in any case, stops the run
+// before anything on Windows changes, naming the clash.
+func TestFunctionalWindowsAdminRunnerLabelClash(t *testing.T) {
+	t.Parallel()
+	for label, want := range map[string]string{
+		"rocketnet-windows": "verifier label rocketnet-windows is windows_runners of https://github.com/mas-bandwidth/rocketnet",
+		"Fleet":             "verifier label Fleet is ", // the role's and windows_runners' both
+		"captain":           "verifier label captain is github_runner_wsl_labels",
+		"tlc":               "verifier label tlc is runner_scopes of https://github.com/o",
+		"X64":               "verifier label X64 is a label GitHub gives runners",
+	} {
+		t.Run(label, func(t *testing.T) {
+			t.Parallel()
+			record := strings.Replace(adminRecord, "labels: [verify-nightly]", "labels: [verify-nightly, "+label+"]", 1) + `
+      nova_runner_scopes:
+        - {url: https://github.com/o, count: 1, labels: [tlc]}`
+			r := newWinRig(t, record, map[string]string{"names": lines(adminSecret)})
+			out, log, err := r.play(t)
+			if err == nil {
+				t.Fatalf("a shared label must fail the run:\n%s", out)
+			}
+			for _, p := range []string{"NAMES", "EXEC", "ACCOUNT", "LOGON", "INSTALL", "REGISTER"} {
+				if len(logLines(log, p)) > 0 {
+					t.Errorf("the run called %s before stopping:\n%s", p, log)
+				}
+			}
+			if !strings.Contains(strings.Join(strings.Fields(out), " "), want) {
+				t.Errorf("the refusal does not name %q:\n%s", want, out)
+			}
+		})
+	}
+}
+
+// TestFunctionalWindowsAdminRunnerDirectoryNotProtected: a logon that reports its directory open (ACL-OPEN), or that
+// does not say acl=protected, fails the run.
+func TestFunctionalWindowsAdminRunnerDirectoryNotProtected(t *testing.T) {
+	t.Parallel()
+	for _, flag := range []string{"aclopen", "aclsilent"} {
+		t.Run(flag, func(t *testing.T) {
+			t.Parallel()
+			files := map[string]string{"reg": lines(append(allDirs, adminDir)...), "svc": lines(append(allDirs, adminDir)...),
+				"gh-repos-mas-bandwidth-rocketnet": ghRocketnet + ghLine(adminName), "gh-orgs-robotgamedevelopers": ghRgd,
+				"names": lines(adminSecret), flag: ""}
+			r := newWinRig(t, adminRecord, files)
+			out, _, err := r.play(t)
+			if err == nil || !strings.Contains(out, "or its directory is not protected") {
+				t.Fatalf("an admin runner's directory that is not protected must fail the run:\n%s", out)
+			}
+		})
 	}
 }

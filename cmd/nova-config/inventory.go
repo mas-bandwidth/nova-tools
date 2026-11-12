@@ -153,6 +153,9 @@ func build(machines []Row, services []Row, local string) (*inventory, error) {
 			if err != nil {
 				return nil, refused("machine %s has corrupt windows_admin_runners (%v); run: nova-config machine set %s --windows_admin_runners <value>", m, err, m)
 			}
+			if err := checkMachine(r); err != nil {
+				return nil, refused("%v; run: nova-config machine set %s --windows_admin_runners <value>", err, m)
+			}
 			hv["nova_windows_admin_runners"] = ws
 		}
 		if env := map[string]unsafeText{}; v["runner_env"] != "" && v["runner_env"] != "{}" {

@@ -399,8 +399,14 @@ func TestWindowsAdminPasswordOnlyInTheEnvironment(t *testing.T) {
 	if strings.Contains(ps, "windowslogonpassword") {
 		t.Error("runner-windows.ps1 gives config.cmd the password as an argument")
 	}
-	allowed := []string{"$pw = Take-Secret $SecretEnv", "$pw = $null", "ConvertTo-SecureString -String $pw -AsPlainText -Force",
-		"[NovaAccount]::ServiceLogon($Account, $pw)", "StartPassword = $pw }"}
+	// a cmdlet's parameters are what module logging (event 4103) records: the value reaches only methods
+	for _, never := range []string{"ConvertTo-SecureString", "StartPassword", "-AsPlainText"} {
+		if strings.Contains(ps, never) {
+			t.Errorf("runner-windows.ps1 hands the password to a cmdlet (%s), which module logging would record", never)
+		}
+	}
+	allowed := []string{"$pw = Take-Secret $SecretEnv", "$pw = $null", "foreach ($c in $pw.ToCharArray()) { $sec.AppendChar($c) }",
+		"[NovaAccount]::ServiceLogon($Account, $pw)", "$rc = [NovaAccount]::SetServiceLogon($s.Name, $want, $pw)"}
 	uses := 0
 	for _, l := range strings.Split(ps, "\n") {
 		if !strings.Contains(l, "$pw") {
@@ -428,6 +434,7 @@ func TestWindowsAdminRunnerOrder(t *testing.T) {
 	s := string(b)
 	at := -1
 	for _, step := range []string{
+		"- name: no admin runner shares a label",
 		"- name: the names in this machine's seat, for the admin runners' passwords",
 		"- name: every admin runner's password is in this machine's seat",
 		"- name: the script, staged on the Windows side",
@@ -457,9 +464,70 @@ func TestWindowsAdminRunnerOrder(t *testing.T) {
 			t.Errorf("wsl-windows.yml lacks %q", want)
 		}
 	}
-	admin := s[strings.Index(s, "{%- for t in nova_windows_admin_runners"):]
+	want := s[strings.Index(s, "- name: the wanted Windows runners"):]
+	admin := want[strings.Index(want, "{%- for t in nova_windows_admin_runners"):]
 	admin = admin[:strings.Index(admin, "{%- endfor -%}")]
 	if strings.Contains(admin, "github_runner_wsl_labels") {
 		t.Error("an admin runner must not carry the role's labels (fleet, the machine's name)")
+	}
+}
+
+// psAction is the body of one -Action of runner-windows.ps1.
+func psAction(t *testing.T, ps, action string) string {
+	t.Helper()
+	i := strings.Index(ps, "  '"+action+"' {")
+	if i < 0 {
+		t.Fatalf("runner-windows.ps1 has no %s action", action)
+	}
+	body := ps[i:]
+	return body[:strings.Index(body, "\n  }\n")]
+}
+
+// TestWindowsAdminRunnerGuards: the account action changes nothing on a user it did not make (no marker), checked
+// before any right, group or password; the logon action sets the service's logon on every call (never only after a
+// password change), then protects the directory (protected, grants replaced by SYSTEM, Administrators and the
+// account) and proves it: an ACE for NETWORK SERVICE, Authenticated Users, Users or Everyone fails the action; and the
+// play fails a logon whose receipt does not say acl=protected.
+func TestWindowsAdminRunnerGuards(t *testing.T) {
+	t.Parallel()
+	b, err := fs.ReadFile(tree, roleDir+"/files/runner-windows.ps1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ps := string(b)
+	if !strings.Contains(ps, "$AccountMarker = 'nova-fleet: windows admin runner'") {
+		t.Error("runner-windows.ps1 defines no account marker")
+	}
+	acct := psAction(t, ps, "account")
+	guard := strings.Index(acct, `if ($u -and "$($u.Description)" -cne $AccountMarker) {`)
+	for _, after := range []string{"Add-AccountApi", "New-LocalUser", "[NovaAccount]::Grant(", "Add-LocalGroupMember", "Set-LocalUser"} {
+		if j := strings.Index(acct, after); guard < 0 || j < guard {
+			t.Errorf("the account action reaches %s before refusing a user without the marker", after)
+		}
+	}
+	if !strings.Contains(acct, "-Description $AccountMarker") || !strings.Contains(acct, "exit 9") {
+		t.Error("the account action makes its user with the marker, and refuses another with exit 9")
+	}
+	logon := psAction(t, ps, "logon")
+	set := strings.Index(logon, "\n      $rc = [NovaAccount]::SetServiceLogon($s.Name, $want, $pw)\n")
+	protect := strings.Index(logon, `& icacls.exe $Dir /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' "*${sid}:(OI)(CI)F" /C /Q`)
+	proof := strings.Index(logon, `"ACL-OPEN $p ace=`)
+	if set < 0 || protect < set || proof < protect {
+		t.Errorf("the logon action must set the logon on every call, then protect the directory, then prove it (at %d, %d, %d)", set, protect, proof)
+	}
+	if !strings.Contains(logon, "$forbidden = @('S-1-5-20', 'S-1-5-11', 'S-1-5-32-545', 'S-1-1-0')") ||
+		!strings.Contains(logon, "$open = @($ids | Where-Object { $forbidden -contains $_") ||
+		!strings.Contains(logon, `& icacls.exe $Dir /remove "*$other" /C /Q`) {
+		t.Error("the logon action must remove every other ACE and fail on NETWORK SERVICE, Authenticated Users, Users or Everyone")
+	}
+	if !strings.Contains(logon, " acl=protected ") {
+		t.Error("the logon receipt says acl=protected")
+	}
+	y, err := fs.ReadFile(tree, roleDir+"/tasks/wsl-windows.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(y), "rejectattr('stdout', 'search', ' acl=protected ')") {
+		t.Error("the play must fail a logon whose receipt does not say acl=protected")
 	}
 }

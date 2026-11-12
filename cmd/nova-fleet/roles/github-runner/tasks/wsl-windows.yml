@@ -44,6 +44,30 @@
       GITHUB-RUNNERS {{ inventory_hostname }}: windows_admin_runners names an organization; give each a repository:
       nova-config machine set {{ inventory_hostname }} --windows_admin_runners 'https://github.com/<owner>/<repo>=<account>:<label>'
 
+# An admin runner's label is its own: one that any other runner of the machine carries (the role's Windows labels,
+# windows_runners' or runner_scopes'), or one GitHub gives runners for their OS and kind, would let a job meant for an
+# ordinary runner land on it and run as an administrator. Compared without case, as GitHub matches labels.
+- name: no admin runner shares a label
+  ansible.builtin.assert:
+    quiet: true
+    that: github_runner_win_label_clash | length == 0
+    fail_msg: >-
+      GITHUB-RUNNERS {{ inventory_hostname }}: an admin runner's label is not its own: {{ github_runner_win_label_clash | join(', ') }};
+      nothing was changed; give it a label no other runner carries:
+      nova-config machine set {{ inventory_hostname }} --windows_admin_runners 'https://github.com/<owner>/<repo>=<account>:<label>'
+  vars:
+    github_runner_win_label_clash: >-
+      {%- set taken = {} -%}
+      {%- for l in ['self-hosted', 'windows', 'x64', 'linux', 'macos'] -%}{%- set _ = taken.update({l: 'a label GitHub gives runners'}) -%}{%- endfor -%}
+      {%- for l in github_runner_wsl_labels -%}{%- set _ = taken.update({l | lower: 'github_runner_wsl_labels'}) -%}{%- endfor -%}
+      {%- for f, ts in [('windows_runners', nova_windows_runners | default([])), ('runner_scopes', nova_runner_scopes | default([]))] -%}{%- for t in ts -%}
+      {%- for l in t.labels | default([]) -%}{%- set _ = taken.update({l | lower: f ~ ' of ' ~ t.url}) -%}{%- endfor -%}{%- endfor -%}{%- endfor -%}
+      {%- set out = [] -%}
+      {%- for t in nova_windows_admin_runners | default([]) -%}{%- for l in t.labels | default([]) -%}
+      {%- if (l | lower) in taken -%}{%- set _ = out.append(t.account ~ ' label ' ~ l ~ ' is ' ~ taken[l | lower]) -%}{%- endif -%}
+      {%- endfor -%}{%- endfor -%}
+      {{ out }}
+
 # Every wanted runner, one entry each: its target, name, directory and labels. The labels are the role's own for the
 # Windows side (github_runner_wsl_labels: fleet and the machine's name; GitHub adds self-hosted, X64 and Windows) and the
 # record's extras for the target. The slug says the kind, so an organization a-b (org-a-b) and a repository a/b (a-b)
@@ -177,7 +201,7 @@
 - name: the accounts' receipt
   ansible.builtin.debug:
     msg: >-
-      {{ (item.stdout_lines | default([]) | select('match', '^(ACCOUNT|NO-SECRET|NEEDS-ELEVATION|BAD-ARGS) ') | list
+      {{ (item.stdout_lines | default([]) | select('match', '^(ACCOUNT|ACCOUNT-NOT-OURS|NO-SECRET|NEEDS-ELEVATION|BAD-ARGS) ') | list
           + (item.stderr_lines | default([]) | select('match', '^(SECRETS |nova-secrets)') | list)) | join(' ')
          | default('rc=' ~ item.rc | default('-'), true) | regex_replace('^ACCOUNT ', 'ACCOUNT ' ~ inventory_hostname ~ ' ') }}
   loop: "{{ github_runner_win_account.results | default([]) }}"
@@ -210,10 +234,12 @@
   loop_control: { loop_var: github_runner_win_url }
 
 # register leaves the service as NETWORK SERVICE (config.cmd's --windowslogonpassword would put the password in an
-# argument): this switches an admin runner's service to .\<account> through Win32_Service.Change inside powershell,
-# with the password from its environment as above, and gives the account full control of the runner's directory (the
-# runner writes _diag and _work there). A service already running as the account is left alone, unless the account
-# step set a new password (-Relogon).
+# argument): on every run this sets an admin runner's service to .\<account> (ChangeServiceConfig inside powershell,
+# the password from its environment as above), so a run cut off after the account step never leaves the old password.
+# Then the runner's directory is protected on every run, register's /reset undone: nothing inherited, full control for
+# SYSTEM, Administrators and the account only, checked for NETWORK SERVICE, Authenticated Users, Users and Everyone
+# (acl=protected), so no job on another runner can change its binaries or .env or read its credentials. The service
+# restarts while idle when the account step set a new password (-Relogon) or it ran as another account.
 - name: each admin runner's service logs on as its account
   ansible.builtin.shell: >-
     {{ github_runner_win_secrets_exec }} {{ item.secret | quote }} -- env WSLENV={{ item.secret | quote }}
@@ -227,13 +253,13 @@
   no_log: true
   failed_when: false
   register: github_runner_win_logon
-  changed_when: github_runner_win_logon.stdout is search(' set account=|acl=set')
+  changed_when: github_runner_win_logon.stdout is search(' set account=|restart=done|aclset=yes')
   when: not ansible_check_mode
 
 - name: the services' logon receipt
   ansible.builtin.debug:
     msg: >-
-      {{ (item.stdout_lines | default([]) | select('match', '^(LOGON|NO-SERVICE|NO-SECRET|LOGON-FAILED|ACL-FAILED|NEEDS-ELEVATION|BAD-ARGS) ') | list
+      {{ (item.stdout_lines | default([]) | select('match', '^(LOGON|NO-SERVICE|NO-SECRET|LOGON-FAILED|ACL-FAILED|ACL-OPEN|ACCOUNT-NOT-OURS|NEEDS-ELEVATION|BAD-ARGS) ') | list
           + (item.stderr_lines | default([]) | select('match', '^(SECRETS |nova-secrets)') | list)) | join(' ')
          | default('rc=' ~ item.rc | default('-'), true) | regex_replace('^LOGON ', 'LOGON ' ~ inventory_hostname ~ ' ') }}
   loop: "{{ github_runner_win_logon.results | default([]) }}"
@@ -243,8 +269,12 @@
 - name: every admin runner's service logs on as its account
   ansible.builtin.assert:
     quiet: true
-    that: github_runner_win_logon.results | default([]) | rejectattr('rc', 'equalto', 0) | list | length == 0
-    fail_msg: "GITHUB-RUNNERS {{ inventory_hostname }}: an admin runner's service could not be set to its account; its receipt is above"
+    that:
+      - github_runner_win_logon.results | default([]) | rejectattr('rc', 'equalto', 0) | list | length == 0
+      - github_runner_win_logon.results | default([]) | rejectattr('stdout', 'search', ' acl=protected ') | list | length == 0
+    fail_msg: >-
+      GITHUB-RUNNERS {{ inventory_hostname }}: an admin runner's service could not be set to its account, or its directory
+      is not protected; its receipt is above
   when: not ansible_check_mode
 
 - name: each wanted runner's service starts at boot and is running

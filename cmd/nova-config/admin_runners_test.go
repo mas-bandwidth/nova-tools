@@ -79,6 +79,53 @@ func TestWindowsAdminRunnersCanonical(t *testing.T) {
 	}
 }
 
+// A built-in Windows account would be taken over, and a label GitHub gives runners would let any job selecting it
+// reach the admin runner: both are refused, the label whatever its case.
+func TestWindowsAdminRunnersRefuseBuiltinAccountsAndReservedLabels(t *testing.T) {
+	t.Parallel()
+	f := kinds["machine"].findField("windows_admin_runners")
+	for _, bad := range []string{
+		"https://github.com/o/r=administrator:l",
+		"https://github.com/o/r=guest:l",
+		"https://github.com/o/r=defaultaccount:l",
+		"https://github.com/o/r=wdagutilityaccount:l",
+		"https://github.com/o/r=acct:self-hosted",
+		"https://github.com/o/r=acct:l+Windows",
+		"https://github.com/o/r=acct:X64",
+		"https://github.com/o/r=acct:linux",
+		"https://github.com/o/r=acct:macOS",
+	} {
+		_, err := f.canonical(bad)
+		assert.Error(t, err, bad)
+	}
+	_, err := f.canonical("https://github.com/o/r=acct:windows-nightly")
+	assert.NoError(t, err, "a label that only contains a reserved word is the runner's own")
+}
+
+// The machine's user as the account, or a label another runner of the machine carries (or the machine's name), is
+// refused on the write, which changes nothing, and refuses the inventory when it is in the store already.
+func TestWindowsAdminRunnersRefuseClashesWithTheMachine(t *testing.T) {
+	t.Parallel()
+	h := fleet(t)
+	h.ok(t, "machine", "set", "bench-b", "--windows_runners", captainWin, "--runner_scopes", "https://github.com/o=1:tlc", "--actor", "t")
+	for value, want := range map[string]string{
+		"https://github.com/o/r=nova:l":                 "is the machine's user",
+		"https://github.com/o/r=acct:Fleet":             "is also windows_runners of https://github.com/robotgamedevelopers",
+		"https://github.com/o/r=acct:rocketnet-windows": "is also windows_runners of https://github.com/mas-bandwidth/rocketnet",
+		"https://github.com/o/r=acct:tlc":               "is also runner_scopes of https://github.com/o",
+		"https://github.com/o/r=acct:bench-b":           "is also the machine's name",
+	} {
+		code, _, stderr := h.run(t, "machine", "set", "bench-b", "--windows_admin_runners", value, "--actor", "t")
+		assert.Equal(t, 1, code, value)
+		assert.Contains(t, stderr, want, value)
+	}
+	assert.Contains(t, h.ok(t, "machine", "show", "bench-b"), " windows_admin_runners=- ")
+
+	_, err := build([]Row{{Name: "m1", F: map[string]string{"user": "acct", "windows_admin_runners": "https://github.com/o/r=acct:l"}}}, nil, "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "is the machine's user")
+}
+
 // The secret name is the account upper-cased with - as _, so two accounts never share one.
 func TestWindowsAdminRunnersSecretName(t *testing.T) {
 	t.Parallel()

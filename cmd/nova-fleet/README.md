@@ -525,11 +525,23 @@ never an organization: every repository of an organization could send an organiz
 `<machine>-win-<slug>-<account>` in `C:\actions-runner\<slug>-<account>`, with its own work folder, the same job `PATH`,
 `.env` lines and CI rules as the other Windows runners, and the same install, registration, repair and counts: it is
 one more runner in the `windows=` of the receipt. **Its labels** are only the entry's (GitHub adds `self-hosted`,
-`Windows` and `X64`): never `fleet`, the machine's name or another runner's labels, so no ordinary job lands on it.
-**The account** is the local user `<account>`, made by the play: in `Administrators` (by its SID, `S-1-5-32-544`),
-allowed to log on as a service, denied interactive and remote-interactive logon, its password never expiring and not
-changeable by the user. The runner's service logs on as `.\<account>` and the account gets full control of the runner's
-directory. A service runs with its account's full administrator token (services are not filtered by UAC).
+`Windows` and `X64`), and must be its own: before anything changes, the run fails on a label (compared without case)
+that is one of the role's Windows labels (`fleet`, the machine's name), any of the machine's `windows_runners` or
+`runner_scopes` labels, or one GitHub gives runners (`self-hosted`, `windows`, `x64`, `linux`, `macos`), naming the
+clash; nova-config refuses the same on the write. So no job meant for another runner lands on it. **The account** is
+the local user `<account>`, made by the play with a fixed description (`$AccountMarker` in the script): in
+`Administrators` (by its SID, `S-1-5-32-544`), allowed to log on as a service, denied interactive and
+remote-interactive logon, its password never expiring and not changeable by the user. A user of that name without the
+description (a person's, or a built-in one) is never changed: the run fails with `ACCOUNT-NOT-OURS`; nova-config
+refuses Windows' built-in names and the machine's user. A service runs with its account's full administrator token
+(services are not filtered by UAC).
+
+**The directory** is the admin's alone. Under `C:\` a runner directory inherits write access for every signed-in
+account, and registering resets it to that, so a job on any other runner of the machine could replace the admin
+runner's binaries or `.env`, or read its credentials. On every run the logon step protects it: nothing inherited,
+full control for SYSTEM, `Administrators` and the account and no other entry, owned by `Administrators`, everything
+under it reset to inherit only that. It then checks the directory and everything at its top level: an entry for
+`NETWORK SERVICE`, Authenticated Users, Users or Everyone, or another owner, fails the run (`ACL-OPEN`).
 
 **The password** is a value in the machine's own seat, never typed and never shown. The play reads the seat's names
 first (`nova-secrets names`, no value read); a seat without it stops the run before anything changes, naming the
@@ -545,13 +557,24 @@ nova-fleet secrets-refresh -- -e nova_seal_store=S
 
 On the machine the value reaches `powershell.exe` only in its environment: `nova-secrets exec --only <secret> -- env
 WSLENV=<secret> powershell.exe ...`, where `WSLENV` hands that one variable through interop. The script removes it from
-its environment as it reads it and passes it only to calls inside its own process (`New-LocalUser`, `LogonUser`,
-`Win32_Service.Change`); the tasks are `no_log`. `config.cmd --windowslogonpassword` is never used, since it would put
-the password in an argument. Two lines per admin runner: `ACCOUNT <machine> <account> account=created|updated|ok
-rights=ok|+<right>,... admin=added|ok` (an existing account whose stored password does not log it on as a service gets
-the stored one: `updated`), then `LOGON <machine> <dir> ok|set account=.\<account> acl=ok|set service=<name>`. A service
-already logging on as the account is left alone, unless the account step said `updated`, which sets the logon again and
-restarts the service. `--check` reads the names and prints the plan; it changes no account.
+its environment as it reads it and hands it only to method calls inside its own process (a `SecureString` built a
+character at a time, `LogonUser`, `ChangeServiceConfig`), never to a cmdlet parameter, which module logging would
+record; the tasks are `no_log`. `config.cmd --windowslogonpassword` is never used, since it would put the password in
+an argument. Two lines per admin runner: `ACCOUNT <machine> <account> account=created|updated|ok rights=ok|+<right>,...
+admin=added|ok` (an existing account whose stored password does not log it on as a service gets the stored one:
+`updated`), then `LOGON <machine> <dir> ok|set account=.\<account> restart=no|done|busy acl=protected aclset=yes|no
+service=<name>`. The service's logon (account and password) is set on every run, so a run cut off between the two
+steps never leaves the service on an old password. It is restarted only while no job runs, and only when the account
+step said `updated`, the service had logged on as another account, or its listener runs as another user;
+`restart=busy` leaves that to the next run. `--check` reads the names and prints the plan; it changes no account.
+
+**Removing an entry** from `windows_admin_runners` does not retire its runner or its account: the play no longer
+looks at them. Retire one by hand. Take a removal token with the control node's gh (`gh api -X POST
+repos/<owner>/<repo>/actions/runners/remove-token -q .token`) and hand it to `config.cmd remove` in the runner
+directory on its stdin, as `ACTIONS_RUNNER_INPUT_TOKEN` (never an argument). Then, in an elevated PowerShell on the
+machine, delete the service (`sc.exe delete <service>`; `Get-CimInstance Win32_Service` finds it by the directory in
+its path), the directory (`Remove-Item -Recurse -Force C:\actions-runner\<slug>-<account>`) and the account
+(`Remove-LocalUser -Name <account>`).
 
 **Which jobs reach it** is the repository's rule: no workflow that a pull request triggers may name the runner's
 label, since a pull request's code would then run as an administrator. The repository checks that class in CI; in a

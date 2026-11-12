@@ -27,16 +27,21 @@
 #             restarts the machine.
 #   account   -Account -SecretEnv                     an admin runner's local account. Its password is the environment
 #             variable -SecretEnv names (nova-secrets exec, then WSLENV through interop), removed from this process's
-#             environment as it is read; never an argument, a file or a line of output. The account is created (password
-#             never expires, the user cannot change it), or its password set where the stored one does not log it on as
-#             a service; put in Administrators by SID (S-1-5-32-544); granted SeServiceLogonRight and denied interactive
-#             and remote-interactive logon (SeDenyInteractiveLogonRight, SeDenyRemoteInteractiveLogonRight) through the
-#             LSA: ACCOUNT <account> account=created|updated|ok rights=ok|+<right>,... admin=added|ok
-#   logon     -Dir -Account -SecretEnv [-Relogon]     the runner's service in -Dir logs on as .\<account> (Win32_Service
-#             Change, the password from the environment as above), restarted when running; the account given full
-#             control of -Dir. A service already logging on as the account is left alone unless -Relogon (the account's
-#             password was set): LOGON <dir> ok|set account=.\<account> acl=ok|set service=<name>, or NO-SERVICE <dir>
-#             (exit 7)
+#             environment as it is read; never an argument, a cmdlet parameter, a file or a line of output. The account is
+#             created with the description $AccountMarker (password never expires, the user cannot change it), or, when
+#             it carries that marker, its password set where the stored one does not log it on as a service; a user of
+#             that name without the marker is refused, nothing changed: ACCOUNT-NOT-OURS (exit 9). Put in Administrators
+#             by SID (S-1-5-32-544); granted SeServiceLogonRight and denied interactive and remote-interactive logon
+#             (SeDenyInteractiveLogonRight, SeDenyRemoteInteractiveLogonRight) through the LSA:
+#             ACCOUNT <account> account=created|updated|ok rights=ok|+<right>,... admin=added|ok
+#   logon     -Dir -Account -SecretEnv [-Relogon]     the runner's service in -Dir set to log on as .\<account> with the
+#             password from the environment as above (ChangeServiceConfig, on every call); then -Dir protected: nothing
+#             inherited, full control for SYSTEM, Administrators and the account only, owned by Administrators, what is
+#             under it reset to inherit that, and checked: an ACE for NETWORK SERVICE, Authenticated Users, Users or
+#             Everyone, or another owner, is ACL-OPEN (exit 10). The service is restarted while idle when -Relogon (the
+#             password was set), its logon was another account, or its listener runs as another user:
+#             LOGON <dir> ok|set account=.\<account> restart=no|done|busy acl=protected aclset=yes|no service=<name>,
+#             or NO-SERVICE <dir> (exit 7)
 param(
   [Parameter(Mandatory = $true)][ValidateSet('install', 'register', 'ensure', 'keepalive', 'pagefile', 'account', 'logon')][string]$Action,
   [string]$Dir = '',
@@ -106,6 +111,8 @@ function Take-Secret([string]$n) {
   return $v
 }
 function Test-AccountName([string]$a) { return $a -cmatch '^[a-z][a-z0-9-]{0,19}$' }
+# The description every account the account action makes carries; a user without it is never changed.
+$AccountMarker = 'nova-fleet: windows admin runner'
 # Add-AccountApi: the LSA account-rights calls and a service-type logon check, which PowerShell has no cmdlet for.
 function Add-AccountApi {
   if ('NovaAccount' -as [type]) { return }
@@ -186,6 +193,37 @@ public static class NovaAccount {
     CloseHandle(t);
     return 0;
   }
+  [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+  static extern IntPtr OpenSCManagerW(string machine, string database, uint access);
+  [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+  static extern IntPtr OpenServiceW(IntPtr manager, string name, uint access);
+  [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+  static extern bool ChangeServiceConfigW(IntPtr service, uint type, uint start, uint error, string path, string group,
+    IntPtr tag, string dependencies, string account, string password, string display);
+  [DllImport("advapi32.dll")] static extern bool CloseServiceHandle(IntPtr handle);
+  const uint NoChange = 0xFFFFFFFF;       // SERVICE_NO_CHANGE
+  const uint ManagerConnect = 0x0001;     // SC_MANAGER_CONNECT
+  const uint ServiceChangeConfig = 0x0002; // SERVICE_CHANGE_CONFIG
+  // SetServiceLogon: the service logs on as account with password from its next start; 0, else the Windows error. A
+  // method call, so the password is never a cmdlet parameter that module logging would record.
+  public static int SetServiceLogon(string service, string account, string password) {
+    IntPtr m = OpenSCManagerW(null, null, ManagerConnect);
+    if (m == IntPtr.Zero) { return Marshal.GetLastWin32Error(); }
+    try {
+      IntPtr s = OpenServiceW(m, service, ServiceChangeConfig);
+      if (s == IntPtr.Zero) { return Marshal.GetLastWin32Error(); }
+      try {
+        if (!ChangeServiceConfigW(s, NoChange, NoChange, NoChange, null, null, IntPtr.Zero, null, account, password, null)) {
+          return Marshal.GetLastWin32Error();
+        }
+        return 0;
+      } finally {
+        CloseServiceHandle(s);
+      }
+    } finally {
+      CloseServiceHandle(m);
+    }
+  }
 }
 '@
 }
@@ -196,12 +234,20 @@ switch ($Action) {
     if (-not (Test-AccountName $Account)) { 'BAD-ARGS -Account'; exit 2 }
     $pw = Take-Secret $SecretEnv
     try {
-      Add-AccountApi
-      $sec = ConvertTo-SecureString -String $pw -AsPlainText -Force
-      $did = 'ok'
       $u = Get-LocalUser -Name $Account -ErrorAction SilentlyContinue
+      # a user of that name that this play did not make (no marker) is never taken over
+      if ($u -and "$($u.Description)" -cne $AccountMarker) {
+        "ACCOUNT-NOT-OURS ${Account}: a local user of that name exists without the description '$AccountMarker'; nothing was changed; give the runner another account"
+        exit 9
+      }
+      Add-AccountApi
+      # built char by char through method calls, so the plain text is never a cmdlet parameter (module logging)
+      $sec = New-Object Security.SecureString
+      foreach ($c in $pw.ToCharArray()) { $sec.AppendChar($c) }
+      $sec.MakeReadOnly()
+      $did = 'ok'
       if (-not $u) {
-        $u = New-LocalUser -Name $Account -Password $sec -PasswordNeverExpires -UserMayNotChangePassword -AccountNeverExpires -Description 'nova-fleet: an admin GitHub Actions runner'
+        $u = New-LocalUser -Name $Account -Password $sec -PasswordNeverExpires -UserMayNotChangePassword -AccountNeverExpires -Description $AccountMarker
         $did = 'created'
       }
       $sid = New-Object Security.Principal.SecurityIdentifier($u.SID.Value)
@@ -236,29 +282,71 @@ switch ($Action) {
     try {
       $s = Service-Of $Dir
       if (-not $s) { "NO-SERVICE $Dir"; exit 7 }
-      $sid = (Get-LocalUser -Name $Account -ErrorAction Stop).SID.Value
-      $full = [Security.AccessControl.FileSystemRights]::FullControl
-      $both = [Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit'
-      $acl = 'ok'
-      $rules = @((Get-Acl -LiteralPath $Dir).GetAccessRules($true, $false, [Security.Principal.SecurityIdentifier]) | Where-Object {
-          $_.IdentityReference.Value -eq $sid -and "$($_.AccessControlType)" -eq 'Allow' -and ($_.FileSystemRights -band $full) -eq $full -and $_.InheritanceFlags -eq $both })
-      if ($rules.Count -eq 0) {
-        & icacls.exe $Dir /grant "*${sid}:(OI)(CI)F" /C /Q | Out-Null
-        if ($LASTEXITCODE -ne 0) { "ACL-FAILED $Dir rc=$LASTEXITCODE"; exit $LASTEXITCODE }
-        $acl = 'set'
-      }
+      $u = Get-LocalUser -Name $Account -ErrorAction Stop
+      if ("$($u.Description)" -cne $AccountMarker) { "ACCOUNT-NOT-OURS ${Account}: no description '$AccountMarker'; nothing was changed"; exit 9 }
+      Add-AccountApi
       $want = ".\$Account"
-      $did = 'ok'
-      if ($Relogon -or @($want, "$env:COMPUTERNAME\$Account") -notcontains "$($s.StartName)") {
-        $r = Invoke-CimMethod -InputObject $s -MethodName Change -Arguments @{ StartName = $want; StartPassword = $pw }
-        if ($r.ReturnValue -ne 0) { "LOGON-FAILED $Dir rc=$($r.ReturnValue)"; exit 8 }
-        if ($s.State -eq 'Running') { Restart-Service -Name $s.Name -Force }
-        $did = 'set'
-      }
+      $moved = @($want, "$env:COMPUTERNAME\$Account") -notcontains "$($s.StartName)"
+      # applied on every run, so a run cut off between the account step and this one never leaves the old password
+      $rc = [NovaAccount]::SetServiceLogon($s.Name, $want, $pw)
+      if ($rc -ne 0) { "LOGON-FAILED $Dir rc=$rc"; exit 8 }
     } finally {
       $pw = $null
     }
-    "LOGON $Dir $did account=$want acl=$acl service=$($s.Name)"
+    $did = if ($moved) { 'set' } else { 'ok' }
+    # The directory, on every run (register's icacls /reset puts inheritance back): protected, nothing inherited from
+    # C:\ (whose Authenticated Users may modify), full control for SYSTEM, Administrators and the account and no other
+    # ACE, owned by Administrators; everything under it reset to inherit only that. _work is reset only when the
+    # service had not logged on as the account (after a register: its listener ran as NETWORK SERVICE) or _work is not
+    # clean, since after that nothing but these three can write in it. No job on another runner can then change the
+    # runner's binaries, .env or .path, or read its credentials.
+    $sid = $u.SID.Value
+    $allowed = @('S-1-5-18', 'S-1-5-32-544', $sid)
+    $forbidden = @('S-1-5-20', 'S-1-5-11', 'S-1-5-32-545', 'S-1-1-0')
+    $before = Get-Acl -LiteralPath $Dir
+    $aclset = 'no'
+    if (-not $before.AreAccessRulesProtected -or @($before.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]) |
+        Where-Object { $allowed -notcontains $_.IdentityReference.Value }).Count -gt 0) { $aclset = 'yes' }
+    & icacls.exe $Dir /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' "*${sid}:(OI)(CI)F" /C /Q | Out-Null
+    if ($LASTEXITCODE -ne 0) { "ACL-FAILED $Dir rc=$LASTEXITCODE"; exit $LASTEXITCODE }
+    foreach ($other in @((Get-Acl -LiteralPath $Dir).GetAccessRules($true, $false, [Security.Principal.SecurityIdentifier]) |
+        ForEach-Object { $_.IdentityReference.Value } | Where-Object { $allowed -notcontains $_ } | Sort-Object -Unique)) {
+      & icacls.exe $Dir /remove "*$other" /C /Q | Out-Null
+      if ($LASTEXITCODE -ne 0) { "ACL-FAILED $Dir remove=$other rc=$LASTEXITCODE"; exit $LASTEXITCODE }
+    }
+    & icacls.exe $Dir /setowner '*S-1-5-32-544' /C /Q | Out-Null
+    $work = Join-Path $Dir '_work'
+    $workClean = -not (Test-Path -LiteralPath $work) -or ((Get-Acl -LiteralPath $work).GetOwner([Security.Principal.SecurityIdentifier]).Value -in $allowed -and
+      @((Get-Acl -LiteralPath $work).GetAccessRules($true, $false, [Security.Principal.SecurityIdentifier])).Count -eq 0)
+    foreach ($child in @(Get-ChildItem -LiteralPath $Dir -Force | Where-Object { $_.Name -ne '_work' -or $moved -or -not $workClean })) {
+      & icacls.exe $child.FullName /setowner '*S-1-5-32-544' /T /C /Q | Out-Null
+      & icacls.exe $child.FullName /reset /T /C /Q | Out-Null
+      if ($LASTEXITCODE -ne 0) { "ACL-FAILED $($child.FullName) rc=$LASTEXITCODE"; exit $LASTEXITCODE }
+    }
+    # the proof: no ACE for NETWORK SERVICE, Authenticated Users, Users or Everyone on the directory or anything at its
+    # top level, the directory holds only the three, and every owner there is one of them
+    foreach ($p in @($Dir) + @(Get-ChildItem -LiteralPath $Dir -Force | ForEach-Object { $_.FullName })) {
+      $a = Get-Acl -LiteralPath $p
+      $ids = @($a.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]) | ForEach-Object { $_.IdentityReference.Value })
+      $open = @($ids | Where-Object { $forbidden -contains $_ -or ($p -eq $Dir -and $allowed -notcontains $_) })
+      $owner = $a.GetOwner([Security.Principal.SecurityIdentifier]).Value
+      if ($open.Count -gt 0 -or $allowed -notcontains $owner -or ($p -eq $Dir -and -not $a.AreAccessRulesProtected)) {
+        "ACL-OPEN $p ace=$(($open | Sort-Object -Unique) -join ',') owner=$owner"; exit 10
+      }
+    }
+    # A restart is owed when the password was set anew, the service had another logon, or its listener runs as
+    # someone else; it is taken only while no job runs (a busy runner keeps the old logon until the next run).
+    $exe = Join-Path $Dir 'bin\Runner.Listener.exe'
+    $listener = Get-CimInstance Win32_Process -Filter "Name = 'Runner.Listener.exe'" | Where-Object { $_.ExecutablePath -eq $exe } | Select-Object -First 1
+    $stale = $false
+    if ($listener) { $stale = "$((Invoke-CimMethod -InputObject $listener -MethodName GetOwner).User)" -ne $Account }
+    $restart = 'no'
+    $s = Service-Of $Dir
+    if (($Relogon -or $moved -or $stale) -and $s.State -eq 'Running') {
+      if ($listener -and (Get-CimInstance Win32_Process -Filter "ParentProcessId = $($listener.ProcessId) AND Name = 'Runner.Worker.exe'")) { $restart = 'busy' }
+      else { Restart-Service -Name $s.Name -Force; $restart = 'done' }
+    }
+    "LOGON $Dir $did account=$want restart=$restart acl=protected aclset=$aclset service=$($s.Name)"
   }
   'install' {
     Need-Admin
