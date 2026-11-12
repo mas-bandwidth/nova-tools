@@ -180,6 +180,12 @@ nova_runner_ports_uri: "http://ports.ubuntu.com/ubuntu-ports/"
 # and a run that fails while its VM tier lacks anything.
 nova_runner_vm_kernel: true
 nova_runner_vm_kernel_dir: "{{ ansible_facts['user_dir'] }}/vm-kernels"
+# Debian/Ubuntu: TLC's jar (TLA+ tools v1.7.4), root's at this path and readable by every login, pinned by its sha256.
+# A missing one is copied from nova_runner_tla_jar_source, a machine of the inventory with the jar at the same path,
+# through the control node; a jar that differs from the pin is refused, never replaced. An empty sha256 skips it.
+nova_runner_tla_jar: /opt/tla/tla2tools.jar
+nova_runner_tla_jar_sha256: 936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88
+nova_runner_tla_jar_source: ""
 
 # The age and sops a Linux machine gets from join.yml, pinned by the digest
 # GitHub publishes for each release asset. A darwin machine takes Homebrew's.

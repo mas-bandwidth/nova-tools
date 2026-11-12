@@ -1188,6 +1188,8 @@ one). A list without the `:s390x` packages goes with the architecture off, `-e '
 | `nova_runner_ports_uri` | `http://ports.ubuntu.com/ubuntu-ports/` | the archive a foreign architecture comes from |
 | `nova_runner_vm_kernel` | `true` | Debian/Ubuntu (not WSL): keep each kernel image readable by the login, for a VM of the host's own kernel; a runner login of its own gets root's copies in `/opt/nova/vm-kernels` (its `~/vm-kernels`, a kernel hook for each new image) from `github-runners`, which fails with `VM-TIER-MISSING` naming what the tier lacks (vng, qemu, a writable `/dev/kvm`, the image, the modules) |
 | `nova_runner_vm_kernel_dir` | `<home>/vm-kernels` | where the copies go, as `vmlinuz-<version>` |
+| `nova_runner_tla_jar`, `nova_runner_tla_jar_sha256` | `/opt/tla/tla2tools.jar`; the sha256 of TLA+ tools v1.7.4 (the one `tests/tla/tla2tools.sha256` pins) | Debian/Ubuntu: **TLC's jar**, below; an empty sha256 skips it |
+| `nova_runner_tla_jar_source` | none | a machine of the inventory with the pinned jar at the same path, where a machine lacks it |
 
 Both switches apply on Debian and Ubuntu only; another OS skips them. The play reaches every bench as well as every runner: a WSL2 machine (`/proc/sys/fs/binfmt_misc/WSLInterop`) has no `/boot/vmlinuz-<version>` and no `kvm` group, so the VM tier is skipped there.
 
@@ -1214,9 +1216,22 @@ no image in `/boot`, or that has no `kvm` group, is refused with the package to 
 of the debian list (`virtme-ng`, `qemu-system-x86`). Joining `kvm` reaches a runner already running only when it
 restarts. Copies of kernels later removed stay until deleted.
 
+**TLC's jar.** A model check runs `java -cp <jar> tlc2.TLC` with the Java runtime of the debian list and the jar at
+`nova_runner_tla_jar`. A jar there whose sha256 is the pin is left as it is. One that differs is refused, and nothing is
+written: `TLA-JAR-MISMATCH host=<machine> path=<jar> want=<sha256> got=<sha256>`; remove it and run again. A missing jar
+is fetched from `nova_runner_tla_jar_source` into a temporary directory on the control node, checked against the pin
+there (a source whose jar differs is refused the same way, naming the source), and copied: the directory root's, 0755,
+the jar root's, 0644, so the fleet login and a runner login of its own both read it. With no source named the machine
+is refused, `TLA-JAR-NO-SOURCE host=<machine>`, with the command to run. `--check` prints `TLA-JAR WOULD-COPY`; each
+machine gets `TLA-JAR host=<machine> present|copied from <source> <jar> sha256=<pin>`.
+
+```
+nova-fleet runner-packages --check --diff -- -l bench -e nova_runner_tla_jar_source=bench-1
+```
+
 **Check.** `RUNNER-PACKAGES host=<machine> wanted=<n> present=<n> installed=<n>`, one line per machine.
 **Rollback.** The play never removes a package: one taken out of the list stays installed until a play removes it. Nor
-does it remove a foreign architecture, a ports source, the `Architectures` lines, the kernel hook or the copies.
+does it remove a foreign architecture, a ports source, the `Architectures` lines, the kernel hook, the copies or TLC's jar.
 
 ## sdk-toolchain
 
