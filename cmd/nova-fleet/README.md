@@ -506,6 +506,19 @@ cannot read GitHub's list for a target refuses, rather than take a whole runner 
 from its directories and GitHub's own list; a run where any is short fails. `--check` reads both, asks for the tokens it
 would need, and prints `RUNNER-PLAN <machine> windows=<n> register=<names> repair=<names> labels=<labels>`.
 
+### The Windows page file at a fixed size
+
+`nova-fleet windows-runners -- -l <machine> -e nova_windows_pagefile_mb=<n>` turns off Windows' page file management
+and fixes `C:\pagefile.sys` at `<n>` MB (initial = maximum). Without it the page file is left as it is.
+
+Why: a system-managed page file shrinks when it is idle, and the commit limit shrinks with it. The WSL VM and every
+Windows job draw on that limit, so jobs fail for memory while RAM is free. On captain on 2026-11-12 the limit fell
+from 123.6 GB to 72.5 GB.
+
+It prints `PAGEFILE <machine> ok|set size_mb=<n> active_mb=<allocated now> restart=owed|no`, then `COMMIT <machine>
+limit_gb= free_gb=`. `restart=owed` means Windows has not applied the size yet. Nothing here restarts the machine:
+a person picks the moment. `--check` prints `PAGEFILE-PLAN`.
+
 ### WSL held running from boot
 
 WSL starts a distro only when something on Windows asks for one, and stops it when the last `wsl.exe` holding it ends

@@ -311,3 +311,35 @@ func TestWindowsRunnerScriptHasNoRetire(t *testing.T) {
 		t.Error("runner-windows.ps1 still accepts -Action retire, which nothing calls")
 	}
 }
+
+// The page file is held at a fixed size only where a run names nova_windows_pagefile_mb, and nothing restarts the
+// machine: a size Windows has not applied yet is reported as restart=owed, for a person to pick the moment.
+func TestWindowsPagefileIsOptInAndNeverRestarts(t *testing.T) {
+	b, err := fs.ReadFile(tree, roleDir+"/files/runner-windows.ps1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ps := strings.ToLower(string(b))
+	for _, never := range []string{"restart-computer", "shutdown.exe", "shutdown /r"} {
+		if strings.Contains(ps, never) {
+			t.Errorf("runner-windows.ps1 contains %q: nothing here restarts the machine", never)
+		}
+	}
+	if !strings.Contains(ps, "restart=$owed") || !strings.Contains(ps, "\x27pagefile\x27 {") {
+		t.Error("runner-windows.ps1 has the pagefile verb and reports restart=owed|no")
+	}
+	task, err := fs.ReadFile(tree, roleDir+"/tasks/wsl-pagefile.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(task), "(nova_windows_pagefile_mb | default(0) | int) > 0") {
+		t.Error("wsl-pagefile.yml runs only when nova_windows_pagefile_mb is set")
+	}
+	play, err := fs.ReadFile(tree, "windows-runners.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(play), "tasks_from: wsl-pagefile.yml") {
+		t.Error("the windows-runners play includes wsl-pagefile.yml")
+	}
+}

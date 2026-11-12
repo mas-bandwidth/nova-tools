@@ -1,0 +1,41 @@
+---
+# The Windows side's page file held at a fixed size (files/runner-windows.ps1 pagefile), on a WSL machine whose run
+# names nova_windows_pagefile_mb (0, the default, leaves Windows managing it). A system-managed page file shrinks when
+# idle, and with it the commit limit the WSL VM and every Windows job draw on: captain went from 123.6 GB to 72.5 GB on
+# 2026-11-12 and its MSVC jobs failed for memory with RAM free. Prints PAGEFILE (restart=owed when Windows has not
+# applied the size yet: nothing here restarts the machine) and COMMIT. --check prints the plan only.
+
+- name: is this a WSL machine with interop (page file)
+  ansible.builtin.stat: { path: "{{ github_runner_wsl_interop }}" }
+  register: github_runner_pagefile_interop
+
+- name: the page file at its fixed size
+  when: github_runner_pagefile_interop.stat.exists and (nova_windows_pagefile_mb | default(0) | int) > 0
+  block:
+    - name: the plan (page file)
+      ansible.builtin.debug:
+        msg: "PAGEFILE-PLAN {{ inventory_hostname }} size_mb={{ nova_windows_pagefile_mb | int }} (check: nothing changed)"
+      when: ansible_check_mode
+
+    - name: the staging directory (page file)
+      ansible.builtin.file: { path: "{{ github_runner_wsl_stage_unix }}", state: directory, mode: "0755" }
+      when: not ansible_check_mode
+
+    - name: runner-windows.ps1 (page file)
+      ansible.builtin.copy: { src: runner-windows.ps1, dest: "{{ github_runner_wsl_stage_unix }}/runner-windows.ps1", mode: "0644" }
+      when: not ansible_check_mode
+
+    - name: the page file, set
+      ansible.builtin.shell: >-
+        "{{ github_runner_wsl_powershell }}" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File {{ github_runner_wsl_script | quote }}
+        -Action pagefile -SizeMb {{ nova_windows_pagefile_mb | int }} </dev/null
+      args: { executable: /bin/sh }
+      register: github_runner_pagefile
+      changed_when: github_runner_pagefile.stdout is search('^PAGEFILE set ', multiline=True)
+      failed_when: github_runner_pagefile.rc != 0 or github_runner_pagefile.stdout is not search('^PAGEFILE ', multiline=True)
+      when: not ansible_check_mode
+
+    - name: the page file's receipt
+      ansible.builtin.debug:
+        msg: "{{ github_runner_pagefile.stdout_lines | select('match', '^(PAGEFILE|COMMIT) ') | map('regex_replace', '^(\\S+) ', '\\1 ' ~ inventory_hostname ~ ' ') | join('\n') }}"
+      when: not ansible_check_mode

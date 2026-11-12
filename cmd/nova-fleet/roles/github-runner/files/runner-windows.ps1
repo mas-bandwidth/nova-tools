@@ -21,8 +21,12 @@
 #             --exec /bin/sleep infinity as this Windows account, logon type S4U (no password stored), at boot and each
 #             minute after while it is not running; set when it differs, started when it is not running:
 #             KEEPALIVE <distro> ok|set|started|set,started task=<name>, or NO-DISTRO (exit 6)
+#   pagefile  -SizeMb                                 C:\pagefile.sys fixed at -SizeMb (initial = maximum), system management
+#             off: PAGEFILE ok|set size_mb=<n> active_mb=<the size Windows has allocated now> restart=owed|no, then
+#             COMMIT limit_gb=<n> free_gb=<n>. A set that Windows has not applied yet says restart=owed; nothing here
+#             restarts the machine.
 param(
-  [Parameter(Mandatory = $true)][ValidateSet('install', 'register', 'ensure', 'keepalive')][string]$Action,
+  [Parameter(Mandatory = $true)][ValidateSet('install', 'register', 'ensure', 'keepalive', 'pagefile')][string]$Action,
   [string]$Dir = '',
   [string]$Cache = '',
   [string]$Version = '',
@@ -32,7 +36,8 @@ param(
   [string]$Name = '',
   [string]$Labels = '',
   [string]$MachineId = '',
-  [string]$User = ''
+  [string]$User = '',
+  [int]$SizeMb = 0
 )
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
@@ -227,5 +232,32 @@ switch ($Action) {
     }
     if ($did.Count -eq 0) { $did = @('ok') }
     "KEEPALIVE $distro $($did -join ',') task=$name"
+  }
+  'pagefile' {
+    Need-Admin
+    if ($SizeMb -lt 1024) { 'BAD-ARGS -SizeMb'; exit 2 }
+    $path = 'C:\pagefile.sys'
+    $cs = Get-CimInstance Win32_ComputerSystem
+    $set = Get-CimInstance Win32_PageFileSetting | Where-Object { $_.Name -eq $path }
+    $did = 'ok'
+    if ($cs.AutomaticManagedPagefile) {
+      Set-CimInstance -InputObject $cs -Property @{ AutomaticManagedPagefile = $false } | Out-Null
+      $did = 'set'
+    }
+    $set = Get-CimInstance Win32_PageFileSetting | Where-Object { $_.Name -eq $path }
+    if (-not $set) {
+      $set = New-CimInstance -ClassName Win32_PageFileSetting -Property @{ Name = $path }
+      $did = 'set'
+    }
+    if ($set.InitialSize -ne $SizeMb -or $set.MaximumSize -ne $SizeMb) {
+      Set-CimInstance -InputObject $set -Property @{ InitialSize = [uint32]$SizeMb; MaximumSize = [uint32]$SizeMb } | Out-Null
+      $did = 'set'
+    }
+    $use = Get-CimInstance Win32_PageFileUsage | Where-Object { $_.Name -eq $path }
+    $active = if ($use) { [int]$use.AllocatedBaseSize } else { 0 }
+    $owed = if ($active -eq $SizeMb) { 'no' } else { 'owed' }
+    "PAGEFILE $did size_mb=$SizeMb active_mb=$active restart=$owed"
+    $os = Get-CimInstance Win32_OperatingSystem
+    "COMMIT limit_gb={0:N1} free_gb={1:N1}" -f ($os.TotalVirtualMemorySize / 1MB), ($os.FreeVirtualMemory / 1MB)
   }
 }
