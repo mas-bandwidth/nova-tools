@@ -102,5 +102,8 @@ func TestRunnerPackagesTLAJarMismatchIsRefusedBeforeAnyWrite(t *testing.T) {
 	assert.Equal(t, "root", c["owner"])
 	assert.Equal(t, "0644", c["mode"])
 	assert.Equal(t, true, inner[jar]["become"])
-	assert.NotContains(t, c, "force", "the copy only ever lands where there was no jar")
+	assert.Equal(t, false, c["force"], "the copy only ever lands where there is no jar, even one that appeared after the check")
+	stat := top[0]["ansible.builtin.stat"].(map[string]any)
+	assert.Equal(t, true, stat["follow"], "a link to the pinned jar is checked by what it points to")
+	assert.Contains(t, asText(top[source]["when"]), "nova_runner_tla_jar_source == inventory_hostname", "a machine is never its own source")
 }

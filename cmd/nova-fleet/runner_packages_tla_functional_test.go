@@ -22,9 +22,14 @@ const tlaTestPin = "936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e05
 
 func runTLATasks(t *testing.T, jar, pin string) (string, error) {
 	t.Helper()
+	return runTLATasksFrom(t, jar, pin, "")
+}
+
+func runTLATasksFrom(t *testing.T, jar, pin, source string) (string, error) {
+	t.Helper()
 	fleet, err := filepath.Abs(".")
 	require.NoError(t, err)
-	_, out, err := runPackagesPlayResult(t, map[string]any{"nova_runner_tla_jar": jar, "nova_runner_tla_jar_sha256": pin},
+	_, out, err := runPackagesPlayResult(t, map[string]any{"nova_runner_tla_jar": jar, "nova_runner_tla_jar_sha256": pin, "nova_runner_tla_jar_source": source},
 		[]any{map[string]any{"ansible.builtin.include_tasks": fleet + "/roles/runner-packages/tasks/tla.yml"}})
 	return out, err
 }
@@ -82,4 +87,28 @@ func TestFunctionalRunnerPackagesTLAJarMissingWithNoSourceRefused(t *testing.T) 
 	assert.Contains(t, out, "TLA-JAR-NO-SOURCE host=localhost")
 	assert.Contains(t, out, "-e nova_runner_tla_jar_source=")
 	assert.NoDirExists(t, filepath.Dir(jar), "nothing is written without a source")
+}
+
+func TestFunctionalRunnerPackagesTLAJarMachineIsNeverItsOwnSource(t *testing.T) {
+	t.Parallel()
+	jar := filepath.Join(t.TempDir(), "tla", "tla2tools.jar")
+
+	out, err := runTLATasksFrom(t, jar, tlaTestPin, "localhost")
+	require.Error(t, err, out)
+	assert.Contains(t, out, "TLA-JAR-NO-SOURCE host=localhost")
+	assert.NoDirExists(t, filepath.Dir(jar))
+}
+
+func TestFunctionalRunnerPackagesTLAJarLinkToThePinnedJarLeftAlone(t *testing.T) {
+	t.Parallel()
+	real, sum := writeJar(t, "the pinned jar")
+	link := filepath.Join(t.TempDir(), "tla2tools.jar")
+	require.NoError(t, os.Symlink(real, link))
+
+	out, err := runTLATasks(t, link, sum)
+	require.NoError(t, err, out)
+	assert.Contains(t, out, "TLA-JAR host=localhost present "+link)
+	target, err := os.Readlink(link)
+	require.NoError(t, err)
+	assert.Equal(t, real, target)
 }

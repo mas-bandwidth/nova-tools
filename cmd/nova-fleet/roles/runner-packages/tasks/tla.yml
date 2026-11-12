@@ -7,6 +7,7 @@
 - name: the TLC jar on the machine
   ansible.builtin.stat:
     path: "{{ nova_runner_tla_jar }}"
+    follow: true   # a link to the pinned jar is the pinned jar
     get_checksum: true
     checksum_algorithm: sha256
   register: rp_tla
@@ -24,9 +25,9 @@
   ansible.builtin.fail:
     msg: >-
       TLA-JAR-NO-SOURCE host={{ inventory_hostname }}: no {{ nova_runner_tla_jar }} and nova_runner_tla_jar_source names
-      no machine of the inventory that has it;
+      another machine of the inventory that has it;
       run: nova-fleet runner-packages -- -l {{ inventory_hostname }} -e nova_runner_tla_jar_source=<a machine with the jar>
-  when: not rp_tla.stat.exists and nova_runner_tla_jar_source not in hostvars
+  when: not rp_tla.stat.exists and (nova_runner_tla_jar_source not in hostvars or nova_runner_tla_jar_source == inventory_hostname)
 
 - name: would copy the jar
   ansible.builtin.debug:
@@ -80,6 +81,7 @@
       ansible.builtin.copy:
         src: "{{ rp_tla_tmp.path }}/tla2tools.jar"
         dest: "{{ nova_runner_tla_jar }}"
+        force: false   # a jar that appeared since the check above is never replaced
         owner: root
         group: root
         mode: "0644"
