@@ -3,6 +3,8 @@
 package main
 
 import (
+	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,11 +21,13 @@ import (
 // github_runner_git_probe_functional_test.go runs roles/github-runner/tasks/git-probe.yml on localhost against a runner
 // base directory in the test's temp dir. TestFunctionalRunnerGitProbe runs the Linux block with fakes for pgrep (the
 // runner idle or busy) and nova-secrets (which stands in for the fetch: it records where it ran and prints what git
-// printed), and for cp, df or timeout where a case needs them to fail. A clone that makes git abort fails the run
-// naming the machine, runner, workspace and the step that moves it aside; a clean one passes; a busy runner's is
-// skipped and named; a clone that is not both shallow and a promisor is not probed; every other way the probe cannot
-// check a clone is red with its reason. The workspace is never changed and no copy is left.
-// TestFunctionalRunnerGitProbeRealFetch runs the same block with real git against a local bare repository.
+// printed), and for cp, df, flock or timeout where a case needs them to fail. A clone that makes git abort fails the
+// run naming the machine, runner, workspace and the step that moves it aside; a clean one passes; a busy runner's is
+// skipped and named; a clone that is not both shallow and a promisor is not probed, and one moved aside is reported as
+// such; every other way the probe cannot check a clone is red with its reason. The workspace is never changed and no
+// copy is left. TestFunctionalRunnerGitProbeRealFetch runs the same block with real git against a local bare
+// repository. The block runs under /bin/dash where there is one, as on the Debian and Ubuntu runners, where /bin/sh is
+// dash: dash runs no EXIT trap when a signal it does not trap ends it.
 
 // gitProbeRig is one runner base directory with the clone <base>/o-r-1/_work/r/r, a scratch directory and a bin
 // directory for the fake nova-secrets.
@@ -34,21 +38,64 @@ func newGitProbeRig(t *testing.T, shallow, promisor bool) *gitProbeRig {
 	dir := t.TempDir()
 	r := &gitProbeRig{dir: dir, base: filepath.Join(dir, "actions-runner"), scratch: filepath.Join(dir, "home", ".cache", "nova-git-probe"),
 		bin: filepath.Join(dir, "nova-bin"), calls: filepath.Join(dir, "fetch.calls")}
-	r.ws = filepath.Join(r.base, "o-r-1", "_work", "r", "r")
-	r.worker = r.base + "/o-r-1/bin/[R]unner.Worker"
-	g := filepath.Join(r.ws, ".git")
-	require.NoError(t, os.MkdirAll(filepath.Join(g, "objects", "pack"), 0o755))
 	require.NoError(t, os.MkdirAll(r.bin, 0o755))
-	r.config = "[remote \"origin\"]\n\turl = https://github.com/o/r\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n"
-	if promisor {
-		r.config += "\tpromisor = true\n\tpartialclonefilter = tree:0\n"
-	}
-	r.config += "[http \"https://github.com/\"]\n\textraheader = AUTHORIZATION: basic placeholder\n"
-	require.NoError(t, os.WriteFile(filepath.Join(g, "config"), []byte(r.config), 0o644))
-	if shallow {
-		require.NoError(t, os.WriteFile(filepath.Join(g, "shallow"), []byte("0123456789abcdef0123456789abcdef01234567\n"), 0o644))
-	}
+	r.worker = r.base + "/o-r-1/bin/[R]unner.Worker"
+	r.ws, r.config = r.clone(t, "o-r-1", "r", shallow, promisor)
 	return r
+}
+
+// clone makes <base>/<runner>/_work/<repo>/<repo>/.git: refs, a pack, the extra header actions/checkout writes, and
+// shallow and a promisor as asked. It returns the workspace and its config's text.
+func (r *gitProbeRig) clone(t *testing.T, runner, repo string, shallow, promisor bool) (string, string) {
+	t.Helper()
+	ws := filepath.Join(r.base, runner, "_work", repo, repo)
+	g := filepath.Join(ws, ".git")
+	for _, d := range []string{"objects/pack", "refs/heads", "refs/tags"} {
+		require.NoError(t, os.MkdirAll(filepath.Join(g, d), 0o755))
+	}
+	files := map[string]string{
+		"HEAD": "ref: refs/heads/main\n", "packed-refs": "# pack-refs with: peeled fully-peeled sorted\n",
+		"refs/heads/main": "0123456789abcdef0123456789abcdef01234567\n", "objects/pack/pack-1.pack": "PACK", "objects/pack/pack-1.idx": "IDX",
+	}
+	if shallow {
+		files["shallow"] = "0123456789abcdef0123456789abcdef01234567\n"
+	}
+	config := "[remote \"origin\"]\n\turl = https://github.com/o/" + repo + "\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n"
+	if promisor {
+		config += "\tpromisor = true\n\tpartialclonefilter = tree:0\n"
+	}
+	files["config"] = config + "[http \"https://github.com/\"]\n\textraheader = AUTHORIZATION: basic placeholder\n"
+	for name, body := range files {
+		require.NoError(t, os.WriteFile(filepath.Join(g, name), []byte(body), 0o644))
+	}
+	return ws, files["config"]
+}
+
+// snapshot is every entry under a workspace's .git with its mode, size, modification time and contents.
+func snapshot(t *testing.T, ws string) []string {
+	t.Helper()
+	var out []string
+	g := filepath.Join(ws, ".git")
+	require.NoError(t, filepath.WalkDir(g, func(p string, e fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		info, err := e.Info()
+		if err != nil {
+			return err
+		}
+		line := fmt.Sprintf("%s %v %d %d", strings.TrimPrefix(p, g), info.Mode(), info.Size(), info.ModTime().UnixNano())
+		if !e.IsDir() {
+			b, err := os.ReadFile(p)
+			if err != nil {
+				return err
+			}
+			line += " " + string(b)
+		}
+		out = append(out, line)
+		return nil
+	}))
+	return out
 }
 
 // secrets writes the fake nova-secrets: it records where it ran and its arguments, refuses unless it runs in a copy
@@ -64,8 +111,14 @@ func (r *gitProbeRig) idle() string {
 	return `[ "$1 $2" = "-f ` + r.worker + `" ] || { echo "unexpected pgrep $*" >&2; exit 3; }` + "\nexit 1"
 }
 
+// run runs tasks with fakes; a machine without flock (macOS) gets one that takes the lock.
 func (r *gitProbeRig) run(t *testing.T, tasks []map[string]any, fakes map[string]string) (string, error) {
 	t.Helper()
+	if _, ok := fakes["flock"]; !ok {
+		if _, err := exec.LookPath("flock"); err != nil {
+			fakes["flock"] = "exit 0"
+		}
+	}
 	return runTasksLocally(t, tasks, map[string]any{
 		"github_runner_base_dir": r.base, "github_runner_git_probe_scratch": r.scratch, "nova_bin_dir": r.bin,
 	}, fakes)
@@ -80,15 +133,31 @@ func (r *gitProbeRig) fetches(t *testing.T) []string {
 	return nil
 }
 
+func (r *gitProbeRig) left(t *testing.T) []string {
+	t.Helper()
+	var left []string
+	entries, _ := os.ReadDir(r.scratch) // ignored: absent when the probe stopped before making it
+	for _, e := range entries {
+		left = append(left, e.Name())
+	}
+	return left
+}
+
+// gitProbeLinuxBlock is the Linux block's tasks, its shell /bin/dash where there is one.
 func gitProbeLinuxBlock(t *testing.T) []map[string]any {
 	t.Helper()
 	block := runnerTask(t, taskGroups(t, "roles/github-runner/tasks/git-probe.yml")[0], "the runners' workspace clones, probed on a copy (Linux)")
-	return mapsOf(t, block["block"])
+	tasks := mapsOf(t, block["block"])
+	if _, err := os.Stat("/bin/dash"); err == nil {
+		args, _ := tasks[0]["args"].(map[string]any)
+		require.Equal(t, "/bin/sh", args["executable"])
+		args["executable"] = "/bin/dash"
+	}
+	return tasks
 }
 
 func TestFunctionalRunnerGitProbe(t *testing.T) {
 	t.Parallel()
-	tasks := gitProbeLinuxBlock(t)
 	const bug = "BUG: builtin/pack-objects.c:4842: should_include_obj should only be called on existing objects\n" +
 		"fatal: could not finish pack-objects to repack local links\nfatal: index-pack failed"
 	type probeCase struct {
@@ -98,8 +167,10 @@ func TestFunctionalRunnerGitProbe(t *testing.T) {
 		setup                   func(t *testing.T, r *gitProbeRig)
 		fails, fetched          bool
 		verdict                 string   // the clone's line ends in this, after the workspace
+		why                     string   // its GIT-PROBE-WHY line, if any
 		want, not               []string // more text the output has, and does not have
-		left                    []string // what the scratch directory holds after the run
+		left                    []string // what the scratch directory holds after the run, beside .lock
+		changes                 bool     // the case changes the live clone itself (the fake cp)
 	}
 	busyAt := func(n int) func(r *gitProbeRig) map[string]string {
 		return func(r *gitProbeRig) map[string]string {
@@ -108,7 +179,13 @@ func TestFunctionalRunnerGitProbe(t *testing.T) {
 				`[ $c -ge ` + string(rune('0'+n)) + ` ] && { echo 4242; exit 0; }` + "\n" + r.idle()}
 		}
 	}
-	for name, c := range map[string]probeCase{
+	// signalled: cp copies, then sends the probe's shell sig, as a hangup, Ctrl-C or kill would mid-run.
+	signalled := func(sig string) probeCase {
+		return probeCase{fetch: "exit 0", fails: true, fakes: func(*gitProbeRig) map[string]string {
+			return map[string]string{"cp": "/bin/cp \"$@\"; kill -" + sig + " $PPID; exit 0"}
+		}, want: []string{"the probe stopped, rc="}}
+	}
+	cases := map[string]probeCase{
 		"found": {fetch: "echo '" + bug + "' >&2; exit 128", fails: true, fetched: true, verdict: "BUG",
 			want: []string{"makes git abort in actions/checkout's fetch", "done bug=1 clean=0 skipped-busy=-"}},
 		"found by signal 6": {fetch: "echo 'error: pack-objects died of signal 6' >&2; echo 'fatal: index-pack failed' >&2; exit 128",
@@ -118,35 +195,51 @@ func TestFunctionalRunnerGitProbe(t *testing.T) {
 			want: []string{"done bug=0 clean=0 skipped-busy=o-r-1"}},
 		"busy after the copy": {fetch: "exit 0", fakes: busyAt(2), verdict: "skipped=busy",
 			want: []string{"done bug=0 clean=0 skipped-busy=o-r-1"}},
+		"changed during the copy": {fetch: "exit 0", changes: true, verdict: "skipped=busy",
+			fakes: func(*gitProbeRig) map[string]string {
+				return map[string]string{"cp": "/bin/cp \"$@\"; rc=$?; touch -t 203001010000 \"$2/HEAD\"; exit $rc"}
+			}, want: []string{"done bug=0 clean=0 skipped-busy=o-r-1"}},
 		"pgrep fails": {fetch: "exit 0", fakes: func(*gitProbeRig) map[string]string { return map[string]string{"pgrep": "exit 2"} },
 			fails: true, verdict: "error=pgrep-rc-2"},
 		"not shallow":  {notShallow: true, fetch: "exit 0", verdict: "not-probed"},
 		"not promisor": {notPromisor: true, fetch: "exit 0", verdict: "not-probed"},
 		"auth": {fetch: "echo \"fatal: unable to access 'https://x-access-token:ghs_secret123@github.com/o/r/': The requested URL returned error: 403\" >&2; exit 128",
-			fails: true, fetched: true,
-			verdict: "error=auth repo=https://github.com/o/r: fatal: unable to access 'https://REDACTED@github.com/o/r/': The requested URL returned error: 403",
-			not:     []string{"ghs_secret123"}},
+			fails: true, fetched: true, verdict: "error=auth",
+			why: "repo=https://github.com/o/r: fatal: unable to access 'https://REDACTED@github.com/o/r/': The requested URL returned error: 403",
+			not: []string{"ghs_secret123"}},
 		"network": {fetch: "echo \"fatal: unable to access 'https://github.com/o/r/': Could not resolve host: github.com\" >&2; exit 128",
-			fails: true, fetched: true, verdict: "error=network repo=https://github.com/o/r: fatal: unable to access 'https://github.com/o/r/': Could not resolve host: github.com"},
+			fails: true, fetched: true, verdict: "error=network", why: "repo=https://github.com/o/r: fatal: unable to access 'https://github.com/o/r/': Could not resolve host: github.com"},
 		"secrets refuses": {fetch: "echo 'nova-secrets: GH_GATE_TOKEN is not granted to this seat' >&2; exit 125", fails: true, fetched: true,
-			verdict: "error=secrets rc=125: nova-secrets: GH_GATE_TOKEN is not granted to this seat",
-			want:    []string{"nova-secrets exec --only GH_GATE_TOKEN -- true"}},
+			verdict: "error=secrets", why: "rc=125: nova-secrets: GH_GATE_TOKEN is not granted to this seat",
+			want: []string{"nova-secrets exec --only GH_GATE_TOKEN -- true"}},
 		"timeout": {fetch: "exit 0", fakes: func(*gitProbeRig) map[string]string { return map[string]string{"timeout": "exit 124"} },
 			fails: true, verdict: "error=fetch-timeout"},
 		"copy fails": {fetch: "exit 0", fakes: func(*gitProbeRig) map[string]string { return map[string]string{"cp": `mkdir -p "$3/objects"; exit 1`} },
 			fails: true, verdict: "error=copy"},
 		"no disk": {fetch: "exit 0", fakes: func(*gitProbeRig) map[string]string {
 			return map[string]string{"df": "echo 'Filesystem 1024-blocks Used Available Capacity Mounted on'; echo '/dev/x 100 99 0 100% /'"}
-		}, fails: true, verdict: "skipped=disk free=0K need=", want: []string{"not checked:"}},
-		"stale copy": {fetch: "exit 0", fetched: true, verdict: "clean", left: []string{"keep"},
+		}, fails: true, verdict: "skipped=disk", why: "free=0K need=", want: []string{"not checked:"}},
+		"locked": {fetch: "exit 0", fakes: func(*gitProbeRig) map[string]string { return map[string]string{"flock": "exit 1"} },
+			fails: true, want: []string{"skipped=locked", "another probe holds"}, not: []string{"GIT-PROBE localhost done"}},
+		"moved aside": {fetch: "exit 0", fetched: true, verdict: "clean",
 			setup: func(t *testing.T, r *gitProbeRig) {
-				for _, d := range []string{"probe.old", "keep"} {
+				aside, _ := r.clone(t, "o-r-1", "r", true, true)
+				require.NoError(t, os.Rename(aside, r.ws+".git-bug"))
+				r.ws, r.config = r.clone(t, "o-r-1", "r", true, true)
+			}, want: []string{"/_work/r/r.git-bug moved-aside", "done bug=0 clean=1"}, not: []string{".git-bug.git-bug"}},
+		"stale copy": {fetch: "exit 0", fetched: true, verdict: "clean", left: []string{"keep", "probe.new"},
+			setup: func(t *testing.T, r *gitProbeRig) {
+				for d, at := range map[string]time.Time{"probe.old": time.Unix(1000, 0), "keep": time.Unix(1000, 0), "probe.new": time.Unix(4102444800, 0)} {
 					p := filepath.Join(r.scratch, d)
 					require.NoError(t, os.MkdirAll(filepath.Join(p, ".git"), 0o755))
-					require.NoError(t, os.Chtimes(p, time.Unix(1000, 0), time.Unix(1000, 0)))
+					require.NoError(t, os.Chtimes(p, at, at))
 				}
 			}},
-	} {
+		"hangup":    signalled("HUP"),
+		"interrupt": signalled("INT"),
+		"terminate": signalled("TERM"),
+	}
+	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			r := newGitProbeRig(t, !c.notShallow, !c.notPromisor)
@@ -161,8 +254,14 @@ func TestFunctionalRunnerGitProbe(t *testing.T) {
 			if c.setup != nil {
 				c.setup(t, r)
 			}
-			out, err := r.run(t, tasks, fakes)
-			assert.Contains(t, out, "GIT-PROBE localhost o-r-1 "+r.ws+" "+c.verdict)
+			before := snapshot(t, r.ws)
+			out, err := r.run(t, gitProbeLinuxBlock(t), fakes)
+			if c.verdict != "" {
+				assert.Contains(t, out, "GIT-PROBE localhost o-r-1 "+r.ws+" "+c.verdict+"\"")
+			}
+			if c.why != "" {
+				assert.Contains(t, out, "GIT-PROBE-WHY localhost o-r-1: "+c.why)
+			}
 			if c.fails {
 				require.Error(t, err, out)
 				assert.Contains(t, out, "GIT-PROBE localhost:")
@@ -193,17 +292,62 @@ func TestFunctionalRunnerGitProbe(t *testing.T) {
 				assert.Contains(t, args, "exec --only GH_GATE_TOKEN -- git -c credential.helper= -c credential.helper=!f() { test \"$1\" = get")
 				assert.Contains(t, args, "fetch --prune --no-recurse-submodules --filter=tree:0 --unshallow origin +refs/heads/*:refs/remotes/origin/* +refs/tags/*:refs/tags/*")
 			}
-			b, err := os.ReadFile(filepath.Join(r.ws, ".git", "config"))
-			require.NoError(t, err)
-			assert.Equal(t, r.config, string(b), "the workspace is never changed")
-			var left []string
-			entries, _ := os.ReadDir(r.scratch) // ignored: absent when nothing was copied
-			for _, e := range entries {
-				left = append(left, e.Name())
+			if !c.changes {
+				assert.Equal(t, before, snapshot(t, r.ws), "the workspace is never changed")
 			}
-			assert.Equal(t, c.left, left, "no copy and no stamp is left; an earlier run's copy is removed")
+			assert.Equal(t, append([]string{".lock"}, c.left...), r.left(t), "no copy and no stamp is left; only an earlier run's copy is removed")
 		})
 	}
+}
+
+// Two runners, two clones each: o-r-1 is busy (named once in the done line), o-r-2 idle with one clone that aborts and
+// one clean. Each probed clone has its own copy, the counters add up across clones, and the run is red for the one BUG.
+func TestFunctionalRunnerGitProbeTwoRunners(t *testing.T) {
+	t.Parallel()
+	r := newGitProbeRig(t, true, true)
+	ws := map[string]string{"o-r-1 r": r.ws}
+	for _, c := range [][2]string{{"o-r-1", "b"}, {"o-r-2", "q"}, {"o-r-2", "z"}} {
+		ws[c[0]+" "+c[1]], _ = r.clone(t, c[0], c[1], true, true)
+	}
+	before := map[string][]string{}
+	for k, w := range ws {
+		before[k] = snapshot(t, w)
+	}
+	r.secrets(t, "grep -q 'o/q$' .git/config && { echo 'BUG: builtin/pack-objects.c:4842: should_include_obj' >&2; exit 128; }\nexit 0")
+	pgrep := "case \"$2\" in *'/o-r-1/bin/[R]unner.Worker') echo 4242; exit 0 ;; *'/o-r-2/bin/[R]unner.Worker') exit 1 ;; esac\nexit 3"
+	out, err := r.run(t, gitProbeLinuxBlock(t), map[string]string{"pgrep": pgrep})
+	require.Error(t, err, out)
+	assert.Contains(t, out, "GIT-PROBE localhost o-r-1 "+ws["o-r-1 r"]+" skipped=busy")
+	assert.Contains(t, out, "GIT-PROBE localhost o-r-1 "+ws["o-r-1 b"]+" skipped=busy")
+	assert.Contains(t, out, "GIT-PROBE localhost o-r-2 "+ws["o-r-2 q"]+" BUG")
+	assert.Contains(t, out, "GIT-PROBE localhost o-r-2 "+ws["o-r-2 z"]+" clean")
+	assert.Contains(t, out, "GIT-PROBE localhost done bug=1 clean=1 skipped-busy=o-r-1\"")
+	assert.Contains(t, out, "GIT-PROBE-FIX localhost o-r-2: pgrep -f '"+r.base+"/o-r-2/bin/[R]unner.Worker' || mv '"+ws["o-r-2 q"]+"'")
+	fetches := r.fetches(t)
+	require.Len(t, fetches, 2)
+	first, _, _ := strings.Cut(fetches[0], "|")
+	second, _, _ := strings.Cut(fetches[1], "|")
+	assert.NotEqual(t, first, second, "each clone has its own copy")
+	for k, w := range ws {
+		assert.Equal(t, before[k], snapshot(t, w), "%s is never changed", k)
+	}
+	assert.Equal(t, []string{".lock"}, r.left(t))
+}
+
+// A runner base directory with a blank in its path: the clone that aborts is still found and the run is red.
+func TestFunctionalRunnerGitProbePathWithBlanks(t *testing.T) {
+	t.Parallel()
+	r := newGitProbeRig(t, true, true)
+	spaced := filepath.Join(r.dir, "actions runner")
+	require.NoError(t, os.Rename(r.base, spaced))
+	r.ws = strings.Replace(r.ws, r.base, spaced, 1)
+	r.worker = strings.Replace(r.worker, r.base, spaced, 1)
+	r.base = spaced
+	r.secrets(t, "echo 'BUG: builtin/pack-objects.c:4842: should_include_obj' >&2; exit 128")
+	out, err := r.run(t, gitProbeLinuxBlock(t), map[string]string{"pgrep": r.idle()})
+	require.Error(t, err, out)
+	assert.Contains(t, out, "GIT-PROBE localhost o-r-1 "+r.ws+" BUG\"")
+	assert.Contains(t, out, "makes git abort in actions/checkout's fetch")
 }
 
 // A scratch directory that cannot be made stops the probe: rc != 0 is red, with the reason.
@@ -282,9 +426,7 @@ func TestFunctionalRunnerGitProbeRealFetch(t *testing.T) {
 	require.FileExists(t, filepath.Join(r.ws, ".git", "shallow"))
 	require.Equal(t, "true", gitIn(t, r.ws, "config", "--get", "remote.origin.promisor"))
 	gitIn(t, r.ws, "config", "http.https://github.com/.extraheader", "AUTHORIZATION: basic placeholder")
-	before, err := os.ReadFile(filepath.Join(r.ws, ".git", "config"))
-	require.NoError(t, err)
-	r.config = string(before)
+	before := snapshot(t, r.ws)
 
 	rec := filepath.Join(r.dir, "copy.state")
 	secrets := `#!/bin/sh
@@ -315,10 +457,6 @@ exit $rc
 	for _, ref := range []string{"refs/remotes/origin/main", "refs/remotes/origin/side", "refs/tags/v1"} {
 		assert.True(t, slices.Contains(lines[2:], ref), "%s fetched by the refspecs: %v", ref, lines[2:])
 	}
-	after, err := os.ReadFile(filepath.Join(r.ws, ".git", "config"))
-	require.NoError(t, err)
-	assert.Equal(t, r.config, string(after), "the workspace is never changed")
-	require.FileExists(t, filepath.Join(r.ws, ".git", "shallow"), "the workspace stays shallow")
-	entries, _ := os.ReadDir(r.scratch) // ignored: compared below
-	assert.Empty(t, entries, "no copy is left")
+	assert.Equal(t, before, snapshot(t, r.ws), "the workspace is never changed")
+	assert.Equal(t, []string{".lock"}, r.left(t), "no copy is left")
 }
