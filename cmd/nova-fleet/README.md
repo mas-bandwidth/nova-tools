@@ -1160,10 +1160,13 @@ Debian and Ubuntu the compilers, assemblers and build systems (`build-essential`
 zlib, OpenGL), the runtimes (`golang-go`, `dotnet-sdk-10.0`, Mono, a Java runtime, `opam`, Python's pip and venv),
 the analysers and provers (`cppcheck`, `valgrind`, `cbmc`, `cadical`, `z3`, `gappa`, `sollya`), the store clients
 (`postgresql-client-18`, `redis-tools`, `sqlite3`), containers, VMs and emulation (`podman`, `bubblewrap`, `virtme-ng`,
-`qemu-system-x86`, `qemu-user`, `qemu-system-s390x` with the s390x cross compilers) and `bats`, `tcpdump` and the
-archivers; the list in `group_vars/all.yml` is grouped that way. Every name resolves on Ubuntu 26.04; a Debian
-release or an older Ubuntu lacks some of the versioned ones (`clang-18`, `postgresql-client-18`, `dotnet-sdk-10.0`),
-and there apt fails the task naming the package, and the fix is your own list, below, without it. A package already
+`qemu-system-x86`, `qemu-user`, `qemu-system-s390x` with the s390x cross compilers, and the s390x libraries a
+big-endian build links, `libsodium-dev:s390x`, `libbpf-dev:s390x`, `libxdp-dev:s390x` and `libstdc++6:s390x`, from the
+foreign architecture `s390x`) and `bats`, `tcpdump`, GNU `time` and the archivers; the list in `group_vars/all.yml` is
+grouped that way. Every name resolves on Ubuntu 26.04; a Debian release or an older Ubuntu lacks some of the versioned
+ones (`clang-18`, `postgresql-client-18`, `dotnet-sdk-10.0`), and there apt fails the task naming the package, and the
+fix is your own list, below, without it. Debian has no Ubuntu ports archive, so there the play refuses the foreign
+architecture; the fix is your own list without the `:s390x` names, run with the architecture turned off. A package already
 installed is adopted as it is: never reinstalled, upgraded or auto-updated, so a run over it reports `changed=0`.
 Only packages: no server is started, no `brew services`, no unit; the tests run their own `initdb` and `pg_ctl` (with
 `LC_ALL=C`). CI never installs: the macOS functional job refuses when `initdb` is missing and names this play.
@@ -1175,25 +1178,18 @@ nova-fleet runner-packages -- -l bench
 
 A list given with `-e` replaces the default whole, not merged, so another list starts from a copy: a JSON value, or a
 vars file after `-e @`, read from the directory you run in (the plays are elsewhere, so a file of yours never shadows
-one). [docs/examples/runner-packages-s390x-vm.yml](../../docs/examples/runner-packages-s390x-vm.yml) in the
-repository, copied beside your inventory, is the default list with the two switches below on, the foreign architecture `s390x` and the kernel copies
-for a VM of the host's own kernel, and the s390x libraries a big-endian build links added as `<name>:s390x`:
-
-```
-nova-fleet runner-packages --check -- -e @runner-packages-s390x-vm.yml -l bench
-nova-fleet runner-packages -- -e @runner-packages-s390x-vm.yml -l bench
-```
+one). A list without the `:s390x` packages goes with the architecture off, `-e '{"nova_runner_foreign_architectures": []}'`.
 
 | Variable | Default | |
 |---|---|---|
 | `nova_runner_packages` | `darwin`: `postgresql@18`, `cmake`, `libsodium`, `pkgconf`, `ccache`; `debian`: the toolchain above (`group_vars/all.yml`) | another OS with a non-empty list is refused |
 | `nova_runner_windows_ccache`, `nova_runner_windows_ccache_dir` | `4.14.3` and its zip's sha256; `C:\ProgramData\nova\ccache` | **Windows ccache.** On a WSL machine whose record names `windows_runners`, ccache's own Windows release, checked, unpacked through `/mnt/c` to that directory as `ccache.exe` and `msvc\cl.exe` (the same binary under the compiler's name: MSBuild runs it in place of cl.exe when a build sets `CLToolExe=cl.exe;CLToolPath=<dir>\msvc` in `CMAKE_VS_GLOBALS`, since the Visual Studio generator honours no compiler launcher; ccache then runs the real cl.exe from the PATH MSBuild sets). The version in `VERSION` beside it; a matching version is left alone; an empty version skips it |
-| `nova_runner_foreign_architectures` | `[]` | Ubuntu: dpkg architectures the debian list may name packages of, as `<name>:<arch>` |
+| `nova_runner_foreign_architectures` | `[s390x]` | Ubuntu: dpkg architectures the debian list may name packages of, as `<name>:<arch>` |
 | `nova_runner_ports_uri` | `http://ports.ubuntu.com/ubuntu-ports/` | the archive a foreign architecture comes from |
 | `nova_runner_vm_kernel` | `true` | Debian/Ubuntu (not WSL): keep each kernel image readable by the login, for a VM of the host's own kernel; a runner login of its own gets root's copies in `/opt/nova/vm-kernels` (its `~/vm-kernels`, a kernel hook for each new image) from `github-runners`, which fails with `VM-TIER-MISSING` naming what the tier lacks (vng, qemu, a writable `/dev/kvm`, the image, the modules) |
 | `nova_runner_vm_kernel_dir` | `<home>/vm-kernels` | where the copies go, as `vmlinuz-<version>` |
 
-Both switches apply on Debian and Ubuntu only; another OS skips them. The play reaches every bench as well as every runner, so a run that turns a switch on names its machines with `-l`: a WSL2 machine (`/proc/sys/fs/binfmt_misc/WSLInterop`) has no `/boot/vmlinuz-<version>` and no `kvm` group, so the VM tier is skipped there.
+Both switches apply on Debian and Ubuntu only; another OS skips them. The play reaches every bench as well as every runner: a WSL2 machine (`/proc/sys/fs/binfmt_misc/WSLInterop`) has no `/boot/vmlinuz-<version>` and no `kvm` group, so the VM tier is skipped there.
 
 **Foreign architectures.** A cross build that links a library of another architecture (`libsodium-dev:s390x`) needs
 dpkg multiarch. For each architecture the list names, the play runs `dpkg --add-architecture` where

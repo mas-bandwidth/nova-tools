@@ -6,12 +6,10 @@
 # ones are installed. Packages only: no server is started and no service registered (the tests run their own initdb
 # and pg_ctl). One line per machine: RUNNER-PACKAGES host=<machine> wanted=<n> present=<n> installed=<n>; --check
 # prints WOULD-INSTALL for each missing one. nova-fleet up does not run this play. A list given with -e replaces the
-# default whole (docs/examples/runner-packages-s390x-vm.yml in the repository is one with a foreign architecture and
-# the kernel copies for a VM of the host's own kernel on).
+# default whole.
 #
 #   nova-fleet runner-packages --check -- -l <machine>
 #   nova-fleet runner-packages -- -l <machine>
-#   nova-fleet runner-packages -- -e @runner-packages-s390x-vm.yml -l <machine>
 - name: the packages the runners' tests need
   hosts: bench:runner
   gather_facts: true
