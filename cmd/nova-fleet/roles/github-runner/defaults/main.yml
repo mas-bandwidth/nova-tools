@@ -98,10 +98,14 @@ github_runner_ci_push_branches: [main, sprint/*]
 # nova_windows_runners); these are how they are reached and laid out.
 github_runner_wsl_interop: /proc/sys/fs/binfmt_misc/WSLInterop
 github_runner_wsl_powershell: /mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe
-github_runner_wsl_stage_unix: /mnt/c/ProgramData/nova-runner-stage
-github_runner_wsl_script: 'C:\ProgramData\nova-runner-stage\runner-windows.ps1'
-github_runner_wsl_ci_stage_unix: /mnt/c/ProgramData/nova-ci-rules-stage
-github_runner_wsl_ci_script: 'C:\ProgramData\nova-ci-rules-stage\nova-ci-rules.ps1'
+# The scripts the role runs elevated are staged in one directory directly under C:\, made sealed by the role (owned by
+# Administrators, nothing inherited, only SYSTEM and Administrators) and proved before every elevated call
+# (tasks/wsl-stage.yml, files/stage-check.ps1). Never under C:\ProgramData, where every user may add files to a folder.
+# The old stage folders, C:\ProgramData\nova-runner-stage and C:\ProgramData\nova-ci-rules-stage, are never read again.
+github_runner_wsl_stage_dir: 'C:\nova-stage'
+github_runner_wsl_stage_unix: /mnt/c/nova-stage
+github_runner_wsl_script: '{{ github_runner_wsl_stage_dir }}\runner-windows.ps1'
+github_runner_wsl_ci_script: '{{ github_runner_wsl_stage_dir }}\nova-ci-rules.ps1'
 github_runner_wsl_base_dir: 'C:\actions-runner'
 github_runner_wsl_cache: 'C:\actions-runner\.cache'
 # The keepalive (tasks/wsl-keepalive.yml) finds this distro on the Windows side by its machine-id.

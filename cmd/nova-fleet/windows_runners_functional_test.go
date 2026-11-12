@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -23,6 +24,15 @@ d=$(dirname "$0")/..
 log=$d/calls.log
 arg() { k=$1; shift; while [ $# -gt 0 ]; do [ "$1" = "$k" ] && { printf '%s' "$2"; return; }; shift; done; }
 case "$*" in
+*-File*) printf 'CALL %s\n' "$(arg -File "$@")" >>"$log" ;;
+esac
+case "$*" in
+*-NoLogo*-EncodedCommand*)
+	printf 'STAGECHECK\n' >>"$log"
+	if [ -f "$d/stageopen" ] && [ "$(grep -c '^STAGECHECK$' "$log")" -ge "$(cat "$d/stageopen")" ]; then
+		printf 'STAGE-OPEN C:\\ sid=S-1-5-32-545: nothing was run\r\n'; exit 14
+	fi
+	mkdir -p "$d/stage"; exit 0 ;;
 *-EncodedCommand*)
 	[ -f "$d/reg" ] && while IFS= read -r l; do printf 'REG %s\r\n' "$l"; done <"$d/reg"
 	[ -f "$d/svc" ] && while IFS= read -r l; do printf 'SVC %s\r\n' "$l"; done <"$d/svc"
@@ -90,7 +100,7 @@ func newWinRig(t *testing.T, record string, files map[string]string) winRig {
 	r.write(t, "inv.yml", "all:\n  hosts:\n    captain:\n      ansible_connection: local\n"+
 		"      ansible_python_interpreter: \"{{ ansible_playbook_python }}\""+record+"\n  children:\n    bench: {hosts: {captain: {}}}\n", 0o644)
 	r.write(t, "vars.yml", "github_runner_wsl_interop: "+r.dir+"/interop\ngithub_runner_wsl_powershell: "+r.dir+"/bin/powershell.exe\n"+
-		"github_runner_wsl_stage_unix: "+r.dir+"/stage\ngithub_runner_wsl_ci_stage_unix: "+r.dir+"/cistage\ngithub_runner_gh: "+r.dir+"/bin/gh\n"+
+		"github_runner_wsl_stage_unix: "+r.dir+"/stage\ngithub_runner_gh: "+r.dir+"/bin/gh\n"+
 		"github_runner_wsl_machine_id_file: "+r.dir+"/machine-id\n", 0o644)
 	r.write(t, "machine-id", "0123456789abcdef0123456789abcdef\n", 0o644)
 	for name, body := range files {
@@ -229,6 +239,66 @@ func TestFunctionalWSLKeepalive(t *testing.T) {
 			}
 			if !strings.Contains(out, "KEEPALIVE captain distro-a set,started") {
 				t.Errorf("no keepalive receipt:\n%s", out)
+			}
+		})
+	}
+}
+
+// TestFunctionalStageCheckGuardsEveryElevatedCall: the play stages the scripts it runs elevated and proves the stage
+// (files/stage-check.ps1) right before each elevated call: every CALL in the fake's log comes straight after a
+// STAGECHECK and the scripts are staged; and whichever check refuses (STAGE-OPEN; the fake refuses from its nth on),
+// the run fails and nothing elevated runs after it.
+func TestFunctionalStageCheckGuardsEveryElevatedCall(t *testing.T) {
+	t.Parallel()
+	files := map[string]string{"reg": lines(allDirs...), "svc": lines(allDirs...),
+		"gh-repos-mas-bandwidth-rocketnet": ghRocketnet, "gh-orgs-robotgamedevelopers": ghRgd}
+	r := newWinRig(t, captainRecord, files)
+	out, log, err := r.play(t)
+	if err != nil {
+		t.Fatalf("play failed: %v\n%s", err, out)
+	}
+	prev, calls := "", 0
+	for _, l := range strings.Split(log, "\n") {
+		if strings.HasPrefix(l, "CALL ") {
+			calls++
+			if prev != "STAGECHECK" {
+				t.Errorf("%q ran without the stage proved right before it (after %q)", l, prev)
+			}
+		}
+		if l != "" && !strings.HasPrefix(l, "REGISTER ") && !strings.HasPrefix(l, "KEEPALIVE ") {
+			prev = l
+		}
+	}
+	if calls < 3 {
+		t.Errorf("only %d elevated calls logged:\n%s", calls, log)
+	}
+	for _, f := range []string{"runner-windows.ps1", "nova-ci-rules.ps1", "job-started.ps1", "job-completed.ps1"} {
+		if _, err := os.Stat(filepath.Join(r.dir, "stage", f)); err != nil {
+			t.Errorf("%s was not staged: %v", f, err)
+		}
+	}
+	checks := strings.Count(log, "STAGECHECK\n")
+	for n := 1; n <= checks; n++ {
+		t.Run(fmt.Sprintf("a refusal at check %d of %d", n, checks), func(t *testing.T) {
+			t.Parallel()
+			r := newWinRig(t, captainRecord, files)
+			r.write(t, "stageopen", fmt.Sprintf("%d\n", n), 0o644)
+			out, log, err := r.play(t)
+			if err == nil || !strings.Contains(out, "STAGE-OPEN") {
+				t.Fatalf("a stage refusal must fail the run and say STAGE-OPEN:\n%s", out)
+			}
+			seen := 0
+			for _, l := range strings.Split(log, "\n") {
+				if l == "STAGECHECK" {
+					seen++
+				}
+				if strings.HasPrefix(l, "CALL ") && seen >= n {
+					t.Errorf("%q ran after check %d refused:\n%s", l, n, log)
+				}
+			}
+			_, err = os.Stat(filepath.Join(r.dir, "stage", "runner-windows.ps1"))
+			if n == 1 && err == nil {
+				t.Error("a script was staged into a stage the first check refused")
 			}
 		})
 	}

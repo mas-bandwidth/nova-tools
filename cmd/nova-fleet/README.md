@@ -516,7 +516,7 @@ nova-fleet windows-runners -- -l bench-1
 `windows_runners` is `<url>=<count>[:<label>+<label>]`, comma-separated (cmd/nova-config/README.md); the inventory hands it to
 the play as `nova_windows_runners`. A machine without it gets no runners (only the keepalive below); one with it that is not WSL with interop is
 refused. **The channel** is the one `ci-rules` already uses: from the WSL login, `powershell.exe` by its full path
-runs the role's `files/runner-windows.ps1`, staged to `C:\ProgramData\nova-runner-stage`. It acts as the Windows account
+runs the role's `files/runner-windows.ps1`, staged to `C:\nova-stage` (below, "The stage directory"). It acts as the Windows account
 that started WSL, elevated; no Windows login, password or key is involved, and no port is opened. **Each runner** is
 `<machine>-win-<slug>-<i>` in `C:\actions-runner\<slug>-<i>` (`<slug>` is `<owner>-<repo>`, or `org-<org>` so an
 organization never shares a slug with a repository), the pinned release checked against its digest (a directory left
@@ -533,6 +533,37 @@ directory's own `retired-<yyyymmdd>\`, its service is removed, and it registers 
 cannot read GitHub's list for a target refuses, rather than take a whole runner for a half one. Each machine prints `GITHUB-RUNNERS host=<machine> windows=<n> registered=<n> online=<n>`
 from its directories and GitHub's own list; a run where any is short fails. `--check` reads both, asks for the tokens it
 would need, and prints `RUNNER-PLAN <machine> windows=<n> register=<names> repair=<names> labels=<labels>`.
+
+### The stage directory
+
+Every script the role runs elevated on the Windows side (`runner-windows.ps1`, and `nova-ci-rules.ps1` with its two
+hooks) is staged in `C:\nova-stage` (`github_runner_wsl_stage_dir`), never under `C:\ProgramData`. There every user may
+add files to a folder, so a job of an ordinary runner (`NETWORK SERVICE`) could make the stage folder first, or put
+its own script in it, and the play would run that script as an administrator. The role's `tasks/wsl-stage.yml` makes the
+directory sealed in the one call that creates it: owned by `Administrators`, nothing inherited, full control for SYSTEM
+and `Administrators` only. It copies the scripts in through `/mnt/c`, and every elevated call is
+`<stage check> && powershell.exe ... -File C:\nova-stage\<script>`. The stage check is `files/stage-check.ps1`, handed
+to `powershell.exe` as `-EncodedCommand` so it is never a file anyone could change. It proves, the moment before each
+call:
+
+- no folder above `C:\nova-stage` lets `NETWORK SERVICE`, SERVICE, LOCAL, Authenticated Users, Users or Everyone make,
+  change or delete a file in it, or is owned by one of them (making a folder in `C:\` is allowed: it lands beside the
+  stage directory, not in it);
+- the directory is as the play makes it;
+- everything in it is a file, not a link, owned by SYSTEM, `Administrators` or the account running the play, with
+  nothing but what it inherits;
+- each script has the sha256 of the role's own file on the control node.
+
+A refusal fails the task and nothing is run; nothing found is ever changed or repaired:
+
+- `STAGE-OPEN <folder> sid=<sid>|owner=<sid>|unreadable=<why>`: a folder above lets one of those accounts write;
+- `STAGE-PLANTED <path> owner=<sid>|inherited=yes|ace=<sid>|folder=no|file=no|unreadable=<why>`: the directory, or
+  something in it, was not made by the play. Delete it in an elevated PowerShell (`Remove-Item -LiteralPath
+  'C:\nova-stage' -Recurse -Force`) and run again;
+- `STAGE-CHANGED <path> missing|sha256=<hex>`: a staged script is not the role's.
+
+`C:\ProgramData\nova-runner-stage` and `C:\ProgramData\nova-ci-rules-stage` are never read, run or trusted; the play
+leaves them where they are on a machine that has them, and an administrator may delete them by hand. The decisions in `stage-check.ps1` are tested on fake ACLs by `TestFunctionalStageCheck` (`testdata/stagecheck`).
 
 ### The Windows page file at a fixed size
 
