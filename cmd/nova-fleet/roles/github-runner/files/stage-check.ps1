@@ -6,11 +6,13 @@
 #   $Names  the files that must be there, $Shas their sha256 (from the role's own files on the control node)
 # and every elevated call runs only after it exits 0 (github_runner_win_stage_check). It changes nothing it finds and
 # repairs nothing; one line, then exit 14, on a refusal:
-#   STAGE-OPEN <path> ...     a folder above the stage directory lets NETWORK SERVICE, SERVICE, LOCAL, Authenticated
-#                             Users, Users or Everyone make, change or delete a file in it, or is owned by one of them
+#   STAGE-OPEN <path> ...     a folder above the stage directory is owned by, or lets delete, rename or re-permission
+#                             it to, anyone but SYSTEM, Administrators or TrustedInstaller (NETWORK SERVICE, SERVICE,
+#                             LOCAL, Authenticated Users, Users, Everyone, a service's own SID ...); adding a file
+#                             beside the stage directory is not refused: it cannot reach into the sealed directory
 #   STAGE-PLANTED <path> ...  the stage directory, or something in it, is not as this play makes it: owned by SYSTEM
 #                             or Administrators, nothing inherited, only SYSTEM and Administrators in its list; and in
-#                             it only files owned by those or by this account, with nothing but what they inherit
+#                             it only files owned by those or by this account, with only SYSTEM and Administrators in their lists
 #   STAGE-CHANGED <path> ...  a file to run is missing or is not the role's (its sha256)
 # On success it prints nothing, or with $Make, STAGE <dir> ok|made.
 $ErrorActionPreference = 'Stop'
@@ -92,22 +94,29 @@ public sealed class StageDisk : IStageDisk {
 }
 public static class NovaStage {
   public static readonly string[] Sealers = { "S-1-5-18", "S-1-5-32-544" };
-  // NETWORK SERVICE (every ordinary runner's jobs), SERVICE, LOCAL, Authenticated Users, Users, Everyone
-  public static readonly string[] Openers = { "S-1-5-20", "S-1-5-6", "S-1-2-0", "S-1-5-11", "S-1-5-32-545", "S-1-1-0" };
-  // The rights on a folder that let someone make, change or delete a file in it: FILE_WRITE_DATA (add a file),
-  // DELETE_CHILD, DELETE, WRITE_DAC, WRITE_OWNER, GENERIC_ALL, GENERIC_WRITE. FILE_APPEND_DATA (add a folder) is not
-  // among them: C:\ gives it to Authenticated Users, and a folder they make is beside the stage directory, not in it.
-  public const long FileWrite = 0x2 | 0x40 | 0x10000 | 0x40000 | 0x80000 | 0x10000000 | 0x40000000;
+  // Who may own a folder above the stage directory, and hold Replace on it: SYSTEM, Administrators, TrustedInstaller;
+  // CREATOR OWNER and OWNER RIGHTS stand for the owner, who is one of those. Everyone else is refused, by name or not
+  // (NETWORK SERVICE, the runner services' own SIDs, This Organization, Authenticated Users, Users, Everyone ...).
+  public static readonly string[] Keepers = { "S-1-5-18", "S-1-5-32-544",
+    "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464", "S-1-3-0", "S-1-3-4" };
+  // Replace: the rights on a folder above that let someone take the stage directory's path from it: DELETE_CHILD,
+  // DELETE (rename the folder away), WRITE_DAC, WRITE_OWNER (grant themselves the rest), GENERIC_ALL. Adding a file or
+  // a folder to a folder above is not among them: it lands beside the stage directory, not in it, and the stage
+  // directory itself is sealed (captain's C:\ gives Authenticated Users Modify, which holds none of these).
+  public const long Replace = 0x40 | 0x10000 | 0x40000 | 0x80000 | 0x10000000;
 
-  // Above: the first folder above stage, up to the drive, that one of Openers owns or may make, change or delete a file
-  // in (an allow ACE that applies to the folder itself), or that cannot be read; else null.
+  // Above: the first folder above stage, up to the drive, owned by anyone but Keepers, or on which anyone but Keepers
+  // holds Replace (an allow ACE that applies to the folder itself), or that cannot be read; else null.
   public static string Above(IStageDisk d, string stage) {
     for (string p = d.Parent(stage); p != null; p = d.Parent(p)) {
       StageFacts f = d.Read(p);
       if (f.Missing || f.Error != null) { return "STAGE-OPEN " + p + " unreadable=" + (f.Error ?? "missing"); }
-      if (Array.IndexOf(Openers, f.Owner) >= 0) { return "STAGE-OPEN " + p + " owner=" + f.Owner; }
+      if (Array.IndexOf(Keepers, f.Owner) < 0) { return "STAGE-OPEN " + p + " owner=" + f.Owner; }
+      // a drive's root cannot be deleted or renamed, so DELETE on it takes nothing (captain's C:\ gives Authenticated
+      // Users Modify, which holds DELETE)
+      long take = d.Parent(p) == null ? Replace & ~0x10000L : Replace;
       foreach (StageAce a in f.Aces) {
-        if (a.Allow && !a.InheritOnly && (a.Rights & FileWrite) != 0 && Array.IndexOf(Openers, a.Sid) >= 0) { return "STAGE-OPEN " + p + " sid=" + a.Sid; }
+        if (a.Allow && !a.InheritOnly && (a.Rights & take) != 0 && Array.IndexOf(Keepers, a.Sid) < 0) { return "STAGE-OPEN " + p + " sid=" + a.Sid; }
       }
     }
     return null;
@@ -126,7 +135,7 @@ public static class NovaStage {
     }
     return null;
   }
-  // Files: null when everything in stage is a file (not a link) owned by one of owners with only inherited ACEs, and
+  // Files: null when everything in stage is a file (not a link) owned by one of owners with only SYSTEM and Administrators in its list, and
   // each of names is there with the sha256 in shas; else why.
   public static string Files(IStageDisk d, string stage, string[] owners, string[] names, string[] shas) {
     string[] items;
@@ -141,7 +150,9 @@ public static class NovaStage {
       if (f.Folder || f.Reparse) { return "STAGE-PLANTED " + p + " file=no"; }
       if (Array.IndexOf(owners, f.Owner) < 0) { return "STAGE-PLANTED " + p + " owner=" + f.Owner; }
       foreach (StageAce a in f.Aces) {
-        if (!a.Inherited) { return "STAGE-PLANTED " + p + " ace=" + a.Sid; }
+        // SYSTEM and Administrators only, as the sealed directory passes on; not "anything inherited": a file moved in
+        // keeps the entries it inherited where it was
+        if (Array.IndexOf(Sealers, a.Sid) < 0) { return "STAGE-PLANTED " + p + " ace=" + a.Sid; }
       }
     }
     for (int i = 0; i < names.Length; i++) {
@@ -176,8 +187,8 @@ if ($Make -and -not [NovaStage]::Above($disk, $Stage) -and -not (Test-Path -Lite
 }
 $why = [NovaStage]::Check($disk, $Stage, $owners, [string[]]$Names, [string[]]$Shas)
 if ($why) {
-  if ($why -like 'STAGE-PLANTED *') { "${why}: it was not made by this play and is never used or changed; in an elevated PowerShell: Remove-Item -LiteralPath '$Stage' -Recurse -Force, then run the play again" }
-  elseif ($why -like 'STAGE-OPEN *') { "${why}: a job on an ordinary runner could put a file there; nothing was run; close it (no write for those accounts) and run the play again" }
+  if ($why -like 'STAGE-PLANTED *') { "${why}: it was not made by this play and is never used or changed; in an elevated cmd (rmdir removes a link inside without following it): rmdir /s /q `"$Stage`", then run the play again" }
+  elseif ($why -like 'STAGE-OPEN *') { "${why}: an account other than SYSTEM, Administrators or TrustedInstaller could take the stage directory's path; nothing was run; close it and run the play again" }
   else { "${why}: nothing was run; run the play again" }
   exit 14
 }

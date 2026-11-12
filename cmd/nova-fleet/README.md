@@ -546,24 +546,30 @@ and `Administrators` only. It copies the scripts in through `/mnt/c`, and every 
 to `powershell.exe` as `-EncodedCommand` so it is never a file anyone could change. It proves, the moment before each
 call:
 
-- no folder above `C:\nova-stage` lets `NETWORK SERVICE`, SERVICE, LOCAL, Authenticated Users, Users or Everyone make,
-  change or delete a file in it, or is owned by one of them (making a folder in `C:\` is allowed: it lands beside the
-  stage directory, not in it);
+- every folder above `C:\nova-stage` is owned by SYSTEM, `Administrators` or TrustedInstaller, and no one else (not
+  `NETWORK SERVICE`, SERVICE, LOCAL, Authenticated Users, Users, Everyone, This Organization or a service's own SID)
+  may delete it, rename it, delete what is in it, or change its permissions or owner. Adding a file or a folder to
+  `C:\` is not refused: it lands beside the stage directory, never in it (captain's `C:\` gives Authenticated Users
+  Modify, which is that and no more);
 - the directory is as the play makes it;
 - everything in it is a file, not a link, owned by SYSTEM, `Administrators` or the account running the play, with
-  nothing but what it inherits;
+  only the entries it inherits from the directory (SYSTEM and `Administrators`);
 - each script has the sha256 of the role's own file on the control node.
 
 A refusal fails the task and nothing is run; nothing found is ever changed or repaired:
 
-- `STAGE-OPEN <folder> sid=<sid>|owner=<sid>|unreadable=<why>`: a folder above lets one of those accounts write;
+- `STAGE-OPEN <folder> sid=<sid>|owner=<sid>|unreadable=<why>`: someone else could take the stage directory's path;
 - `STAGE-PLANTED <path> owner=<sid>|inherited=yes|ace=<sid>|folder=no|file=no|unreadable=<why>`: the directory, or
-  something in it, was not made by the play. Delete it in an elevated PowerShell (`Remove-Item -LiteralPath
-  'C:\nova-stage' -Recurse -Force`) and run again;
+  something in it, was not made by the play. Because `C:\` lets any account make a folder, a job of an ordinary runner
+  can make `C:\nova-stage` before the play does; the play then refuses until an administrator deletes it. Delete it
+  in an elevated cmd with `rmdir /s /q C:\nova-stage`, which removes a link inside it without following it (Windows
+  PowerShell's `Remove-Item -Recurse` follows one and deletes what it points at), and run again;
 - `STAGE-CHANGED <path> missing|sha256=<hex>`: a staged script is not the role's.
 
 `C:\ProgramData\nova-runner-stage` and `C:\ProgramData\nova-ci-rules-stage` are never read, run or trusted; the play
-leaves them where they are on a machine that has them, and an administrator may delete them by hand. The decisions in `stage-check.ps1` are tested on fake ACLs by `TestFunctionalStageCheck` (`testdata/stagecheck`).
+leaves them where they are on a machine that has them, and an administrator may delete them by hand (`rmdir /s /q`).
+The decisions in `stage-check.ps1` are tested on fake ACLs by `TestFunctionalStageCheck` (`testdata/stagecheck`); the
+part that reads the real disk (`StageDisk`) runs only on Windows, when the play runs.
 
 ### The Windows page file at a fixed size
 

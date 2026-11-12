@@ -5,7 +5,7 @@
 # so it runs only after files/stage-check.ps1, handed to powershell.exe as -EncodedCommand (never staged itself),
 # has proved, that same moment: no folder above github_runner_wsl_stage_dir lets an ordinary runner's account make,
 # change or delete a file in it; the directory is the one this play made sealed; everything in it is a file owned by
-# SYSTEM, Administrators or this account with nothing but what it inherits; and each staged script has the sha256 of
+# SYSTEM, Administrators or this account with only SYSTEM and Administrators in its list; and each staged script has the sha256 of
 # the role's own file on the control node. A refusal (STAGE-OPEN, STAGE-PLANTED, STAGE-CHANGED) fails the task and
 # nothing is run; nothing found is ever repaired. Included before the first elevated call of each entry (wsl-windows,
 # wsl-keepalive, wsl-pagefile, ci-rules); a run stages once per machine (the check before each call still runs every

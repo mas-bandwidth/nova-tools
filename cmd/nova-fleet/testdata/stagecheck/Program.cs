@@ -34,6 +34,7 @@ sealed class FakeDisk : IStageDisk {
 
 static class Program {
   const string Sys = "S-1-5-18", Adm = "S-1-5-32-544", NS = "S-1-5-20", AU = "S-1-5-11", Users = "S-1-5-32-545", Me = "S-1-5-21-1-2-3-500";
+  const string TI = "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464";
   const string Stage = "C:\\nova-stage";
   const string Sha = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
   static readonly string[] Owners = { Sys, Adm, Me };
@@ -69,7 +70,7 @@ static class Program {
   // the stage directory as the play makes it, and the two scripts staged in it
   static FakeDisk Good() {
     FakeDisk d = new FakeDisk();
-    d.Facts["C:\\"] = Facts(true, "S-1-5-80-956008885", true, Ace(Adm, 0x1f01ff, false, false), Ace(Sys, 0x1f01ff, false, false),
+    d.Facts["C:\\"] = Facts(true, TI, true, Ace(Adm, 0x1f01ff, false, false), Ace(Sys, 0x1f01ff, false, false),
       Ace(Users, 0x1200a9, false, false), Ace(AU, 0x4, false, false), Ace(AU, 0x1301bf, false, true));
     d.Facts[Stage] = Facts(true, Adm, true, Ace(Sys, 0x1f01ff, false, false), Ace(Adm, 0x1f01ff, false, false));
     foreach (string n in Names) {
@@ -80,42 +81,64 @@ static class Program {
   }
   static string Check(FakeDisk d) { return NovaStage.Check(d, Stage, Owners, Names, Shas); }
 
+  static StageFacts Drive(params StageAce[] aces) {
+    return Facts(true, Adm, false, aces);
+  }
+  static string Opened(long rights, string sid) {
+    FakeDisk d = Good();
+    d.Facts["C:\\"].Aces = new StageAce[] { Ace(Sys, 0x1f01ff, false, false), Ace(sid, rights, false, false) };
+    return Check(d);
+  }
   static void Above() {
     Want("good", Check(Good()), null);
+    // captain's C:\ (icacls, 2026-11-12): Authenticated Users Modify on the drive itself, owner Administrators
     FakeDisk d = Good();
-    d.Facts["C:\\"].Aces = new StageAce[] { Ace(Users, 0x2, false, false) };
-    Want("the drive takes files from Users", Check(d), "STAGE-OPEN C:\\ sid=" + Users);
-    d = Good();
-    d.Facts["C:\\"].Aces = new StageAce[] { Ace(AU, 0x40, false, false) };
-    Want("the drive lets a delete in it", Check(d), "STAGE-OPEN C:\\ sid=" + AU);
-    d = Good();
-    d.Facts["C:\\"].Aces = new StageAce[] { Ace("S-1-5-6", 0x40000, false, false) };
-    Want("the drive's permissions changed by SERVICE", Check(d), "STAGE-OPEN C:\\ sid=S-1-5-6");
-    d = Good();
-    d.Facts["C:\\"].Aces = new StageAce[] { Ace("S-1-2-0", 0x40000000, false, false) };
-    Want("the drive written by LOCAL", Check(d), "STAGE-OPEN C:\\ sid=S-1-2-0");
-    d = Good();
-    d.Facts["C:\\"].Aces = new StageAce[] { Ace("S-1-1-0", 0x10000000, false, false) };
-    Want("the drive all Everyone's", Check(d), "STAGE-OPEN C:\\ sid=S-1-1-0");
+    d.Facts["C:\\"] = Drive(Ace("S-1-15-3-65536-1", 0x1200a9, true, false), Ace(Adm, 0x1f01ff, true, false), Ace(Adm, 0x1f01ff, true, true),
+      Ace(Sys, 0x1f01ff, true, false), Ace(AU, 0x1301bf, true, false), Ace(AU, 0x1301bf, true, true), Ace(Users, 0x1200a9, true, false));
+    Want("captain's drive: files beside the stage are no threat", Check(d), null);
+    Want("a file added by Users", Opened(0x2, Users), null);
+    Want("written by LOCAL (GENERIC_WRITE)", Opened(0x40000000, "S-1-2-0"), null);
+    Want("a delete in it by Authenticated Users", Opened(0x40, AU), "STAGE-OPEN C:\\ sid=" + AU);
+    Want("DELETE on the drive's root takes nothing", Opened(0x10000, Users), null);
+    Want("permissions changed by SERVICE", Opened(0x40000, "S-1-5-6"), "STAGE-OPEN C:\\ sid=S-1-5-6");
+    Want("owner changed by LOCAL", Opened(0x80000, "S-1-2-0"), "STAGE-OPEN C:\\ sid=S-1-2-0");
+    Want("all Everyone's", Opened(0x10000000, "S-1-1-0"), "STAGE-OPEN C:\\ sid=S-1-1-0");
+    Want("This Organization, not named anywhere", Opened(0x40, "S-1-5-15"), "STAGE-OPEN C:\\ sid=S-1-5-15");
+    Want("a runner service's own SID", Opened(0x10000000, "S-1-5-80-1-2-3-4-5"), "STAGE-OPEN C:\\ sid=S-1-5-80-1-2-3-4-5");
+    Want("TrustedInstaller", Opened(0x1f01ff, TI), null);
+    Want("CREATOR OWNER and OWNER RIGHTS stand for the owner", Opened(0x1f01ff, "S-1-3-0") ?? Opened(0x1f01ff, "S-1-3-4"), null);
     d = Good();
     d.Facts["C:\\"].Owner = NS;
-    Want("the drive owned by NETWORK SERVICE", Check(d), "STAGE-OPEN C:\\ owner=" + NS);
+    Want("owned by NETWORK SERVICE", Check(d), "STAGE-OPEN C:\\ owner=" + NS);
     d = Good();
+    d.Facts["C:\\"].Owner = Me;
+    Want("owned by a user", Check(d), "STAGE-OPEN C:\\ owner=" + Me);
+    d = Good();
+    d.Facts["C:\\"].Owner = Sys;
+    Want("owned by SYSTEM", Check(d), null);
+    d = Good();
+    d.Facts["C:\\"].Aces = new StageAce[] { Ace(Users, 0x40, false, false) };
     d.Facts["C:\\"].Aces[0].Allow = false;
-    d.Facts["C:\\"].Aces[0].Sid = Users;
-    d.Facts["C:\\"].Aces[0].Rights = 0x2;
-    Want("a deny entry is no write", Check(d), null);
+    Want("a deny entry gives nothing", Check(d), null);
+    d = Good();
+    d.Facts["C:\\"].Aces = new StageAce[] { Ace(Users, 0x1f01ff, false, true) };
+    Want("inherit-only: not on the drive itself", Check(d), null);
     d = Good();
     d.Facts["C:\\"].Error = "UnauthorizedAccessException";
-    Want("the drive unreadable", Check(d), "STAGE-OPEN C:\\ unreadable=");
+    Want("unreadable", Check(d), "STAGE-OPEN C:\\ unreadable=UnauthorizedAccessException");
     // a stage two levels down: every folder up to the drive is read, not only the parent
     d = Good();
     string deep = "C:\\sealed\\nova-stage";
     d.Facts["C:\\sealed"] = Facts(true, Adm, true, Ace(Sys, 0x1f01ff, false, false), Ace(Adm, 0x1f01ff, false, false));
     d.Facts[deep] = d.Facts[Stage];
     Want("deeper, sealed above", NovaStage.Check(d, deep, Owners, new string[0], new string[0]), null);
-    d.Facts["C:\\"].Aces = new StageAce[] { Ace(Users, 0x2, false, false) };
+    d.Facts["C:\\sealed"].Aces = new StageAce[] { Ace(Sys, 0x1f01ff, false, false), Ace(Users, 0x10000, false, false) };
+    Want("deeper, the folder above renamed by Users (DELETE)", NovaStage.Check(d, deep, Owners, new string[0], new string[0]), "STAGE-OPEN C:\\sealed sid=" + Users);
+    d.Facts["C:\\sealed"].Aces = new StageAce[] { Ace(Sys, 0x1f01ff, false, false) };
+    d.Facts["C:\\"].Aces = new StageAce[] { Ace(Users, 0x40, false, false) };
     Want("deeper, the drive open", NovaStage.Check(d, deep, Owners, new string[0], new string[0]), "STAGE-OPEN C:\\ sid=" + Users);
+    d.Facts.Remove("C:\\sealed");
+    Want("deeper, a folder above missing", NovaStage.Check(d, deep, Owners, new string[0], new string[0]), "STAGE-OPEN C:\\sealed unreadable=missing");
   }
 
   static void Root() {
@@ -158,6 +181,9 @@ static class Program {
     d = Good();
     d.Facts[f].Aces = new StageAce[] { Ace(Sys, 0x1f01ff, true, false), Ace(Users, 0x2, false, false) };
     Want("a script with its own entry", Check(d), "STAGE-PLANTED " + f + " ace=" + Users);
+    d = Good();
+    d.Facts[f].Aces = new StageAce[] { Ace(Sys, 0x1f01ff, true, false), Ace(Users, 0x1301bf, true, false) };
+    Want("a script moved in, its old inherited entries kept", Check(d), "STAGE-PLANTED " + f + " ace=" + Users);
     d = Good();
     d.Facts[f].Reparse = true;
     Want("a script that is a link", Check(d), "STAGE-PLANTED " + f + " file=no");

@@ -35,6 +35,9 @@ func TestStageGuardsEveryElevatedCall(t *testing.T) {
 	for file, tasks := range roleTasks(t) {
 		for _, task := range tasks {
 			cmd := shellText(task)
+			if strings.Contains(cmd, "github_runner_wsl_powershell") && !strings.Contains(cmd, "-File") && !strings.Contains(cmd, "-EncodedCommand") {
+				t.Errorf("%s %q: powershell.exe runs something other than a staged -File or an -EncodedCommand:\n%s", file, task["name"], cmd)
+			}
 			if !strings.Contains(cmd, "-File") {
 				continue
 			}
