@@ -209,14 +209,20 @@ function Get-AdminRefusal {
 }
 
 function Invoke-Started {
-    $why = Get-AdminRefusal
+    # a check that throws is a refusal, never a pass
+    try { $why = Get-AdminRefusal }
+    catch { $why = "the administrator runner check failed ($($_.Exception.Message)); the fleet admin looks" }
     if ($why) {
         "::error::CI rule: $why"
         # A failed job-started hook fails the job but does not stop it: the runner adds the hook as a pre-job step, and
         # a step with if: always() or failure() still runs after it, here as an administrator. So the job's
-        # Runner.Worker is ended now, before any step of the job runs.
-        $worker = Find-Ancestor $PID 'Runner.Worker' (Get-Rows 'name')
+        # Runner.Worker is ended now, before any step of the job runs; a process listing that fails is tried again.
+        $worker = $null
+        for ($i = 0; $i -lt 3 -and -not $worker; $i++) {
+            try { $worker = Find-Ancestor $PID 'Runner.Worker' (Get-Rows 'name') } catch { $worker = $null }
+        }
         if ($worker) { Stop-Process -Id $worker -Force -ErrorAction SilentlyContinue }
+        else { "::error::CI rule: no Runner.Worker above this hook was found to end, so the job's always() steps may still run; the fleet admin looks" }
         exit 1
     }
     Invoke-Disarm

@@ -9,8 +9,9 @@
 # The directory holds exactly VERSION, ccache.exe and msvc\cl.exe, both binaries the release's own, compared on every
 # run with the release zip kept (checked by its sha256) on the WSL side, which no Windows job reaches. Anything else,
 # or a binary that differs, and the whole directory is removed and made again: a file a job put there while it was
-# open (it was under C:\ProgramData, where every user may add files to a subfolder) is never sealed in. The directory
-# is sealed before anything is copied in and again after: owned by Administrators, nothing inherited, full control for
+# open (it was under C:\ProgramData, where every user may add files to a subfolder) is never sealed in. A directory
+# made anew is made sealed in the one call that creates it (files/ccache-dir.ps1), so no job holds a handle into it;
+# one a job made in the gap after the removal is refused. It is sealed again before anything is copied in and after: owned by Administrators, nothing inherited, full control for
 # SYSTEM and Administrators, read and run for Authenticated Users and Users, and everything in it inheriting only that.
 # A run that finds it not exact after the seal fails. An admin runner's install refuses the directory while it is not
 # sealed (runner-windows.ps1 install -ToolDirs).
@@ -48,8 +49,15 @@
       ansible.builtin.file: { path: "{{ rp_win_ccache_unix }}", state: absent }
       when: rp_win_ccache_was.stdout == 'DIFFERS'
 
-    - name: the Windows ccache directory
-      ansible.builtin.file: { path: "{{ rp_win_ccache_unix }}", state: directory, mode: "0755" }
+    - name: the Windows ccache directory, made sealed in the call that creates it (files/ccache-dir.ps1)
+      ansible.builtin.shell: >-
+        /mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe -NoProfile -NonInteractive -NoLogo -EncodedCommand
+        {{ ("$Dir = '" ~ nova_runner_windows_ccache_dir ~ "'\n" ~ lookup('ansible.builtin.file', 'ccache-dir.ps1'))
+           | b64encode(encoding='utf-16-le') }} </dev/null
+      args: { executable: /bin/sh }
+      register: rp_win_ccache_made
+      failed_when: rp_win_ccache_made.rc != 0 or rp_win_ccache_made.stdout is not search('^CCACHE-DIR .* made', multiline=True)
+      when: rp_win_ccache_was.stdout != 'EXACT'
 
     - name: the Windows ccache directory sealed (before anything is copied in)
       ansible.builtin.shell: "{{ rp_win_ccache_seal }}"

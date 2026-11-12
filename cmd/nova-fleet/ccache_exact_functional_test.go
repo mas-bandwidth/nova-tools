@@ -90,6 +90,11 @@ func TestFunctionalCcacheExact(t *testing.T) {
 				t.Fatal(err)
 			}
 		}, "DIFFERS"},
+		{"a folder that cannot be listed", func(d, _ string) {
+			if err := os.Chmod(filepath.Join(d, "msvc"), 0); err != nil {
+				t.Fatal(err)
+			}
+		}, "DIFFERS"},
 		{"no directory", func(d, _ string) {
 			if err := os.RemoveAll(d); err != nil {
 				t.Fatal(err)
@@ -98,6 +103,9 @@ func TestFunctionalCcacheExact(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
+			if tc.name == "a folder that cannot be listed" && os.Geteuid() == 0 {
+				t.Skip("root lists a folder whatever its mode")
+			}
 			tmp := t.TempDir()
 			src, d, other := filepath.Join(tmp, "src"), filepath.Join(tmp, "ccache"), filepath.Join(tmp, "other")
 			write(filepath.Join(src, "ccache.exe"), "MZ release\n")
@@ -107,7 +115,8 @@ func TestFunctionalCcacheExact(t *testing.T) {
 			tc.setup(d, other)
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
-			out, err := exec.CommandContext(ctx, "bash", "-c", script, "exact", d, src).CombinedOutput()
+			out, err := exec.CommandContext(ctx, "bash", "-c", script, "exact", d, src).Output()
+			_ = os.Chmod(filepath.Join(d, "msvc"), 0o755) // so the temporary directory can be removed
 			if err != nil || strings.TrimSpace(string(out)) != tc.want {
 				t.Errorf("got %q (%v), want %s", out, err, tc.want)
 			}

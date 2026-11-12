@@ -616,7 +616,9 @@ func TestWindowsAdminRunnerSealed(t *testing.T) {
 	hook := string(h)
 	started := hook[strings.Index(hook, "function Invoke-Started {"):]
 	inOrder(t, "the job-started hook", started,
-		"$why = Get-AdminRefusal", "if ($why) {", `"::error::CI rule: $why"`, "$worker = Find-Ancestor $PID 'Runner.Worker' (Get-Rows 'name')", "if ($worker) { Stop-Process -Id $worker -Force", "exit 1", "Invoke-Disarm", "Invoke-Chain \"$env:NOVA_CI_CHAIN_JOB_STARTED\"")
+		"try { $why = Get-AdminRefusal }", "catch { $why = \"the administrator runner check failed", "if ($why) {", `"::error::CI rule: $why"`,
+		"for ($i = 0; $i -lt 3 -and -not $worker; $i++) {", "try { $worker = Find-Ancestor $PID 'Runner.Worker' (Get-Rows 'name') } catch { $worker = $null }",
+		"if ($worker) { Stop-Process -Id $worker -Force", "else { \"::error::CI rule: no Runner.Worker above this hook was found to end", "exit 1", "Invoke-Disarm", "Invoke-Chain \"$env:NOVA_CI_CHAIN_JOB_STARTED\"")
 	refusal := hook[strings.Index(hook, "function Get-AdminRefusal {"):]
 	inOrder(t, "Get-AdminRefusal", refusal,
 		"$wf = Join-Path $here 'admin-workflow'",
@@ -677,13 +679,28 @@ func TestWindowsAdminRunnerSealed(t *testing.T) {
 		"- name: is the Windows ccache directory exactly the release",
 		"ansible.builtin.file: { path: \"{{ rp_win_ccache_unix }}\", state: absent }",
 		"when: rp_win_ccache_was.stdout == 'DIFFERS'",
+		"- name: the Windows ccache directory, made sealed in the call that creates it (files/ccache-dir.ps1)",
+		"lookup('ansible.builtin.file', 'ccache-dir.ps1')",
+		"failed_when: rp_win_ccache_made.rc != 0 or rp_win_ccache_made.stdout is not search('^CCACHE-DIR .* made', multiline=True)",
+		"when: rp_win_ccache_was.stdout != 'EXACT'",
 		"- name: the Windows ccache directory sealed (before anything is copied in)",
 		"cp \"$src/ccache.exe\" \"{{ rp_win_ccache_unix }}/msvc/cl.exe\"",
 		"- name: the Windows ccache directory sealed (what was copied in inherits only the seal)",
 		"- name: sealed, it is exactly the release",
 		"failed_when: rp_win_ccache_is.rc != 0 or rp_win_ccache_is.stdout != 'EXACT'")
+	// made sealed in the call that creates it, and a folder a job made in the gap refused, never adopted
+	m, err := fs.ReadFile(tree, "roles/runner-packages/files/ccache-dir.ps1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	inOrder(t, "ccache-dir.ps1", string(m),
+		"$ds.SetAccessRuleProtection($true, $false)", "$ds.SetOwner($admins)",
+		"@('S-1-5-11', 'ReadAndExecute'), @('S-1-5-32-545', 'ReadAndExecute')",
+		"$was = Test-Path -LiteralPath $Dir", "[void][IO.Directory]::CreateDirectory($Dir, $ds)",
+		"if ($was -or $owner -ne $admins.Value -or -not $acl.AreAccessRulesProtected) {", "\n  exit 15\n}", "\"CCACHE-DIR $Dir made\"")
 	inOrder(t, "the ccache exactness check", string(c),
 		"if [ ! -e \"$d\" ] && [ ! -L \"$d\" ]; then echo ABSENT; exit 0; fi",
+		"| LC_ALL=C sort | tr '\\n' ' ') || have=UNREADABLE",
 		"[ \"$have\" = 'd ./msvc f ./VERSION f ./ccache.exe f ./msvc/cl.exe ' ]",
 		"cmp -s \"$src/ccache.exe\" \"$d/ccache.exe\" && cmp -s \"$src/ccache.exe\" \"$d/msvc/cl.exe\"")
 }
