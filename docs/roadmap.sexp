@@ -26,6 +26,7 @@
      ("machine-firewall-allow-in" "nova-config machine records carry a per-machine firewall allow-in list that the tailscale role reads, so a machine's extra ufw rule (space2/space3: in on eno2 proto udp from 10.77.0.0/24) no longer depends on passing -e nova_firewall_allow_in on each up or tailscale run")
      ("bus-hook-service-record" "nova-bus hook --service writes a nova-config service record (seat, keys NOVA_BUS_PASSWORD, env) instead of a launchd or systemd unit holding the bus password in plain text; the services play then owns the unit")
      ("bus-hook-absent-wake-backoff" "nova-bus hook backs off while its wake target is absent (no Monitor on the wake file, no harness server) instead of exiting 1 and being restarted every 10 s by its supervisor (16,953 restarts in one log, 2026-11-12)")
+     ("reserve-first-come" "nova-reserve hands freed slots to waiters in arrival order, so a long waiter is not passed by later ones (captain 2026-11-12: a waiter since 17:13Z was passed by three later arrivals)")
      )
    :columns (("done" "done"))
    :cells (
@@ -49,6 +50,7 @@
      ("machine-firewall-allow-in" "done" "t-machine-firewall-allow-in")
      ("bus-hook-service-record" "done" "t-bus-hook-service-record")
      ("bus-hook-absent-wake-backoff" "done" "t-bus-hook-absent-wake-backoff")
+     ("reserve-first-come" "done" "t-reserve-first-come")
      ))
   (:id "t-reserve-slots-are-cores" :type :task :title "nova-reserve slots bound CPU, so N one-slot jobs cannot saturate a bench" :state :todo)
   (:id "t-fleet-placement" :type :task :title "Place one heavy job on the quietest bench fleet-wide" :state :todo)
@@ -69,4 +71,5 @@
   (:id "t-bus-service-path" :type :task :title "Idea, the owner's decision: nova-bus hook --service carries the caller's PATH into the unit for --exec, as it does for --codex-thread" :state :todo)
   (:id "t-machine-firewall-allow-in" :type :task :title "nova-config machine records carry a per-machine firewall allow-in list that the tailscale role reads, so a machine's extra ufw rule (space2/space3: in on eno2 proto udp from 10.77.0.0/24) no longer depends on passing -e nova_firewall_allow_in on each up or tailscale run" :state :todo)
   (:id "t-bus-hook-service-record" :type :task :title "nova-bus hook --service writes a nova-config service record (seat, keys NOVA_BUS_PASSWORD, env) instead of a launchd or systemd unit holding the bus password in plain text; the services play then owns the unit" :state :todo)
-  (:id "t-bus-hook-absent-wake-backoff" :type :task :title "nova-bus hook backs off while its wake target is absent (no Monitor on the wake file, no harness server) instead of exiting 1 and being restarted every 10 s by its supervisor (16,953 restarts in one log, 2026-11-12)" :state :todo)))
+  (:id "t-bus-hook-absent-wake-backoff" :type :task :title "nova-bus hook backs off while its wake target is absent (no Monitor on the wake file, no harness server) instead of exiting 1 and being restarted every 10 s by its supervisor (16,953 restarts in one log, 2026-11-12)" :state :todo)
+  (:id "t-reserve-first-come" :type :task :title "nova-reserve hands freed slots to waiters in arrival order, so a long waiter is not passed by later ones (captain 2026-11-12: a waiter since 17:13Z was passed by three later arrivals)" :state :todo)))
