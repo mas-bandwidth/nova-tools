@@ -1,0 +1,123 @@
+# purpose: checks every Linux bench and runner against runner-requirements.tsv, as the runner login; read-only, fails by name on a gap
+#
+# audit.yml: each requirement of runner-requirements.tsv (cmd/nova-fleet/README.md, "audit") checked on each Linux
+# machine of the bench and runner groups, as the login CI jobs run as: github_runner_user where that login exists
+# (ghrunner), else the fleet login, with the PATH a runner's jobs start with and that login's HOME. Read-only: it writes
+# nothing, under --check or not. Per machine, one line per requirement missing:
+#   FLEET-AUDIT MISSING host=<machine> item=<name> install=<play> check=<command>
+# one per requirement declared for another architecture (FLEET-AUDIT NOT-APPLICABLE), then
+#   FLEET-AUDIT host=<machine> login=<login> arch=<arch> ok=<n> missing=<n> not-applicable=<n>
+# and a machine with anything missing fails: FLEET-AUDIT FAILED host=<machine> missing=<names>. A machine that is not
+# Linux prints FLEET-AUDIT SKIPPED and is not failed (the file covers Linux).
+#
+#   nova-fleet audit -- -l <machine>
+- name: the fleet's runner requirements, checked as the runner login
+  hosts: bench:runner
+  gather_facts: true
+  gather_subset: [min]
+  vars:
+    # the requirements file: the one beside this play, unless -e nova_audit_requirements=<file> names another
+    nova_audit_requirements: "{{ playbook_dir }}/runner-requirements.tsv"
+    audit_path: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+    audit_arch: "{{ {'x86_64': 'amd64', 'aarch64': 'arm64', 'arm64': 'arm64'}.get(ansible_facts['architecture'], ansible_facts['architecture']) }}"
+    audit_wsl: "{{ 'microsoft' in (ansible_facts['kernel'] | lower) }}"
+    audit_lines: "{{ lookup('ansible.builtin.file', nova_audit_requirements).splitlines() | reject('match', '^(#|\\s*$)') | list }}"
+  tasks:
+    - name: a machine that is not Linux
+      ansible.builtin.debug:
+        msg: "FLEET-AUDIT SKIPPED host={{ inventory_hostname }} os={{ ansible_facts['system'] }} (runner-requirements.tsv covers Linux)"
+      when: ansible_facts['system'] != 'Linux'
+
+    - name: only Linux is audited
+      ansible.builtin.meta: end_host
+      when: ansible_facts['system'] != 'Linux'
+
+    - name: every requirement has its four fields, and an arch of any, amd64 or arm64 (and not-wsl)
+      ansible.builtin.assert:
+        that:
+          - (item.split('\t') | length) == 4 and (item.split('\t') | map('trim') | select | list | length) == 4
+          - item.split('\t')[1].split(',') | difference(['any', 'amd64', 'arm64', 'not-wsl']) | length == 0
+          - item.split('\t')[1].split(',') | intersect(['any', 'amd64', 'arm64']) | length > 0
+        fail_msg: >-
+          FLEET-AUDIT BAD-LINE {{ item }}: runner-requirements.tsv takes name, arch, install and check, tab-separated, the arch
+          any, amd64 or arm64 or a comma list of them, with not-wsl
+        quiet: true
+      loop: "{{ audit_lines }}"
+      run_once: true
+
+    - name: the requirements
+      ansible.builtin.set_fact:
+        audit_items: >-
+          {%- set out = [] -%}
+          {%- for l in audit_lines -%}
+          {%- set f = l.split('\t') -%}
+          {%- set a = f[1].split(',') -%}
+          {%- set applies = ('any' in a or audit_arch in a) and not ('not-wsl' in a and audit_wsl) -%}
+          {%- set _ = out.append({'name': f[0], 'arch': a, 'install': f[2], 'check': f[3], 'applies': applies}) -%}
+          {%- endfor -%}
+          {{ out }}
+
+    - name: the login CI jobs run as
+      ansible.builtin.getent: { database: passwd, key: "{{ github_runner_user }}", fail_key: false }
+      check_mode: false
+
+    - name: the login, and its home
+      ansible.builtin.set_fact:
+        audit_login: "{{ github_runner_user if ansible_facts['getent_passwd'][github_runner_user] else ansible_facts['user_id'] }}"
+        audit_home: "{{ ansible_facts['getent_passwd'][github_runner_user][4] if ansible_facts['getent_passwd'][github_runner_user] else ansible_facts['user_dir'] }}"
+
+    - name: the requirements that apply here, and those declared for elsewhere
+      ansible.builtin.set_fact:
+        audit_here: "{{ audit_items | selectattr('applies') | list }}"
+        audit_elsewhere: "{{ audit_items | rejectattr('applies') | list }}"
+
+    # each check in its own bash, with no input, bounded; the lines name the requirement by its place in audit_here
+    - name: every requirement for this architecture, checked as the login
+      ansible.builtin.command:
+        argv: >-
+          {{ ([] if audit_login == ansible_facts['user_id'] else ['sudo', '-n', '-u', audit_login])
+             + ['/usr/bin/env', '-i', 'PATH=' ~ audit_path, 'HOME=' ~ audit_home, 'USER=' ~ audit_login, 'LANG=C.UTF-8', 'bash', '-s'] }}
+        stdin: |
+          cd "$HOME" || cd /
+          {% for r in audit_here %}
+          if timeout 120 bash -c {{ r.check | quote }} >/dev/null 2>&1 </dev/null; then echo "OK {{ loop.index0 }}"; else echo "MISSING {{ loop.index0 }}"; fi
+          {% endfor %}
+      register: audit_run
+      changed_when: false
+      check_mode: false
+
+    - name: what is missing
+      ansible.builtin.set_fact:
+        audit_missing: >-
+          {{ audit_run.stdout_lines | select('match', '^MISSING [0-9]+$') | map('regex_replace', '^MISSING ', '') | map('int')
+             | map('extract', audit_here) | list }}
+        audit_ok: "{{ audit_run.stdout_lines | select('match', '^OK [0-9]+$') | list | length }}"
+
+    - name: every requirement has an answer
+      ansible.builtin.assert:
+        that: (audit_ok | int) + (audit_missing | length) == (audit_here | length)
+        fail_msg: "FLEET-AUDIT FAILED host={{ inventory_hostname }}: {{ audit_here | length }} checks, {{ (audit_ok | int) + (audit_missing | length) }} answered (rc={{ audit_run.rc }}: {{ audit_run.stderr | default('') | trim }})"
+        quiet: true
+
+    - name: each requirement missing
+      ansible.builtin.debug:
+        msg: "FLEET-AUDIT MISSING host={{ inventory_hostname }} item={{ item.name }} install={{ item.install }} check={{ item.check }}"
+      loop: "{{ audit_missing }}"
+      loop_control: { label: "{{ item.name }}" }
+
+    - name: each requirement declared for another architecture
+      ansible.builtin.debug:
+        msg: "FLEET-AUDIT NOT-APPLICABLE host={{ inventory_hostname }} item={{ item.name }} arch={{ audit_arch }}{{ ',wsl' if audit_wsl else '' }} declared={{ item.arch | join(',') }}"
+      loop: "{{ audit_elsewhere }}"
+      loop_control: { label: "{{ item.name }}" }
+
+    - name: the machine's line
+      ansible.builtin.debug:
+        msg: >-
+          FLEET-AUDIT host={{ inventory_hostname }} login={{ audit_login }} arch={{ audit_arch }} ok={{ audit_ok }}
+          missing={{ audit_missing | length }} not-applicable={{ audit_elsewhere | length }}
+
+    - name: a machine with a gap fails by name
+      ansible.builtin.fail:
+        msg: "FLEET-AUDIT FAILED host={{ inventory_hostname }} missing={{ audit_missing | map(attribute='name') | join(',') }}"
+      when: audit_missing | length > 0
