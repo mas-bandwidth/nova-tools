@@ -510,8 +510,11 @@ protocol.version=2 fetch --prune --no-recurse-submodules --filter=tree:0 --unsha
 builtin/pack-objects.c: ... should_include_obj should only be called on existing objects`, `index-pack failed` and exit
 128, so every job that lands on that runner fails at checkout. git 2.56.1 aborts on the same clone as 2.53.0, and a
 repack first does not help: a newer git is not the fix. `-e nova_runner_git_probe=true` asks the play to look, after
-the runners are converged; it is off by default, since each clone it probes is copied and fetched. Linux runners only:
-on macOS the run prints `GIT-PROBE <machine> skipped`, and the Windows side of a WSL machine is not probed.
+the runners are converged; it is off by default, since each clone it probes is copied and fetched. Linux runners of the
+fleet login only (`github_runner_user` the play's login, as on WSL): runners of a login of their own (`ghrunner`, "The
+runner login") are not probed and the run is red with `GIT-PROBE <machine> <base> error=runner-login`, since their home
+is closed to the fleet login and their clones are written by CI jobs that must not run code as it. On macOS the run
+prints `GIT-PROBE <machine> skipped`, and the Windows side of a WSL machine is not probed.
 
 ```
 nova-fleet github-runners --check -- -l MACHINE -e nova_runner_git_probe=true
@@ -524,7 +527,7 @@ that started and ended during the copy). The clone's `.git` is copied under `<ho
 run on the copy for at most 600 seconds with the token from the machine's seat (`nova-secrets exec --only
 GH_GATE_TOKEN`, through the credential helper of `nova-secrets help exec`), and the copy is deleted, also when the probe
 is interrupted. One probe runs at a time per machine (`flock` on `<scratch>/.lock`); at the start it removes the copies
-an earlier run left behind. The probe never writes, moves or deletes a workspace. `GH_GATE_TOKEN` must be able to read
+and stamps an earlier run left behind. The probe never writes, moves or deletes a workspace. `GH_GATE_TOKEN` must be able to read
 every repository whose workspace is probed.
 
 Each clone prints `GIT-PROBE <machine> <runner> <workspace> <result>`, the result its last word, followed by
@@ -542,7 +545,7 @@ done bug=<n> clean=<n> skipped-busy=<runners>`:
 | `error=auth` | the fetch was refused (a 403, failed authentication, a repository the token cannot see); the detail is `repo=<url>: <git's line>`, any token in it redacted. Red |
 | `error=network` | GitHub could not be reached; the detail as for `error=auth`. Red |
 | `error=fetch-timeout` | the fetch ran past 600 seconds. Red |
-| `error=secrets` | `nova-secrets exec` itself failed; the detail is `rc=<n>: <its line>`. Red, and only then the failure says `run: <bin>/nova-secrets exec --only GH_GATE_TOKEN -- true` |
+| `error=secrets` | `nova-secrets exec` itself failed (a line starting `nova-secrets:`, or rc 126 or 127); the detail is `rc=<n>: <its line>`. Red, and only then the failure says `run: <bin>/nova-secrets exec --only GH_GATE_TOKEN -- true` |
 | `error=fetch-rc-<n>`, `error=pgrep-rc-<n>`, `error=copy`, `error=scratch`, `error=df` | the probe could not check the clone. Red |
 
 Another probe holding the lock gives `GIT-PROBE <machine> <scratch> skipped=locked` (red; run again when it has

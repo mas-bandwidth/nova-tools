@@ -30,6 +30,14 @@
         host={{ inventory_hostname | quote }}
         scratch={{ github_runner_git_probe_scratch | quote }}
         secrets={{ (nova_bin_dir ~ '/nova-secrets') | quote }}
+        base={{ github_runner_base_dir | quote }}
+        # Runners of a login of their own (ghrunner) live in a home the fleet login cannot read, and their clones are
+        # written by CI jobs that must not run code as the fleet login: not probed, and red so it never reads as clean.
+        if [ {{ (github_runner_other | default(false) | bool) | ternary('yes', 'no') }} = yes ]; then
+          echo "GIT-PROBE $host $base error=runner-login"
+          echo "GIT-PROBE-WHY $host: the runners run as {{ github_runner_user | default('') }}, not the fleet login; the probe checks only runners of the fleet login"
+          exit 0
+        fi
         copy=
         stamp=
         cleanup() { if [ -n "$copy" ]; then rm -rf "$copy"; fi; if [ -n "$stamp" ]; then rm -f "$stamp"; fi; }
@@ -48,8 +56,8 @@
         fi
         if [ "$l" != 0 ]; then echo "flock on $scratch/.lock failed, rc=$l" >&2; exit 1; fi
         if ! stamp=$(mktemp "$scratch/.stamp.XXXXXX"); then stamp=; echo "cannot write the scratch directory $scratch" >&2; exit 1; fi
-        # Copies an earlier run left behind (one killed outright); the copies of this run are all newer than its stamp.
-        find "$scratch" -mindepth 1 -maxdepth 1 -type d -name 'probe.*' ! -newer "$stamp" -exec rm -rf {} +
+        # Copies and stamps an earlier run left behind (one killed outright); those of this run are all newer than its stamp.
+        find "$scratch" -mindepth 1 -maxdepth 1 \( -name 'probe.*' -o -name '.stamp.*' \) ! -path "$stamp" ! -newer "$stamp" -exec rm -rf {} +
         say() { echo "GIT-PROBE $host $r $w $1"; }
         why() { echo "GIT-PROBE-WHY $host $r: $1"; }
         drop() { rm -rf "$copy"; copy=; }
@@ -70,7 +78,7 @@
         bugs=0
         clean=0
         busy=
-        for g in {{ github_runner_base_dir | quote }}/*/_work/*/*/.git; do
+        for g in "$base"/*/_work/*/*/.git; do
           [ -d "$g" ] || continue
           w=${g%/.git}
           d=${w%%/_work/*}
@@ -109,7 +117,7 @@
           [ -n "$line" ] || line=$(printf '%s\n' "$out" | tail -n 1 | redact)
           case $rc:$line in
             124:*) say error=fetch-timeout ;;
-            *nova-secrets*) say error=secrets; why "rc=$rc: $line" ;;
+            *:nova-secrets:*|126:*|127:*) say error=secrets; why "rc=$rc: $line" ;;
             *403*|*'Authentication failed'*|*'could not read Username'*|*'Permission denied'*|*'Repository not found'*|*'terminal prompts disabled'*)
               say error=auth; why "repo=$url: $line" ;;
             *'Could not resolve'*|*'unable to access'*|*'Failed to connect'*|*'timed out'*|*'Connection'*)

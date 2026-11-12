@@ -111,17 +111,21 @@ func (r *gitProbeRig) idle() string {
 	return `[ "$1 $2" = "-f ` + r.worker + `" ] || { echo "unexpected pgrep $*" >&2; exit 3; }` + "\nexit 1"
 }
 
-// run runs tasks with fakes; a machine without flock (macOS) gets one that takes the lock.
-func (r *gitProbeRig) run(t *testing.T, tasks []map[string]any, fakes map[string]string) (string, error) {
+// run runs tasks with fakes and any more vars; a machine without flock (macOS) gets one that takes the lock.
+func (r *gitProbeRig) run(t *testing.T, tasks []map[string]any, fakes map[string]string, more ...map[string]any) (string, error) {
 	t.Helper()
 	if _, ok := fakes["flock"]; !ok {
 		if _, err := exec.LookPath("flock"); err != nil {
 			fakes["flock"] = "exit 0"
 		}
 	}
-	return runTasksLocally(t, tasks, map[string]any{
-		"github_runner_base_dir": r.base, "github_runner_git_probe_scratch": r.scratch, "nova_bin_dir": r.bin,
-	}, fakes)
+	vars := map[string]any{"github_runner_base_dir": r.base, "github_runner_git_probe_scratch": r.scratch, "nova_bin_dir": r.bin}
+	for _, m := range more {
+		for k, v := range m {
+			vars[k] = v
+		}
+	}
+	return runTasksLocally(t, tasks, vars, fakes)
 }
 
 func (r *gitProbeRig) fetches(t *testing.T) []string {
@@ -170,7 +174,9 @@ func TestFunctionalRunnerGitProbe(t *testing.T) {
 		why                     string   // its GIT-PROBE-WHY line, if any
 		want, not               []string // more text the output has, and does not have
 		left                    []string // what the scratch directory holds after the run, beside .lock
+		noScratch               bool     // the probe stops before it makes the scratch directory
 		changes                 bool     // the case changes the live clone itself (the fake cp)
+		vars                    map[string]any
 	}
 	busyAt := func(n int) func(r *gitProbeRig) map[string]string {
 		return func(r *gitProbeRig) map[string]string {
@@ -234,7 +240,19 @@ func TestFunctionalRunnerGitProbe(t *testing.T) {
 					require.NoError(t, os.MkdirAll(filepath.Join(p, ".git"), 0o755))
 					require.NoError(t, os.Chtimes(p, at, at))
 				}
+				old := filepath.Join(r.scratch, ".stamp.old")
+				require.NoError(t, os.WriteFile(old, nil, 0o600))
+				require.NoError(t, os.Chtimes(old, time.Unix(1000, 0), time.Unix(1000, 0)))
 			}},
+		// A repository whose url names nova-secrets is refused as any other is: the remedy is not nova-secrets'.
+		"auth for a repo named nova-secrets": {fetch: "echo \"fatal: unable to access 'https://github.com/o/nova-secrets/': The requested URL returned error: 403\" >&2; exit 128",
+			fails: true, fetched: true, verdict: "error=auth",
+			why: "repo=https://github.com/o/r: fatal: unable to access 'https://github.com/o/nova-secrets/': The requested URL returned error: 403"},
+		// Runners of a login of their own: nothing is read or copied, and the run is red so it is not read as clean.
+		"runner login": {fetch: "exit 0", fails: true, noScratch: true,
+			vars: map[string]any{"github_runner_other": true, "github_runner_user": "ghrunner"},
+			want: []string{" error=runner-login\"", "the runners run as ghrunner, not the fleet login"},
+			not:  []string{"GIT-PROBE localhost done"}},
 		"hangup":    signalled("HUP"),
 		"interrupt": signalled("INT"),
 		"terminate": signalled("TERM"),
@@ -255,7 +273,7 @@ func TestFunctionalRunnerGitProbe(t *testing.T) {
 				c.setup(t, r)
 			}
 			before := snapshot(t, r.ws)
-			out, err := r.run(t, gitProbeLinuxBlock(t), fakes)
+			out, err := r.run(t, gitProbeLinuxBlock(t), fakes, c.vars)
 			if c.verdict != "" {
 				assert.Contains(t, out, "GIT-PROBE localhost o-r-1 "+r.ws+" "+c.verdict+"\"")
 			}
@@ -295,7 +313,11 @@ func TestFunctionalRunnerGitProbe(t *testing.T) {
 			if !c.changes {
 				assert.Equal(t, before, snapshot(t, r.ws), "the workspace is never changed")
 			}
-			assert.Equal(t, append([]string{".lock"}, c.left...), r.left(t), "no copy and no stamp is left; only an earlier run's copy is removed")
+			if c.noScratch {
+				assert.Empty(t, r.left(t), "nothing is made")
+				return
+			}
+			assert.Equal(t, append([]string{".lock"}, c.left...), r.left(t), "no copy and no stamp is left; only an earlier run's copy and stamp are removed")
 		})
 	}
 }
