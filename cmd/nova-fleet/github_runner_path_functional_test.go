@@ -111,4 +111,5 @@ func TestRunnerTmpdirAndTheRecordsEnvironmentRender(t *testing.T) {
 	service, _, _ = renderRunnerUnits(t, "-e", "github_runner_user=ghrunner")
 	assert.Contains(t, service, "\nUser=ghrunner\n")
 	assert.Contains(t, service, "\nEnvironment=TMPDIR=/home/ghrunner/.cache/runner-tmp\n")
+	assert.Contains(t, service, "\nEnvironment=PATH=/home/ghrunner/.local/bin:/usr/local/sbin:")
 }

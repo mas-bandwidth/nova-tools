@@ -401,15 +401,19 @@ system's, so a job finds Homebrew's formulae and its `python3`.
 
 **The runner login.** The runners run as `github_runner_user`, the login the play connects as by default (macOS always).
 On Linux, `-e github_runner_user=ghrunner` runs them as a login of their own, so a CI job has no root and no way to get
-it: the play makes the login (home `/home/<login>`, `github_runner_home`, mode `0750`) with its password locked, in no
-group but its own and `kvm` (where the host has one; others are removed), writes
-`/etc/ssh/sshd_config.d/90-nova-runner-login.conf` (`DenyUsers <login>`, checked with `sshd -t`), and fails the run
-unless `sudo -l -U <login>` says it is not allowed to run sudo. The runners' directories, release cache and `TMPDIR`
-are then in its home, written as root and owned by it, and `config.sh` runs as it. A runner whose unit runs it from
-another directory (the fleet login's, before the switch) moves: `RUNNER-MOVE <runner> from=<dir> to=<dir> user=<login>`,
-then, once its job ends, its unit stops, it registers in the new directory under the same name (`config.sh --replace`),
-the unit restarts it there and the old directory is deleted. A held runner is not moved: the run fails with
-`RUNNER-HELD` naming it.
+it. Limit such a run to Linux hosts (`-- -l <host>`): a macOS host fails it. The play makes the login (home
+`/home/<login>`, `github_runner_home`, mode `0750`) with its password locked, in no group but its own and `kvm` (where
+the host has one), refuses an account of that name that is not a runner login already (a uid below 1000, or any other
+group), writes `/etc/ssh/sshd_config.d/90-nova-runner-login.conf` (`DenyUsers <login>`, checked with `sshd -t`, then
+with `sshd -T`), and fails the run unless `sudo -l -U <login>` says it is not allowed to run sudo. The runners'
+directories, release cache and `TMPDIR` are then in its home, written as the login (root follows no link it could
+plant there; root's only act there is deleting a runner directory by name), and the runners' default `PATH` starts
+with its own `~/.local/bin`, never the fleet login's. A runner whose unit runs it from another directory (the fleet
+login's, before the switch) moves: `RUNNER-MOVE <runner> from=<dir> to=<dir> user=<login>`, then, once its job ends,
+its unit stops, it registers in the new directory under the same name (`config.sh --replace`, with a fresh token), the
+unit restarts it there and the old directory is deleted; a move that fails starts the runner where it ran and fails
+the run with `RUNNER-MOVE-FAILED`. A held runner is not moved: the run fails with `RUNNER-HELD` naming it. The
+record's `runner_env` must name nothing in the fleet login's home (the run fails naming the keys).
 
 **Public repositories.** A self-hosted runner runs the code of any workflow that reaches it, and on a public repository
 that includes pull requests from forks. Use these runners on private repositories, or restrict which workflows and

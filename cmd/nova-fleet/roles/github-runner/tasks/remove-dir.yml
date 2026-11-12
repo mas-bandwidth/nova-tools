@@ -1,0 +1,23 @@
+---
+# Deletes github_runner_rm, a runner directory, as root (the CI rules leave <dir>/.nova-ci-rules owned by root), never
+# through a link: a runner login may have turned any name in its home into a link to what root must not touch. The
+# parent is entered and checked to be the directory its name holds, and the directory is removed by its name there
+# (rm follows no link under it).
+- name: delete {{ github_runner_rm | basename }}
+  ansible.builtin.shell: |
+    set -eu
+    parent={{ github_runner_rm | dirname | quote }}
+    name={{ github_runner_rm | basename | quote }}
+    cd "$parent" 2>/dev/null || { echo ABSENT; exit 0; }
+    if [ -L "$parent" ] || [ "$(ls -di . | awk '{ print $1 }')" != "$(ls -di "$parent" | awk '{ print $1 }')" ]; then
+      echo "$parent is not the directory its name held (a link?): nothing deleted" >&2
+      exit 1
+    fi
+    if [ ! -e "./$name" ] && [ ! -L "./$name" ]; then echo ABSENT; exit 0; fi
+    rm -rf -- "./$name"
+    echo REMOVED
+  args: { executable: /bin/sh }
+  become: true
+  register: github_runner_removed
+  changed_when: "'REMOVED' in github_runner_removed.stdout"
+  when: not ansible_check_mode

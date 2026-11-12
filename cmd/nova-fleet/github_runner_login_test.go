@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -77,6 +78,18 @@ func TestRunnerLoginHasNoRootAndNoSSH(t *testing.T) {
 	assert.Equal(t, []any{"sudo", "-n", "-l", "-U", "{{ github_runner_user }}"}, cmd["argv"])
 	assert.Equal(t, "'is not allowed to run sudo' not in github_runner_sudo.stdout", asText(sudo["failed_when"]))
 	assert.Equal(t, false, sudo["check_mode"], "read under --check too")
+	assert.Equal(t, "C", sudo["environment"].(map[string]any)["LC_ALL"], "sudo's words are matched in the C locale")
+
+	// sshd's own settings deny it, so a drop-in sshd never reads fails the run
+	sshdT := runnerTask(t, tasks, "sshd's settings deny the runner login")
+	assert.Equal(t, "/usr/sbin/sshd", sshdT["ansible.builtin.command"].(map[string]any)["argv"].([]any)[0])
+	assert.Contains(t, asText(sshdT["failed_when"]), "denyusers")
+
+	// an account that holds the name already is taken only as a runner login: never an admin's, never a system account
+	assert.Less(t, taskIndex(tasks, "an existing account is a runner login"), taskIndex(tasks, "the runner login (locked"))
+	exists := fmt.Sprint(runnerTask(t, tasks, "an existing account is a runner login, never an admin's or a system account")["ansible.builtin.assert"].(map[string]any)["that"])
+	assert.Contains(t, exists, "| int >= 1000")
+	assert.Contains(t, exists, "difference([github_runner_user, 'kvm']) | length == 0")
 }
 
 // config.sh runs as the runner login (become_user), pipelined: the token never lands in a file, and the runner's
@@ -105,7 +118,7 @@ func TestRunnerConfigRunsAsTheRunnerLogin(t *testing.T) {
 // the new unit runs it. A held runner is refused, not moved.
 func TestRunnerMovesOnlyWhenIdle(t *testing.T) {
 	t.Parallel()
-	runner := roleTaskFile(t, "unix-runner.yml")
+	runner := flattenTasks(t, roleTaskFile(t, "unix-runner.yml"))
 	order := []string{
 		"the directory its unit runs it from (Linux)",
 		"where it moves from",
@@ -124,6 +137,10 @@ func TestRunnerMovesOnlyWhenIdle(t *testing.T) {
 	assert.Equal(t, "wait-idle.yml", asText(wait["ansible.builtin.include_tasks"]))
 	vars, _ := wait["vars"].(map[string]any)
 	assert.Equal(t, "{{ github_runner_old_dir }}", vars["github_runner_idle_dir"])
+	move := runnerTask(t, runner, "the move, and the registration here")
+	rescue := mapsOf(t, move["rescue"])
+	require.NotEmpty(t, rescue, "a failed move has a rescue")
+	assert.Equal(t, "a failed move starts the runner where it ran", rescue[0]["name"])
 	held := runnerTask(t, runner, "a moving runner is not held")
 	assert.Contains(t, asText(held["ansible.builtin.assert"].(map[string]any)["that"]), "not in github_runner_hold")
 	b, err := os.ReadFile("roles/github-runner/tasks/wait-idle.yml")

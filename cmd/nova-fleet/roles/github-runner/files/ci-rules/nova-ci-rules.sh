@@ -302,6 +302,39 @@ watchdog() {
 
 owner() { stat -c %U "$1" 2>/dev/null || stat -f %Su "$1"; }
 
+# same NAME: the working directory is the directory NAME holds, NAME looked up without following a last link (ls -d
+# reads the name itself), so a name another login turned into a link, or swapped, after the cd is caught.
+same() { [ ! -L "$1" ] && [ . -ef "$1" ] && [ "$(ls -di . | awk '{ print $1 }')" = "$(ls -di "$1" | awk '{ print $1 }')" ]; }
+
+# in-hooks HOOKDIR CMD..: CMD run inside HOOKDIR, entered and checked as apply enters it.
+in_hooks() { (cd "$1" && same "$1" && shift && "$@"); }
+
+# as-owner USER CMD..: CMD run as USER when root and USER is not, else as this login.
+as_owner() {
+	u=$1
+	shift
+	if [ "$(id -u)" != 0 ] || [ "$(id -u "$u")" = 0 ]; then
+		"$@"
+	elif command -v runuser >/dev/null 2>&1; then
+		runuser -u "$u" -- "$@"
+	else
+		sudo -n -u "$u" -- "$@"
+	fi
+}
+
+# env-apply HOOKDIR DIR: DIR/.env with its hooks pointing into HOOKDIR (env-edit), replaced only when that changes it;
+# prints set then. Run as the runner's login (apply), so nothing of another user's is read or written through it.
+env_apply() {
+	cd "$2" || return 1
+	touch .env || return 1
+	env_edit "$1" <.env >.env.nova-new || return 1
+	if cmp -s .env.nova-new .env; then
+		rm -f .env.nova-new
+	else
+		mv .env.nova-new .env && echo set
+	fi
+}
+
 listener_of() { ps -A -o pid= -o command= | awk -v want="$1/bin/Runner.Listener" '$2 == want { print $1; exit }'; }
 
 # gone PID SECONDS: true once PID has exited, waiting up to SECONDS.
@@ -385,31 +418,48 @@ apply() {
 			continue
 		fi
 		who=$(owner "$dir")
-		hooks=ok
-		mkdir -p "$hd/state"
-		for f in nova-ci-rules.sh job-started.sh job-completed.sh; do
-			cmp -s "$src/$f" "$hd/$f" || { cp "$src/$f" "$hd/$f" && hooks='set'; }
-			chmod 0755 "$hd/$f"
-		done
-		[ "$(cat "$hd/limit" 2>/dev/null)" = "$lim" ] || { echo "$lim" >"$hd/limit" && hooks='set'; }
-		[ "$(cat "$hd/push-branches" 2>/dev/null)" = "$br" ] || { echo "$br" >"$hd/push-branches" && hooks='set'; }
-		touch "$dir/.env"
-		env_edit "$hd" <"$dir/.env" >"$hd/env.new"
-		cmp -s "$hd/env.new" "$dir/.env" || { cat "$hd/env.new" >"$dir/.env" && hooks='set'; }
-		rm -f "$hd/env.new"
-		if [ "$(id -u)" = 0 ]; then
-			chown -R 0:0 "$hd"
-			chmod 0755 "$hd"
-			chmod 0644 "$hd/limit" "$hd/push-branches"
-			chown -R "$who" "$hd/state" "$dir/.env"
-		fi
+		# Root in a directory another login owns reaches nothing there by a name that login could point elsewhere: the
+		# hooks directory is entered, checked to be the one its name holds (and root's), and written only relative to
+		# it; the .env is read and written as its owner. Prints the hooks' state and whether the .env is the one the
+		# runner was last started on.
+		seen=$(
+			cd "$dir" && same "$dir" || exit 1
+			if [ -L .nova-ci-rules ] || { [ "$(id -u)" = 0 ] && [ -e .nova-ci-rules ] && [ "$(owner .nova-ci-rules)" != root ]; }; then
+				rm -rf ./.nova-ci-rules || exit 1
+			fi
+			mkdir -p .nova-ci-rules && cd .nova-ci-rules && same "$hd" || exit 1
+			[ "$(id -u)" != 0 ] || [ "$(owner .)" = root ] || exit 1
+			h=ok
+			for f in nova-ci-rules.sh job-started.sh job-completed.sh; do
+				cmp -s "$src/$f" "./$f" || { cp "$src/$f" "./$f" && h='set'; }
+				chmod 0755 "./$f"
+			done
+			[ "$(cat limit 2>/dev/null)" = "$lim" ] || { echo "$lim" >limit && h='set'; }
+			[ "$(cat push-branches 2>/dev/null)" = "$br" ] || { echo "$br" >push-branches && h='set'; }
+			mkdir -p state
+			if [ "$(id -u)" = 0 ]; then
+				chown 0:0 . nova-ci-rules.sh job-started.sh job-completed.sh limit push-branches
+				chmod 0755 .
+				chmod 0644 limit push-branches
+				chown -R "$who" state
+			fi
+			e=$(as_owner "$who" sh ./nova-ci-rules.sh env-apply "$hd" "$dir") || exit 1
+			[ "$e" = set ] && h='set'
+			as_owner "$who" cat "$dir/.env" >env.now || exit 1
+			if cmp -s env.now env.applied; then echo "$h fresh"; else echo "$h stale"; fi
+		) || {
+			echo "CI-RULES $dir denied=hooks-not-reachable-as-$(id -un)"
+			bad=1
+			continue
+		}
+		hooks=${seen% *}
 		pid=$(listener_of "$dir")
 		r=no
-		if cmp -s "$dir/.env" "$hd/env.applied"; then
+		if [ "${seen#* }" = fresh ]; then
 			r=no
 		elif [ -z "$pid" ]; then
 			r=stopped
-			cp "$dir/.env" "$hd/env.applied"
+			in_hooks "$hd" mv env.now env.applied
 		elif ps -A -o ppid= -o command= | awk -v p="$pid" '$1 == p && /Runner\.Worker/ { found = 1 } END { exit !found }'; then
 			r=busy
 		else
@@ -417,7 +467,7 @@ apply() {
 			case $? in
 			0)
 				r='done'
-				cp "$dir/.env" "$hd/env.applied"
+				in_hooks "$hd" mv env.now env.applied
 				;;
 			2)
 				r=needs-root
@@ -453,8 +503,9 @@ limit-text) limit_text "$1" ;;
 ancestor) ancestor "$1" "$2" ;;
 tree) tree "$1" "$2" ;;
 env-edit) env_edit "$1" ;;
+env-apply) env_apply "$1" "$2" ;;
 *)
-	echo "nova-ci-rules: want started, completed, watchdog, sampler, apply, push-ok, limited, overdue, on-battery, cgroup-of, sample, limit-text, ancestor, tree or env-edit" >&2
+	echo "nova-ci-rules: want started, completed, watchdog, sampler, apply, push-ok, limited, overdue, on-battery, cgroup-of, sample, limit-text, ancestor, tree, env-edit or env-apply" >&2
 	exit 2
 	;;
 esac

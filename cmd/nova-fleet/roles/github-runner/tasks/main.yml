@@ -38,11 +38,11 @@
     msg: >-
       RUNNER-LOGIN {{ inventory_hostname }} {{ github_runner_user }} home={{ github_runner_home }}: a run makes it, then its
       runners; plan them once it exists (check: nothing changed)
-  when: github_runner_other | bool and ansible_check_mode and github_runner_login is changed
+  when: github_runner_other | bool and ansible_check_mode and 'ABSENT' in github_runner_existing.stdout
 
 - name: nothing more to plan here until the runner login exists
   ansible.builtin.meta: end_host
-  when: github_runner_other | bool and ansible_check_mode and github_runner_login is changed
+  when: github_runner_other | bool and ansible_check_mode and 'ABSENT' in github_runner_existing.stdout
 
 - name: one url, named with -e github_runner_url
   ansible.builtin.include_tasks: scope.yml
