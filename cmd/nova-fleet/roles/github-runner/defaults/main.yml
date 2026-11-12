@@ -78,6 +78,12 @@ github_runner_idle_delay: 15
 # RUNNER-HELD, so the restart is owed to a later run. -e '{"github_runner_hold": ["mas-bandwidth-2"]}'
 github_runner_hold: []
 
+# The probe for workspace clones that make git abort in actions/checkout's fetch (tasks/git-probe.yml), Linux runners
+# only: off unless -e nova_runner_git_probe=true, since each shallow promisor clone is copied and fetched. The copies are
+# made under this directory of the login's and deleted.
+nova_runner_git_probe: false
+github_runner_git_probe_scratch: "{{ ansible_facts['user_dir'] }}/.cache/nova-git-probe"
+
 # gh on the control node, logged in (gh auth login) with admin on the repository or organization:
 # it asks GitHub for the registration and removal tokens (tasks/token.yml), and after a run reads
 # GitHub's list of runners, every wanted runner online (the RUNNERS receipt); false skips that

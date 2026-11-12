@@ -445,6 +445,7 @@ events may use them.
 | `github_runner_version`, `github_runner_sha256` | the pinned actions/runner release and its digests |
 | `github_runner_ci_limit_seconds` | 120: the per-commit job limit every runner enforces ("CI rules") |
 | `github_runner_ci_push_branches` | `[main, sprint/*]`: the branches a push may run CI on, as globs where `*` and `?` stop at a `/` (tags always may); any other branch gets CI through its pull request |
+| `nova_runner_git_probe` | false: true probes the Linux runners' workspace clones for the checkout's git abort ("A workspace clone git cannot fetch into" below) |
 
 **The token.** The play asks GitHub for it on the control node with that node's own `gh` login, `gh api -X POST
 <repos|orgs>/<path>/actions/runners/registration-token -q .token` (`remove-token` to retire), never a pasted token,
@@ -501,6 +502,64 @@ nova-fleet github-runners -- -e github_runner_url=https://github.com/OWNER/REPO 
 That stops and removes the services, removes the runners from GitHub and deletes their directories. With `-e
 github_runner_deregister=false` no token is read and the GitHub entries stay for you to delete. A removal token also
 expires in an hour.
+
+**A workspace clone git cannot fetch into.** A runner keeps each repository's clone between jobs, in
+`<runner dir>/_work/<repo>/<repo>`. A clone that is shallow (`.git/shallow`) and a promisor partial clone
+(`remote.origin.promisor=true`, `partialclonefilter=tree:0`) can make git abort in actions/checkout's fetch (`git -c
+protocol.version=2 fetch --prune --no-recurse-submodules --filter=tree:0 --unshallow origin ...`) with `BUG:
+builtin/pack-objects.c: ... should_include_obj should only be called on existing objects`, `index-pack failed` and exit
+128, so every job that lands on that runner fails at checkout. git 2.56.1 aborts on the same clone as 2.53.0, and a
+repack first does not help: a newer git is not the fix. `-e nova_runner_git_probe=true` asks the play to look, after
+the runners are converged; it is off by default, since each clone it probes is copied and fetched. Linux runners of the
+fleet login only (`github_runner_user` the play's login, as on WSL): runners of a login of their own (`ghrunner`, "The
+runner login") are not probed and the run is red with `GIT-PROBE <machine> <base> error=runner-login`, since their home
+is closed to the fleet login and their clones are written by CI jobs that must not run code as it. On macOS the run
+prints `GIT-PROBE <machine> skipped`, and the Windows side of a WSL machine is not probed.
+
+```
+nova-fleet github-runners --check -- -l MACHINE -e nova_runner_git_probe=true
+```
+
+Only a clone that is both shallow and a promisor is probed, and only while its runner is idle: no `Runner.Worker` from
+its `bin`, checked before and after the copy, and nothing in the clone's `.git` changed while the copy was made (a job
+that started and ended during the copy). The clone's `.git` is copied under `<home>/.cache/nova-git-probe`
+(`github_runner_git_probe_scratch`) when that filesystem has free space of three times its size, the checkout's fetch is
+run on the copy for at most 600 seconds with the token from the machine's seat (`nova-secrets exec --only
+GH_GATE_TOKEN`, through the credential helper of `nova-secrets help exec`), and the copy is deleted, also when the probe
+is interrupted. One probe runs at a time per machine (`flock` on `<scratch>/.lock`); at the start it removes the copies
+and stamps an earlier run left behind. The probe never writes, moves or deletes a workspace. `GH_GATE_TOKEN` must be able to read
+every repository whose workspace is probed.
+
+Each clone prints `GIT-PROBE <machine> <runner> <workspace> <result>`, the result its last word, followed by
+`GIT-PROBE-WHY <machine> <runner>: <detail>` where there is more to say; each machine ends with `GIT-PROBE <machine>
+done bug=<n> clean=<n> skipped-busy=<runners>`:
+
+| Result | |
+|---|---|
+| `BUG` | the fetch printed a line starting `BUG:`, or `died of signal 6`. Red: the failure names the machine, runner and workspace, with the fix as `GIT-PROBE-FIX <machine> <runner>: <command>` |
+| `clean` | the fetch finished |
+| `not-probed` | not both shallow and a promisor |
+| `moved-aside` | a clone moved aside by the fix (`<workspace>.git-bug`); not probed |
+| `skipped=busy` | the runner ran a job before, during or after the copy. Green, but not checked: the done line names the runner; run again later |
+| `skipped=disk` | too little free space for the copy; the detail is `free=<n>K need=<n>K on <dir>`. Red |
+| `error=auth` | the fetch was refused (a 403, failed authentication, a repository the token cannot see); the detail is `repo=<url>: <git's line>`, any token in it redacted. Red |
+| `error=network` | GitHub could not be reached; the detail as for `error=auth`. Red |
+| `error=fetch-timeout` | the fetch ran past 600 seconds. Red |
+| `error=secrets` | `nova-secrets exec` itself failed (a line starting `nova-secrets:`, or rc 126 or 127); the detail is `rc=<n>: <its line>`. Red, and only then the failure says `run: <bin>/nova-secrets exec --only GH_GATE_TOKEN -- true` |
+| `error=fetch-rc-<n>`, `error=pgrep-rc-<n>`, `error=copy`, `error=scratch`, `error=df` | the probe could not check the clone. Red |
+
+Another probe holding the lock gives `GIT-PROBE <machine> <scratch> skipped=locked` (red; run again when it has
+finished). A scratch directory that cannot be made stops the probe on that machine (red, `the probe stopped`).
+
+**The fix** is a separate step, by hand, on the machine: move the clone aside while its runner is idle, and the next
+job clones again. The command the failure prints moves it only if no job is running there:
+
+```
+pgrep -f '<runner dir>/bin/[R]unner.Worker' || mv '<workspace>' '<workspace>.git-bug'
+```
+
+If `pgrep` prints a process, a job is running: wait and run it again. Delete `<workspace>.git-bug` once a job on that
+runner has checked out again.
 
 ## Windows runners of a WSL machine
 

@@ -51,3 +51,9 @@
 - name: every runner of the machine record
   ansible.builtin.include_tasks: record.yml
   when: github_runner_url is not defined
+
+# -e nova_runner_git_probe=true: after the runners, each workspace clone git may abort on in the checkout's fetch is probed
+# on a copy and a clone that aborts fails the run (tasks/git-probe.yml). Off by default: a copy and a fetch per clone.
+- name: the workspace clones that make git abort in the checkout's fetch (-e nova_runner_git_probe=true)
+  ansible.builtin.include_tasks: git-probe.yml
+  when: nova_runner_git_probe | bool

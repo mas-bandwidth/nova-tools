@@ -12,6 +12,9 @@
 # One url only, leaving the machine's other runners as they are (nova-fleet up does this for a new machine):
 #   nova-fleet github-runners -- -e github_runner_url=https://github.com/<owner>/<repo> -e github_runner_scope=repo
 #
+# Linux runners' workspace clones that make git abort in actions/checkout's fetch, found and reported, never moved:
+#   nova-fleet github-runners --check -- -l <machine> -e nova_runner_git_probe=true
+#
 # The registration token is asked of GitHub on the control node with its own gh login
 # (`gh api -X POST .../actions/runners/registration-token`); it is not an argument, a variable of the inventory or a file.
 # For one url, a host's count is its machine row's `runners`; a host with none is refused, not read as 0.

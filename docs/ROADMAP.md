@@ -27,6 +27,7 @@ Ideas and future work for nova-tools. Nothing here is scheduled; the owner decid
 | nova-bus hook --service writes a nova-config service record (seat, keys NOVA_BUS_PASSWORD, env) instead of a launchd or systemd unit holding the bus password in plain text; the services play then owns the unit | ❌ |
 | nova-bus hook backs off while its wake target is absent (no Monitor on the wake file, no harness server) instead of exiting 1 and being restarted every 10 s by its supervisor (16,953 restarts in one log, 2026-11-12) | ❌ |
 | nova-reserve hands freed slots to waiters in arrival order, so a long waiter is not passed by later ones (captain 2026-11-12: a waiter since 17:13Z was passed by three later arrivals) | ❌ |
+| The github-runners workspace git probe (-e nova_runner_git_probe=true) takes GH_GATE_TOKEN from the control node for each run instead of the host's seat, so a host's seat no longer needs the token for the probe; GH_GATE_TOKEN stays on bench hosts, read-only, for cloning private repositories | ❌ |
 | complete | 0% |
 
 [Source data](roadmap.sexp)
