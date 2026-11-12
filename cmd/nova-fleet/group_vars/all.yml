@@ -75,11 +75,11 @@ nova_age_keygen: "{{ '/opt/homebrew/bin/age-keygen' if (nova_system | default(an
 # formulae on darwin, apt packages on debian. Installed when missing, never upgraded, never started: the functional
 # tier runs its own initdb and pg_ctl. The debian list is the toolchain of a fleet whose repositories build C, C++, Go,
 # .NET, Java, OCaml and Python, prove with SMT and bounded model checkers, and test in containers, VMs and under
-# emulation. Every name resolves on Ubuntu 26.04; a Debian release or an older Ubuntu lacks some of the versioned ones
-# (clang-18, postgresql-client-18, dotnet-sdk-10.0). A list given with -e replaces this one whole (no merge): copy it
-# and edit, or start from docs/examples/runner-packages-s390x-vm.yml in the repository, the same list with the
-# foreign-architecture libraries added and nova_runner_vm_kernel on. A package of another dpkg architecture
-# (`libsodium-dev:s390x`) needs that architecture in nova_runner_foreign_architectures, so none is in the default list.
+# emulation, big-endian builds included: the s390x libraries those link are `<name>:s390x`, which apt fetches because
+# s390x is in nova_runner_foreign_architectures below. Every name resolves on Ubuntu 26.04; a Debian release or an
+# older Ubuntu lacks some of the versioned ones (clang-18, postgresql-client-18, dotnet-sdk-10.0) and has no Ubuntu
+# ports archive. A list given with -e replaces this one whole (no merge): copy it and edit, and drop the `:s390x`
+# names with the architecture.
 # The Windows side of a WSL machine with Windows runners (its record's windows_runners): ccache for MSVC, from ccache's own
 # release zip, checked against its sha256 (read from the GitHub release 2026-11-12), unpacked to the directory below
 # with msvc\cl.exe beside it (runner-packages, "Windows ccache"). An empty version skips it.
@@ -124,6 +124,11 @@ nova_runner_packages:
     - zlib1g-dev
     - libopengl0
     - libglx0
+    # the same libraries built for s390x, for the big-endian build (nova_runner_foreign_architectures)
+    - "libsodium-dev:s390x"
+    - "libbpf-dev:s390x"
+    - "libxdp-dev:s390x"
+    - "libstdc++6:s390x"
     # languages and runtimes
     - golang-go
     - dotnet-sdk-10.0
@@ -137,6 +142,7 @@ nova_runner_packages:
     - cppcheck
     - valgrind
     - strace
+    - time
     - cbmc
     - cadical
     - z3
@@ -166,7 +172,7 @@ nova_runner_packages:
     - tcpdump
 # Foreign dpkg architectures the debian list may name packages of (`libfoo-dev:s390x`), Ubuntu only: each is enabled in
 # dpkg and fetched from nova_runner_ports_uri, and the native sources are restricted to the native architecture.
-nova_runner_foreign_architectures: []
+nova_runner_foreign_architectures: [s390x]
 nova_runner_ports_uri: "http://ports.ubuntu.com/ubuntu-ports/"
 # Debian/Ubuntu: keep a copy of each kernel image the host installs in nova_runner_vm_kernel_dir, readable by the
 # login, and the login in kvm, for a CI job that boots a VM of the host's own kernel. On for every bench and runner

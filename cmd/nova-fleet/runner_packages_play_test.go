@@ -78,9 +78,10 @@ func readRunnerPackagesVars(t *testing.T, path string) runnerPackagesVars {
 	return vars
 }
 
-// The defaults: a CI toolchain for Linux and macOS, with nothing that needs a switch the defaults leave off. A package
-// of a foreign architecture (`libsodium-dev:s390x`) is fetched only once its architecture is enabled, so the default
-// list names none; the VM tier's kernel copies and the foreign architectures are off until a run turns them on.
+// The defaults: a CI toolchain for Linux and macOS, big-endian builds included. A package of a foreign architecture
+// (`libsodium-dev:s390x`) is fetched only once its architecture is enabled, so each `<name>:<arch>` the default list
+// names is of an architecture the defaults enable, and the s390x libraries a big-endian build links are there; the VM
+// tier's kernel copies are on.
 func TestRunnerPackagesDefaults(t *testing.T) {
 	t.Parallel()
 	vars := readRunnerPackagesVars(t, "group_vars/all.yml")
@@ -91,42 +92,20 @@ func TestRunnerPackagesDefaults(t *testing.T) {
 		assert.Contains(t, debian, want)
 	}
 	assert.Len(t, slices.Compact(slices.Sorted(slices.Values(debian))), len(debian), "a package is listed once")
-	for _, p := range debian {
-		assert.NotContains(t, p, ":", "%s needs a foreign architecture, and the defaults enable none", p)
-	}
 	require.NotNil(t, vars.Foreign, "nova_runner_foreign_architectures has a default")
-	assert.Empty(t, vars.Foreign, "no foreign architecture by default")
+	assert.Equal(t, []string{"s390x"}, vars.Foreign, "s390x, for the big-endian build")
+	for _, p := range debian {
+		if _, arch, ok := strings.Cut(p, ":"); ok {
+			assert.Contains(t, vars.Foreign, arch, "%s: a package of an architecture the defaults do not enable", p)
+		}
+	}
+	for _, want := range []string{"libsodium-dev:s390x", "libbpf-dev:s390x", "libxdp-dev:s390x", "libstdc++6:s390x", "gcc-s390x-linux-gnu", "g++-s390x-linux-gnu", "qemu-user"} {
+		assert.Contains(t, debian, want, "the big-endian build's toolchain")
+	}
 	require.NotNil(t, vars.VMKernel, "nova_runner_vm_kernel has a default")
 	assert.True(t, *vars.VMKernel, "the VM tier is on for every bench and runner")
 	assert.Equal(t, "http://ports.ubuntu.com/ubuntu-ports/", vars.PortsURI)
 	assert.Equal(t, "{{ ansible_facts['user_dir'] }}/vm-kernels", vars.KernelDir)
-}
-
-// docs/examples/runner-packages-s390x-vm.yml is the default list with the two switches on and the foreign-architecture
-// libraries added: a -e value replaces the default whole, so the example repeats the list, and this keeps the two the
-// same. Every `<name>:<arch>` it adds names an architecture it enables.
-func TestRunnerPackagesExampleIsTheDefaultListWithTheExtrasOn(t *testing.T) {
-	t.Parallel()
-	def := readRunnerPackagesVars(t, "group_vars/all.yml")
-	ex := readRunnerPackagesVars(t, "../../docs/examples/runner-packages-s390x-vm.yml")
-	assert.Equal(t, def.Packages["darwin"], ex.Packages["darwin"])
-	assert.NotEmpty(t, ex.Foreign, "the example enables a foreign architecture")
-	require.NotNil(t, ex.VMKernel)
-	assert.True(t, *ex.VMKernel, "the example turns the VM tier on")
-	var extra []string
-	for _, p := range ex.Packages["debian"] {
-		if !slices.Contains(def.Packages["debian"], p) {
-			extra = append(extra, p)
-		}
-	}
-	for _, p := range def.Packages["debian"] {
-		assert.Contains(t, ex.Packages["debian"], p, "the example dropped a default package")
-	}
-	assert.NotEmpty(t, extra, "the example adds the foreign-architecture libraries")
-	for _, p := range extra {
-		_, arch, ok := strings.Cut(p, ":")
-		assert.True(t, ok && slices.Contains(ex.Foreign, arch), "%s: the example adds only packages of an architecture it enables", p)
-	}
 }
 
 // taskNamed is the one task of the role's file whose name is name.
