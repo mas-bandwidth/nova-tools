@@ -127,6 +127,23 @@ func TestCIRulesLimitedEvents(t *testing.T) {
 	}
 }
 
+// TestCIRulesOnBattery: the job-started hook refuses a job on a laptop drawing from its battery (it may be carried
+// and sleep with the job in flight). The verb reads `pmset -g batt` output on stdin; these are the two first lines macOS
+// prints, plus no output at all (a machine without pmset). The sh hook only: Windows runners have no battery rule.
+func TestCIRulesOnBattery(t *testing.T) {
+	sh := ciShells(t)[0]
+	for in, want := range map[string]int{
+		"Now drawing from 'Battery Power'\n -InternalBattery-0 (id=36372579)\t88%; discharging; 5:10 remaining present: true\n": 0,
+		"Now drawing from 'AC Power'\n -InternalBattery-0 (id=36372579)\t88%; charging; 0:41 remaining present: true\n":         1,
+		"Now drawing from 'UPS Power'\n": 1,
+		"":                               1,
+	} {
+		if got, out := ciRun(t, sh, ciRulesDir, in, nil, "on-battery"); got != want {
+			t.Errorf("on-battery < %q = %d %q, want %d", in, got, out, want)
+		}
+	}
+}
+
 func TestCIRulesOverdueAndText(t *testing.T) {
 	for _, sh := range ciShells(t) {
 		for _, tc := range []struct {

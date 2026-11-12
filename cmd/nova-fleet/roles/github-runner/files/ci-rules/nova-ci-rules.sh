@@ -14,7 +14,7 @@
 #                       runner whose .env changed
 #
 # The parts below are pure functions of their arguments and stdin, so the unit tests call them with no clock:
-#   push-ok REF, limited EVENT, overdue NOW DEADLINE, limit-text SECONDS,
+#   push-ok REF, limited EVENT, overdue NOW DEADLINE, limit-text SECONDS, on-battery < `pmset -g batt` output,
 #   ancestor PID NAME < "pid ppid comm" lines, tree ROOT EXCLUDE < "pid ppid command" lines,
 #   env-edit HOOKDIR < .env
 set -u
@@ -54,6 +54,15 @@ limited() {
 }
 
 overdue() { [ "$1" -ge "$2" ]; }
+
+# on-battery < the output of `pmset -g batt`: true when its first line says the machine draws from its battery. A
+# laptop runner on battery is about to be carried and may sleep with the lid shut, so no job starts there; on AC power,
+# or on a machine without pmset (Linux), every job starts as before.
+on_battery() {
+	IFS= read -r first || return 1
+	case $first in *"'Battery Power'"*) return 0 ;; esac
+	return 1
+}
 
 limit_text() {
 	if [ $(($1 % 60)) -eq 0 ]; then echo "$(($1 / 60))m"; else echo "${1}s"; fi
@@ -151,6 +160,10 @@ started() {
 	if [ "$event" = push ] && ! push_ok "$ref"; then
 		set -f
 		echo "::error::CI rule: push CI runs only on $(echo $branches | sed 's/ /, /g') and tags, not $ref; set on.push.branches to [$(echo $branches | sed "s/[^ ]*/'&'/g; s/ /, /g")] and let this branch get CI through its pull request"
+		exit 1
+	fi
+	if command -v pmset >/dev/null 2>&1 && pmset -g batt 2>/dev/null | on_battery; then
+		echo "::error::CI rule: $(hostname -s) is on battery power (pmset -g batt), so it may sleep with this job in flight; the job is refused before it starts; rerun it and another runner takes it"
 		exit 1
 	fi
 	chain "${NOVA_CI_CHAIN_JOB_STARTED:-}" || exit $?
@@ -344,12 +357,13 @@ apply) apply "$@" ;;
 push-ok) push_ok "$1" ;;
 limited) limited "$1" ;;
 overdue) overdue "$1" "$2" ;;
+on-battery) on_battery ;;
 limit-text) limit_text "$1" ;;
 ancestor) ancestor "$1" "$2" ;;
 tree) tree "$1" "$2" ;;
 env-edit) env_edit "$1" ;;
 *)
-	echo "nova-ci-rules: want started, completed, watchdog, apply, push-ok, limited, overdue, limit-text, ancestor, tree or env-edit" >&2
+	echo "nova-ci-rules: want started, completed, watchdog, apply, push-ok, limited, overdue, on-battery, limit-text, ancestor, tree or env-edit" >&2
 	exit 2
 	;;
 esac

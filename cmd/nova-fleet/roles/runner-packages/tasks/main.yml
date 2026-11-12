@@ -41,6 +41,12 @@
   ansible.builtin.include_tasks: debian-vm-kernel.yml
   when: rp_os == 'debian' and nova_runner_vm_kernel | bool and not rp_wsl.stat.exists
 
+- name: the Windows side of a WSL machine with Windows runners (ccache for MSVC)
+  ansible.builtin.include_tasks: windows-ccache.yml
+  vars:
+    rp_win_ccache_unix: "{{ nova_runner_windows_ccache_unix }}"
+  when: rp_os == 'debian' and (nova_windows_runners | default([]) | length > 0) and nova_runner_windows_ccache.version | default('') | length > 0
+
 - name: the receipt
   ansible.builtin.debug:
     msg: "RUNNER-PACKAGES host={{ inventory_hostname }} wanted={{ rp_wanted | length }} present={{ rp_present | length }} installed={{ rp_installed }}"
