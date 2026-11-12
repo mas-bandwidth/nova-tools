@@ -24,6 +24,8 @@ Ideas and future work for nova-tools. Nothing here is scheduled; the owner decid
 | nova-sandbox on macOS: a --read or --write reached through a chain of symlinks or a symlinked ancestor is granted as a one-hop link is | ❌ |
 | Idea, the owner's decision: nova-bus hook --service carries the caller's PATH into the unit for --exec, as it does for --codex-thread | ❌ |
 | nova-config machine records carry a per-machine firewall allow-in list that the tailscale role reads, so a machine's extra ufw rule (space2/space3: in on eno2 proto udp from 10.77.0.0/24) no longer depends on passing -e nova_firewall_allow_in on each up or tailscale run | ❌ |
+| nova-bus hook --service writes a nova-config service record (seat, keys NOVA_BUS_PASSWORD, env) instead of a launchd or systemd unit holding the bus password in plain text; the services play then owns the unit | ❌ |
+| nova-bus hook backs off while its wake target is absent (no Monitor on the wake file, no harness server) instead of exiting 1 and being restarted every 10 s by its supervisor (16,953 restarts in one log, 2026-11-12) | ❌ |
 | complete | 0% |
 
 [Source data](roadmap.sexp)
