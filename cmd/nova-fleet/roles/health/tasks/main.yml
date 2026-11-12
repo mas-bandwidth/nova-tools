@@ -288,50 +288,73 @@
   become: true
   when: nova_health_disk_clean | bool
 
-# github-runners.yml writes a runner's TMPDIR into its unit; its jobs' leftovers land there, not in /tmp
-- name: the runners' TMPDIRs
-  ansible.builtin.shell: cat /etc/systemd/system/github-runner-*.service 2>/dev/null | sed -n 's/^Environment=TMPDIR=//p' | sort -u
+# github-runners.yml writes a runner's login and TMPDIR into its unit; its jobs' leftovers land there, not in /tmp. One
+# line per runner: login, its home, TMPDIR.
+- name: the runners' logins and TMPDIRs
+  ansible.builtin.shell: |
+    for f in /etc/systemd/system/github-runner-*.service; do
+      [ -f "$f" ] || continue
+      u=$(sed -n 's/^User=//p' "$f"); t=$(sed -n 's/^Environment=TMPDIR=//p' "$f")
+      [ -n "$u" ] && [ -n "$t" ] && echo "$u $(getent passwd "$u" | cut -d: -f6) $t"
+    done | sort -u
   register: health_runner_tmp
   changed_when: false
   check_mode: false
   when: nova_health_disk_clean | bool
 
-- name: the clean's unit and timer
+# nova-disk-clean removes only what its user owns, so each login gets a clean run as it: the fleet login's
+# (nova-disk-clean) with /tmp, its runners' TMPDIRs and its Go cache, and each other runner login's
+# (nova-disk-clean-<login>) with /tmp, its runners' TMPDIRs and its own Go cache.
+- name: the cleans, one per login
+  ansible.builtin.set_fact:
+    health_cleans: >-
+      {%- set rows = health_runner_tmp.stdout_lines | default([]) | map('split', ' ') | list -%}
+      {%- set out = [{'unit': 'nova-disk-clean', 'user': ansible_facts['user_id'],
+            'dirs': nova_health_disk_clean_dirs + (rows | selectattr(0, 'equalto', ansible_facts['user_id']) | map(attribute=2) | list),
+            'caches': nova_health_disk_clean_caches}] -%}
+      {%- for u in rows | map(attribute=0) | unique | reject('equalto', ansible_facts['user_id']) -%}
+      {%- set mine = rows | selectattr(0, 'equalto', u) | list -%}
+      {%- set _ = out.append({'unit': 'nova-disk-clean-' ~ u, 'user': u,
+            'dirs': nova_health_disk_clean_dirs + (mine | map(attribute=2) | list),
+            'caches': [mine[0][1] ~ '/.cache/go-build']}) -%}
+      {%- endfor -%}
+      {{ out }}
+  when: nova_health_disk_clean | bool
+
+- name: the cleans' units and timers
   vars:
-    clean_dirs: "{{ (nova_health_disk_clean_dirs + health_runner_tmp.stdout_lines) | unique | join(':') }}"
+    clean_dirs: "{{ item.0.dirs | unique | join(':') }}"
+    health_clean_service: |
+      # managed by Ansible (fleet/health.yml)
+      [Unit]
+      Description=what jobs leave in {{ clean_dirs }} and the Go build cache, unchanged {{ nova_health_disk_clean_age_min }}m ({{ nova_health_disk_clean_pressed_min }}m over {{ nova_health_disk_warn_pct }}%)
+      [Service]
+      Type=oneshot
+      User={{ item.0.user }}
+      Nice=19
+      IOSchedulingClass=idle
+      Environment=DISK_WARN_PCT={{ nova_health_disk_warn_pct }}
+      Environment=DISK_CLEAN_AGE_MIN={{ nova_health_disk_clean_age_min }}
+      Environment=DISK_CLEAN_PRESSED_MIN={{ nova_health_disk_clean_pressed_min }}
+      Environment="DISK_CLEAN_DIRS={{ clean_dirs }}"
+      Environment="DISK_CLEAN_CACHES={{ item.0.caches | join(':') }}"
+      ExecStart=/usr/local/sbin/nova-disk-clean
+    health_clean_timer: |
+      # managed by Ansible (fleet/health.yml)
+      [Unit]
+      Description=the disk clean ({{ nova_health_disk_clean_on_calendar }})
+      [Timer]
+      OnCalendar={{ nova_health_disk_clean_on_calendar }}
+      RandomizedDelaySec=10m
+      Persistent=true
+      [Install]
+      WantedBy=timers.target
   ansible.builtin.copy:
-    dest: "/etc/systemd/system/nova-disk-clean.{{ item.ext }}"
+    dest: "/etc/systemd/system/{{ item.0.unit }}.{{ item.1 }}"
     mode: "0644"
-    content: "{{ item.content }}"
-  loop:
-    - ext: service
-      content: |
-        # managed by Ansible (fleet/health.yml)
-        [Unit]
-        Description=what jobs leave in {{ clean_dirs }} and the Go build cache, unchanged {{ nova_health_disk_clean_age_min }}m ({{ nova_health_disk_clean_pressed_min }}m over {{ nova_health_disk_warn_pct }}%)
-        [Service]
-        Type=oneshot
-        User={{ ansible_facts['user_id'] }}
-        Nice=19
-        IOSchedulingClass=idle
-        Environment=DISK_WARN_PCT={{ nova_health_disk_warn_pct }}
-        Environment=DISK_CLEAN_AGE_MIN={{ nova_health_disk_clean_age_min }}
-        Environment=DISK_CLEAN_PRESSED_MIN={{ nova_health_disk_clean_pressed_min }}
-        Environment="DISK_CLEAN_DIRS={{ clean_dirs }}"
-        Environment="DISK_CLEAN_CACHES={{ nova_health_disk_clean_caches | join(':') }}"
-        ExecStart=/usr/local/sbin/nova-disk-clean
-    - ext: timer
-      content: |
-        # managed by Ansible (fleet/health.yml)
-        [Unit]
-        Description=the disk clean ({{ nova_health_disk_clean_on_calendar }})
-        [Timer]
-        OnCalendar={{ nova_health_disk_clean_on_calendar }}
-        RandomizedDelaySec=10m
-        Persistent=true
-        [Install]
-        WantedBy=timers.target
-  loop_control: { label: "nova-disk-clean.{{ item.ext }}" }
+    content: "{{ health_clean_service if item.1 == 'service' else health_clean_timer }}"
+  loop: "{{ health_cleans | default([]) | product(['service', 'timer']) | list }}"
+  loop_control: { label: "{{ item.0.unit }}.{{ item.1 }}" }
   become: true
   register: health_clean_units
   when: nova_health_disk_clean | bool
@@ -341,10 +364,14 @@
   become: true
   when: nova_health_disk_clean | bool and health_clean_units is changed and not ansible_check_mode
 
-- name: the clean's timer, enabled and started
-  ansible.builtin.systemd_service: { name: nova-disk-clean.timer, enabled: true, state: started }
+- name: the cleans' timers, enabled and started
+  ansible.builtin.systemd_service: { name: "{{ item.unit }}.timer", enabled: true, state: started }
+  loop: "{{ health_cleans | default([]) }}"
+  loop_control: { label: "{{ item.unit }}.timer" }
   become: true
-  when: nova_health_disk_clean | bool and not (ansible_check_mode and health_clean_units is changed)
+  when: >-
+    nova_health_disk_clean | bool and not (ansible_check_mode
+    and health_clean_units.results | default([]) | selectattr('item.0.unit', 'equalto', item.unit) | select('changed') | list | length > 0)
 
 - name: the changes, applied now
   ansible.builtin.meta: flush_handlers

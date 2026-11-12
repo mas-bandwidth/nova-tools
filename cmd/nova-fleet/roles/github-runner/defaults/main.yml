@@ -34,8 +34,8 @@ github_runner_sha256:
   win-x64: "a1f17aa987fc8158bc7521d284912267a0d01b7c2c4684b33c86783b5e8221cc"
 github_runner_release_url: "https://github.com/actions/runner/releases/download"
 
-# Where a host keeps them: <base>/<owner>-<repo>-<i> (or <org>-<i>), in the login's home.
-github_runner_base_dir: "{{ ansible_facts['user_dir'] ~ '/actions-runner' }}"
+# Where a host keeps them: <base>/<owner>-<repo>-<i> (or <org>-<i>), in the runner login's home (github_runner_home).
+github_runner_base_dir: "{{ github_runner_home ~ '/actions-runner' }}"
 # Where a host keeps the runners' services, read by a run of the record (tasks/record.yml) to find the ones it does not want.
 github_runner_unit_dir: "{{ '/Library/LaunchDaemons' if ansible_facts['system'] == 'Darwin' else '/etc/systemd/system' }}"
 
@@ -44,16 +44,19 @@ github_runner_unit_dir: "{{ '/Library/LaunchDaemons' if ansible_facts['system'] 
 # it for one run.
 github_runner_env: "{{ nova_runner_env | default({}) }}"
 
-# A Linux runner's TMPDIR when github_runner_env has none: one directory of the login (0700) for all its runners, made
+# A Linux runner's TMPDIR when github_runner_env has none: one directory of the runner login (0700) for all its runners, made
 # before the units start. Its jobs' temporary files land there and not in /tmp, and the health play's disk clean reads
 # it from the units and removes what is left. A macOS daemon gets none (its jobs use /tmp, which macOS cleans).
-github_runner_tmpdir: "{{ ansible_facts['user_dir'] }}/.cache/runner-tmp"
+github_runner_tmpdir: "{{ github_runner_home }}/.cache/runner-tmp"
 
 # The PATH the service starts with when github_runner_env has none; its jobs inherit it, so a step finds the nova
-# tools (`nova-reserve run ...`): nova_bin_dir first (group_vars/all.yml, where install.yml puts them), then the
+# tools (`nova-reserve run ...`): github_runner_bin_dir first, then the
 # system's. Linux: systemd's list and the Debian/Ubuntu login tail runners had before; macOS: Homebrew's prefix
 # (/opt/homebrew on Apple silicon, /usr/local on Intel) before the system's, as nova_service_path has it.
-github_runner_default_path_linux: "{{ nova_bin_dir }}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin"
+# github_runner_bin_dir: nova_bin_dir (group_vars/all.yml, where install.yml puts the tools) for the fleet login's
+# runners; a runner login of its own gets its own ~/.local/bin, never a directory of the fleet login's.
+github_runner_bin_dir: "{{ nova_bin_dir if github_runner_user == ansible_facts['user_id'] else github_runner_home ~ '/.local/bin' }}"
+github_runner_default_path_linux: "{{ github_runner_bin_dir }}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin"
 github_runner_default_path_darwin: "{{ nova_bin_dir }}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
 # Linux only: run the runner's bin/installdependencies.sh (system packages) once per

@@ -41,8 +41,11 @@ func TestRunnerPathStartsWithTheToolsDir(t *testing.T) {
 	assert.True(t, strings.HasPrefix(asText(install["nova_tools_bin_dir"]), "{{ nova_bin_dir "), "the install role's bin dir is nova_bin_dir")
 
 	d := runnerDefaults(t)
-	assert.Equal(t, "{{ nova_bin_dir }}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin",
+	assert.Equal(t, "{{ github_runner_bin_dir }}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin",
 		asText(d["github_runner_default_path_linux"]))
+	// the fleet login's runners find the tools in nova_bin_dir; a runner login of its own never looks in the fleet login's home
+	assert.Equal(t, "{{ nova_bin_dir if github_runner_user == ansible_facts['user_id'] else github_runner_home ~ '/.local/bin' }}",
+		asText(d["github_runner_bin_dir"]))
 	// Homebrew's prefix (/opt/homebrew on Apple silicon, /usr/local on Intel) comes before the system's, so a job finds
 	// the formulae installed there (cmake, pkg-config) and Homebrew's python3, whose ctypes finds Homebrew's libraries.
 	assert.Equal(t, "{{ nova_bin_dir }}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin", asText(d["github_runner_default_path_darwin"]))
@@ -50,8 +53,8 @@ func TestRunnerPathStartsWithTheToolsDir(t *testing.T) {
 
 // A Linux runner's unit lifts RLIMIT_MEMLOCK (systemd's default is 8 MiB). The kernel charges io_uring's locked pages
 // to the user across all of its processes, so every runner of the login on a host shares one budget, and the jobs'
-// need grows with the runner count and the repository. infinity grants a job nothing it lacks: the login has
-// passwordless sudo (join.yml).
+// need grows with the runner count and the repository. The limit lets the login lock its own memory and is no
+// privilege: the unit's comment says so, and names no sudo (a runner login of its own has none).
 func TestRunnerServiceLiftsTheLockedMemoryLimit(t *testing.T) {
 	t.Parallel()
 	b, err := os.ReadFile("roles/github-runner/templates/runner.service.j2")
@@ -60,6 +63,7 @@ func TestRunnerServiceLiftsTheLockedMemoryLimit(t *testing.T) {
 	service := s[strings.Index(s, "\n[Service]\n"):strings.Index(s, "\n[Install]\n")]
 	assert.Contains(t, service, "\nLimitMEMLOCK=infinity\n")
 	assert.Equal(t, 1, strings.Count(s, "LimitMEMLOCK="))
+	assert.NotContains(t, s, "sudo")
 }
 
 // Both service files set PATH once: github_runner_env's PATH if it has one, else the default above.

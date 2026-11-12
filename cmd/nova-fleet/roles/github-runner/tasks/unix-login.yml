@@ -1,0 +1,240 @@
+---
+# The runner login when github_runner_user is not the fleet login (cmd/nova-fleet/README.md, "The runner login"): a
+# login of its own, so a CI job has no root and no way to get it. Its password is locked, it is in no group but its own
+# and kvm (the VM tier opens /dev/kvm through it), sudo grants it nothing, sshd refuses it whatever keys its home holds,
+# and its home is its own (0750).
+- name: a runner login of its own is a plain name on Linux
+  ansible.builtin.assert:
+    quiet: true
+    that:
+      - ansible_facts['system'] == 'Linux'
+      - github_runner_user is match('^[a-z_][a-z0-9_-]{0,31}$')
+      - github_runner_user != 'root'
+    fail_msg: >-
+      github-runner: github_runner_user={{ github_runner_user }} on {{ ansible_facts['system'] }}: a runner login other than
+      the fleet login ({{ ansible_facts['user_id'] }}) is for Linux, a plain lower-case name other than root; macOS runs
+      its runners as the login
+
+# Root changes the owner of what the CI rules' state directory holds (nova-ci-rules.sh apply): without the kernel's
+# hardlink protection a runner login could link a file of root's in there and be given it.
+- name: the kernel refuses links to files a login does not own
+  ansible.builtin.command: { argv: [sysctl, -n, fs.protected_hardlinks, fs.protected_symlinks] }
+  register: github_runner_protected
+  changed_when: false
+  failed_when: github_runner_protected.stdout_lines != ['1', '1']
+  check_mode: false
+
+- name: the kvm group
+  ansible.builtin.command: getent group kvm
+  register: github_runner_kvm
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+# An account that already holds the name is taken only when it is a runner login already (uid 1000 or above, in no group
+# but its own and kvm): the user task below sets its groups, and must never strip an admin of sudo or wheel.
+- name: the account that holds the name already
+  ansible.builtin.shell: |
+    getent passwd {{ github_runner_user | quote }} >/dev/null || { echo ABSENT; exit 0; }
+    id -u {{ github_runner_user | quote }}
+    id -nG {{ github_runner_user | quote }}
+  args: { executable: /bin/sh }
+  register: github_runner_existing
+  changed_when: false
+  check_mode: false
+
+- name: an existing account is a runner login, never an admin's or a system account
+  ansible.builtin.assert:
+    quiet: true
+    that:
+      - github_runner_existing.stdout_lines | length == 2
+      - github_runner_existing.stdout_lines[0] | int >= 1000
+      - github_runner_existing.stdout_lines[1].split() | difference([github_runner_user, 'kvm']) | length == 0
+    fail_msg: >-
+      github-runner: the account {{ github_runner_user }} on {{ inventory_hostname }} exists
+      (uid and groups: {{ github_runner_existing.stdout_lines | join('; ') }})
+      and is not a runner login: a uid below 1000, or a group beyond its own and kvm. Name another github_runner_user.
+  when: "'ABSENT' not in github_runner_existing.stdout"
+
+- name: the runner login (locked, its own group and kvm only)
+  ansible.builtin.user:
+    name: "{{ github_runner_user }}"
+    home: "{{ github_runner_home }}"
+    create_home: true
+    shell: /bin/bash
+    groups: "{{ 'kvm' if github_runner_kvm.rc == 0 else '' }}"
+    append: false
+    password_lock: true
+  become: true
+  register: github_runner_login
+
+- name: the runner login's home is its own
+  ansible.builtin.file:
+    path: "{{ github_runner_home }}"
+    state: directory
+    owner: "{{ github_runner_user }}"
+    group: "{{ github_runner_user }}"
+    mode: "0750"
+  become: true
+  when: not (ansible_check_mode and 'ABSENT' in github_runner_existing.stdout)
+
+- name: sshd refuses the runner login
+  ansible.builtin.copy:
+    dest: /etc/ssh/sshd_config.d/90-nova-runner-login.conf
+    content: |
+      # managed by Ansible (fleet/github-runners.yml): a CI job's login is never an ssh login, whatever keys its home holds
+      DenyUsers {{ github_runner_user }}
+    owner: root
+    group: root
+    mode: "0644"
+    validate: /usr/sbin/sshd -t -f %s
+  become: true
+  register: github_runner_sshd
+
+- name: sshd reads it
+  ansible.builtin.command: systemctl try-reload-or-restart ssh.service
+  become: true
+  when: github_runner_sshd is changed and not ansible_check_mode
+
+# sshd's own answer, so a drop-in directory sshd_config does not include (or an earlier DenyUsers/AllowUsers rule that
+# wins) fails the run rather than leaving the login open.
+- name: sshd's settings deny the runner login
+  ansible.builtin.command: { argv: [/usr/sbin/sshd, -T, -C, "user={{ github_runner_user }},host=nova-fleet,addr=192.0.2.1"] }
+  become: true
+  register: github_runner_sshd_t
+  changed_when: false
+  failed_when: >-
+    github_runner_sshd_t.rc != 0
+    or github_runner_user not in (github_runner_sshd_t.stdout_lines | select('match', '(?i)^denyusers ') | map('lower') | join(' ')).split()
+  check_mode: false
+  when: not (ansible_check_mode and github_runner_sshd is changed)
+
+# Tailscale SSH takes a connection on the source machine's tag alone, never reading sshd's DenyUsers, and a fleet
+# login there has sudo: the runner login's own connections to ssh on any tailnet address (this machine's too) are
+# refused here, on the machine, by a table of its own that systemd loads at boot.
+- name: nft
+  ansible.builtin.apt: { name: nftables, state: present }
+  become: true
+
+- name: the runner login reaches no ssh on the tailnet
+  ansible.builtin.copy:
+    dest: /etc/nova-runner-login.nft
+    content: |
+      # managed by Ansible (fleet/github-runners.yml): a CI job's login opens no ssh connection to the tailnet
+      table inet nova_runner_login
+      delete table inet nova_runner_login
+      table inet nova_runner_login {
+        chain output {
+          type filter hook output priority 0; policy accept;
+          meta skuid "{{ github_runner_user }}" ip daddr 100.64.0.0/10 tcp dport 22 reject with tcp reset
+          meta skuid "{{ github_runner_user }}" ip6 daddr fd7a:115c:a1e0::/48 tcp dport 22 reject with tcp reset
+        }
+      }
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+  register: github_runner_nft
+  when: not (ansible_check_mode and 'ABSENT' in github_runner_existing.stdout)
+
+- name: systemd loads it at boot
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/nova-runner-login-net.service
+    content: |
+      # managed by Ansible (fleet/github-runners.yml)
+      [Unit]
+      Description=No ssh to the tailnet from the CI runner login
+      After=nftables.service
+      Before=network-pre.target
+      Wants=network-pre.target
+
+      [Service]
+      Type=oneshot
+      RemainAfterExit=yes
+      ExecStart=/usr/sbin/nft -f /etc/nova-runner-login.nft
+
+      [Install]
+      WantedBy=multi-user.target
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+  register: github_runner_nft_unit
+
+- name: and it is loaded now
+  ansible.builtin.systemd:
+    name: nova-runner-login-net.service
+    enabled: true
+    state: "{{ 'restarted' if (github_runner_nft is changed or github_runner_nft_unit is changed) else 'started' }}"
+    daemon_reload: "{{ github_runner_nft_unit is changed }}"
+  become: true
+  when: not ansible_check_mode
+
+# tailscaled dials for any login that reaches its socket (`tailscale nc <peer> 22`), as root, past the table above:
+# its runtime directory is closed to all but root and the fleet login's group, now and at every start of tailscaled.
+- name: tailscaled's drop-in directory
+  ansible.builtin.file: { path: /etc/systemd/system/tailscaled.service.d, state: directory, owner: root, group: root, mode: "0755" }
+  become: true
+
+- name: tailscaled's socket is the fleet login's and root's (at its next start)
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/tailscaled.service.d/90-nova-runner-login.conf
+    content: |
+      # managed by Ansible (fleet/github-runners.yml): a CI job's login cannot ask tailscaled to dial for it
+      [Service]
+      RuntimeDirectoryMode=0750
+      ExecStartPost=/usr/bin/chgrp {{ ansible_facts['user_gid'] }} /run/tailscale
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+  register: github_runner_ts_dropin
+  when: not (ansible_check_mode and 'ABSENT' in github_runner_existing.stdout)
+
+- name: systemd reads it (tailscaled is not restarted)
+  ansible.builtin.systemd: { daemon_reload: true }
+  become: true
+  when: github_runner_ts_dropin is changed and not ansible_check_mode
+
+- name: tailscaled's socket is the fleet login's and root's (now)
+  ansible.builtin.shell: |
+    set -eu
+    [ -d /run/tailscale ] || { echo ABSENT; exit 0; }
+    [ "$(stat -c '%a %g' /run/tailscale)" = "750 {{ ansible_facts['user_gid'] }}" ] && exit 0
+    chgrp {{ ansible_facts['user_gid'] }} /run/tailscale
+    chmod 0750 /run/tailscale
+    echo SET
+  args: { executable: /bin/sh }
+  become: true
+  register: github_runner_ts_dir
+  changed_when: "'SET' in github_runner_ts_dir.stdout"
+
+- name: the runner login cannot reach tailscaled
+  ansible.builtin.command: { argv: [runuser, -u, "{{ github_runner_user }}", --, test, -x, /run/tailscale] }
+  become: true
+  register: github_runner_ts_reach
+  changed_when: false
+  failed_when: github_runner_ts_reach.rc == 0
+  check_mode: false
+  when: not ansible_check_mode and 'ABSENT' not in github_runner_ts_dir.stdout
+
+- name: the kernel holds the refusal
+  ansible.builtin.shell: nft list chain inet nova_runner_login output | grep -c 'tcp dport 22 reject'
+  become: true
+  register: github_runner_nft_rules
+  changed_when: false
+  failed_when: github_runner_nft_rules.stdout | trim != '2'
+  check_mode: false
+  when: not ansible_check_mode
+
+# sudo's own answer for the login, read as root (in the C locale, whose words are matched): any rule that names it (a
+# group, a drop-in, ALL) fails the run.
+- name: sudo grants the runner login nothing
+  ansible.builtin.command: { argv: [sudo, -n, -l, -U, "{{ github_runner_user }}"] }
+  environment: { LC_ALL: C, LANG: C }
+  become: true
+  register: github_runner_sudo
+  changed_when: false
+  failed_when: "'is not allowed to run sudo' not in github_runner_sudo.stdout"
+  check_mode: false
+  when: not (ansible_check_mode and 'ABSENT' in github_runner_existing.stdout)
