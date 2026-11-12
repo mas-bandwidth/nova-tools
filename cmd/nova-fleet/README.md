@@ -512,6 +512,7 @@ every runner running on the machines named, whoever registered it (`nova-fleet c
 | `push` | runs only on a branch matching `github_runner_ci_push_branches` (default `main` and `sprint/*`, one segment) or a tag; any other ref is refused before the first step: `::error::CI rule: push CI runs only on main, sprint/* and tags, not <ref>; ...` (a card branch gets CI through its pull request) |
 | `push`, `pull_request`, `merge_group` | the job finishes within `github_runner_ci_limit_seconds` (default 120) of job wall time, counted from the end of the job-started hook; past it every process under the job's `Runner.Worker` is stopped and killed, each second until the job ends, and the job fails at the job-completed hook: `::error::CI rule: per-commit jobs finish in 2m; move longer work to a nightly (schedule) workflow` |
 | `schedule`, `workflow_dispatch` | nightly or manual: no limit |
+| any, on a Mac drawing from its battery | refused at the job-started hook, before the first step (`pmset -g batt` says `'Battery Power'`): a laptop on battery is about to be carried and may sleep with the job in flight; on AC, or without `pmset`, nothing changes. `::error::CI rule: <host> is on battery power ...; rerun it and another runner takes it` |
 
 The hooks enforce only these rows. That unit tests use no real time, sleep or network, and that unit and functional jobs
 run in parallel, is the rule repositories follow; no hook checks it.
@@ -1071,7 +1072,7 @@ tailnet=<interface> dry=False watchdog=<interval> device=yes panic=<n> oops=<n> 
 The packages a CI runner's tests need, on each machine of the `bench` and `runner` groups (a bench runs the same gates), from `nova_runner_packages`
 (`group_vars/all.yml`): a list per OS, Homebrew formulae on `darwin` (as the login; brew refuses root) and apt
 packages on `debian`. The default is the toolchain of a fleet whose repositories build C, C++, Go, .NET, Java, OCaml
-and Python and test them: on macOS `postgresql@18` (the functional tier), `cmake`, `libsodium` and `pkgconf`; on
+and Python and test them: on macOS `postgresql@18` (the functional tier), `cmake`, `libsodium`, `pkgconf` and `ccache` (the compiler cache); on
 Debian and Ubuntu the compilers, assemblers and build systems (`build-essential`, `clang-18`, `lld`, `cmake`,
 `ninja-build`, `ccache`, `nasm`), the libraries the tests link (libsodium, libbpf, libxdp, liburing, libcurl, MPFR,
 zlib, OpenGL), the runtimes (`golang-go`, `dotnet-sdk-10.0`, Mono, a Java runtime, `opam`, Python's pip and venv),
@@ -1103,7 +1104,7 @@ nova-fleet runner-packages -- -e @runner-packages-s390x-vm.yml -l bench
 
 | Variable | Default | |
 |---|---|---|
-| `nova_runner_packages` | `darwin`: `postgresql@18`, `cmake`, `libsodium`, `pkgconf`; `debian`: the toolchain above (`group_vars/all.yml`) | another OS with a non-empty list is refused |
+| `nova_runner_packages` | `darwin`: `postgresql@18`, `cmake`, `libsodium`, `pkgconf`, `ccache`; `debian`: the toolchain above (`group_vars/all.yml`) | another OS with a non-empty list is refused |
 | `nova_runner_foreign_architectures` | `[]` | Ubuntu: dpkg architectures the debian list may name packages of, as `<name>:<arch>` |
 | `nova_runner_ports_uri` | `http://ports.ubuntu.com/ubuntu-ports/` | the archive a foreign architecture comes from |
 | `nova_runner_vm_kernel` | `false` | Debian/Ubuntu: keep each kernel image readable by the login, for a VM of the host's own kernel |

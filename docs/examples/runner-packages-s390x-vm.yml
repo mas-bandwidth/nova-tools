@@ -13,7 +13,7 @@
 nova_runner_foreign_architectures: [s390x]
 nova_runner_vm_kernel: true
 nova_runner_packages:
-  darwin: ["postgresql@18", cmake, libsodium, pkgconf]
+  darwin: ["postgresql@18", cmake, libsodium, pkgconf, ccache]
   debian:
     # compilers, assemblers, build systems and the tools a build calls
     - build-essential
