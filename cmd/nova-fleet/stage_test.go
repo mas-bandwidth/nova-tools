@@ -107,7 +107,8 @@ func TestStageTasks(t *testing.T) {
 		case task["ansible.builtin.set_fact"] != nil:
 			facts, _ := task["ansible.builtin.set_fact"].(map[string]any)
 			for k, v := range facts {
-				s := strings.Join(strings.Fields(v.(string)), " ")
+				str, _ := v.(string)
+				s := strings.Join(strings.Fields(str), " ")
 				if k == "github_runner_win_stage_make" || k == "github_runner_win_stage_check" {
 					if !strings.Contains(s, "-NoLogo -EncodedCommand") || !strings.HasSuffix(s, "</dev/null") {
 						t.Errorf("%s is not an encoded command with stdin closed: %s", k, s)

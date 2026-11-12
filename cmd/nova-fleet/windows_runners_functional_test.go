@@ -277,8 +277,13 @@ func TestFunctionalStageCheckGuardsEveryElevatedCall(t *testing.T) {
 			t.Errorf("%s was not staged: %v", f, err)
 		}
 	}
+	// the make, the proof after staging, the first call's guard and the last call's guard (each run costs a play; the
+	// guard on every call is TestStageGuardsEveryElevatedCall's)
 	checks := strings.Count(log, "STAGECHECK\n")
-	for n := 1; n <= checks; n++ {
+	if checks < 4 {
+		t.Fatalf("only %d checks:\n%s", checks, log)
+	}
+	for _, n := range []int{1, 2, 3, checks} {
 		t.Run(fmt.Sprintf("a refusal at check %d of %d", n, checks), func(t *testing.T) {
 			t.Parallel()
 			r := newWinRig(t, captainRecord, files)

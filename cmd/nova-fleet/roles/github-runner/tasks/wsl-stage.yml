@@ -8,52 +8,60 @@
 # SYSTEM, Administrators or this account with nothing but what it inherits; and each staged script has the sha256 of
 # the role's own file on the control node. A refusal (STAGE-OPEN, STAGE-PLANTED, STAGE-CHANGED) fails the task and
 # nothing is run; nothing found is ever repaired. Included before the first elevated call of each entry (wsl-windows,
-# wsl-keepalive, wsl-pagefile, ci-rules); --check skips it, as it skips every elevated call.
+# wsl-keepalive, wsl-pagefile, ci-rules); a run stages once per machine (the check before each call still runs every
+# time); --check skips it, as it skips every elevated call.
 
-- name: the staged scripts' sha256, from the role's own files
-  ansible.builtin.stat:
-    path: "{{ role_path }}/files/{{ item }}"
-    checksum_algorithm: sha256
-    get_checksum: true
-  delegate_to: localhost
-  become: false
-  loop: [runner-windows.ps1, ci-rules/nova-ci-rules.ps1, ci-rules/job-started.ps1, ci-rules/job-completed.ps1]
-  register: github_runner_win_stage_stat
+- name: the scripts, staged once per run
+  when: not (github_runner_win_staged | default(false))
+  block:
+    - name: the staged scripts' sha256, from the role's own files
+      ansible.builtin.stat:
+        path: "{{ role_path }}/files/{{ item }}"
+        checksum_algorithm: sha256
+        get_checksum: true
+      delegate_to: localhost
+      become: false
+      loop: [runner-windows.ps1, ci-rules/nova-ci-rules.ps1, ci-rules/job-started.ps1, ci-rules/job-completed.ps1]
+      register: github_runner_win_stage_stat
 
-- name: the stage check, made once for this run
-  ansible.builtin.set_fact:
-    github_runner_win_stage_body: "{{ lookup('ansible.builtin.file', 'stage-check.ps1') }}"
-    github_runner_win_stage_names: "{{ github_runner_win_stage_stat.results | map(attribute='item') | map('basename') | list }}"
-    github_runner_win_stage_shas: "{{ github_runner_win_stage_stat.results | map(attribute='stat.checksum') | list }}"
+    - name: the stage check, made once for this run
+      ansible.builtin.set_fact:
+        github_runner_win_stage_body: "{{ lookup('ansible.builtin.file', 'stage-check.ps1') }}"
+        github_runner_win_stage_names: "{{ github_runner_win_stage_stat.results | map(attribute='item') | map('basename') | list }}"
+        github_runner_win_stage_shas: "{{ github_runner_win_stage_stat.results | map(attribute='stat.checksum') | list }}"
 
-- name: the stage check, as a command line
-  ansible.builtin.set_fact:
-    # create the directory sealed where it is missing, then prove it (no file named yet)
-    github_runner_win_stage_make: >-
-      "{{ github_runner_wsl_powershell }}" -NoProfile -NonInteractive -NoLogo -EncodedCommand
-      {{ ("$Make = $true; $Stage = '" ~ github_runner_wsl_stage_dir ~ "'; $Names = @(); $Shas = @()\n" ~ github_runner_win_stage_body)
-         | b64encode(encoding='utf-16-le') }} </dev/null
-    # prove it and every staged script, before each elevated call
-    github_runner_win_stage_check: >-
-      "{{ github_runner_wsl_powershell }}" -NoProfile -NonInteractive -NoLogo -EncodedCommand
-      {{ ("$Make = $false; $Stage = '" ~ github_runner_wsl_stage_dir ~ "'; $Names = @('" ~ (github_runner_win_stage_names | join("', '"))
-         ~ "'); $Shas = @('" ~ (github_runner_win_stage_shas | join("', '")) ~ "')\n" ~ github_runner_win_stage_body)
-         | b64encode(encoding='utf-16-le') }} </dev/null
+    - name: the stage check, as a command line
+      ansible.builtin.set_fact:
+        # create the directory sealed where it is missing, then prove it (no file named yet)
+        github_runner_win_stage_make: >-
+          "{{ github_runner_wsl_powershell }}" -NoProfile -NonInteractive -NoLogo -EncodedCommand
+          {{ ("$Make = $true; $Stage = '" ~ github_runner_wsl_stage_dir ~ "'; $Names = @(); $Shas = @()\n" ~ github_runner_win_stage_body)
+             | b64encode(encoding='utf-16-le') }} </dev/null
+        # prove it and every staged script, before each elevated call
+        github_runner_win_stage_check: >-
+          "{{ github_runner_wsl_powershell }}" -NoProfile -NonInteractive -NoLogo -EncodedCommand
+          {{ ("$Make = $false; $Stage = '" ~ github_runner_wsl_stage_dir ~ "'; $Names = @('" ~ (github_runner_win_stage_names | join("', '"))
+             ~ "'); $Shas = @('" ~ (github_runner_win_stage_shas | join("', '")) ~ "')\n" ~ github_runner_win_stage_body)
+             | b64encode(encoding='utf-16-le') }} </dev/null
 
-- name: the stage directory, made sealed and proved
-  ansible.builtin.shell: "{{ github_runner_win_stage_make }}"
-  args: { executable: /bin/sh }
-  register: github_runner_win_stage_made
-  changed_when: github_runner_win_stage_made.stdout is search(' made')
-  when: not ansible_check_mode
+    - name: the stage directory, made sealed and proved
+      ansible.builtin.shell: "{{ github_runner_win_stage_make }}"
+      args: { executable: /bin/sh }
+      register: github_runner_win_stage_made
+      changed_when: github_runner_win_stage_made.stdout is search(' made')
+      when: not ansible_check_mode
 
-- name: the scripts, staged
-  ansible.builtin.copy: { src: "{{ item }}", dest: "{{ github_runner_wsl_stage_unix }}/{{ item | basename }}", mode: "0644" }
-  loop: [runner-windows.ps1, ci-rules/nova-ci-rules.ps1, ci-rules/job-started.ps1, ci-rules/job-completed.ps1]
-  when: not ansible_check_mode
+    - name: the scripts, staged
+      ansible.builtin.copy: { src: "{{ item }}", dest: "{{ github_runner_wsl_stage_unix }}/{{ item | basename }}", mode: "0644" }
+      loop: [runner-windows.ps1, ci-rules/nova-ci-rules.ps1, ci-rules/job-started.ps1, ci-rules/job-completed.ps1]
+      when: not ansible_check_mode
 
-- name: the staged scripts, proved
-  ansible.builtin.shell: "{{ github_runner_win_stage_check }}"
-  args: { executable: /bin/sh }
-  changed_when: false
-  when: not ansible_check_mode
+    - name: the staged scripts, proved
+      ansible.builtin.shell: "{{ github_runner_win_stage_check }}"
+      args: { executable: /bin/sh }
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: staged for this run
+      ansible.builtin.set_fact: { github_runner_win_staged: true }
+      when: not ansible_check_mode
