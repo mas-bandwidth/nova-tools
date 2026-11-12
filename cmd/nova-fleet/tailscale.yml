@@ -7,7 +7,7 @@
 #   1. Tailscale installed: Tailscale's apt repository on Debian and Ubuntu, Homebrew's cask on macOS (none where the
 #      open-source tailscaled, Homebrew's formula, already runs: that Mac is driven as Linux is, Tailscale SSH included).
 #   2. `tailscale up --auth-key=file:/dev/stdin --hostname <machine> --advertise-tags=tag:nova[,tag:runner] [--ssh]`,
-#      the key TAILSCALE_AUTHKEY from the control node's environment (up puts it there), on stdin, on a machine that is not Running. A Running
+#      the key from the control node's environment (NOVA_FLEET_AUTHKEY, which up puts there, else TAILSCALE_AUTHKEY), on stdin, on a machine that is not Running. A Running
 #      machine is never brought up again: a hostname or Tailscale SSH that differs is set in place with no key, and
 #      tags that differ stop the run with the command to retag it at its console.
 #   3. The machine's MagicDNS name (<machine>.<tailnet>.ts.net) recorded as its address in nova-config
