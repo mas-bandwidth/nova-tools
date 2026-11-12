@@ -699,6 +699,20 @@ leaves them where they are on a machine that has them, and an administrator may 
 The decisions in `stage-check.ps1` are tested on fake ACLs by `TestFunctionalStageCheck` (`testdata/stagecheck`); the
 part that reads the real disk (`StageDisk`) runs only on Windows, when the play runs.
 
+### A plain Windows host
+
+A machine with no WSL (its record's `os` is `windows`, its `user` an administrator, its `address` where its OpenSSH
+answers with PowerShell as the shell) gets the same runners the same way. nova-config's inventory gives it
+`ansible_shell_type: powershell` and puts it in the group `windows` only, never `bench`, `runner` or `services`
+whatever its roles; `secrets-refresh`, `ssh-names`, `seat` and `tailscale` skip it, so no play written for Linux or
+macOS reaches it (its CI rules are kept by this play, not by `ci-rules`). The play stages the same scripts into the
+same sealed directory with `tasks/windows-stage.yml` (the same `stage-check.ps1`, run with
+`ansible.windows.win_command`; `win_copy` stages) and runs the same `powershell.exe` command lines with `win_command`.
+`win_command` cannot join two programs with `&&`, so each elevated call is the task straight after a task that runs
+the stage check; the directory it proved is one only SYSTEM and Administrators can change. The token is on stdin only
+(pipelined, `no_log`). It gets no keepalive and no page file step. The `ansible.windows` collection is in
+`requirements.yml`.
+
 ### The Windows page file at a fixed size
 
 `nova-fleet windows-runners -- -l <machine> -e nova_windows_pagefile_mb=<n>` turns off Windows' page file management

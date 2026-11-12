@@ -28,6 +28,7 @@ type inventory struct {
 	Bench    group `json:"bench"`
 	Runner   group `json:"runner"`
 	Services group `json:"services"`
+	Windows  group `json:"windows"`
 }
 
 // unsafeText is free text a row carries (argv, env values, log), printed as
@@ -127,7 +128,7 @@ func build(machines []Row, services []Row, local string) (*inventory, error) {
 	if cs := adminClashes(machines, ""); len(cs) > 0 {
 		return nil, refused("%s; run: nova-config machine set %s --windows_admin_runners <value>", cs[0].msg, cs[0].machine)
 	}
-	groups := map[string][]string{"bench": {}, "runner": {}, "services": {}}
+	groups := map[string][]string{"bench": {}, "runner": {}, "services": {}, "windows": {}}
 	all := []string{}
 	for _, r := range machines {
 		m, v := r.Name, r.F
@@ -176,6 +177,13 @@ func build(machines []Row, services []Row, local string) (*inventory, error) {
 			hv["ansible_python_interpreter"] = "/usr/bin/python3"
 		}
 		inv.Meta.Hostvars[m] = hv
+		// a plain Windows host (not the Windows side of WSL): reached over its OpenSSH, whose shell is PowerShell, and
+		// in the windows group only, never a worker group, so no play written for Linux or macOS reaches it
+		if v["os"] == "windows" {
+			hv["ansible_shell_type"] = "powershell"
+			groups["windows"] = append(groups["windows"], m)
+			continue
+		}
 		for _, role := range strings.Split(v["roles"], ",") {
 			if _, ok := groups[role]; ok {
 				groups[role] = append(groups[role], m)
@@ -187,5 +195,6 @@ func build(machines []Row, services []Row, local string) (*inventory, error) {
 	}
 	inv.All = group{Hosts: all}
 	inv.Bench, inv.Runner, inv.Services = group{Hosts: groups["bench"]}, group{Hosts: groups["runner"]}, group{Hosts: groups["services"]}
+	inv.Windows = group{Hosts: groups["windows"]}
 	return inv, nil
 }

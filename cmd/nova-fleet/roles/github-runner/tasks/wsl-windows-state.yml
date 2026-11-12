@@ -17,6 +17,26 @@
   register: github_runner_win_state
   changed_when: false
   check_mode: false
+  when: not github_runner_win_native | bool
+
+# The same query on a plain Windows host, under its own register name (a skipped task still registers).
+- name: the Windows runners' directories and services, read (plain Windows host)
+  ansible.windows.win_command:
+    argv: ['powershell.exe', '-NoProfile', '-NonInteractive', '-EncodedCommand', "{{ github_runner_wsl_query | b64encode(encoding='utf-16-le') }}"]
+  vars:
+    github_runner_wsl_query: >-
+      $svc = @(Get-CimInstance Win32_Service | ForEach-Object { [string]$_.PathName });
+      foreach ($d in @({% for r in github_runner_win_want %}'{{ r.dir }}'{{ '' if loop.last else ',' }}{% endfor %})) {
+      if (Test-Path -LiteralPath (Join-Path $d '.runner')) { 'REG ' + $d }
+      if (@($svc | Where-Object { $_ -like ('*' + $d + '\*') }).Count -gt 0) { 'SVC ' + $d } }
+  register: github_runner_win_state_native
+  changed_when: false
+  check_mode: false
+  when: github_runner_win_native | bool
+
+- name: the read, whichever way it ran
+  ansible.builtin.set_fact:
+    github_runner_win_state: "{{ github_runner_win_state_native if github_runner_win_native | bool else github_runner_win_state }}"
 
 - name: GitHub's list
   ansible.builtin.include_tasks: wsl-windows-github.yml

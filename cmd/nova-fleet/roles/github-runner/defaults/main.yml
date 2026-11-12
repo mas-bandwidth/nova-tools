@@ -106,6 +106,10 @@ github_runner_wsl_stage_dir: 'C:\nova-stage'
 github_runner_wsl_stage_unix: /mnt/c/nova-stage
 github_runner_wsl_script: '{{ github_runner_wsl_stage_dir }}\runner-windows.ps1'
 github_runner_wsl_ci_script: '{{ github_runner_wsl_stage_dir }}\nova-ci-rules.ps1'
+# A plain Windows host (its record's os is windows; no WSL): the play reaches it over its OpenSSH as an administrator,
+# PowerShell as the shell (nova-config's inventory sets ansible_shell_type), stages the same scripts in the same
+# directory with tasks/windows-stage.yml and runs them with ansible.windows instead of interop.
+github_runner_win_native: "{{ (nova_os | default('')) == 'windows' }}"
 github_runner_wsl_base_dir: 'C:\actions-runner'
 github_runner_wsl_cache: 'C:\actions-runner\.cache'
 # Where admin runners live (windows_admin_runners): <dir>\<owner>-<repo>-<account>, the directory and each runner's made

@@ -95,3 +95,27 @@ func TestInventoryDarwinInterpreter(t *testing.T) {
 	_, out, _ = h.run(t, "inventory", "--host", "bench-b")
 	assert.NotContains(t, out, "ansible_python_interpreter", "Linux keeps ansible's discovery")
 }
+
+func TestInventoryWindowsShell(t *testing.T) {
+	t.Parallel()
+	h := fleet(t)
+	h.ok(t, "machine", "add", "win-a", "--user", "Administrator", "--os", "windows", "--arch", "amd64", "--actor", "t")
+	_, out, _ := h.run(t, "inventory", "--host", "win-a")
+	assert.Contains(t, out, `"ansible_shell_type": "powershell"`, "a plain Windows host is reached with PowerShell as its shell")
+	_, out, _ = h.run(t, "inventory", "--host", "bench-b")
+	assert.NotContains(t, out, "ansible_shell_type", "Linux keeps the default shell")
+	// roles runner and runner_scopes would put any other machine in the worker groups: a Windows host stays in windows
+	h.ok(t, "machine", "add", "win-b", "--user", "Administrator", "--os", "windows", "--roles", "bench,runner,services",
+		"--runner_scopes", "https://github.com/o/r=1", "--actor", "t")
+	_, out, _ = h.run(t, "inventory", "--list")
+	var inv struct {
+		All, Bench, Runner, Services, Windows struct{ Hosts []string }
+	}
+	assert.NoError(t, json.Unmarshal([]byte(out), &inv))
+	assert.ElementsMatch(t, []string{"win-a", "win-b"}, inv.Windows.Hosts)
+	for _, g := range [][]string{inv.Bench.Hosts, inv.Runner.Hosts, inv.Services.Hosts} {
+		assert.NotContains(t, g, "win-a")
+		assert.NotContains(t, g, "win-b")
+	}
+	assert.Contains(t, inv.All.Hosts, "win-b")
+}

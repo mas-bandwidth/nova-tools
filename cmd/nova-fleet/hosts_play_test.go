@@ -3,6 +3,7 @@ package main
 import (
 	"io/fs"
 	"slices"
+	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -32,11 +33,11 @@ func TestPlaysTargetTheirGroups(t *testing.T) {
 		"postgres":        {"{{ nova_store_hosts | default('services') }}", "localhost"},
 		"redis":           {"{{ nova_store_hosts | default('services') }}"},
 		"join":            {joinHost, "localhost"},
-		"seat":            {"{{ nova_join_host | default('all') }}"},
-		"tailscale":       {"{{ nova_join_host | default('all') }}"},
-		"secrets-refresh": {"all"},
-		"ssh-names":       {"all"},
-		"windows-runners": {workers},
+		"seat":            {"{{ nova_join_host | default('all:!windows') }}"},
+		"tailscale":       {"{{ nova_join_host | default('all:!windows') }}"},
+		"secrets-refresh": {"all:!windows"},
+		"ssh-names":       {"all:!windows"},
+		"windows-runners": {workers + ":windows"}, // and plain Windows hosts, which are in group windows only
 	}
 	for _, name := range plays(tree) {
 		allowed, ok := want[name]
@@ -63,5 +64,18 @@ func TestPlaysTargetTheirGroups(t *testing.T) {
 		if !slices.Equal(hosts, allowed) {
 			t.Errorf("%s.yml targets hosts %q, want %q", name, hosts, allowed)
 		}
+	}
+}
+
+// TestSSHNamesListLeavesOutWindows: ssh-names runs on all:!windows, and its write asserts the run covers every machine
+// of its list, so the list leaves group windows out too; with it in, one plain Windows host refuses every write.
+func TestSSHNamesListLeavesOutWindows(t *testing.T) {
+	t.Parallel()
+	b, err := fs.ReadFile(tree, "ssh-names.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), "ssh_names_hosts: \"{{ groups['all'] | difference(groups['windows'] | default([])) | sort }}\"") {
+		t.Error("ssh-names.yml: ssh_names_hosts must be groups all less groups windows, as its hosts are all:!windows")
 	}
 }

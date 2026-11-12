@@ -30,6 +30,31 @@
   no_log: true
   failed_when: false
   register: github_runner_win_registration
+  when: not ansible_check_mode and not github_runner_win_native | bool
+
+- name: the stage, proved (plain Windows host; before the registration)
+  ansible.windows.win_command: { argv: "{{ github_runner_win_stage_check_argv }}" }
+  changed_when: false
+  when: not ansible_check_mode and github_runner_win_native | bool
+
+# The same on a plain Windows host. win_command hands the token to powershell.exe's stdin; the module and its arguments
+# travel in the ssh session's pipe, never a file on the disk. Its own register name: a skipped task still registers.
+- name: register with GitHub as a Windows service (plain Windows host; the token reaches the runner on its stdin)
+  ansible.windows.win_command:
+    argv: ['powershell.exe', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', "{{ github_runner_wsl_script }}", '-Action', 'register', '-Dir', "{{ item.dir }}", '-Url', "{{ item.url }}", '-Name', "{{ item.name }}", '-Labels', "{{ item.labels }}"]
+  args:
+    stdin: "{{ github_runner_token }}"
+  vars: { ansible_pipelining: true }
+  loop: "{{ github_runner_win_target_need }}"
+  loop_control: { label: "{{ item.name }}" }
+  no_log: true
+  failed_when: false
+  register: github_runner_win_registration_native
+  when: not ansible_check_mode and github_runner_win_native | bool
+
+- name: the registrations, whichever way they ran
+  ansible.builtin.set_fact:
+    github_runner_win_registration: "{{ github_runner_win_registration_native if github_runner_win_native | bool else github_runner_win_registration }}"
   when: not ansible_check_mode
 
 # no_log hides the whole result, the cause with it: each outcome is printed with the token redacted

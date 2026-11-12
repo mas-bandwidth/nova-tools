@@ -36,7 +36,7 @@
 #   nova-fleet ssh-names --check --diff
 #   nova-fleet ssh-names
 - name: ssh by tailnet name from every machine of the fleet
-  hosts: all
+  hosts: all:!windows   # a plain Windows host (group windows) runs only windows-runners
   gather_facts: true
   gather_subset: [min]
   ignore_unreachable: true   # a machine asleep or away is reported offline, not failed
@@ -47,7 +47,7 @@
     ssh_names_include: "Include ~/.ssh/config.d/nova-fleet"
     ssh_names_host_key_default: /etc/ssh/ssh_host_ed25519_key.pub   # a machine's ssh_names_host_key overrides it
     # the machines of the inventory, those in this run, and those that answered this run's fact gathering
-    ssh_names_hosts: "{{ groups['all'] | sort }}"
+    ssh_names_hosts: "{{ groups['all'] | difference(groups['windows'] | default([])) | sort }}"   # not a plain Windows host (group windows)
     ssh_names_online: "{{ ansible_play_hosts_all | map('extract', hostvars) | selectattr('ansible_facts.env', 'defined') | map(attribute='inventory_hostname') | sort }}"
     ssh_names_offline: "{{ ssh_names_hosts | reject('in', ssh_names_online) | list }}"
     # by the tailnet's node for each machine online: the control node (its ssh rules take a person's check), and the

@@ -3,3 +3,5 @@
 # ansible.posix: synchronize, the push of the secrets store (roles/secrets-refresh).
 collections:
   - name: ansible.posix
+  # ansible.windows: win_command, win_copy and win_file, the windows-runners play on a plain Windows host.
+  - name: ansible.windows
