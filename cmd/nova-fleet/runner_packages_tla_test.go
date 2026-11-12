@@ -91,16 +91,21 @@ func TestRunnerPackagesTLAJarMismatchIsRefusedBeforeAnyWrite(t *testing.T) {
 	guard := top[block]
 	assert.Equal(t, "not ansible_check_mode and not rp_tla.stat.exists", asText(guard["when"]), "an existing jar is never replaced; --check writes nothing")
 	inner := mapsOf(t, guard["block"])
-	require.Len(t, inner, 2)
+	require.Len(t, inner, 3)
 	d := inner[0]["ansible.builtin.file"].(map[string]any)
 	assert.Equal(t, "root", d["owner"])
 	assert.Equal(t, "0755", d["mode"])
 	assert.Equal(t, true, inner[0]["become"])
 	g := inner[1]["ansible.builtin.get_url"].(map[string]any)
 	assert.Equal(t, "{{ nova_runner_tla_jar_url }}", g["url"])
-	assert.Equal(t, "{{ nova_runner_tla_jar }}", g["dest"])
+	assert.Equal(t, "{{ nova_runner_tla_jar }}.download", g["dest"], "downloaded beside its place, never onto it")
 	assert.Equal(t, "sha256:{{ nova_runner_tla_jar_sha256 }}", g["checksum"], "get_url refuses a download that is not the pin")
-	assert.Equal(t, false, g["force"])
+	c := inner[2]["ansible.builtin.copy"].(map[string]any)
+	assert.Equal(t, "{{ nova_runner_tla_jar }}", c["dest"])
+	assert.Equal(t, false, c["force"], "a file that appeared since the check is never replaced")
+	assert.Equal(t, "root", c["owner"])
+	assert.Equal(t, "0644", c["mode"])
+	assert.Equal(t, true, inner[2]["become"])
 	assert.Equal(t, "root", g["owner"])
 	assert.Equal(t, "0644", g["mode"])
 	assert.Equal(t, true, inner[1]["become"])
@@ -110,7 +115,7 @@ func TestRunnerPackagesTLAJarMismatchIsRefusedBeforeAnyWrite(t *testing.T) {
 // checked against its pin, under nova-reserve as the login; only the install is root's, and --check builds nothing.
 func TestRunnerPackagesMSanLibcxxIsPinnedAndBuiltUnderReserve(t *testing.T) {
 	t.Parallel()
-	top, names := rpTaskFile(t, "msan-libcxx.yml")
+	top, names := rpTaskFile(t, "msan-libcxx-build.yml")
 	nopin := slices.Index(names, "a clang with no pinned llvm-project source is refused")
 	block := slices.Index(names, "the instrumented libc++, built here")
 	require.GreaterOrEqual(t, nopin, 0)
@@ -132,4 +137,19 @@ func TestRunnerPackagesMSanLibcxxIsPinnedAndBuiltUnderReserve(t *testing.T) {
 			assert.Contains(t, []string{"the build installed (root's, readable by every login)", "the prefix readable by every login"}, name)
 		}
 	}
+}
+
+// Under --check the packages are not installed, so a machine with no clang yet is told what would be built, not
+// failed; outside --check no clang is refused by name, and the build runs only for a clang that answered.
+func TestRunnerPackagesMSanLibcxxWithoutClang(t *testing.T) {
+	t.Parallel()
+	top, names := rpTaskFile(t, "msan-libcxx.yml")
+	would := top[slices.Index(names, "would build the instrumented libc++ for the clang the packages bring")]
+	assert.Equal(t, "ansible_check_mode and not rp_msan_has_clang", asText(would["when"]))
+	refuse := top[slices.Index(names, "a clang to build for")]
+	assert.Equal(t, "not ansible_check_mode and not rp_msan_has_clang", asText(refuse["when"]))
+	assert.Contains(t, asText(refuse["ansible.builtin.fail"].(map[string]any)["msg"]), "MSAN-LIBCXX-NO-CLANG host={{ inventory_hostname }}")
+	build := top[slices.Index(names, "the instrumented libc++ for that clang")]
+	assert.Equal(t, "msan-libcxx-build.yml", asText(build["ansible.builtin.include_tasks"]))
+	assert.Equal(t, "rp_msan_has_clang", asText(build["when"]))
 }

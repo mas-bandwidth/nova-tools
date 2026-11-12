@@ -39,15 +39,30 @@
         mode: "0755"
       become: true
 
-    - name: the jar (root's, readable by every login), checked against the pin before it lands
+    # beside the jar, so the copy below is a move on one file system; get_url refuses a download that is not the pin
+    - name: the jar downloaded beside its place, checked against the pin
       ansible.builtin.get_url:
         url: "{{ nova_runner_tla_jar_url }}"
-        dest: "{{ nova_runner_tla_jar }}"
+        dest: "{{ nova_runner_tla_jar }}.download"
         checksum: "sha256:{{ nova_runner_tla_jar_sha256 }}"
-        force: false   # an existing file whose sha256 is the pin is left as it is
         owner: root
         group: root
         mode: "0644"
+      become: true
+
+    - name: the jar (root's, readable by every login), never over a file that appeared since the check
+      ansible.builtin.copy:
+        src: "{{ nova_runner_tla_jar }}.download"
+        dest: "{{ nova_runner_tla_jar }}"
+        remote_src: true
+        force: false
+        owner: root
+        group: root
+        mode: "0644"
+      become: true
+  always:
+    - name: the download removed
+      ansible.builtin.file: { path: "{{ nova_runner_tla_jar }}.download", state: absent }
       become: true
 
 - name: the jar's receipt
