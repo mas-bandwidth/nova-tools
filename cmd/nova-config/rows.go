@@ -253,28 +253,38 @@ var (
 )
 
 // adminRunner is one entry of windows_admin_runners: one Windows runner on url (a repository) run as the local
-// administrator account, carrying only labels (GitHub adds self-hosted, Windows and X64). Secret is the nova-secrets
-// name of the account's password. Its json is the inventory's nova_windows_admin_runners entry.
+// administrator account, carrying only labels (GitHub adds self-hosted, Windows and X64), that runs only the one
+// workflow File of the repository's main branch. Secret is the nova-secrets name of the account's password; Workflow
+// is the GITHUB_WORKFLOW_REF its jobs must carry. Its json is the inventory's nova_windows_admin_runners entry.
 type adminRunner struct {
-	URL     string   `json:"url"`
-	Account string   `json:"account"`
-	Labels  []string `json:"labels"`
-	Secret  string   `json:"secret"`
+	URL      string   `json:"url"`
+	Account  string   `json:"account"`
+	Labels   []string `json:"labels"`
+	Secret   string   `json:"secret"`
+	File     string   `json:"-"`
+	Workflow string   `json:"workflow"`
 }
 
-// parseAdmins reads `<url>=<account>:<label>[+<label>...]`, comma-separated: sorted by url then account, each account
-// once, labels sorted and unique; empty is none. The url is a repository: an organization's runner is reachable from
-// every repository in it, and this one runs jobs as an administrator.
+// adminWorkflow is a workflow file name in the repository's .github/workflows.
+var adminWorkflow = regexp.MustCompile(`^[A-Za-z0-9._-]+\.ya?ml$`)
+
+// parseAdmins reads `<url>=<account>:<label>[+<label>...]@<workflow>`, comma-separated: sorted by url then account,
+// each account and each runner directory (<owner>-<repo>-<account>) once, labels sorted and unique; empty is none. The
+// url is a repository: an organization's runner is reachable from every repository in it, and this one runs jobs as an
+// administrator. The workflow is the one file of .github/workflows whose jobs it runs, from main only.
 func parseAdmins(raw string) ([]adminRunner, error) {
 	out := []adminRunner{}
 	for _, e := range strings.FieldsFunc(raw, func(r rune) bool { return r == ',' || unicode.IsSpace(r) }) {
 		rest, https := strings.CutPrefix(e, "https://")
 		u, tail, eq := strings.Cut(rest, "=")
-		account, labels, colon := strings.Cut(tail, ":")
-		w := adminRunner{URL: "https://" + strings.TrimSuffix(u, "/"), Account: account, Labels: strings.Split(labels, "+")}
-		if !https || !eq || !colon || !scopeTarget.MatchString(w.URL) || strings.Count(w.URL, "/") != 4 || !adminAccount.MatchString(account) {
-			return nil, fmt.Errorf("%q: want <url>=<account>:<label>[+<label>], the url https://github.com/<owner>/<repo> (a repository, never an organization), the account a lower-case letter then at most 19 lower-case letters, digits and dashes", e)
+		account, tail, colon := strings.Cut(tail, ":")
+		labels, file, _ := strings.Cut(tail, "@") // no "@" leaves file empty, which adminWorkflow refuses
+		w := adminRunner{URL: "https://" + strings.TrimSuffix(u, "/"), Account: account, Labels: strings.Split(labels, "+"), File: file}
+		if !https || !eq || !colon || !scopeTarget.MatchString(w.URL) || strings.Count(w.URL, "/") != 4 || !adminAccount.MatchString(account) ||
+			!adminWorkflow.MatchString(file) {
+			return nil, fmt.Errorf("%q: want <url>=<account>:<label>[+<label>]@<workflow>, the url https://github.com/<owner>/<repo> (a repository, never an organization), the account a lower-case letter then at most 19 lower-case letters, digits and dashes, the workflow a file name in .github/workflows (<name>.yml)", e)
 		}
+		w.Workflow = strings.TrimPrefix(w.URL, "https://github.com/") + "/.github/workflows/" + file + "@refs/heads/main"
 		if slices.Contains(builtinAccounts, account) {
 			return nil, fmt.Errorf("%q: account %s is a Windows built-in account; give the runner its own account", e, account)
 		}
@@ -291,6 +301,9 @@ func parseAdmins(raw string) ([]adminRunner, error) {
 		if slices.ContainsFunc(out, func(o adminRunner) bool { return o.Account == w.Account }) {
 			return nil, fmt.Errorf("account %s is named twice; give each account one runner", w.Account)
 		}
+		if o := slices.IndexFunc(out, func(o adminRunner) bool { return strings.EqualFold(adminDir(o), adminDir(w)) }); o >= 0 {
+			return nil, fmt.Errorf("%s and %s would share the runner directory %s; give one of them another account", out[o].URL+"="+out[o].Account, w.URL+"="+w.Account, adminDir(w))
+		}
 		w.Secret = "NOVA_WINRUNNER_" + strings.ToUpper(strings.ReplaceAll(account, "-", "_")) + "_PASSWORD"
 		out = append(out, w)
 	}
@@ -298,6 +311,12 @@ func parseAdmins(raw string) ([]adminRunner, error) {
 		return cmp.Or(strings.Compare(a.URL, b.URL), strings.Compare(a.Account, b.Account))
 	})
 	return out, nil
+}
+
+// adminDir is the name of an admin runner's directory on the machine (Windows compares it without case):
+// <owner>-<repo>-<account>, which two entries can share (o/r-x=a and o/r=x-a).
+func adminDir(w adminRunner) string {
+	return strings.ReplaceAll(strings.TrimPrefix(w.URL, "https://github.com/"), "/", "-") + "-" + w.Account
 }
 
 // canonicalAdmins is a windows_admin_runners value as it is stored: parseAdmins' entries, written back.
@@ -308,7 +327,7 @@ func canonicalAdmins(f field, raw string) (string, error) {
 	}
 	parts := []string{}
 	for _, w := range ws {
-		parts = append(parts, w.URL+"="+w.Account+":"+strings.Join(w.Labels, "+"))
+		parts = append(parts, w.URL+"="+w.Account+":"+strings.Join(w.Labels, "+")+"@"+w.File)
 	}
 	return strings.Join(parts, ","), nil
 }

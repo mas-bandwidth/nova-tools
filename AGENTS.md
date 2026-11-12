@@ -148,6 +148,7 @@ Functional prerequisites:
 | `secrets` | `sops`, `age-keygen` and `git` on PATH |
 | `sandbox` | Linux with Landlock for real enforcement checks |
 | `reserve` | OS file locks and child processes on the tested platform |
+| `fleet` | the dotnet SDK on PATH for `TestFunctionalWindowsSecurityDecisions` (it compiles the Windows scripts' C# at C# 5 and runs it on fake ACLs; skipped without it, except on Linux with `NOVA_CONTRACT_STRICT=1`, as in CI, where it fails) |
 
 Fleet checks (CI installs ansible-core in a fresh virtualenv and the collections in `cmd/nova-fleet/requirements.yml`):
 

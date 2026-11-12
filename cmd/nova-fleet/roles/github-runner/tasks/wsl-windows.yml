@@ -88,7 +88,7 @@
             'name': inventory_hostname ~ '-win-' ~ slug ~ '-' ~ i,
             'dir': github_runner_wsl_base_dir ~ '\\' ~ slug ~ '-' ~ i,
             'labels': (github_runner_wsl_labels + (t.labels | default([]))) | unique | sort | join(','),
-            'account': '', 'secret': ''}) -%}
+            'account': '', 'secret': '', 'workflow': ''}) -%}
       {%- endfor -%}
       {%- endfor -%}
       {%- for t in nova_windows_admin_runners | default([]) -%}
@@ -98,7 +98,7 @@
             'name': inventory_hostname ~ '-win-' ~ slug ~ '-' ~ t.account,
             'dir': github_runner_wsl_admin_dir ~ '\\' ~ slug ~ '-' ~ t.account,
             'labels': t.labels | unique | sort | join(','),
-            'account': t.account, 'secret': t.secret}) -%}
+            'account': t.account, 'secret': t.secret, 'workflow': t.workflow | default('')}) -%}
       {%- endfor -%}
       {{ out }}
 
@@ -215,23 +215,26 @@
     fail_msg: "GITHUB-RUNNERS {{ inventory_hostname }}: an admin runner's account could not be set; its receipt is above"
   when: not ansible_check_mode
 
-# An admin runner (-Account) is unpacked into a directory made sealed before anything is in it, from a copy of the zip
-# hashed inside it, its files checked against that copy on every run, its PATH checked writable by no ordinary runner,
-# and its .env the role's whole, CCACHE_DISABLE=1 among it (runner-windows.ps1, install).
+# An admin runner (-Account) is unpacked into a directory made sealed before anything is in it (every folder above it
+# proved closed first), from a copy of the zip hashed inside it, its files checked against that copy on every run, its
+# PATH and the ccache folders a build may run (-ToolDirs) checked writable by no ordinary runner, its one workflow
+# written for the job-started hook (-Workflow), and its .env the role's whole, CCACHE_DISABLE=1 among it
+# (runner-windows.ps1, install).
 - name: each wanted runner unpacked, with the .env lines the role owns
   ansible.builtin.shell: >-
     "{{ github_runner_wsl_powershell }}" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File {{ github_runner_wsl_script | quote }}
     -Action install -Dir {{ item.dir | quote }} -Cache {{ github_runner_wsl_cache | quote }}
     -Version {{ github_runner_version | quote }} -Sha {{ github_runner_sha256['win-x64'] | quote }}
     {{ ('-PathList ' ~ (github_runner_win_path | join(';') | quote)) if github_runner_win_path | length > 0 else '' }}
-    {{ ('-Account ' ~ (item.account | quote)) if item.account else '' }} </dev/null
+    {{ ('-Account ' ~ (item.account | quote) ~ ' -Workflow ' ~ (item.workflow | quote) ~ ' -ToolDirs ' ~ (github_runner_win_admin_tools | join(';') | quote))
+       if item.account else '' }} </dev/null
   args: { executable: /bin/sh }
   vars:
     github_runner_win_path: "{{ github_runner_win_admin_path if item.account else github_runner_windows_path }}"
   loop: "{{ github_runner_win_want }}"
   loop_control: { label: "{{ item.name }}" }
   register: github_runner_win_installed
-  changed_when: github_runner_win_installed.stdout is search('DOWNLOADED|EXTRACTED|ENV-CHANGED')
+  changed_when: github_runner_win_installed.stdout is search('DOWNLOADED|EXTRACTED|ENV-CHANGED|WORKFLOW ')
   when: not ansible_check_mode
 
 - name: register, one target at a time (each target's own token)
@@ -244,8 +247,9 @@
 # proves the admin root and the runner's whole directory sealed (acl=protected; nothing repaired, an unsealed one
 # refused), then makes the service logging on as .\<account> or sets that logon (CreateService or ChangeServiceConfig
 # inside powershell, the password from its environment as above), so a run cut off after the account step never leaves
-# the old password. The service restarts while idle when the account step set a new password (-Relogon) or it ran as
-# another account.
+# the old password. The service restarts while idle when the account step made the account or set a new password
+# (-Relogon: an account made anew has a new SID and password, and a service left from the old one must log on again) or
+# it ran as another account.
 - name: each admin runner's service logs on as its account
   ansible.builtin.shell: >-
     {{ github_runner_win_secrets_exec }} {{ item.secret | quote }} -- env WSLENV={{ item.secret | quote }}
@@ -253,7 +257,7 @@
     -Action logon -Dir {{ item.dir | quote }} -Url {{ item.url | quote }} -Name {{ item.name | quote }}
     -Account {{ item.account | quote }} -SecretEnv {{ item.secret | quote }}
     {{ '-Relogon' if (github_runner_win_account.results | selectattr('item.account', 'equalto', item.account) | map(attribute='stdout')
-       | first | default('')) is search('account=updated') else '' }} </dev/null
+       | first | default('')) is search('account=(updated|created)') else '' }} </dev/null
   args: { executable: /bin/sh }
   loop: "{{ github_runner_win_admin }}"
   loop_control: { label: "{{ item.name }}" }
@@ -266,7 +270,7 @@
 - name: the services' logon receipt
   ansible.builtin.debug:
     msg: >-
-      {{ (item.stdout_lines | default([]) | select('match', '^(LOGON|NO-SECRET|LOGON-FAILED|ACL-OPEN|ACCOUNT-NOT-OURS|NEEDS-ELEVATION|BAD-ARGS) ') | list
+      {{ (item.stdout_lines | default([]) | select('match', '^(LOGON|NO-SECRET|LOGON-FAILED|ACL-OPEN|ABOVE-OPEN|ACCOUNT-NOT-OURS|NEEDS-ELEVATION|BAD-ARGS) ') | list
           + (item.stderr_lines | default([]) | select('match', '^(SECRETS |nova-secrets)') | list)) | join(' ')
          | default('rc=' ~ item.rc | default('-'), true) | regex_replace('^LOGON ', 'LOGON ' ~ inventory_hostname ~ ' ') }}
   loop: "{{ github_runner_win_logon.results | default([]) }}"

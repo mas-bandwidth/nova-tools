@@ -45,6 +45,20 @@
   ansible.builtin.include_tasks: windows-ccache.yml
   vars:
     rp_win_ccache_unix: "{{ nova_runner_windows_ccache_unix }}"
+    # icacls from the WSL login (the elevated Windows account): owner Administrators throughout; on the directory nothing
+    # inherited, the grants below and nothing for the accounts jobs run as (NETWORK SERVICE, SERVICE, LOCAL, Everyone,
+    # CREATOR OWNER); everything in it reset to inherit only that. SEAL ok|changed, compared on icacls' own listing.
+    rp_win_ccache_seal: |
+      set -eu -o pipefail
+      ic=/mnt/c/Windows/System32/icacls.exe
+      d={{ nova_runner_windows_ccache_dir | quote }}
+      before=$("$ic" "$d" /T /C /Q 2>&1 | tr -d '\r' | md5sum)
+      "$ic" "$d" /setowner '*S-1-5-32-544' /T /C /Q >/dev/null
+      "$ic" "$d" /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-11:(OI)(CI)RX' '*S-1-5-32-545:(OI)(CI)RX' /Q >/dev/null
+      "$ic" "$d" /remove:g '*S-1-5-20' '*S-1-5-6' '*S-1-2-0' '*S-1-1-0' '*S-1-3-0' /Q >/dev/null
+      if [ -n "$(ls -A {{ nova_runner_windows_ccache_unix | quote }})" ]; then "$ic" "$d\\*" /reset /T /C /Q >/dev/null; fi
+      after=$("$ic" "$d" /T /C /Q 2>&1 | tr -d '\r' | md5sum)
+      if [ "$before" = "$after" ]; then echo 'SEAL ok'; else echo 'SEAL changed'; fi
   when: rp_os == 'debian' and ((nova_windows_runners | default([]) + nova_windows_admin_runners | default([])) | length > 0) and nova_runner_windows_ccache.version | default('') | length > 0
 
 - name: the receipt

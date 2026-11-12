@@ -62,7 +62,7 @@ case "$*" in
 		printf 'LOGON %s set account=.\\%s restart=done acl=protected service=s\r\n' "$(arg -Dir "$@")" "$(arg -Account "$@")"
 	fi
 	exit 0 ;;
-*"-Action install"*) printf 'INSTALL %s account=%s path=%s\n' "$(arg -Dir "$@")" "$(arg -Account "$@")" "$(arg -PathList "$@")" >>"$log"; printf 'OK\r\n'; exit 0 ;;
+*"-Action install"*) printf 'INSTALL %s account=%s path=%s workflow=%s tools=%s\n' "$(arg -Dir "$@")" "$(arg -Account "$@")" "$(arg -PathList "$@")" "$(arg -Workflow "$@")" "$(arg -ToolDirs "$@")" >>"$log"; printf 'OK\r\n'; exit 0 ;;
 *"-Action ensure"*) printf 'OK\r\n'; exit 0 ;;
 *" apply "*) printf 'CI-RULES x hooks=ok restart=no\r\n'; exit 0 ;;
 esac
@@ -271,12 +271,13 @@ func TestFunctionalWSLKeepalive(t *testing.T) {
 }
 
 const (
-	adminSecret = "NOVA_WINRUNNER_VERIFIER_PASSWORD"
-	adminDir    = `C:\ProgramData\nova-admin-runners\mas-bandwidth-rocketnet-verifier`
-	adminName   = "captain-win-mas-bandwidth-rocketnet-verifier"
-	adminRecord = captainRecord + `
+	adminSecret   = "NOVA_WINRUNNER_VERIFIER_PASSWORD"
+	adminDir      = `C:\nova-admin-runners\mas-bandwidth-rocketnet-verifier`
+	adminName     = "captain-win-mas-bandwidth-rocketnet-verifier"
+	adminWorkflow = "mas-bandwidth/rocketnet/.github/workflows/appverif.yml@refs/heads/main"
+	adminRecord   = captainRecord + `
       nova_windows_admin_runners:
-        - {url: https://github.com/mas-bandwidth/rocketnet, account: verifier, labels: [verify-nightly], secret: ` + adminSecret + `}`
+        - {url: https://github.com/mas-bandwidth/rocketnet, account: verifier, labels: [verify-nightly], secret: ` + adminSecret + `, workflow: ` + adminWorkflow + `}`
 )
 
 // logLines are the call log's lines that start with prefix.
@@ -319,6 +320,7 @@ func TestFunctionalWindowsAdminRunner(t *testing.T) {
 			[]string{"LABELS " + adminName + " " + adminDir + " verify-nightly"}, "no"},
 		{"all whole, password unchanged", whole, false, nil, "no"},
 		{"all whole, password set anew", mergeFiles(whole, map[string]string{"account": "updated"}), false, nil, "yes"},
+		{"all whole, account made anew", mergeFiles(whole, map[string]string{"account": "created"}), false, nil, "yes"},
 		{"check", whole, true, nil, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -397,8 +399,8 @@ func TestFunctionalWindowsAdminRunnerInstallArgs(t *testing.T) {
 	installs := logLines(log, "INSTALL ")
 	slices.Sort(installs)
 	for _, w := range []string{
-		"INSTALL " + adminDir + ` account=verifier path=C:\Go\bin`,
-		"INSTALL " + rn1 + ` account= path=C:\Go\bin;C:\ProgramData\nova\ccache\msvc`,
+		"INSTALL " + adminDir + ` account=verifier path=C:\Go\bin workflow=` + adminWorkflow + ` tools=C:\ProgramData\nova\ccache;C:\ProgramData\nova\ccache\msvc`,
+		"INSTALL " + rn1 + ` account= path=C:\Go\bin;C:\ProgramData\nova\ccache\msvc workflow= tools=`,
 	} {
 		if !slices.Contains(installs, w) {
 			t.Errorf("no install %q among:\n%s", w, strings.Join(installs, "\n"))

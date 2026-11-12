@@ -3,21 +3,27 @@
 # account that started WSL, elevated). The role stages this file to C:\ProgramData\nova-runner-stage and calls one verb
 # at a time; every line it prints starts with a word the role matches. fleet/README.md, "Windows runners of a WSL machine".
 #
-#   install   -Dir -Cache -Version -Sha [-PathList] [-Account]
+#   install   -Dir -Cache -Version -Sha [-PathList] [-Account -Workflow [-ToolDirs]]
 #             the pinned runner zip in -Cache (its sha256 checked before it is
 #             used), unpacked into -Dir where config.cmd is missing (a dir with files but no config.cmd, an
 #             interrupted unpack, is moved aside first: PARTIAL <dir> -> <where>), and the .env lines the role owns (PATH, GOCACHE,
 #             DOTNET_INSTALL_DIR, DOTNET_CLI_TELEMETRY_OPTOUT) set in place, every other line (the CI-rules hooks) kept:
 #             DOWNLOADED, EXTRACTED, ENV-CHANGED <dir> when something moved.
-#             With -Account (an admin runner, whose -Dir is <admin root>\<name>): the admin root and -Dir are created
+#             With -Account (an admin runner, whose -Dir is <admin root>\<name>): first every folder above the admin root
+#             is proved closed ([NovaTree]::Above: none of the openers below may make or change a file in it or owns
+#             anything in it), else ABOVE-OPEN (exit 13); then the admin root and -Dir are created
 #             sealed (Seal-Dir: owned by Administrators, nothing inherited, full control for SYSTEM, Administrators and,
 #             on -Dir, the account), and one that was there unsealed is refused, never changed: PLANTED (exit 11); the
 #             whole tree under -Dir is proved sealed ([NovaTree]::Open), else ACL-OPEN (exit 10). The zip is copied into
 #             -Dir (.nova-runner.zip), that copy hashed, and extracted from that same copy (overwriting; a new pin
 #             replaces bin and externals while the runner is idle: UPGRADE-OWED <dir> busy while a job runs); on every
 #             run the copy holds its recorded hash and every file it lists is that file, with nothing else in bin or
-#             externals, else TAMPERED (exit 11). Every PATH entry (the machine PATH when -PathList is empty) is checked
-#             writable by none of NETWORK SERVICE, Authenticated Users, Users and Everyone, else PATH-WRITABLE (exit 12).
+#             externals, else TAMPERED (exit 11). Every PATH entry (the machine PATH when -PathList is empty) and every
+#             -ToolDirs folder (ccache's, and the cl.exe it runs) is checked: the folder, or the nearest one above a
+#             missing one, and every file in it, owned by and writable by none of NETWORK SERVICE, SERVICE, LOCAL,
+#             Authenticated Users, Users and Everyone ([NovaTree]::OpenPath), else PATH-WRITABLE (exit 12). -Workflow
+#             (<owner>/<repo>/.github/workflows/<file>@refs/heads/main) is written to -Dir\.nova-ci-rules\admin-workflow,
+#             the one workflow the job-started hook lets run there: WORKFLOW <dir> <workflow> when it changed.
 #             Its .env holds only the role's lines, CCACHE_DISABLE=1 among them, and the CI-rules hooks in -Dir.
 #   register  -Dir -Url -Name -Labels [-Account]      stdin carries ONE registration token; it reaches config.cmd as
 #             ACTIONS_RUNNER_INPUT_TOKEN, never an argument, a file or a line of output. Registers the runner as a
@@ -50,7 +56,8 @@
 #   logon     -Dir -Url -Name -Account -SecretEnv [-Relogon]
 #             the admin root and the whole tree under -Dir proved sealed first ([NovaTree]::Open; nothing is
 #             repaired): an owner other than SYSTEM, Administrators or the account, an explicit ACE below -Dir, or on the
-#             two directories an ACE for anyone else or inheritance on, is ACL-OPEN (exit 10). Then the runner's service
+#             two directories an ACE for anyone else or inheritance on, is ACL-OPEN (exit 10); and every folder above the
+#             admin root proved closed as install does, else ABOVE-OPEN (exit 13). Then the runner's service
 #             logs on as .\<account> with the password from the environment as above: made (CreateService, the name
 #             config.cmd gives, written to .service) where there is none, else set (ChangeServiceConfig, on every
 #             call). The service is restarted while idle when -Relogon (the password was set), its logon was another
@@ -71,6 +78,8 @@ param(
   [int]$SizeMb = 0,
   [string]$Account = '',
   [string]$SecretEnv = '',
+  [string]$Workflow = '',
+  [string]$ToolDirs = '',
   [switch]$Relogon
 )
 $ErrorActionPreference = 'Stop'
@@ -262,10 +271,14 @@ public static class NovaAccount {
 }
 '@
 }
-# Add-TreeApi: an admin runner's directory, walked and checked in-process (thousands of files under _work), and the
-# pinned zip extracted and compared file by file.
+# Add-TreeApi: the checks an admin runner's directories, its PATH and the folders above it must pass, and the pinned zip
+# extracted and compared file by file. The decisions (NovaTree) read the file system only through INovaTree, so the
+# tests run them on a fake one; NovaDisk is the real one.
 function Add-TreeApi {
-  if ('NovaTree' -as [type]) { return }
+  if ('NovaTree' -as [type]) {
+    $script:Disk = New-Object NovaDisk
+    return
+  }
   Add-Type -ReferencedAssemblies 'System.IO.Compression', 'System.IO.Compression.FileSystem' -TypeDefinition @'
 using System;
 using System.Collections.Generic;
@@ -274,58 +287,218 @@ using System.IO.Compression;
 using System.Security.AccessControl;
 using System.Security.Cryptography;
 using System.Security.Principal;
-public static class NovaTree {
-  // Open: null when dir is sealed, else "<path> <why>" for the first place that is not. dir itself: inheritance off,
-  // its owner and every ACE's SID in allowed. With deep, everything under it too, walked without following a reparse
-  // point: its owner in allowed, inheritance on and no explicit ACE (so it holds exactly what dir gives). A place that
-  // cannot be read is not sealed.
-  public static string Open(string dir, string[] allowed, bool deep) {
-    DirectoryInfo d = new DirectoryInfo(dir);
-    string why = Check(d, allowed, true);
-    if (why != null || !deep) { return why; }
-    Stack<DirectoryInfo> todo = new Stack<DirectoryInfo>();
-    todo.Push(d);
-    while (todo.Count > 0) {
-      DirectoryInfo cur = todo.Pop();
-      FileSystemInfo[] items;
-      try {
-        items = cur.GetFileSystemInfos();
-      } catch (Exception e) {
-        return cur.FullName + " unreadable=" + e.GetType().Name;
+// NovaAce: one ACE as the checks read it. InheritOnly: it does not apply to the place itself; ToFiles: files made in a
+// folder inherit it.
+public sealed class NovaAce {
+  public string Sid;
+  public bool Allow;
+  public bool Inherited;
+  public long Rights;
+  public bool InheritOnly;
+  public bool ToFiles;
+}
+// NovaFacts: what the checks read of one place. Error: it is there and its security could not be read.
+public sealed class NovaFacts {
+  public bool Missing;
+  public bool Folder;
+  public bool Reparse;
+  public bool SystemHidden;
+  public string Error;
+  public string Owner;
+  public bool Protected;
+  public NovaAce[] Aces = new NovaAce[0];
+}
+// INovaTree: the file system as the checks see it. Children throws when a folder cannot be listed; Parent is null above
+// the drive.
+public interface INovaTree {
+  NovaFacts Read(string path);
+  string[] Children(string path);
+  string Parent(string path);
+}
+public sealed class NovaDisk : INovaTree {
+  public NovaFacts Read(string p) {
+    NovaFacts f = new NovaFacts();
+    FileSystemInfo i = Directory.Exists(p) ? (FileSystemInfo)new DirectoryInfo(p) : new FileInfo(p);
+    if (!i.Exists) {
+      f.Missing = true;
+      return f;
+    }
+    f.Folder = i is DirectoryInfo;
+    f.Reparse = (i.Attributes & FileAttributes.ReparsePoint) != 0;
+    FileAttributes sh = FileAttributes.System | FileAttributes.Hidden;
+    f.SystemHidden = (i.Attributes & sh) == sh;
+    try {
+      FileSystemSecurity s = f.Folder ? (FileSystemSecurity)((DirectoryInfo)i).GetAccessControl() : ((FileInfo)i).GetAccessControl();
+      f.Owner = s.GetOwner(typeof(SecurityIdentifier)).Value;
+      f.Protected = s.AreAccessRulesProtected;
+      List<NovaAce> aces = new List<NovaAce>();
+      foreach (FileSystemAccessRule r in s.GetAccessRules(true, true, typeof(SecurityIdentifier))) {
+        NovaAce a = new NovaAce();
+        a.Sid = r.IdentityReference.Value;
+        a.Allow = r.AccessControlType == AccessControlType.Allow;
+        a.Inherited = r.IsInherited;
+        a.Rights = (long)(uint)(int)r.FileSystemRights;
+        a.InheritOnly = (r.PropagationFlags & PropagationFlags.InheritOnly) != 0;
+        a.ToFiles = (r.InheritanceFlags & InheritanceFlags.ObjectInherit) != 0;
+        aces.Add(a);
       }
-      foreach (FileSystemInfo i in items) {
-        why = Check(i, allowed, false);
-        if (why != null) { return why; }
-        DirectoryInfo sub = i as DirectoryInfo;
-        if (sub != null && (i.Attributes & FileAttributes.ReparsePoint) == 0) { todo.Push(sub); }
+      f.Aces = aces.ToArray();
+    } catch (Exception e) {
+      f.Error = e.GetType().Name;
+    }
+    return f;
+  }
+  public string[] Children(string p) { return Directory.GetFileSystemEntries(p); }
+  public string Parent(string p) {
+    DirectoryInfo d = Directory.GetParent(p);
+    return d == null ? null : d.FullName;
+  }
+}
+public static class NovaTree {
+  // The rights that let someone make or change a file in a folder (or change a file): FILE_WRITE_DATA (add a file),
+  // DELETE_CHILD, DELETE, WRITE_DAC, WRITE_OWNER, GENERIC_ALL, GENERIC_WRITE. AnyWrite adds FILE_APPEND_DATA (add a
+  // subfolder).
+  public const long FileWrite = 0x2 | 0x40 | 0x10000 | 0x40000 | 0x80000 | 0x10000000 | 0x40000000;
+  public const long AnyWrite = FileWrite | 0x4;
+  // The rights on a folder that let someone replace what is in it: DELETE_CHILD, WRITE_DAC, WRITE_OWNER, GENERIC_ALL.
+  public const long Replace = 0x40 | 0x40000 | 0x80000 | 0x10000000;
+
+  // Sealed: null when f holds what a sealed place holds, else why. The sealed directory itself (top): inheritance off,
+  // its owner and every ACE's SID in allowed. Below it: its owner in allowed, inheritance on and no ACE of its own.
+  public static string Sealed(NovaFacts f, string[] allowed, bool top) {
+    if (f.Missing) { return "missing=yes"; }
+    if (f.Error != null) { return "unreadable=" + f.Error; }
+    if (Array.IndexOf(allowed, f.Owner) < 0) { return "owner=" + f.Owner; }
+    if (top != f.Protected) { return top ? "inherited=yes" : "protected=yes"; }
+    foreach (NovaAce a in f.Aces) {
+      if (top ? Array.IndexOf(allowed, a.Sid) < 0 : !a.Inherited) { return "ace=" + a.Sid; }
+    }
+    return null;
+  }
+  // Open: null when dir is sealed and, with deep, everything under it (walked without following a reparse point); else
+  // "<path> <why>" for the first place that is not. A folder that cannot be listed is not sealed.
+  public static string Open(INovaTree t, string dir, string[] allowed, bool deep) {
+    string why = Sealed(t.Read(dir), allowed, true);
+    if (why != null) { return dir + " " + why; }
+    if (!deep) { return null; }
+    Stack<string> todo = new Stack<string>();
+    todo.Push(dir);
+    while (todo.Count > 0) {
+      string cur = todo.Pop();
+      string[] items;
+      try {
+        items = t.Children(cur);
+      } catch (Exception e) {
+        return cur + " unreadable=" + e.GetType().Name;
+      }
+      foreach (string p in items) {
+        NovaFacts f = t.Read(p);
+        why = Sealed(f, allowed, false);
+        if (why != null) { return p + " " + why; }
+        if (f.Folder && !f.Reparse) { todo.Push(p); }
       }
     }
     return null;
   }
-  static string Check(FileSystemInfo i, string[] allowed, bool top) {
-    string at = i.FullName;
-    FileSystemSecurity s;
-    try {
-      DirectoryInfo d = i as DirectoryInfo;
-      s = d != null ? (FileSystemSecurity)d.GetAccessControl() : ((FileInfo)i).GetAccessControl();
-    } catch (Exception e) {
-      return at + " unreadable=" + e.GetType().Name;
+  // Writer: how one of openers may do one of rights to f: "owner=<sid>" when it owns f, "sid=<sid>" for an allow ACE that
+  // applies to f itself or, with files, to the files made in f; else null.
+  public static string Writer(NovaFacts f, string[] openers, long rights, bool files) {
+    if (Array.IndexOf(openers, f.Owner) >= 0) { return "owner=" + f.Owner; }
+    foreach (NovaAce a in f.Aces) {
+      bool here = !a.InheritOnly || (files && a.ToFiles);
+      if (a.Allow && here && (a.Rights & rights) != 0 && Array.IndexOf(openers, a.Sid) >= 0) { return "sid=" + a.Sid; }
     }
-    string owner = s.GetOwner(typeof(SecurityIdentifier)).Value;
-    if (Array.IndexOf(allowed, owner) < 0) { return at + " owner=" + owner; }
-    if (top != s.AreAccessRulesProtected) { return at + (top ? " inherited=yes" : " protected=yes"); }
-    foreach (FileSystemAccessRule r in s.GetAccessRules(true, true, typeof(SecurityIdentifier))) {
-      string sid = r.IdentityReference.Value;
-      if (top ? Array.IndexOf(allowed, sid) < 0 : !r.IsInherited) { return at + " ace=" + sid; }
+    return null;
+  }
+  // FilesOpen: the first file directly in dir that one of openers owns or may change, or that cannot be read (a hidden
+  // system file that cannot be read, such as the page file, is passed; with hidden, every hidden system file is), as
+  // "<file> <why>"; else null.
+  static string FilesOpen(INovaTree t, string dir, string[] openers, bool hidden) {
+    string[] items;
+    try {
+      items = t.Children(dir);
+    } catch (Exception e) {
+      return dir + " unreadable=" + e.GetType().Name;
+    }
+    foreach (string p in items) {
+      NovaFacts f = t.Read(p);
+      if (f.Folder || f.Missing || (hidden && f.SystemHidden)) { continue; }
+      if (f.Error != null) {
+        if (f.SystemHidden) { continue; }
+        return p + " unreadable=" + f.Error;
+      }
+      string w = Writer(f, openers, FileWrite, false);
+      if (w != null) { return p + " " + w; }
+    }
+    return null;
+  }
+  // OpenPath: the first of dirs (a job's PATH, and the tools a build runs) where one of openers could put or change a
+  // program: the folder (or, where it is missing, the nearest one above it, where it could be made), every file in it,
+  // and every folder above it (Replace); as "<dir> <why> at=<folder>" or "<dir> file=<file> <why>"; else null.
+  public static string OpenPath(INovaTree t, string[] dirs, string[] openers) {
+    foreach (string d in dirs) {
+      string p = d;
+      NovaFacts f = t.Read(p);
+      while (f.Missing) {
+        p = t.Parent(p);
+        if (p == null) { break; }
+        f = t.Read(p);
+      }
+      if (p == null) { continue; }
+      if (f.Error != null) { return d + " unreadable=" + f.Error + " at=" + p; }
+      string w = Writer(f, openers, AnyWrite, true);
+      if (w != null) { return d + " " + w + " at=" + p; }
+      if (p == d) {
+        string fo = FilesOpen(t, d, openers, false);
+        if (fo != null) { return d + " file=" + fo; }
+      }
+      // a folder above it that one of them owns, or may delete in or re-permit, lets them move it aside and put another
+      // in its place
+      for (string a = t.Parent(p); a != null; a = t.Parent(a)) {
+        NovaFacts g = t.Read(a);
+        if (g.Missing || g.Error != null) { return d + " unreadable=" + (g.Error ?? "missing") + " at=" + a; }
+        w = Writer(g, openers, Replace, false);
+        if (w != null) { return d + " " + w + " at=" + a; }
+      }
+    }
+    return null;
+  }
+  // Above: the first folder above dir, up to the drive, where one of openers may make or change a file (MSBuild and NuGet
+  // read a Directory.Build.targets or a NuGet.Config from every folder above a checkout), or that holds something one of
+  // them owns (made by one of them), a folder whose owner cannot be read, or a file one of them may change (a hidden
+  // system file, such as DumpStack.log.tmp, is passed: none of them can name a file there); as "<place> <why>"; else
+  // null. Making a folder is allowed: C:\ lets every signed-in account do that, and the job-started hook refuses every
+  // job while one they made is there.
+  public static string Above(INovaTree t, string dir, string[] openers) {
+    for (string p = t.Parent(dir); p != null; p = t.Parent(p)) {
+      NovaFacts f = t.Read(p);
+      if (f.Missing || f.Error != null) { return p + " unreadable=" + (f.Error ?? "missing"); }
+      string w = Writer(f, openers, FileWrite, false);
+      if (w != null) { return p + " " + w; }
+      string[] items;
+      try {
+        items = t.Children(p);
+      } catch (Exception e) {
+        return p + " unreadable=" + e.GetType().Name;
+      }
+      foreach (string c in items) {
+        NovaFacts g = t.Read(c);
+        if (g.Missing) { continue; }
+        if (g.Error != null && g.Folder && !g.SystemHidden) { return c + " unreadable=" + g.Error; }
+        if (g.Error == null && Array.IndexOf(openers, g.Owner) >= 0) { return c + " owner=" + g.Owner; }
+      }
+      string fo = FilesOpen(t, p, openers, true);
+      if (fo != null) { return fo; }
     }
     return null;
   }
   // Extract: every entry of zip written under dir, overwriting; an entry naming a place outside dir is refused.
   public static void Extract(string zip, string dir) {
-    string root = Path.GetFullPath(dir).TrimEnd('\\') + "\\";
+    char sep = Path.DirectorySeparatorChar;
+    string root = Path.GetFullPath(dir).TrimEnd(sep) + sep;
     using (ZipArchive z = ZipFile.OpenRead(zip)) {
       foreach (ZipArchiveEntry e in z.Entries) {
-        string p = Path.GetFullPath(Path.Combine(root, e.FullName.Replace('/', '\\')));
+        string p = Path.GetFullPath(Path.Combine(root, e.FullName.Replace('/', sep)));
         if (!p.StartsWith(root, StringComparison.OrdinalIgnoreCase)) { throw new IOException("zip entry outside the directory: " + e.FullName); }
         if (e.FullName.EndsWith("/")) {
           Directory.CreateDirectory(p);
@@ -339,12 +512,13 @@ public static class NovaTree {
   // Verify: null when every file zip lists is under dir with the same sha256 and the directories closed hold no file it
   // does not list; else "<path> missing|changed|extra".
   public static string Verify(string zip, string dir, string[] closed) {
+    char sep = Path.DirectorySeparatorChar;
     HashSet<string> listed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
     using (SHA256 h = SHA256.Create())
     using (ZipArchive z = ZipFile.OpenRead(zip)) {
       foreach (ZipArchiveEntry e in z.Entries) {
         if (e.FullName.EndsWith("/")) { continue; }
-        string rel = e.FullName.Replace('/', '\\');
+        string rel = e.FullName.Replace('/', sep);
         listed.Add(rel);
         string p = Path.Combine(dir, rel);
         if (!File.Exists(p)) { return p + " missing"; }
@@ -358,18 +532,20 @@ public static class NovaTree {
       string cd = Path.Combine(dir, c);
       if (!Directory.Exists(cd)) { continue; }
       foreach (string f in Directory.EnumerateFiles(cd, "*", SearchOption.AllDirectories)) {
-        if (!listed.Contains(f.Substring(dir.TrimEnd('\\').Length + 1))) { return f + " extra"; }
+        if (!listed.Contains(f.Substring(dir.TrimEnd(sep).Length + 1))) { return f + " extra"; }
       }
     }
     return null;
   }
 }
 '@
+  $script:Disk = New-Object NovaDisk
 }
-# The SIDs an admin runner's directories may hold: SYSTEM and Administrators (and, on -Dir, the account). The ones no
-# admin runner's PATH may be writable by: NETWORK SERVICE (every ordinary runner), Authenticated Users, Users, Everyone.
+# The SIDs an admin runner's directories may hold: SYSTEM and Administrators (and, on -Dir, the account). The ones that
+# may write nothing an admin runner runs or reads: NETWORK SERVICE (every ordinary runner), SERVICE, LOCAL,
+# Authenticated Users, Users, Everyone.
 $Sealers = @('S-1-5-18', 'S-1-5-32-544')
-$Openers = @('S-1-5-20', 'S-1-5-11', 'S-1-5-32-545', 'S-1-1-0')
+$Openers = @('S-1-5-20', 'S-1-5-6', 'S-1-2-0', 'S-1-5-11', 'S-1-5-32-545', 'S-1-1-0')
 # Seal-Dir PATH SIDS: PATH created sealed where it is missing (in one call, so it is never there unsealed: owned by
 # Administrators, nothing inherited, full control for SYSTEM, Administrators and SIDS); then, made here or found,
 # checked sealed. One that is not was there before this play sealed it (anyone could have put a file in it): PLANTED,
@@ -386,26 +562,14 @@ function Seal-Dir([string]$p, [string[]]$sids) {
     }
     [void][IO.Directory]::CreateDirectory($p, $ds)
   }
-  $why = [NovaTree]::Open($p, $allowed, $false)
+  $why = [NovaTree]::Open($Disk, $p, $allowed, $false)
   if ($why) { "PLANTED ${why}: it was not made sealed by this play; delete it and run the play again: Remove-Item -LiteralPath '$p' -Recurse -Force"; exit 11 }
 }
-# Find-OpenPath DIRS: the first DIR (or, where it is missing, the nearest folder above it, where it could be made) that
-# NETWORK SERVICE, Authenticated Users, Users or Everyone may write, as "<dir> sid=<sid> at=<folder>"; else nothing.
-# An ACE counts where it applies to the folder itself or to the files in it.
-function Find-OpenPath([string[]]$dirs) {
-  $write = 0x2 -bor 0x4 -bor 0x40 -bor 0x10000 -bor 0x40000 -bor 0x80000 -bor 0x10000000 -bor 0x40000000
-  foreach ($d in $dirs) {
-    $p = $d
-    while ($p -and -not (Test-Path -LiteralPath $p)) { $p = Split-Path $p }
-    if (-not $p) { continue }
-    foreach ($r in (Get-Acl -LiteralPath $p).GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
-      $here = ([int]$r.PropagationFlags -band 2) -eq 0 -or ([int]$r.InheritanceFlags -band 2) -ne 0
-      if ("$($r.AccessControlType)" -eq 'Allow' -and $Openers -contains $r.IdentityReference.Value -and
-          ([int64]$r.FileSystemRights -band $write) -ne 0 -and $here) {
-        return "$d sid=$($r.IdentityReference.Value) at=$p"
-      }
-    }
-  }
+# Assert-Above ROOT: nothing above the admin root lets an ordinary runner's job put a file there (NovaTree.Above), else
+# ABOVE-OPEN, exit 13.
+function Assert-Above([string]$root) {
+  $why = [NovaTree]::Above($Disk, $root, $Openers)
+  if ($why) { "ABOVE-OPEN ${why}: a job on another runner could put a file there that this administrator's builds read; close it or move it"; exit 13 }
 }
 # Test-Busy DIR: the runner in DIR is running a job (its listener has a Runner.Worker child).
 function Test-Busy([string]$d) {
@@ -478,9 +642,10 @@ switch ($Action) {
       # The proof, before the service is given the account: the admin root holds only SYSTEM and Administrators, and
       # the runner's directory and everything under it hold what install sealed it with. Nothing is repaired: a
       # directory that is not sealed may hold a file a job on another runner put there, which this account would run.
-      foreach ($why in [NovaTree]::Open((Split-Path $Dir), $Sealers, $false), [NovaTree]::Open($Dir, $Sealers + @($u.SID.Value), $true)) {
+      foreach ($why in [NovaTree]::Open($Disk, (Split-Path $Dir), $Sealers, $false), [NovaTree]::Open($Disk, $Dir, $Sealers + @($u.SID.Value), $true)) {
         if ($why) { "ACL-OPEN ${why}: stop its service, delete the runner's directory and run the play again"; exit 10 }
       }
+      Assert-Above (Split-Path $Dir)
       $want = ".\$Account"
       $s = Service-Of $Dir
       if (-not $s) {
@@ -519,18 +684,32 @@ switch ($Action) {
     Need-Admin
     if (-not $Dir -or -not $Cache -or -not $Version -or $Sha -notmatch '^[0-9a-f]{64}$') { 'BAD-PIN'; exit 2 }
     if ($Account -and -not (Test-AccountName $Account)) { 'BAD-ARGS -Account'; exit 2 }
+    if ($Account -and $Workflow -notmatch '^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/\.github/workflows/[A-Za-z0-9._-]+\.ya?ml@refs/heads/main$') { 'BAD-ARGS -Workflow'; exit 2 }
     if ($Account) {
-      # sealed before anything is put in it, and proved sealed before anything in it is trusted
+      # nothing above the admin root lets another runner's job put a file there; then the root and -Dir sealed before
+      # anything is put in them, and proved sealed before anything in them is trusted
       $u = Get-OurUser $Account
       Add-TreeApi
+      Assert-Above (Split-Path $Dir)
       Seal-Dir (Split-Path $Dir) @()
       Seal-Dir $Dir @($u.SID.Value)
-      $why = [NovaTree]::Open($Dir, $Sealers + @($u.SID.Value), $true)
+      $why = [NovaTree]::Open($Disk, $Dir, $Sealers + @($u.SID.Value), $true)
       if ($why) { "ACL-OPEN ${why}: stop its service, delete the runner's directory and run the play again"; exit 10 }
+      # every PATH folder and every file in it, and the folders of the tools a build runs (ccache, its cl.exe), closed
+      # to every account ordinary jobs run as
       $paths = @($PathList -split ';' | Where-Object { $_ })
       if ($paths.Count -eq 0) { $paths = @([Environment]::GetEnvironmentVariable('Path', 'Machine') -split ';' | Where-Object { $_ }) }
-      $open = Find-OpenPath $paths
+      $paths += @($ToolDirs -split ';' | Where-Object { $_ })
+      $open = [NovaTree]::OpenPath($Disk, [string[]]$paths, $Openers)
       if ($open) { "PATH-WRITABLE ${open}: a job on another runner could put a program there that this administrator's jobs run; take it out of github_runner_windows_path or close it"; exit 12 }
+      # the one workflow this runner runs, read by the job-started hook (nova-ci-rules.ps1 started), which refuses every other job
+      $hd = Join-Path $Dir '.nova-ci-rules'
+      New-Item -ItemType Directory -Force -Path $hd | Out-Null
+      $wf = Join-Path $hd 'admin-workflow'
+      if (-not (Test-Path -LiteralPath $wf) -or (Get-Content -Raw -LiteralPath $wf).Trim() -cne $Workflow) {
+        [IO.File]::WriteAllText($wf, $Workflow)
+        "WORKFLOW $Dir $Workflow"
+      }
     }
     New-Item -ItemType Directory -Force -Path $Cache | Out-Null
     $zip = Join-Path $Cache "actions-runner-win-x64-$Version.zip"

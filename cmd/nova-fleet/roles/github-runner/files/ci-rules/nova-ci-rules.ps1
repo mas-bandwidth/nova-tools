@@ -3,7 +3,10 @@
 # The runner runs job-started.ps1 before each job and job-completed.ps1 after it (ACTIONS_RUNNER_HOOK_JOB_STARTED and
 # _COMPLETED in its .env); both call this script, which lives beside them in <runner dir>\.nova-ci-rules\.
 #
-#   started             a push outside the allowed branches (push-branches) and tags is refused; then NOVA_CI_CHAIN_JOB_STARTED runs;
+#   started             on an administrator runner, every job but a push, schedule or workflow_dispatch job of
+#                       refs/heads/main running the one workflow in admin-workflow is refused, as is any job while a
+#                       folder above the runner is owned by an account ordinary jobs run as (Get-AdminRefusal);
+#                       a push outside the allowed branches (push-branches) and tags is refused; then NOVA_CI_CHAIN_JOB_STARTED runs;
 #                       then a push, pull_request or merge_group job gets a watchdog
 #   completed           the watchdog is stopped; NOVA_CI_CHAIN_JOB_COMPLETED runs; a job the watchdog stopped fails
 #   watchdog W DEADLINE (internal) at DEADLINE (unix seconds) kills every process under Runner.Worker W but the hooks
@@ -134,7 +137,80 @@ function Invoke-Disarm {
     }
 }
 
+# Add-AdminApi: NovaCiAdmin, an administrator runner's rules on the job (the tests compile it on its own, with fake inputs).
+function Add-AdminApi {
+    if ('NovaCiAdmin' -as [type]) { return }
+    Add-Type -TypeDefinition @'
+using System;
+public static class NovaCiAdmin {
+  // The SIDs every ordinary runner's job, or any signed-in account, acts as: NETWORK SERVICE, SERVICE, LOCAL,
+  // Authenticated Users, Users, Everyone.
+  public static readonly string[] Openers = { "S-1-5-20", "S-1-5-6", "S-1-2-0", "S-1-5-11", "S-1-5-32-545", "S-1-1-0" };
+  // Refuse: null when an administrator runner may run this job, else why. Only a push, schedule or workflow_dispatch
+  // job of refs/heads/main, and only of the one workflow want names (owner/repo/.github/workflows/<file>@refs/heads/main;
+  // owner and repository compared without case, as GitHub does, the rest exactly); no want refuses every job.
+  public static string Refuse(string evt, string gitRef, string workflowRef, string want) {
+    if (string.IsNullOrEmpty(want)) { return "this administrator runner has no allowed workflow (.nova-ci-rules\\admin-workflow); run the windows-runners play"; }
+    if (evt != "push" && evt != "schedule" && evt != "workflow_dispatch") { return "an administrator runner runs push, schedule and workflow_dispatch jobs only, not " + evt; }
+    if (gitRef != "refs/heads/main") { return "an administrator runner runs jobs of refs/heads/main only, not " + gitRef; }
+    string got = workflowRef ?? "";
+    int a = want.IndexOf("/.github/", StringComparison.Ordinal);
+    int b = got.IndexOf("/.github/", StringComparison.Ordinal);
+    if (a < 0 || b < 0 || !string.Equals(want.Substring(0, a), got.Substring(0, b), StringComparison.OrdinalIgnoreCase) || want.Substring(a) != got.Substring(b)) {
+      return "this administrator runner runs " + want + " only, not " + got;
+    }
+    return null;
+  }
+  // Planted: the first of the folders paths whose owner (owners, in the same order; empty where it could not be read)
+  // is one of Openers, or unknown on a folder that is not a hidden system one (systemHidden; System Volume Information
+  // is one), as "<path> owner=<sid>|unreadable"; else null. A folder some job made above the runner (C:\ lets any
+  // account make one) may hold a configuration its builds read as they walk up from the checkout.
+  public static string Planted(string[] paths, string[] owners, bool[] systemHidden) {
+    for (int i = 0; i < paths.Length; i++) {
+      if (string.IsNullOrEmpty(owners[i])) {
+        if (systemHidden[i]) { continue; }
+        return paths[i] + " owner=unreadable";
+      }
+      if (Array.IndexOf(Openers, owners[i]) >= 0) { return paths[i] + " owner=" + owners[i]; }
+    }
+    return null;
+  }
+}
+'@
+}
+# Get-AdminRefusal: on an administrator runner (its .nova-ci-rules holds admin-workflow, or this hook runs as an
+# administrator), why this job may not run there, else nothing; on any other runner, nothing. The rule lives here, in
+# the runner's sealed directory, never in the workflow it guards.
+function Get-AdminRefusal {
+    $wf = Join-Path $here 'admin-workflow'
+    $want = if (Test-Path -LiteralPath $wf) { (Get-Content -Raw -LiteralPath $wf).Trim() } else { '' }
+    $me = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
+    if (-not $want -and -not $me.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { return $null }
+    Add-AdminApi
+    $why = [NovaCiAdmin]::Refuse("$env:GITHUB_EVENT_NAME", "$env:GITHUB_REF", "$env:GITHUB_WORKFLOW_REF", $want)
+    if ($why) { return $why }
+    $paths = New-Object System.Collections.Generic.List[string]
+    $owners = New-Object System.Collections.Generic.List[string]
+    $sh = New-Object System.Collections.Generic.List[bool]
+    for ($d = Split-Path $here; $d; $d = Split-Path $d) {
+        foreach ($c in @(Get-ChildItem -LiteralPath $d -Directory -Force -ErrorAction SilentlyContinue)) {
+            $o = ''
+            try { $o = (Get-Acl -LiteralPath $c.FullName).GetOwner([Security.Principal.SecurityIdentifier]).Value } catch { $o = '' }
+            $paths.Add($c.FullName); $owners.Add($o)
+            $sh.Add(($c.Attributes -band [IO.FileAttributes]'Hidden, System') -eq [IO.FileAttributes]'Hidden, System')
+        }
+    }
+    $p = [NovaCiAdmin]::Planted($paths.ToArray(), $owners.ToArray(), $sh.ToArray())
+    if ($p) { return "$p is above this administrator runner and was made by an account any job runs as; the fleet admin removes it" }
+    return $null
+}
+
 function Invoke-Started {
+    $why = Get-AdminRefusal
+    if ($why) {
+        "::error::CI rule: $why"
+        exit 1
+    }
     Invoke-Disarm
     Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path $state 'fired')
     $event = "$env:GITHUB_EVENT_NAME"; $ref = "$env:GITHUB_REF"

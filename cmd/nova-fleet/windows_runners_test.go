@@ -509,13 +509,14 @@ func TestWindowsAdminRunnerGuards(t *testing.T) {
 		t.Error("the account action makes its user with the marker, and refuses another with exit 9")
 	}
 	logon := psAction(t, ps, "logon")
-	proof := strings.Index(logon, "foreach ($why in [NovaTree]::Open((Split-Path $Dir), $Sealers, $false), [NovaTree]::Open($Dir, $Sealers + @($u.SID.Value), $true)) {")
+	proof := strings.Index(logon, "foreach ($why in [NovaTree]::Open($Disk, (Split-Path $Dir), $Sealers, $false), [NovaTree]::Open($Disk, $Dir, $Sealers + @($u.SID.Value), $true)) {")
 	refuse := strings.Index(logon, `if ($why) { "ACL-OPEN ${why}: `)
+	above := strings.Index(logon, "Assert-Above (Split-Path $Dir)")
 	create := strings.Index(logon, "$rc = [NovaAccount]::CreateService(")
 	set := strings.Index(logon, "\n        $rc = [NovaAccount]::SetServiceLogon($s.Name, $want, $pw)\n")
-	if proof < 0 || refuse < proof || create < refuse || set < refuse {
-		t.Errorf("the logon action must prove the tree sealed, refuse when it is not, and only then make the service or set its logon on every call (at %d, %d, %d, %d)",
-			proof, refuse, create, set)
+	if proof < 0 || refuse < proof || above < refuse || create < above || set < above {
+		t.Errorf("the logon action must prove the tree sealed and the folders above it closed, refuse when they are not, and only then make the service or set its logon on every call (at %d, %d, %d, %d, %d)",
+			proof, refuse, above, create, set)
 	}
 	if strings.Contains(logon, "icacls") || strings.Contains(logon, "Set-Acl") {
 		t.Error("the logon action repairs nothing: a tree that is not sealed is refused")
@@ -550,11 +551,13 @@ func inOrder(t *testing.T, what, s string, steps ...string) {
 	}
 }
 
-// TestWindowsAdminRunnerSealed: an admin runner's directories are created sealed in one call (owned by
-// Administrators, nothing inherited) and a found one that is not sealed is refused; the proof walks the whole tree
-// (owner, an explicit ACE, inheritance); install seals and proves before it unpacks, hashes the copy it extracts and
-// extracts that copy, and checks the files against it on every run; register gives NETWORK SERVICE nothing; the .env
-// is the role's whole with CCACHE_DISABLE=1; and every PATH entry is checked writable by no ordinary runner.
+// TestWindowsAdminRunnerSealed: the wiring of an admin runner's checks (what each decides is run on fake ACLs by
+// TestFunctionalWindowsSecurityDecisions). Its directories are created sealed in one call (owned by Administrators,
+// nothing inherited) and a found one that is not sealed is refused; install proves the folders above the admin root
+// closed before it seals, seals and proves before it unpacks, checks the PATH and the tool folders, records the one
+// workflow the hook allows, hashes the copy it extracts and extracts that copy, and checks the files against it on
+// every run; register gives NETWORK SERVICE nothing; the .env is the role's whole with CCACHE_DISABLE=1; the root is
+// directly under C:\; and the job-started hook refuses an admin runner's job before anything else runs.
 func TestWindowsAdminRunnerSealed(t *testing.T) {
 	t.Parallel()
 	b, err := fs.ReadFile(tree, roleDir+"/files/runner-windows.ps1")
@@ -568,29 +571,31 @@ func TestWindowsAdminRunnerSealed(t *testing.T) {
 		"$ds.SetAccessRuleProtection($true, $false)",
 		"$ds.SetOwner((New-Object Security.Principal.SecurityIdentifier 'S-1-5-32-544'))",
 		"[void][IO.Directory]::CreateDirectory($p, $ds)",
-		"$why = [NovaTree]::Open($p, $allowed, $false)",
+		"$why = [NovaTree]::Open($Disk, $p, $allowed, $false)",
 		`if ($why) { "PLANTED ${why}: `, "exit 11")
 	if !strings.Contains(ps, "$Sealers = @('S-1-5-18', 'S-1-5-32-544')") {
 		t.Error("only SYSTEM and Administrators seal an admin runner's directories")
 	}
-	for _, want := range []string{
-		"if (Array.IndexOf(allowed, owner) < 0) { return at + \" owner=\" + owner; }",
-		"if (top != s.AreAccessRulesProtected) {",
-		"if (top ? Array.IndexOf(allowed, sid) < 0 : !r.IsInherited) { return at + \" ace=\" + sid; }",
-		"if (sub != null && (i.Attributes & FileAttributes.ReparsePoint) == 0) { todo.Push(sub); }",
-	} {
-		if !strings.Contains(ps, want) {
-			t.Errorf("NovaTree.Open lacks %q (the owner, inheritance, explicit-ACE and whole-tree checks)", want)
-		}
+	if !strings.Contains(ps, "$Openers = @('S-1-5-20', 'S-1-5-6', 'S-1-2-0', 'S-1-5-11', 'S-1-5-32-545', 'S-1-1-0')") {
+		t.Error("the accounts ordinary jobs act as are NETWORK SERVICE, SERVICE, LOCAL, Authenticated Users, Users and Everyone")
 	}
+	above := ps[strings.Index(ps, "function Assert-Above("):]
+	above = above[:strings.Index(above, "\n}\n")]
+	inOrder(t, "Assert-Above", above, "$why = [NovaTree]::Above($Disk, $root, $Openers)", `if ($why) { "ABOVE-OPEN ${why}: `, "exit 13")
 	install := psAction(t, ps, "install")
 	inOrder(t, "install, an admin runner", install,
+		"if ($Account -and $Workflow -notmatch '^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/\\.github/workflows/[A-Za-z0-9._-]+\\.ya?ml@refs/heads/main$') { 'BAD-ARGS -Workflow'; exit 2 }",
 		"$u = Get-OurUser $Account",
+		"Assert-Above (Split-Path $Dir)",
 		"Seal-Dir (Split-Path $Dir) @()",
 		"Seal-Dir $Dir @($u.SID.Value)",
-		"$why = [NovaTree]::Open($Dir, $Sealers + @($u.SID.Value), $true)",
-		"$open = Find-OpenPath $paths",
+		"$why = [NovaTree]::Open($Disk, $Dir, $Sealers + @($u.SID.Value), $true)",
+		"if ($paths.Count -eq 0) { $paths = @([Environment]::GetEnvironmentVariable('Path', 'Machine')",
+		"$paths += @($ToolDirs -split ';' | Where-Object { $_ })",
+		"$open = [NovaTree]::OpenPath($Disk, [string[]]$paths, $Openers)",
 		`if ($open) { "PATH-WRITABLE ${open}: `,
+		"$wf = Join-Path $hd 'admin-workflow'",
+		"[IO.File]::WriteAllText($wf, $Workflow)",
 		"Copy-Item -Force -LiteralPath $zip -Destination $pinned",
 		"$got = (Get-FileHash -LiteralPath $pinned -Algorithm SHA256).Hash.ToLower()",
 		"if ($got -ne $Sha) { Remove-Item -Force -LiteralPath $pinned;",
@@ -601,13 +606,26 @@ func TestWindowsAdminRunnerSealed(t *testing.T) {
 	if !strings.Contains(install, "$kept = @($lines | Where-Object { -not $Account -and (") {
 		t.Error("an admin runner's .env keeps no line the role does not own")
 	}
-	if !strings.Contains(install, "if ($paths.Count -eq 0) { $paths = @([Environment]::GetEnvironmentVariable('Path', 'Machine')") ||
-		!strings.Contains(ps, "$Openers = @('S-1-5-20', 'S-1-5-11', 'S-1-5-32-545', 'S-1-1-0')") ||
-		!strings.Contains(ps, "if (\"$($r.AccessControlType)\" -eq 'Allow' -and $Openers -contains $r.IdentityReference.Value -and") {
-		t.Error("every PATH entry of an admin runner (the machine's PATH without a list) is checked for NETWORK SERVICE, Authenticated Users, Users and Everyone")
-	}
 	register := psAction(t, ps, "register")
 	inOrder(t, "register", register, "if ($Account) {", "$a += '--disableupdate'", "} else {", "& icacls.exe $Dir /reset /T /C /Q", "$a += '--runasservice'")
+
+	h, err := fs.ReadFile(tree, roleDir+"/files/ci-rules/nova-ci-rules.ps1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	hook := string(h)
+	started := hook[strings.Index(hook, "function Invoke-Started {"):]
+	inOrder(t, "the job-started hook", started,
+		"$why = Get-AdminRefusal", "if ($why) {", `"::error::CI rule: $why"`, "exit 1", "Invoke-Disarm", "Invoke-Chain \"$env:NOVA_CI_CHAIN_JOB_STARTED\"")
+	refusal := hook[strings.Index(hook, "function Get-AdminRefusal {"):]
+	inOrder(t, "Get-AdminRefusal", refusal,
+		"$wf = Join-Path $here 'admin-workflow'",
+		"if (-not $want -and -not $me.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { return $null }",
+		"$why = [NovaCiAdmin]::Refuse(\"$env:GITHUB_EVENT_NAME\", \"$env:GITHUB_REF\", \"$env:GITHUB_WORKFLOW_REF\", $want)",
+		"if ($why) { return $why }",
+		"for ($d = Split-Path $here; $d; $d = Split-Path $d) {",
+		"$p = [NovaCiAdmin]::Planted($paths.ToArray(), $owners.ToArray(), $sh.ToArray())",
+		"if ($p) { return ")
 
 	y, err := fs.ReadFile(tree, roleDir+"/tasks/wsl-windows.yml")
 	if err != nil {
@@ -619,19 +637,40 @@ func TestWindowsAdminRunnerSealed(t *testing.T) {
 	}
 	for _, want := range []string{
 		"'dir': github_runner_wsl_admin_dir ~ '\\\\' ~ slug ~ '-' ~ t.account,",
-		"{{ ('-Account ' ~ (item.account | quote)) if item.account else '' }} </dev/null",
+		"'workflow': t.workflow | default('')",
+		"{{ ('-Account ' ~ (item.account | quote) ~ ' -Workflow ' ~ (item.workflow | quote) ~ ' -ToolDirs ' ~ (github_runner_win_admin_tools | join(';') | quote))",
 		"github_runner_win_path: \"{{ github_runner_win_admin_path if item.account else github_runner_windows_path }}\"",
+		"| first | default('')) is search('account=(updated|created)') else '' }} </dev/null",
 	} {
 		if !strings.Contains(string(y), want) {
 			t.Errorf("wsl-windows.yml lacks %q", want)
 		}
 	}
 	for _, want := range []string{
-		`github_runner_wsl_admin_dir: 'C:\ProgramData\nova-admin-runners'`,
+		`github_runner_wsl_admin_dir: 'C:\nova-admin-runners'`,
 		"{{ github_runner_windows_path | reject('match', '(?i)' ~ (nova_runner_windows_ccache_dir",
+		"github_runner_win_admin_tools: '{{ [nova_runner_windows_ccache_dir, nova_runner_windows_ccache_dir ~ ''\\msvc''] }}'",
 	} {
 		if !strings.Contains(string(d), want) {
 			t.Errorf("defaults/main.yml lacks %q", want)
 		}
 	}
+	c, err := fs.ReadFile(tree, "roles/runner-packages/tasks/main.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	inOrder(t, "the ccache seal", string(c),
+		"\"$ic\" \"$d\" /setowner '*S-1-5-32-544' /T /C /Q",
+		"\"$ic\" \"$d\" /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-11:(OI)(CI)RX' '*S-1-5-32-545:(OI)(CI)RX' /Q",
+		"\"$ic\" \"$d\" /remove:g '*S-1-5-20' '*S-1-5-6' '*S-1-2-0' '*S-1-1-0' '*S-1-3-0' /Q",
+		"\"$ic\" \"$d\\\\*\" /reset /T /C /Q")
+	w, err := fs.ReadFile(tree, "roles/runner-packages/tasks/windows-ccache.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	inOrder(t, "windows-ccache.yml", string(w),
+		"- name: the Windows ccache directory sealed (before anything is copied in)",
+		"dest: \"{{ rp_win_ccache_stage.path }}/ccache.zip\"",
+		"cp \"$src/ccache.exe\" \"{{ rp_win_ccache_unix }}/msvc/cl.exe\"",
+		"- name: the Windows ccache directory sealed (what was copied in inherits only the seal)")
 }
