@@ -38,6 +38,7 @@ func TestRunnerServiceStopEndsTheWholeRunner(t *testing.T) {
 	assert.Contains(t, s, "\nKillSignal=SIGTERM\n")
 	assert.Contains(t, s, "\nTimeoutStopSec=5min\n", "the bound on a graceful stop")
 	assert.NotContains(t, s, "SendSIGKILL=no", "the guaranteed half is the SIGKILL")
+	assert.Contains(t, s, "\nOOMPolicy=continue\n", "an OOM kill fails the job; it never stops the runner (amd-1, 2026-11-12)")
 }
 
 // macOS has no such flaw: launchd makes run.sh a process group leader, run-helper.sh and the listener stay in that
