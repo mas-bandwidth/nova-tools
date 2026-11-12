@@ -683,7 +683,7 @@ func (u *upRun) steps() int {
 	// A push the remote refuses (a protected branch: changes through a pull request) goes to a branch of
 	// its own instead, named by the commit; the run goes on, and ends 1 with the branch to open a PR from.
 	git := func(args ...string) (string, string, int) {
-		return outCmd(u.bin["git"], append([]string{"-C", u.store}, args...), os.Environ())
+		return outCmd(u.bin["git"], append([]string{"-C", u.store}, args...), append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1", "GIT_TERMINAL_PROMPT=0")) // no system credential helper (a Mac's keychain), no prompt
 	}
 	if up, _, c := git("rev-parse", "--abbrev-ref", "@{u}"); c != 0 {
 		u.say("UP STORE NOTE %s has no upstream: nothing to push", u.store)
