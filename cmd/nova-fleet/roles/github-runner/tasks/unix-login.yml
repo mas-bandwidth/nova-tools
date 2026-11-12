@@ -286,3 +286,12 @@
 # Nothing else of the machine is the runner login's to write, and the fleet login's home is closed to it.
 - name: the machine, locked down for the runner login
   ansible.builtin.include_tasks: lockdown.yml
+
+# The VM tier (nova_runner_vm_kernel, on for every bench and runner; a host_vars file turns it off for one machine) for
+# the runner login: vm-tier.yml. It boots the host's own x86_64 kernel, so an arm64 host has none; WSL has no /boot
+# kernel image and no kvm.
+- name: the VM tier for the runner login
+  ansible.builtin.include_tasks: vm-tier.yml
+  when: >-
+    nova_runner_vm_kernel | bool and ansible_facts['architecture'] == 'x86_64'
+    and 'microsoft' not in (ansible_facts['kernel'] | lower)

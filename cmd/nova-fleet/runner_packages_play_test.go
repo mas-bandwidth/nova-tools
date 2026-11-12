@@ -97,7 +97,7 @@ func TestRunnerPackagesDefaults(t *testing.T) {
 	require.NotNil(t, vars.Foreign, "nova_runner_foreign_architectures has a default")
 	assert.Empty(t, vars.Foreign, "no foreign architecture by default")
 	require.NotNil(t, vars.VMKernel, "nova_runner_vm_kernel has a default")
-	assert.False(t, *vars.VMKernel, "the VM tier's kernel copies are off by default")
+	assert.True(t, *vars.VMKernel, "the VM tier is on for every bench and runner")
 	assert.Equal(t, "http://ports.ubuntu.com/ubuntu-ports/", vars.PortsURI)
 	assert.Equal(t, "{{ ansible_facts['user_dir'] }}/vm-kernels", vars.KernelDir)
 }
@@ -200,6 +200,10 @@ func TestRunnerPackagesVMKernel(t *testing.T) {
 	require.NotNil(t, tmpl)
 	assert.Equal(t, "/etc/kernel/postinst.d/zz-nova-vm-kernel", tmpl["dest"])
 	assert.Equal(t, "0755", tmpl["mode"])
+	src, err := os.ReadFile("roles/runner-packages/templates/vm-kernel.postinst.j2")
+	require.NoError(t, err)
+	assert.NotContains(t, string(src), "set -e", "a kernel package whose hook fails is left half configured")
+	assert.True(t, strings.HasSuffix(string(src), "\nexit 0\n"), "the hook never fails")
 
 	img := taskNamed(t, "debian-vm-kernel.yml", "the running kernel's image, readable by the login")
 	cp, _ := img["ansible.builtin.copy"].(map[string]any)

@@ -1,0 +1,94 @@
+---
+# The VM tier for a runner login of its own (nova_runner_vm_kernel; runner-packages brings virtme-ng and qemu): a job
+# boots a VM of the host's own kernel (vng --run $HOME/vm-kernels/vmlinuz-$(uname -r)), and Ubuntu's /boot image is
+# root's only. The copies are root's, in <nova_shared_dir>/vm-kernels, readable by the runner login's group (root never
+# writes in its home); a kernel hook adds each image the host installs, this run the running kernel's; the login's
+# ~/vm-kernels names the directory, and it is in kvm (unix-login.yml). Then the job's own conditions (rocketnet's
+# scripts/vm-tier-missing) are checked as the login, and any that fails fails the run.
+- name: the shared kernel copies and the running kernel's
+  ansible.builtin.shell: |
+    set -eu
+    dir={{ (nova_shared_dir ~ '/vm-kernels') | quote }}
+    group={{ github_runner_user | quote }}
+    mkdir -p "$dir"
+    chown root:"$group" "$dir"
+    chmod 0750 "$dir"
+    r=$(uname -r)
+    [ -f "/boot/vmlinuz-$r" ] || { echo "no /boot/vmlinuz-$r: the running kernel has no image installed" >&2; exit 1; }
+    cmp -s "/boot/vmlinuz-$r" "$dir/vmlinuz-$r" && [ "$(stat -c '%U:%G:%a' "$dir/vmlinuz-$r")" = "root:$group:640" ] && exit 0
+    install -o root -g "$group" -m 0640 "/boot/vmlinuz-$r" "$dir/vmlinuz-$r"
+    echo SET
+  args: { executable: /bin/sh }
+  become: true
+  register: github_runner_vm_kernel
+  changed_when: "'SET' in github_runner_vm_kernel.stdout"
+  when: not ansible_check_mode
+
+- name: the kernel hook that copies each image the host installs
+  ansible.builtin.copy:
+    dest: /etc/kernel/postinst.d/zz-nova-vm-kernel-runner
+    content: |
+      #!/bin/sh
+      # managed by Ansible (fleet/github-runners.yml): each kernel image the host installs, copied for the runner
+      # login's VM tier (root's copy, readable by its group), as the running one is by the play. It never fails: a
+      # kernel package whose hook fails is left half configured.
+      set -u
+      version=${1:-}
+      image=${2:-/boot/vmlinuz-$version}
+      [ -n "$version" ] && [ -f "$image" ] || exit 0
+      getent group {{ github_runner_user | quote }} >/dev/null || exit 0
+      install -d -o root -g {{ github_runner_user | quote }} -m 0750 {{ (nova_shared_dir ~ '/vm-kernels') | quote }} || exit 0
+      install -o root -g {{ github_runner_user | quote }} -m 0640 "$image" {{ (nova_shared_dir ~ '/vm-kernels') | quote }}/vmlinuz-"$version" || exit 0
+      exit 0
+    owner: root
+    group: root
+    mode: "0755"
+  become: true
+  when: not (ansible_check_mode and 'ABSENT' in github_runner_existing.stdout)
+
+- name: the runner login's ~/vm-kernels names them
+  ansible.builtin.shell: |
+    set -eu
+    cd {{ github_runner_home | quote }}
+    [ "$(readlink vm-kernels 2>/dev/null)" = {{ (nova_shared_dir ~ '/vm-kernels') | quote }} ] && exit 0
+    # as the login, in its own home: what a job left there in place of the link goes
+    if [ -e vm-kernels ] && [ ! -L vm-kernels ]; then rm -rf -- vm-kernels; fi
+    ln -sfn {{ (nova_shared_dir ~ '/vm-kernels') | quote }} vm-kernels
+    echo SET
+  args: { executable: /bin/sh }
+  become: true
+  become_user: "{{ github_runner_user }}"
+  vars: { ansible_pipelining: true }
+  register: github_runner_vm_link
+  changed_when: "'SET' in github_runner_vm_link.stdout"
+  when: not ansible_check_mode
+
+# rocketnet's scripts/vm-tier-missing, as the runner login with its runners' PATH and HOME: vng, qemu, a writable
+# /dev/kvm, the running kernel's image readable, its modules.
+- name: the VM tier is whole for the runner login
+  ansible.builtin.shell: |
+    runuser -u {{ github_runner_user | quote }} -- env HOME={{ github_runner_home | quote }} \
+      PATH={{ github_runner_env.get('PATH', github_runner_default_path_linux) | quote }} sh -c '
+      r=$(uname -r); m=""
+      add() { m="${m:+$m; }$1"; }
+      command -v vng >/dev/null 2>&1 || add "vng (package virtme-ng)"
+      command -v qemu-system-x86_64 >/dev/null 2>&1 || add "qemu-system-x86_64 (package qemu-system-x86)"
+      [ -e /dev/kvm ] || add "/dev/kvm (no KVM on this host)"
+      [ ! -e /dev/kvm ] || [ -w /dev/kvm ] || add "write access to /dev/kvm for $(id -un)"
+      [ -r "$HOME/vm-kernels/vmlinuz-$r" ] || add "read access to $HOME/vm-kernels/vmlinuz-$r for $(id -un)"
+      [ -d "/lib/modules/$r" ] || add "/lib/modules/$r"
+      [ -z "$m" ] || echo "needs $m"'
+  args: { executable: /bin/sh, chdir: / }
+  become: true
+  register: github_runner_vm_tier
+  changed_when: false
+  failed_when: github_runner_vm_tier.rc != 0
+  check_mode: false
+  when: not ansible_check_mode
+
+- name: a VM tier that lacks anything fails the run
+  ansible.builtin.fail:
+    msg: >-
+      VM-TIER-MISSING {{ inventory_hostname }} {{ github_runner_user }}: {{ github_runner_vm_tier.stdout | default('') }}
+      (a host with no VM tier sets nova_runner_vm_kernel: false in host_vars/{{ inventory_hostname }}.yml beside the inventory)
+  when: github_runner_vm_tier.stdout | default('') | length > 0

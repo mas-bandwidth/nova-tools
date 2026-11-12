@@ -48,3 +48,33 @@ func TestRunnerLoginLockdown(t *testing.T) {
 	writable := runnerTask(t, tasks, "a path the runner login can write or owns fails the run")
 	assert.Contains(t, asText(writable["ansible.builtin.fail"].(map[string]any)["msg"]), "RUNNER-LOGIN-WRITABLE")
 }
+
+// The runner login's VM tier (roles/github-runner/tasks/vm-tier.yml): root's kernel copies outside its home, readable
+// by its group; its ~/vm-kernels made as it; and rocketnet's scripts/vm-tier-missing conditions, checked as it, fail
+// the run naming what is missing.
+func TestRunnerLoginVMTier(t *testing.T) {
+	t.Parallel()
+	login := roleTaskFile(t, "unix-login.yml")
+	tier := runnerTask(t, login, "the VM tier for the runner login")
+	assert.Equal(t, "vm-tier.yml", asText(tier["ansible.builtin.include_tasks"]))
+	assert.Equal(t, "nova_runner_vm_kernel | bool and ansible_facts['architecture'] == 'x86_64' and 'microsoft' not in (ansible_facts['kernel'] | lower)", asText(tier["when"]), "an x86_64 kernel, never WSL's")
+
+	tasks := roleTaskFile(t, "vm-tier.yml")
+	copies := asText(runnerTask(t, tasks, "the shared kernel copies and the running kernel's")["ansible.builtin.shell"])
+	assert.Contains(t, copies, "dir={{ (nova_shared_dir ~ '/vm-kernels') | quote }}")
+	assert.Contains(t, copies, `install -o root -g "$group" -m 0640 "/boot/vmlinuz-$r" "$dir/vmlinuz-$r"`)
+	hook := asText(runnerTask(t, tasks, "the kernel hook that copies each image the host installs")["ansible.builtin.copy"].(map[string]any)["content"])
+	assert.Contains(t, hook, "install -o root -g {{ github_runner_user | quote }} -m 0640")
+	assert.Contains(t, hook, "getent group {{ github_runner_user | quote }} >/dev/null || exit 0", "a kernel package whose hook fails is left half configured")
+	assert.NotContains(t, hook, "set -e", "the hook never fails")
+	link := runnerTask(t, tasks, "the runner login's ~/vm-kernels names them")
+	assert.Equal(t, "{{ github_runner_user }}", link["become_user"])
+
+	check := asText(runnerTask(t, tasks, "the VM tier is whole for the runner login")["ansible.builtin.shell"])
+	for _, want := range []string{"runuser -u {{ github_runner_user | quote }}", "command -v vng", "command -v qemu-system-x86_64",
+		"[ -w /dev/kvm ]", `[ -r "$HOME/vm-kernels/vmlinuz-$r" ]`, `[ -d "/lib/modules/$r" ]`} {
+		assert.Contains(t, check, want)
+	}
+	fail := runnerTask(t, tasks, "a VM tier that lacks anything fails the run")
+	assert.Contains(t, asText(fail["ansible.builtin.fail"].(map[string]any)["msg"]), "VM-TIER-MISSING")
+}

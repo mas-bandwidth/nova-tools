@@ -11,12 +11,8 @@
   ansible.builtin.set_fact:
     github_runner_other: "{{ github_runner_user != ansible_facts['user_id'] }}"
 
-- name: the runner login of its own (Linux)
-  ansible.builtin.include_tasks: unix-login.yml
-  when: github_runner_other | bool
-
 # The runner login cannot enter the fleet login's home, so an environment naming a path there (a record written for
-# the fleet login's runners) would fail every job: refused before any runner moves.
+# the fleet login's runners) would fail every job: refused before the machine or any runner is changed.
 - name: the runner login's environment names nothing in the fleet login's home
   ansible.builtin.assert:
     quiet: true
@@ -30,6 +26,10 @@
       {{ github_runner_env | dict2items | selectattr('value', 'string')
          | selectattr('value', 'search', '(^|:)' ~ (ansible_facts['user_dir'] | regex_escape) ~ '(/|:|$)')
          | map(attribute='key') | list }}
+  when: github_runner_other | bool
+
+- name: the runner login of its own (Linux)
+  ansible.builtin.include_tasks: unix-login.yml
   when: github_runner_other | bool
 
 # --check cannot plan files owned by a login that does not exist yet: it says so and stops for this host.

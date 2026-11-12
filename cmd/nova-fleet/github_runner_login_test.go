@@ -25,11 +25,12 @@ func groupVars(t *testing.T) map[string]any {
 	return all
 }
 
-// One definition every play reads: the runner login and its home, the fleet login's by default.
-func TestRunnerLoginIsTheFleetLoginByDefault(t *testing.T) {
+// One definition every play reads: the runner login and its home, one of its own on Linux by default (ghrunner), the
+// fleet login on macOS.
+func TestRunnerLoginIsItsOwnOnLinuxByDefault(t *testing.T) {
 	t.Parallel()
 	all := groupVars(t)
-	assert.Equal(t, "{{ ansible_facts['user_id'] }}", asText(all["github_runner_user"]))
+	assert.Equal(t, "{{ 'ghrunner' if ansible_facts['system'] == 'Linux' and 'microsoft' not in (ansible_facts['kernel'] | lower) else ansible_facts['user_id'] }}", asText(all["github_runner_user"]), "WSL keeps the fleet login: its interop gives any login root")
 	assert.Equal(t, "{{ ansible_facts['user_dir'] if github_runner_user == ansible_facts['user_id'] else '/home/' ~ github_runner_user }}",
 		asText(all["github_runner_home"]))
 	d := runnerDefaults(t)
@@ -50,6 +51,8 @@ func TestRunnerLoginIsMadeFirst(t *testing.T) {
 	assert.Equal(t, "github_runner_other | bool", asText(login["when"]))
 	assert.Less(t, taskIndex(main, "the runner login of its own"), taskIndex(main, "one url"))
 	assert.Less(t, taskIndex(main, "the runner login of its own"), taskIndex(main, "every runner of the machine record"))
+	// an environment the login cannot use is refused before the machine is changed for it
+	assert.Less(t, taskIndex(main, "the runner login's environment names nothing in the fleet login's home"), taskIndex(main, "the runner login of its own (Linux)"))
 }
 
 // Locked, its own group and kvm only (append false drops any other, sudo with it), its home 0750, sshd refusing it,

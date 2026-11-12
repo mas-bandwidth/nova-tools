@@ -93,5 +93,5 @@ func TestSDKToolchainSharesTheSDKAsTheLogin(t *testing.T) {
 	require.NoError(t, err)
 	var d map[string]any
 	require.NoError(t, yaml.Unmarshal(b, &d))
-	assert.Equal(t, false, d["nova_sdk_shared"], "the shared SDK is asked for, never assumed")
+	assert.Equal(t, "{{ ansible_facts['system'] == 'Linux' and 'runner' in group_names and github_runner_user != ansible_facts['user_id'] }}", d["nova_sdk_shared"], "shared wherever the runners are a login of their own")
 }

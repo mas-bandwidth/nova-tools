@@ -399,9 +399,10 @@ directory from the units. A macOS daemon gets no `TMPDIR` unless `github_runner_
 which macOS cleans. A macOS daemon starts with `/opt/homebrew/bin` on its PATH, before the
 system's, so a job finds Homebrew's formulae and its `python3`.
 
-**The runner login.** The runners run as `github_runner_user`, the login the play connects as by default (macOS always).
-On Linux, `-e github_runner_user=ghrunner` runs them as a login of their own, so a CI job has no root and no way to get
-it. Limit such a run to Linux hosts (`-- -l <host>`): a macOS host fails it. The play makes the login (home
+**The runner login.** The runners run as `github_runner_user`: on Linux `ghrunner`, a login of their own, so
+a CI job has no root and no way to get it; on WSL and macOS the login the play connects as (WSL's interop gives any
+login root). `-e github_runner_user=<the fleet
+login>` keeps a Linux host's runners as the fleet login for a run (for every run, and every play that reads it, set `github_runner_user` in its `host_vars` file); another name on macOS fails the run. The play makes the login (home
 `/home/<login>`, `github_runner_home`, mode `0750`) with its password locked, in no group but its own and `kvm` (where
 the host has one), refuses an account of that name that is not a runner login already (a uid below 1000, or any other
 group), writes `/etc/ssh/sshd_config.d/90-nova-runner-login.conf` (`DenyUsers <login>`, checked with `sshd -t`, then
@@ -410,12 +411,19 @@ with `sshd -T`), refuses the login's own connections to ssh on any tailnet addre
 fails the run unless `sudo -l -U <login>` says it is not allowed to run sudo. It refuses a WSL host whose interop is on (any login runs `wsl.exe -u root` through it, `RUNNER-LOGIN-WSL-INTEROP`), closes the fleet login's home (`0750`), and fails the run on any path the login can write or owns outside its home, the kernel's directories and the shared scratch places, on every local filesystem, found by `find` run as the login (`RUNNER-LOGIN-WRITABLE`; nothing found is changed). The runners'
 directories, release cache and `TMPDIR` are then in its home, written as the login (root follows no link it could
 plant there; root's only act there is deleting a runner directory by name), and the runners' default `PATH` starts
-with `/opt/nova/bin` (`nova_shared_dir`): root's copies of the fleet login's tools, which it runs and cannot change (made here, refreshed by `install` on a runner whose runners are another login's). Its `~/sdk` names `/opt/nova/sdk`, the fleet login's shared SDK, once `sdk-toolchain -e nova_sdk_shared=true` has put one there, so a workflow's `$HOME/sdk` works for it as for the fleet login. A runner whose unit runs it from another directory (the fleet
+with `/opt/nova/bin` (`nova_shared_dir`): root's copies of the fleet login's tools, which it runs and cannot change (made here, refreshed by `install` on a runner whose runners are another login's). Its `~/sdk` names `/opt/nova/sdk`, the fleet login's shared SDK, once `sdk-toolchain` has put one there (`nova_sdk_shared`, on for a runner whose runners are another login's), so a workflow's `$HOME/sdk` works for it as for the fleet login. A runner whose unit runs it from another directory (the fleet
 login's, before the switch) moves: `RUNNER-MOVE <runner> from=<dir> to=<dir> user=<login>`, then, once its job ends,
 its unit stops, it registers in the new directory under the same name (`config.sh --replace`, with a fresh token), the
 unit restarts it there and the old directory is deleted; a move that fails starts the runner where it ran and fails
 the run with `RUNNER-MOVE-FAILED`. A held runner is not moved: the run fails with `RUNNER-HELD` naming it. The
-record's `runner_env` must name nothing in the fleet login's home (the run fails naming the keys).
+record's `runner_env` must name nothing in the fleet login's home (the run fails naming the keys, before the machine
+is changed). With `nova_runner_vm_kernel` (on) an x86_64 host gives it the VM tier: root's copies of the kernel
+images in `/opt/nova/vm-kernels` (a kernel hook adds each new one), its `~/vm-kernels` naming them, and the run fails
+with `VM-TIER-MISSING` while vng, qemu, a writable `/dev/kvm`, the running kernel's image or its modules are missing
+for it; a host with no VM tier sets `nova_runner_vm_kernel: false` in its `host_vars` file. A host moves to the runner
+login in four runs, each `--check --diff` first: `install` (the shared tools and the shared SDK's directory),
+`sdk-toolchain` (the shared SDK, while `~/sdk` stays in use until it is whole), `runner-packages`, then `github-runners`
+once the record's `runner_env` names the runner login's paths.
 
 **Public repositories.** A self-hosted runner runs the code of any workflow that reaches it, and on a public repository
 that includes pull requests from forks. Use these runners on private repositories, or restrict which workflows and
@@ -431,7 +439,7 @@ events may use them.
 | `github_runner_deregister` | true: retiring removes the runner from GitHub (needs a removal token) |
 | `github_runner_env` | the service's environment, `{NAME: value}`, inherited by every job; default the machine record's `runner_env` (the inventory's `nova_runner_env`; `nova-config machine set <machine> --runner_env '<json-object>'`, cmd/nova-config/README.md), so every run for any url writes it. A `PATH` replaces the default (`nova_bin_dir` first, then the system's); a `TMPDIR` replaces `github_runner_tmpdir`. `-e github_runner_env` replaces the record's for one run; there a path under the login's home may be written `{{ ansible_facts['user_dir'] }}/...`, rendered per machine (the record holds literal values). [docs/examples/github-runners-env.yml](../../docs/examples/github-runners-env.yml) is a vars file with the url, scope, labels and an environment for Ubuntu runners, for `-e @github-runners-env.yml` (read from the directory you run in) |
 | `github_runner_tmpdir` | a Linux runner's `TMPDIR` when the environment names none: `<home>/.cache/runner-tmp` |
-| `github_runner_user` | the login the runners run as: the play's login by default; on Linux another name is a login of its own ("The runner login") |
+| `github_runner_user` | the login the runners run as: `ghrunner` on Linux, a login of its own ("The runner login"); the play's login on WSL and macOS; on Linux the play's login keeps the old way |
 | `github_runner_home` | that login's home: the play's login's, or `/home/<login>` |
 | `github_runner_base_labels` | `[fleet]`: the labels every runner gets, Linux, macOS and the Windows side |
 | `github_runner_version`, `github_runner_sha256` | the pinned actions/runner release and its digests |
@@ -1182,7 +1190,7 @@ nova-fleet runner-packages -- -e @runner-packages-s390x-vm.yml -l bench
 | `nova_runner_windows_ccache`, `nova_runner_windows_ccache_dir` | `4.14.3` and its zip's sha256; `C:\ProgramData\nova\ccache` | **Windows ccache.** On a WSL machine whose record names `windows_runners`, ccache's own Windows release, checked, unpacked through `/mnt/c` to that directory as `ccache.exe` and `msvc\cl.exe` (the same binary under the compiler's name: MSBuild runs it in place of cl.exe when a build sets `CLToolExe=cl.exe;CLToolPath=<dir>\msvc` in `CMAKE_VS_GLOBALS`, since the Visual Studio generator honours no compiler launcher; ccache then runs the real cl.exe from the PATH MSBuild sets). The version in `VERSION` beside it; a matching version is left alone; an empty version skips it |
 | `nova_runner_foreign_architectures` | `[]` | Ubuntu: dpkg architectures the debian list may name packages of, as `<name>:<arch>` |
 | `nova_runner_ports_uri` | `http://ports.ubuntu.com/ubuntu-ports/` | the archive a foreign architecture comes from |
-| `nova_runner_vm_kernel` | `false` | Debian/Ubuntu: keep each kernel image readable by the login, for a VM of the host's own kernel |
+| `nova_runner_vm_kernel` | `true` | Debian/Ubuntu (not WSL): keep each kernel image readable by the login, for a VM of the host's own kernel; a runner login of its own gets root's copies in `/opt/nova/vm-kernels` (its `~/vm-kernels`, a kernel hook for each new image) from `github-runners`, which fails with `VM-TIER-MISSING` naming what the tier lacks (vng, qemu, a writable `/dev/kvm`, the image, the modules) |
 | `nova_runner_vm_kernel_dir` | `<home>/vm-kernels` | where the copies go, as `vmlinuz-<version>` |
 
 Both switches apply on Debian and Ubuntu only; another OS skips them. The play reaches every bench as well as every runner, so a run that turns a switch on names its machines with `-l`: a WSL2 machine (`/proc/sys/fs/binfmt_misc/WSLInterop`) has no `/boot/vmlinuz-<version>` and no `kvm` group, so the VM tier is skipped there.
@@ -1281,7 +1289,7 @@ version bump installs the new directory beside the old and moves the links.
 | Variable | Default | |
 |---|---|---|
 | `nova_sdk_dir` | `<home>/sdk` | the SDK directory, used by its real path |
-| `nova_sdk_shared` | `false` | Linux: the SDK in `/opt/nova/sdk` (`nova_shared_dir`, made by `github-runners` with a runner login of its own), the login's and readable by every login, with `nova_sdk_dir` a link to it, so a runner login of its own runs the same tools. The shared SDK is installed fresh (its files name their own path) while `~/sdk` stays in use; at the end of the run `~/sdk` becomes a link to it (`SDK-TOOLCHAIN SHARE`) and the old one is deleted. Nothing in it is left writable by other logins, and a run fails on anything in it they cannot read; an old `~/sdk` holding what the shared one lacks (an older version a link names, a directory put there by hand) stays in use and the run fails naming it (`SDK-TOOLCHAIN SHARE-HELD`) |
+| `nova_sdk_shared` | on for a Linux runner whose runners are another login's (`github_runner_user`) | Linux: the SDK in `/opt/nova/sdk` (`nova_shared_dir`, made by `github-runners` with a runner login of its own), the login's and readable by every login, with `nova_sdk_dir` a link to it, so a runner login of its own runs the same tools. The shared SDK is installed fresh (its files name their own path) while `~/sdk` stays in use; at the end of the run `~/sdk` becomes a link to it (`SDK-TOOLCHAIN SHARE`) and the old one is deleted. Nothing in it is left writable by other logins, and a run fails on anything in it they cannot read; an old `~/sdk` holding what the shared one lacks (an older version a link names, a directory put there by hand) stays in use and the run fails naming it (`SDK-TOOLCHAIN SHARE-HELD`) |
 | `nova_sdk_tools` | the toolchain above | one entry per tool: `name`, `version`, `dir`, `probe`, `links`, `kind`, `build`, `alias`, `wrapper`, `run`, and a `linux` and/or `darwin` pin (a pin's own `build` replaces the tool's on that platform); a list given with `-e` replaces it whole |
 | `nova_sdk_dotnet_more` | the .NET 8.0 SDK | more SDKs in the dotnet directory, each a `version` and a `url` and `sha512` per platform |
 | `nova_sdk_rustup` | rustup 1.29.1; `1.98.1` with `clippy` and `rustfmt`, and `nightly-2026-10-01` | `version`, the `linux` rustup-init `url`, `sha256` and `host`, the `toolchains` (each `name`, `components`, `targets`; the first is on PATH) and the commands `links` puts in `~/sdk/bin` |

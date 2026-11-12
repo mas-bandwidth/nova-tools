@@ -15,10 +15,10 @@ nova_bin_dir: "{{ nova_home }}/.local/bin"
 # <dir>/bin (roles/nova-tools-install/tasks/shared.yml) and the SDK in <dir>/sdk (sdk-toolchain with nova_sdk_shared).
 nova_shared_dir: /opt/nova
 # The login a machine's GitHub runners run as (github-runners.yml; cmd/nova-fleet/README.md, "The runner login"), and its
-# home. The fleet login by default; on Linux another name (-e github_runner_user=ghrunner) is a login of its own that
-# the play makes, with no sudo, no ssh and no way into the fleet login's home, so a CI job has no root. macOS runs its
-# runners as the login.
-github_runner_user: "{{ ansible_facts['user_id'] }}"
+# home. On Linux a login of its own, ghrunner, that the play makes, with no sudo, no ssh and no way into the fleet
+# login's home, so a CI job has no root; -e github_runner_user=<the fleet login> keeps the old way. WSL keeps the fleet login: its
+# interop runs wsl.exe -u root for any login (unix-login.yml refuses a login of its own there). macOS runs its runners as the login.
+github_runner_user: "{{ 'ghrunner' if ansible_facts['system'] == 'Linux' and 'microsoft' not in (ansible_facts['kernel'] | lower) else ansible_facts['user_id'] }}"
 github_runner_home: "{{ ansible_facts['user_dir'] if github_runner_user == ansible_facts['user_id'] else '/home/' ~ github_runner_user }}"
 
 # The PATH a service unit runs with; a service row's env may set its own.
@@ -169,8 +169,10 @@ nova_runner_packages:
 nova_runner_foreign_architectures: []
 nova_runner_ports_uri: "http://ports.ubuntu.com/ubuntu-ports/"
 # Debian/Ubuntu: keep a copy of each kernel image the host installs in nova_runner_vm_kernel_dir, readable by the
-# login, and the login in kvm, for a CI job that boots a VM of the host's own kernel. Off unless true.
-nova_runner_vm_kernel: false
+# login, and the login in kvm, for a CI job that boots a VM of the host's own kernel. On for every bench and runner
+# (the plays that read it run on no other); a runner login of its own gets root's copies (github-runners, vm-tier.yml)
+# and a run that fails while its VM tier lacks anything.
+nova_runner_vm_kernel: true
 nova_runner_vm_kernel_dir: "{{ ansible_facts['user_dir'] }}/vm-kernels"
 
 # The age and sops a Linux machine gets from join.yml, pinned by the digest
