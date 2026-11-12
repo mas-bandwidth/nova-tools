@@ -47,6 +47,21 @@ func TestUpFirstLoginIsASudoUser(t *testing.T) {
 	}
 }
 
+// A control seat that holds a TAILSCALE_AUTHKEY of its own: nova-secrets exec drops that inherited name, so the
+// key up minted reaches the join under up's own name, NOVA_FLEET_AUTHKEY, never as an argument.
+func TestUpMintedKeySurvivesASeatHoldingTailscaleAuthkey(t *testing.T) {
+	f := &upFake{names: "NOVA_PG_PASSWORD NOVA_BUS_PASSWORD TAILSCALE_AUTHKEY", peers: map[string]string{"store-1": "100.64.0.1"},
+		rows: `{"items":[{"kind":"machine","fields":{"name":"store-1","address":"store-1.ts.example","user":"nova","os":"linux","arch":"amd64","roles":"services,bench"}}]}`}
+	f.install(t)
+	t.Setenv("NOVA_PG_DSN", "postgres://nova_config@store-1.ts.example:5432/nova")
+	code, out, errs := runArgs("up", "--tools", "v2.0.0", "second=203.0.113.8")
+	all := strings.Join(f.calls, "\n")
+	if code != 0 || !strings.Contains(all, "-e nova_join_host=second ") || !strings.Contains(all, "[env NOVA_FLEET_AUTHKEY="+fakeKey("auth", "SECRET1")+"]") ||
+		strings.Count(all, "SECRET1") != 1 {
+		t.Errorf("code %d\n%s\n%s\ncalls:\n%s", code, out, errs, all)
+	}
+}
+
 // The default stays root: no --first-login, no key, no sudo check, join as root.
 func TestUpFirstLoginDefaultsToRoot(t *testing.T) {
 	f := &upFake{names: "NOVA_PG_PASSWORD NOVA_BUS_PASSWORD", peers: map[string]string{"store-1": "100.64.0.1"},

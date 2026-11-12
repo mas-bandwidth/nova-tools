@@ -129,6 +129,12 @@ func (f *upFake) install(t *testing.T) {
 	}
 	runCmd = func(bin string, args, env []string) (int, error) {
 		line := record(bin, slices.Clone(args))
+		if filepath.Base(bin) == "nova-secrets" && len(args) > 0 && args[0] == "exec" { // as the real one: the inherited environment loses every name the seat holds
+			env = slices.DeleteFunc(slices.Clone(env), func(e string) bool {
+				name, _, _ := strings.Cut(e, "=")
+				return slices.Contains(strings.Fields(f.names), name)
+			})
+		}
 		if k := slices.IndexFunc(env, func(e string) bool {
 			return strings.HasPrefix(e, "TAILSCALE_AUTHKEY=") || strings.HasPrefix(e, "NOVA_FLEET_AUTHKEY=")
 		}); k >= 0 {
