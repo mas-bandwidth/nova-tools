@@ -10,6 +10,17 @@
 - name: ufw (Linux)
   when: (nova_system | default(ansible_facts['system'])) == 'Linux'
   block:
+    - name: nova_firewall_allow_in is a list of ufw allow rules
+      ansible.builtin.assert:
+        that:
+          - nova_firewall_allow_in is iterable and nova_firewall_allow_in is not string and nova_firewall_allow_in is not mapping
+          - nova_firewall_allow_in | reject('match', '^[A-Za-z0-9][A-Za-z0-9 ./:_-]*$') | list | length == 0
+        fail_msg: >-
+          FIREWALL STOP {{ inventory_hostname }}: nova_firewall_allow_in wants a list of the words after `ufw allow`
+          (letters, digits, spaces and . / : _ -), as -e '{"nova_firewall_allow_in": ["in on eno2 proto udp from 10.0.0.0/24"]}';
+          got {{ nova_firewall_allow_in | to_json }}
+        quiet: true
+
     - name: the ufw package
       ansible.builtin.apt: { name: ufw, state: present }
       become: true
@@ -38,6 +49,9 @@
         {% for p in nova_firewall_allow_udp %}
         grep -Eq '^{{ p }}/udp +ALLOW IN' <<< "$s" || want+=(udp{{ p }})
         {% endfor %}
+        {% for r in nova_firewall_allow_in %}
+        ufw --dry-run allow {{ r }} 2>&1 | grep -q 'Skipping adding existing rule' || want+=("allow-in:{{ r | replace(' ', '_') }}")
+        {% endfor %}
         echo "${want[*]}"
       args: { executable: /bin/bash }
       become: true
@@ -64,6 +78,9 @@
         ufw allow in on tailscale0
         {% for p in nova_firewall_allow_udp %}
         ufw allow {{ p }}/udp
+        {% endfor %}
+        {% for r in nova_firewall_allow_in %}
+        ufw allow {{ r }}
         {% endfor %}
         ufw --force enable
       become: true

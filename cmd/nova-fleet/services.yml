@@ -143,6 +143,21 @@
           {{ (nova_launchd_domain == 'system' or (nova_launchd_domain == 'auto' and service_gui.rc | default(0) != 0))
              if service_darwin else (nova_systemd_scope == 'system') }}
 
+    # the login's user manager starts only through pam_systemd, which a minimal Debian or Ubuntu image can lack
+    # (user@<uid> then fails with "$XDG_RUNTIME_DIR is not set" and no user unit can run)
+    - name: is pam_systemd installed (Debian, Ubuntu)
+      ansible.builtin.command: dpkg-query -W -f=${Status} libpam-systemd
+      register: service_pam
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      when: not service_darwin and not service_system and ansible_facts['os_family'] | default('') == 'Debian'
+
+    - name: pam_systemd, which the login's own systemd needs (Debian, Ubuntu; only where it is missing)
+      ansible.builtin.apt: { name: libpam-systemd, state: present, update_cache: true, cache_valid_time: 3600 }
+      become: true
+      when: service_pam is not skipped and 'install ok installed' not in service_pam.stdout | default('')
+
     - name: the unit directory
       ansible.builtin.file: { path: "{{ service_dir }}", state: directory, mode: "0755" }
       become: "{{ service_system }}"

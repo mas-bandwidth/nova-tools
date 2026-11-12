@@ -97,8 +97,13 @@ nova-fleet up --tools "$NOVA_TOOLS_VERSION" store-1=203.0.113.7 -- -e nova_pg_ve
    `tskey-api-...`, and press enter). On a fresh node it first makes the store, a recovery key, this node's key, the
    pins and the seat, and says to back up the recovery key. It expires (90 days by default): a run with an expired one stops at the tailnet step with
    `HTTP 401: TAILSCALE_API_KEY was refused; ...` and the line that makes a new one.
-4. Each Linux machine reachable as root over ssh at its address, with the control node's key, and its host key
-   already in this node's `known_hosts` (ssh to it once by hand; `up` prompts for nothing). A Mac: its login and
+4. Each Linux machine reachable over ssh at its address as the first login its provider gives, and its host key
+   already in this node's `known_hosts` (ssh to it once by hand; `up` prompts for nothing). The first login is
+   `root` unless `--first-login <login>` names another for every machine, or `<name>=<login>@<address>` for one
+   (`ubuntu`, `debian`, `ec2-user`, `admin`: a login other than root must sudo without a password, which `up` checks
+   before any play). Its key is ssh's own (the control node's key, or the agent's) unless `--first-key <file>`
+   names one. `join` makes the fleet's login (`--user`, default `nova`) through it, and from then on nothing uses
+   the first login or its key. A Mac: its login and
    passwordless sudo set up at its console, and the Tailscale app's VPN approved once. Once a machine is on the
    tailnet, `up` reaches it as its login at its tailnet name, with the Tailscale SSH host key `tailscale status`
    reports pinned in `known_hosts` (`UP HOSTKEY <machine> OK pinned=<n>`); it never turns host key checking off.
@@ -109,8 +114,8 @@ machine is the one nova-config's rows say ("Adding a machine" below). Nothing he
 | # | Step | What runs | Why here |
 |---|---|---|---|
 | 1 | control | `nova-fleet check`: every helper (with `--runners`, `gh` and its login), the store, key, seat and pins, `TAILSCALE_API_KEY` read from the seat, `NOVA_PG_DSN` when a fleet exists; anything missing stops the run with its fix line | a run never starts that a missing secret would stop later |
-| 2 | tailnet | through the Tailscale API v2 with `TAILSCALE_API_KEY` as Bearer auth (`cmd/nova-fleet/tailnet.go`): `GET /tailnet/-/acl` (HuJSON, its ETag), the fleet's needs (`nova-fleet show tailscale-acl`) merged in as a JSON Patch applied by `github.com/tailscale/hujson` (comments and formatting kept), `POST` with `If-Match` only when that added something (a 412 reads again and retries once); this node joined with a minted `tag:control` key when it is not on the tailnet, else `POST /device/<id>/tags` adding `tag:control`; each machine on the tailnet (the one peer whose MagicDNS label is its name; two such peers are refused) given `tag:nova` (and `tag:runner`) the same way; a machine that is this node itself (`tailscale status` Self, by the same label) is already on the tailnet and gets neither; for each machine not on it, `POST /tailnet/-/keys` mints a single-use, pre-authorized key good for an hour, held in memory and given only to that machine's play as `TAILSCALE_AUTHKEY` in its environment. Receipt `UP TAILNET OK policy=<merged\|unchanged> control=<tagged\|already\|joined> keys=<n minted> retagged=<n>`; under `--check`, `UP TAILNET WOULD ...` after GETs only | the tags exist before a device carries one, and the keys before any join |
-| 3 | reach | one `ssh -o BatchMode=yes ... true` per machine: as its login at its tailnet name once it has a row (join closed the address given then), else as root at the address given; `UP REACH <machine> OK <who>@<where>` | a run never starts a play on a machine it cannot reach |
+| 2 | tailnet | through the Tailscale API v2 with `TAILSCALE_API_KEY` as Bearer auth (`cmd/nova-fleet/tailnet.go`): `GET /tailnet/-/acl` (HuJSON, its ETag), the fleet's needs (`nova-fleet show tailscale-acl`) merged in as a JSON Patch applied by `github.com/tailscale/hujson` (comments and formatting kept), `POST` with `If-Match` only when that added something (a 412 reads again and retries once); this node joined with a minted `tag:control` key when it is not on the tailnet, else `POST /device/<id>/tags` adding `tag:control`; each machine on the tailnet (the one peer whose MagicDNS label is its name; two such peers are refused) given `tag:nova` (and `tag:runner`) the same way; a machine that is this node itself (`tailscale status` Self, by the same label) is already on the tailnet and gets neither; for each machine not on it, `POST /tailnet/-/keys` mints a single-use, pre-authorized key good for an hour, held in memory and given only to that machine's play as `NOVA_FLEET_AUTHKEY` in its environment (a name of up's own: `nova-secrets exec` drops every inherited name its seat holds, and a seat may hold a `TAILSCALE_AUTHKEY`). Receipt `UP TAILNET OK policy=<merged\|unchanged> control=<tagged\|already\|joined> keys=<n minted> retagged=<n>`; under `--check`, `UP TAILNET WOULD ...` after GETs only | the tags exist before a device carries one, and the keys before any join |
+| 3 | reach | one `ssh -o BatchMode=yes ... true` per machine: as its login at its tailnet name once it has a row (join closed the address given then), else as its first login at the address given (with `-i <file> -o IdentitiesOnly=yes` under `--first-key`), and a first login other than root must answer `sudo -n true`; `UP REACH <machine> OK <who>@<where>` | a run never starts a play on a machine it cannot reach, or one whose first login cannot make the fleet's login |
 | 4 | first | on a new fleet's first machine, from a hand inventory: `tailscale` (no address recorded, firewall later), then `postgres` (nova-config's roles, grants and tables, loaded on the machine as `nova_admin`) and `redis`, their passwords sealed into your seat as `NOVA_PG_PASSWORD` and `NOVA_BUS_PASSWORD` | nova-config's rows live in this PostgreSQL, so it comes before any row |
 | 5 | join | `join` for each machine (`services,bench` for the first; the others `bench`; `runner` with `--runners`): its row, its login with passwordless sudo, its tailnet name and host key, its firewall, its seat; with `--runners`, a row that lacks the `runner` role gets it (`UP ROLE <machine> OK runner`). This node itself, named as a machine, is skipped (`UP JOIN <machine> SKIPPED this control node ...`): join's peer check cannot see the node it runs on, so its row must exist already (else the run stops with the `nova-config machine add` line) | the store exists now |
 | 6 | grant | `nova-secrets grant <--grant names> --to <machine> --pub <its seat key>` for each machine but this control node (its own seat holds the values; `UP GRANT <machine> SKIPPED`): the values written to that seat's grants file, encrypted to the seat's key (read from the machine over the tailnet with `age-keygen -y`, found in `nova_bin_dir` when `-- -e nova_bin_dir=...` sets it, then `~/.local/bin`; public half only, and pinned in `NOVA_SECRETS_PINS`) and the recovery key; your seat is never a recipient ([secrets guide](../nova-secrets/README.md)) | the seats exist now |
@@ -155,7 +160,20 @@ nova-fleet up --tools "$NOVA_TOOLS_VERSION" web-2=203.0.113.9
 The store machine is the row with the role `services`; no machine named becomes "first", and PostgreSQL and Redis are
 not installed again. A machine with a row is reached as its row's user at its row's address, and `join` runs its
 login play not at all (its login exists, and the policy lets no one in as root over the tailnet); a machine without one is
-reached as root at the address given, as on the first run.
+reached as its first login at the address given, as on the first run:
+
+```
+nova-fleet up --tools "$NOVA_TOOLS_VERSION" --first-login ubuntu --first-key ~/.ssh/provider_key web-2=203.0.113.9
+nova-fleet up --tools "$NOVA_TOOLS_VERSION" web-2=ubuntu@203.0.113.9 web-3=203.0.113.10
+```
+
+A machine that answers nowhere stops the run before any play, naming what was tried and the fix:
+`nova-fleet up: web-2 does not answer ssh: ... (tried root@203.0.113.9); run: ssh root@203.0.113.9 true  # a provider
+whose first login is not root: --first-login <login> or web-2=<login>@203.0.113.9, and --first-key <file> for its key`.
+A first login that answers and cannot sudo without a password stops it too, under `--check` as well:
+`nova-fleet up: web-2 answers ssh as ubuntu at 203.0.113.9, and ubuntu cannot sudo without a password (...): join
+makes the fleet's login through it; run: ssh -t ubuntu@203.0.113.9 sudo visudo -f /etc/sudoers.d/90-ubuntu  # the one
+line: ubuntu ALL=(ALL) NOPASSWD:ALL`.
 
 ## The plays
 
@@ -166,7 +184,7 @@ reached as root at the address given, as on the first run.
 | `health` | guards that let a Linux machine get itself out of trouble, a disk report and clean, and a Mac's Go build cache trim (bench, runner and services groups) | nothing |
 | `install` | install one nova-tools release, by tag, on the machines named (bench, runner and services groups) | `nova_tools_version` (a tag `vX.Y.Z`; no default) |
 | `netwatch` | a Linux machine that loses its network or the tailnet recovers by itself, and a hung one resets (bench, runner and services groups) | nothing; `-l` the machines |
-| `join` | a new machine joins the fleet: its row, its login, the tailnet, the tools a seat needs, its seat | the machine as the argument; its row's fields; `NOVA_PG_DSN` and `NOVA_PG_PASSWORD` in the environment, and `TAILSCALE_AUTHKEY` for a machine not on the tailnet (`up` mints it) |
+| `join` | a new machine joins the fleet: its row, its login, the tailnet, the tools a seat needs, its seat | the machine as the argument; its row's fields; `NOVA_PG_DSN` and `NOVA_PG_PASSWORD` in the environment, and `NOVA_FLEET_AUTHKEY` (`up` mints it) or `TAILSCALE_AUTHKEY` for a machine not on the tailnet |
 | `postgres` | the PostgreSQL nova-config keeps the fleet in, on each machine of the services group | `nova_seal_*` to seal its password |
 | `redis` | the Redis nova-bus talks to, on each machine of the services group | `nova_seal_*` to seal its password |
 | `runner-packages` | the packages a CI runner's tests need, from `nova_runner_packages` (a CI toolchain by default), on each machine of the bench and runner groups (a sprint card's gate needs what a CI job needs); packages only, nothing started. `up` does not run it | nothing; `-l` the machines |
@@ -365,7 +383,7 @@ LaunchAgent: a LaunchAgent runs only inside a logged-in GUI session, and a CI ma
 none. Only a run needs sudo for that file (`/Library/LaunchDaemons` is world-readable, so `--check` reads and diffs it
 as the login and finishes without a password). The daemon's `ProcessType` is `Interactive`: launchd throttles the CPU and
 I/O of a job with no `ProcessType` as background work, and a CI job inherits its runner's limits. Linux and macOS write the service files with sudo, so the login needs
-passwordless sudo: `join.yml` sets it up on Linux (`/etc/sudoers.d/90-nova-<login>`); on macOS set it at the console.
+passwordless sudo: `join.yml` sets it up on Linux (`/etc/sudoers.d/90-nova-<login>`); on macOS set it at the console. On Debian and Ubuntu the play installs `libpam-systemd` where `dpkg-query` says it is missing: without pam_systemd the login's user manager (`user@<uid>`) never starts, and no user unit can run.
 No command here asks for a sudo password: an interactive prompt is a stall for an AI running the play.
 A stop or restart ends the whole runner: on Linux the unit sets `RUNNER_MANUALLY_TRAP_SIG=1`, so the release's `run.sh`
 passes the stop to its listener as SIGINT and waits for it (a running job is cancelled by the runner, not killed), and
@@ -551,10 +569,11 @@ the row and reads the inventory again.
    which machine it is), else what the address answers at this first connection (trust on first use: this proves only that it is the
    same machine from here on). A nova-config row write plus a join admits a machine to the fleet: the tailnet-peer
    check and `nova_join_host_key` are the mitigation, and push access to the config store is the trust boundary.
-2. **The login** (Linux, connecting as root over the address given; skipped once the row's address is the tailnet
+2. **The login** (Linux, connecting as `nova_join_root_user` over the address given: root, or the provider's first
+   login, which the play becomes root through with sudo; skipped once the row's address is the tailnet
    name, since the login exists then and the policy lets no one in as root over the tailnet). The row's user: no
    password, in `nova_join_sudo_group` with
-   passwordless sudo (`/etc/sudoers.d/90-nova-<login>`, checked by `visudo` before it lands), root's
+   passwordless sudo (`/etc/sudoers.d/90-nova-<login>`, checked by `visudo` before it lands), the first login's
    `authorized_keys` copied to it (or the control node's file `nova_join_authorized_keys` names), linger on, the
    hostname set to the machine name. A darwin machine has no root login: set its login and sudo up at its console.
 3. **The tailnet**: `tailscale` (below). From here on the plays reach the machine over the tailnet.
@@ -607,9 +626,9 @@ running the same command again.
 | `nova_join_cores` | unset | the row's cores |
 | `nova_join_roles` | `bench` | the row's roles (`bench`, `runner`, `services`) |
 | `nova_join_actor` | `$USER` | nova-config's `--actor` |
-| `nova_join_root_user` | `root` | the login a fresh Linux machine is reached with (`up` passes the login it reached the machine as) |
+| `nova_join_root_user` | `root` | the login a fresh Linux machine is reached with: root, or a first login the play becomes root through with sudo (`up` passes the login it reached the machine as: `--first-login`, or `<name>=<login>@<address>`) |
 | `nova_join_sudo_group` | `sudo` | the group the login joins (`wheel` on Red Hat) |
-| `nova_join_authorized_keys` | root's on the machine | a file on the control node to install instead |
+| `nova_join_authorized_keys` | the first login's on the machine | a file on the control node to install instead |
 | `nova_join_hostname` | `true` | set the hostname to the machine name |
 | `nova_join_host_key` | unset | the machine's host key (`ssh-ed25519 AAAA...`) from the provider's console; without it the first connection's key is pinned |
 | `nova_tailnet` | `true` | `false` skips the tailnet checks (a private network); the rest of the join is unchanged |
@@ -664,7 +683,7 @@ one. On a Mac machine, open the Tailscale app once at its console and approve it
 3. Each machine named that is on the tailnet (the one peer whose MagicDNS label, the DNS name before its first dot,
    is the machine's name; two such peers stop the run, naming both, and nothing is tagged) given `tag:nova` (and `tag:runner` with `--runners`) the same way; for
    each that is not, a key from `POST /api/v2/tailnet/-/keys`: single use, pre-authorized, those tags, an hour. It is
-   held in memory and reaches only that machine's play, as `TAILSCALE_AUTHKEY` in its environment.
+   held in memory and reaches only that machine's play, as `NOVA_FLEET_AUTHKEY` in its environment.
 
 **What the play does, per machine:**
 
@@ -674,7 +693,7 @@ one. On a Mac machine, open the Tailscale app once at its console and approve it
    sudo and `--ssh`.
 2. `tailscale up --reset --auth-key=file:/dev/stdin --hostname=<machine> --advertise-tags=tag:nova[,tag:runner] --ssh`
    (`--ssh` on Linux and on the open-source `tailscaled`; the macOS app does not serve Tailscale SSH). `tag:runner` is added for a machine in
-   the `runner` group. The key comes from `TAILSCALE_AUTHKEY` in the control node's environment (`up` puts the one it minted there; run
+   the `runner` group. The key comes from `NOVA_FLEET_AUTHKEY` in the control node's environment (`up` puts the one it minted there), else `TAILSCALE_AUTHKEY` (run
    alone, give one) and reaches the
    machine on the command's stdin only. A machine already Running with the same tags is not joined again; a hostname or
    Tailscale SSH setting that differs is set in place with `tailscale set`, with no key.
@@ -682,7 +701,10 @@ one. On a Mac machine, open the Tailscale app once at its console and approve it
    --address <dns name>`, then reads the inventory again, so the firewall play, every run after it, the bus and the
    services reach the machine by that name.
 4. The firewall. Linux: ufw denies incoming on every interface but `tailscale0`, allows outgoing and UDP 41641
-   (Tailscale's direct connections). It is turned on only when the run itself comes in on the tailnet (or is local),
+   (Tailscale's direct connections), and each rule `nova_firewall_allow_in` lists (`ufw allow <rule>`, added when
+   `ufw --dry-run` does not say it exists). The list comes from `-e`, so a run that should keep a machine's rule
+   names that machine with it: `nova-fleet up ... web-2=203.0.113.9 -- -e '{"nova_firewall_allow_in": ["in on eno2
+   proto udp from 10.0.0.0/24"]}'`. A rule already added stays until `ufw delete allow <rule>` on the machine. It is turned on only when the run itself comes in on the tailnet (or is local),
    so it cannot cut its own connection; otherwise it stops with `FIREWALL HELD` and says why. macOS: the application
    firewall on (sudo: the login needs passwordless sudo, set at the console).
 
@@ -701,6 +723,7 @@ nova-secrets exec --only NOVA_PG_PASSWORD --store S --key K --as SEAT -- \
 | `nova_tailscale_record_address` | `true` | write the MagicDNS name into nova-config |
 | `nova_firewall` | `true` | ufw on Linux, the application firewall on macOS |
 | `nova_firewall_allow_udp` | `[41641]` | UDP ports open on every interface |
+| `nova_firewall_allow_in` | `[]` | more ufw allow rules (the words after `ufw allow`); anything but letters, digits, spaces and `. / : _ -` stops the play with `FIREWALL STOP` |
 | `nova_tailscale_apt_url` | `https://pkgs.tailscale.com/stable` | |
 
 **Check.** `TAILNET <machine> dns=<name> ip=<100.x> tags=tag:nova address=kept` and `FIREWALL <machine> ufw as

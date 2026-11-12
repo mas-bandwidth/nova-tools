@@ -7,9 +7,9 @@
 #   1. the machine row (control node): `nova-config machine add` where the row of nova_join_host is missing, then the
 #      inventory is read again so the plays below find it. A row that exists is never edited; a row whose user differs
 #      from nova_join_user stops the join by name.
-#   2. the login (Linux, as root over the address given; skipped once the address is the MagicDNS name): rsync (the control node pushes the secrets store with it), the row's user, no
-#      password, in nova_join_sudo_group with passwordless sudo (checked by visudo before it lands), root's
-#      authorized_keys copied to it (or the file nova_join_authorized_keys names on the control node), linger on, the
+#   2. the login (Linux, as root over the address given, or as the provider's first login with sudo; skipped once the address is the MagicDNS name): rsync (the control node pushes the secrets store with it), the row's user, no
+#      password, in nova_join_sudo_group with passwordless sudo (checked by visudo before it lands), the first
+#      login's authorized_keys copied to it (or the file nova_join_authorized_keys names on the control node), linger on, the
 #      hostname set to the inventory name.
 #   3. tailscale.yml: Tailscale installed and up with the adopter's tagged auth key, the MagicDNS name recorded as the
 #      machine's address, the firewall closed to everything but the tailnet. From here on the plays reach the machine
@@ -135,9 +135,11 @@
           JOIN ROW {{ nova_join_host }} user={{ nova_join_login }}
           {{ 'present' if join_row | length > 0 else ('WOULD-ADD (check: nothing written; the plays below match no host)' if ansible_check_mode else 'ADDED') }}
 
-- name: the login (Linux, as root)
+- name: the login (Linux, as root, or as the first login through sudo)
   hosts: "{{ nova_join_host | default('!all') }}"   # no machine named, no host
   gather_facts: false
+  # a provider's first login other than root (ubuntu, debian, ec2-user, admin) sudoes without a password: up checked it
+  become: "{{ nova_join_root_user != 'root' }}"
   vars:
     ansible_user: "{{ nova_join_root_user }}"
     join_login: "{{ hostvars['localhost']['nova_join_login'] }}"
@@ -166,6 +168,11 @@
     - name: the machine's facts, as root
       ansible.builtin.setup:
         gather_subset: [min]
+
+    # the first login's own keys: a cloud image's root keys often only print "log in as ubuntu" and close
+    - name: "the home of the first login {{ nova_join_root_user }}"
+      ansible.builtin.getent: { database: passwd, key: "{{ nova_join_root_user }}" }
+      check_mode: false
 
     - name: a Linux machine
       ansible.builtin.assert:
@@ -205,9 +212,9 @@
       register: join_ssh_dir
 
     # under --check a directory not made yet cannot take the copy; the task above already says it would be made
-    - name: "the authorized keys of {{ join_login }}: root's, or the control node's file nova_join_authorized_keys names"
+    - name: "the authorized keys of {{ join_login }}: the first login's, or the control node's file nova_join_authorized_keys names"
       ansible.builtin.copy:
-        src: "{{ nova_join_authorized_keys | default('/root/.ssh/authorized_keys') }}"
+        src: "{{ nova_join_authorized_keys | default(ansible_facts['getent_passwd'][nova_join_root_user][4] ~ '/.ssh/authorized_keys') }}"
         remote_src: "{{ nova_join_authorized_keys is not defined }}"
         dest: "{{ join_user.home | default('/home/' ~ join_login) }}/.ssh/authorized_keys"
         owner: "{{ join_login }}"

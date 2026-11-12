@@ -22,6 +22,11 @@ ExecStart={{ github_runner_dir }}/run.sh
 Restart=always
 RestartSec=10
 KillMode=mixed
+# The kernel's OOM killer taking one process of a job fails that job (its step sees the kill); it must not stop the
+# runner. systemd's default (OOMPolicy=stop) stopped the whole unit, so the runner left with "The runner has received a
+# shutdown signal" and every job on it was cancelled (amd-1, 2026-11-12T08:48:05Z: a global OOM killed a qemu guest
+# in one runner and a functional suite in the other, and both nightly jobs died as cancelled, not failed).
+OOMPolicy=continue
 KillSignal=SIGTERM
 TimeoutStopSec=5min
 
