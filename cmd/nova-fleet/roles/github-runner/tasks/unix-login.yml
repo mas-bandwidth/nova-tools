@@ -15,6 +15,15 @@
       the fleet login ({{ ansible_facts['user_id'] }}) is for Linux, a plain lower-case name other than root; macOS runs
       its runners as the login
 
+# Root changes the owner of what the CI rules' state directory holds (nova-ci-rules.sh apply): without the kernel's
+# hardlink protection a runner login could link a file of root's in there and be given it.
+- name: the kernel refuses links to files a login does not own
+  ansible.builtin.command: { argv: [sysctl, -n, fs.protected_hardlinks, fs.protected_symlinks] }
+  register: github_runner_protected
+  changed_when: false
+  failed_when: github_runner_protected.stdout_lines != ['1', '1']
+  check_mode: false
+
 - name: the kvm group
   ansible.builtin.command: getent group kvm
   register: github_runner_kvm
@@ -135,6 +144,7 @@
       # managed by Ansible (fleet/github-runners.yml)
       [Unit]
       Description=No ssh to the tailnet from the CI runner login
+      After=nftables.service
       Before=network-pre.target
       Wants=network-pre.target
 
@@ -159,6 +169,54 @@
     daemon_reload: "{{ github_runner_nft_unit is changed }}"
   become: true
   when: not ansible_check_mode
+
+# tailscaled dials for any login that reaches its socket (`tailscale nc <peer> 22`), as root, past the table above:
+# its runtime directory is closed to all but root and the fleet login's group, now and at every start of tailscaled.
+- name: tailscaled's drop-in directory
+  ansible.builtin.file: { path: /etc/systemd/system/tailscaled.service.d, state: directory, owner: root, group: root, mode: "0755" }
+  become: true
+
+- name: tailscaled's socket is the fleet login's and root's (at its next start)
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/tailscaled.service.d/90-nova-runner-login.conf
+    content: |
+      # managed by Ansible (fleet/github-runners.yml): a CI job's login cannot ask tailscaled to dial for it
+      [Service]
+      RuntimeDirectoryMode=0750
+      ExecStartPost=/usr/bin/chgrp {{ ansible_facts['user_gid'] }} /run/tailscale
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+  register: github_runner_ts_dropin
+  when: not (ansible_check_mode and 'ABSENT' in github_runner_existing.stdout)
+
+- name: systemd reads it (tailscaled is not restarted)
+  ansible.builtin.systemd: { daemon_reload: true }
+  become: true
+  when: github_runner_ts_dropin is changed and not ansible_check_mode
+
+- name: tailscaled's socket is the fleet login's and root's (now)
+  ansible.builtin.shell: |
+    set -eu
+    [ -d /run/tailscale ] || { echo ABSENT; exit 0; }
+    [ "$(stat -c '%a %g' /run/tailscale)" = "750 {{ ansible_facts['user_gid'] }}" ] && exit 0
+    chgrp {{ ansible_facts['user_gid'] }} /run/tailscale
+    chmod 0750 /run/tailscale
+    echo SET
+  args: { executable: /bin/sh }
+  become: true
+  register: github_runner_ts_dir
+  changed_when: "'SET' in github_runner_ts_dir.stdout"
+
+- name: the runner login cannot reach tailscaled
+  ansible.builtin.command: { argv: [runuser, -u, "{{ github_runner_user }}", --, test, -x, /run/tailscale] }
+  become: true
+  register: github_runner_ts_reach
+  changed_when: false
+  failed_when: github_runner_ts_reach.rc == 0
+  check_mode: false
+  when: not ansible_check_mode and 'ABSENT' not in github_runner_ts_dir.stdout
 
 - name: the kernel holds the refusal
   ansible.builtin.shell: nft list chain inet nova_runner_login output | grep -c 'tcp dport 22 reject'

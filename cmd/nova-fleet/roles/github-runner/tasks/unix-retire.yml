@@ -59,7 +59,7 @@
   no_log: true
   register: github_runner_removal
   failed_when: false
-  when: github_runner_deregister | bool and not ansible_check_mode
+  when: github_runner_deregister | bool and github_runner_stray_trusted | default(true) | bool and not ansible_check_mode
 
 - name: a failed removal says why (the token, if it ever appeared, redacted)
   ansible.builtin.fail:

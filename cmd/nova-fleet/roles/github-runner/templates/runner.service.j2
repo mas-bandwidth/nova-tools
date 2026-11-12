@@ -3,6 +3,11 @@
 Description=GitHub Actions runner {{ github_runner_name }} ({{ github_runner_path }})
 After=network-online.target
 Wants=network-online.target
+{% if github_runner_user != ansible_facts['user_id'] %}
+# a runner login of its own starts only once the table refusing it ssh on the tailnet is loaded (tasks/unix-login.yml)
+Requires=nova-runner-login-net.service
+After=nova-runner-login-net.service
+{% endif %}
 
 [Service]
 User={{ github_runner_user }}

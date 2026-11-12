@@ -39,11 +39,30 @@
       RUNNER-STRAY {{ inventory_hostname }} {{ github_runner_stray }} url={{ github_runner_stray_url or '-' }}: not in the
       record's runner_scopes; {{ 'a run retires it (check: nothing changed)' if ansible_check_mode else 'retiring it' }}
 
+# A runner login of its own wrote its .runner, so the url there is the login's choice: a removal token is asked only for
+# a url under an owner the record names, never for an org or repo a job picked. Otherwise the stray is only removed here.
+- name: a stray's url is trusted for a token
+  ansible.builtin.set_fact:
+    github_runner_stray_trusted: >-
+      {{ not (github_runner_other | bool)
+         or (github_runner_stray_url | regex_replace('^https://github\.com/([^/]+)(/.*)?$', '\1'))
+            in (nova_runner_scopes | default([]) | map(attribute='url') | map('regex_replace', '^https://github\.com/([^/]+)(/.*)?$', '\1') | list) }}
+
+- name: an untrusted stray url, named
+  ansible.builtin.debug:
+    msg: >-
+      RUNNER-STRAY-UNTRUSTED {{ inventory_hostname }} {{ github_runner_stray }} url={{ github_runner_stray_url }}: no owner
+      the record names; removed here, not from GitHub
+  when: github_runner_stray_url | length > 0 and not (github_runner_stray_trusted | bool)
+
 - name: a removal token for its url
   ansible.builtin.include_tasks: token.yml
-  when: github_runner_stray_url | length > 0 and github_runner_deregister | bool
+  when: github_runner_stray_url | length > 0 and github_runner_deregister | bool and github_runner_stray_trusted | bool
 
 - name: retire it
   ansible.builtin.include_tasks: unix-retire.yml
   vars:
     runner_index: "{{ github_runner_stray_index }}"
+
+- name: the next retire is trusted again
+  ansible.builtin.set_fact: { github_runner_stray_trusted: true }

@@ -97,6 +97,7 @@ func TestRunnerTmpdirAndTheRecordsEnvironmentRender(t *testing.T) {
 	service, plist, _ := renderRunnerUnits(t)
 	assert.Regexp(t, `\nEnvironment=TMPDIR=/[^\n]*/\.cache/runner-tmp\n`, service, "the login's home (its passwd entry, ansible's user_dir)")
 	assert.NotContains(t, plist, "TMPDIR")
+	assert.NotContains(t, service, "nova-runner-login-net", "the fleet login's runners need no table of their own")
 
 	service, plist, _ = renderRunnerUnits(t, "-e", `{"nova_runner_env": {"TMPDIR": "/scratch/t", "ImageOS": "ubuntu24", "PATH": "/sdk/bin:/bin"}}`)
 	assert.Contains(t, service, "\nEnvironment=PATH=/sdk/bin:/bin\nEnvironment=TMPDIR=/scratch/t\nEnvironment=ImageOS=ubuntu24\n")
@@ -112,4 +113,5 @@ func TestRunnerTmpdirAndTheRecordsEnvironmentRender(t *testing.T) {
 	assert.Contains(t, service, "\nUser=ghrunner\n")
 	assert.Contains(t, service, "\nEnvironment=TMPDIR=/home/ghrunner/.cache/runner-tmp\n")
 	assert.Contains(t, service, "\nEnvironment=PATH=/home/ghrunner/.local/bin:/usr/local/sbin:")
+	assert.Contains(t, service, "\nRequires=nova-runner-login-net.service\nAfter=nova-runner-login-net.service\n")
 }

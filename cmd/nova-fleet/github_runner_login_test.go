@@ -164,6 +164,28 @@ func TestRunnerLoginReachesNoTailnetSSH(t *testing.T) {
 	assert.Contains(t, unit, "ExecStart=/usr/sbin/nft -f /etc/nova-runner-login.nft")
 	assert.Contains(t, unit, "WantedBy=multi-user.target")
 	assert.Equal(t, "github_runner_nft_rules.stdout | trim != '2'", asText(runnerTask(t, tasks, "the kernel holds the refusal")["failed_when"]))
+
+	// tailscaled dials for any login that reaches its socket, as root and past the table: its directory is closed
+	dropin := asText(runnerTask(t, tasks, "tailscaled's socket is the fleet login's and root's (at its next start)")["ansible.builtin.copy"].(map[string]any)["content"])
+	assert.Contains(t, dropin, "RuntimeDirectoryMode=0750\n")
+	assert.Contains(t, dropin, "ExecStartPost=/usr/bin/chgrp {{ ansible_facts['user_gid'] }} /run/tailscale\n")
+	now := asText(runnerTask(t, tasks, "tailscaled's socket is the fleet login's and root's (now)")["ansible.builtin.shell"])
+	assert.Contains(t, now, "chmod 0750 /run/tailscale")
+	reach := runnerTask(t, tasks, "the runner login cannot reach tailscaled")
+	assert.Equal(t, []any{"runuser", "-u", "{{ github_runner_user }}", "--", "test", "-x", "/run/tailscale"}, reach["ansible.builtin.command"].(map[string]any)["argv"])
+	assert.Equal(t, "github_runner_ts_reach.rc == 0", asText(reach["failed_when"]))
+}
+
+// A runner login of its own wrote its strays' .runner files: a removal token is asked only for a url under an owner the
+// record names.
+func TestRunnerStrayURLIsTrustedOnlyUnderTheRecordsOwners(t *testing.T) {
+	t.Parallel()
+	tasks := roleTaskFile(t, "record-retire.yml")
+	trust := asText(runnerTask(t, tasks, "a stray's url is trusted for a token")["ansible.builtin.set_fact"].(map[string]any)["github_runner_stray_trusted"])
+	assert.Contains(t, trust, "not (github_runner_other | bool)")
+	assert.Contains(t, trust, "nova_runner_scopes")
+	assert.Contains(t, asText(runnerTask(t, tasks, "a removal token for its url")["when"]), "github_runner_stray_trusted | bool")
+	assert.Less(t, taskIndex(tasks, "retire it"), taskIndex(tasks, "the next retire is trusted again"))
 }
 
 // Root's apply writes only in a runner directory its owner chose: a link on the way there must be root's or the
