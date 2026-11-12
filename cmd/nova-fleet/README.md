@@ -825,7 +825,9 @@ the row and reads the inventory again.
    is a `NOTE`, not a failure.
 9. **The toolchain** (a bench or runner): `runner-packages`, `sdk-toolchain` (Linux and macOS), then `audit` against
    `runner-requirements.tsv`, which stops the join, `FLEET-AUDIT FAILED host=<machine> missing=<names>`, on anything
-   still missing. A machine of neither group skips this step.
+   still missing (`join --check` installs nothing, so there it prints `FLEET-AUDIT WOULD-FAIL` instead). A machine of
+   neither group skips this step; one on a platform the SDK has no pins for (Windows, Linux arm64, an Intel Mac) skips
+   `sdk-toolchain` by name.
 
 A Windows machine gets 1 and 3 (and `runner-packages` with nothing to install, as a runner).
 
