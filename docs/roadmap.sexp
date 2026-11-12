@@ -23,6 +23,7 @@
      ("reserve-shared-process-group" "nova-reserve: several runs in one terminal process group (make -j, a script, a PTY harness) share the terminal and job-control stops; JobControl.tla is extended to more than one run first")
      ("sandbox-darwin-link-chains" "nova-sandbox on macOS: a --read or --write reached through a chain of symlinks or a symlinked ancestor is granted as a one-hop link is")
      ("bus-service-path" "Idea, the owner's decision: nova-bus hook --service carries the caller's PATH into the unit for --exec, as it does for --codex-thread")
+     ("machine-firewall-allow-in" "nova-config machine records carry a per-machine firewall allow-in list that the tailscale role reads, so a machine's extra ufw rule (space2/space3: in on eno2 proto udp from 10.77.0.0/24) no longer depends on passing -e nova_firewall_allow_in on each up or tailscale run")
      )
    :columns (("done" "done"))
    :cells (
@@ -43,6 +44,7 @@
      ("reserve-shared-process-group" "done" "t-reserve-shared-process-group")
      ("sandbox-darwin-link-chains" "done" "t-sandbox-darwin-link-chains")
      ("bus-service-path" "done" "t-bus-service-path")
+     ("machine-firewall-allow-in" "done" "t-machine-firewall-allow-in")
      ))
   (:id "t-reserve-slots-are-cores" :type :task :title "nova-reserve slots bound CPU, so N one-slot jobs cannot saturate a bench" :state :todo)
   (:id "t-fleet-placement" :type :task :title "Place one heavy job on the quietest bench fleet-wide" :state :todo)
@@ -60,4 +62,5 @@
   (:id "t-cairn-concurrent-first-open" :type :task :title "nova-cairn open: two first opens of one session at the same time settle on one open record; CairnStore.tla's Open becomes a header step and a log step first, then the code follows" :state :todo)
   (:id "t-reserve-shared-process-group" :type :task :title "nova-reserve: several runs in one terminal process group (make -j, a script, a PTY harness) share the terminal and job-control stops; JobControl.tla is extended to more than one run first" :state :todo)
   (:id "t-sandbox-darwin-link-chains" :type :task :title "nova-sandbox on macOS: a --read or --write reached through a chain of symlinks or a symlinked ancestor is granted as a one-hop link is" :state :todo)
-  (:id "t-bus-service-path" :type :task :title "Idea, the owner's decision: nova-bus hook --service carries the caller's PATH into the unit for --exec, as it does for --codex-thread" :state :todo)))
+  (:id "t-bus-service-path" :type :task :title "Idea, the owner's decision: nova-bus hook --service carries the caller's PATH into the unit for --exec, as it does for --codex-thread" :state :todo)
+  (:id "t-machine-firewall-allow-in" :type :task :title "nova-config machine records carry a per-machine firewall allow-in list that the tailscale role reads, so a machine's extra ufw rule (space2/space3: in on eno2 proto udp from 10.77.0.0/24) no longer depends on passing -e nova_firewall_allow_in on each up or tailscale run" :state :todo)))
