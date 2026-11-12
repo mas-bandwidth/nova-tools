@@ -410,7 +410,7 @@ with `sshd -T`), refuses the login's own connections to ssh on any tailnet addre
 fails the run unless `sudo -l -U <login>` says it is not allowed to run sudo. The runners'
 directories, release cache and `TMPDIR` are then in its home, written as the login (root follows no link it could
 plant there; root's only act there is deleting a runner directory by name), and the runners' default `PATH` starts
-with its own `~/.local/bin`, never the fleet login's. A runner whose unit runs it from another directory (the fleet
+with `/opt/nova/bin` (`nova_shared_dir`): root's copies of the fleet login's tools, which it runs and cannot change (made here, refreshed by `install` on a runner whose runners are another login's). Its `~/sdk` names `/opt/nova/sdk`, the fleet login's shared SDK, once `sdk-toolchain -e nova_sdk_shared=true` has put one there, so a workflow's `$HOME/sdk` works for it as for the fleet login. A runner whose unit runs it from another directory (the fleet
 login's, before the switch) moves: `RUNNER-MOVE <runner> from=<dir> to=<dir> user=<login>`, then, once its job ends,
 its unit stops, it registers in the new directory under the same name (`config.sh --replace`, with a fresh token), the
 unit restarts it there and the old directory is deleted; a move that fails starts the runner where it ran and fails
@@ -1281,6 +1281,7 @@ version bump installs the new directory beside the old and moves the links.
 | Variable | Default | |
 |---|---|---|
 | `nova_sdk_dir` | `<home>/sdk` | the SDK directory, used by its real path |
+| `nova_sdk_shared` | `false` | Linux: the SDK in `/opt/nova/sdk` (`nova_shared_dir`, made by `github-runners` with a runner login of its own), the login's and readable by every login, with `nova_sdk_dir` a link to it, so a runner login of its own runs the same tools. The shared SDK is installed fresh (its files name their own path) while `~/sdk` stays in use; at the end of the run `~/sdk` becomes a link to it (`SDK-TOOLCHAIN SHARE`) and the old one is deleted. Nothing in it is left writable by other logins, and a run fails on anything in it they cannot read; an old `~/sdk` holding what the shared one lacks (an older version a link names, a directory put there by hand) stays in use and the run fails naming it (`SDK-TOOLCHAIN SHARE-HELD`) |
 | `nova_sdk_tools` | the toolchain above | one entry per tool: `name`, `version`, `dir`, `probe`, `links`, `kind`, `build`, `alias`, `wrapper`, `run`, and a `linux` and/or `darwin` pin (a pin's own `build` replaces the tool's on that platform); a list given with `-e` replaces it whole |
 | `nova_sdk_dotnet_more` | the .NET 8.0 SDK | more SDKs in the dotnet directory, each a `version` and a `url` and `sha512` per platform |
 | `nova_sdk_rustup` | rustup 1.29.1; `1.98.1` with `clippy` and `rustfmt`, and `nightly-2026-10-01` | `version`, the `linux` rustup-init `url`, `sha256` and `host`, the `toolchains` (each `name`, `components`, `targets`; the first is on PATH) and the commands `links` puts in `~/sdk/bin` |

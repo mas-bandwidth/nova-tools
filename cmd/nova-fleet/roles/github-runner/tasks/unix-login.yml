@@ -78,6 +78,32 @@
   become: true
   when: not (ansible_check_mode and 'ABSENT' in github_runner_existing.stdout)
 
+# What its jobs run, outside the fleet login's home: root's copies of the tools (the runners' default PATH starts
+# there), and ~/sdk naming the shared SDK where sdk-toolchain put one (nova_sdk_shared), so a workflow's $HOME/sdk
+# works as it does for the fleet login.
+- name: the shared tools
+  ansible.builtin.include_tasks: "{{ role_path }}/../nova-tools-install/tasks/shared.yml"
+
+- name: is there a shared SDK
+  ansible.builtin.stat: { path: "{{ nova_shared_dir }}/sdk/bin" }
+  register: github_runner_shared_sdk
+
+- name: the runner login's ~/sdk names it
+  ansible.builtin.shell: |
+    set -eu
+    cd {{ github_runner_home | quote }}
+    [ "$(readlink sdk 2>/dev/null)" = {{ (nova_shared_dir ~ '/sdk') | quote }} ] && exit 0
+    if [ -e sdk ] && [ ! -L sdk ]; then echo "~/sdk is not a link: left as it is" >&2; exit 1; fi
+    ln -sfn {{ (nova_shared_dir ~ '/sdk') | quote }} sdk
+    echo SET
+  args: { executable: /bin/sh }
+  become: true
+  become_user: "{{ github_runner_user }}"
+  vars: { ansible_pipelining: true }
+  register: github_runner_sdk_link
+  changed_when: "'SET' in github_runner_sdk_link.stdout"
+  when: github_runner_shared_sdk.stat.isdir | default(false) and not ansible_check_mode
+
 - name: sshd refuses the runner login
   ansible.builtin.copy:
     dest: /etc/ssh/sshd_config.d/90-nova-runner-login.conf

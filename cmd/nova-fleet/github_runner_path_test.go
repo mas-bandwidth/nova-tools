@@ -44,7 +44,7 @@ func TestRunnerPathStartsWithTheToolsDir(t *testing.T) {
 	assert.Equal(t, "{{ github_runner_bin_dir }}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin",
 		asText(d["github_runner_default_path_linux"]))
 	// the fleet login's runners find the tools in nova_bin_dir; a runner login of its own never looks in the fleet login's home
-	assert.Equal(t, "{{ nova_bin_dir if github_runner_user == ansible_facts['user_id'] else github_runner_home ~ '/.local/bin' }}",
+	assert.Equal(t, "{{ nova_bin_dir if github_runner_user == ansible_facts['user_id'] else nova_shared_dir ~ '/bin' }}",
 		asText(d["github_runner_bin_dir"]))
 	// Homebrew's prefix (/opt/homebrew on Apple silicon, /usr/local on Intel) comes before the system's, so a job finds
 	// the formulae installed there (cmake, pkg-config) and Homebrew's python3, whose ctypes finds Homebrew's libraries.

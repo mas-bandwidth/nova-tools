@@ -54,8 +54,8 @@ github_runner_tmpdir: "{{ github_runner_home }}/.cache/runner-tmp"
 # system's. Linux: systemd's list and the Debian/Ubuntu login tail runners had before; macOS: Homebrew's prefix
 # (/opt/homebrew on Apple silicon, /usr/local on Intel) before the system's, as nova_service_path has it.
 # github_runner_bin_dir: nova_bin_dir (group_vars/all.yml, where install.yml puts the tools) for the fleet login's
-# runners; a runner login of its own gets its own ~/.local/bin, never a directory of the fleet login's.
-github_runner_bin_dir: "{{ nova_bin_dir if github_runner_user == ansible_facts['user_id'] else github_runner_home ~ '/.local/bin' }}"
+# runners; a runner login of its own gets root's copies in nova_shared_dir/bin, never a directory of the fleet login's.
+github_runner_bin_dir: "{{ nova_bin_dir if github_runner_user == ansible_facts['user_id'] else nova_shared_dir ~ '/bin' }}"
 github_runner_default_path_linux: "{{ github_runner_bin_dir }}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin"
 github_runner_default_path_darwin: "{{ nova_bin_dir }}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 

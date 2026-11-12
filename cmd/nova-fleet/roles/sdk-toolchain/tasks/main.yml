@@ -5,9 +5,13 @@
 # and gh entries that came before it are removed, each by its exact form). A tool whose probe exists is
 # adopted as it is. Runs as the login: nothing here becomes root. sdk_dir is nova_sdk_dir with every symlink followed,
 # and nothing else names nova_sdk_dir.
+- name: the shared SDK (nova_sdk_shared)
+  ansible.builtin.include_tasks: shared.yml
+  when: nova_sdk_shared | bool
+
 - name: the SDK directory's real path
   ansible.builtin.command:
-    argv: ["{{ ansible_facts['python']['executable'] }}", -I, -c, "import os, sys; print(os.path.realpath(sys.argv[1]))", "{{ nova_sdk_dir }}"]
+    argv: ["{{ ansible_facts['python']['executable'] }}", -I, -c, "import os, sys; print(os.path.realpath(sys.argv[1]))", "{{ (nova_shared_dir ~ '/sdk') if nova_sdk_shared | bool else nova_sdk_dir }}"]
   register: sdk_dir_real
   changed_when: false
   check_mode: false
@@ -311,3 +315,8 @@
       {{ ('would-install=' ~ (sdk_missing | length)) if ansible_check_mode else ('installed=' ~ (sdk_installed.results | default([]) | select('changed') | list | length)) }}
       dotnet={{ (sdk_runtimes.stdout_lines | default([]) | select('match', '^Microsoft.NETCore.App ') | map('split', ' ') | map(attribute=1) | join(',')) or '-' }}
   changed_when: false
+
+# nova_sdk_shared: the run reached here, so every tool is in the shared SDK: nova_sdk_dir becomes a link to it.
+- name: nova_sdk_dir names the shared SDK (nova_sdk_shared)
+  ansible.builtin.include_tasks: link.yml
+  when: nova_sdk_shared | bool
