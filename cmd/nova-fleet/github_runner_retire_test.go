@@ -52,3 +52,31 @@ func TestRunnerRunIsTheRecordsWithoutAURL(t *testing.T) {
 	assert.Equal(t, "record.yml", asText(main[1]["ansible.builtin.include_tasks"]))
 	assert.Equal(t, "github_runner_url is not defined", asText(main[1]["when"]))
 }
+
+// A held runner (github_runner_hold, e.g. one running a multi-hour model check nothing resumes) is neither waited on nor
+// restarted or reloaded, on Linux and on macOS; the run says RUNNER-HELD so the restart is owed, and by default
+// nothing is held.
+func TestRunnerHeldIsNeitherWaitedOnNorRestarted(t *testing.T) {
+	t.Parallel()
+	runner := roleTaskFile(t, "unix-runner.yml")
+	for _, name := range []string{
+		"the job it is running ends before the changed unit restarts it (Linux)",
+		"the job it is running ends before the changed daemon reloads it (macOS)",
+		"load the daemon, or reload it where its file changed (macOS)",
+	} {
+		assert.Contains(t, asText(runnerTask(t, runner, name)["when"]), "not in github_runner_hold", name)
+	}
+	restart := runnerTask(t, runner, "the service is enabled at boot and running (Linux)")
+	assert.Contains(t, asText(restart["ansible.builtin.systemd"].(map[string]any)["state"]), "not in github_runner_hold")
+	for _, name := range []string{
+		"a held runner is not waited on or restarted (Linux)",
+		"a held runner is not waited on or reloaded (macOS)",
+	} {
+		held := runnerTask(t, runner, name)
+		assert.Contains(t, asText(held["ansible.builtin.debug"].(map[string]any)["msg"]), "RUNNER-HELD", name)
+		assert.Contains(t, asText(held["when"]), "in github_runner_hold", name)
+	}
+	d, err := os.ReadFile("roles/github-runner/defaults/main.yml")
+	require.NoError(t, err)
+	assert.Contains(t, string(d), "\ngithub_runner_hold: []\n")
+}

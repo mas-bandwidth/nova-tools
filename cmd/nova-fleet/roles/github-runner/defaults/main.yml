@@ -70,6 +70,11 @@ github_runner_deregister: true
 github_runner_idle_retries: 240
 github_runner_idle_delay: 15
 
+# Runner directories (basenames, e.g. mas-bandwidth-2) held this run: a runner busy with a job nothing can resume
+# (a multi-hour model check) is neither waited on nor restarted; its changed file is written and the run says
+# RUNNER-HELD, so the restart is owed to a later run. -e '{"github_runner_hold": ["mas-bandwidth-2"]}'
+github_runner_hold: []
+
 # gh on the control node, logged in (gh auth login) with admin on the repository or organization:
 # it asks GitHub for the registration and removal tokens (tasks/token.yml), and after a run reads
 # GitHub's list of runners, every wanted runner online (the RUNNERS receipt); false skips that

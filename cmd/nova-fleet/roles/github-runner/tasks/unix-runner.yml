@@ -205,11 +205,21 @@
   register: github_runner_dropins
   when: ansible_facts['system'] == 'Linux'
 
+# A held runner (github_runner_hold names its directory) keeps running what it runs: its changed unit or daemon file is
+# written, and nothing waits on it or restarts it; the run says RUNNER-HELD and the restart is owed to a later run.
+- name: a held runner is not waited on or restarted (Linux)
+  ansible.builtin.debug:
+    msg: "RUNNER-HELD {{ inventory_hostname }} {{ github_runner_dir | basename }}: its file changed; the restart is owed to a later run"
+  when: >-
+    ansible_facts['system'] == 'Linux' and not ansible_check_mode and (github_runner_dir | basename) in github_runner_hold
+    and (github_runner_unit_file is changed or github_runner_dropins is changed)
+
 - name: the job it is running ends before the changed unit restarts it (Linux)
   ansible.builtin.include_tasks: wait-idle.yml
   when: >-
     ansible_facts['system'] == 'Linux' and not ansible_check_mode
     and (github_runner_unit_file is changed or github_runner_dropins is changed) and runner_index not in github_runner_need
+    and (github_runner_dir | basename) not in github_runner_hold
 
 - name: systemd reads the unit (Linux)
   ansible.builtin.systemd: { daemon_reload: true }
@@ -222,7 +232,9 @@
   ansible.builtin.systemd:
     name: "{{ github_runner_unit }}.service"
     enabled: true
-    state: "{{ 'restarted' if (github_runner_unit_file is changed or github_runner_dropins is changed) else 'started' }}"
+    state: >-
+      {{ 'restarted' if ((github_runner_unit_file is changed or github_runner_dropins is changed)
+      and (github_runner_dir | basename) not in github_runner_hold) else 'started' }}
   become: true
   when: ansible_facts['system'] == 'Linux' and not (ansible_check_mode and github_runner_unit_file is changed)
 
@@ -253,11 +265,19 @@
   check_mode: false
   when: ansible_facts['system'] == 'Darwin'
 
+- name: a held runner is not waited on or reloaded (macOS)
+  ansible.builtin.debug:
+    msg: "RUNNER-HELD {{ inventory_hostname }} {{ github_runner_dir | basename }}: its file changed; the reload is owed to a later run"
+  when: >-
+    ansible_facts['system'] == 'Darwin' and not ansible_check_mode and github_runner_loaded.rc == 0
+    and github_runner_unit_file is changed and (github_runner_dir | basename) in github_runner_hold
+
 - name: the job it is running ends before the changed daemon reloads it (macOS)
   ansible.builtin.include_tasks: wait-idle.yml
   when: >-
     ansible_facts['system'] == 'Darwin' and not ansible_check_mode
     and github_runner_loaded.rc == 0 and github_runner_unit_file is changed
+    and (github_runner_dir | basename) not in github_runner_hold
 
 - name: load the daemon, or reload it where its file changed (macOS)
   ansible.builtin.shell: |
@@ -273,4 +293,6 @@
   become: "{{ not ansible_check_mode }}"
   register: github_runner_boot
   changed_when: "'BOOTSTRAPPED' in github_runner_boot.stdout"
-  when: ansible_facts['system'] == 'Darwin' and (github_runner_loaded.rc != 0 or github_runner_unit_file is changed)
+  when: >-
+    ansible_facts['system'] == 'Darwin' and (github_runner_loaded.rc != 0
+    or (github_runner_unit_file is changed and (github_runner_dir | basename) not in github_runner_hold))
