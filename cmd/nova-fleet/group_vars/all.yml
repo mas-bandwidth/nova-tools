@@ -127,6 +127,7 @@ nova_runner_packages:
     # analysis, proof and dynamic checking
     - cppcheck
     - valgrind
+    - strace
     - cbmc
     - cadical
     - z3
