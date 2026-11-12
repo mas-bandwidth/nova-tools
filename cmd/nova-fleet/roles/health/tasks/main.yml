@@ -366,12 +366,38 @@
   changed_when: false
   check_mode: false
 
+# An Intel 700-series NIC (X710, XL710, XXV710, X722) runs the in-tree i40e: AF_XDP zero copy is the mode, and Intel's
+# out-of-tree driver compiles it out (its src/i40e.h undefines HAVE_AF_XDP_ZC_SUPPORT for SUSE, Ubuntu and every kernel
+# >= 5.2; the fork mas-bandwidth/ethernet-linux-i40e is upstream 2.30.18 unchanged). Reported, never changed: each i40e
+# port's driver build (in-tree when modinfo's path is under kernel/, else out-of-tree) and its version, and zc=yes when
+# the loaded module carries the zero-copy path (i40e_xsk_wakeup in /proc/kallsyms). Nothing printed without such a NIC.
+- name: the i40e driver of an Intel 700-series NIC, and whether AF_XDP zero copy is there
+  ansible.builtin.shell: |
+    set -u
+    out=""
+    for n in /sys/class/net/*; do
+      [ "$(basename "$(readlink -f "$n/device/driver" 2>/dev/null)")" = i40e ] || continue
+      i=$(basename "$n")
+      v=$(ethtool -i "$i" 2>/dev/null | sed -n 's/^version: //p')
+      out="$out $i=${v:-?}"
+    done
+    [ -n "$out" ] || exit 0
+    case "$(modinfo -n i40e 2>/dev/null)" in */kernel/drivers/*) b=in-tree ;; "") b=? ;; *) b=out-of-tree ;; esac
+    grep -q ' i40e_xsk_wakeup' /proc/kallsyms && zc=yes || zc=no
+    echo "i40e=$b zc=$zc ports=$(echo $out | tr ' ' ',')"
+  args: { executable: /bin/bash }
+  become: true
+  register: health_i40e
+  changed_when: false
+  check_mode: false
+
 - name: the receipt
   vars:
     health_trimmed: "{{ health_trim.results | default([]) | selectattr('stdout', 'defined') | map(attribute='stdout') | list }}"
   ansible.builtin.debug:
     msg: >-
       HEALTH {{ inventory_hostname }} {{ health_show.stdout | trim }}
+      {{- (' ' ~ health_i40e.stdout | trim) if health_i40e.stdout | default('') | trim else '' }}
       {{- (' ' ~ health_trimmed | join(' ')) if health_trimmed else '' }}
       {{- ' (check: nothing changed)' if ansible_check_mode else '' }}
 

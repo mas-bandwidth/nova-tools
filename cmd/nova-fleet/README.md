@@ -999,7 +999,11 @@ daemon's environment says `WOULD` and removes nothing.
 | `nova_health_disk_clean_age_min`, `nova_health_disk_clean_pressed_min`, `nova_health_disk_clean_on_calendar` | `2880`, `360`, hourly | minutes |
 
 **Check.** `HEALTH <machine> journal=persistent panic=10 ssh_oom=0 slice_max=<bytes> user_memlock=<bytes> | DISK <machine> root=<n>%
-swap=<n>%`. **Rollback.** Remove the file of the guard (named above), then `systemctl daemon-reload` and restart the
+swap=<n>% [i40e=in-tree|out-of-tree zc=yes|no ports=<iface>=<version>,...]`: the last part only on a machine with an Intel
+700-series NIC, reported and never changed. Those machines run the in-tree i40e: AF_XDP zero copy is the mode, and Intel's
+out-of-tree driver compiles it out (`src/i40e.h` undefines `HAVE_AF_XDP_ZC_SUPPORT` for SUSE, Ubuntu and kernels >= 5.2;
+the fork mas-bandwidth/ethernet-linux-i40e is upstream 2.30.18 unchanged). `zc=yes` means the loaded module carries the
+zero-copy path (`i40e_xsk_wakeup` in `/proc/kallsyms`). **Rollback.** Remove the file of the guard (named above), then `systemctl daemon-reload` and restart the
 daemon it configures (`systemd-journald`, `ssh`) or `sysctl --system`; `systemctl disable --now nova-disk-report.timer`.
 
 ## netwatch
