@@ -369,7 +369,9 @@ it is offline (its machine side is gone) and left when online, each printing `GI
 drop-in directory beside it (`<unit>.service.d`) is removed. Before a runner is stopped or restarted onto a changed
 unit, the job it is running ends (`tasks/wait-idle.yml`: a `Runner.Worker` from its `bin`, polled every
 `github_runner_idle_delay` (15) seconds `github_runner_idle_retries` (240) times; still busy then, the run fails and
-the runner keeps running). `-e github_runner_url` with `-e github_runner_scope` is a run for that one url instead, with
+the runner keeps running). A Linux unit has `OOMPolicy=continue` and `MemoryMax=<github_runner_memory_max_pct>%` (50;
+0 for none): a runaway job is killed by the OOM killer inside its own runner and fails there, and the runner, the
+machine's other runners and its bench keep running. `-e github_runner_url` with `-e github_runner_scope` is a run for that one url instead, with
 `runners` (or `runner_count`) as its count; the machine's other runners are left as they are.
 
 **Labels:** a runner's labels are

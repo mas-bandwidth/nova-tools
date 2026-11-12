@@ -70,6 +70,13 @@ github_runner_deregister: true
 github_runner_idle_retries: 240
 github_runner_idle_delay: 15
 
+# Each Linux runner's unit may hold at most this share of the machine's memory (systemd MemoryMax=<pct>%, relative to
+# physical memory, the WSL VM's on a Windows host); 0 leaves it unbounded. One runaway job then meets the kernel's OOM
+# killer inside its own runner and fails there (OOMPolicy=continue keeps the runner), instead of exhausting the machine
+# and taking every other runner's job and the bench with it. Seen 2026-11-11/12: single CI processes at 25 GB on 30 GB
+# machines and at 94 to 127 GB on a 124 GB one, each a global OOM. No swap file helps there: a runaway fills it too.
+github_runner_memory_max_pct: 50
+
 # gh on the control node, logged in (gh auth login) with admin on the repository or organization:
 # it asks GitHub for the registration and removal tokens (tasks/token.yml), and after a run reads
 # GitHub's list of runners, every wanted runner online (the RUNNERS receipt); false skips that
