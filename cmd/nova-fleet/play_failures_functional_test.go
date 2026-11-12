@@ -5,6 +5,7 @@ package main
 import (
 	"cmp"
 	"context"
+	"maps"
 	"os"
 	"os/exec"
 	"os/user"
@@ -75,7 +76,13 @@ func runTasksLocally(t *testing.T, tasks []map[string]any, vars map[string]any, 
 	for name, script := range fakes {
 		require.NoError(t, os.WriteFile(filepath.Join(bin, name), []byte("#!/bin/sh\n"+script+"\n"), 0o755))
 	}
-	play := []map[string]any{{"hosts": "localhost", "connection": "local", "gather_facts": true, "gather_subset": []string{"min"}, "vars": vars, "tasks": tasks}}
+	// the github-runner role's main.yml sets whose runners these are before any of its task files runs: the fleet
+	// login's (this one), unless a test says otherwise
+	me, err := user.Current()
+	require.NoError(t, err)
+	all := map[string]any{"github_runner_other": false, "github_runner_user": me.Username}
+	maps.Copy(all, vars)
+	play := []map[string]any{{"hosts": "localhost", "connection": "local", "gather_facts": true, "gather_subset": []string{"min"}, "vars": all, "tasks": tasks}}
 	b, err := yaml.Marshal(play)
 	require.NoError(t, err)
 	file := filepath.Join(dir, "play.yml")
