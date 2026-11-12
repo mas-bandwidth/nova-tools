@@ -15,6 +15,7 @@
 #
 # The parts below are pure functions of their arguments and stdin, so the unit tests call them with no clock:
 #   push-ok REF, limited EVENT, overdue NOW DEADLINE, limit-text SECONDS, on-battery < `pmset -g batt` output,
+#   cgroup-of < /proc/self/cgroup, sample PEAK ANON DIR (a cgroup directory: memory.current, memory.stat),
 #   ancestor PID NAME < "pid ppid comm" lines, tree ROOT EXCLUDE < "pid ppid command" lines,
 #   env-edit HOOKDIR < .env
 set -u
@@ -167,6 +168,8 @@ started() {
 		exit 1
 	fi
 	chain "${NOVA_CI_CHAIN_JOB_STARTED:-}" || exit $?
+	# measuring never fails or delays a job: any error inside is dropped
+	(measure_start) >/dev/null 2>&1 || true
 	if ! limited "$event"; then
 		echo "CI rule: a $event job has no time limit"
 		exit 0
@@ -185,6 +188,8 @@ started() {
 completed() {
 	disarm
 	rc=0
+	# the job's measurement lines; measuring never changes the job's result
+	(measure_end) 2>/dev/null || true
 	chain "${NOVA_CI_CHAIN_JOB_COMPLETED:-}" || rc=$?
 	if [ -e "$state/fired" ]; then
 		rm -f "$state/fired"
@@ -192,6 +197,89 @@ completed() {
 		exit 1
 	fi
 	exit $rc
+}
+
+# ---- the job's measurement (memory and load), printed into the job's log at its end and appended to the host's
+# ci-jobs log (NOVA_CI_JOBS_LOG, default ~/.local/state/nova/ci-jobs.log). It sets the runner caps from data:
+#   MEMORY-PEAK host runner repo workflow job run secs peak_mib anon_mib   every job on Linux: the largest memory.current
+#               and memory.stat anon of the runner's cgroup, sampled each second while the job ran
+#   JOB-LOAD    the same fields, load1 holders why                           a job that ran over 100 s: the machine's load
+#               and its nova-reserve holders at the job's end
+# Nothing here can fail or hold a job: started and completed call it in a subshell whose failure is dropped.
+
+# cgroup-of < /proc/self/cgroup: the cgroup v2 path of the caller ("0::<path>").
+cgroup_of() { sed -n 's/^0::\(.*\)$/\1/p' | head -n 1; }
+
+# sample PEAK ANON DIR: the larger of PEAK and DIR/memory.current, and of ANON and DIR/memory.stat's anon; fails when
+# DIR has no memory.current.
+sample() {
+	cur=$(cat "$3/memory.current" 2>/dev/null) || return 1
+	anon=$(awk '$1 == "anon" { print $2; exit }' "$3/memory.stat" 2>/dev/null)
+	p=$1 a=$2
+	[ "${cur:-0}" -gt "$p" ] && p=$cur
+	[ "${anon:-0}" -gt "$a" ] && a=$anon
+	echo "$p $a"
+}
+
+# sampler DIR OUT WORKER: (internal) once a second, the job's maxima so far into OUT, until DIR or the job's
+# Runner.Worker (WORKER) is gone, or it is stopped.
+sampler() {
+	p=0 a=0
+	while kill -0 "$3" 2>/dev/null && v=$(sample "$p" "$a" "$1"); do
+		p=${v% *} a=${v#* }
+		echo "$v" >"$2.tmp" && mv "$2.tmp" "$2"
+		sleep 1
+	done
+}
+
+stop_sampler() {
+	if [ -r "$state/sampler.pid" ]; then
+		s=$(cat "$state/sampler.pid")
+		case $(ps -o command= -p "$s" 2>/dev/null) in *nova-ci-rules.sh\ sampler*) kill "$s" 2>/dev/null ;; esac
+		rm -f "$state/sampler.pid"
+	fi
+}
+
+measure_start() {
+	mkdir -p "$state"
+	stop_sampler
+	rm -f "$state/mem" "$state/job.start"
+	date +%s >"$state/job.start"
+	cg=${NOVA_CI_CGROUP:-}
+	[ -n "$cg" ] || { [ -r /proc/self/cgroup ] && cg=/sys/fs/cgroup$(cgroup_of </proc/self/cgroup); }
+	# only inside a job: the sampler ends with the job's Runner.Worker
+	w=$(procs comm | ancestor $$ Runner.Worker) || w=
+	if [ -n "$w" ] && [ -n "$cg" ] && [ -r "$cg/memory.current" ]; then
+		nohup sh "$here/nova-ci-rules.sh" sampler "$cg" "$state/mem" "$w" </dev/null >/dev/null 2>&1 &
+		echo $! >"$state/sampler.pid"
+	fi
+}
+
+measure_end() {
+	stop_sampler
+	[ -r "$state/job.start" ] || return 0
+	start=$(cat "$state/job.start")
+	rm -f "$state/job.start"
+	secs=$(($(date +%s) - start))
+	id="host=$(hostname -s) runner=${RUNNER_NAME:-?} repo=${GITHUB_REPOSITORY:-?} workflow=\"${GITHUB_WORKFLOW:-?}\" job=${GITHUB_JOB:-?} run=${GITHUB_RUN_ID:-?} secs=$secs"
+	log=${NOVA_CI_JOBS_LOG:-$HOME/.local/state/nova/ci-jobs.log}
+	mkdir -p "$(dirname "$log")"
+	at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+	if [ -r "$state/mem" ]; then
+		read -r peak anon <"$state/mem"
+		line="MEMORY-PEAK $id peak_mib=$((peak / 1048576)) anon_mib=$((anon / 1048576))"
+		echo "$line"
+		echo "$at $line" >>"$log"
+		rm -f "$state/mem"
+	fi
+	if [ "$secs" -gt 100 ]; then
+		load=$(cut -d' ' -f1 /proc/loadavg 2>/dev/null || sysctl -n vm.loadavg 2>/dev/null | awk '{ print $2 }')
+		holders=$(${NOVA_CI_RESERVE:-nova-reserve} status 2>/dev/null | sed -n 's/^slot[0-9]* held .*why=\([^ ]*\).*$/\1/p')
+		n=$(printf '%s' "$holders" | grep -c . || true)
+		line="JOB-LOAD $id load1=${load:-?} holders=$n why=$(printf '%s' "$holders" | tr '\n' ',' | sed 's/,$//')"
+		echo "$line"
+		echo "$at $line" >>"$log"
+	fi
 }
 
 # The sweep stops every process under the worker first, so none forks or is reparented away between the listing and
@@ -358,12 +446,15 @@ push-ok) push_ok "$1" ;;
 limited) limited "$1" ;;
 overdue) overdue "$1" "$2" ;;
 on-battery) on_battery ;;
+sampler) sampler "$1" "$2" "$3" ;;
+cgroup-of) cgroup_of ;;
+sample) sample "$1" "$2" "$3" ;;
 limit-text) limit_text "$1" ;;
 ancestor) ancestor "$1" "$2" ;;
 tree) tree "$1" "$2" ;;
 env-edit) env_edit "$1" ;;
 *)
-	echo "nova-ci-rules: want started, completed, watchdog, apply, push-ok, limited, overdue, on-battery, limit-text, ancestor, tree or env-edit" >&2
+	echo "nova-ci-rules: want started, completed, watchdog, sampler, apply, push-ok, limited, overdue, on-battery, cgroup-of, sample, limit-text, ancestor, tree or env-edit" >&2
 	exit 2
 	;;
 esac
