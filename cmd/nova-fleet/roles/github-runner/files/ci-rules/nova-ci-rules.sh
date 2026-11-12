@@ -306,17 +306,33 @@ owner() { stat -c %U "$1" 2>/dev/null || stat -f %Su "$1"; }
 # reads the name itself), so a name another login turned into a link, or swapped, after the cd is caught.
 same() { [ ! -L "$1" ] && [ . -ef "$1" ] && [ "$(ls -di . | awk '{ print $1 }')" = "$(ls -di "$1" | awk '{ print $1 }')" ]; }
 
+# links-owned PATH USER: every link on the absolute PATH is root's or USER's, so no other login chose where it leads.
+links_owned() {
+	p='' rest=${1#/}
+	while [ -n "$rest" ]; do
+		c=${rest%%/*}
+		case $rest in */*) rest=${rest#*/} ;; *) rest='' ;; esac
+		[ -n "$c" ] || continue
+		p=$p/$c
+		if [ -L "$p" ]; then
+			o=$(owner "$p")
+			[ "$o" = root ] || [ "$o" = "$2" ] || return 1
+		fi
+	done
+}
+
 # in-hooks HOOKDIR CMD..: CMD run inside HOOKDIR, entered and checked as apply enters it.
 in_hooks() { (cd "$1" && same "$1" && shift && "$@"); }
 
-# as-owner USER CMD..: CMD run as USER when root and USER is not, else as this login.
+# as-owner USER CMD..: CMD run as USER when root and USER is not, else as this login; given two minutes where timeout
+# is there, so a FIFO the login left in place of its .env does not hold root's run.
 as_owner() {
 	u=$1
 	shift
 	if [ "$(id -u)" != 0 ] || [ "$(id -u "$u")" = 0 ]; then
 		"$@"
 	elif command -v runuser >/dev/null 2>&1; then
-		runuser -u "$u" -- "$@"
+		timeout 120 runuser -u "$u" -- "$@"
 	else
 		sudo -n -u "$u" -- "$@"
 	fi
@@ -400,17 +416,28 @@ apply() {
 	shift 2
 	src=$here
 	if [ $# -eq 0 ]; then
+		# each listener's uid with its directory: a process names any path it likes, so only the directory's owner's
+		# listener counts for it (below)
 		# shellcheck disable=SC2046 # runner directories hold no spaces
-		set -- $(ps -A -o command= | awk '$1 ~ /\/bin\/Runner\.Listener$/ { sub(/\/bin\/Runner\.Listener$/, "", $1); print $1 }' | sort -u)
+		set -- $(ps -A -o uid= -o command= | awk '$2 ~ /\/bin\/Runner\.Listener$/ { sub(/\/bin\/Runner\.Listener$/, "", $2); print $1 ":" $2 }' | sort -u)
 	fi
 	bad=0
 	for given in "$@"; do
+		uid=''
+		case $given in [0-9]*:/*) uid=${given%%:*} given=${given#*:} ;; esac
 		# the listener runs from the physical path (run-helper.sh cd -P), so a symlinked directory is resolved first
 		dir=$(cd -P "$given" 2>/dev/null && pwd -P) || {
 			echo "CI-RULES $given denied=not-reachable-by-$(id -un)"
 			bad=1
 			continue
 		}
+		# a directory reached through a link another login owns, or named by another login's process, is not the
+		# runner's: that login could point root at any directory
+		if ! links_owned "$given" "$(owner "$dir")" || { [ -n "$uid" ] && [ "$uid" != "$(id -u "$(owner "$dir")")" ]; }; then
+			echo "CI-RULES $given denied=not-its-owners"
+			bad=1
+			continue
+		fi
 		hd=$dir/.nova-ci-rules
 		if ! [ -w "$dir" ] || { [ -e "$dir/.env" ] && ! [ -w "$dir/.env" ]; } || { [ -e "$hd" ] && ! [ -w "$hd" ]; }; then
 			echo "CI-RULES $dir denied=not-writable-by-$(id -un)"
@@ -423,7 +450,7 @@ apply() {
 		# it; the .env is read and written as its owner. Prints the hooks' state and whether the .env is the one the
 		# runner was last started on.
 		seen=$(
-			cd "$dir" && same "$dir" || exit 1
+			cd "$dir" && [ "$(pwd -P)" = "$dir" ] && [ "$(owner .)" = "$who" ] || exit 1
 			if [ -L .nova-ci-rules ] || { [ "$(id -u)" = 0 ] && [ -e .nova-ci-rules ] && [ "$(owner .nova-ci-rules)" != root ]; }; then
 				rm -rf ./.nova-ci-rules || exit 1
 			fi

@@ -100,6 +100,75 @@
   check_mode: false
   when: not (ansible_check_mode and github_runner_sshd is changed)
 
+# Tailscale SSH takes a connection on the source machine's tag alone, never reading sshd's DenyUsers, and a fleet
+# login there has sudo: the runner login's own connections to ssh on any tailnet address (this machine's too) are
+# refused here, on the machine, by a table of its own that systemd loads at boot.
+- name: nft
+  ansible.builtin.apt: { name: nftables, state: present }
+  become: true
+
+- name: the runner login reaches no ssh on the tailnet
+  ansible.builtin.copy:
+    dest: /etc/nova-runner-login.nft
+    content: |
+      # managed by Ansible (fleet/github-runners.yml): a CI job's login opens no ssh connection to the tailnet
+      table inet nova_runner_login
+      delete table inet nova_runner_login
+      table inet nova_runner_login {
+        chain output {
+          type filter hook output priority 0; policy accept;
+          meta skuid "{{ github_runner_user }}" ip daddr 100.64.0.0/10 tcp dport 22 reject with tcp reset
+          meta skuid "{{ github_runner_user }}" ip6 daddr fd7a:115c:a1e0::/48 tcp dport 22 reject with tcp reset
+        }
+      }
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+  register: github_runner_nft
+  when: not (ansible_check_mode and 'ABSENT' in github_runner_existing.stdout)
+
+- name: systemd loads it at boot
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/nova-runner-login-net.service
+    content: |
+      # managed by Ansible (fleet/github-runners.yml)
+      [Unit]
+      Description=No ssh to the tailnet from the CI runner login
+      Before=network-pre.target
+      Wants=network-pre.target
+
+      [Service]
+      Type=oneshot
+      RemainAfterExit=yes
+      ExecStart=/usr/sbin/nft -f /etc/nova-runner-login.nft
+
+      [Install]
+      WantedBy=multi-user.target
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+  register: github_runner_nft_unit
+
+- name: and it is loaded now
+  ansible.builtin.systemd:
+    name: nova-runner-login-net.service
+    enabled: true
+    state: "{{ 'restarted' if (github_runner_nft is changed or github_runner_nft_unit is changed) else 'started' }}"
+    daemon_reload: "{{ github_runner_nft_unit is changed }}"
+  become: true
+  when: not ansible_check_mode
+
+- name: the kernel holds the refusal
+  ansible.builtin.shell: nft list chain inet nova_runner_login output | grep -c 'tcp dport 22 reject'
+  become: true
+  register: github_runner_nft_rules
+  changed_when: false
+  failed_when: github_runner_nft_rules.stdout | trim != '2'
+  check_mode: false
+  when: not ansible_check_mode
+
 # sudo's own answer for the login, read as root (in the C locale, whose words are matched): any rule that names it (a
 # group, a drop-in, ALL) fails the run.
 - name: sudo grants the runner login nothing

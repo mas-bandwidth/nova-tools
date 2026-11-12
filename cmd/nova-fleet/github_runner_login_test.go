@@ -147,3 +147,39 @@ func TestRunnerMovesOnlyWhenIdle(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(b), "{{ github_runner_idle_dir | default(github_runner_dir) }}/bin/[R]unner.Worker")
 }
+
+// Tailscale SSH never reads sshd's DenyUsers and takes a connection on the source machine's tag: the runner login's own
+// connections to ssh on the tailnet are refused on the machine, at boot too.
+func TestRunnerLoginReachesNoTailnetSSH(t *testing.T) {
+	t.Parallel()
+	tasks := roleTaskFile(t, "unix-login.yml")
+	nft := asText(runnerTask(t, tasks, "the runner login reaches no ssh on the tailnet")["ansible.builtin.copy"].(map[string]any)["content"])
+	for _, want := range []string{
+		`meta skuid "{{ github_runner_user }}" ip daddr 100.64.0.0/10 tcp dport 22 reject`,
+		`meta skuid "{{ github_runner_user }}" ip6 daddr fd7a:115c:a1e0::/48 tcp dport 22 reject`,
+	} {
+		assert.Contains(t, nft, want)
+	}
+	unit := asText(runnerTask(t, tasks, "systemd loads it at boot")["ansible.builtin.copy"].(map[string]any)["content"])
+	assert.Contains(t, unit, "ExecStart=/usr/sbin/nft -f /etc/nova-runner-login.nft")
+	assert.Contains(t, unit, "WantedBy=multi-user.target")
+	assert.Equal(t, "github_runner_nft_rules.stdout | trim != '2'", asText(runnerTask(t, tasks, "the kernel holds the refusal")["failed_when"]))
+}
+
+// Root's apply writes only in a runner directory its owner chose: a link on the way there must be root's or the
+// owner's, a listener counts only for a directory its own login owns, and the directory entered is the one resolved.
+func TestCIRulesApplyGoesOnlyWhereTheOwnerChose(t *testing.T) {
+	t.Parallel()
+	b, err := os.ReadFile("roles/github-runner/files/ci-rules/nova-ci-rules.sh")
+	require.NoError(t, err)
+	sh := string(b)
+	for _, want := range []string{
+		`ps -A -o uid= -o command=`,
+		`links_owned "$given" "$(owner "$dir")"`,
+		`[ "$uid" != "$(id -u "$(owner "$dir")")" ]`,
+		`cd "$dir" && [ "$(pwd -P)" = "$dir" ] && [ "$(owner .)" = "$who" ] || exit 1`,
+		`timeout 120 runuser -u "$u"`,
+	} {
+		assert.Contains(t, sh, want)
+	}
+}

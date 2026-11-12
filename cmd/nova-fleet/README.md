@@ -405,7 +405,9 @@ it. Limit such a run to Linux hosts (`-- -l <host>`): a macOS host fails it. The
 `/home/<login>`, `github_runner_home`, mode `0750`) with its password locked, in no group but its own and `kvm` (where
 the host has one), refuses an account of that name that is not a runner login already (a uid below 1000, or any other
 group), writes `/etc/ssh/sshd_config.d/90-nova-runner-login.conf` (`DenyUsers <login>`, checked with `sshd -t`, then
-with `sshd -T`), and fails the run unless `sudo -l -U <login>` says it is not allowed to run sudo. The runners'
+with `sshd -T`), refuses the login's own connections to ssh on any tailnet address (Tailscale SSH reads no
+`DenyUsers`: an nftables table, `/etc/nova-runner-login.nft`, loaded at boot by `nova-runner-login-net.service`), and
+fails the run unless `sudo -l -U <login>` says it is not allowed to run sudo. The runners'
 directories, release cache and `TMPDIR` are then in its home, written as the login (root follows no link it could
 plant there; root's only act there is deleting a runner directory by name), and the runners' default `PATH` starts
 with its own `~/.local/bin`, never the fleet login's. A runner whose unit runs it from another directory (the fleet

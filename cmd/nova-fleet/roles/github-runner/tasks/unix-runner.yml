@@ -69,13 +69,14 @@
 
 # the runner's own installer of the system libraries it needs (libicu and the like); once per release on the host
 # Run as root from root's own copy of the release, checked against its digest: the unpacked one is the runner login's,
-# which a job may have rewritten. The record that it ran is root's too.
+# which a job may have rewritten. A runner login of its own reads the cached release out for root (root opens nothing
+# in its home). The record that it ran is root's too.
 - name: the runner's system dependencies (Linux)
   ansible.builtin.shell: |
     set -eu
     stage=$(mktemp -d)
     trap 'rm -rf "$stage"' EXIT
-    cp "{{ github_runner_base_dir }}/.cache/actions-runner-{{ github_runner_os }}-{{ github_runner_arch }}-{{ github_runner_version }}.tar.gz" "$stage/runner.tar.gz"
+    {{ ('timeout 300 runuser -u ' ~ (github_runner_user | quote) ~ ' -- ') if github_runner_other | bool else '' }}cat "{{ github_runner_base_dir }}/.cache/actions-runner-{{ github_runner_os }}-{{ github_runner_arch }}-{{ github_runner_version }}.tar.gz" >"$stage/runner.tar.gz"
     echo "{{ github_runner_sha256[github_runner_os ~ '-' ~ github_runner_arch] }}  $stage/runner.tar.gz" | sha256sum -c --quiet -
     mkdir "$stage/x"
     tar -xzf "$stage/runner.tar.gz" -C "$stage/x"
