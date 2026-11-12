@@ -383,7 +383,7 @@ LaunchAgent: a LaunchAgent runs only inside a logged-in GUI session, and a CI ma
 none. Only a run needs sudo for that file (`/Library/LaunchDaemons` is world-readable, so `--check` reads and diffs it
 as the login and finishes without a password). The daemon's `ProcessType` is `Interactive`: launchd throttles the CPU and
 I/O of a job with no `ProcessType` as background work, and a CI job inherits its runner's limits. Linux and macOS write the service files with sudo, so the login needs
-passwordless sudo: `join.yml` sets it up on Linux (`/etc/sudoers.d/90-nova-<login>`); on macOS set it at the console.
+passwordless sudo: `join.yml` sets it up on Linux (`/etc/sudoers.d/90-nova-<login>`); on macOS set it at the console. On Debian and Ubuntu the play installs `libpam-systemd` where `dpkg-query` says it is missing: without pam_systemd the login's user manager (`user@<uid>`) never starts, and no user unit can run.
 No command here asks for a sudo password: an interactive prompt is a stall for an AI running the play.
 A stop or restart ends the whole runner: on Linux the unit sets `RUNNER_MANUALLY_TRAP_SIG=1`, so the release's `run.sh`
 passes the stop to its listener as SIGINT and waits for it (a running job is cancelled by the runner, not killed), and

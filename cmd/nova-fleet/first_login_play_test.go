@@ -78,6 +78,23 @@ func TestTailscaleRoleReadsUpsKeyFirst(t *testing.T) {
 	assert.Empty(t, u.tskey, "the key reaches one play only")
 }
 
+// TestServicesInstallPamSystemdWhereMissing: a minimal Debian or Ubuntu image can lack pam_systemd, and then the
+// login's user manager never starts; the play asks dpkg without root and installs the package only where it is missing.
+func TestServicesInstallPamSystemdWhereMissing(t *testing.T) {
+	t.Parallel()
+	b, err := os.ReadFile("services.yml")
+	require.NoError(t, err)
+	var plays []map[string]any
+	require.NoError(t, yaml.Unmarshal(b, &plays))
+	tasks := flattenTasks(t, toTasks(plays[0]["tasks"]))
+	ask, put, units := taskIndex(tasks, "is pam_systemd installed"), taskIndex(tasks, "pam_systemd, which the login"), taskIndex(tasks, "one unit per record")
+	require.True(t, ask >= 0 && put > ask && units > put, "asked, then installed, before any unit")
+	assert.Equal(t, "dpkg-query -W -f=${Status} libpam-systemd", asText(tasks[ask]["ansible.builtin.command"]))
+	assert.Nil(t, tasks[ask]["become"], "asking needs no root")
+	assert.Equal(t, true, tasks[put]["become"])
+	assert.Contains(t, asText(tasks[put]["when"]), "'install ok installed' not in service_pam.stdout")
+}
+
 func toTasks(v any) []map[string]any {
 	var out []map[string]any
 	for _, x := range v.([]any) {
