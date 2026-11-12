@@ -22,6 +22,9 @@ nova_tailscale_apt_url: https://pkgs.tailscale.com/stable
 # the application firewall is on. false leaves the firewall as it is.
 nova_firewall: true
 nova_firewall_allow_udp: [41641]
+# More incoming traffic a machine must take on Linux besides the tailnet, each the words after `ufw allow`,
+# as "in on eno2 proto udp from 10.0.0.0/24" (a private link between two machines). Empty: the tailnet only.
+nova_firewall_allow_in: []
 
 # The CLI per platform; on a Mac running the open-source tailscaled, the tailscale beside the daemon instead.
 nova_tailscale_bin: >-
