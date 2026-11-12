@@ -476,6 +476,12 @@ func runPlay(play string, args []string, stdout, stderr io.Writer, refuse func(s
 			cfg = abs
 		}
 		inventory, wrap = cfg, true
+		// A failing inventory script buries its cause under pages of ansible warnings (captain, 2026-11-12): say it first.
+		if _, why, c := outCmd(cfg, []string{"inventory", "--list"}, os.Environ()); c != 0 {
+			why = strings.TrimSpace(why)
+			fmt.Fprintf(stderr, "nova-fleet %s: the inventory (nova-config inventory --list) failed: %s; nova-config inventory --list shows the whole error; run: NOVA_PG_DSN='postgres://nova_config@<the store machine>:5432/nova?sslmode=disable' nova-secrets exec --only NOVA_PG_PASSWORD -- nova-fleet %s ...\n", play, oneLine(why[strings.LastIndex(why, "\n")+1:]), play)
+			return 2
+		}
 	}
 	dir, err := extract(tree)
 	if err != nil {
