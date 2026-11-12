@@ -4,50 +4,58 @@
 # /mnt/c into nova_runner_windows_ccache_dir (C:\ProgramData\nova\ccache): ccache.exe, and msvc\cl.exe, the same binary
 # under the compiler's name, which MSBuild runs in place of cl.exe when a build sets CLToolPath to that directory (the
 # Visual Studio generator honours no compiler launcher; rocketnet's .github/actions/ccache passes CMAKE_VS_GLOBALS).
-# ccache finds the real cl.exe on the PATH MSBuild sets for the tool. A version already in place is left as it is.
+# ccache finds the real cl.exe on the PATH MSBuild sets for the tool.
 #
-# The directory is sealed, before anything is copied in and again after: owned by Administrators, nothing inherited
-# from C:\ProgramData (where every user may add files to a subfolder), full control for SYSTEM and Administrators,
-# read and run for Authenticated Users and Users, and everything in it inheriting only that. A job on any runner runs
-# these binaries and none can change them; an admin runner's install refuses the directory while that is not so
-# (runner-windows.ps1 install -ToolDirs). The zip is fetched and unpacked on the WSL side, which no Windows job reaches.
-- name: the Windows ccache directory
-  ansible.builtin.file: { path: "{{ rp_win_ccache_unix }}", state: directory, mode: "0755" }
+# The directory holds exactly VERSION, ccache.exe and msvc\cl.exe, both binaries the release's own, compared on every
+# run with the release zip kept (checked by its sha256) on the WSL side, which no Windows job reaches. Anything else,
+# or a binary that differs, and the whole directory is removed and made again: a file a job put there while it was
+# open (it was under C:\ProgramData, where every user may add files to a subfolder) is never sealed in. The directory
+# is sealed before anything is copied in and again after: owned by Administrators, nothing inherited, full control for
+# SYSTEM and Administrators, read and run for Authenticated Users and Users, and everything in it inheriting only that.
+# A run that finds it not exact after the seal fails. An admin runner's install refuses the directory while it is not
+# sealed (runner-windows.ps1 install -ToolDirs).
+- name: the kept release zip's folder on the WSL side
+  ansible.builtin.file: { path: "~/.cache/nova-ccache", state: directory, mode: "0700" }
+
+- name: the release zip, kept and checked
+  ansible.builtin.get_url:
+    url: "https://github.com/ccache/ccache/releases/download/v{{ nova_runner_windows_ccache.version }}/ccache-{{ nova_runner_windows_ccache.version }}-windows-x86_64.zip"
+    dest: "~/.cache/nova-ccache/ccache-{{ nova_runner_windows_ccache.version }}.zip"
+    checksum: "sha256:{{ nova_runner_windows_ccache.sha256 }}"
+    mode: "0600"
   when: not ansible_check_mode
 
-- name: the Windows ccache directory sealed (before anything is copied in)
-  ansible.builtin.shell: "{{ rp_win_ccache_seal }}"
-  args: { executable: /bin/bash }
-  register: rp_win_ccache_sealed
-  changed_when: "'SEAL changed' in rp_win_ccache_sealed.stdout"
+- name: the release, unpacked and compared
   when: not ansible_check_mode
-
-- name: the Windows ccache in place (version file)
-  ansible.builtin.slurp:
-    src: "{{ rp_win_ccache_unix }}/VERSION"
-  register: rp_win_ccache_have
-  failed_when: false
-
-- name: install it when the version differs
-  when: (rp_win_ccache_have.content | default('') | b64decode | trim) != nova_runner_windows_ccache.version
   block:
     - name: a staging directory on the WSL side
       ansible.builtin.tempfile: { state: directory, suffix: .nova-ccache }
       register: rp_win_ccache_stage
 
-    - name: the release zip, checked
-      ansible.builtin.get_url:
-        url: "https://github.com/ccache/ccache/releases/download/v{{ nova_runner_windows_ccache.version }}/ccache-{{ nova_runner_windows_ccache.version }}-windows-x86_64.zip"
-        dest: "{{ rp_win_ccache_stage.path }}/ccache.zip"
-        checksum: "sha256:{{ nova_runner_windows_ccache.sha256 }}"
-        mode: "0644"
-
     - name: unpacked
       ansible.builtin.unarchive:
-        src: "{{ rp_win_ccache_stage.path }}/ccache.zip"
+        src: "~/.cache/nova-ccache/ccache-{{ nova_runner_windows_ccache.version }}.zip"
         dest: "{{ rp_win_ccache_stage.path }}"
         remote_src: true
-      when: not ansible_check_mode
+
+    - name: is the Windows ccache directory exactly the release
+      ansible.builtin.shell: "{{ rp_win_ccache_exact }}"
+      args: { executable: /bin/bash }
+      register: rp_win_ccache_was
+      changed_when: false
+
+    - name: anything else there is removed with the directory (a link is removed, never followed)
+      ansible.builtin.file: { path: "{{ rp_win_ccache_unix }}", state: absent }
+      when: rp_win_ccache_was.stdout == 'DIFFERS'
+
+    - name: the Windows ccache directory
+      ansible.builtin.file: { path: "{{ rp_win_ccache_unix }}", state: directory, mode: "0755" }
+
+    - name: the Windows ccache directory sealed (before anything is copied in)
+      ansible.builtin.shell: "{{ rp_win_ccache_seal }}"
+      args: { executable: /bin/bash }
+      register: rp_win_ccache_sealed
+      changed_when: "'SEAL changed' in rp_win_ccache_sealed.stdout"
 
     - name: ccache.exe and msvc/cl.exe from the unpacked release
       ansible.builtin.shell: |
@@ -57,19 +65,26 @@
         cp "$src/ccache.exe" "{{ rp_win_ccache_unix }}/ccache.exe"
         cp "$src/ccache.exe" "{{ rp_win_ccache_unix }}/msvc/cl.exe"
         printf '%s\n' "{{ nova_runner_windows_ccache.version }}" > "{{ rp_win_ccache_unix }}/VERSION"
-      when: not ansible_check_mode
+      when: rp_win_ccache_was.stdout != 'EXACT'
 
     - name: counted
       ansible.builtin.set_fact:
         rp_installed: "{{ rp_installed | int + 1 }}"
+      when: rp_win_ccache_was.stdout != 'EXACT'
+
+    - name: the Windows ccache directory sealed (what was copied in inherits only the seal)
+      ansible.builtin.shell: "{{ rp_win_ccache_seal }}"
+      args: { executable: /bin/bash }
+      register: rp_win_ccache_resealed
+      changed_when: "'SEAL changed' in rp_win_ccache_resealed.stdout"
+
+    - name: sealed, it is exactly the release
+      ansible.builtin.shell: "{{ rp_win_ccache_exact }}"
+      args: { executable: /bin/bash }
+      register: rp_win_ccache_is
+      changed_when: false
+      failed_when: rp_win_ccache_is.rc != 0 or rp_win_ccache_is.stdout != 'EXACT'
   always:
     - name: the staging directory is removed
       ansible.builtin.file: { path: "{{ rp_win_ccache_stage.path }}", state: absent }
       when: rp_win_ccache_stage.path is defined
-
-- name: the Windows ccache directory sealed (what was copied in inherits only the seal)
-  ansible.builtin.shell: "{{ rp_win_ccache_seal }}"
-  args: { executable: /bin/bash }
-  register: rp_win_ccache_resealed
-  changed_when: "'SEAL changed' in rp_win_ccache_resealed.stdout"
-  when: not ansible_check_mode

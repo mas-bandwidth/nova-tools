@@ -1,9 +1,14 @@
 ---
-# Linux (WSL2 too) and macOS. Everything under the login's home runs as the login; the
-# service files and the dependency install are the only things done with become.
+# Linux (WSL2 too) and macOS. Everything under the runner login's home runs as the login when the runners are the
+# login's; the service files and the dependency install are the only things done with become. A runner login of its
+# own (github_runner_other, Linux) has its home read and written as that login (become_user), never as root: root
+# follows the links a runner login can plant there. Root only deletes there, by name (remove-dir.yml).
 
 - name: is there a runner base directory yet
   ansible.builtin.stat: { path: "{{ github_runner_base_dir }}" }
+  become: "{{ github_runner_other }}"
+  become_user: "{{ github_runner_user }}"
+  vars: { ansible_pipelining: true }
   register: github_runner_base
 
 - name: the runner directories that exist for this url
@@ -14,18 +19,39 @@
     use_regex: true
     file_type: directory
     recurse: false
+  become: "{{ github_runner_other }}"
+  become_user: "{{ github_runner_user }}"
+  vars: { ansible_pipelining: true }
   register: github_runner_found
+
+# A unit can run a runner from another login's home (before a move to github_runner_user), where the find above does
+# not look: the units count too, so a runner above the count is retired wherever it runs.
+- name: the runner units for this url (Linux)
+  ansible.builtin.command:
+    argv: [systemctl, list-unit-files, --no-legend, --plain, "github-runner-{{ github_runner_slug }}-*.service"]
+  register: github_runner_units
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: ansible_facts['system'] == 'Linux'
 
 - name: the runners to retire (above the count, or all of them when absent)
   ansible.builtin.set_fact:
     github_runner_retire: >-
-      {{ (github_runner_found.files | default([])) | map(attribute='path') | map('basename') | map('regex_replace', '^.*-([0-9]+)$', '\1')
-         | map('int') | difference(github_runner_want) | sort | reverse | list }}
+      {{ ((github_runner_found.files | default([])) | map(attribute='path') | map('basename')
+          | map('regex_replace', '^.*-([0-9]+)$', '\1') | list
+          + (github_runner_units.stdout_lines | default([]) | map('split') | map('first')
+          | select('match', '^github-runner-' ~ (github_runner_slug | regex_escape) ~ '-[0-9]+\.service$')
+          | map('regex_replace', '^.*-([0-9]+)\.service$', '\1') | list))
+         | map('int') | unique | difference(github_runner_want) | sort | reverse | list }}
 
 - name: which of the wanted runners are registered
   ansible.builtin.stat:
     path: "{{ github_runner_base_dir }}/{{ github_runner_slug }}-{{ item }}/.runner"
   loop: "{{ github_runner_want }}"
+  become: "{{ github_runner_other }}"
+  become_user: "{{ github_runner_user }}"
+  vars: { ansible_pipelining: true }
   register: github_runner_registered
 
 - name: the runners that need registering
@@ -51,7 +77,12 @@
   loop_control: { loop_var: runner_index }
 
 - name: the cache directory
-  ansible.builtin.file: { path: "{{ github_runner_base_dir }}/.cache", state: directory }
+  ansible.builtin.file:
+    path: "{{ github_runner_base_dir }}/.cache"
+    state: directory
+  become: "{{ github_runner_other }}"
+  become_user: "{{ github_runner_user }}"
+  vars: { ansible_pipelining: true }
   register: github_runner_cache
   when: github_runner_want | length > 0
 
@@ -61,8 +92,11 @@
   ansible.builtin.file:
     path: "{{ github_runner_env.get('TMPDIR', github_runner_tmpdir) }}"
     state: directory
-    owner: "{{ ansible_facts['user_id'] }}"
+    owner: "{{ github_runner_user }}"
     mode: "0700"
+  become: "{{ github_runner_other }}"
+  become_user: "{{ github_runner_user }}"
+  vars: { ansible_pipelining: true }
   when: github_runner_want | length > 0 and (ansible_facts['system'] == 'Linux' or 'TMPDIR' in github_runner_env)
 
 - name: the pinned runner release, checked against its digest
@@ -71,6 +105,9 @@
     dest: "{{ github_runner_base_dir }}/.cache/actions-runner-{{ github_runner_os }}-{{ github_runner_arch }}-{{ github_runner_version }}.tar.gz"
     checksum: "sha256:{{ github_runner_sha256[github_runner_os ~ '-' ~ github_runner_arch] }}"
     mode: "0644"
+  become: "{{ github_runner_other }}"
+  become_user: "{{ github_runner_user }}"
+  vars: { ansible_pipelining: true }
   when: >-
     ansible_facts['system'] != 'Darwin'
     and github_runner_want | length > 0 and not (ansible_check_mode and github_runner_cache is changed)

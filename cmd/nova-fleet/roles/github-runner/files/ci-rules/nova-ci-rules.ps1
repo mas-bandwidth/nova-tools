@@ -193,7 +193,10 @@ function Get-AdminRefusal {
     $owners = New-Object System.Collections.Generic.List[string]
     $sh = New-Object System.Collections.Generic.List[bool]
     for ($d = Split-Path $here; $d; $d = Split-Path $d) {
-        foreach ($c in @(Get-ChildItem -LiteralPath $d -Directory -Force -ErrorAction SilentlyContinue)) {
+        # a folder above that cannot be listed is refused, never passed
+        try { $list = @(Get-ChildItem -LiteralPath $d -Directory -Force -ErrorAction Stop) }
+        catch { return "$d is above this administrator runner and could not be listed ($($_.Exception.GetType().Name)); the fleet admin looks" }
+        foreach ($c in $list) {
             $o = ''
             try { $o = (Get-Acl -LiteralPath $c.FullName).GetOwner([Security.Principal.SecurityIdentifier]).Value } catch { $o = '' }
             $paths.Add($c.FullName); $owners.Add($o)
@@ -209,6 +212,11 @@ function Invoke-Started {
     $why = Get-AdminRefusal
     if ($why) {
         "::error::CI rule: $why"
+        # A failed job-started hook fails the job but does not stop it: the runner adds the hook as a pre-job step, and
+        # a step with if: always() or failure() still runs after it, here as an administrator. So the job's
+        # Runner.Worker is ended now, before any step of the job runs.
+        $worker = Find-Ancestor $PID 'Runner.Worker' (Get-Rows 'name')
+        if ($worker) { Stop-Process -Id $worker -Force -ErrorAction SilentlyContinue }
         exit 1
     }
     Invoke-Disarm

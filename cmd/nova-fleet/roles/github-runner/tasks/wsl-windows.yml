@@ -2,13 +2,13 @@
 # A WSL machine's Windows-side runners (cmd/nova-fleet/README.md, "Windows runners of a WSL machine"): what its machine record's
 # windows_runners names (the inventory's nova_windows_runners, a list of {url, scope, count, labels}), set up from the
 # WSL login through interop: powershell.exe by its full path runs files/runner-windows.ps1, staged to
-# C:\ProgramData\nova-runner-stage, as the Windows account that started WSL (elevated). No Windows login, password or
+# C:\nova-stage (sealed, proved before every elevated call: tasks/wsl-stage.yml), as the Windows account that started WSL (elevated). No Windows login, password or
 # key is involved. Each runner is <host>-win-<slug>-<i> in C:\actions-runner\<slug>-<i>, a Windows service run as
 # NETWORK SERVICE (config.cmd --runasservice), registered with a token from token.yml on its stdin. An existing
 # registered runner is left alone. --check reads, asks for the tokens it would need, and prints the plan.
 #
 # The record's windows_admin_runners (nova_windows_admin_runners, a list of {url, account, labels, secret}) adds one
-# runner per entry, <host>-win-<slug>-<account> in C:\actions-runner\<slug>-<account>, carrying only the entry's labels,
+# runner per entry, <host>-win-<slug>-<account> in C:\nova-admin-runners\<slug>-<account> (github_runner_wsl_admin_dir), carrying only the entry's labels,
 # whose service logs on as the local account <account> in Administrators. Its password is the nova-secrets value
 # <secret> in this machine's seat: a run where the seat lacks it stops before changing anything and prints how to mint
 # it. The value reaches powershell.exe only in its environment (nova-secrets exec, then WSLENV through interop).
@@ -42,7 +42,7 @@
     that: nova_windows_admin_runners | default([]) | map(attribute='url') | reject('match', '^https://github[.]com/[^/]+/[^/]+$') | list | length == 0
     fail_msg: >-
       GITHUB-RUNNERS {{ inventory_hostname }}: windows_admin_runners names an organization; give each a repository:
-      nova-config machine set {{ inventory_hostname }} --windows_admin_runners 'https://github.com/<owner>/<repo>=<account>:<label>'
+      nova-config machine set {{ inventory_hostname }} --windows_admin_runners 'https://github.com/<owner>/<repo>=<account>:<label>@<workflow>.yml'
 
 # An admin runner's label is its own: one that any other runner of the machine carries (the role's Windows labels,
 # windows_runners' or runner_scopes'), or one GitHub gives runners for their OS and kind, would let a job meant for an
@@ -54,7 +54,7 @@
     fail_msg: >-
       GITHUB-RUNNERS {{ inventory_hostname }}: an admin runner's label is not its own: {{ github_runner_win_label_clash | join(', ') }};
       nothing was changed; give it a label no other runner carries:
-      nova-config machine set {{ inventory_hostname }} --windows_admin_runners 'https://github.com/<owner>/<repo>=<account>:<label>'
+      nova-config machine set {{ inventory_hostname }} --windows_admin_runners 'https://github.com/<owner>/<repo>=<account>:<label>@<workflow>.yml'
   vars:
     github_runner_win_label_clash: >-
       {%- set taken = {} -%}
@@ -171,13 +171,8 @@
       nova-fleet secrets-refresh -- -e nova_seal_store={{ nova_seal_store | default('<store>') }}
   when: github_runner_win_unsealed | length > 0
 
-- name: the script, staged on the Windows side
-  when: not ansible_check_mode
-  block:
-    - name: the staging directory
-      ansible.builtin.file: { path: "{{ github_runner_wsl_stage_unix }}", state: directory, mode: "0755" }
-    - name: runner-windows.ps1
-      ansible.builtin.copy: { src: runner-windows.ps1, dest: "{{ github_runner_wsl_stage_unix }}/runner-windows.ps1", mode: "0644" }
+- name: the scripts, staged on the Windows side where only Administrators can change them
+  ansible.builtin.include_tasks: wsl-stage.yml
 
 # Each admin runner's local account: created, or its password set to the seat's where they differ; in Administrators
 # (by SID); allowed to log on as a service and denied interactive and remote-interactive logon. The password reaches
@@ -186,6 +181,7 @@
 # carry the value.
 - name: each admin runner's local account
   ansible.builtin.shell: >-
+    {{ github_runner_win_stage_check }} &&
     {{ github_runner_win_secrets_exec }} {{ item.secret | quote }} -- env WSLENV={{ item.secret | quote }}
     "{{ github_runner_wsl_powershell }}" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File {{ github_runner_wsl_script | quote }}
     -Action account -Account {{ item.account | quote }} -SecretEnv {{ item.secret | quote }} </dev/null
@@ -201,7 +197,7 @@
 - name: the accounts' receipt
   ansible.builtin.debug:
     msg: >-
-      {{ (item.stdout_lines | default([]) | select('match', '^(ACCOUNT|ACCOUNT-NOT-OURS|NO-SECRET|NEEDS-ELEVATION|BAD-ARGS) ') | list
+      {{ (item.stdout_lines | default([]) | select('match', '^(STAGE-[A-Z]+|ACCOUNT|ACCOUNT-NOT-OURS|NO-SECRET|NEEDS-ELEVATION|BAD-ARGS) ') | list
           + (item.stderr_lines | default([]) | select('match', '^(SECRETS |nova-secrets)') | list)) | join(' ')
          | default('rc=' ~ item.rc | default('-'), true) | regex_replace('^ACCOUNT ', 'ACCOUNT ' ~ inventory_hostname ~ ' ') }}
   loop: "{{ github_runner_win_account.results | default([]) }}"
@@ -222,6 +218,7 @@
 # (runner-windows.ps1, install).
 - name: each wanted runner unpacked, with the .env lines the role owns
   ansible.builtin.shell: >-
+    {{ github_runner_win_stage_check }} &&
     "{{ github_runner_wsl_powershell }}" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File {{ github_runner_wsl_script | quote }}
     -Action install -Dir {{ item.dir | quote }} -Cache {{ github_runner_wsl_cache | quote }}
     -Version {{ github_runner_version | quote }} -Sha {{ github_runner_sha256['win-x64'] | quote }}
@@ -252,6 +249,7 @@
 # it ran as another account.
 - name: each admin runner's service logs on as its account
   ansible.builtin.shell: >-
+    {{ github_runner_win_stage_check }} &&
     {{ github_runner_win_secrets_exec }} {{ item.secret | quote }} -- env WSLENV={{ item.secret | quote }}
     "{{ github_runner_wsl_powershell }}" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File {{ github_runner_wsl_script | quote }}
     -Action logon -Dir {{ item.dir | quote }} -Url {{ item.url | quote }} -Name {{ item.name | quote }}
@@ -270,7 +268,7 @@
 - name: the services' logon receipt
   ansible.builtin.debug:
     msg: >-
-      {{ (item.stdout_lines | default([]) | select('match', '^(LOGON|NO-SECRET|LOGON-FAILED|ACL-OPEN|ABOVE-OPEN|ACCOUNT-NOT-OURS|NEEDS-ELEVATION|BAD-ARGS) ') | list
+      {{ (item.stdout_lines | default([]) | select('match', '^(STAGE-[A-Z]+|LOGON|NO-SECRET|LOGON-FAILED|ACL-OPEN|ABOVE-OPEN|ACCOUNT-NOT-OURS|NEEDS-ELEVATION|BAD-ARGS) ') | list
           + (item.stderr_lines | default([]) | select('match', '^(SECRETS |nova-secrets)') | list)) | join(' ')
          | default('rc=' ~ item.rc | default('-'), true) | regex_replace('^LOGON ', 'LOGON ' ~ inventory_hostname ~ ' ') }}
   loop: "{{ github_runner_win_logon.results | default([]) }}"
@@ -290,6 +288,7 @@
 
 - name: each wanted runner's service starts at boot and is running
   ansible.builtin.shell: >-
+    {{ github_runner_win_stage_check }} &&
     "{{ github_runner_wsl_powershell }}" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File {{ github_runner_wsl_script | quote }}
     -Action ensure -Dir {{ item.dir | quote }} </dev/null
   args: { executable: /bin/sh }
@@ -304,13 +303,9 @@
 - name: the CI rules on these runners
   when: not ansible_check_mode
   block:
-    - name: the hooks' staging directory
-      ansible.builtin.file: { path: "{{ github_runner_wsl_ci_stage_unix }}", state: directory, mode: "0755" }
-    - name: the hooks, staged
-      ansible.builtin.copy: { src: "ci-rules/{{ item }}", dest: "{{ github_runner_wsl_ci_stage_unix }}/{{ item }}", mode: "0644" }
-      loop: [nova-ci-rules.ps1, job-started.ps1, job-completed.ps1]
-    - name: apply them
+    - name: apply them (the hooks were staged with the script)
       ansible.builtin.shell: >-
+        {{ github_runner_win_stage_check }} &&
         "{{ github_runner_wsl_powershell }}" -NoProfile -NonInteractive -ExecutionPolicy Bypass
         -File {{ github_runner_wsl_ci_script | quote }} apply {{ github_runner_ci_limit_seconds }}
         {{ github_runner_ci_push_branches | join(' ') | quote }} {{ github_runner_win_want | map(attribute='dir') | map('quote') | join(' ') }}

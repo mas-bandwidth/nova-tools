@@ -438,7 +438,7 @@ func TestWindowsAdminRunnerOrder(t *testing.T) {
 		"- name: no admin runner shares a label",
 		"- name: the names in this machine's seat, for the admin runners' passwords",
 		"- name: every admin runner's password is in this machine's seat",
-		"- name: the script, staged on the Windows side",
+		"- name: the scripts, staged on the Windows side where only Administrators can change them",
 		"- name: each admin runner's local account",
 		"- name: each wanted runner unpacked",
 		"- name: register, one target at a time",
@@ -602,7 +602,7 @@ func TestWindowsAdminRunnerSealed(t *testing.T) {
 		"[NovaTree]::Extract($pinned, $Dir)",
 		"[NovaTree]::Verify($pinned, $Dir, @('bin', 'externals'))",
 		`if ($why) { "TAMPERED ${why}: `,
-		"$own['CCACHE_DISABLE'] = '1'")
+		"$own['CCACHE_DISABLE'] = '1'", "$own['CCACHE_CONFIGPATH'] = \"$Dir\\.nova-ccache\\ccache.conf\"", "$own['CCACHE_CONFIGPATH2'] = \"$Dir\\.nova-ccache\\ccache-system.conf\"")
 	if !strings.Contains(install, "$kept = @($lines | Where-Object { -not $Account -and (") {
 		t.Error("an admin runner's .env keeps no line the role does not own")
 	}
@@ -616,7 +616,7 @@ func TestWindowsAdminRunnerSealed(t *testing.T) {
 	hook := string(h)
 	started := hook[strings.Index(hook, "function Invoke-Started {"):]
 	inOrder(t, "the job-started hook", started,
-		"$why = Get-AdminRefusal", "if ($why) {", `"::error::CI rule: $why"`, "exit 1", "Invoke-Disarm", "Invoke-Chain \"$env:NOVA_CI_CHAIN_JOB_STARTED\"")
+		"$why = Get-AdminRefusal", "if ($why) {", `"::error::CI rule: $why"`, "$worker = Find-Ancestor $PID 'Runner.Worker' (Get-Rows 'name')", "if ($worker) { Stop-Process -Id $worker -Force", "exit 1", "Invoke-Disarm", "Invoke-Chain \"$env:NOVA_CI_CHAIN_JOB_STARTED\"")
 	refusal := hook[strings.Index(hook, "function Get-AdminRefusal {"):]
 	inOrder(t, "Get-AdminRefusal", refusal,
 		"$wf = Join-Path $here 'admin-workflow'",
@@ -624,6 +624,8 @@ func TestWindowsAdminRunnerSealed(t *testing.T) {
 		"$why = [NovaCiAdmin]::Refuse(\"$env:GITHUB_EVENT_NAME\", \"$env:GITHUB_REF\", \"$env:GITHUB_WORKFLOW_REF\", $want)",
 		"if ($why) { return $why }",
 		"for ($d = Split-Path $here; $d; $d = Split-Path $d) {",
+		"-Directory -Force -ErrorAction Stop) }",
+		"catch { return ",
 		"$p = [NovaCiAdmin]::Planted($paths.ToArray(), $owners.ToArray(), $sh.ToArray())",
 		"if ($p) { return ")
 
@@ -668,9 +670,20 @@ func TestWindowsAdminRunnerSealed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// a file planted while the directory was open is never sealed in: not exact, the directory goes, and it must be
+	// exact once sealed
 	inOrder(t, "windows-ccache.yml", string(w),
+		"checksum: \"sha256:{{ nova_runner_windows_ccache.sha256 }}\"",
+		"- name: is the Windows ccache directory exactly the release",
+		"ansible.builtin.file: { path: \"{{ rp_win_ccache_unix }}\", state: absent }",
+		"when: rp_win_ccache_was.stdout == 'DIFFERS'",
 		"- name: the Windows ccache directory sealed (before anything is copied in)",
-		"dest: \"{{ rp_win_ccache_stage.path }}/ccache.zip\"",
 		"cp \"$src/ccache.exe\" \"{{ rp_win_ccache_unix }}/msvc/cl.exe\"",
-		"- name: the Windows ccache directory sealed (what was copied in inherits only the seal)")
+		"- name: the Windows ccache directory sealed (what was copied in inherits only the seal)",
+		"- name: sealed, it is exactly the release",
+		"failed_when: rp_win_ccache_is.rc != 0 or rp_win_ccache_is.stdout != 'EXACT'")
+	inOrder(t, "the ccache exactness check", string(c),
+		"if [ ! -e \"$d\" ] && [ ! -L \"$d\" ]; then echo ABSENT; exit 0; fi",
+		"[ \"$have\" = 'f ./VERSION f ./ccache.exe d ./msvc f ./msvc/cl.exe ' ]",
+		"cmp -s \"$src/ccache.exe\" \"$d/ccache.exe\" && cmp -s \"$src/ccache.exe\" \"$d/msvc/cl.exe\"")
 }

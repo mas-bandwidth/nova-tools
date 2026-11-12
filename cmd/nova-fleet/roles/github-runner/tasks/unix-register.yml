@@ -15,6 +15,8 @@
     creates: "{{ github_runner_dir }}/.runner"
     stdin: "{{ github_runner_token }}"
   vars: { ansible_pipelining: true }
+  become: "{{ github_runner_other }}"
+  become_user: "{{ github_runner_user }}"
   no_log: true
   failed_when: false
   register: github_runner_registration

@@ -175,3 +175,10 @@
 - name: the v1 gh wrapper is gone from the bin directory
   ansible.builtin.file: { path: "{{ nova_tools_bin_dir }}/gh", state: absent }
   when: nova_tools_gh_grep.rc | default(1) == 0
+
+# A runner login of its own runs root's copies of the tools (shared.yml): refreshed here on a runner whose runners are
+# another login's (github_runner_user), never from what is on disk (a test's install of its own build on a CI host
+# must not reach them).
+- name: the shared tools are refreshed
+  ansible.builtin.include_tasks: shared.yml
+  when: ansible_facts['system'] == 'Linux' and 'runner' in group_names and github_runner_user != ansible_facts['user_id']

@@ -341,12 +341,15 @@ func TestSDKToolchainResolvesTheSDKDirectory(t *testing.T) {
 	var raw []any
 	require.NoError(t, yaml.Unmarshal(b, &raw))
 	tasks := mapsOf(t, raw)
-	require.GreaterOrEqual(t, len(tasks), 2)
-	resolve := taskText(t, tasks[0])
+	require.GreaterOrEqual(t, len(tasks), 3)
+	// first the shared SDK's checks, when asked for (tasks/shared.yml); the resolution then names the shared directory
+	assert.Equal(t, "shared.yml", asText(tasks[0]["ansible.builtin.include_tasks"]))
+	assert.Equal(t, "nova_sdk_shared | bool", asText(tasks[0]["when"]))
+	resolve := taskText(t, tasks[1])
 	assert.Contains(t, resolve, "os.path.realpath")
-	assert.Contains(t, resolve, "{{ nova_sdk_dir }}")
-	assert.Equal(t, false, tasks[0]["check_mode"], "resolved under --check too")
-	fact, _ := tasks[1]["ansible.builtin.set_fact"].(map[string]any)
+	assert.Contains(t, resolve, "if nova_sdk_shared | bool else nova_sdk_dir }}")
+	assert.Equal(t, false, tasks[1]["check_mode"], "resolved under --check too")
+	fact, _ := tasks[2]["ansible.builtin.set_fact"].(map[string]any)
 	assert.Equal(t, "{{ sdk_dir_real.stdout }}", fact["sdk_dir"], "sdk_dir is the resolved path")
 	files, err := filepath.Glob(sdkToolchainRole + "/*/*")
 	require.NoError(t, err)
@@ -354,11 +357,10 @@ func TestSDKToolchainResolvesTheSDKDirectory(t *testing.T) {
 	for _, f := range files {
 		b, err := os.ReadFile(f)
 		require.NoError(t, err)
-		want := 0
-		if strings.HasSuffix(f, "tasks/main.yml") {
-			want = 1 // the resolution itself
+		if strings.HasSuffix(f, "tasks/link.yml") {
+			continue // the link nova_sdk_dir becomes, made once the shared SDK is whole
 		}
-		assert.Equal(t, want, strings.Count(string(b), "{{ nova_sdk_dir }}"), "%s uses the resolved sdk_dir", f)
+		assert.Equal(t, 0, strings.Count(string(b), "{{ nova_sdk_dir }}"), "%s uses the resolved sdk_dir", f)
 	}
 }
 

@@ -24,16 +24,12 @@
           user={{ ansible_user_id }} (check: nothing changed)
       when: ansible_check_mode
 
-    - name: the staging directory (keepalive)
-      ansible.builtin.file: { path: "{{ github_runner_wsl_stage_unix }}", state: directory, mode: "0755" }
-      when: not ansible_check_mode
-
-    - name: runner-windows.ps1 (keepalive)
-      ansible.builtin.copy: { src: runner-windows.ps1, dest: "{{ github_runner_wsl_stage_unix }}/runner-windows.ps1", mode: "0644" }
-      when: not ansible_check_mode
+    - name: the scripts, staged (keepalive)
+      ansible.builtin.include_tasks: wsl-stage.yml
 
     - name: the keepalive task, set and running
       ansible.builtin.shell: >-
+        {{ github_runner_win_stage_check }} &&
         "{{ github_runner_wsl_powershell }}" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File {{ github_runner_wsl_script | quote }}
         -Action keepalive -MachineId {{ github_runner_keepalive_mid.content | b64decode | trim | quote }}
         -User {{ ansible_user_id | quote }} </dev/null

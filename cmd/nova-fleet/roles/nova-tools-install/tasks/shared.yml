@@ -1,0 +1,28 @@
+---
+# The fleet's tools for a runner login of its own (Linux; cmd/nova-fleet/README.md, "The runner login"): root's copies
+# of the fleet login's, in nova_shared_dir/bin, which that login runs and cannot change. github-runners makes them;
+# install refreshes them on a runner whose runners are another login's. Each is replaced whole (a new file, then a rename), and only
+# when it differs. Beside them, the directory a shared SDK goes in (sdk-toolchain, nova_sdk_shared), the fleet login's.
+- name: the shared tools, root's copies of the fleet login's
+  ansible.builtin.shell: |
+    set -eu
+    shared={{ nova_shared_dir | quote }}
+    mkdir -p "$shared/bin" "$shared/sdk"
+    chown root:root "$shared" "$shared/bin"
+    chmod 0755 "$shared" "$shared/bin"
+    # the SDK belongs to the fleet login (sdk-toolchain never becomes root): every login reads it, only it writes there
+    [ "$(stat -c %U "$shared/sdk")" = {{ ansible_facts['user_id'] | quote }} ] || chown {{ ansible_facts['user_id'] | quote }}: "$shared/sdk"
+    chmod 0755 "$shared/sdk"
+    for t in {{ nova_tools_names | map('quote') | join(' ') }}; do
+      src={{ nova_bin_dir | quote }}/$t
+      [ -f "$src" ] || continue
+      cmp -s "$src" "$shared/bin/$t" && continue
+      install -o root -g root -m 0755 "$src" "$shared/bin/.$t.new"
+      mv -f "$shared/bin/.$t.new" "$shared/bin/$t"
+      echo "SET $t"
+    done
+  args: { executable: /bin/sh }
+  become: true
+  register: nova_tools_shared
+  changed_when: "'SET' in nova_tools_shared.stdout"
+  when: not ansible_check_mode

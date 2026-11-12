@@ -1,0 +1,24 @@
+---
+# nova_sdk_shared (defaults/main.yml): the role installs into <nova_shared_dir>/sdk, the login's, while nova_sdk_dir
+# stays as it is; once every tool is in place there, link.yml makes nova_sdk_dir a link to it and deletes the old SDK.
+# So a runner working from the old SDK keeps it until the new one is whole.
+- name: a shared SDK is a Linux one
+  ansible.builtin.assert:
+    quiet: true
+    that: ansible_facts['system'] == 'Linux' and nova_shared_dir is match('^/[^ ]+$')
+    fail_msg: "sdk-toolchain: nova_sdk_shared is for Linux, with nova_shared_dir an absolute path (it is {{ nova_shared_dir }})"
+
+# The role never becomes root: the directory is made by github-runners with a runner login of its own (root's
+# <nova_shared_dir>, the login's <nova_shared_dir>/sdk; roles/nova-tools-install/tasks/shared.yml).
+- name: the shared SDK directory
+  ansible.builtin.stat: { path: "{{ nova_shared_dir }}/sdk", get_checksum: false }
+  register: sdk_shared_dir
+
+- name: the shared SDK directory is the login's
+  ansible.builtin.assert:
+    quiet: true
+    that: sdk_shared_dir.stat.isdir | default(false) and sdk_shared_dir.stat.pw_name == ansible_facts['user_id']
+    fail_msg: >-
+      sdk-toolchain: {{ nova_shared_dir }}/sdk on {{ inventory_hostname }} is
+      {{ ('owned by ' ~ sdk_shared_dir.stat.pw_name) if sdk_shared_dir.stat.exists else 'missing' }}: github-runners with
+      a runner login of its own makes it, the login's ({{ ansible_facts['user_id'] }})

@@ -25,7 +25,7 @@ CREATE INDEX IF NOT EXISTS history_kind_name ON config.history (kind, name, id);
 -- windows_runners a WSL machine's Windows-side runners, each
 -- <url>=<count>[:<label>+<label>] comma-separated ('' is none).
 -- windows_admin_runners is a WSL machine's Windows-side runners run as a local
--- administrator account, one per <url>=<account>:<label>[+<label>],
+-- administrator account, one per <url>=<account>:<label>[+<label>]@<workflow>,
 -- comma-separated ('' is none). runner_env is the environment its runners'
 -- services start with, a JSON object of NAME to value ('{}' is none).
 CREATE TABLE IF NOT EXISTS config.machines (

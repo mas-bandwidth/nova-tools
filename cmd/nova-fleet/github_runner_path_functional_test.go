@@ -6,6 +6,7 @@ import (
 	"context"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -48,7 +49,10 @@ func renderRunnerUnits(t *testing.T, extra ...string) (service, plist, home stri
 	require.NoError(t, os.WriteFile(play, []byte(runnerPathPlay), 0o644))
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	args := append([]string{"-i", "localhost,", "-e", "fleet=" + fleet, "-e", "out=" + dir}, extra...)
+	// the fleet login's runners unless a test names another login (Linux defaults to one of its own)
+	me, err := user.Current()
+	require.NoError(t, err)
+	args := append([]string{"-i", "localhost,", "-e", "fleet=" + fleet, "-e", "out=" + dir, "-e", "github_runner_user=" + me.Username}, extra...)
 	cmd := exec.CommandContext(ctx, "ansible-playbook", append(args, play)...)
 	cmd.Env = append(os.Environ(), "ANSIBLE_NOCOLOR=1", "HOME="+home, "ANSIBLE_LOCAL_TEMP="+filepath.Join(dir, "tmp"))
 	out, err := cmd.CombinedOutput()
@@ -97,6 +101,7 @@ func TestRunnerTmpdirAndTheRecordsEnvironmentRender(t *testing.T) {
 	service, plist, _ := renderRunnerUnits(t)
 	assert.Regexp(t, `\nEnvironment=TMPDIR=/[^\n]*/\.cache/runner-tmp\n`, service, "the login's home (its passwd entry, ansible's user_dir)")
 	assert.NotContains(t, plist, "TMPDIR")
+	assert.NotContains(t, service, "nova-runner-login-net", "the fleet login's runners need no table of their own")
 
 	service, plist, _ = renderRunnerUnits(t, "-e", `{"nova_runner_env": {"TMPDIR": "/scratch/t", "ImageOS": "ubuntu24", "PATH": "/sdk/bin:/bin"}}`)
 	assert.Contains(t, service, "\nEnvironment=PATH=/sdk/bin:/bin\nEnvironment=TMPDIR=/scratch/t\nEnvironment=ImageOS=ubuntu24\n")
@@ -106,4 +111,12 @@ func TestRunnerTmpdirAndTheRecordsEnvironmentRender(t *testing.T) {
 	service, _, _ = renderRunnerUnits(t, "-e", `{"nova_runner_env": {"ImageOS": "ubuntu24"}, "github_runner_env": {"FOO": "bar"}}`)
 	assert.Contains(t, service, "\nEnvironment=FOO=bar\n")
 	assert.NotContains(t, service, "ImageOS", "-e github_runner_env replaces the record's for the run")
+
+	// a runner login of its own: the unit runs as it, and its TMPDIR is in its home (a name that is never the test's own
+	// login, which on a Linux CI host is ghrunner)
+	service, _, _ = renderRunnerUnits(t, "-e", "github_runner_user=ghrunner-t")
+	assert.Contains(t, service, "\nUser=ghrunner-t\n")
+	assert.Contains(t, service, "\nEnvironment=TMPDIR=/home/ghrunner-t/.cache/runner-tmp\n")
+	assert.Contains(t, service, "\nEnvironment=PATH=/opt/nova/bin:/usr/local/sbin:")
+	assert.Contains(t, service, "\nRequires=nova-runner-login-net.service\nAfter=nova-runner-login-net.service\n")
 }

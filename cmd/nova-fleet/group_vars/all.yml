@@ -11,6 +11,15 @@ nova_tools_names: [nova-bus, nova-cairn, nova-config, nova-sandbox, nova-secrets
 # Where a machine keeps the tools: its login's home.
 nova_home: "{{ ansible_facts['env']['HOME'] }}"
 nova_bin_dir: "{{ nova_home }}/.local/bin"
+# What the fleet login shares with a runner login of its own (Linux), outside its home: root's copies of the tools in
+# <dir>/bin (roles/nova-tools-install/tasks/shared.yml) and the SDK in <dir>/sdk (sdk-toolchain with nova_sdk_shared).
+nova_shared_dir: /opt/nova
+# The login a machine's GitHub runners run as (github-runners.yml; cmd/nova-fleet/README.md, "The runner login"), and its
+# home. On Linux a login of its own, ghrunner, that the play makes, with no sudo, no ssh and no way into the fleet
+# login's home, so a CI job has no root; -e github_runner_user=<the fleet login> keeps the old way. WSL keeps the fleet login: its
+# interop runs wsl.exe -u root for any login (unix-login.yml refuses a login of its own there). macOS runs its runners as the login.
+github_runner_user: "{{ 'ghrunner' if ansible_facts['system'] == 'Linux' and 'microsoft' not in (ansible_facts['kernel'] | lower) else ansible_facts['user_id'] }}"
+github_runner_home: "{{ ansible_facts['user_dir'] if github_runner_user == ansible_facts['user_id'] else '/home/' ~ github_runner_user }}"
 
 # The PATH a service unit runs with; a service row's env may set its own.
 nova_service_path: "{{ nova_bin_dir }}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
@@ -66,11 +75,11 @@ nova_age_keygen: "{{ '/opt/homebrew/bin/age-keygen' if (nova_system | default(an
 # formulae on darwin, apt packages on debian. Installed when missing, never upgraded, never started: the functional
 # tier runs its own initdb and pg_ctl. The debian list is the toolchain of a fleet whose repositories build C, C++, Go,
 # .NET, Java, OCaml and Python, prove with SMT and bounded model checkers, and test in containers, VMs and under
-# emulation. Every name resolves on Ubuntu 26.04; a Debian release or an older Ubuntu lacks some of the versioned ones
-# (clang-18, postgresql-client-18, dotnet-sdk-10.0). A list given with -e replaces this one whole (no merge): copy it
-# and edit, or start from docs/examples/runner-packages-s390x-vm.yml in the repository, the same list with the
-# foreign-architecture libraries added and nova_runner_vm_kernel on. A package of another dpkg architecture
-# (`libsodium-dev:s390x`) needs that architecture in nova_runner_foreign_architectures, so none is in the default list.
+# emulation, big-endian builds included: the s390x libraries those link are `<name>:s390x`, which apt fetches because
+# s390x is in nova_runner_foreign_architectures below. Every name resolves on Ubuntu 26.04; a Debian release or an
+# older Ubuntu lacks some of the versioned ones (clang-18, postgresql-client-18, dotnet-sdk-10.0), and Debian has no
+# Ubuntu ports archive. A list given with -e replaces this one whole (no merge): copy it and edit, and drop the
+# `:s390x` names when the architecture is turned off.
 # The Windows side of a WSL machine with Windows runners (its record's windows_runners): ccache for MSVC, from ccache's own
 # release zip, checked against its sha256 (read from the GitHub release 2026-11-12), unpacked to the directory below
 # with msvc\cl.exe beside it (runner-packages, "Windows ccache"). An empty version skips it.
@@ -115,6 +124,11 @@ nova_runner_packages:
     - zlib1g-dev
     - libopengl0
     - libglx0
+    # the same libraries built for s390x, for the big-endian build (nova_runner_foreign_architectures)
+    - "libsodium-dev:s390x"
+    - "libbpf-dev:s390x"
+    - "libxdp-dev:s390x"
+    - "libstdc++6:s390x"
     # languages and runtimes
     - golang-go
     - dotnet-sdk-10.0
@@ -128,6 +142,7 @@ nova_runner_packages:
     - cppcheck
     - valgrind
     - strace
+    - time
     - cbmc
     - cadical
     - z3
@@ -157,12 +172,20 @@ nova_runner_packages:
     - tcpdump
 # Foreign dpkg architectures the debian list may name packages of (`libfoo-dev:s390x`), Ubuntu only: each is enabled in
 # dpkg and fetched from nova_runner_ports_uri, and the native sources are restricted to the native architecture.
-nova_runner_foreign_architectures: []
+nova_runner_foreign_architectures: [s390x]
 nova_runner_ports_uri: "http://ports.ubuntu.com/ubuntu-ports/"
 # Debian/Ubuntu: keep a copy of each kernel image the host installs in nova_runner_vm_kernel_dir, readable by the
-# login, and the login in kvm, for a CI job that boots a VM of the host's own kernel. Off unless true.
-nova_runner_vm_kernel: false
+# login, and the login in kvm, for a CI job that boots a VM of the host's own kernel. On for every bench and runner
+# (the plays that read it run on no other); a runner login of its own gets root's copies (github-runners, vm-tier.yml)
+# and a run that fails while its VM tier lacks anything.
+nova_runner_vm_kernel: true
 nova_runner_vm_kernel_dir: "{{ ansible_facts['user_dir'] }}/vm-kernels"
+# Debian/Ubuntu: TLC's jar (TLA+ tools v1.7.4), root's at this path and readable by every login, pinned by its sha256.
+# A missing one is copied from nova_runner_tla_jar_source, a machine of the inventory with the jar at the same path,
+# through the control node; a jar that differs from the pin is refused, never replaced. An empty sha256 skips it.
+nova_runner_tla_jar: /opt/tla/tla2tools.jar
+nova_runner_tla_jar_sha256: 936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88
+nova_runner_tla_jar_source: ""
 
 # The age and sops a Linux machine gets from join.yml, pinned by the digest
 # GitHub publishes for each release asset. A darwin machine takes Homebrew's.

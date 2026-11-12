@@ -17,16 +17,12 @@
         msg: "PAGEFILE-PLAN {{ inventory_hostname }} size_mb={{ nova_windows_pagefile_mb | int }} (check: nothing changed)"
       when: ansible_check_mode
 
-    - name: the staging directory (page file)
-      ansible.builtin.file: { path: "{{ github_runner_wsl_stage_unix }}", state: directory, mode: "0755" }
-      when: not ansible_check_mode
-
-    - name: runner-windows.ps1 (page file)
-      ansible.builtin.copy: { src: runner-windows.ps1, dest: "{{ github_runner_wsl_stage_unix }}/runner-windows.ps1", mode: "0644" }
-      when: not ansible_check_mode
+    - name: the scripts, staged (page file)
+      ansible.builtin.include_tasks: wsl-stage.yml
 
     - name: the page file, set
       ansible.builtin.shell: >-
+        {{ github_runner_win_stage_check }} &&
         "{{ github_runner_wsl_powershell }}" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File {{ github_runner_wsl_script | quote }}
         -Action pagefile -SizeMb {{ nova_windows_pagefile_mb | int }} </dev/null
       args: { executable: /bin/sh }

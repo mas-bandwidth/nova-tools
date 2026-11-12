@@ -2,11 +2,11 @@ package main
 
 import (
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gopkg.in/yaml.v3"
 )
 
 // A runner's CI rules are applied as root (tasks/ci-rules.yml), which leaves <runner dir>/.nova-ci-rules owned by root.
@@ -15,18 +15,39 @@ import (
 // again in that directory from being restarted onto its hooks.
 func TestRunnerRetireDeletesTheDirectoryAsRoot(t *testing.T) {
 	t.Parallel()
-	b, err := os.ReadFile("roles/github-runner/tasks/unix-retire.yml")
-	require.NoError(t, err)
-	var raw []any
-	require.NoError(t, yaml.Unmarshal(b, &raw))
-	var del map[string]any
-	for _, task := range flattenTasks(t, mapsOf(t, raw)) {
-		if f, ok := task["ansible.builtin.file"].(map[string]any); ok && f["state"] == "absent" {
-			del = task
-		}
+	retire := roleTaskFile(t, "unix-retire.yml")
+	del := runnerTask(t, retire, "delete the directory")
+	assert.Equal(t, "remove-dir.yml", asText(del["ansible.builtin.include_tasks"]))
+	assert.Equal(t, "github_runner_rm", del["loop_control"].(map[string]any)["loop_var"])
+	rm := roleTaskFile(t, "remove-dir.yml")
+	require.Len(t, rm, 1)
+	assert.Equal(t, true, rm[0]["become"], "root deletes what the CI rules left owned by root")
+	assert.Equal(t, "not ansible_check_mode", asText(rm[0]["when"]))
+}
+
+// Root deletes in a runner login's home only by name, in a parent it has checked is the directory its name holds: a
+// login that turned the parent (or the directory) into a link sends root nowhere it did not mean.
+func TestRunnerDirectoryIsDeletedThroughNoLink(t *testing.T) {
+	t.Parallel()
+	sh := asText(roleTaskFile(t, "remove-dir.yml")[0]["ansible.builtin.shell"])
+	for _, want := range []string{`cd "$parent"`, `[ -L "$parent" ]`, `ls -di .`, `ls -di "$parent"`, `rm -rf -- "./$name"`} {
+		assert.Contains(t, sh, want)
 	}
-	require.NotNil(t, del, "unix-retire.yml deletes the runner's directory")
-	assert.Equal(t, "{{ not ansible_check_mode }}", asText(del["become"]), "root deletes what the CI rules left owned by root")
+	assert.Less(t, strings.Index(sh, `ls -di "$parent"`), strings.Index(sh, `rm -rf`), "the parent is checked before anything is deleted")
+}
+
+// The runner's dependency script runs as root, so root runs its own copy: the cached release, checked against the
+// pinned digest and unpacked into a directory of root's, never the copy in a runner login's home.
+func TestRunnerDependenciesRunFromRootsOwnCopy(t *testing.T) {
+	t.Parallel()
+	deps := runnerTask(t, roleTaskFile(t, "unix-runner.yml"), "the runner's system dependencies (Linux)")
+	sh := asText(deps["ansible.builtin.shell"])
+	for _, want := range []string{"mktemp -d", "sha256sum -c", `"$stage/x/bin/installdependencies.sh"`} {
+		assert.Contains(t, sh, want)
+	}
+	assert.NotContains(t, sh, "{{ github_runner_dir }}/bin/installdependencies.sh")
+	assert.Less(t, strings.Index(sh, "sha256sum -c"), strings.Index(sh, "installdependencies.sh"))
+	assert.Equal(t, true, deps["become"])
 }
 
 // A runner is never stopped or restarted under a running job: retiring waits for its job first, and a changed unit (or a
@@ -46,11 +67,13 @@ func TestRunnerStopsOnlyWhenIdle(t *testing.T) {
 func TestRunnerRunIsTheRecordsWithoutAURL(t *testing.T) {
 	t.Parallel()
 	main := roleTaskFile(t, "main.yml")
-	require.Len(t, main, 2)
-	assert.Equal(t, "scope.yml", asText(main[0]["ansible.builtin.include_tasks"]))
-	assert.Equal(t, "github_runner_url is defined", asText(main[0]["when"]))
-	assert.Equal(t, "record.yml", asText(main[1]["ansible.builtin.include_tasks"]))
-	assert.Equal(t, "github_runner_url is not defined", asText(main[1]["when"]))
+	one := runnerTask(t, main, "one url, named with -e github_runner_url")
+	assert.Equal(t, "scope.yml", asText(one["ansible.builtin.include_tasks"]))
+	assert.Equal(t, "github_runner_url is defined", asText(one["when"]))
+	record := runnerTask(t, main, "every runner of the machine record")
+	assert.Equal(t, "record.yml", asText(record["ansible.builtin.include_tasks"]))
+	assert.Equal(t, "github_runner_url is not defined", asText(record["when"]))
+	assert.Equal(t, len(main)-1, taskIndex(main, "every runner of the machine record"), "the runs are the last tasks")
 }
 
 // A held runner (github_runner_hold, e.g. one running a multi-hour model check nothing resumes) is neither waited on nor

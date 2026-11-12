@@ -32,6 +32,10 @@
   ansible.builtin.include_tasks: debian.yml
   when: rp_os == 'debian' and rp_wanted | length > 0
 
+- name: TLC's jar, for the Java runtime above (Debian, Ubuntu)
+  ansible.builtin.include_tasks: tla.yml
+  when: rp_os == 'debian' and nova_runner_tla_jar_sha256 | length > 0
+
 - name: a WSL machine (no /boot kernel image, no kvm)
   ansible.builtin.stat: { path: /proc/sys/fs/binfmt_misc/WSLInterop, get_checksum: false }
   register: rp_wsl
@@ -45,6 +49,17 @@
   ansible.builtin.include_tasks: windows-ccache.yml
   vars:
     rp_win_ccache_unix: "{{ nova_runner_windows_ccache_unix }}"
+    # EXACT when the directory holds VERSION, ccache.exe, msvc and msvc/cl.exe and nothing else (no link), both binaries
+    # the unpacked release's and VERSION its version; ABSENT; else DIFFERS
+    rp_win_ccache_exact: |
+      set -eu -o pipefail
+      d={{ nova_runner_windows_ccache_unix | quote }}
+      src={{ (rp_win_ccache_stage.path | default('') ~ '/ccache-' ~ nova_runner_windows_ccache.version ~ '-windows-x86_64') | quote }}
+      if [ ! -e "$d" ] && [ ! -L "$d" ]; then echo ABSENT; exit 0; fi
+      have=$(cd "$d" && find . -mindepth 1 -printf '%y %p\n' | LC_ALL=C sort | tr '\n' ' ')
+      if [ ! -L "$d" ] && [ "$have" = 'f ./VERSION f ./ccache.exe d ./msvc f ./msvc/cl.exe ' ] &&
+        cmp -s "$src/ccache.exe" "$d/ccache.exe" && cmp -s "$src/ccache.exe" "$d/msvc/cl.exe" &&
+        [ "$(cat "$d/VERSION")" = {{ nova_runner_windows_ccache.version | quote }} ]; then echo EXACT; else echo DIFFERS; fi
     # icacls from the WSL login (the elevated Windows account): owner Administrators throughout; on the directory nothing
     # inherited, the grants below and nothing for the accounts jobs run as (NETWORK SERVICE, SERVICE, LOCAL, Everyone,
     # CREATOR OWNER); everything in it reset to inherit only that. SEAL ok|changed, compared on icacls' own listing.

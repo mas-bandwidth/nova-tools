@@ -17,6 +17,7 @@
 
 - name: register with GitHub as a Windows service (the token reaches the runner on its stdin)
   ansible.builtin.shell: >-
+    {{ github_runner_win_stage_check }} &&
     "{{ github_runner_wsl_powershell }}" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File {{ github_runner_wsl_script | quote }}
     -Action register -Dir {{ item.dir | quote }} -Url {{ item.url | quote }} -Name {{ item.name | quote }} -Labels {{ item.labels | quote }}
     {{ ('-Account ' ~ (item.account | quote)) if item.account else '' }}

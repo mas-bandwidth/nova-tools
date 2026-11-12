@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -25,6 +26,10 @@ func TestInstallGhWrapper(t *testing.T) {
 	t.Parallel()
 	if _, err := exec.LookPath("ansible-playbook"); err != nil {
 		t.Skip("ansible-core is not installed on this machine")
+	}
+	me, err := user.Current()
+	if err != nil {
+		t.Fatal(err)
 	}
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git is not installed on this machine")
@@ -75,7 +80,9 @@ func TestInstallGhWrapper(t *testing.T) {
 			}
 		}
 		code, out, errs := runFleet(t, bin, "install", "--inventory", inv, "--", "-e", "nova_tools_version=local", "-e", "nova_tools_local_dir="+dist,
-			"-e", "nova_bin_dir="+binDir, "-e", "nova_home="+home, "-e", `{"nova_tools_names":["nova-fleet"]}`)
+			"-e", "nova_bin_dir="+binDir, "-e", "nova_home="+home, "-e", `{"nova_tools_names":["nova-fleet"]}`,
+			// the runners as the test's own login: a runner's shared tools (another login's runners) need root
+			"-e", "github_runner_user="+me.Username)
 		if code != 0 {
 			t.Fatalf("%s: install: exit %d\n%s\n%s", c.name, code, out, errs)
 		}

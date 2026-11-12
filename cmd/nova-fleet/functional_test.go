@@ -10,6 +10,7 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -165,8 +166,14 @@ func TestRunnerTokenRequestFailsWithItsReason(t *testing.T) {
 	if err := os.WriteFile(inv, []byte("[runner]\nlocalhost ansible_connection=local ansible_python_interpreter=auto_silent runners=1\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	// the runners as the test's own login: a Linux host's default, a login of its own, needs root to make
+	me, err := user.Current()
+	if err != nil {
+		t.Fatal(err)
+	}
 	code, out, errs := runFleet(t, bin, "github-runners", "--check", "--inventory", inv, "--", "-e", "github_runner_url=https://github.com/o/r",
-		"-e", "github_runner_scope=repo", "-e", "github_runner_gh="+gh, "-e", "github_runner_base_dir="+t.TempDir())
+		"-e", "github_runner_scope=repo", "-e", "github_runner_gh="+gh, "-e", "github_runner_base_dir="+t.TempDir(),
+		"-e", "github_runner_user="+me.Username)
 	if code == 0 || !strings.Contains(out, "GITHUB RUNNER TOKEN localhost: gh api on the control node failed, rc=4") || !strings.Contains(out, "please run:  gh auth login") || strings.Contains(out, "censored") {
 		t.Fatalf("--check with no gh login: exit %d, want the token refusal with its reason:\n%s\n%s", code, out, errs)
 	}

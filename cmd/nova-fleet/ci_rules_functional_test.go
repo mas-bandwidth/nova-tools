@@ -59,3 +59,37 @@ func TestCIRulesApplyWritesThePushBranches(t *testing.T) {
 		t.Errorf("apply without BRANCHES = %d, want 2", code)
 	}
 }
+
+// apply writes nothing through a link in the runner's directory (a runner login could plant one for root's apply to
+// follow): a .nova-ci-rules link is replaced by a directory, a .env link by a file, and what they named is untouched.
+func TestCIRulesApplyFollowsNoLinkInTheRunnerDirectory(t *testing.T) {
+	t.Parallel()
+	hooks := ciCopy(t, "")
+	runner := t.TempDir()
+	elsewhere := t.TempDir()
+	victim := filepath.Join(elsewhere, "victim")
+	if err := os.WriteFile(victim, []byte("keep\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(elsewhere, filepath.Join(runner, ".nova-ci-rules")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(victim, filepath.Join(runner, ".env")); err != nil {
+		t.Fatal(err)
+	}
+	sh := ciShells(t)[0]
+	if code, out := ciRun(t, sh, hooks, "", nil, "apply", "90", "main", runner); code != 0 || !strings.Contains(out, "hooks=set") {
+		t.Fatalf("apply = %d %q, want hooks=set", code, out)
+	}
+	for _, name := range []string{".nova-ci-rules", ".env"} {
+		if fi, err := os.Lstat(filepath.Join(runner, name)); err != nil || fi.Mode()&os.ModeSymlink != 0 {
+			t.Errorf("%s after apply: %v, %v; want no link", name, fi, err)
+		}
+	}
+	if b, err := os.ReadFile(victim); err != nil || string(b) != "keep\n" {
+		t.Errorf("the .env link's target = %q, %v; want it untouched", b, err)
+	}
+	if entries, err := os.ReadDir(elsewhere); err != nil || len(entries) != 1 {
+		t.Errorf("the .nova-ci-rules link's target holds %d entries, %v; want only its own file", len(entries), err)
+	}
+}

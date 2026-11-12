@@ -16,6 +16,12 @@
 # directory: a sandbox that grants the SDK by its real path cannot traverse a symlink outside its grants.
 nova_sdk_dir: "{{ ansible_facts['user_dir'] }}/sdk"
 
+# Linux: the SDK in <nova_shared_dir>/sdk (group_vars/all.yml), the login's and readable by every login, with
+# nova_sdk_dir a link to it, so a runner login of its own (github-runners, "The runner login") runs the same tools
+# without reaching into the login's home. The shared SDK is installed fresh (its files name their own path) while
+# nova_sdk_dir stays in use; once every tool is in place nova_sdk_dir becomes a link to it and the old one is deleted.
+nova_sdk_shared: "{{ ansible_facts['system'] == 'Linux' and 'runner' in group_names and github_runner_user != ansible_facts['user_id'] }}"
+
 # Linux: ~/.bashrc sources env.sh on its first line (before any early return for a non-interactive shell), unless a
 # line of it already names sdk/env.sh. A Mac's shell files are left as they are.
 nova_sdk_shell_rc: true

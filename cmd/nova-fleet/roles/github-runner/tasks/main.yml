@@ -5,6 +5,45 @@
 # are the host's runners, every scope's made as scope.yml makes one url's, and every other runner on the host is retired
 # (record.yml). With -e github_runner_url: that one url's runners only (scope.yml); the host's other runners are left.
 
+# The runners run as github_runner_user: the fleet login, or on Linux a login of its own (unix-login.yml). Then what is in
+# its home is read and written as root and owned by it, and config.sh runs as it.
+- name: whose runners these are
+  ansible.builtin.set_fact:
+    github_runner_other: "{{ github_runner_user != ansible_facts['user_id'] }}"
+
+# The runner login cannot enter the fleet login's home, so an environment naming a path there (a record written for
+# the fleet login's runners) would fail every job: refused before the machine or any runner is changed.
+- name: the runner login's environment names nothing in the fleet login's home
+  ansible.builtin.assert:
+    quiet: true
+    that: github_runner_env_theirs | length == 0
+    fail_msg: >-
+      github-runner: {{ inventory_hostname }}'s runner environment names {{ github_runner_env_theirs | join(', ') }}, in
+      {{ ansible_facts['user_dir'] }}, which {{ github_runner_user }} cannot read; give paths it can, run: nova-config machine
+      set {{ inventory_hostname }} --runner_env '<json-object>'
+  vars:
+    github_runner_env_theirs: >-
+      {{ github_runner_env | dict2items | selectattr('value', 'string')
+         | selectattr('value', 'search', '(^|:)' ~ (ansible_facts['user_dir'] | regex_escape) ~ '(/|:|$)')
+         | map(attribute='key') | list }}
+  when: github_runner_other | bool
+
+- name: the runner login of its own (Linux)
+  ansible.builtin.include_tasks: unix-login.yml
+  when: github_runner_other | bool
+
+# --check cannot plan files owned by a login that does not exist yet: it says so and stops for this host.
+- name: the runner login, planned
+  ansible.builtin.debug:
+    msg: >-
+      RUNNER-LOGIN {{ inventory_hostname }} {{ github_runner_user }} home={{ github_runner_home }}: a run makes it, then its
+      runners; plan them once it exists (check: nothing changed)
+  when: github_runner_other | bool and ansible_check_mode and 'ABSENT' in github_runner_existing.stdout
+
+- name: nothing more to plan here until the runner login exists
+  ansible.builtin.meta: end_host
+  when: github_runner_other | bool and ansible_check_mode and 'ABSENT' in github_runner_existing.stdout
+
 - name: one url, named with -e github_runner_url
   ansible.builtin.include_tasks: scope.yml
   when: github_runner_url is defined

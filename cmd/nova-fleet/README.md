@@ -399,6 +399,32 @@ directory from the units. A macOS daemon gets no `TMPDIR` unless `github_runner_
 which macOS cleans. A macOS daemon starts with `/opt/homebrew/bin` on its PATH, before the
 system's, so a job finds Homebrew's formulae and its `python3`.
 
+**The runner login.** The runners run as `github_runner_user`: on Linux `ghrunner`, a login of their own, so
+a CI job has no root and no way to get it; on WSL and macOS the login the play connects as (WSL's interop gives any
+login root). `-e github_runner_user=<the fleet
+login>` keeps a Linux host's runners as the fleet login for a run (for every run, and every play that reads it, set `github_runner_user` in its `host_vars` file); another name on macOS fails the run. The play makes the login (home
+`/home/<login>`, `github_runner_home`, mode `0750`) with its password locked, in no group but its own and `kvm` (where
+the host has one), refuses an account of that name that is not a runner login already (a uid below 1000, or any other
+group), writes `/etc/ssh/sshd_config.d/90-nova-runner-login.conf` (`DenyUsers <login>`, checked with `sshd -t`, then
+with `sshd -T`), refuses the login's own connections to ssh on any tailnet address (Tailscale SSH reads no
+`DenyUsers`: an nftables table, `/etc/nova-runner-login.nft`, loaded at boot by `nova-runner-login-net.service`), and
+fails the run unless `sudo -l -U <login>` says it is not allowed to run sudo. It refuses a WSL host whose interop is on (any login runs `wsl.exe -u root` through it, `RUNNER-LOGIN-WSL-INTEROP`), closes the fleet login's home (`0750`), and fails the run on any path the login can write or owns outside its home, the kernel's directories and the shared scratch places, on every local filesystem, found by `find` run as the login (`RUNNER-LOGIN-WRITABLE`; nothing found is changed). The runners'
+directories, release cache and `TMPDIR` are then in its home, written as the login (root follows no link it could
+plant there; root's only act there is deleting a runner directory by name), and the runners' default `PATH` starts
+with `/opt/nova/bin` (`nova_shared_dir`): root's copies of the fleet login's tools, which it runs and cannot change (made here, refreshed by `install` on a runner whose runners are another login's). Its `~/sdk` names `/opt/nova/sdk`, the fleet login's shared SDK, once `sdk-toolchain` has put one there (`nova_sdk_shared`, on for a runner whose runners are another login's), so a workflow's `$HOME/sdk` works for it as for the fleet login. A runner whose unit runs it from another directory (the fleet
+login's, before the switch) moves: `RUNNER-MOVE <runner> from=<dir> to=<dir> user=<login>`, then, once its job ends,
+its unit stops, it registers in the new directory under the same name (`config.sh --replace`, with a fresh token), the
+unit restarts it there and the old directory is deleted; a move that fails starts the runner where it ran and fails
+the run with `RUNNER-MOVE-FAILED`. A held runner is not moved: the run fails with `RUNNER-HELD` naming it. The
+record's `runner_env` must name nothing in the fleet login's home (the run fails naming the keys, before the machine
+is changed). With `nova_runner_vm_kernel` (on) an x86_64 host gives it the VM tier: root's copies of the kernel
+images in `/opt/nova/vm-kernels` (a kernel hook adds each new one), its `~/vm-kernels` naming them, and the run fails
+with `VM-TIER-MISSING` while vng, qemu, a writable `/dev/kvm`, the running kernel's image or its modules are missing
+for it; a host with no VM tier sets `nova_runner_vm_kernel: false` in its `host_vars` file. A host moves to the runner
+login in four runs, each `--check --diff` first: `install` (the shared tools and the shared SDK's directory),
+`sdk-toolchain` (the shared SDK, while `~/sdk` stays in use until it is whole), `runner-packages`, then `github-runners`
+once the record's `runner_env` names the runner login's paths.
+
 **Public repositories.** A self-hosted runner runs the code of any workflow that reaches it, and on a public repository
 that includes pull requests from forks. Use these runners on private repositories, or restrict which workflows and
 events may use them.
@@ -413,6 +439,8 @@ events may use them.
 | `github_runner_deregister` | true: retiring removes the runner from GitHub (needs a removal token) |
 | `github_runner_env` | the service's environment, `{NAME: value}`, inherited by every job; default the machine record's `runner_env` (the inventory's `nova_runner_env`; `nova-config machine set <machine> --runner_env '<json-object>'`, cmd/nova-config/README.md), so every run for any url writes it. A `PATH` replaces the default (`nova_bin_dir` first, then the system's); a `TMPDIR` replaces `github_runner_tmpdir`. `-e github_runner_env` replaces the record's for one run; there a path under the login's home may be written `{{ ansible_facts['user_dir'] }}/...`, rendered per machine (the record holds literal values). [docs/examples/github-runners-env.yml](../../docs/examples/github-runners-env.yml) is a vars file with the url, scope, labels and an environment for Ubuntu runners, for `-e @github-runners-env.yml` (read from the directory you run in) |
 | `github_runner_tmpdir` | a Linux runner's `TMPDIR` when the environment names none: `<home>/.cache/runner-tmp` |
+| `github_runner_user` | the login the runners run as: `ghrunner` on Linux, a login of its own ("The runner login"); the play's login on WSL and macOS; on Linux the play's login keeps the old way |
+| `github_runner_home` | that login's home: the play's login's, or `/home/<login>` |
 | `github_runner_base_labels` | `[fleet]`: the labels every runner gets, Linux, macOS and the Windows side |
 | `github_runner_version`, `github_runner_sha256` | the pinned actions/runner release and its digests |
 | `github_runner_ci_limit_seconds` | 120: the per-commit job limit every runner enforces ("CI rules") |
@@ -488,7 +516,7 @@ nova-fleet windows-runners -- -l bench-1
 `windows_runners` is `<url>=<count>[:<label>+<label>]`, comma-separated (cmd/nova-config/README.md); the inventory hands it to
 the play as `nova_windows_runners`. A machine without it gets no runners (only the keepalive below); one with it that is not WSL with interop is
 refused. **The channel** is the one `ci-rules` already uses: from the WSL login, `powershell.exe` by its full path
-runs the role's `files/runner-windows.ps1`, staged to `C:\ProgramData\nova-runner-stage`. It acts as the Windows account
+runs the role's `files/runner-windows.ps1`, staged to `C:\nova-stage` (below, "The stage directory"). It acts as the Windows account
 that started WSL, elevated; no Windows login, password or key is involved, and no port is opened. **Each runner** is
 `<machine>-win-<slug>-<i>` in `C:\actions-runner\<slug>-<i>` (`<slug>` is `<owner>-<repo>`, or `org-<org>` so an
 organization never shares a slug with a repository), the pinned release checked against its digest (a directory left
@@ -529,7 +557,9 @@ refuses two entries whose `<slug>-<account>`, compared without case, would be th
 folder and the CI rules of the other Windows runners, and the same registration, repair and counts: it is one more
 runner in the `windows=` of the receipt. Its job `PATH` is the other runners' without the ccache directory, and its
 `.env` holds only the role's lines, `CCACHE_DISABLE=1` among them (every runner writes its ccache, so a job here would
-link what any of them put there) and the CI rules' hooks; any other line is dropped. **Its
+link what any of them put there), `CCACHE_CONFIGPATH` and `CCACHE_CONFIGPATH2` pointing into its sealed directory (a
+disabled ccache still reads its configuration, whose `compiler=` picks what runs, and its system file is
+`%ALLUSERSPROFILE%\ccache\ccache.conf`, which any job may make) and the CI rules' hooks; any other line is dropped. **Its
 labels** are only the entry's (GitHub adds `self-hosted`, `Windows` and `X64`), and must be its own: nova-config refuses
 on the write, and the inventory refuses when the store holds one, a label (compared without case) that a job of the same
 repository could select on another runner: any label of the machine's own `windows_runners` or `runner_scopes`, its
@@ -550,12 +580,16 @@ as `NETWORK SERVICE`, which may add files to any folder under `C:\ProgramData`, 
 access for every signed-in account: a file such a job put in the admin runner's directory, or a binary it changed
 there, would run as an administrator, and so would a `Directory.Build.targets` or `NuGet.Config` it put in any folder
 above it (MSBuild and NuGet read them from every folder above a checkout). So the admin root is directly under `C:\`,
-where those accounts may make a folder but not a file, and the install and logon steps prove that first
-(`[NovaTree]::Above`): no folder above the admin root may let `NETWORK SERVICE`, SERVICE, LOCAL, Authenticated Users,
-Users or Everyone (the openers) make, change or delete a file in it, hold a folder one of them owns (made by one of
-them) or whose owner cannot be read, or hold a file one of them may change; else `ABOVE-OPEN <path> ...` fails the run.
-A folder an opener makes in `C:\` later (such as `C:\.cargo`, which cargo reads above a checkout) is caught by the
-job-started hook, below. Then the install step makes `C:\nova-admin-runners` and the runner's directory sealed in
+where on a default Windows those accounts may make a folder but not a file, and the install and logon steps prove that
+first (`[NovaTree]::Above`): no folder above the admin root may let `NETWORK SERVICE`, SERVICE, LOCAL, Authenticated
+Users, Users or Everyone (the openers) make, change or delete a file in it, hold a folder one of them owns (made by one
+of them) or whose owner cannot be read, or hold a file one of them may change; else `ABOVE-OPEN <path> ...` fails the
+run. (captain's `C:\` gives Authenticated Users Modify on the drive itself, read on 2026-11-12, so an admin runner
+there refuses with `ABOVE-OPEN C:\` until `C:\` is back to Windows' default: Authenticated Users may only make a
+folder in it.) A folder an opener has made in `C:\` before a job starts (such as `C:\.cargo`, which cargo reads above
+a checkout) is refused by the job-started hook, below; one made while the job runs is not caught. So an admin
+workflow runs no tool that reads its configuration from a folder above the checkout (cargo, npm and node, pip): MSBuild
+and NuGet read files there, which `C:\` does not let those accounts make. Then the install step makes `C:\nova-admin-runners` and the runner's directory sealed in
 the call that creates them: owned by `Administrators`, nothing inherited, full control for SYSTEM and `Administrators`,
 and on the runner's directory its account. One that was already there and is not sealed so was made by someone else
 and is never used or changed: `PLANTED <path> ...` fails the run and names the command that deletes it. Nothing in
@@ -619,11 +653,50 @@ guards. The install step writes the entry's workflow to `.nova-ci-rules\admin-wo
 anything else runs, every job but a `push`, `schedule` or `workflow_dispatch` job of `refs/heads/main` whose
 `GITHUB_WORKFLOW_REF` is that workflow at `refs/heads/main` (owner and repository compared without case, the rest
 exactly); with no `admin-workflow` it refuses every job. It also refuses every job while a folder above the runner
-is owned by an opener (or its owner cannot be read, a hidden system folder aside). A refusal is
-`::error::CI rule: <why>` and fails the job. So a pull request, a branch, a tag or another workflow never runs as an
+is owned by an opener (or its owner cannot be read, a hidden system folder aside), or cannot be listed. A refusal is
+`::error::CI rule: <why>`, and the hook then ends the job's `Runner.Worker`: the runner adds the hook as a pre-job step,
+and a failed one fails the job but still lets its `if: always()` and `if: failure()` steps run (actions/runner,
+`JobExtension.cs`), so ending the worker is what keeps every step of a refused job from running. So a pull request, a branch, a tag or another workflow never runs as an
 administrator, whatever label it names. GitHub still gives the runner `self-hosted`, `Windows` and `X64`, so in a
 repository with an admin runner every ordinary Windows job should name a label of its own runners as well (such as
 `fleet` or a `windows_runners` label): a job that lands on the admin runner by those labels is refused, not run.
+
+### The stage directory
+
+Every script the role runs elevated on the Windows side (`runner-windows.ps1`, and `nova-ci-rules.ps1` with its two
+hooks) is staged in `C:\nova-stage` (`github_runner_wsl_stage_dir`), never under `C:\ProgramData`. There every user may
+add files to a folder, so a job of an ordinary runner (`NETWORK SERVICE`) could make the stage folder first, or put
+its own script in it, and the play would run that script as an administrator. The role's `tasks/wsl-stage.yml` makes the
+directory sealed in the one call that creates it: owned by `Administrators`, nothing inherited, full control for SYSTEM
+and `Administrators` only. It copies the scripts in through `/mnt/c`, and every elevated call is
+`<stage check> && powershell.exe ... -File C:\nova-stage\<script>`. The stage check is `files/stage-check.ps1`, handed
+to `powershell.exe` as `-EncodedCommand` so it is never a file anyone could change. It proves, the moment before each
+call:
+
+- every folder above `C:\nova-stage` is owned by SYSTEM, `Administrators` or TrustedInstaller, and no one else (not
+  `NETWORK SERVICE`, SERVICE, LOCAL, Authenticated Users, Users, Everyone, This Organization or a service's own SID)
+  may delete it, rename it, delete what is in it, or change its permissions or owner. Adding a file or a folder to
+  `C:\` is not refused: it lands beside the stage directory, never in it (captain's `C:\` gives Authenticated Users
+  Modify, which is that and no more);
+- the directory is as the play makes it;
+- everything in it is a file, not a link, owned by SYSTEM, `Administrators` or the account running the play, with
+  only the entries it inherits from the directory (SYSTEM and `Administrators`);
+- each script has the sha256 of the role's own file on the control node.
+
+A refusal fails the task and nothing is run; nothing found is ever changed or repaired:
+
+- `STAGE-OPEN <folder> sid=<sid>|owner=<sid>|unreadable=<why>`: someone else could take the stage directory's path;
+- `STAGE-PLANTED <path> owner=<sid>|inherited=yes|ace=<sid>|folder=no|file=no|unreadable=<why>`: the directory, or
+  something in it, was not made by the play. Because `C:\` lets any account make a folder, a job of an ordinary runner
+  can make `C:\nova-stage` before the play does; the play then refuses until an administrator deletes it. Delete it
+  in an elevated cmd with `rmdir /s /q C:\nova-stage`, which removes a link inside it without following it (Windows
+  PowerShell's `Remove-Item -Recurse` follows one and deletes what it points at), and run again;
+- `STAGE-CHANGED <path> missing|sha256=<hex>`: a staged script is not the role's.
+
+`C:\ProgramData\nova-runner-stage` and `C:\ProgramData\nova-ci-rules-stage` are never read, run or trusted; the play
+leaves them where they are on a machine that has them, and an administrator may delete them by hand (`rmdir /s /q`).
+The decisions in `stage-check.ps1` are tested on fake ACLs by `TestFunctionalStageCheck` (`testdata/stagecheck`); the
+part that reads the real disk (`StageDisk`) runs only on Windows, when the play runs.
 
 ### The Windows page file at a fixed size
 
@@ -1114,7 +1187,9 @@ applying it restarts only the daemon it configures, never the login's units. A d
   that is `/`, the home or above it, or under a runner's `_work` or `actions-runner*` is refused (`CLEAN-REFUSED`); a file
   of `nova_health_disk_clean_caches` (Go's build cache) unchanged that long goes too. On a filesystem over
   `nova_health_disk_warn_pct` the age is `nova_health_disk_clean_pressed_min`. One `CLEAN` line per removal and a
-  `CLEAN-DONE` line in the journal.
+  `CLEAN-DONE` line in the journal. A runner login of its own (github-runners, "The runner login") gets its own
+  `nova-disk-clean-<login>.timer`, run as it, for `/tmp`, its runners' `TMPDIR`s and its Go build cache: the clean
+  removes only what its user owns.
 
 ```
 nova-fleet health --check --diff
@@ -1249,10 +1324,13 @@ Debian and Ubuntu the compilers, assemblers and build systems (`build-essential`
 zlib, OpenGL), the runtimes (`golang-go`, `dotnet-sdk-10.0`, Mono, a Java runtime, `opam`, Python's pip and venv),
 the analysers and provers (`cppcheck`, `valgrind`, `cbmc`, `cadical`, `z3`, `gappa`, `sollya`), the store clients
 (`postgresql-client-18`, `redis-tools`, `sqlite3`), containers, VMs and emulation (`podman`, `bubblewrap`, `virtme-ng`,
-`qemu-system-x86`, `qemu-user`, `qemu-system-s390x` with the s390x cross compilers) and `bats`, `tcpdump` and the
-archivers; the list in `group_vars/all.yml` is grouped that way. Every name resolves on Ubuntu 26.04; a Debian
-release or an older Ubuntu lacks some of the versioned ones (`clang-18`, `postgresql-client-18`, `dotnet-sdk-10.0`),
-and there apt fails the task naming the package, and the fix is your own list, below, without it. A package already
+`qemu-system-x86`, `qemu-user`, `qemu-system-s390x` with the s390x cross compilers, and the s390x libraries a
+big-endian build links, `libsodium-dev:s390x`, `libbpf-dev:s390x`, `libxdp-dev:s390x` and `libstdc++6:s390x`, from the
+foreign architecture `s390x`) and `bats`, `tcpdump`, GNU `time` and the archivers; the list in `group_vars/all.yml` is
+grouped that way. Every name resolves on Ubuntu 26.04; a Debian release or an older Ubuntu lacks some of the versioned
+ones (`clang-18`, `postgresql-client-18`, `dotnet-sdk-10.0`), and there apt fails the task naming the package, and the
+fix is your own list, below, without it. Debian has no Ubuntu ports archive, so there the play refuses the foreign
+architecture; the fix is your own list without the `:s390x` names, run with the architecture turned off. A package already
 installed is adopted as it is: never reinstalled, upgraded or auto-updated, so a run over it reports `changed=0`.
 Only packages: no server is started, no `brew services`, no unit; the tests run their own `initdb` and `pg_ctl` (with
 `LC_ALL=C`). CI never installs: the macOS functional job refuses when `initdb` is missing and names this play.
@@ -1264,25 +1342,20 @@ nova-fleet runner-packages -- -l bench
 
 A list given with `-e` replaces the default whole, not merged, so another list starts from a copy: a JSON value, or a
 vars file after `-e @`, read from the directory you run in (the plays are elsewhere, so a file of yours never shadows
-one). [docs/examples/runner-packages-s390x-vm.yml](../../docs/examples/runner-packages-s390x-vm.yml) in the
-repository, copied beside your inventory, is the default list with the two switches below on, the foreign architecture `s390x` and the kernel copies
-for a VM of the host's own kernel, and the s390x libraries a big-endian build links added as `<name>:s390x`:
-
-```
-nova-fleet runner-packages --check -- -e @runner-packages-s390x-vm.yml -l bench
-nova-fleet runner-packages -- -e @runner-packages-s390x-vm.yml -l bench
-```
+one). A list without the `:s390x` packages goes with the architecture off, `-e '{"nova_runner_foreign_architectures": []}'`.
 
 | Variable | Default | |
 |---|---|---|
 | `nova_runner_packages` | `darwin`: `postgresql@18`, `cmake`, `libsodium`, `pkgconf`, `ccache`; `debian`: the toolchain above (`group_vars/all.yml`) | another OS with a non-empty list is refused |
-| `nova_runner_windows_ccache`, `nova_runner_windows_ccache_dir` | `4.14.3` and its zip's sha256; `C:\ProgramData\nova\ccache` | **Windows ccache.** On a WSL machine whose record names `windows_runners` or `windows_admin_runners`, ccache's own Windows release, checked and unpacked on the WSL side, then copied through `/mnt/c` into that directory, sealed before and after (owned by `Administrators`, nothing inherited, read and run for Authenticated Users and Users, so no job can change what every job runs; an admin runner's install refuses it otherwise), as `ccache.exe` and `msvc\cl.exe` (the same binary under the compiler's name: MSBuild runs it in place of cl.exe when a build sets `CLToolExe=cl.exe;CLToolPath=<dir>\msvc` in `CMAKE_VS_GLOBALS`, since the Visual Studio generator honours no compiler launcher; ccache then runs the real cl.exe from the PATH MSBuild sets). The version in `VERSION` beside it; a matching version is left alone; an empty version skips it |
-| `nova_runner_foreign_architectures` | `[]` | Ubuntu: dpkg architectures the debian list may name packages of, as `<name>:<arch>` |
+| `nova_runner_windows_ccache`, `nova_runner_windows_ccache_dir` | `4.14.3` and its zip's sha256; `C:\ProgramData\nova\ccache` | **Windows ccache.** On a WSL machine whose record names `windows_runners` or `windows_admin_runners`, ccache's own Windows release, checked and unpacked on the WSL side, then copied through `/mnt/c` into that directory, sealed before and after (owned by `Administrators`, nothing inherited, read and run for Authenticated Users and Users, so no job can change what every job runs; an admin runner's install refuses it otherwise), as `ccache.exe` and `msvc\cl.exe` (the same binary under the compiler's name: MSBuild runs it in place of cl.exe when a build sets `CLToolExe=cl.exe;CLToolPath=<dir>\msvc` in `CMAKE_VS_GLOBALS`, since the Visual Studio generator honours no compiler launcher; ccache then runs the real cl.exe from the PATH MSBuild sets). The version in `VERSION` beside it. Every run compares the directory with the release (the zip kept on the WSL side): anything else in it, a binary that differs or a link, and the directory is removed and made again, so a file put there while it was open is never sealed in; one still there after the seal fails the run. An empty version skips it |
+| `nova_runner_foreign_architectures` | `[s390x]` | Ubuntu: dpkg architectures the debian list may name packages of, as `<name>:<arch>` |
 | `nova_runner_ports_uri` | `http://ports.ubuntu.com/ubuntu-ports/` | the archive a foreign architecture comes from |
-| `nova_runner_vm_kernel` | `false` | Debian/Ubuntu: keep each kernel image readable by the login, for a VM of the host's own kernel |
+| `nova_runner_vm_kernel` | `true` | Debian/Ubuntu (not WSL): keep each kernel image readable by the login, for a VM of the host's own kernel; a runner login of its own gets root's copies in `/opt/nova/vm-kernels` (its `~/vm-kernels`, a kernel hook for each new image) from `github-runners`, which fails with `VM-TIER-MISSING` naming what the tier lacks (vng, qemu, a writable `/dev/kvm`, the image, the modules) |
 | `nova_runner_vm_kernel_dir` | `<home>/vm-kernels` | where the copies go, as `vmlinuz-<version>` |
+| `nova_runner_tla_jar`, `nova_runner_tla_jar_sha256` | `/opt/tla/tla2tools.jar`; the sha256 of TLA+ tools v1.7.4 (the one `tests/tla/tla2tools.sha256` pins) | Debian/Ubuntu: **TLC's jar**, below; an empty sha256 skips it |
+| `nova_runner_tla_jar_source` | none | a machine of the inventory with the pinned jar at the same path, where a machine lacks it |
 
-Both switches apply on Debian and Ubuntu only; another OS skips them. The play reaches every bench as well as every runner, so a run that turns a switch on names its machines with `-l`: a WSL2 machine (`/proc/sys/fs/binfmt_misc/WSLInterop`) has no `/boot/vmlinuz-<version>` and no `kvm` group, so the VM tier is skipped there.
+Both switches apply on Debian and Ubuntu only; another OS skips them. The play reaches every bench as well as every runner: a WSL2 machine (`/proc/sys/fs/binfmt_misc/WSLInterop`) has no `/boot/vmlinuz-<version>` and no `kvm` group, so the VM tier is skipped there.
 
 **Foreign architectures.** A cross build that links a library of another architecture (`libsodium-dev:s390x`) needs
 dpkg multiarch. For each architecture the list names, the play runs `dpkg --add-architecture` where
@@ -1307,9 +1380,22 @@ no image in `/boot`, or that has no `kvm` group, is refused with the package to 
 of the debian list (`virtme-ng`, `qemu-system-x86`). Joining `kvm` reaches a runner already running only when it
 restarts. Copies of kernels later removed stay until deleted.
 
+**TLC's jar.** A model check runs `java -cp <jar> tlc2.TLC` with the Java runtime of the debian list and the jar at
+`nova_runner_tla_jar`. A jar there whose sha256 is the pin is left as it is. One that differs is refused, and nothing is
+written: `TLA-JAR-MISMATCH host=<machine> path=<jar> want=<sha256> got=<sha256>`; remove it and run again. A missing jar
+is fetched from `nova_runner_tla_jar_source` into a temporary directory on the control node, checked against the pin
+there (a source whose jar differs is refused the same way, naming the source), and copied: the directory root's, 0755,
+the jar root's, 0644, so the fleet login and a runner login of its own both read it. With no source named the machine
+is refused, `TLA-JAR-NO-SOURCE host=<machine>`, with the command to run. `--check` prints `TLA-JAR WOULD-COPY`; each
+machine gets `TLA-JAR host=<machine> present|copied from <source> <jar> sha256=<pin>`.
+
+```
+nova-fleet runner-packages --check --diff -- -l bench -e nova_runner_tla_jar_source=bench-1
+```
+
 **Check.** `RUNNER-PACKAGES host=<machine> wanted=<n> present=<n> installed=<n>`, one line per machine.
 **Rollback.** The play never removes a package: one taken out of the list stays installed until a play removes it. Nor
-does it remove a foreign architecture, a ports source, the `Architectures` lines, the kernel hook or the copies.
+does it remove a foreign architecture, a ports source, the `Architectures` lines, the kernel hook, the copies or TLC's jar.
 
 ## sdk-toolchain
 
@@ -1378,6 +1464,7 @@ version bump installs the new directory beside the old and moves the links.
 | Variable | Default | |
 |---|---|---|
 | `nova_sdk_dir` | `<home>/sdk` | the SDK directory, used by its real path |
+| `nova_sdk_shared` | on for a Linux runner whose runners are another login's (`github_runner_user`) | Linux: the SDK in `/opt/nova/sdk` (`nova_shared_dir`, made by `github-runners` with a runner login of its own), the login's and readable by every login, with `nova_sdk_dir` a link to it, so a runner login of its own runs the same tools. The shared SDK is installed fresh (its files name their own path) while `~/sdk` stays in use; at the end of the run `~/sdk` becomes a link to it (`SDK-TOOLCHAIN SHARE`) and the old one is deleted. Nothing in it is left writable by other logins, and a run fails on anything in it they cannot read; an old `~/sdk` holding what the shared one lacks (an older version a link names, a directory put there by hand) stays in use and the run fails naming it (`SDK-TOOLCHAIN SHARE-HELD`) |
 | `nova_sdk_tools` | the toolchain above | one entry per tool: `name`, `version`, `dir`, `probe`, `links`, `kind`, `build`, `alias`, `wrapper`, `run`, and a `linux` and/or `darwin` pin (a pin's own `build` replaces the tool's on that platform); a list given with `-e` replaces it whole |
 | `nova_sdk_dotnet_more` | the .NET 8.0 SDK | more SDKs in the dotnet directory, each a `version` and a `url` and `sha512` per platform |
 | `nova_sdk_rustup` | rustup 1.29.1; `1.98.1` with `clippy` and `rustfmt`, and `nightly-2026-10-01` | `version`, the `linux` rustup-init `url`, `sha256` and `host`, the `toolchains` (each `name`, `components`, `targets`; the first is on PATH) and the commands `links` puts in `~/sdk/bin` |

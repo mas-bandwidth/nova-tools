@@ -24,7 +24,8 @@
     fail_msg: >-
       {{ inventory_hostname }} ({{ ansible_facts['distribution'] }}, {{ rp_native_arch.stdout }}): nova_runner_foreign_architectures
       ({{ nova_runner_foreign_architectures | join(', ') }}) must name architectures other than the native one, from Ubuntu's ports
-      archive; run: nova-fleet runner-packages -- -l {{ inventory_hostname }} -e '{"nova_runner_foreign_architectures": []}'
+      archive; turn them off with a nova_runner_packages of your own that names no <name>:<arch> package (README, "runner-packages"),
+      run: nova-fleet runner-packages -- -l {{ inventory_hostname }} -e @my-runner-packages.yml -e '{"nova_runner_foreign_architectures": []}'
     quiet: true
 
 - name: the native sources

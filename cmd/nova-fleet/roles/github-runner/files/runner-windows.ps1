@@ -1,6 +1,6 @@
 # runner-windows.ps1: a WSL machine's Windows-side GitHub Actions runners, driven by the github-runner role's
 # tasks/wsl-windows.yml through WSL interop (powershell.exe run from the machine's WSL login, which acts with the Windows
-# account that started WSL, elevated). The role stages this file to C:\ProgramData\nova-runner-stage and calls one verb
+# account that started WSL, elevated). The role stages this file to C:\nova-stage (tasks/wsl-stage.yml) and calls one verb
 # at a time; every line it prints starts with a word the role matches. fleet/README.md, "Windows runners of a WSL machine".
 #
 #   install   -Dir -Cache -Version -Sha [-PathList] [-Account -Workflow [-ToolDirs]]
@@ -773,6 +773,11 @@ switch ($Action) {
       # would link what they put there), and the CI-rules hooks as nova-ci-rules apply writes them, so no other line
       # (a hook or a variable some earlier hand put there) reaches an administrator's jobs
       $own['CCACHE_DISABLE'] = '1'
+      # ccache still reads its configuration when disabled, and its compiler= picks what runs; its system file is
+      # %ALLUSERSPROFILE%\ccache\ccache.conf, under C:\ProgramData, where any job may make it. Both files it reads are
+      # pointed into this sealed directory, where none is (a missing file is no configuration)
+      $own['CCACHE_CONFIGPATH'] = "$Dir\.nova-ccache\ccache.conf"
+      $own['CCACHE_CONFIGPATH2'] = "$Dir\.nova-ccache\ccache-system.conf"
       $own['ACTIONS_RUNNER_HOOK_JOB_STARTED'] = "$Dir\.nova-ci-rules\job-started.ps1"
       $own['ACTIONS_RUNNER_HOOK_JOB_COMPLETED'] = "$Dir\.nova-ci-rules\job-completed.ps1"
     }
