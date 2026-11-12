@@ -1,0 +1,110 @@
+---
+# Debian, Ubuntu on x86_64: the MemorySanitizer-instrumented libc++ (libc++ and libc++abi built with
+# LLVM_USE_SANITIZER=MemoryWithOrigins, shared) in <nova_runner_msan_libcxx_prefix><clang version>, for the clang on the
+# system PATH. The library's headers and the compiler move together, so each machine builds it from the llvm-project
+# release of its own clang, the tarball checked against nova_runner_msan_libcxx_sha256; a clang with no pin is refused.
+# A prefix that holds lib/libc++.so and include/c++/v1/__config_site is left as it is. The build runs as the login,
+# under nova-reserve (one slot's share of the CPUs; half the CPUs at nice 10 on a machine without it), in a temporary directory removed after; only the install is root's.
+- name: the clang on the system PATH
+  ansible.builtin.command:
+    argv: [/usr/bin/env, "PATH=/usr/local/bin:/usr/bin:/bin", clang++, -dumpversion]
+  register: rp_msan_clang
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: a clang to build for
+  ansible.builtin.fail:
+    msg: >-
+      MSAN-LIBCXX-NO-CLANG host={{ inventory_hostname }}: clang++ -dumpversion did not answer (rc={{ rp_msan_clang.rc }});
+      run: nova-fleet runner-packages -- -l {{ inventory_hostname }}
+  when: rp_msan_clang.rc != 0 or rp_msan_clang.stdout | trim | length == 0
+
+- name: the prefix for that clang
+  ansible.builtin.set_fact:
+    rp_msan_version: "{{ rp_msan_clang.stdout | trim }}"
+    rp_msan_prefix: "{{ nova_runner_msan_libcxx_prefix }}{{ rp_msan_clang.stdout | trim }}"
+
+- name: the instrumented libc++ there
+  ansible.builtin.stat: { path: "{{ rp_msan_prefix }}/{{ item }}", get_checksum: false }
+  loop: [lib/libc++.so, include/c++/v1/__config_site]
+  register: rp_msan_files
+  check_mode: false
+
+- name: the library is built
+  ansible.builtin.set_fact:
+    rp_msan_present: "{{ rp_msan_files.results | map(attribute='stat.exists') | min }}"
+
+- name: a clang with no pinned llvm-project source is refused
+  ansible.builtin.fail:
+    msg: >-
+      MSAN-LIBCXX-NO-PIN host={{ inventory_hostname }} clang={{ rp_msan_version }}: nova_runner_msan_libcxx_sha256 pins
+      {{ nova_runner_msan_libcxx_sha256.keys() | join(', ') }}; add the llvm-project-{{ rp_msan_version }}.src.tar.xz sha256
+      the release publishes, run: nova-fleet runner-packages -- -l {{ inventory_hostname }}
+  when: not rp_msan_present and rp_msan_version not in nova_runner_msan_libcxx_sha256
+
+# a machine joining has no nova tools yet (install comes after join) and runs no other work: there the build takes
+# half the CPUs at nice 10, as nova-reserve's absence leaves nothing to share them with
+- name: nova-reserve to build under
+  ansible.builtin.stat: { path: "{{ nova_bin_dir }}/nova-reserve", get_checksum: false }
+  register: rp_msan_reserve
+  when: not rp_msan_present
+
+- name: would build the instrumented libc++
+  ansible.builtin.debug:
+    msg: "MSAN-LIBCXX WOULD-BUILD host={{ inventory_hostname }} clang={{ rp_msan_version }} {{ rp_msan_prefix }}"
+  changed_when: true
+  when: ansible_check_mode and not rp_msan_present
+
+- name: the instrumented libc++, built here
+  when: not ansible_check_mode and not rp_msan_present
+  block:
+    - name: a temporary directory for the build
+      ansible.builtin.tempfile: { state: directory, suffix: .msan-libcxx }
+      register: rp_msan_tmp
+
+    - name: the llvm-project source of this clang, checked against its pin
+      ansible.builtin.get_url:
+        url: "https://github.com/llvm/llvm-project/releases/download/llvmorg-{{ rp_msan_version }}/llvm-project-{{ rp_msan_version }}.src.tar.xz"
+        dest: "{{ rp_msan_tmp.path }}/llvm-project.src.tar.xz"
+        checksum: "sha256:{{ nova_runner_msan_libcxx_sha256[rp_msan_version] }}"
+        mode: "0644"
+
+    - name: libc++ and libc++abi configured, built under nova-reserve
+      ansible.builtin.shell: |
+        set -euo pipefail
+        cd {{ rp_msan_tmp.path | quote }}
+        tar -xJf llvm-project.src.tar.xz
+        cmake -G Ninja -S llvm-project-{{ rp_msan_version }}.src/runtimes -B build \
+          -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
+          -DCMAKE_INSTALL_PREFIX={{ rp_msan_prefix | quote }} \
+          -DLLVM_ENABLE_RUNTIMES="libcxx;libcxxabi" -DLLVM_USE_SANITIZER=MemoryWithOrigins \
+          -DLIBCXX_ENABLE_STATIC=OFF -DLIBCXXABI_ENABLE_STATIC=OFF -DLIBCXXABI_USE_LLVM_UNWINDER=OFF \
+          -DLIBCXX_INCLUDE_BENCHMARKS=OFF -DLIBCXX_INCLUDE_TESTS=OFF -DLIBCXXABI_INCLUDE_TESTS=OFF >/dev/null
+        {% if rp_msan_reserve.stat.exists %}
+        {{ nova_bin_dir | quote }}/nova-reserve run --why msan-libcxx -- bash -c 'cmake --build build --parallel "$(nproc)"' >/dev/null
+        {% else %}
+        nice -n 10 cmake --build build --parallel "$(( $(nproc) / 2 > 0 ? $(nproc) / 2 : 1 ))" >/dev/null
+        {% endif %}
+      args: { executable: /bin/bash }
+      environment: { PATH: "/usr/local/bin:/usr/bin:/bin" }
+
+    - name: the build installed (root's, readable by every login)
+      ansible.builtin.command:
+        argv: [cmake, --install, "{{ rp_msan_tmp.path }}/build"]
+      become: true
+
+    - name: the prefix readable by every login
+      ansible.builtin.file: { path: "{{ rp_msan_prefix }}", state: directory, owner: root, group: root, mode: "0755" }
+      become: true
+  always:
+    - name: the build directory removed
+      ansible.builtin.file: { path: "{{ rp_msan_tmp.path }}", state: absent }
+      when: rp_msan_tmp.path is defined
+
+- name: the instrumented libc++'s receipt
+  ansible.builtin.debug:
+    msg: >-
+      MSAN-LIBCXX host={{ inventory_hostname }} clang={{ rp_msan_version }}
+      {{ 'present' if rp_msan_present else ('WOULD-BUILD' if ansible_check_mode else 'built') }} {{ rp_msan_prefix }}
+  changed_when: false

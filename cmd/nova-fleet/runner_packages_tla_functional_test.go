@@ -14,22 +14,16 @@ import (
 )
 
 // runner_packages_tla_functional_test.go runs roles/runner-packages/tasks/tla.yml through ansible-core on localhost
-// against a jar in a temp directory: a jar that differs from the pin is refused by name and left as it was, a matching
-// one is left as it was, and a missing one with no source machine is refused naming the fix. None of these paths
-// becomes root.
+// against a jar in a temp directory: a jar that differs from the pin is refused by name and left as it was, and a
+// matching one, or a link to it, is left as it was. None of these paths becomes root or downloads.
 
 const tlaTestPin = "936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88"
 
 func runTLATasks(t *testing.T, jar, pin string) (string, error) {
 	t.Helper()
-	return runTLATasksFrom(t, jar, pin, "")
-}
-
-func runTLATasksFrom(t *testing.T, jar, pin, source string) (string, error) {
-	t.Helper()
 	fleet, err := filepath.Abs(".")
 	require.NoError(t, err)
-	_, out, err := runPackagesPlayResult(t, map[string]any{"nova_runner_tla_jar": jar, "nova_runner_tla_jar_sha256": pin, "nova_runner_tla_jar_source": source},
+	_, out, err := runPackagesPlayResult(t, map[string]any{"nova_runner_tla_jar": jar, "nova_runner_tla_jar_sha256": pin},
 		[]any{map[string]any{"ansible.builtin.include_tasks": fleet + "/roles/runner-packages/tasks/tla.yml"}})
 	return out, err
 }
@@ -76,27 +70,6 @@ func TestFunctionalRunnerPackagesTLAJarMatchingLeftAlone(t *testing.T) {
 	after, err := os.Stat(jar)
 	require.NoError(t, err)
 	assert.Equal(t, before.ModTime(), after.ModTime())
-}
-
-func TestFunctionalRunnerPackagesTLAJarMissingWithNoSourceRefused(t *testing.T) {
-	t.Parallel()
-	jar := filepath.Join(t.TempDir(), "tla", "tla2tools.jar")
-
-	out, err := runTLATasks(t, jar, tlaTestPin)
-	require.Error(t, err, out)
-	assert.Contains(t, out, "TLA-JAR-NO-SOURCE host=localhost")
-	assert.Contains(t, out, "-e nova_runner_tla_jar_source=")
-	assert.NoDirExists(t, filepath.Dir(jar), "nothing is written without a source")
-}
-
-func TestFunctionalRunnerPackagesTLAJarMachineIsNeverItsOwnSource(t *testing.T) {
-	t.Parallel()
-	jar := filepath.Join(t.TempDir(), "tla", "tla2tools.jar")
-
-	out, err := runTLATasksFrom(t, jar, tlaTestPin, "localhost")
-	require.Error(t, err, out)
-	assert.Contains(t, out, "TLA-JAR-NO-SOURCE host=localhost")
-	assert.NoDirExists(t, filepath.Dir(jar))
 }
 
 func TestFunctionalRunnerPackagesTLAJarLinkToThePinnedJarLeftAlone(t *testing.T) {

@@ -20,7 +20,7 @@ clang-tidy	any	runner-packages	command -v clang-tidy || command -v clang-tidy-18
 llvm tools	any	runner-packages	command -v llvm-profdata && command -v llvm-cov
 libFuzzer runtime	amd64	runner-packages	ls "$(clang -print-resource-dir)"/lib/*/libclang_rt.fuzzer-x86_64.a
 MSan runtime	amd64	runner-packages	ls "$(clang -print-resource-dir)"/lib/*/libclang_rt.msan-x86_64.a.syms
-MSan libc++	amd64	none	v=$(clang++ -dumpversion) && test -f "/opt/msan-libcxx-$v/lib/libc++.so" && test -f "/opt/msan-libcxx-$v/include/c++/v1/__config_site"
+MSan libc++	amd64	runner-packages	v=$(clang++ -dumpversion) && test -f "/opt/msan-libcxx-$v/lib/libc++.so" && test -f "/opt/msan-libcxx-$v/include/c++/v1/__config_site"
 ninja	any	runner-packages	command -v ninja
 ccache	any	runner-packages	command -v ccache
 pkg-config	any	runner-packages	command -v pkg-config
