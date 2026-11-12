@@ -1,0 +1,46 @@
+---
+# The Windows side of a WSL machine with Windows runners (its record's windows_runners): ccache for MSVC, from the
+# release ccache publishes (nova_runner_windows_ccache: version, sha256 of the zip), unpacked from the WSL login through
+# /mnt/c into nova_runner_windows_ccache_dir (C:\ProgramData\nova\ccache): ccache.exe, and msvc\cl.exe, the same binary
+# under the compiler's name, which MSBuild runs in place of cl.exe when a build sets CLToolPath to that directory (the
+# Visual Studio generator honours no compiler launcher; rocketnet's .github/actions/ccache passes CMAKE_VS_GLOBALS).
+# ccache finds the real cl.exe on the PATH MSBuild sets for the tool. A version already in place is left as it is.
+- name: the Windows ccache in place (version file)
+  ansible.builtin.slurp:
+    src: "{{ rp_win_ccache_unix }}/VERSION"
+  register: rp_win_ccache_have
+  failed_when: false
+
+- name: install it when the version differs
+  when: (rp_win_ccache_have.content | default('') | b64decode | trim) != nova_runner_windows_ccache.version
+  block:
+    - name: its directory
+      ansible.builtin.file: { path: "{{ rp_win_ccache_unix }}", state: directory, mode: "0755" }
+
+    - name: the release zip, checked
+      ansible.builtin.get_url:
+        url: "https://github.com/ccache/ccache/releases/download/v{{ nova_runner_windows_ccache.version }}/ccache-{{ nova_runner_windows_ccache.version }}-windows-x86_64.zip"
+        dest: "{{ rp_win_ccache_unix }}.zip"
+        checksum: "sha256:{{ nova_runner_windows_ccache.sha256 }}"
+        mode: "0644"
+
+    - name: unpacked
+      ansible.builtin.unarchive:
+        src: "{{ rp_win_ccache_unix }}.zip"
+        dest: "{{ rp_win_ccache_unix | dirname }}"
+        remote_src: true
+      when: not ansible_check_mode
+
+    - name: ccache.exe and msvc/cl.exe from the unpacked release
+      ansible.builtin.shell: |
+        set -eu
+        src="{{ rp_win_ccache_unix | dirname }}/ccache-{{ nova_runner_windows_ccache.version }}-windows-x86_64"
+        mkdir -p "{{ rp_win_ccache_unix }}/msvc"
+        cp "$src/ccache.exe" "{{ rp_win_ccache_unix }}/ccache.exe"
+        cp "$src/ccache.exe" "{{ rp_win_ccache_unix }}/msvc/cl.exe"
+        printf '%s\n' "{{ nova_runner_windows_ccache.version }}" > "{{ rp_win_ccache_unix }}/VERSION"
+      when: not ansible_check_mode
+
+    - name: counted
+      ansible.builtin.set_fact:
+        rp_installed: "{{ rp_installed | int + 1 }}"

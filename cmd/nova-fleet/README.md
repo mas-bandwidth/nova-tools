@@ -1105,6 +1105,7 @@ nova-fleet runner-packages -- -e @runner-packages-s390x-vm.yml -l bench
 | Variable | Default | |
 |---|---|---|
 | `nova_runner_packages` | `darwin`: `postgresql@18`, `cmake`, `libsodium`, `pkgconf`, `ccache`; `debian`: the toolchain above (`group_vars/all.yml`) | another OS with a non-empty list is refused |
+| `nova_runner_windows_ccache`, `nova_runner_windows_ccache_dir` | `4.14.3` and its zip's sha256; `C:\ProgramData\nova\ccache` | **Windows ccache.** On a WSL machine whose record names `windows_runners`, ccache's own Windows release, checked, unpacked through `/mnt/c` to that directory as `ccache.exe` and `msvc\cl.exe` (the same binary under the compiler's name: MSBuild runs it in place of cl.exe when a build sets `CLToolExe=cl.exe;CLToolPath=<dir>\msvc` in `CMAKE_VS_GLOBALS`, since the Visual Studio generator honours no compiler launcher; ccache then runs the real cl.exe from the PATH MSBuild sets). The version in `VERSION` beside it; a matching version is left alone; an empty version skips it |
 | `nova_runner_foreign_architectures` | `[]` | Ubuntu: dpkg architectures the debian list may name packages of, as `<name>:<arch>` |
 | `nova_runner_ports_uri` | `http://ports.ubuntu.com/ubuntu-ports/` | the archive a foreign architecture comes from |
 | `nova_runner_vm_kernel` | `false` | Debian/Ubuntu: keep each kernel image readable by the login, for a VM of the host's own kernel |
