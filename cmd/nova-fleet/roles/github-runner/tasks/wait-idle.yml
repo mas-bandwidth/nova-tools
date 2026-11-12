@@ -1,10 +1,11 @@
 ---
-# The runner in github_runner_dir finishes the job it is running before its service is restarted or stopped: a job is a
-# Runner.Worker started from <dir>/bin. Polled every github_runner_idle_delay seconds, github_runner_idle_retries times;
-# a runner still busy then fails the run and is left running, never cancelled. --check does not wait.
-- name: the runner's job ends first ({{ github_runner_dir | basename }})
+# The runner in github_runner_dir (or github_runner_idle_dir, a runner moving from there) finishes the job it is running
+# before its service is restarted or stopped: a job is a Runner.Worker started from <dir>/bin. Polled every
+# github_runner_idle_delay seconds, github_runner_idle_retries times; a runner still busy then fails the run and is left
+# running, never cancelled. --check does not wait.
+- name: the runner's job ends first ({{ github_runner_idle_dir | default(github_runner_dir) | basename }})
   ansible.builtin.command:
-    argv: [pgrep, -f, "{{ github_runner_dir }}/bin/[R]unner.Worker"]
+    argv: [pgrep, -f, "{{ github_runner_idle_dir | default(github_runner_dir) }}/bin/[R]unner.Worker"]
   register: github_runner_worker
   changed_when: false
   failed_when: github_runner_worker.rc != 1

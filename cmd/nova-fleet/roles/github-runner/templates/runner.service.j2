@@ -5,7 +5,7 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-User={{ ansible_facts['user_id'] }}
+User={{ github_runner_user }}
 WorkingDirectory={{ github_runner_dir }}
 Environment=PATH={{ github_runner_env.get('PATH', github_runner_default_path_linux) }}
 Environment=TMPDIR={{ github_runner_env.get('TMPDIR', github_runner_tmpdir) }}
@@ -16,7 +16,8 @@ Environment={{ k }}={{ v }}
 # (RUNNER_MANUALLY_TRAP_SIG), and whatever is left once run.sh exits, or at TimeoutStopSec, is killed (KillMode=mixed).
 Environment=RUNNER_MANUALLY_TRAP_SIG=1
 # The kernel charges io_uring's locked pages to the user across all its processes, so every runner of the login shares
-# one budget that grows with the runner count; systemd's default (8 MiB) refuses that. The login has sudo already.
+# one budget that grows with the runner count; systemd's default (8 MiB) refuses that. Only a limit: it lets the login
+# lock its own memory and gives it no privilege.
 LimitMEMLOCK=infinity
 ExecStart={{ github_runner_dir }}/run.sh
 Restart=always

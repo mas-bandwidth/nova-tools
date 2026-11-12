@@ -12,17 +12,24 @@
     github_runner_registration: { changed: false }
 
 - name: the directory
-  ansible.builtin.file: { path: "{{ github_runner_dir }}", state: directory }
+  ansible.builtin.file:
+    path: "{{ github_runner_dir }}"
+    state: directory
+    owner: "{{ github_runner_user if github_runner_other else omit }}"
+    group: "{{ github_runner_user if github_runner_other else omit }}"
+  become: "{{ github_runner_other }}"
   register: github_runner_made
 
 # a dry run cannot unpack a release the dry run did not download: get_url above reports "would download" and this waits
 - name: is the release in the cache
   ansible.builtin.stat:
     path: "{{ github_runner_base_dir }}/.cache/actions-runner-{{ github_runner_os }}-{{ github_runner_arch }}-{{ github_runner_version }}.tar.gz"
+  become: "{{ github_runner_other }}"
   register: github_runner_cached
 
 - name: is config.sh there
   ansible.builtin.stat: { path: "{{ github_runner_dir }}/config.sh" }
+  become: "{{ github_runner_other }}"
   register: github_runner_config
 
 - name: unpack the runner where config.sh is missing
@@ -31,6 +38,9 @@
     dest: "{{ github_runner_dir }}"
     remote_src: true
     creates: "{{ github_runner_dir }}/config.sh"
+    owner: "{{ github_runner_user if github_runner_other else omit }}"
+    group: "{{ github_runner_user if github_runner_other else omit }}"
+  become: "{{ github_runner_other }}"
   register: github_runner_unpacked
   when: >-
     ansible_facts['system'] != 'Darwin'
@@ -66,6 +76,50 @@
     ansible_facts['system'] == 'Linux' and github_runner_install_dependencies | bool
     and not (ansible_check_mode and (github_runner_unpacked is changed or not github_runner_config.stat.exists))
 
+# A runner whose unit runs it from another directory (another login's home: github_runner_user changed) moves here: once
+# its job ends its unit is stopped, it registers here under the same name (config.sh --replace), and its old directory
+# is deleted once the new unit runs it. A held runner is not moved.
+- name: the directory its unit runs it from (Linux)
+  ansible.builtin.command: { argv: [systemctl, show, -P, WorkingDirectory, "{{ github_runner_unit }}.service"] }
+  register: github_runner_from
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: ansible_facts['system'] == 'Linux'
+
+- name: where it moves from
+  ansible.builtin.set_fact:
+    github_runner_old_dir: >-
+      {{ github_runner_from.stdout | default('') | trim
+         if (github_runner_from.stdout | default('') | trim) != github_runner_dir
+            and (github_runner_from.stdout | default('') | trim) is match('^/.+/actions-runner/' ~ (github_runner_dir | basename | regex_escape) ~ '$')
+         else '' }}
+
+- name: a moving runner is not held
+  ansible.builtin.assert:
+    quiet: true
+    that: github_runner_old_dir == '' or (github_runner_dir | basename) not in github_runner_hold
+    fail_msg: >-
+      RUNNER-HELD {{ inventory_hostname }} {{ github_runner_dir | basename }}: it runs from {{ github_runner_old_dir }} and
+      moves to {{ github_runner_dir }} (another login), which stops it; run again without it in github_runner_hold
+
+- name: the move, planned
+  ansible.builtin.debug:
+    msg: >-
+      RUNNER-MOVE {{ github_runner_name }} from={{ github_runner_old_dir }} to={{ github_runner_dir }} user={{ github_runner_user }}
+      {{ '(check: nothing changed)' if ansible_check_mode else '' }}
+  when: github_runner_old_dir != ''
+
+- name: the moving runner's job ends first
+  ansible.builtin.include_tasks: wait-idle.yml
+  vars: { github_runner_idle_dir: "{{ github_runner_old_dir }}" }
+  when: github_runner_old_dir != '' and not ansible_check_mode
+
+- name: the moving runner is stopped where it runs
+  ansible.builtin.systemd: { name: "{{ github_runner_unit }}.service", state: stopped }
+  become: true
+  when: github_runner_old_dir != '' and not ansible_check_mode
+
 - name: register with GitHub
   ansible.builtin.include_tasks: unix-register.yml
   when: runner_index in github_runner_need and not ansible_check_mode
@@ -76,10 +130,14 @@
     dest: "{{ github_runner_dir }}/.labels"
     mode: "0644"
     force: false
+    owner: "{{ github_runner_user if github_runner_other else omit }}"
+    group: "{{ github_runner_user if github_runner_other else omit }}"
+  become: "{{ github_runner_other }}"
   when: github_runner_registration is changed
 
 - name: the labels it holds now
   ansible.builtin.command: cat "{{ github_runner_dir }}/.labels"
+  become: "{{ github_runner_other }}"
   register: github_runner_held
   changed_when: false
   failed_when: false
@@ -159,6 +217,9 @@
         content: "{{ github_runner_gh_holds | join(',') }}\n"
         dest: "{{ github_runner_dir }}/.labels"
         mode: "0644"
+        owner: "{{ github_runner_user if github_runner_other else omit }}"
+        group: "{{ github_runner_user if github_runner_other else omit }}"
+      become: "{{ github_runner_other }}"
 
     - name: the labels it was given
       ansible.builtin.debug:
@@ -237,6 +298,12 @@
       and (github_runner_dir | basename) not in github_runner_hold) else 'started' }}
   become: true
   when: ansible_facts['system'] == 'Linux' and not (ansible_check_mode and github_runner_unit_file is changed)
+
+# its registration there was replaced by the one here; root, as the CI rules leave <dir>/.nova-ci-rules owned by root
+- name: the moved runner's old directory is deleted (Linux)
+  ansible.builtin.file: { path: "{{ github_runner_old_dir }}", state: absent }
+  become: true
+  when: github_runner_old_dir != '' and not ansible_check_mode
 
 # ---- macOS: a system LaunchDaemon dropped to the login, started at boot with nobody logged in (a LaunchAgent would
 # run only inside a logged-in GUI session, and a CI machine comes back from a reboot with none). Only a run needs

@@ -50,8 +50,8 @@ func TestRunnerPathStartsWithTheToolsDir(t *testing.T) {
 
 // A Linux runner's unit lifts RLIMIT_MEMLOCK (systemd's default is 8 MiB). The kernel charges io_uring's locked pages
 // to the user across all of its processes, so every runner of the login on a host shares one budget, and the jobs'
-// need grows with the runner count and the repository. infinity grants a job nothing it lacks: the login has
-// passwordless sudo (join.yml).
+// need grows with the runner count and the repository. The limit lets the login lock its own memory and is no
+// privilege: the unit's comment says so, and names no sudo (a runner login of its own has none).
 func TestRunnerServiceLiftsTheLockedMemoryLimit(t *testing.T) {
 	t.Parallel()
 	b, err := os.ReadFile("roles/github-runner/templates/runner.service.j2")
@@ -60,6 +60,7 @@ func TestRunnerServiceLiftsTheLockedMemoryLimit(t *testing.T) {
 	service := s[strings.Index(s, "\n[Service]\n"):strings.Index(s, "\n[Install]\n")]
 	assert.Contains(t, service, "\nLimitMEMLOCK=infinity\n")
 	assert.Equal(t, 1, strings.Count(s, "LimitMEMLOCK="))
+	assert.NotContains(t, s, "sudo")
 }
 
 // Both service files set PATH once: github_runner_env's PATH if it has one, else the default above.

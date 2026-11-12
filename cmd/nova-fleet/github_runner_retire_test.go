@@ -46,11 +46,13 @@ func TestRunnerStopsOnlyWhenIdle(t *testing.T) {
 func TestRunnerRunIsTheRecordsWithoutAURL(t *testing.T) {
 	t.Parallel()
 	main := roleTaskFile(t, "main.yml")
-	require.Len(t, main, 2)
-	assert.Equal(t, "scope.yml", asText(main[0]["ansible.builtin.include_tasks"]))
-	assert.Equal(t, "github_runner_url is defined", asText(main[0]["when"]))
-	assert.Equal(t, "record.yml", asText(main[1]["ansible.builtin.include_tasks"]))
-	assert.Equal(t, "github_runner_url is not defined", asText(main[1]["when"]))
+	one := runnerTask(t, main, "one url, named with -e github_runner_url")
+	assert.Equal(t, "scope.yml", asText(one["ansible.builtin.include_tasks"]))
+	assert.Equal(t, "github_runner_url is defined", asText(one["when"]))
+	record := runnerTask(t, main, "every runner of the machine record")
+	assert.Equal(t, "record.yml", asText(record["ansible.builtin.include_tasks"]))
+	assert.Equal(t, "github_runner_url is not defined", asText(record["when"]))
+	assert.Equal(t, len(main)-1, taskIndex(main, "every runner of the machine record"), "the runs are the last tasks")
 }
 
 // A held runner (github_runner_hold, e.g. one running a multi-hour model check nothing resumes) is neither waited on nor

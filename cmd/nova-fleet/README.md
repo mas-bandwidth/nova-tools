@@ -399,6 +399,18 @@ directory from the units. A macOS daemon gets no `TMPDIR` unless `github_runner_
 which macOS cleans. A macOS daemon starts with `/opt/homebrew/bin` on its PATH, before the
 system's, so a job finds Homebrew's formulae and its `python3`.
 
+**The runner login.** The runners run as `github_runner_user`, the login the play connects as by default (macOS always).
+On Linux, `-e github_runner_user=ghrunner` runs them as a login of their own, so a CI job has no root and no way to get
+it: the play makes the login (home `/home/<login>`, `github_runner_home`, mode `0750`) with its password locked, in no
+group but its own and `kvm` (where the host has one; others are removed), writes
+`/etc/ssh/sshd_config.d/90-nova-runner-login.conf` (`DenyUsers <login>`, checked with `sshd -t`), and fails the run
+unless `sudo -l -U <login>` says it is not allowed to run sudo. The runners' directories, release cache and `TMPDIR`
+are then in its home, written as root and owned by it, and `config.sh` runs as it. A runner whose unit runs it from
+another directory (the fleet login's, before the switch) moves: `RUNNER-MOVE <runner> from=<dir> to=<dir> user=<login>`,
+then, once its job ends, its unit stops, it registers in the new directory under the same name (`config.sh --replace`),
+the unit restarts it there and the old directory is deleted. A held runner is not moved: the run fails with
+`RUNNER-HELD` naming it.
+
 **Public repositories.** A self-hosted runner runs the code of any workflow that reaches it, and on a public repository
 that includes pull requests from forks. Use these runners on private repositories, or restrict which workflows and
 events may use them.
@@ -413,6 +425,8 @@ events may use them.
 | `github_runner_deregister` | true: retiring removes the runner from GitHub (needs a removal token) |
 | `github_runner_env` | the service's environment, `{NAME: value}`, inherited by every job; default the machine record's `runner_env` (the inventory's `nova_runner_env`; `nova-config machine set <machine> --runner_env '<json-object>'`, cmd/nova-config/README.md), so every run for any url writes it. A `PATH` replaces the default (`nova_bin_dir` first, then the system's); a `TMPDIR` replaces `github_runner_tmpdir`. `-e github_runner_env` replaces the record's for one run; there a path under the login's home may be written `{{ ansible_facts['user_dir'] }}/...`, rendered per machine (the record holds literal values). [docs/examples/github-runners-env.yml](../../docs/examples/github-runners-env.yml) is a vars file with the url, scope, labels and an environment for Ubuntu runners, for `-e @github-runners-env.yml` (read from the directory you run in) |
 | `github_runner_tmpdir` | a Linux runner's `TMPDIR` when the environment names none: `<home>/.cache/runner-tmp` |
+| `github_runner_user` | the login the runners run as: the play's login by default; on Linux another name is a login of its own ("The runner login") |
+| `github_runner_home` | that login's home: the play's login's, or `/home/<login>` |
 | `github_runner_base_labels` | `[fleet]`: the labels every runner gets, Linux, macOS and the Windows side |
 | `github_runner_version`, `github_runner_sha256` | the pinned actions/runner release and its digests |
 | `github_runner_ci_limit_seconds` | 120: the per-commit job limit every runner enforces ("CI rules") |
@@ -995,7 +1009,9 @@ applying it restarts only the daemon it configures, never the login's units. A d
   that is `/`, the home or above it, or under a runner's `_work` or `actions-runner*` is refused (`CLEAN-REFUSED`); a file
   of `nova_health_disk_clean_caches` (Go's build cache) unchanged that long goes too. On a filesystem over
   `nova_health_disk_warn_pct` the age is `nova_health_disk_clean_pressed_min`. One `CLEAN` line per removal and a
-  `CLEAN-DONE` line in the journal.
+  `CLEAN-DONE` line in the journal. A runner login of its own (github-runners, "The runner login") gets its own
+  `nova-disk-clean-<login>.timer`, run as it, for `/tmp`, its runners' `TMPDIR`s and its Go build cache: the clean
+  removes only what its user owns.
 
 ```
 nova-fleet health --check --diff

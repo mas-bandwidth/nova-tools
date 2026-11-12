@@ -38,6 +38,7 @@
 
 - name: is there a runner base directory yet
   ansible.builtin.stat: { path: "{{ github_runner_base_dir }}" }
+  become: "{{ github_runner_other }}"
   register: github_runner_record_base
 
 - name: the runner directories on the host
@@ -47,6 +48,7 @@
     use_regex: true
     file_type: directory
     recurse: false
+  become: "{{ github_runner_other }}"
   register: github_runner_record_dirs
   when: github_runner_record_base.stat.isdir | default(false)
 

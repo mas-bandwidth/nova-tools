@@ -106,4 +106,9 @@ func TestRunnerTmpdirAndTheRecordsEnvironmentRender(t *testing.T) {
 	service, _, _ = renderRunnerUnits(t, "-e", `{"nova_runner_env": {"ImageOS": "ubuntu24"}, "github_runner_env": {"FOO": "bar"}}`)
 	assert.Contains(t, service, "\nEnvironment=FOO=bar\n")
 	assert.NotContains(t, service, "ImageOS", "-e github_runner_env replaces the record's for the run")
+
+	// a runner login of its own: the unit runs as it, and its TMPDIR is in its home
+	service, _, _ = renderRunnerUnits(t, "-e", "github_runner_user=ghrunner")
+	assert.Contains(t, service, "\nUser=ghrunner\n")
+	assert.Contains(t, service, "\nEnvironment=TMPDIR=/home/ghrunner/.cache/runner-tmp\n")
 }

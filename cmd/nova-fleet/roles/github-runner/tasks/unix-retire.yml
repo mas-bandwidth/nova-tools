@@ -1,14 +1,24 @@
 ---
 # Retire runner number runner_index: after the job it is running ends, stop and remove its service (and any drop-in
-# beside it), remove it from GitHub, delete its directory.
+# beside it), remove it from GitHub, delete its directory. On Linux its unit may run it from another directory (another
+# login's home, before a move to github_runner_user): the job there is waited on, and that directory is deleted too.
 - name: the retiring runner's names
   ansible.builtin.set_fact:
     github_runner_dir: "{{ github_runner_base_dir }}/{{ github_runner_slug }}-{{ runner_index }}"
     github_runner_unit: "github-runner-{{ github_runner_slug }}-{{ runner_index }}"
     github_runner_label_id: "github-runner.{{ github_runner_slug }}-{{ runner_index }}"
 
+- name: the directory its unit runs it from (Linux)
+  ansible.builtin.command: { argv: [systemctl, show, -P, WorkingDirectory, "{{ github_runner_unit }}.service"] }
+  register: github_runner_retire_from
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: ansible_facts['system'] == 'Linux'
+
 - name: the job it is running ends first
   ansible.builtin.include_tasks: wait-idle.yml
+  vars: { github_runner_idle_dir: "{{ github_runner_retire_from.stdout | default('') | trim or github_runner_dir }}" }
 
 - name: stop and remove the service
   ansible.builtin.shell: |
@@ -44,6 +54,8 @@
     removes: "{{ github_runner_dir }}/.runner"
     stdin: "{{ github_runner_token | default('') }}"
   vars: { ansible_pipelining: true }
+  become: "{{ github_runner_other }}"
+  become_user: "{{ github_runner_user }}"
   no_log: true
   register: github_runner_removal
   failed_when: false
@@ -59,5 +71,8 @@
 
 # as root: the CI rules (tasks/ci-rules.yml) leave <dir>/.nova-ci-rules owned by root
 - name: delete the directory
-  ansible.builtin.file: { path: "{{ github_runner_dir }}", state: absent }
+  ansible.builtin.file: { path: "{{ item }}", state: absent }
+  loop: >-
+    {{ ([github_runner_dir] + ([github_runner_retire_from.stdout | default('') | trim]
+        | select('match', '^/.+/actions-runner/' ~ (github_runner_dir | basename | regex_escape) ~ '$') | list)) | unique }}
   become: "{{ not ansible_check_mode }}"

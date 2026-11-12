@@ -1,0 +1,73 @@
+---
+# The runner login when github_runner_user is not the fleet login (cmd/nova-fleet/README.md, "The runner login"): a
+# login of its own, so a CI job has no root and no way to get it. Its password is locked, it is in no group but its own
+# and kvm (the VM tier opens /dev/kvm through it), sudo grants it nothing, sshd refuses it whatever keys its home holds,
+# and its home is its own (0750).
+- name: a runner login of its own is a plain name on Linux
+  ansible.builtin.assert:
+    quiet: true
+    that:
+      - ansible_facts['system'] == 'Linux'
+      - github_runner_user is match('^[a-z_][a-z0-9_-]{0,31}$')
+      - github_runner_user != 'root'
+    fail_msg: >-
+      github-runner: github_runner_user={{ github_runner_user }} on {{ ansible_facts['system'] }}: a runner login other than
+      the fleet login ({{ ansible_facts['user_id'] }}) is for Linux, a plain lower-case name other than root; macOS runs
+      its runners as the login
+
+- name: the kvm group
+  ansible.builtin.command: getent group kvm
+  register: github_runner_kvm
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: the runner login (locked, its own group and kvm only)
+  ansible.builtin.user:
+    name: "{{ github_runner_user }}"
+    home: "{{ github_runner_home }}"
+    create_home: true
+    shell: /bin/bash
+    groups: "{{ 'kvm' if github_runner_kvm.rc == 0 else '' }}"
+    append: false
+    password_lock: true
+  become: true
+  register: github_runner_login
+
+- name: the runner login's home is its own
+  ansible.builtin.file:
+    path: "{{ github_runner_home }}"
+    state: directory
+    owner: "{{ github_runner_user }}"
+    group: "{{ github_runner_user }}"
+    mode: "0750"
+  become: true
+  when: not (ansible_check_mode and github_runner_login is changed)
+
+- name: sshd refuses the runner login
+  ansible.builtin.copy:
+    dest: /etc/ssh/sshd_config.d/90-nova-runner-login.conf
+    content: |
+      # managed by Ansible (fleet/github-runners.yml): a CI job's login is never an ssh login, whatever keys its home holds
+      DenyUsers {{ github_runner_user }}
+    owner: root
+    group: root
+    mode: "0644"
+    validate: /usr/sbin/sshd -t -f %s
+  become: true
+  register: github_runner_sshd
+
+- name: sshd reads it
+  ansible.builtin.command: systemctl try-reload-or-restart ssh.service
+  become: true
+  when: github_runner_sshd is changed and not ansible_check_mode
+
+# sudo's own answer for the login, read as root: any rule that names it (a group, a drop-in, ALL) fails the run.
+- name: sudo grants the runner login nothing
+  ansible.builtin.command: { argv: [sudo, -n, -l, -U, "{{ github_runner_user }}"] }
+  become: true
+  register: github_runner_sudo
+  changed_when: false
+  failed_when: "'is not allowed to run sudo' not in github_runner_sudo.stdout"
+  check_mode: false
+  when: not (ansible_check_mode and github_runner_login is changed)

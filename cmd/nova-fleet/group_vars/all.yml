@@ -11,6 +11,12 @@ nova_tools_names: [nova-bus, nova-cairn, nova-config, nova-sandbox, nova-secrets
 # Where a machine keeps the tools: its login's home.
 nova_home: "{{ ansible_facts['env']['HOME'] }}"
 nova_bin_dir: "{{ nova_home }}/.local/bin"
+# The login a machine's GitHub runners run as (github-runners.yml; cmd/nova-fleet/README.md, "The runner login"), and its
+# home. The fleet login by default; on Linux another name (-e github_runner_user=ghrunner) is a login of its own that
+# the play makes, with no sudo, no ssh and no way into the fleet login's home, so a CI job has no root. macOS runs its
+# runners as the login.
+github_runner_user: "{{ ansible_facts['user_id'] }}"
+github_runner_home: "{{ ansible_facts['user_dir'] if github_runner_user == ansible_facts['user_id'] else '/home/' ~ github_runner_user }}"
 
 # The PATH a service unit runs with; a service row's env may set its own.
 nova_service_path: "{{ nova_bin_dir }}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"

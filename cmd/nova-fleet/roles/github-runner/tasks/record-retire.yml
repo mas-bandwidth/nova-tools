@@ -4,6 +4,7 @@
 # the job it is running ends). A directory with no .runner was never registered and is only removed.
 - name: the stray runner's registration
   ansible.builtin.slurp: { src: "{{ github_runner_base_dir }}/{{ github_runner_stray }}/.runner" }
+  become: "{{ github_runner_other }}"
   register: github_runner_stray_file
   failed_when: false
 
