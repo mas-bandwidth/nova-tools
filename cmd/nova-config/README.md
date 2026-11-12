@@ -51,6 +51,7 @@ optional (`--dry-run` runs the write and rolls it back, so it refuses what the w
 | `runners`, `note` | CI runner count for a one-url github-runners run (`-e github_runner_url=...`; default 0); one line of notes. |
 | `runner_scopes` | The machine's Linux and macOS GitHub Actions runners: `<url>=<count>[:<label>+<label>]`, comma-separated, as `windows_runners` (same form and checks). Stored sorted by url with labels sorted; `''` is none. A machine with any is in the inventory's `runner` group. nova-fleet's `github-runners` play, run without `-e github_runner_url`, makes the machine's runners exactly these, and retires any other runner it finds there. |
 | `windows_runners` | A WSL machine's Windows-side runners: `<url>=<count>[:<label>+<label>]`, comma-separated, the url `https://github.com/<owner>/<repo>` or `https://github.com/<org>`, the count 1 to 99. Stored sorted by url with labels sorted; `''` is none. nova-fleet's `windows-runners` play converges them. |
+| `windows_admin_runners` | A WSL machine's Windows-side runners that run as a local administrator account, one per entry: `<url>=<account>:<label>[+<label>]@<workflow>`, comma-separated. `<workflow>` is required: the file name (`<name>.yml` or `.yaml`) in the repository's `.github/workflows` of the one workflow the runner runs; its job-started hook refuses every other job, and every job but a push, schedule or workflow_dispatch of `refs/heads/main`. The url is a repository, `https://github.com/<owner>/<repo>` (an organization is refused); the account a lower-case letter then at most 19 lower-case letters, digits and dashes (a Windows user name), never a Windows built-in account (`administrator`, `guest`, `defaultaccount`, `wdagutilityaccount`) or the machine's `user`, each account once, and no two entries whose `<owner>-<repo>-<account>` (compared without case) would share a runner directory; at least one label, never one GitHub gives runners (`self-hosted`, `windows`, `x64`, `linux`, `macos`, in any case), nor a label a job of the same repository could select on another runner (the machine's name and every label of its `windows_runners` and `runner_scopes`, with its roles, os and arch where it has `runner_scopes`; on any machine with a runner of the repository or its owner, that runner's labels and the machine's name; any other admin runner's label of the repository), refused on this write and on a write to the other runner, and the runner carries only these (GitHub adds `self-hosted`, `Windows` and `X64`). Its password is the nova-secrets value `NOVA_WINRUNNER_<ACCOUNT>_PASSWORD` (`-` as `_`) in the machine's seat. Stored sorted by url, then account, with labels sorted; `''` is none. nova-fleet's `windows-runners` play converges them (cmd/nova-fleet/README.md, "Windows runners run as a local administrator"). |
 | `runner_env` | The environment the machine's GitHub Actions runners' services start with (every job inherits it): a JSON object of string values, default `{}`; a name is letters, digits and underscores, not starting with a digit. Values are literal, written per machine (`/home/alice/sdk/bin`, never `~` or a template). nova-fleet's `github-runners` play reads it from the inventory. |
 | `roles` | Comma-separated `bench`, `runner`, `services`; default `bench`. |
 
@@ -66,7 +67,7 @@ CONFIG ADD kind=machine name=bench-a rev=1
 next: nova-fleet join bench-a
 CONFIG SET kind=machine name=bench-a rev=2 changed=note
 CONFIG SET kind=machine name=bench-a changed=none rev=unchanged
-MACHINE name=bench-a address=- public=- user=nova os=linux arch=amd64 cores=16 roles=bench,services runners=0 runner_scopes=- windows_runners=- runner_env={} note="Example host" created=2026-11-05T23:51:58Z updated=2026-11-05T23:51:58Z services=-
+MACHINE name=bench-a address=- public=- user=nova os=linux arch=amd64 cores=16 roles=bench,services runners=0 runner_scopes=- windows_runners=- windows_admin_runners=- runner_env={} note="Example host" created=2026-11-05T23:51:58Z updated=2026-11-05T23:51:58Z services=-
 ```
 
 `rev` is the history ID; `changed=` lists only the fields whose value differs.
@@ -174,7 +175,8 @@ roles put it in `bench` or `services`. A `runner` role, a positive runner
 count or any runner_scopes adds `runner`. `--host <name>` prints one host's variables:
 `ansible_host`, `ansible_user`, `runners`, `nova_services` (always a list of the
 service fields) and, when set, `nova_os`, `nova_arch`, `nova_public`, `cores`, `nova_runner_scopes` and `nova_windows_runners` (each a list of
-`{url, count, labels}`) and `nova_runner_env` (the `runner_env` object).
+`{url, count, labels}`), `nova_windows_admin_runners` (a list of `{url, account, labels, secret, workflow}`, `workflow` `<owner>/<repo>/.github/workflows/<file>@refs/heads/main`, `secret` the
+nova-secrets name of the account's password; a store holding an admin runner label another runner of its repository carries refuses the inventory) and `nova_runner_env` (the `runner_env` object).
 `argv`, `env` and `runner_env` values and `log` are printed as `{"__ansible_unsafe": ...}`, so
 Ansible reads them as data and never as a template. The local host (the first label of the hostname,
 lower-cased) gets `ansible_connection: local`. As an Ansible script, use

@@ -28,6 +28,9 @@ type Machine struct {
 	RunnerScopes string `json:"runner_scopes"`
 	// WindowsRunners is a WSL machine's Windows-side runners: <url>=<count>[:<label>+<label>], comma-separated
 	WindowsRunners string `json:"windows_runners"`
+	// WindowsAdminRunners is a WSL machine's Windows-side runners run as a local administrator account, one per entry:
+	// <url>=<account>:<label>[+<label>], comma-separated
+	WindowsAdminRunners string `json:"windows_admin_runners"`
 	// RunnerEnv is the environment its GitHub Actions runners' services start with (the github-runners play)
 	RunnerEnv map[string]string `json:"runner_env"`
 	Note      string            `json:"note"`

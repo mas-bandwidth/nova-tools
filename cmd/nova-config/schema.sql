@@ -23,9 +23,11 @@ CREATE INDEX IF NOT EXISTS history_kind_name ON config.history (kind, name, id);
 -- internet reaches it at (an IP literal or a DNS name), for services that face
 -- the internet. runner_scopes is its Linux and macOS GitHub Actions runners and
 -- windows_runners a WSL machine's Windows-side runners, each
--- <url>=<count>[:<label>+<label>] comma-separated ('' is none). runner_env is
--- the environment its runners' services start with, a JSON object of NAME to
--- value ('{}' is none).
+-- <url>=<count>[:<label>+<label>] comma-separated ('' is none).
+-- windows_admin_runners is a WSL machine's Windows-side runners run as a local
+-- administrator account, one per <url>=<account>:<label>[+<label>]@<workflow>,
+-- comma-separated ('' is none). runner_env is the environment its runners'
+-- services start with, a JSON object of NAME to value ('{}' is none).
 CREATE TABLE IF NOT EXISTS config.machines (
     name       text PRIMARY KEY CONSTRAINT machines_name_pattern CHECK (name ~ '^[a-z0-9][a-z0-9-]*$'),
     "user"     text NOT NULL,
@@ -42,12 +44,15 @@ CREATE TABLE IF NOT EXISTS config.machines (
     "public"   text,
     runner_scopes text NOT NULL DEFAULT '',
     windows_runners text NOT NULL DEFAULT '',
+    windows_admin_runners text NOT NULL DEFAULT '',
     runner_env text NOT NULL DEFAULT '{}' CHECK (runner_env LIKE '{%}')
 );
 -- A machines table made before the runner_env column gets it here; on one that has it this does nothing.
 ALTER TABLE config.machines ADD COLUMN IF NOT EXISTS runner_env text NOT NULL DEFAULT '{}' CHECK (runner_env LIKE '{%}');
 -- A machines table made before the runner_scopes column gets it here ('': none, as every machine had); on one that has it this does nothing.
 ALTER TABLE config.machines ADD COLUMN IF NOT EXISTS runner_scopes text NOT NULL DEFAULT '';
+-- A machines table made before the windows_admin_runners column gets it here ('': none); on one that has it this does nothing.
+ALTER TABLE config.machines ADD COLUMN IF NOT EXISTS windows_admin_runners text NOT NULL DEFAULT '';
 
 -- A service: a program one machine keeps running; with every n seconds it runs
 -- every n seconds instead of staying up.

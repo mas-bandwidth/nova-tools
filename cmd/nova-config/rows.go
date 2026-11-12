@@ -22,8 +22,8 @@ import (
 // sorted comma list of words matching word), argv (a JSON array of strings),
 // env (a JSON object of NAME to value), path (an absolute or ~/ path), ref
 // (the name of a machine row, NULL when empty), public (a public IP literal
-// or a DNS name) or scopes (GitHub Actions runners per repository or organization,
-// see canonicalScopes).
+// or a DNS name), scopes (GitHub Actions runners per repository or organization,
+// see canonicalScopes) or admins (Windows runners run as a local administrator, see canonicalAdmins).
 type field struct {
 	name, typ string
 	required  bool
@@ -52,7 +52,7 @@ var (
 )
 
 var kinds = map[string]*kind{
-	"machine": {name: "machine", table: "machines",
+	"machine": {name: "machine", table: "machines", check: checkMachine,
 		fields: []field{
 			{name: "address", typ: "text"},
 			{name: "public", typ: "public", null: true},
@@ -64,6 +64,7 @@ var kinds = map[string]*kind{
 			{name: "runners", typ: "int"},
 			{name: "runner_scopes", typ: "scopes"},
 			{name: "windows_runners", typ: "scopes"},
+			{name: "windows_admin_runners", typ: "admins"},
 			{name: "runner_env", typ: "env", def: "{}"},
 			{name: "note", typ: "text", cut: true, free: true},
 		}},
@@ -151,6 +152,8 @@ func (f field) canonical(raw string) (string, error) {
 		}
 	case "scopes":
 		return canonicalScopes(f, raw)
+	case "admins":
+		return canonicalAdmins(f, raw)
 	}
 	if strings.ContainsAny(raw, "\r\n") {
 		return "", fmt.Errorf("--%s: want one line", f.name)
@@ -236,6 +239,95 @@ func canonicalScopes(f field, raw string) (string, error) {
 	}
 	if err != nil {
 		return "", fmt.Errorf("--%s %v", f.name, err)
+	}
+	return strings.Join(parts, ","), nil
+}
+
+// adminAccount is a Windows local user name an admin runner runs as (at most 20 characters, Windows' limit).
+// builtinAccounts are Windows' own local users, never an admin runner's: the play would take one over.
+// reservedLabels are labels GitHub gives runners for their OS and kind: a job selecting one would reach the admin runner.
+var (
+	adminAccount    = regexp.MustCompile(`^[a-z][a-z0-9-]{0,19}$`)
+	builtinAccounts = []string{"administrator", "guest", "defaultaccount", "wdagutilityaccount"}
+	reservedLabels  = []string{"self-hosted", "windows", "x64", "linux", "macos"}
+)
+
+// adminRunner is one entry of windows_admin_runners: one Windows runner on url (a repository) run as the local
+// administrator account, carrying only labels (GitHub adds self-hosted, Windows and X64), that runs only the one
+// workflow File of the repository's main branch. Secret is the nova-secrets name of the account's password; Workflow
+// is the GITHUB_WORKFLOW_REF its jobs must carry. Its json is the inventory's nova_windows_admin_runners entry.
+type adminRunner struct {
+	URL      string   `json:"url"`
+	Account  string   `json:"account"`
+	Labels   []string `json:"labels"`
+	Secret   string   `json:"secret"`
+	File     string   `json:"-"`
+	Workflow string   `json:"workflow"`
+}
+
+// adminWorkflow is a workflow file name in the repository's .github/workflows.
+var adminWorkflow = regexp.MustCompile(`^[A-Za-z0-9._-]+\.ya?ml$`)
+
+// parseAdmins reads `<url>=<account>:<label>[+<label>...]@<workflow>`, comma-separated: sorted by url then account,
+// each account and each runner directory (<owner>-<repo>-<account>) once, labels sorted and unique; empty is none. The
+// url is a repository: an organization's runner is reachable from every repository in it, and this one runs jobs as an
+// administrator. The workflow is the one file of .github/workflows whose jobs it runs, from main only.
+func parseAdmins(raw string) ([]adminRunner, error) {
+	out := []adminRunner{}
+	for _, e := range strings.FieldsFunc(raw, func(r rune) bool { return r == ',' || unicode.IsSpace(r) }) {
+		rest, https := strings.CutPrefix(e, "https://")
+		u, tail, eq := strings.Cut(rest, "=")
+		account, tail, colon := strings.Cut(tail, ":")
+		labels, file, _ := strings.Cut(tail, "@") // no "@" leaves file empty, which adminWorkflow refuses
+		w := adminRunner{URL: "https://" + strings.TrimSuffix(u, "/"), Account: account, Labels: strings.Split(labels, "+"), File: file}
+		if !https || !eq || !colon || !scopeTarget.MatchString(w.URL) || strings.Count(w.URL, "/") != 4 || !adminAccount.MatchString(account) ||
+			!adminWorkflow.MatchString(file) {
+			return nil, fmt.Errorf("%q: want <url>=<account>:<label>[+<label>]@<workflow>, the url https://github.com/<owner>/<repo> (a repository, never an organization), the account a lower-case letter then at most 19 lower-case letters, digits and dashes, the workflow a file name in .github/workflows (<name>.yml)", e)
+		}
+		w.Workflow = strings.TrimPrefix(w.URL, "https://github.com/") + "/.github/workflows/" + file + "@refs/heads/main"
+		if slices.Contains(builtinAccounts, account) {
+			return nil, fmt.Errorf("%q: account %s is a Windows built-in account; give the runner its own account", e, account)
+		}
+		for _, l := range w.Labels {
+			if !scopeLabel.MatchString(l) {
+				return nil, fmt.Errorf("%q: label %q: want letters, digits, dot, dash and underscore", e, l)
+			}
+			if slices.Contains(reservedLabels, strings.ToLower(l)) {
+				return nil, fmt.Errorf("%q: label %q is one GitHub gives runners (%s); give a label of the runner's own", e, l, strings.Join(reservedLabels, ", "))
+			}
+		}
+		slices.Sort(w.Labels)
+		w.Labels = slices.Compact(w.Labels)
+		if slices.ContainsFunc(out, func(o adminRunner) bool { return o.Account == w.Account }) {
+			return nil, fmt.Errorf("account %s is named twice; give each account one runner", w.Account)
+		}
+		if o := slices.IndexFunc(out, func(o adminRunner) bool { return strings.EqualFold(adminDir(o), adminDir(w)) }); o >= 0 {
+			return nil, fmt.Errorf("%s and %s would share the runner directory %s; give one of them another account", out[o].URL+"="+out[o].Account, w.URL+"="+w.Account, adminDir(w))
+		}
+		w.Secret = "NOVA_WINRUNNER_" + strings.ToUpper(strings.ReplaceAll(account, "-", "_")) + "_PASSWORD"
+		out = append(out, w)
+	}
+	slices.SortFunc(out, func(a, b adminRunner) int {
+		return cmp.Or(strings.Compare(a.URL, b.URL), strings.Compare(a.Account, b.Account))
+	})
+	return out, nil
+}
+
+// adminDir is the name of an admin runner's directory on the machine (Windows compares it without case):
+// <owner>-<repo>-<account>, which two entries can share (o/r-x=a and o/r=x-a).
+func adminDir(w adminRunner) string {
+	return strings.ReplaceAll(strings.TrimPrefix(w.URL, "https://github.com/"), "/", "-") + "-" + w.Account
+}
+
+// canonicalAdmins is a windows_admin_runners value as it is stored: parseAdmins' entries, written back.
+func canonicalAdmins(f field, raw string) (string, error) {
+	ws, err := parseAdmins(raw)
+	if err != nil {
+		return "", fmt.Errorf("--%s %v", f.name, err)
+	}
+	parts := []string{}
+	for _, w := range ws {
+		parts = append(parts, w.URL+"="+w.Account+":"+strings.Join(w.Labels, "+")+"@"+w.File)
 	}
 	return strings.Join(parts, ","), nil
 }
@@ -400,6 +492,96 @@ func checkService(r Row) error {
 		return fmt.Errorf("%s", strings.Join(p, "; "))
 	}
 	return nil
+}
+
+// checkMachine refuses an admin runner whose account is the machine's login, or whose label another runner of the
+// machine carries (adminClashes). A field that does not parse is left to its own refusal.
+func checkMachine(r Row) error {
+	admins, err := parseAdmins(r.F["windows_admin_runners"])
+	if err != nil {
+		return nil
+	}
+	var p []string
+	for _, a := range admins {
+		if strings.EqualFold(a.Account, r.F["user"]) {
+			p = append(p, fmt.Sprintf("machine %s: admin runner account %s is the machine's user; give the runner its own account", r.Name, a.Account))
+		}
+	}
+	for _, c := range adminClashes([]Row{r}, "") {
+		p = append(p, c.msg)
+	}
+	if len(p) > 0 {
+		return fmt.Errorf("%s", strings.Join(p, "; "))
+	}
+	return nil
+}
+
+// adminClash is one admin runner label another runner carries: machine is the admin runner's.
+type adminClash struct{ machine, msg string }
+
+// adminClashes are the admin runner labels that another runner a job of the same repository could select carries:
+// that job could then land on the admin runner. Taken are, on the admin runner's own machine, every label of its
+// windows_runners and runner_scopes (whatever their url), its name, and where it has runner_scopes its roles, os and
+// arch (the Linux runners' labels); on every machine with a runner of the repository or its owner, those labels of that
+// runner and the machine's name; and the labels of every other admin runner of the repository, on any machine. With
+// only, just the clashes that involve that machine. A field that does not parse has no labels.
+func adminClashes(rows []Row, only string) []adminClash {
+	var out []adminClash
+	for _, r := range rows {
+		admins, _ := parseAdmins(r.F["windows_admin_runners"]) // ignored: a bad value is refused by its own check
+		for _, a := range admins {
+			owner := a.URL[:strings.LastIndex(a.URL, "/")]
+			for _, o := range rows {
+				if only != "" && r.Name != only && o.Name != only {
+					continue
+				}
+				self, on := o.Name == r.Name, " on machine "+o.Name
+				if self {
+					on = ""
+				}
+				taken := map[string]string{}
+				reached := false
+				for _, f := range []string{"windows_runners", "runner_scopes"} {
+					ws, _ := parseScopes(o.F[f]) // ignored: a bad value is refused by its own check
+					for _, w := range ws {
+						if !self && !strings.EqualFold(w.URL, a.URL) && !strings.EqualFold(w.URL, owner) {
+							continue
+						}
+						reached = true
+						for _, l := range w.Labels {
+							taken[strings.ToLower(l)] = f + " of " + w.URL + on
+						}
+						if f == "runner_scopes" {
+							for _, l := range append(strings.Split(o.F["roles"], ","), o.F["os"], o.F["arch"]) {
+								if l != "" {
+									taken[strings.ToLower(l)] = "a role, os or arch label of the runner_scopes runners" + on
+								}
+							}
+						}
+					}
+				}
+				if self {
+					taken[strings.ToLower(o.Name)] = "the machine's name"
+				} else if reached {
+					taken[strings.ToLower(o.Name)] = "the name of machine " + o.Name + ", a label of its runners of " + a.URL
+				}
+				others, _ := parseAdmins(o.F["windows_admin_runners"]) // ignored: as above
+				for _, b := range others {
+					if strings.EqualFold(b.URL, a.URL) && !(self && b.Account == a.Account) {
+						for _, l := range b.Labels {
+							taken[strings.ToLower(l)] = "a label of the admin runner " + b.Account + " of " + b.URL + on
+						}
+					}
+				}
+				for _, l := range a.Labels {
+					if by, ok := taken[strings.ToLower(l)]; ok {
+						out = append(out, adminClash{r.Name, fmt.Sprintf("machine %s: admin runner label %s is also %s; give the admin runner a label of its own", r.Name, l, by)})
+					}
+				}
+			}
+		}
+	}
+	return out
 }
 
 func checkFriend(r Row) error {

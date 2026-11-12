@@ -124,6 +124,9 @@ func build(machines []Row, services []Row, local string) (*inventory, error) {
 		il.Keepalive, il.Enabled = l.F["keepalive"] == "true", l.F["enabled"] == "true"
 		byMachine[l.F["machine"]] = append(byMachine[l.F["machine"]], il)
 	}
+	if cs := adminClashes(machines, ""); len(cs) > 0 {
+		return nil, refused("%s; run: nova-config machine set %s --windows_admin_runners <value>", cs[0].msg, cs[0].machine)
+	}
 	groups := map[string][]string{"bench": {}, "runner": {}, "services": {}}
 	all := []string{}
 	for _, r := range machines {
@@ -147,6 +150,16 @@ func build(machines []Row, services []Row, local string) (*inventory, error) {
 				}
 				hv[f[1]] = ws
 			}
+		}
+		if v["windows_admin_runners"] != "" {
+			ws, err := parseAdmins(v["windows_admin_runners"])
+			if err != nil {
+				return nil, refused("machine %s has corrupt windows_admin_runners (%v); run: nova-config machine set %s --windows_admin_runners <value>", m, err, m)
+			}
+			if err := checkMachine(r); err != nil {
+				return nil, refused("%v; run: nova-config machine set %s --windows_admin_runners <value>", err, m)
+			}
+			hv["nova_windows_admin_runners"] = ws
 		}
 		if env := map[string]unsafeText{}; v["runner_env"] != "" && v["runner_env"] != "{}" {
 			if _, err := kinds["machine"].findField("runner_env").canonical(v["runner_env"]); err != nil {

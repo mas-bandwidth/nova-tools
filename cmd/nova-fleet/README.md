@@ -194,7 +194,7 @@ line: ubuntu ALL=(ALL) NOPASSWD:ALL`.
 | `secrets-refresh` | the control node's encrypted store pushed to every machine with `ansible.posix.synchronize` (`verify_host: true`, no `.git`, stale files deleted, 0700/0600); no machine runs a timer (pull mode is retired; one left is removed) | `nova_seal_store` (the control node's clone) to push |
 | `services` | one supervised unit per service record, on the machine the record names (bench, runner and services groups) | the inventory's `nova_services` |
 | `ssh-names` | `ssh <machine>` by its tailnet name from every machine of the fleet: each login's ssh config and the fleet's host keys from the record, then every pair checked (all machines; one asleep or away is reported offline) | nothing |
-| `windows-runners` | a WSL machine held running from boot, and its Windows-side GitHub Actions runners from its record's `windows_runners`, through WSL interop | the record's `windows_runners`; `gh` on the control node logged in with admin on each repository or organization |
+| `windows-runners` | a WSL machine held running from boot, and its Windows-side GitHub Actions runners from its record's `windows_runners`, through WSL interop | the record's `windows_runners` and `windows_admin_runners`; `gh` on the control node logged in with admin on each repository or organization; each admin runner's password in the machine's seat |
 | `tailscale` | each machine on the tailnet, its address the MagicDNS name, its firewall closed to all but the tailnet | `TAILSCALE_AUTHKEY` in the environment for a machine not on the tailnet (`up` mints it) |
 
 ```
@@ -533,7 +533,134 @@ exists and GitHub lists its name; a whole runner is left alone, so a second run 
 directory's own `retired-<yyyymmdd>\`, its service is removed, and it registers again with `--replace`. A run that
 cannot read GitHub's list for a target refuses, rather than take a whole runner for a half one. Each machine prints `GITHUB-RUNNERS host=<machine> windows=<n> registered=<n> online=<n>`
 from its directories and GitHub's own list; a run where any is short fails. `--check` reads both, asks for the tokens it
-would need, and prints `RUNNER-PLAN <machine> windows=<n> register=<names> repair=<names> labels=<labels>`.
+would need, and prints `RUNNER-PLAN <machine> windows=<n> register=<names> repair=<names> admin=<name>@<account>,... unsealed=<names> labels=<labels>`.
+
+### Windows runners run as a local administrator
+
+A job that must change the machine (Application Verifier writes `HKLM\...\Image File Execution Options`) cannot run
+as `NETWORK SERVICE`, and giving `NETWORK SERVICE` that right would let every CI job on the machine reach SYSTEM. Such
+a job gets its own runner instead, in a second field of the record:
+
+```
+nova-config machine set bench-1 --windows_admin_runners 'https://github.com/<owner>/<repo>=ci-admin:<label>@<workflow>.yml' --actor alice
+nova-fleet windows-runners --check -- -l bench-1
+nova-fleet windows-runners -- -l bench-1
+```
+
+`windows_admin_runners` is `<url>=<account>:<label>[+<label>]@<workflow>`, comma-separated, one runner per entry;
+`<workflow>` is the file name in the repository's `.github/workflows` of the one workflow the runner runs, and is
+required. The inventory hands it to the play as `nova_windows_admin_runners`, each entry with `secret`, the nova-secrets
+name of the account's password (`NOVA_WINRUNNER_<ACCOUNT>_PASSWORD`, the account upper-cased with `-` as `_`), and
+`workflow`, `<owner>/<repo>/.github/workflows/<workflow>@refs/heads/main`. **The url is a repository**, never an
+organization: every repository of an organization could send an organization's runner jobs. **The runner** is
+`<machine>-win-<slug>-<account>` in `C:\nova-admin-runners\<slug>-<account>` (`github_runner_wsl_admin_dir`; nova-config
+refuses two entries whose `<slug>-<account>`, compared without case, would be the same directory), with its own work
+folder and the CI rules of the other Windows runners, and the same registration, repair and counts: it is one more
+runner in the `windows=` of the receipt. Its job `PATH` is the other runners' without the ccache directory, and its
+`.env` holds only the role's lines, `CCACHE_DISABLE=1` among them (every runner writes its ccache, so a job here would
+link what any of them put there), `CCACHE_CONFIGPATH` and `CCACHE_CONFIGPATH2` pointing into its sealed directory (a
+disabled ccache still reads its configuration, whose `compiler=` picks what runs, and its system file is
+`%ALLUSERSPROFILE%\ccache\ccache.conf`, which any job may make) and the CI rules' hooks; any other line is dropped. **Its
+labels** are only the entry's (GitHub adds `self-hosted`, `Windows` and `X64`), and must be its own: nova-config refuses
+on the write, and the inventory refuses when the store holds one, a label (compared without case) that a job of the same
+repository could select on another runner: any label of the machine's own `windows_runners` or `runner_scopes`, its
+name, and with `runner_scopes` its roles, os and arch; on any machine with a runner of the repository or its owner, that
+runner's labels and the machine's name; any other admin runner's label of the repository, on any machine; and one GitHub
+gives runners (`self-hosted`, `windows`, `x64`, `linux`, `macos`). A write to the other runner is refused the same way.
+The run also fails, before anything changes, on one of the role's Windows labels (`fleet`, the machine's name). So no
+job meant for another runner lands on it. **The account** is
+the local user `<account>`, made by the play with a fixed description (`$AccountMarker` in the script): in
+`Administrators` (by its SID, `S-1-5-32-544`), allowed to log on as a service, denied interactive and
+remote-interactive logon, its password never expiring and not changeable by the user. A user of that name without the
+description (a person's, or a built-in one) is never changed: the run fails with `ACCOUNT-NOT-OURS`; nova-config
+refuses Windows' built-in names and the machine's user. A service runs with its account's full administrator token
+(services are not filtered by UAC).
+
+**The directory** is the admin's alone, and it is never opened, not even for a moment. Every other runner's job runs
+as `NETWORK SERVICE`, which may add files to any folder under `C:\ProgramData`, and under `C:\` a folder inherits write
+access for every signed-in account: a file such a job put in the admin runner's directory, or a binary it changed
+there, would run as an administrator, and so would a `Directory.Build.targets` or `NuGet.Config` it put in any folder
+above it (MSBuild and NuGet read them from every folder above a checkout). So the admin root is directly under `C:\`,
+where on a default Windows those accounts may make a folder but not a file, and the install and logon steps prove that
+first (`[NovaTree]::Above`): no folder above the admin root may let `NETWORK SERVICE`, SERVICE, LOCAL, Authenticated
+Users, Users or Everyone (the openers) make, change or delete a file in it, hold a folder one of them owns (made by one
+of them) or whose owner cannot be read, or hold a file one of them may change; else `ABOVE-OPEN <path> ...` fails the
+run. (captain's `C:\` gives Authenticated Users Modify on the drive itself, read on 2026-11-12, so an admin runner
+there refuses with `ABOVE-OPEN C:\` until `C:\` is back to Windows' default: Authenticated Users may only make a
+folder in it.) A folder an opener has made in `C:\` before a job starts (such as `C:\.cargo`, which cargo reads above
+a checkout) is refused by the job-started hook, below; one made while the job runs is not caught. So an admin
+workflow runs no tool that reads its configuration from a folder above the checkout (cargo, npm and node, pip): MSBuild
+and NuGet read files there, which `C:\` does not let those accounts make. Then the install step makes `C:\nova-admin-runners` and the runner's directory sealed in
+the call that creates them: owned by `Administrators`, nothing inherited, full control for SYSTEM and `Administrators`,
+and on the runner's directory its account. One that was already there and is not sealed so was made by someone else
+and is never used or changed: `PLANTED <path> ...` fails the run and names the command that deletes it. Nothing in
+the directory is ever reset or repaired. The runner zip is copied from the cache into the directory, that copy is
+hashed against the pin, and the runner is extracted from that same copy. Registration passes `--disableupdate` and not
+`--runasservice` (which would grant `NETWORK SERVICE` the directory and start the listener as `NETWORK SERVICE`); the
+logon step makes the service. On every run, before the service is given the account, the whole tree is proved: the two
+directories hold only those entries, and everything under the runner's directory is owned by SYSTEM, `Administrators`
+or the account, inherits, and has no entry of its own; else `ACL-OPEN <path> ...` fails the run. Every file the copied
+zip lists must still be that file, with nothing else in `bin` or `externals`, else `TAMPERED <path> missing|changed|extra`.
+A new pin replaces `bin` and `externals` from a new copy while the runner is idle (`UPGRADE-OWED <dir> busy` while a
+job runs). Every entry of its job `PATH` (the machine's `PATH` when `github_runner_windows_path` is empty), and the
+folders of the tools a build may run from outside it (`github_runner_win_admin_tools`: the ccache folder and its
+`msvc`, whose `cl.exe` MSBuild runs when a build sets `CLToolPath` there), must be owned and writable by none of the
+openers, and so must every file in it, and no folder above it may be owned by one or let one delete in it or change
+its permissions (where an entry is missing, the folder above it, where it could be made): else `PATH-WRITABLE <entry>
+sid=<sid>|owner=<sid> at=<folder>` or `PATH-WRITABLE <entry> file=<file> ...` fails the run. The runner-packages play
+seals the ccache folder for this (owned by `Administrators`, nothing inherited, read and run for Authenticated Users and
+Users), before it copies the binaries in and again after, and unpacks the release on the WSL side, which no Windows job
+reaches. The checks themselves (`NovaTree` in `runner-windows.ps1`) are tested on fake ACLs by
+`TestFunctionalWindowsSecurityDecisions` (`testdata/winsec`).
+
+**The password** is a value in the machine's own seat, never typed and never shown. The play reads the seat's names
+first (`nova-secrets names`, no value read); a seat without it stops the run before anything changes, naming the
+commands to run on the control node: a generated value piped into `set` (the `Nw1-` prefix meets Windows' complexity
+rule), a `grant` to the machine's seat, the store's push, and the refresh:
+
+```
+{ printf 'Nw1-'; openssl rand -hex 24; } | nova-secrets set NOVA_WINRUNNER_CI_ADMIN_PASSWORD --store S --key K --pins P --as control
+nova-secrets grant NOVA_WINRUNNER_CI_ADMIN_PASSWORD --to bench-1 --pins P --store S --key K --as control
+git -C S push
+nova-fleet secrets-refresh -- -e nova_seal_store=S
+```
+
+On the machine the value reaches `powershell.exe` only in its environment: `nova-secrets exec --only <secret> -- env
+WSLENV=<secret> powershell.exe ...`, where `WSLENV` hands that one variable through interop. The script removes it from
+its environment as it reads it and hands it only to method calls inside its own process (a `SecureString` built a
+character at a time, `LogonUser`, `CreateService`, `ChangeServiceConfig`), never to a cmdlet parameter, which module
+logging would record; the tasks are `no_log`. `config.cmd --windowslogonpassword` is never used, since it would put the
+password in an argument. Two lines per admin runner: `ACCOUNT <machine> <account> account=created|updated|ok
+rights=ok|+<right>,... admin=added|ok` (an existing account whose stored password does not log it on as a service gets
+the stored one: `updated`), then `LOGON <machine> <dir> ok|set|created account=.\<account> restart=no|done|busy
+acl=protected service=<name>` (`created`: the service was made, with the name `config.cmd` gives one). The service's
+logon (account and password) is set on every run, so a run cut off between the two
+steps never leaves the service on an old password. It is restarted only while no job runs, and only when the account
+step said `updated` or `created` (an account made anew, its service left from the old one), the service had logged on
+as another account, or its listener runs as another user;
+`restart=busy` leaves that to the next run. `--check` reads the names and prints the plan; it changes no account.
+
+**Removing an entry** from `windows_admin_runners` does not retire its runner or its account: the play no longer
+looks at them. Retire one by hand. Take a removal token with the control node's gh (`gh api -X POST
+repos/<owner>/<repo>/actions/runners/remove-token -q .token`) and hand it to `config.cmd remove` in the runner
+directory on its stdin, as `ACTIONS_RUNNER_INPUT_TOKEN` (never an argument). Then, in an elevated PowerShell on the
+machine, delete the service (`sc.exe delete <service>`; `Get-CimInstance Win32_Service` finds it by the directory in
+its path), the directory (`Remove-Item -Recurse -Force C:\nova-admin-runners\<slug>-<account>`) and the
+account (`Remove-LocalUser -Name <account>`).
+
+**Which jobs run on it** is decided on the machine, in the runner's sealed directory, never by the workflows it
+guards. The install step writes the entry's workflow to `.nova-ci-rules\admin-workflow`, and the job-started hook
+(`nova-ci-rules.ps1 started`, on a runner holding that file or whose hook runs as an administrator) refuses, before
+anything else runs, every job but a `push`, `schedule` or `workflow_dispatch` job of `refs/heads/main` whose
+`GITHUB_WORKFLOW_REF` is that workflow at `refs/heads/main` (owner and repository compared without case, the rest
+exactly); with no `admin-workflow` it refuses every job. It also refuses every job while a folder above the runner
+is owned by an opener (or its owner cannot be read, a hidden system folder aside), or cannot be listed. A refusal is
+`::error::CI rule: <why>`, and the hook then ends the job's `Runner.Worker`: the runner adds the hook as a pre-job step,
+and a failed one fails the job but still lets its `if: always()` and `if: failure()` steps run (actions/runner,
+`JobExtension.cs`), so ending the worker is what keeps every step of a refused job from running. So a pull request, a branch, a tag or another workflow never runs as an
+administrator, whatever label it names. GitHub still gives the runner `self-hosted`, `Windows` and `X64`, so in a
+repository with an admin runner every ordinary Windows job should name a label of its own runners as well (such as
+`fleet` or a `windows_runners` label): a job that lands on the admin runner by those labels is refused, not run.
 
 ### The stage directory
 
@@ -1251,7 +1378,7 @@ one). A list without the `:s390x` packages goes with the architecture off, `-e '
 | Variable | Default | |
 |---|---|---|
 | `nova_runner_packages` | `darwin`: `postgresql@18`, `cmake`, `libsodium`, `pkgconf`, `ccache`; `debian`: the toolchain above (`group_vars/all.yml`) | another OS with a non-empty list is refused |
-| `nova_runner_windows_ccache`, `nova_runner_windows_ccache_dir` | `4.14.3` and its zip's sha256; `C:\ProgramData\nova\ccache` | **Windows ccache.** On a WSL machine whose record names `windows_runners`, ccache's own Windows release, checked, unpacked through `/mnt/c` to that directory as `ccache.exe` and `msvc\cl.exe` (the same binary under the compiler's name: MSBuild runs it in place of cl.exe when a build sets `CLToolExe=cl.exe;CLToolPath=<dir>\msvc` in `CMAKE_VS_GLOBALS`, since the Visual Studio generator honours no compiler launcher; ccache then runs the real cl.exe from the PATH MSBuild sets). The version in `VERSION` beside it; a matching version is left alone; an empty version skips it |
+| `nova_runner_windows_ccache`, `nova_runner_windows_ccache_dir` | `4.14.3` and its zip's sha256; `C:\ProgramData\nova\ccache` | **Windows ccache.** On a WSL machine whose record names `windows_runners` or `windows_admin_runners`, ccache's own Windows release, checked and unpacked on the WSL side, then copied through `/mnt/c` into that directory, sealed before and after (owned by `Administrators`, nothing inherited, read and run for Authenticated Users and Users, so no job can change what every job runs; an admin runner's install refuses it otherwise), as `ccache.exe` and `msvc\cl.exe` (the same binary under the compiler's name: MSBuild runs it in place of cl.exe when a build sets `CLToolExe=cl.exe;CLToolPath=<dir>\msvc` in `CMAKE_VS_GLOBALS`, since the Visual Studio generator honours no compiler launcher; ccache then runs the real cl.exe from the PATH MSBuild sets). The version in `VERSION` beside it. Every run compares the directory with the release (the zip kept on the WSL side): anything else in it, a binary that differs or a link, and the directory is removed and made again, sealed in the one call that creates it (`files/ccache-dir.ps1`, which refuses `CCACHE-DIR-PLANTED` a folder a job made in the gap), so a file or a handle a job put there while it was open is never sealed in; one still there after the seal fails the run. An empty version skips it |
 | `nova_runner_foreign_architectures` | `[s390x]` | Ubuntu: dpkg architectures the debian list may name packages of, as `<name>:<arch>` |
 | `nova_runner_ports_uri` | `http://ports.ubuntu.com/ubuntu-ports/` | the archive a foreign architecture comes from |
 | `nova_runner_vm_kernel` | `true` | Debian/Ubuntu (not WSL): keep each kernel image readable by the login, for a VM of the host's own kernel; a runner login of its own gets root's copies in `/opt/nova/vm-kernels` (its `~/vm-kernels`, a kernel hook for each new image) from `github-runners`, which fails with `VM-TIER-MISSING` naming what the tier lacks (vng, qemu, a writable `/dev/kvm`, the image, the modules) |

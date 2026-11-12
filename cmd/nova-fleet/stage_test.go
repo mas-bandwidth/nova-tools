@@ -43,6 +43,9 @@ func TestStageGuardsEveryElevatedCall(t *testing.T) {
 			}
 			n++
 			name, _ := task["name"].(string)
+			// an admin runner's account and logon run powershell.exe under nova-secrets exec, the password in its env
+			cmd = strings.Replace(cmd, "{{ github_runner_win_stage_check }} && {{ github_runner_win_secrets_exec }} {{ item.secret | quote }} -- env WSLENV={{ item.secret | quote }} ",
+				"{{ github_runner_win_stage_check }} && ", 1)
 			if strings.Count(cmd, "-File") != 1 || !strings.Contains(cmd, stageGuard) {
 				t.Errorf("%s %q: an elevated call not guarded by the stage check:\n%s", file, name, cmd)
 				continue

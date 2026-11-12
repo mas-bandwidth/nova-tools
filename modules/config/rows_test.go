@@ -11,7 +11,7 @@ import (
 
 func TestColumns(t *testing.T) {
 	t.Parallel()
-	assert.Equal(t, []string{"address", "public", "user", "os", "arch", "cores", "roles", "runners", "runner_scopes", "windows_runners", "runner_env", "note"}, Columns[Machine]())
+	assert.Equal(t, []string{"address", "public", "user", "os", "arch", "cores", "roles", "runners", "runner_scopes", "windows_runners", "windows_admin_runners", "runner_env", "note"}, Columns[Machine]())
 	assert.Equal(t, []string{"harness", "model", "width", "tiers", "pronouns", "note", "enabled"}, Columns[Friend]())
 	assert.Equal(t, []string{"machine", "argv", "seat", "keys", "every", "keepalive", "enabled", "env", "log"}, Columns[Service]())
 }
