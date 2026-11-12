@@ -43,8 +43,8 @@ func TestRunnerRequirementsAreOneLineEach(t *testing.T) {
 		seen[name] = true
 		var archs int
 		for _, a := range strings.Split(arch, ",") {
-			assert.Contains(t, []string{"any", "amd64", "arm64", "not-wsl"}, a, "%s: arch %q", name, arch)
-			if a != "not-wsl" {
+			assert.Contains(t, []string{"any", "amd64", "arm64", "not-wsl", "vm-tier"}, a, "%s: arch %q", name, arch)
+			if a != "not-wsl" && a != "vm-tier" {
 				archs++
 			}
 		}
@@ -58,7 +58,7 @@ func TestRunnerRequirementsAreOneLineEach(t *testing.T) {
 		}
 		assert.NotEmpty(t, strings.TrimSpace(check), "%s has no check", name)
 	}
-	for _, want := range []string{"tla2tools.jar", "GNU time", "MSan libc++", "clang-format-18", "s390x libraries", "s390x libstdc++", "VM tier kernel image", "VM tier kvm", "cppcheck 2.19.0", "go 1.26.6"} {
+	for _, want := range []string{"tla2tools.jar", "GNU time", "MSan libc++", "clang-format-18", "s390x libraries", "s390x libstdc++", "VM tier kernel image", "VM tier kvm", "cppcheck 2.19.0", "go >= 1.26.6"} {
 		assert.True(t, seen[want], "the requirement %s", want)
 	}
 }

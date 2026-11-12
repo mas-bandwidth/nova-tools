@@ -1190,14 +1190,17 @@ tailnet=<interface> dry=False watchdog=<interval> device=yes panic=<n> oops=<n> 
 ## audit
 
 What a Linux bench or runner needs for the fleet's CI work is one file, `runner-requirements.tsv`, one requirement per
-line: its name, the architectures it applies to (`any`, `amd64`, `arm64`, with `not-wsl` to leave out WSL machines),
-the play that installs it (`runner-packages`, `sdk-toolchain`, `github-runners`, or `base`, the Ubuntu image itself),
+line: its name, the architectures it applies to (`any`, `amd64`, `arm64`, with `not-wsl` to leave out WSL machines and
+`vm-tier` to leave out a machine whose `nova_runner_vm_kernel` is false),
+the play that installs it (`runner-packages`, `sdk-toolchain`, `github-runners`, `base` for the Ubuntu image itself, or
+`none` where no play installs it yet),
 and a bash command that exits 0 when it is met. The pins in it, versions and sha256, are the ones the CI work checks
 for itself. A new requirement is a new line.
 
 The `audit` play checks every line on each Linux machine of the `bench` and `runner` groups, as the login CI jobs run as
 (`github_runner_user` where that login exists, else the fleet login), with the PATH a runner's jobs start with and that
-login's home, each check bounded to 120 seconds. It only reads, under `--check` or not. Per machine:
+login's home (the PATH of the machine record's `nova_runner_env`, or the login's tools directory before the system's),
+each check bounded to 120 seconds. It only reads, under `--check` or not. Per machine:
 
 ```
 FLEET-AUDIT MISSING host=<machine> item=<name> install=<play> check=<command>

@@ -56,7 +56,6 @@ func TestFunctionalAuditNamesWhatIsMissing(t *testing.T) {
 	assert.Contains(t, out, "FLEET-AUDIT MISSING host=localhost item=unmet thing install=runner-packages check=test -e /nonexistent/audit")
 	assert.NotContains(t, out, "item=met ")
 	assert.Contains(t, out, "FLEET-AUDIT NOT-APPLICABLE host=localhost item=elsewhere")
-	assert.Contains(t, out, "ok=1")
-	assert.Contains(t, out, "missing=1 not-applicable=1")
+	assert.Contains(t, out, " ok=1 missing=1 not-applicable=1")
 	assert.Contains(t, out, "FLEET-AUDIT FAILED host=localhost missing=unmet thing")
 }
