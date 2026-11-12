@@ -179,6 +179,7 @@ line: ubuntu ALL=(ALL) NOPASSWD:ALL`.
 
 | Play | Purpose | Needs |
 |---|---|---|
+| `audit` | every Linux bench and runner checked against `runner-requirements.tsv`, as the login CI jobs run as; read-only, a machine with a gap fails naming it | nothing; `-l` the machines |
 | `ci-rules` | the CI rules on every GitHub Actions runner a machine runs, whoever registered it (bench, runner and services groups) | nothing; `-l` the machines |
 | `github-runners` | GitHub Actions runners on every machine of the runner group, as its record's runner_scopes name them | the machine records' `runner_scopes` (or `github_runner_url`, `github_runner_scope` for one url); `gh` on the control node logged in with admin on each repository or organization |
 | `health` | guards that let a Linux machine get itself out of trouble, a disk report and clean, and a Mac's Go build cache trim (bench, runner and services groups) | nothing |
@@ -1313,6 +1314,35 @@ tailnet=<interface> dry=False watchdog=<interval> device=yes panic=<n> oops=<n> 
 `/etc/systemd/system.conf.d/90-nova-watchdog.conf` (then `systemctl daemon-reexec`) and
 `/etc/sysctl.d/91-nova-lockup.conf`.
 
+## audit
+
+What a Linux bench or runner needs for the fleet's CI work is one file, `runner-requirements.tsv`, one requirement per
+line: its name, the architectures it applies to (`any`, `amd64`, `arm64`, with `not-wsl` to leave out WSL machines and
+`vm-tier` to leave out a machine whose `nova_runner_vm_kernel` is false),
+the play that installs it (`runner-packages`, `sdk-toolchain`, `github-runners`, `base` for the Ubuntu image itself, or
+`none` where no play installs it yet),
+and a bash command that exits 0 when it is met. The pins in it, versions and sha256, are the ones the CI work checks
+for itself. A new requirement is a new line.
+
+The `audit` play checks every line on each Linux machine of the `bench` and `runner` groups, as the login CI jobs run as
+(`github_runner_user` where that login exists, else the fleet login), with the PATH a runner's jobs start with and that
+login's home (the PATH of the machine record's `nova_runner_env`, or the login's tools directory before the system's),
+each check bounded to 120 seconds. It only reads, under `--check` or not. Per machine:
+
+```
+FLEET-AUDIT MISSING host=<machine> item=<name> install=<play> check=<command>
+FLEET-AUDIT NOT-APPLICABLE host=<machine> item=<name> arch=<arch> declared=<arch list>
+FLEET-AUDIT host=<machine> login=<login> arch=<arch> ok=<n> missing=<n> not-applicable=<n>
+```
+
+and a machine with anything missing fails: `FLEET-AUDIT FAILED host=<machine> missing=<names>`. The fix is the play
+the line names, run on that machine. A machine that is not Linux prints `FLEET-AUDIT SKIPPED`. `-e
+nova_audit_requirements=<file>` checks another file of the same form.
+
+```
+nova-fleet audit -- -l bench
+```
+
 ## runner-packages
 
 The packages a CI runner's tests need, on each machine of the `bench` and `runner` groups (a bench runs the same gates), from `nova_runner_packages`
@@ -1326,7 +1356,8 @@ the analysers and provers (`cppcheck`, `valgrind`, `cbmc`, `cadical`, `z3`, `gap
 (`postgresql-client-18`, `redis-tools`, `sqlite3`), containers, VMs and emulation (`podman`, `bubblewrap`, `virtme-ng`,
 `qemu-system-x86`, `qemu-user`, `qemu-system-s390x` with the s390x cross compilers, and the s390x libraries a
 big-endian build links, `libsodium-dev:s390x`, `libbpf-dev:s390x`, `libxdp-dev:s390x` and `libstdc++6:s390x`, from the
-foreign architecture `s390x`) and `bats`, `tcpdump`, GNU `time` and the archivers; the list in `group_vars/all.yml` is
+foreign architecture `s390x`), `bats`, `tcpdump`, GNU `time`, the archivers, the base tools CI steps call (`curl`, `git`,
+`gnupg`, `iproute2`, `openssh-client`, `python3`) and `cloud-image-utils`; the list in `group_vars/all.yml` is
 grouped that way. Every name resolves on Ubuntu 26.04; a Debian release or an older Ubuntu lacks some of the versioned
 ones (`clang-18`, `postgresql-client-18`, `dotnet-sdk-10.0`), and there apt fails the task naming the package, and the
 fix is your own list, below, without it. Debian has no Ubuntu ports archive, so there the play refuses the foreign
