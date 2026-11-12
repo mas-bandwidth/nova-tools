@@ -148,6 +148,13 @@ func build(machines []Row, services []Row, local string) (*inventory, error) {
 				hv[f[1]] = ws
 			}
 		}
+		if v["windows_admin_runners"] != "" {
+			ws, err := parseAdmins(v["windows_admin_runners"])
+			if err != nil {
+				return nil, refused("machine %s has corrupt windows_admin_runners (%v); run: nova-config machine set %s --windows_admin_runners <value>", m, err, m)
+			}
+			hv["nova_windows_admin_runners"] = ws
+		}
 		if env := map[string]unsafeText{}; v["runner_env"] != "" && v["runner_env"] != "{}" {
 			if _, err := kinds["machine"].findField("runner_env").canonical(v["runner_env"]); err != nil {
 				return nil, refused("machine %s has corrupt runner_env (%v); run: nova-config machine set %s --runner_env <json-object>", m, err, m)

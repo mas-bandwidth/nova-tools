@@ -3,6 +3,7 @@ package main
 import (
 	"io/fs"
 	"path"
+	"slices"
 	"strings"
 	"testing"
 
@@ -190,15 +191,16 @@ func TestRunnerWindowsRepairs(t *testing.T) {
 	}
 }
 
-// TestWindowsRunnersPlay: the play reaches only machines whose record names windows_runners, through the role's file.
+// TestWindowsRunnersPlay: the play reaches only machines whose record names windows_runners or windows_admin_runners,
+// through the role's file.
 func TestWindowsRunnersPlay(t *testing.T) {
 	t.Parallel()
 	b, err := fs.ReadFile(tree, "windows-runners.yml")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s := string(b); !strings.Contains(s, "tasks_from: wsl-windows.yml") || !strings.Contains(s, "when: nova_windows_runners | default([]) | length > 0") {
-		t.Error("windows-runners.yml must include wsl-windows.yml only where nova_windows_runners is non-empty")
+	if s := string(b); !strings.Contains(s, "tasks_from: wsl-windows.yml") || !strings.Contains(s, "when: (nova_windows_runners | default([]) | length > 0) or (nova_windows_admin_runners | default([]) | length > 0)") {
+		t.Error("windows-runners.yml must include wsl-windows.yml only where nova_windows_runners or nova_windows_admin_runners is non-empty")
 	}
 	for _, f := range []string{"wsl-windows.yml", "wsl-windows-state.yml", "wsl-windows-github.yml", "wsl-windows-register.yml"} {
 		if _, err := fs.Stat(tree, path.Join(roleDir, "tasks", f)); err != nil {
@@ -341,5 +343,123 @@ func TestWindowsPagefileIsOptInAndNeverRestarts(t *testing.T) {
 	}
 	if !strings.Contains(string(play), "tasks_from: wsl-pagefile.yml") {
 		t.Error("the windows-runners play includes wsl-pagefile.yml")
+	}
+}
+
+// TestWindowsAdminPasswordOnlyInTheEnvironment: an admin runner's password reaches powershell.exe only in its
+// environment (nova-secrets exec adds the one --only name; WSLENV hands it through interop), both tasks that carry it
+// are no_log, the script takes it out of its environment as it reads it and hands it only to calls inside its own
+// process, and config.cmd never gets --windowslogonpassword.
+func TestWindowsAdminPasswordOnlyInTheEnvironment(t *testing.T) {
+	t.Parallel()
+	carriers := 0
+	for file, tasks := range roleTasks(t) {
+		for _, task := range tasks {
+			name, _ := task["name"].(string)
+			cmd := text(t, task["ansible.builtin.shell"]) + text(t, task["ansible.builtin.command"])
+			if strings.Contains(cmd, "windowslogonpassword") {
+				t.Errorf("%s %q gives config.cmd the password as an argument", file, name)
+			}
+			if !strings.Contains(cmd, "-Action account") && !strings.Contains(cmd, "-Action logon") {
+				continue
+			}
+			carriers++
+			for _, want := range []string{"{{ github_runner_win_secrets_exec }} {{ item.secret | quote }} -- env WSLENV={{ item.secret | quote }}",
+				"-SecretEnv {{ item.secret | quote }}", "</dev/null"} {
+				if !strings.Contains(cmd, want) {
+					t.Errorf("%s %q lacks %q", file, name, want)
+				}
+			}
+			if task["no_log"] != true {
+				t.Errorf("%s %q carries the password without no_log: true", file, name)
+			}
+		}
+	}
+	if carriers != 2 {
+		t.Errorf("found %d tasks that carry an admin runner's password; want the account and logon steps", carriers)
+	}
+	d, err := fs.ReadFile(tree, roleDir+"/defaults/main.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(d), "github_runner_win_secrets_exec: >-\n  {{ [github_runner_nova_secrets, 'exec', '--store', nova_secrets_store, '--as', nova_seat,") ||
+		!strings.Contains(string(d), "'--only'] | map('quote') | join(' ') }}") {
+		t.Error("github_runner_win_secrets_exec must be the machine seat's nova-secrets exec, ending in --only")
+	}
+	b, err := fs.ReadFile(tree, roleDir+"/files/runner-windows.ps1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ps := string(b)
+	for _, want := range []string{"$v = [Environment]::GetEnvironmentVariable($n, 'Process')", "[Environment]::SetEnvironmentVariable($n, $null, 'Process')"} {
+		if !strings.Contains(ps, want) {
+			t.Errorf("runner-windows.ps1 lacks %q", want)
+		}
+	}
+	if strings.Contains(ps, "windowslogonpassword") {
+		t.Error("runner-windows.ps1 gives config.cmd the password as an argument")
+	}
+	allowed := []string{"$pw = Take-Secret $SecretEnv", "$pw = $null", "ConvertTo-SecureString -String $pw -AsPlainText -Force",
+		"[NovaAccount]::ServiceLogon($Account, $pw)", "StartPassword = $pw }"}
+	uses := 0
+	for _, l := range strings.Split(ps, "\n") {
+		if !strings.Contains(l, "$pw") {
+			continue
+		}
+		uses++
+		if !slices.ContainsFunc(allowed, func(a string) bool { return strings.Contains(l, a) }) {
+			t.Errorf("runner-windows.ps1 uses the password outside the calls that take it in this process: %s", strings.TrimSpace(l))
+		}
+	}
+	if uses < 6 {
+		t.Errorf("runner-windows.ps1 names the password %d times; the account and logon actions read it", uses)
+	}
+}
+
+// TestWindowsAdminRunnerOrder: the seat is checked for every admin runner's password before anything on the machine
+// changes, the account is set before its runner registers, the service is switched to the account after registering
+// and before ensure starts it; an admin runner carries only its entry's labels and is named by its account.
+func TestWindowsAdminRunnerOrder(t *testing.T) {
+	t.Parallel()
+	b, err := fs.ReadFile(tree, roleDir+"/tasks/wsl-windows.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(b)
+	at := -1
+	for _, step := range []string{
+		"- name: the names in this machine's seat, for the admin runners' passwords",
+		"- name: every admin runner's password is in this machine's seat",
+		"- name: the script, staged on the Windows side",
+		"- name: each admin runner's local account",
+		"- name: each wanted runner unpacked",
+		"- name: register, one target at a time",
+		"- name: each admin runner's service logs on as its account",
+		"- name: each wanted runner's service starts at boot and is running",
+		"- name: the CI rules on these runners",
+	} {
+		i := strings.Index(s, step)
+		if i < 0 || i < at {
+			t.Fatalf("wsl-windows.yml: %q is missing or out of order", step)
+		}
+		at = i
+	}
+	for _, want := range []string{
+		"argv: [\"{{ github_runner_nova_secrets }}\", names, --store, \"{{ nova_secrets_store }}\", --as, \"{{ nova_seat }}\"]",
+		"{ printf 'Nw1-'; openssl rand -hex 24; } | nova-secrets set {{ n }}",
+		"nova-secrets grant {{ n }} --to {{ nova_seat }}",
+		"nova-fleet secrets-refresh -- -e nova_seal_store=",
+		"'labels': t.labels | unique | sort | join(','),",
+		"'name': inventory_hostname ~ '-win-' ~ slug ~ '-' ~ t.account,",
+		"reject('match', '^https://github[.]com/[^/]+/[^/]+$')",
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("wsl-windows.yml lacks %q", want)
+		}
+	}
+	admin := s[strings.Index(s, "{%- for t in nova_windows_admin_runners"):]
+	admin = admin[:strings.Index(admin, "{%- endfor -%}")]
+	if strings.Contains(admin, "github_runner_wsl_labels") {
+		t.Error("an admin runner must not carry the role's labels (fleet, the machine's name)")
 	}
 }

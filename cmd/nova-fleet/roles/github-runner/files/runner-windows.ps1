@@ -25,8 +25,20 @@
 #             off: PAGEFILE ok|set size_mb=<n> active_mb=<the size Windows has allocated now> restart=owed|no, then
 #             COMMIT limit_gb=<n> free_gb=<n>. A set that Windows has not applied yet says restart=owed; nothing here
 #             restarts the machine.
+#   account   -Account -SecretEnv                     an admin runner's local account. Its password is the environment
+#             variable -SecretEnv names (nova-secrets exec, then WSLENV through interop), removed from this process's
+#             environment as it is read; never an argument, a file or a line of output. The account is created (password
+#             never expires, the user cannot change it), or its password set where the stored one does not log it on as
+#             a service; put in Administrators by SID (S-1-5-32-544); granted SeServiceLogonRight and denied interactive
+#             and remote-interactive logon (SeDenyInteractiveLogonRight, SeDenyRemoteInteractiveLogonRight) through the
+#             LSA: ACCOUNT <account> account=created|updated|ok rights=ok|+<right>,... admin=added|ok
+#   logon     -Dir -Account -SecretEnv [-Relogon]     the runner's service in -Dir logs on as .\<account> (Win32_Service
+#             Change, the password from the environment as above), restarted when running; the account given full
+#             control of -Dir. A service already logging on as the account is left alone unless -Relogon (the account's
+#             password was set): LOGON <dir> ok|set account=.\<account> acl=ok|set service=<name>, or NO-SERVICE <dir>
+#             (exit 7)
 param(
-  [Parameter(Mandatory = $true)][ValidateSet('install', 'register', 'ensure', 'keepalive', 'pagefile')][string]$Action,
+  [Parameter(Mandatory = $true)][ValidateSet('install', 'register', 'ensure', 'keepalive', 'pagefile', 'account', 'logon')][string]$Action,
   [string]$Dir = '',
   [string]$Cache = '',
   [string]$Version = '',
@@ -37,7 +49,10 @@ param(
   [string]$Labels = '',
   [string]$MachineId = '',
   [string]$User = '',
-  [int]$SizeMb = 0
+  [int]$SizeMb = 0,
+  [string]$Account = '',
+  [string]$SecretEnv = '',
+  [switch]$Relogon
 )
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
@@ -81,7 +96,170 @@ function Invoke-Config([string[]]$a) {
   }
 }
 
+# Take-Secret NAME: the value of the environment variable NAME, removed from this process's environment as it is read.
+# It is never printed, written, or passed to a program: only to .NET and CIM calls inside this process.
+function Take-Secret([string]$n) {
+  if ($n -notmatch '^[A-Za-z_][A-Za-z0-9_]*$') { [Console]::Out.WriteLine('BAD-ARGS -SecretEnv'); exit 2 }
+  $v = [Environment]::GetEnvironmentVariable($n, 'Process')
+  [Environment]::SetEnvironmentVariable($n, $null, 'Process')
+  if (-not $v) { [Console]::Out.WriteLine("NO-SECRET $n in the environment (nova-secrets exec --only $n -- env WSLENV=$n ...)"); exit 4 }
+  return $v
+}
+function Test-AccountName([string]$a) { return $a -cmatch '^[a-z][a-z0-9-]{0,19}$' }
+# Add-AccountApi: the LSA account-rights calls and a service-type logon check, which PowerShell has no cmdlet for.
+function Add-AccountApi {
+  if ('NovaAccount' -as [type]) { return }
+  Add-Type -TypeDefinition @'
+using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+public static class NovaAccount {
+  [StructLayout(LayoutKind.Sequential)]
+  struct LsaString { public ushort Length; public ushort MaximumLength; public IntPtr Buffer; }
+  [StructLayout(LayoutKind.Sequential)]
+  struct LsaAttributes { public int Length; public IntPtr RootDirectory; public IntPtr ObjectName; public uint Attributes; public IntPtr SecurityDescriptor; public IntPtr SecurityQualityOfService; }
+  [DllImport("advapi32.dll")] static extern uint LsaOpenPolicy(IntPtr system, ref LsaAttributes attributes, uint access, out IntPtr policy);
+  [DllImport("advapi32.dll")] static extern uint LsaAddAccountRights(IntPtr policy, byte[] sid, LsaString[] rights, uint count);
+  [DllImport("advapi32.dll")] static extern uint LsaEnumerateAccountRights(IntPtr policy, byte[] sid, out IntPtr rights, out uint count);
+  [DllImport("advapi32.dll")] static extern uint LsaFreeMemory(IntPtr buffer);
+  [DllImport("advapi32.dll")] static extern uint LsaClose(IntPtr policy);
+  [DllImport("advapi32.dll")] static extern int LsaNtStatusToWinError(uint status);
+  [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+  static extern bool LogonUserW(string user, string domain, string password, int type, int provider, out IntPtr token);
+  [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
+  const uint PolicyAccess = 0x00000810; // POLICY_LOOKUP_NAMES | POLICY_CREATE_ACCOUNT, what LsaAddAccountRights needs
+  const uint NoRights = 0xC0000034;     // STATUS_OBJECT_NAME_NOT_FOUND: the account holds no rights yet
+  const int ServiceLogonType = 5;       // LOGON32_LOGON_SERVICE
+
+  static IntPtr Open() {
+    LsaAttributes a = new LsaAttributes();
+    a.Length = Marshal.SizeOf(typeof(LsaAttributes));
+    IntPtr p;
+    uint s = LsaOpenPolicy(IntPtr.Zero, ref a, PolicyAccess, out p);
+    if (s != 0) { throw new Win32Exception(LsaNtStatusToWinError(s)); }
+    return p;
+  }
+  // Rights: the account rights the SID holds.
+  public static string[] Rights(byte[] sid) {
+    IntPtr p = Open();
+    try {
+      IntPtr buf;
+      uint n;
+      uint s = LsaEnumerateAccountRights(p, sid, out buf, out n);
+      if (s == NoRights) { return new string[0]; }
+      if (s != 0) { throw new Win32Exception(LsaNtStatusToWinError(s)); }
+      try {
+        List<string> list = new List<string>();
+        int size = Marshal.SizeOf(typeof(LsaString));
+        for (int i = 0; i < n; i++) {
+          LsaString u = (LsaString)Marshal.PtrToStructure(new IntPtr(buf.ToInt64() + i * size), typeof(LsaString));
+          list.Add(Marshal.PtrToStringUni(u.Buffer, u.Length / 2));
+        }
+        return list.ToArray();
+      } finally {
+        LsaFreeMemory(buf);
+      }
+    } finally {
+      LsaClose(p);
+    }
+  }
+  // Grant: one right added to the SID.
+  public static void Grant(byte[] sid, string right) {
+    IntPtr p = Open();
+    LsaString[] r = new LsaString[1];
+    r[0].Buffer = Marshal.StringToHGlobalUni(right);
+    r[0].Length = (ushort)(right.Length * 2);
+    r[0].MaximumLength = (ushort)(right.Length * 2 + 2);
+    try {
+      uint s = LsaAddAccountRights(p, sid, r, 1);
+      if (s != 0) { throw new Win32Exception(LsaNtStatusToWinError(s)); }
+    } finally {
+      Marshal.FreeHGlobal(r[0].Buffer);
+      LsaClose(p);
+    }
+  }
+  // ServiceLogon: 0 when the local account logs on as a service with this password, else the Windows error.
+  public static int ServiceLogon(string user, string password) {
+    IntPtr t;
+    if (!LogonUserW(user, ".", password, ServiceLogonType, 0, out t)) { return Marshal.GetLastWin32Error(); }
+    CloseHandle(t);
+    return 0;
+  }
+}
+'@
+}
+
 switch ($Action) {
+  'account' {
+    Need-Admin
+    if (-not (Test-AccountName $Account)) { 'BAD-ARGS -Account'; exit 2 }
+    $pw = Take-Secret $SecretEnv
+    try {
+      Add-AccountApi
+      $sec = ConvertTo-SecureString -String $pw -AsPlainText -Force
+      $did = 'ok'
+      $u = Get-LocalUser -Name $Account -ErrorAction SilentlyContinue
+      if (-not $u) {
+        $u = New-LocalUser -Name $Account -Password $sec -PasswordNeverExpires -UserMayNotChangePassword -AccountNeverExpires -Description 'nova-fleet: an admin GitHub Actions runner'
+        $did = 'created'
+      }
+      $sid = New-Object Security.Principal.SecurityIdentifier($u.SID.Value)
+      $bin = New-Object byte[] $sid.BinaryLength
+      $sid.GetBinaryForm($bin, 0)
+      $have = @([NovaAccount]::Rights($bin))
+      $added = @()
+      foreach ($r in 'SeServiceLogonRight', 'SeDenyInteractiveLogonRight', 'SeDenyRemoteInteractiveLogonRight') {
+        if ($have -notcontains $r) { [NovaAccount]::Grant($bin, $r); $added += "+$r" }
+      }
+      $rights = if ($added.Count -gt 0) { $added -join ',' } else { 'ok' }
+      $admin = 'ok'
+      try { Add-LocalGroupMember -SID 'S-1-5-32-544' -Member $u -ErrorAction Stop; $admin = 'added' }
+      catch { if ("$($_.FullyQualifiedErrorId)" -notlike 'MemberExists*') { throw } }
+      # an existing account is held to the stored password and the flags a new one gets; the logon check runs after
+      # SeServiceLogonRight is granted, so a wrong password is the only way it fails on an enabled account
+      if ($did -eq 'ok' -and (-not $u.Enabled -or $u.PasswordExpires -or $u.UserMayChangePassword -or [NovaAccount]::ServiceLogon($Account, $pw) -ne 0)) {
+        Set-LocalUser -SID $u.SID -Password $sec -PasswordNeverExpires $true -UserMayChangePassword $false -AccountNeverExpires
+        Enable-LocalUser -SID $u.SID
+        $did = 'updated'
+      }
+      $sec.Dispose()
+    } finally {
+      $pw = $null
+    }
+    "ACCOUNT $Account account=$did rights=$rights admin=$admin"
+  }
+  'logon' {
+    Need-Admin
+    if (-not $Dir -or -not (Test-AccountName $Account)) { 'BAD-ARGS -Dir -Account'; exit 2 }
+    $pw = Take-Secret $SecretEnv
+    try {
+      $s = Service-Of $Dir
+      if (-not $s) { "NO-SERVICE $Dir"; exit 7 }
+      $sid = (Get-LocalUser -Name $Account -ErrorAction Stop).SID.Value
+      $full = [Security.AccessControl.FileSystemRights]::FullControl
+      $both = [Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit'
+      $acl = 'ok'
+      $rules = @((Get-Acl -LiteralPath $Dir).GetAccessRules($true, $false, [Security.Principal.SecurityIdentifier]) | Where-Object {
+          $_.IdentityReference.Value -eq $sid -and "$($_.AccessControlType)" -eq 'Allow' -and ($_.FileSystemRights -band $full) -eq $full -and $_.InheritanceFlags -eq $both })
+      if ($rules.Count -eq 0) {
+        & icacls.exe $Dir /grant "*${sid}:(OI)(CI)F" /C /Q | Out-Null
+        if ($LASTEXITCODE -ne 0) { "ACL-FAILED $Dir rc=$LASTEXITCODE"; exit $LASTEXITCODE }
+        $acl = 'set'
+      }
+      $want = ".\$Account"
+      $did = 'ok'
+      if ($Relogon -or @($want, "$env:COMPUTERNAME\$Account") -notcontains "$($s.StartName)") {
+        $r = Invoke-CimMethod -InputObject $s -MethodName Change -Arguments @{ StartName = $want; StartPassword = $pw }
+        if ($r.ReturnValue -ne 0) { "LOGON-FAILED $Dir rc=$($r.ReturnValue)"; exit 8 }
+        if ($s.State -eq 'Running') { Restart-Service -Name $s.Name -Force }
+        $did = 'set'
+      }
+    } finally {
+      $pw = $null
+    }
+    "LOGON $Dir $did account=$want acl=$acl service=$($s.Name)"
+  }
   'install' {
     Need-Admin
     if (-not $Dir -or -not $Cache -or -not $Version -or $Sha -notmatch '^[0-9a-f]{64}$') { 'BAD-PIN'; exit 2 }

@@ -91,8 +91,8 @@ github_runner_ci_limit_seconds: 120
 github_runner_ci_push_branches: [main, sprint/*]
 
 # ---- The Windows side of a WSL machine (tasks/wsl-windows.yml, the windows-runners play; cmd/nova-fleet/README.md, "Windows
-# runners of a WSL machine"). Its runners are the machine record's windows_runners (the inventory's
-# nova_windows_runners); these are how they are reached and laid out.
+# runners of a WSL machine"). Its runners are the machine record's windows_runners and windows_admin_runners (the
+# inventory's nova_windows_runners and nova_windows_admin_runners); these are how they are reached and laid out.
 github_runner_wsl_interop: /proc/sys/fs/binfmt_misc/WSLInterop
 github_runner_wsl_powershell: /mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe
 github_runner_wsl_stage_unix: /mnt/c/ProgramData/nova-runner-stage
@@ -101,6 +101,12 @@ github_runner_wsl_ci_stage_unix: /mnt/c/ProgramData/nova-ci-rules-stage
 github_runner_wsl_ci_script: 'C:\ProgramData\nova-ci-rules-stage\nova-ci-rules.ps1'
 github_runner_wsl_base_dir: 'C:\actions-runner'
 github_runner_wsl_cache: 'C:\actions-runner\.cache'
+# An admin runner's password is opened from this machine's own seat (as services.yml opens a service's keys): the
+# machine's nova-secrets, and the exec that hands one --only name to the command after it (the name follows).
+github_runner_nova_secrets: "{{ nova_bin_dir }}/nova-secrets"
+github_runner_win_secrets_exec: >-
+  {{ [github_runner_nova_secrets, 'exec', '--store', nova_secrets_store, '--as', nova_seat,
+      '--key', nova_secrets_key_dir ~ '/' ~ nova_seat ~ '.key', '--sops', nova_sops, '--only'] | map('quote') | join(' ') }}
 # The keepalive (tasks/wsl-keepalive.yml) finds this distro on the Windows side by its machine-id.
 github_runner_wsl_machine_id_file: /etc/machine-id
 # The labels every Windows-side runner gets, before the record's extras (GitHub adds self-hosted, X64 and Windows): the

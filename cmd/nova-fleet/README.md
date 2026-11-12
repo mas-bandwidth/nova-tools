@@ -193,7 +193,7 @@ line: ubuntu ALL=(ALL) NOPASSWD:ALL`.
 | `secrets-refresh` | the control node's encrypted store pushed to every machine with `ansible.posix.synchronize` (`verify_host: true`, no `.git`, stale files deleted, 0700/0600); no machine runs a timer (pull mode is retired; one left is removed) | `nova_seal_store` (the control node's clone) to push |
 | `services` | one supervised unit per service record, on the machine the record names (bench, runner and services groups) | the inventory's `nova_services` |
 | `ssh-names` | `ssh <machine>` by its tailnet name from every machine of the fleet: each login's ssh config and the fleet's host keys from the record, then every pair checked (all machines; one asleep or away is reported offline) | nothing |
-| `windows-runners` | a WSL machine held running from boot, and its Windows-side GitHub Actions runners from its record's `windows_runners`, through WSL interop | the record's `windows_runners`; `gh` on the control node logged in with admin on each repository or organization |
+| `windows-runners` | a WSL machine held running from boot, and its Windows-side GitHub Actions runners from its record's `windows_runners`, through WSL interop | the record's `windows_runners` and `windows_admin_runners`; `gh` on the control node logged in with admin on each repository or organization; each admin runner's password in the machine's seat |
 | `tailscale` | each machine on the tailnet, its address the MagicDNS name, its firewall closed to all but the tailnet | `TAILSCALE_AUTHKEY` in the environment for a machine not on the tailnet (`up` mints it) |
 
 ```
@@ -504,7 +504,59 @@ exists and GitHub lists its name; a whole runner is left alone, so a second run 
 directory's own `retired-<yyyymmdd>\`, its service is removed, and it registers again with `--replace`. A run that
 cannot read GitHub's list for a target refuses, rather than take a whole runner for a half one. Each machine prints `GITHUB-RUNNERS host=<machine> windows=<n> registered=<n> online=<n>`
 from its directories and GitHub's own list; a run where any is short fails. `--check` reads both, asks for the tokens it
-would need, and prints `RUNNER-PLAN <machine> windows=<n> register=<names> repair=<names> labels=<labels>`.
+would need, and prints `RUNNER-PLAN <machine> windows=<n> register=<names> repair=<names> admin=<name>@<account>,... unsealed=<names> labels=<labels>`.
+
+### Windows runners run as a local administrator
+
+A job that must change the machine (Application Verifier writes `HKLM\...\Image File Execution Options`) cannot run
+as `NETWORK SERVICE`, and giving `NETWORK SERVICE` that right would let every CI job on the machine reach SYSTEM. Such
+a job gets its own runner instead, in a second field of the record:
+
+```
+nova-config machine set bench-1 --windows_admin_runners 'https://github.com/<owner>/<repo>=ci-admin:<label>' --actor alice
+nova-fleet windows-runners --check -- -l bench-1
+nova-fleet windows-runners -- -l bench-1
+```
+
+`windows_admin_runners` is `<url>=<account>:<label>[+<label>]`, comma-separated, one runner per entry; the inventory
+hands it to the play as `nova_windows_admin_runners`, each entry with `secret`, the nova-secrets name of the account's
+password (`NOVA_WINRUNNER_<ACCOUNT>_PASSWORD`, the account upper-cased with `-` as `_`). **The url is a repository**,
+never an organization: every repository of an organization could send an organization's runner jobs. **The runner** is
+`<machine>-win-<slug>-<account>` in `C:\actions-runner\<slug>-<account>`, with its own work folder, the same job `PATH`,
+`.env` lines and CI rules as the other Windows runners, and the same install, registration, repair and counts: it is
+one more runner in the `windows=` of the receipt. **Its labels** are only the entry's (GitHub adds `self-hosted`,
+`Windows` and `X64`): never `fleet`, the machine's name or another runner's labels, so no ordinary job lands on it.
+**The account** is the local user `<account>`, made by the play: in `Administrators` (by its SID, `S-1-5-32-544`),
+allowed to log on as a service, denied interactive and remote-interactive logon, its password never expiring and not
+changeable by the user. The runner's service logs on as `.\<account>` and the account gets full control of the runner's
+directory. A service runs with its account's full administrator token (services are not filtered by UAC).
+
+**The password** is a value in the machine's own seat, never typed and never shown. The play reads the seat's names
+first (`nova-secrets names`, no value read); a seat without it stops the run before anything changes, naming the
+commands to run on the control node: a generated value piped into `set` (the `Nw1-` prefix meets Windows' complexity
+rule), a `grant` to the machine's seat, the store's push, and the refresh:
+
+```
+{ printf 'Nw1-'; openssl rand -hex 24; } | nova-secrets set NOVA_WINRUNNER_CI_ADMIN_PASSWORD --store S --key K --pins P --as control
+nova-secrets grant NOVA_WINRUNNER_CI_ADMIN_PASSWORD --to bench-1 --pins P --store S --key K --as control
+git -C S push
+nova-fleet secrets-refresh -- -e nova_seal_store=S
+```
+
+On the machine the value reaches `powershell.exe` only in its environment: `nova-secrets exec --only <secret> -- env
+WSLENV=<secret> powershell.exe ...`, where `WSLENV` hands that one variable through interop. The script removes it from
+its environment as it reads it and passes it only to calls inside its own process (`New-LocalUser`, `LogonUser`,
+`Win32_Service.Change`); the tasks are `no_log`. `config.cmd --windowslogonpassword` is never used, since it would put
+the password in an argument. Two lines per admin runner: `ACCOUNT <machine> <account> account=created|updated|ok
+rights=ok|+<right>,... admin=added|ok` (an existing account whose stored password does not log it on as a service gets
+the stored one: `updated`), then `LOGON <machine> <dir> ok|set account=.\<account> acl=ok|set service=<name>`. A service
+already logging on as the account is left alone, unless the account step said `updated`, which sets the logon again and
+restarts the service. `--check` reads the names and prints the plan; it changes no account.
+
+**Which jobs reach it** is the repository's rule: no workflow that a pull request triggers may name the runner's
+label, since a pull request's code would then run as an administrator. The repository checks that class in CI; in a
+repository whose nightly runs on such a runner, a check such as `tools/check_privileged_runner.py` refuses the label in
+any workflow other than the scheduled or dispatched nightly (rocketnet's is one).
 
 ### The Windows page file at a fixed size
 
@@ -1157,7 +1209,7 @@ nova-fleet runner-packages -- -e @runner-packages-s390x-vm.yml -l bench
 | Variable | Default | |
 |---|---|---|
 | `nova_runner_packages` | `darwin`: `postgresql@18`, `cmake`, `libsodium`, `pkgconf`, `ccache`; `debian`: the toolchain above (`group_vars/all.yml`) | another OS with a non-empty list is refused |
-| `nova_runner_windows_ccache`, `nova_runner_windows_ccache_dir` | `4.14.3` and its zip's sha256; `C:\ProgramData\nova\ccache` | **Windows ccache.** On a WSL machine whose record names `windows_runners`, ccache's own Windows release, checked, unpacked through `/mnt/c` to that directory as `ccache.exe` and `msvc\cl.exe` (the same binary under the compiler's name: MSBuild runs it in place of cl.exe when a build sets `CLToolExe=cl.exe;CLToolPath=<dir>\msvc` in `CMAKE_VS_GLOBALS`, since the Visual Studio generator honours no compiler launcher; ccache then runs the real cl.exe from the PATH MSBuild sets). The version in `VERSION` beside it; a matching version is left alone; an empty version skips it |
+| `nova_runner_windows_ccache`, `nova_runner_windows_ccache_dir` | `4.14.3` and its zip's sha256; `C:\ProgramData\nova\ccache` | **Windows ccache.** On a WSL machine whose record names `windows_runners` or `windows_admin_runners`, ccache's own Windows release, checked, unpacked through `/mnt/c` to that directory as `ccache.exe` and `msvc\cl.exe` (the same binary under the compiler's name: MSBuild runs it in place of cl.exe when a build sets `CLToolExe=cl.exe;CLToolPath=<dir>\msvc` in `CMAKE_VS_GLOBALS`, since the Visual Studio generator honours no compiler launcher; ccache then runs the real cl.exe from the PATH MSBuild sets). The version in `VERSION` beside it; a matching version is left alone; an empty version skips it |
 | `nova_runner_foreign_architectures` | `[]` | Ubuntu: dpkg architectures the debian list may name packages of, as `<name>:<arch>` |
 | `nova_runner_ports_uri` | `http://ports.ubuntu.com/ubuntu-ports/` | the archive a foreign architecture comes from |
 | `nova_runner_vm_kernel` | `false` | Debian/Ubuntu: keep each kernel image readable by the login, for a VM of the host's own kernel |

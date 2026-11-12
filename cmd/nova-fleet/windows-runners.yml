@@ -4,7 +4,10 @@
 # nobody logged in, and starts it again within a minute when WSL stops (cmd/nova-fleet/README.md, "WSL held running from
 # boot"); a machine that is not WSL is skipped. The machines whose record names windows_runners (nova-config machine set
 # <m> --windows_runners '<url>=<count>[:<label>+<label>],...') also get their runners; every other machine has none.
-# Each runner is <machine>-win-<slug>-<i> in C:\actions-runner\<slug>-<i>, a Windows service, with the CI rules.
+# Each runner is <machine>-win-<slug>-<i> in C:\actions-runner\<slug>-<i>, a Windows service, with the CI rules. A record
+# naming windows_admin_runners ('<url>=<account>:<label>[+<label>],...') adds one runner per entry,
+# <machine>-win-<slug>-<account>, whose service runs as that local administrator account (its password in the
+# machine's seat).
 # cmd/nova-fleet/README.md, "Windows runners of a WSL machine".
 #
 #   nova-fleet windows-runners --check -- -l <machine>
@@ -30,4 +33,4 @@
       ansible.builtin.include_role:
         name: github-runner
         tasks_from: wsl-windows.yml
-      when: nova_windows_runners | default([]) | length > 0
+      when: (nova_windows_runners | default([]) | length > 0) or (nova_windows_admin_runners | default([]) | length > 0)

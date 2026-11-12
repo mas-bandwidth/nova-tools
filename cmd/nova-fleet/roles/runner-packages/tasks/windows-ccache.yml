@@ -1,5 +1,5 @@
 ---
-# The Windows side of a WSL machine with Windows runners (its record's windows_runners): ccache for MSVC, from the
+# The Windows side of a WSL machine with Windows runners (its record's windows_runners or windows_admin_runners): ccache for MSVC, from the
 # release ccache publishes (nova_runner_windows_ccache: version, sha256 of the zip), unpacked from the WSL login through
 # /mnt/c into nova_runner_windows_ccache_dir (C:\ProgramData\nova\ccache): ccache.exe, and msvc\cl.exe, the same binary
 # under the compiler's name, which MSBuild runs in place of cl.exe when a build sets CLToolPath to that directory (the

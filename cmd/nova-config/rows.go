@@ -22,8 +22,8 @@ import (
 // sorted comma list of words matching word), argv (a JSON array of strings),
 // env (a JSON object of NAME to value), path (an absolute or ~/ path), ref
 // (the name of a machine row, NULL when empty), public (a public IP literal
-// or a DNS name) or scopes (GitHub Actions runners per repository or organization,
-// see canonicalScopes).
+// or a DNS name), scopes (GitHub Actions runners per repository or organization,
+// see canonicalScopes) or admins (Windows runners run as a local administrator, see canonicalAdmins).
 type field struct {
 	name, typ string
 	required  bool
@@ -64,6 +64,7 @@ var kinds = map[string]*kind{
 			{name: "runners", typ: "int"},
 			{name: "runner_scopes", typ: "scopes"},
 			{name: "windows_runners", typ: "scopes"},
+			{name: "windows_admin_runners", typ: "admins"},
 			{name: "runner_env", typ: "env", def: "{}"},
 			{name: "note", typ: "text", cut: true, free: true},
 		}},
@@ -151,6 +152,8 @@ func (f field) canonical(raw string) (string, error) {
 		}
 	case "scopes":
 		return canonicalScopes(f, raw)
+	case "admins":
+		return canonicalAdmins(f, raw)
 	}
 	if strings.ContainsAny(raw, "\r\n") {
 		return "", fmt.Errorf("--%s: want one line", f.name)
@@ -236,6 +239,64 @@ func canonicalScopes(f field, raw string) (string, error) {
 	}
 	if err != nil {
 		return "", fmt.Errorf("--%s %v", f.name, err)
+	}
+	return strings.Join(parts, ","), nil
+}
+
+// adminAccount is a Windows local user name an admin runner runs as (at most 20 characters, Windows' limit).
+var adminAccount = regexp.MustCompile(`^[a-z][a-z0-9-]{0,19}$`)
+
+// adminRunner is one entry of windows_admin_runners: one Windows runner on url (a repository) run as the local
+// administrator account, carrying only labels (GitHub adds self-hosted, Windows and X64). Secret is the nova-secrets
+// name of the account's password. Its json is the inventory's nova_windows_admin_runners entry.
+type adminRunner struct {
+	URL     string   `json:"url"`
+	Account string   `json:"account"`
+	Labels  []string `json:"labels"`
+	Secret  string   `json:"secret"`
+}
+
+// parseAdmins reads `<url>=<account>:<label>[+<label>...]`, comma-separated: sorted by url then account, each account
+// once, labels sorted and unique; empty is none. The url is a repository: an organization's runner is reachable from
+// every repository in it, and this one runs jobs as an administrator.
+func parseAdmins(raw string) ([]adminRunner, error) {
+	out := []adminRunner{}
+	for _, e := range strings.FieldsFunc(raw, func(r rune) bool { return r == ',' || unicode.IsSpace(r) }) {
+		rest, https := strings.CutPrefix(e, "https://")
+		u, tail, eq := strings.Cut(rest, "=")
+		account, labels, colon := strings.Cut(tail, ":")
+		w := adminRunner{URL: "https://" + strings.TrimSuffix(u, "/"), Account: account, Labels: strings.Split(labels, "+")}
+		if !https || !eq || !colon || !scopeTarget.MatchString(w.URL) || strings.Count(w.URL, "/") != 4 || !adminAccount.MatchString(account) {
+			return nil, fmt.Errorf("%q: want <url>=<account>:<label>[+<label>], the url https://github.com/<owner>/<repo> (a repository, never an organization), the account a lower-case letter then at most 19 lower-case letters, digits and dashes", e)
+		}
+		for _, l := range w.Labels {
+			if !scopeLabel.MatchString(l) {
+				return nil, fmt.Errorf("%q: label %q: want letters, digits, dot, dash and underscore", e, l)
+			}
+		}
+		slices.Sort(w.Labels)
+		w.Labels = slices.Compact(w.Labels)
+		if slices.ContainsFunc(out, func(o adminRunner) bool { return o.Account == w.Account }) {
+			return nil, fmt.Errorf("account %s is named twice; give each account one runner", w.Account)
+		}
+		w.Secret = "NOVA_WINRUNNER_" + strings.ToUpper(strings.ReplaceAll(account, "-", "_")) + "_PASSWORD"
+		out = append(out, w)
+	}
+	slices.SortFunc(out, func(a, b adminRunner) int {
+		return cmp.Or(strings.Compare(a.URL, b.URL), strings.Compare(a.Account, b.Account))
+	})
+	return out, nil
+}
+
+// canonicalAdmins is a windows_admin_runners value as it is stored: parseAdmins' entries, written back.
+func canonicalAdmins(f field, raw string) (string, error) {
+	ws, err := parseAdmins(raw)
+	if err != nil {
+		return "", fmt.Errorf("--%s %v", f.name, err)
+	}
+	parts := []string{}
+	for _, w := range ws {
+		parts = append(parts, w.URL+"="+w.Account+":"+strings.Join(w.Labels, "+"))
 	}
 	return strings.Join(parts, ","), nil
 }
