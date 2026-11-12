@@ -21,6 +21,11 @@
         name: github-runner
         tasks_from: wsl-keepalive.yml
 
+    - name: the Windows page file at a fixed size (-e nova_windows_pagefile_mb=<n>; none by default)
+      ansible.builtin.include_role:
+        name: github-runner
+        tasks_from: wsl-pagefile.yml
+
     - name: the Windows-side runners
       ansible.builtin.include_role:
         name: github-runner
