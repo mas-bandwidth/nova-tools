@@ -38,3 +38,20 @@ func TestRunnerServiceRendersAWholeRunnerStop(t *testing.T) {
 		}
 	}
 }
+
+// TestRunnerServiceRendersItsMemoryBound: by default a runner's unit holds at most half the machine's memory, so one
+// runaway job is killed inside its own runner; github_runner_memory_max_pct 0 renders no bound at all.
+func TestRunnerServiceRendersItsMemoryBound(t *testing.T) {
+	t.Parallel()
+	if _, err := exec.LookPath("ansible-playbook"); err != nil {
+		t.Skip("ansible-core is not installed on this machine; TestRunnerServiceBoundsItsMemory still runs")
+	}
+	service, _, _ := renderRunnerUnits(t)
+	assert.Contains(t, service, "\nMemoryMax=50%\n")
+	assert.Equal(t, 1, strings.Count(service, "MemoryMax="))
+	assert.Contains(t, service, "\nOOMPolicy=continue\n")
+
+	service, _, _ = renderRunnerUnits(t, "-e", `{"github_runner_memory_max_pct": 0}`)
+	assert.NotContains(t, service, "MemoryMax=")
+	assert.Contains(t, service, "\nOOMPolicy=continue\n", "the bound is optional; the OOM policy is not")
+}

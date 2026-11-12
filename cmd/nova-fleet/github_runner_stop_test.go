@@ -65,3 +65,16 @@ func TestRunnerDaemonRunsWithoutBackgroundLimits(t *testing.T) {
 		assert.NotContains(t, string(b), limit)
 	}
 }
+
+// TestRunnerServiceBoundsItsMemory: a Linux runner's unit carries MemoryMax as a share of the machine's memory
+// (github_runner_memory_max_pct, 50 by default), so a runaway job meets the OOM killer inside its own runner and the
+// machine's other runners and its bench keep running (amd-2, amd-3, captain, hetzner2, 2026-11-11/12).
+func TestRunnerServiceBoundsItsMemory(t *testing.T) {
+	t.Parallel()
+	b, err := os.ReadFile(runnerStopService)
+	require.NoError(t, err)
+	assert.Contains(t, string(b), "\nMemoryMax={{ github_runner_memory_max_pct | int }}%\n")
+	d, err := os.ReadFile("roles/github-runner/defaults/main.yml")
+	require.NoError(t, err)
+	assert.Contains(t, string(d), "\ngithub_runner_memory_max_pct: 50\n")
+}
