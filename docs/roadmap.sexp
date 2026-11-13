@@ -7,6 +7,7 @@
   (:id "future" :type :roadmap :title "Future work"
    :rows (
      ("reserve-slots-are-cores" "nova-reserve slots bound CPU, so N one-slot jobs cannot saturate a bench")
+     ("reboot-window-idle-only" "The fleet's automatic-reboot window (hand-set 2026-11-05 in /etc/apt/apt.conf.d/52nova-reboot-window, one host per 15 minutes, not yet in any play) fires only when the host is idle: no nova-reserve holder and no runner job running, else it defers; when it lands as a play, remove the temporary hold files /etc/apt/apt.conf.d/53nova-no-auto-reboot-hold put on 2026-11-13 on amd-1, amd-2, amd-3, hulk, hetzner1, hetzner2, intel and space (hulk rebooted itself mid-work at 09:00 UTC)")
      ("fleet-placement" "Place one heavy job on the quietest bench fleet-wide")
      ("race-detector-tiers" "race-detector-tiers — PR #6301, branch quality/race: unit and functional tiers under -race")
      ("bus-latency-benchmarks" "bus-latency-benchmarks — PR #6302, branch perf/bus-benchmarks: functional benchmarks for nova-bus send-to-hook latency and hook idle cost")
