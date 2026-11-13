@@ -3,9 +3,12 @@
 # audit.yml: each requirement of runner-requirements.tsv (cmd/nova-fleet/README.md, "audit") checked on each Linux
 # machine of the bench and runner groups, as the login CI jobs run as: github_runner_user where that login exists
 # (ghrunner), else the fleet login, with the PATH a runner's jobs start with and that login's HOME. Read-only: it writes
-# nothing, under --check or not. Per machine, one line per requirement missing:
+# nothing but the nova-reserve probe's temporary directory, removed after, under --check or not. Per machine, one line per requirement missing:
 #   FLEET-AUDIT MISSING host=<machine> item=<name> install=<play> check=<command>
-# one per requirement declared for another architecture (FLEET-AUDIT NOT-APPLICABLE), then
+# one per requirement declared for another architecture (FLEET-AUDIT NOT-APPLICABLE), one where the locked-memory limit
+# of the fleet login's ssh session, of a nova-reserve command and of the runners differ or are below nova_login_memlock
+#   FLEET-AUDIT MISSING host=<machine> item=memlock ssh=<v> reserve=<v> runner=<v> need=<v> install=<plays>
+# then
 #   FLEET-AUDIT host=<machine> login=<login> arch=<arch> ok=<n> missing=<n> not-applicable=<n>
 # and a machine with anything missing fails: FLEET-AUDIT FAILED host=<machine> missing=<names>. A machine that is not
 # Linux prints FLEET-AUDIT SKIPPED and is not failed (the file covers Linux).
@@ -125,19 +128,92 @@
       loop: "{{ audit_elsewhere }}"
       loop_control: { label: "{{ item.name }}" }
 
+    # ---- memlock: an io_uring step locks the same in CI, on a bench over ssh and under nova-reserve ----
+    # Read as the fleet login over this play's own ssh session (sshd's PAM session gives it pam_limits' lines, as any
+    # ssh login): the session's limit, that of a command nova-reserve starts (in a directory of its own, so it takes
+    # none of the machine's slots and waits for none), and the runners': each github-runner unit's LimitMEMLOCK and each
+    # running Runner.Listener's /proc/<pid>/limits. Read only; soft/hard in bytes, or unlimited.
+    - name: the locked-memory limits of ssh, nova-reserve and the runners
+      ansible.builtin.command:
+        argv: [bash, -s]
+        stdin: |
+          norm() { case "$1" in unlimited|infinity) echo unlimited ;; ''|*[!0-9]*) echo "unreadable" ;; *) echo $(( $1 * ${2:-1} )) ;; esac; }
+          echo "SSH $(norm "$(ulimit -Sl)" 1024)/$(norm "$(ulimit -Hl)" 1024)"
+          r={{ nova_bin_dir | quote }}/nova-reserve
+          if [ -x "$r" ]; then
+            d=$(mktemp -d)
+            out=$("$r" run --dir "$d" --wait 60s --why fleet-audit-memlock -- sh -c 'echo "$(ulimit -Sl) $(ulimit -Hl)"' 2>/dev/null </dev/null) || out=
+            rm -rf "$d"
+            set -- $out
+            if [ $# -eq 2 ]; then echo "RESERVE $(norm "$1" 1024)/$(norm "$2" 1024)"; else echo "RESERVE failed"; fi
+          else
+            echo "RESERVE absent"
+          fi
+          for u in $(systemctl list-units --type=service --all --plain --no-legend 'github-runner-*' 2>/dev/null | awk '$2 == "loaded" {print $1}'); do
+            echo "RUNNER $(norm "$(systemctl show -p LimitMEMLOCKSoft --value "$u")")/$(norm "$(systemctl show -p LimitMEMLOCK --value "$u")") unit=$u"
+          done
+          for p in $(pgrep -f '/bin/Runner\.Listener( |$)'); do
+            l=$(awk '/^Max locked memory/ {print $4, $5}' "/proc/$p/limits" 2>/dev/null)
+            set -- $l
+            [ $# -eq 2 ] && echo "RUNNER $(norm "$1")/$(norm "$2") pid=$p"
+          done
+          true
+      register: audit_memlock_run
+      changed_when: false
+      check_mode: false
+      when: nova_audit_memlock | default(nova_join_host is not defined) | bool   # join: health and tools come after it (up)
+
+    - name: the limits, against nova_login_memlock
+      ansible.builtin.set_fact:
+        audit_memlock: >-
+          {%- set need = 'unlimited' if (nova_login_memlock | string) in ['unlimited', 'infinity'] else (nova_login_memlock | human_to_bytes | string) -%}
+          {%- set lines = audit_memlock_run.stdout_lines -%}
+          {%- set ssh = lines | select('match', '^SSH ') | map('regex_replace', '^SSH ', '') | first | default('unreadable') -%}
+          {%- set reserve = lines | select('match', '^RESERVE ') | map('regex_replace', '^RESERVE ', '') | first | default('failed') -%}
+          {%- set runner = lines | select('match', '^RUNNER ') | map('regex_replace', '^RUNNER (\\S+).*$', '\\1') | unique | list -%}
+          {%- set ns = namespace(pairs=[['ssh', ssh], ['reserve', reserve]], low=[]) -%}
+          {%- for v in runner -%}{%- set ns.pairs = ns.pairs + [['runner', v]] -%}{%- endfor -%}
+          {%- for p in ns.pairs -%}
+          {%- for half in (p[1].split('/') if '/' in p[1] else [p[1], p[1]]) -%}
+          {%- if half != 'unlimited' and (need == 'unlimited' or not (half is match('^[0-9]+$')) or (half | int) < (need | int)) -%}
+          {%- set ns.low = ns.low + [p[0]] -%}
+          {%- endif -%}
+          {%- endfor -%}
+          {%- endfor -%}
+          {%- set values = ([ssh, reserve] + runner) | unique | list -%}
+          {{ {'need': need ~ '/' ~ need, 'ssh': ssh, 'reserve': reserve, 'runner': (runner | join(',')) or 'none',
+              'low': ns.low | unique | list, 'differ': values | length > 1,
+              'gap': (ns.low | length > 0) or (values | length > 1)} }}
+      when: nova_audit_memlock | default(nova_join_host is not defined) | bool   # join: health and tools come after it (up)
+
+    - name: memlock missing
+      ansible.builtin.debug:
+        msg: >-
+          FLEET-AUDIT MISSING host={{ inventory_hostname }} item=memlock ssh={{ audit_memlock.ssh }}
+          reserve={{ audit_memlock.reserve }} runner={{ audit_memlock.runner }} need={{ audit_memlock.need }}
+          install={{ ((['tools'] if audit_memlock.reserve in ['absent', 'failed'] else [])
+                     + (['health'] if ('ssh' in audit_memlock.low or audit_memlock.differ) else [])
+                     + (['github-runners'] if 'runner' in audit_memlock.low else [])) | join(',') }}
+      when: audit_memlock is defined and audit_memlock.gap
+
+    - name: every gap, by name
+      ansible.builtin.set_fact:
+        audit_gaps: "{{ audit_missing | map(attribute='name') | list + (['memlock'] if (audit_memlock is defined and audit_memlock.gap) else []) }}"
+        audit_ok_all: "{{ (audit_ok | int) + (1 if (audit_memlock is defined and not audit_memlock.gap) else 0) }}"
+
     - name: the machine's line
       ansible.builtin.debug:
         msg: >-
-          FLEET-AUDIT host={{ inventory_hostname }} login={{ audit_login }} arch={{ audit_arch }} ok={{ audit_ok }}
-          missing={{ audit_missing | length }} not-applicable={{ audit_elsewhere | length }}
+          FLEET-AUDIT host={{ inventory_hostname }} login={{ audit_login }} arch={{ audit_arch }} ok={{ audit_ok_all }}
+          missing={{ audit_gaps | length }} not-applicable={{ audit_elsewhere | length }}
 
     # join --check installs nothing before the audit, so there a gap is what the real join would have to install
     - name: a gap a join under --check would install first
       ansible.builtin.debug:
-        msg: "FLEET-AUDIT WOULD-FAIL host={{ inventory_hostname }} missing={{ audit_missing | map(attribute='name') | join(',') }} (join --check installed nothing)"
-      when: audit_missing | length > 0 and ansible_check_mode and nova_join_host is defined
+        msg: "FLEET-AUDIT WOULD-FAIL host={{ inventory_hostname }} missing={{ audit_gaps | join(',') }} (join --check installed nothing)"
+      when: audit_gaps | length > 0 and ansible_check_mode and nova_join_host is defined
 
     - name: a machine with a gap fails by name
       ansible.builtin.fail:
-        msg: "FLEET-AUDIT FAILED host={{ inventory_hostname }} missing={{ audit_missing | map(attribute='name') | join(',') }}"
-      when: audit_missing | length > 0 and not (ansible_check_mode and nova_join_host is defined)
+        msg: "FLEET-AUDIT FAILED host={{ inventory_hostname }} missing={{ audit_gaps | join(',') }}"
+      when: audit_gaps | length > 0 and not (ansible_check_mode and nova_join_host is defined)

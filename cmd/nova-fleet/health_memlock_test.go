@@ -66,3 +66,30 @@ func TestHealthRemovesOlderToolingLeftovers(t *testing.T) {
 	require.Positive(t, end)
 	assert.Greater(t, strings.Index(s, "the leftovers of older tooling"), end, "Linux only")
 }
+
+// The fleet login's ssh sessions lock what its runners may: pam_limits' file for that login, soft and hard, from
+// nova_login_memlock, which may only be unlimited, as runner.service.j2's LimitMEMLOCK=infinity (any other value is
+// refused by name). --tags memlock writes it alone, and still only on Linux.
+func TestHealthLetsTheLoginsSessionsLockWhatTheRunnersMay(t *testing.T) {
+	t.Parallel()
+	b, err := os.ReadFile("roles/health/tasks/main.yml")
+	require.NoError(t, err)
+	s := string(b)
+	for _, want := range []string{
+		"dest: /etc/security/limits.d/90-nova-memlock.conf",
+		"{{ ansible_facts['user_id'] }} - memlock unlimited",
+		"HEALTH-MEMLOCK-REFUSED host=",
+		"tags: [memlock]",
+	} {
+		assert.Contains(t, s, want)
+	}
+	gate := strings.Index(s, "ansible.builtin.meta: end_host")
+	require.Positive(t, gate)
+	assert.Contains(t, s[gate:gate+200], "tags: [always]", "--tags memlock still ends a machine that is not Linux")
+	g, err := os.ReadFile("group_vars/all.yml")
+	require.NoError(t, err)
+	assert.Contains(t, string(g), "\nnova_login_memlock: unlimited\n")
+	r, err := os.ReadFile("roles/github-runner/templates/runner.service.j2")
+	require.NoError(t, err)
+	assert.Contains(t, string(r), "\nLimitMEMLOCK=infinity\n", "the sessions' limit is the runners'")
+}
