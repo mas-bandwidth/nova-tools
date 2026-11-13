@@ -43,10 +43,14 @@
     for e in * .[!.]* */* */.[!.]* rustup-*/toolchains/* rustup-*/cargo/bin/* opam/*/lib/* opam/*/bin/*; do
       [ -e "$e" ] || [ -L "$e" ] || continue
       case "$e" in dl/*) continue ;; esac
+      # below a top-level link nothing is compared, the link itself is (a version it names that the shared SDK lacks is
+      # named on its own)
+      top=${e%%/*}
+      [ "$top" = "$e" ] || [ ! -L "$top" ] || continue
       [ -e "$shared/$e" ] || [ -L "$shared/$e" ] && continue
       up=$(dirname "$e")
       while [ "$up" != . ]; do
-        [ -e "$shared/$up" ] || break
+        [ -e "$shared/$up" ] || [ -L "$shared/$up" ] || break
         up=$(dirname "$up")
       done
       if [ "$up" = . ]; then echo "$e"; fi
