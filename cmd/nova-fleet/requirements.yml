@@ -3,5 +3,7 @@
 # ansible.posix: synchronize, the push of the secrets store (roles/secrets-refresh).
 collections:
   - name: ansible.posix
-  # ansible.windows: win_command, win_copy and win_file, the windows-runners play on a plain Windows host.
+  # ansible.windows: win_command, win_copy and win_file, the windows-runners play on a plain Windows host (win_command's
+  # argv needs 1.11 or later).
   - name: ansible.windows
+    version: ">=1.11.0"
