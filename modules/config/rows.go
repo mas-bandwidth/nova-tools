@@ -34,8 +34,20 @@ type Machine struct {
 	// RunnerEnv is the environment its GitHub Actions runners' services start with (the github-runners play)
 	RunnerEnv map[string]string `json:"runner_env"`
 	Note      string            `json:"note"`
-	Created   string            `json:"created"`
-	Updated   string            `json:"updated"`
+	// Provider is owned, or the provider the machine is rented from by the hour (latitude, aws); the fields after
+	// it are a rented machine's and "" on an owned one
+	Provider    string `json:"provider"`
+	ProviderID  string `json:"provider_id"`
+	Market      string `json:"market"`       // aws: on-demand or spot
+	SpotRequest string `json:"spot_request"` // the spot request of a spot machine
+	Price       string `json:"price"`        // US dollars an hour, a decimal
+	PriceFrom   string `json:"price_from"`   // provider (read from it) or recalled (not read)
+	Purpose     string `json:"purpose"`
+	RentedBy    string `json:"rented_by"`
+	RentedAt    string `json:"rented_at"` // RFC 3339 UTC
+	ReturnBy    string `json:"return_by"` // RFC 3339 UTC
+	Created     string `json:"created"`
+	Updated     string `json:"updated"`
 }
 
 // Friend is an AI that works on the fleet, named by its bus name.

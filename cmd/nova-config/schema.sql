@@ -53,6 +53,20 @@ ALTER TABLE config.machines ADD COLUMN IF NOT EXISTS runner_env text NOT NULL DE
 ALTER TABLE config.machines ADD COLUMN IF NOT EXISTS runner_scopes text NOT NULL DEFAULT '';
 -- A machines table made before the windows_admin_runners column gets it here ('': none); on one that has it this does nothing.
 ALTER TABLE config.machines ADD COLUMN IF NOT EXISTS windows_admin_runners text NOT NULL DEFAULT '';
+-- A machine rented by the hour (nova-fleet rent): provider is owned (every machine made before these columns) or
+-- the provider it is rented from; provider_id its id there; market on-demand or spot (aws), spot_request the spot
+-- request; price US dollars an hour and price_from provider (read from the provider) or recalled (not read);
+-- purpose what it is for, rented_by who rented it, rented_at and return_by RFC 3339 UTC times. '' is unset.
+ALTER TABLE config.machines ADD COLUMN IF NOT EXISTS provider text NOT NULL DEFAULT 'owned' CHECK (provider IN ('owned', 'latitude', 'aws'));
+ALTER TABLE config.machines ADD COLUMN IF NOT EXISTS provider_id text NOT NULL DEFAULT '';
+ALTER TABLE config.machines ADD COLUMN IF NOT EXISTS market text NOT NULL DEFAULT '' CHECK (market IN ('', 'on-demand', 'spot'));
+ALTER TABLE config.machines ADD COLUMN IF NOT EXISTS spot_request text NOT NULL DEFAULT '';
+ALTER TABLE config.machines ADD COLUMN IF NOT EXISTS price text NOT NULL DEFAULT '' CHECK (price ~ '^([0-9]{1,6}(\.[0-9]{1,4})?)?$');
+ALTER TABLE config.machines ADD COLUMN IF NOT EXISTS price_from text NOT NULL DEFAULT '' CHECK (price_from IN ('', 'provider', 'recalled'));
+ALTER TABLE config.machines ADD COLUMN IF NOT EXISTS purpose text NOT NULL DEFAULT '';
+ALTER TABLE config.machines ADD COLUMN IF NOT EXISTS rented_by text NOT NULL DEFAULT '';
+ALTER TABLE config.machines ADD COLUMN IF NOT EXISTS rented_at text NOT NULL DEFAULT '';
+ALTER TABLE config.machines ADD COLUMN IF NOT EXISTS return_by text NOT NULL DEFAULT '';
 
 -- A service: a program one machine keeps running; with every n seconds it runs
 -- every n seconds instead of staying up.

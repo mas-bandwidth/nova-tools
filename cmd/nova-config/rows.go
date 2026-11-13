@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 
 	config "github.com/mas-bandwidth/nova-tools/v2/modules/config"
@@ -49,6 +50,11 @@ var (
 	keyWord     = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 	envName     = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 	tierWord    = regexp.MustCompile(`^(flash|pro|heavy|frontier)$`)
+	// a machine is owned or rented by the hour from a provider; a rented one at AWS is on demand or spot
+	providerWord  = regexp.MustCompile(`^(owned|latitude|aws)$`)
+	marketWord    = regexp.MustCompile(`^(on-demand|spot)$`)
+	priceFromWord = regexp.MustCompile(`^(provider|recalled)$`)
+	priceText     = regexp.MustCompile(`^[0-9]{1,6}(\.[0-9]{1,4})?$`)
 )
 
 var kinds = map[string]*kind{
@@ -67,6 +73,16 @@ var kinds = map[string]*kind{
 			{name: "windows_admin_runners", typ: "admins"},
 			{name: "runner_env", typ: "env", def: "{}"},
 			{name: "note", typ: "text", cut: true, free: true},
+			{name: "provider", typ: "word", def: "owned", word: providerWord},
+			{name: "provider_id", typ: "text"},
+			{name: "market", typ: "word", word: marketWord},
+			{name: "spot_request", typ: "text"},
+			{name: "price", typ: "price"},
+			{name: "price_from", typ: "word", word: priceFromWord},
+			{name: "purpose", typ: "text", cut: true, free: true},
+			{name: "rented_by", typ: "text"},
+			{name: "rented_at", typ: "time"},
+			{name: "return_by", typ: "time"},
 		}},
 	"service": {name: "service", table: "services", check: checkService,
 		fields: []field{
@@ -154,6 +170,22 @@ func (f field) canonical(raw string) (string, error) {
 		return canonicalScopes(f, raw)
 	case "admins":
 		return canonicalAdmins(f, raw)
+	case "word":
+		if raw != "" && !f.word.MatchString(raw) {
+			return "", fmt.Errorf("--%s %q: want one of %s", f.name, raw, strings.Trim(f.word.String(), "^()$"))
+		}
+	case "price":
+		if raw != "" && !priceText.MatchString(raw) {
+			return "", fmt.Errorf("--%s %q: want US dollars per hour, such as 4.06", f.name, raw)
+		}
+	case "time":
+		if raw != "" {
+			t, err := time.Parse(time.RFC3339, raw)
+			if err != nil {
+				return "", fmt.Errorf("--%s %q: want an RFC 3339 time, such as 2026-11-13T04:00:00Z", f.name, raw)
+			}
+			return t.UTC().Format(time.RFC3339), nil
+		}
 	}
 	if strings.ContainsAny(raw, "\r\n") {
 		return "", fmt.Errorf("--%s: want one line", f.name)
@@ -494,21 +526,55 @@ func checkService(r Row) error {
 	return nil
 }
 
-// checkMachine refuses an admin runner whose account is the machine's login, or whose label another runner of the
-// machine carries (adminClashes). A field that does not parse is left to its own refusal.
-func checkMachine(r Row) error {
-	admins, err := parseAdmins(r.F["windows_admin_runners"])
-	if err != nil {
-		return nil
-	}
+// rentedFields are the fields of a machine rented by the hour; an owned machine has them all empty.
+var rentedFields = []string{"provider_id", "market", "spot_request", "price", "price_from", "purpose", "rented_by", "rented_at", "return_by"}
+
+// checkRented refuses a rented machine without the purpose, who rented it and when (so an idle one is never a
+// mystery), a price without where it came from, a spot field on a machine that is not spot at AWS, and any rented
+// field on an owned machine.
+func checkRented(r Row) []string {
 	var p []string
+	v := r.F
+	if v["provider"] == "owned" {
+		for _, f := range rentedFields {
+			if v[f] != "" {
+				p = append(p, fmt.Sprintf("machine %s: --%s is a rented machine's, and its --provider is owned; set --provider latitude|aws, or --%s ''", r.Name, f, f))
+			}
+		}
+		return p
+	}
+	for _, f := range []string{"purpose", "rented_by", "rented_at"} {
+		if v[f] == "" {
+			p = append(p, fmt.Sprintf("machine %s is rented (--provider %s) and has no --%s; give it", r.Name, v["provider"], f))
+		}
+	}
+	if (v["price"] == "") != (v["price_from"] == "") {
+		p = append(p, fmt.Sprintf("machine %s: --price and --price_from go together (provider: read from the provider; recalled: not read)", r.Name))
+	}
+	if v["market"] != "" && v["provider"] != "aws" {
+		p = append(p, fmt.Sprintf("machine %s: --market is an aws machine's, and its --provider is %s; set --market ''", r.Name, v["provider"]))
+	}
+	if v["spot_request"] != "" && v["market"] != "spot" {
+		p = append(p, fmt.Sprintf("machine %s: --spot_request is a spot machine's, and its --market is %q; set --market spot or --spot_request ''", r.Name, v["market"]))
+	}
+	return p
+}
+
+// checkMachine refuses an admin runner whose account is the machine's login, or whose label another runner of the
+// machine carries (adminClashes), and a rented machine checkRented refuses. A field that does not parse is left to
+// its own refusal.
+func checkMachine(r Row) error {
+	p := checkRented(r)
+	admins, err := parseAdmins(r.F["windows_admin_runners"]) // nil when it does not parse
 	for _, a := range admins {
 		if strings.EqualFold(a.Account, r.F["user"]) {
 			p = append(p, fmt.Sprintf("machine %s: admin runner account %s is the machine's user; give the runner its own account", r.Name, a.Account))
 		}
 	}
-	for _, c := range adminClashes([]Row{r}, "") {
-		p = append(p, c.msg)
+	if err == nil {
+		for _, c := range adminClashes([]Row{r}, "") {
+			p = append(p, c.msg)
+		}
 	}
 	if len(p) > 0 {
 		return fmt.Errorf("%s", strings.Join(p, "; "))
