@@ -719,7 +719,7 @@ func handleFixed(cur, after Row) error {
 		return nil
 	}
 	var p []string
-	for _, f := range []string{"provider", "market"} {
+	for _, f := range []string{"provider", "market", "rented_at"} {
 		if after.F[f] != cur.F[f] {
 			p = append(p, fmt.Sprintf("--%s stays %s", f, value(cur.F[f])))
 		}

@@ -26,11 +26,11 @@ VARIABLES rec, young, box, boxReq, hw, req, reqBox, pc, mine, seen, okBox
 vars == <<rec, young, box, boxReq, hw, req, reqBox, pc, mine, seen, okBox>>
 prov == <<box, boxReq, hw, req, reqBox>>
 
-NoRec == [ex |-> FALSE, id |-> None, rq |-> None, ask |-> FALSE]
-NoMine == [id |-> None, rq |-> None, ask |-> FALSE, added |-> FALSE, new |-> None, newRq |-> None]
+NoRec == [ex |-> FALSE, id |-> None, rq |-> None, ask |-> FALSE, gen |-> None]
+NoMine == [gen |-> None, id |-> None, rq |-> None, ask |-> FALSE, added |-> FALSE, new |-> None, newRq |-> None]
 
 TypeOK ==
-  /\ rec \in [ex : BOOLEAN, id : Boxes \cup {None}, rq : Reqs \cup {None}, ask : BOOLEAN]
+  /\ rec \in [ex : BOOLEAN, id : Boxes \cup {None}, rq : Reqs \cup {None}, ask : BOOLEAN, gen : Rents \cup {None}]
   /\ young \in BOOLEAN
   /\ box \in [Boxes -> {"none", "run", "gone"}]
   /\ boxReq \in [Boxes -> Reqs \cup {None}]
@@ -50,8 +50,9 @@ Held(r) == r.id /= None \/ r.rq /= None \/ r.ask
 
 (* The store's guards: a set gives or clears a handle, never replaces one (config.rented_fixed); a remove    *)
 (* takes a record that holds nothing (config.rented_keep). A write to a record that is gone writes nothing.  *)
-SetOK(new) ==
+SetOK(p, new) ==
   /\ rec.ex
+  /\ Held(rec) => rec.gen = mine[p].gen
   /\ rec.id = None \/ new.id \in {rec.id, None}
   /\ rec.rq = None \/ new.rq \in {rec.rq, None}
 RemoveOK ==
@@ -62,7 +63,7 @@ RemoveOK ==
 Go(p, l) == pc' = [pc EXCEPT ![p] = l]
 Fresh(S, st) == {x \in S : st[x] = "none"}
 Quiet == UNCHANGED <<rec, young, box, boxReq, hw, req, reqBox, mine, seen, okBox>>
-Read(p) == [NoMine EXCEPT !.id = rec.id, !.rq = rec.rq, !.ask = rec.ask]
+Read(p) == [NoMine EXCEPT !.gen = rec.gen, !.id = rec.id, !.rq = rec.rq, !.ask = rec.ask]
 
 \* a box goes; a one-time request ends with it, a persistent one opens again
 BoxGoes(b) ==
@@ -79,15 +80,15 @@ BoxGoes(b) ==
 
 RAdd(p) ==
   /\ p \in Rents /\ pc[p] = "start" /\ ~rec.ex /\ Broken /= "CreateBeforeRow"
-  /\ rec' = [ex |-> TRUE, id |-> None, rq |-> None, ask |-> Broken /= "NoAsk"]
+  /\ rec' = [ex |-> TRUE, id |-> None, rq |-> None, ask |-> Broken /= "NoAsk", gen |-> p]
   /\ young' = (Broken /= "NoAsk")
-  /\ mine' = [mine EXCEPT ![p] = [NoMine EXCEPT !.added = TRUE, !.ask = (Broken /= "NoAsk")]]
+  /\ mine' = [mine EXCEPT ![p] = [NoMine EXCEPT !.gen = p, !.added = TRUE, !.ask = (Broken /= "NoAsk")]]
   /\ Go(p, "find") /\ UNCHANGED <<box, boxReq, hw, req, reqBox, seen, okBox>>
 
 \* CreateBeforeRow: a rent that asks the provider first and writes the record with the ids
 RSkipAdd(p) ==
   /\ Broken = "CreateBeforeRow" /\ p \in Rents /\ pc[p] = "start" /\ ~rec.ex
-  /\ mine' = [mine EXCEPT ![p] = [NoMine EXCEPT !.added = TRUE]]
+  /\ mine' = [mine EXCEPT ![p] = [NoMine EXCEPT !.gen = p, !.added = TRUE]]
   /\ Go(p, "find") /\ UNCHANGED <<rec, young, box, boxReq, hw, req, reqBox, seen, okBox>>
 
 RBusy(p) == p \in Rents /\ pc[p] = "start" /\ rec.ex /\ young /\ Go(p, "done") /\ Quiet
@@ -117,16 +118,16 @@ Note(p, b, q, l) ==
       id == IF setId THEN b ELSE mine[p].id
       rq == IF setRq THEN q ELSE mine[p].rq
       clr == mine[p].ask /\ (id /= None \/ rq /= None)
-      new == [rec EXCEPT !.id = IF setId THEN b ELSE @, !.rq = IF setRq THEN q ELSE @, !.ask = IF clr THEN FALSE ELSE @]
+      new == [rec EXCEPT !.id = IF setId THEN b ELSE @, !.rq = IF setRq THEN q ELSE @, !.ask = IF clr THEN FALSE ELSE @, !.gen = mine[p].gen]
       m == [mine[p] EXCEPT !.id = id, !.rq = rq, !.ask = @ /\ ~clr]
   IN \/ /\ ~setId /\ ~setRq /\ ~clr
         /\ Go(p, l) /\ UNCHANGED <<rec, young, mine>>
      \/ /\ Broken = "CreateBeforeRow" /\ ~rec.ex /\ (setId \/ setRq)
-        /\ rec' = [ex |-> TRUE, id |-> id, rq |-> rq, ask |-> FALSE] /\ young' = young
+        /\ rec' = [ex |-> TRUE, id |-> id, rq |-> rq, ask |-> FALSE, gen |-> p] /\ young' = young
         /\ mine' = [mine EXCEPT ![p] = m] /\ Go(p, l)
-     \/ /\ (setId \/ setRq \/ clr) /\ rec.ex /\ SetOK(new)
+     \/ /\ (setId \/ setRq \/ clr) /\ rec.ex /\ SetOK(p, new)
         /\ rec' = new /\ young' = (young /\ new.ask) /\ mine' = [mine EXCEPT ![p] = m] /\ Go(p, l)
-     \/ /\ (setId \/ setRq \/ clr) /\ ~(rec.ex /\ SetOK(new)) /\ ~(Broken = "CreateBeforeRow" /\ ~rec.ex)
+     \/ /\ (setId \/ setRq \/ clr) /\ ~(rec.ex /\ SetOK(p, new)) /\ ~(Broken = "CreateBeforeRow" /\ ~rec.ex)
         /\ Go(p, "done") /\ UNCHANGED <<rec, young, mine>>
 
 Decide(p) == p \in Rents /\ pc[p] = "decide"
@@ -185,8 +186,8 @@ RCreate(p) ==
 
 \* refused: the ask is cleared and the record stays with no box (a refused spot rent is never made on demand)
 RRefused(p) ==
-  /\ CanCreate(p) /\ ~(Broken = "Fallback" /\ Spot) /\ rec.ex /\ SetOK([rec EXCEPT !.ask = FALSE])
-  /\ rec' = [rec EXCEPT !.ask = FALSE] /\ young' = FALSE
+  /\ CanCreate(p) /\ ~(Broken = "Fallback" /\ Spot) /\ rec.ex /\ SetOK(p, [rec EXCEPT !.ask = FALSE])
+  /\ rec' = [rec EXCEPT !.ask = FALSE, !.gen = mine[p].gen] /\ young' = FALSE
   /\ Go(p, "done") /\ UNCHANGED <<box, boxReq, hw, req, reqBox, mine, seen, okBox>>
 
 \* Fallback: a refused spot rent made on demand, a box with no request
@@ -268,8 +269,8 @@ XClearBox(p) ==
   /\ AtClearBox(p) /\ ClearBox(p)
   /\ LET new == [rec EXCEPT !.id = IF mine[p].id /= None THEN None ELSE @,
                             !.rq = IF ClearRq(p) THEN None ELSE @,
-                            !.ask = IF mine[p].ask THEN FALSE ELSE @]
-     IN IF SetOK(new)
+                            !.ask = IF mine[p].ask THEN FALSE ELSE @, !.gen = mine[p].gen]
+     IN IF SetOK(p, new)
         THEN rec' = new /\ young' = (young /\ new.ask)
              /\ mine' = [mine EXCEPT ![p].id = None, ![p].rq = None, ![p].ask = FALSE]
              /\ Go(p, "gdrop")

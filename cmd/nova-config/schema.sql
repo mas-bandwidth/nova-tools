@@ -139,8 +139,9 @@ END $$;
 -- The store holds these whoever writes, a release before config.rented included:
 -- - a rented record that still holds a box id, a spot request id or a create under way (creating) is not deleted
 --   (each may still bill; clear it once it is gone at the provider);
--- - while it holds any, what the handle names is fixed: name, provider and market do not change, and a handle is
---   only given (from '') or cleared (to ''), never replaced;
+-- - while it holds any, what the handle names is fixed: name, provider, market and rented_at do not change (a
+--   writer that read another record of the name is refused), and a handle is only given (from '') or cleared
+--   (to ''), never replaced;
 -- - a machine row shares its name with a rented record only while that record is a latitude box that exists (its
 --   id given, no create under way): an aws box, or one not created yet, is one no play may reach, and a machine row
 --   is what an inventory, and so a play, reaches. Both checks take a transaction lock on the name first, so two
@@ -157,11 +158,11 @@ CREATE OR REPLACE TRIGGER rented_keep BEFORE DELETE ON config.rented FOR EACH RO
 CREATE OR REPLACE FUNCTION config.rented_fixed() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     IF (OLD.provider_id <> '' OR OLD.spot_request <> '' OR OLD.creating <> '') AND (NEW.name <> OLD.name
-        OR NEW.provider <> OLD.provider OR NEW.market <> OLD.market
+        OR NEW.provider <> OLD.provider OR NEW.market <> OLD.market OR NEW.rented_at <> OLD.rented_at
         OR (OLD.provider_id <> '' AND NEW.provider_id NOT IN (OLD.provider_id, ''))
         OR (OLD.spot_request <> '' AND NEW.spot_request NOT IN (OLD.spot_request, ''))
         OR (OLD.creating <> '' AND NEW.creating NOT IN (OLD.creating, ''))) THEN
-        RAISE EXCEPTION 'rented % holds a box, a spot request or a create under way at %, which may bill: its name, provider, market and handles stay as they are until each handle is cleared; run: nova-fleet rented', OLD.name, OLD.provider;
+        RAISE EXCEPTION 'rented % holds a box, a spot request or a create under way at %, which may bill: its name, provider, market, rented_at and handles stay as they are until each handle is cleared; run: nova-fleet rented', OLD.name, OLD.provider;
     END IF;
     RETURN NEW;
 END $$;

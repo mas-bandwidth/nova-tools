@@ -54,8 +54,10 @@ func (c configRecord) add(r rentedRow, actor string) error {
 	return c.run(args...)
 }
 
-func (c configRecord) set(name, actor string, fields ...string) error {
-	args := []string{"rented", "set", name, "--actor", actor, "--reason", "nova-fleet rent/return"}
+// set writes fields to the record r was read from: rented_at goes with them, and the store refuses to change it
+// while the record holds a handle or an ask, so a write meant for a record since removed never lands on a new one.
+func (c configRecord) set(r rentedRow, actor string, fields ...string) error {
+	args := []string{"rented", "set", r.Name, "--rented_at", r.RentedAt, "--actor", actor, "--reason", "nova-fleet rent/return"}
 	for i := 0; i+1 < len(fields); i += 2 {
 		args = append(args, "--"+fields[i], fields[i+1])
 	}

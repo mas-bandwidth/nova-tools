@@ -71,7 +71,7 @@ Exit: 0 stopped (STOP OK); 1 refused or failed; 2 could not run.
 type rentRecord interface {
 	get(name string) (*rentedRow, error)
 	add(r rentedRow, actor string) error
-	set(name, actor string, fields ...string) error // name, value, name, value ...
+	set(r rentedRow, actor string, fields ...string) error // name, value ...; refused unless r is the record read (rented_at)
 	remove(name, actor string) error
 }
 
@@ -211,7 +211,7 @@ func (d rentDeps) rent(a rentArgs) error {
 	case len(boxes) == 0 && len(live) == 0:
 		b, err := d.prov.create(a.spec)
 		if errors.Is(err, errRefused) {
-			if cerr := d.rec.set(name, a.actor, "creating", ""); cerr != nil {
+			if cerr := d.rec.set(*r, a.actor, "creating", ""); cerr != nil {
 				return fmt.Errorf("%s refused the box (%v) and the record kept its ask: %v; run: nova-fleet return %s", a.provider, err, cerr, name)
 			}
 			d.step("RRefused")
@@ -281,7 +281,7 @@ func (d rentDeps) rent(a rentArgs) error {
 		return err
 	}
 	if r.Address != b.Address {
-		if err := d.rec.set(name, a.actor, "address", b.Address, "user", a.firstLogin); err != nil {
+		if err := d.rec.set(*r, a.actor, "address", b.Address, "user", a.firstLogin); err != nil {
 			return err
 		}
 	}
@@ -327,7 +327,7 @@ func (d rentDeps) note(r *rentedRow, a rentArgs, id, req string, b box) error {
 	if len(set) == 0 {
 		return nil
 	}
-	return d.rec.set(r.Name, a.actor, set...)
+	return d.rec.set(*r, a.actor, set...)
 }
 
 // check reads the hardware over ssh; its PCI ids decide, never the MAC.
@@ -428,7 +428,7 @@ func (d rentDeps) give(r *rentedRow, actor string) error {
 		clear = append(clear, "creating", "")
 	}
 	if len(clear) > 0 {
-		if err := d.rec.set(r.Name, actor, clear...); err != nil {
+		if err := d.rec.set(*r, actor, clear...); err != nil {
 			return err
 		}
 		r.ProviderID, r.SpotRequest, r.Creating = "", "", ""
