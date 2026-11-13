@@ -50,8 +50,8 @@ var (
 	keyWord     = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 	envName     = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 	tierWord    = regexp.MustCompile(`^(flash|pro|heavy|frontier)$`)
-	// a machine is owned or rented by the hour from a provider; a rented one at AWS is on demand or spot
-	providerWord  = regexp.MustCompile(`^(owned|latitude|aws)$`)
+	// a box rented by the hour comes from a provider; one at AWS is on demand or spot
+	providerWord  = regexp.MustCompile(`^(latitude|aws)$`)
 	marketWord    = regexp.MustCompile(`^(on-demand|spot)$`)
 	priceFromWord = regexp.MustCompile(`^(provider|recalled)$`)
 	priceText     = regexp.MustCompile(`^[0-9]{1,6}(\.[0-9]{1,4})?$`)
@@ -73,16 +73,6 @@ var kinds = map[string]*kind{
 			{name: "windows_admin_runners", typ: "admins"},
 			{name: "runner_env", typ: "env", def: "{}"},
 			{name: "note", typ: "text", cut: true, free: true},
-			{name: "provider", typ: "word", def: "owned", word: providerWord},
-			{name: "provider_id", typ: "text"},
-			{name: "market", typ: "word", word: marketWord},
-			{name: "spot_request", typ: "text"},
-			{name: "price", typ: "price"},
-			{name: "price_from", typ: "word", word: priceFromWord},
-			{name: "purpose", typ: "text", cut: true, free: true},
-			{name: "rented_by", typ: "text"},
-			{name: "rented_at", typ: "time"},
-			{name: "return_by", typ: "time"},
 		}},
 	"service": {name: "service", table: "services", check: checkService,
 		fields: []field{
@@ -105,6 +95,24 @@ var kinds = map[string]*kind{
 			{name: "pronouns", typ: "text", null: true},
 			{name: "note", typ: "text", cut: true, free: true},
 			{name: "enabled", typ: "bool", def: "true"},
+		}},
+	// A box rented by the hour, in its own table: a binary that predates it never reads the table, so a box no play may
+	// reach (an aws one, or one not yet created) is in no inventory any nova-config builds. A latitude box also gets a
+	// machine row when it joins the fleet, as owned machines do.
+	"rented": {name: "rented", table: "rented", check: checkRented,
+		fields: []field{
+			{name: "provider", typ: "word", required: true, word: providerWord},
+			{name: "provider_id", typ: "text"},
+			{name: "market", typ: "word", word: marketWord},
+			{name: "spot_request", typ: "text"},
+			{name: "address", typ: "text"},
+			{name: "user", typ: "text"},
+			{name: "price", typ: "price"},
+			{name: "price_from", typ: "word", word: priceFromWord},
+			{name: "purpose", typ: "text", required: true, cut: true, free: true},
+			{name: "rented_by", typ: "text", required: true},
+			{name: "rented_at", typ: "time", required: true},
+			{name: "return_by", typ: "time"},
 		}},
 }
 
@@ -526,64 +534,21 @@ func checkService(r Row) error {
 	return nil
 }
 
-// rentedFields are the fields of a machine rented by the hour; an owned machine has them all empty.
-var rentedFields = []string{"provider_id", "market", "spot_request", "price", "price_from", "purpose", "rented_by", "rented_at", "return_by"}
-
-// checkRented refuses a rented machine without the purpose, who rented it and when (so an idle one is never a
-// mystery), a price without where it came from, a spot field on a machine that is not spot at AWS, and any rented
-// field on an owned machine.
-func checkRented(r Row) []string {
-	var p []string
-	v := r.F
-	if v["provider"] == "owned" {
-		for _, f := range rentedFields {
-			if v[f] != "" {
-				p = append(p, fmt.Sprintf("machine %s: --%s is a rented machine's, and its --provider is owned; set --provider latitude|aws, or --%s ''", r.Name, f, f))
-			}
-		}
-		return p
-	}
-	for _, f := range []string{"purpose", "rented_by", "rented_at"} {
-		if v[f] == "" {
-			p = append(p, fmt.Sprintf("machine %s is rented (--provider %s) and has no --%s; give --%s <value>", r.Name, v["provider"], f, f))
-		}
-	}
-	if v["return_by"] != "" && v["return_by"] < v["rented_at"] { // both RFC 3339 UTC, so they compare as text
-		p = append(p, fmt.Sprintf("machine %s: --return_by %s is before --rented_at %s; give a later --return_by", r.Name, v["return_by"], v["rented_at"]))
-	}
-	if (v["price"] == "") != (v["price_from"] == "") {
-		p = append(p, fmt.Sprintf("machine %s: --price and --price_from go together; give --price <usd-per-hour> --price_from provider|recalled (provider: read from the provider; recalled: not read), or neither", r.Name))
-	}
-	if v["market"] != "" && v["provider"] != "aws" {
-		p = append(p, fmt.Sprintf("machine %s: --market is an aws machine's, and its --provider is %s; set --market ''", r.Name, v["provider"]))
-	}
-	if v["market"] == "" && v["provider"] == "aws" {
-		p = append(p, fmt.Sprintf("machine %s is rented at aws and has no --market; give --market on-demand|spot", r.Name))
-	}
-	if v["provider"] == "aws" && (v["runner_scopes"] != "" || v["windows_runners"] != "" || v["runners"] != "0" && v["runners"] != "") {
-		p = append(p, fmt.Sprintf("machine %s is rented at aws, which no play reaches, so the record cannot keep runners on it; set --runners 0 --runner_scopes '' --windows_runners ''", r.Name))
-	}
-	if v["spot_request"] != "" && v["market"] != "spot" {
-		p = append(p, fmt.Sprintf("machine %s: --spot_request is a spot machine's, and its --market is %q; set --market spot or --spot_request ''", r.Name, v["market"]))
-	}
-	return p
-}
-
 // checkMachine refuses an admin runner whose account is the machine's login, or whose label another runner of the
-// machine carries (adminClashes), and a rented machine checkRented refuses. A field that does not parse is left to
-// its own refusal.
+// machine carries (adminClashes). A field that does not parse is left to its own refusal.
 func checkMachine(r Row) error {
-	p := checkRented(r)
-	admins, err := parseAdmins(r.F["windows_admin_runners"]) // nil when it does not parse
+	admins, err := parseAdmins(r.F["windows_admin_runners"])
+	if err != nil {
+		return nil
+	}
+	var p []string
 	for _, a := range admins {
 		if strings.EqualFold(a.Account, r.F["user"]) {
 			p = append(p, fmt.Sprintf("machine %s: admin runner account %s is the machine's user; give the runner its own account", r.Name, a.Account))
 		}
 	}
-	if err == nil {
-		for _, c := range adminClashes([]Row{r}, "") {
-			p = append(p, c.msg)
-		}
+	for _, c := range adminClashes([]Row{r}, "") {
+		p = append(p, c.msg)
 	}
 	if len(p) > 0 {
 		return fmt.Errorf("%s", strings.Join(p, "; "))
@@ -685,4 +650,48 @@ func dsnPassword(dsn string) bool {
 		has = has || strings.EqualFold(k, "password")
 	}
 	return has
+}
+
+// checkRented refuses a rented box without its purpose, who rented it and when (so an idle one is never a mystery),
+// a price without where it came from, and a market or spot request on a box that is not at AWS or not spot.
+func checkRented(r Row) error {
+	var p []string
+	v := r.F
+	for _, f := range []string{"purpose", "rented_by", "rented_at"} {
+		if v[f] == "" {
+			p = append(p, fmt.Sprintf("rented %s has no --%s; give --%s <value>", r.Name, f, f))
+		}
+	}
+	if v["return_by"] != "" && v["return_by"] < v["rented_at"] { // both RFC 3339 UTC, so they compare as text
+		p = append(p, fmt.Sprintf("rented %s: --return_by %s is before --rented_at %s; give a later --return_by", r.Name, v["return_by"], v["rented_at"]))
+	}
+	if (v["price"] == "") != (v["price_from"] == "") {
+		p = append(p, fmt.Sprintf("rented %s: --price and --price_from go together; give --price <usd-per-hour> --price_from provider|recalled (provider: read from the provider; recalled: not read), or neither", r.Name))
+	}
+	if v["market"] != "" && v["provider"] != "aws" {
+		p = append(p, fmt.Sprintf("rented %s: --market is an aws box's, and its --provider is %s; set --market ''", r.Name, v["provider"]))
+	}
+	if v["market"] == "" && v["provider"] == "aws" {
+		p = append(p, fmt.Sprintf("rented %s is at aws and has no --market; give --market on-demand|spot", r.Name))
+	}
+	if v["spot_request"] != "" && v["market"] != "spot" {
+		p = append(p, fmt.Sprintf("rented %s: --spot_request is a spot box's, and its --market is %q; set --market spot or --spot_request ''", r.Name, v["market"]))
+	}
+	if len(p) > 0 {
+		return fmt.Errorf("%s", strings.Join(p, "; "))
+	}
+	return nil
+}
+
+// rentHandles names what a rented record still holds at its provider that can bill (its box, its spot request), or
+// "" when it holds nothing.
+func rentHandles(r Row) string {
+	var h []string
+	if id := r.F["provider_id"]; id != "" {
+		h = append(h, "box "+id)
+	}
+	if sr := r.F["spot_request"]; sr != "" {
+		h = append(h, "spot request "+sr)
+	}
+	return strings.Join(h, " and ")
 }

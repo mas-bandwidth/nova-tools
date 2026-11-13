@@ -11,10 +11,10 @@ import (
 	"time"
 )
 
-const historyHint = "history takes [<kind> [<name>]] --since <duration|RFC3339> --max <n> --json --pg <dsn>; kinds: machine, service, friend"
+const historyHint = "history takes [<kind> [<name>]] --since <duration|RFC3339> --max <n> --json --pg <dsn>; kinds: machine, service, friend, rented"
 
 // historyKinds are the kinds the history table holds.
-var historyKinds = []string{"machine", "service", "friend"}
+var historyKinds = []string{"machine", "service", "friend", "rented"}
 
 // parseSince is a duration back from now (90m, 24h, 7d) or an RFC 3339 time.
 func parseSince(s string, now time.Time) (time.Time, error) {

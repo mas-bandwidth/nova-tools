@@ -1,97 +1,100 @@
 package main
 
 import (
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
-// rentArgs is a rented machine's add with every field it needs.
+// rentArgs is a rented box's add with every field it needs.
 func rentArgs(name string, extra ...string) []string {
-	return append([]string{"machine", "add", name, "--user", "nova", "--provider", "aws", "--provider_id", "i-0abc",
-		"--market", "spot", "--spot_request", "sir-1", "--price", "0.59", "--price_from", "provider",
-		"--purpose", "load pair rows", "--rented_by", "alice", "--rented_at", "2026-11-13T00:00:00-05:00",
-		"--return_by", "2026-11-13T09:00:00Z", "--actor", "t"}, extra...)
+	return append([]string{"rented", "add", name, "--provider", "aws", "--provider_id", "i-0abc",
+		"--market", "spot", "--spot_request", "sir-1", "--address", "203.0.113.7", "--user", "ubuntu",
+		"--price", "0.59", "--price_from", "provider", "--purpose", "load pair rows", "--rented_by", "alice",
+		"--rented_at", "2026-11-13T00:00:00-05:00", "--return_by", "2026-11-13T09:00:00Z", "--actor", "t"}, extra...)
 }
 
-// A rented machine keeps what it is for, who rented it, when, its price and where the price came from; times are
-// written back in UTC.
+// A rented box keeps what it is for, who rented it, when, its price and where the price came from; times are written
+// back in UTC. It is no machine: it is in its own table.
 func TestRentedRowKeepsItsRecord(t *testing.T) {
 	t.Parallel()
 	h := newHarness()
 	h.ok(t, rentArgs("spill-1")...)
-	out := h.ok(t, "machine", "show", "spill-1")
-	assert.Contains(t, out, " provider=aws provider_id=i-0abc market=spot spot_request=sir-1 price=0.59 price_from=provider purpose=\"load pair rows\" rented_by=alice rented_at=2026-11-13T05:00:00Z return_by=2026-11-13T09:00:00Z ")
-	h.ok(t, "machine", "add", "bench-o", "--user", "nova", "--actor", "t")
-	assert.Contains(t, h.ok(t, "machine", "show", "bench-o"), rentedNone, "a machine added without a provider is owned")
+	out := h.ok(t, "rented", "show", "spill-1")
+	assert.Contains(t, out, "RENTED name=spill-1 provider=aws provider_id=i-0abc market=spot spot_request=sir-1 address=203.0.113.7 user=ubuntu price=0.59 price_from=provider purpose=\"load pair rows\" rented_by=alice rented_at=2026-11-13T05:00:00Z return_by=2026-11-13T09:00:00Z ")
+	assert.Empty(t, h.st.rows["machine"], "a rented box is no machine row")
 }
 
 // Every rented field that does not fit is refused, all of them in one line, and nothing is written.
 func TestRentedRowRefusals(t *testing.T) {
 	t.Parallel()
 	h := newHarness()
-	h.ok(t, "machine", "add", "bench-o", "--user", "nova", "--actor", "t")
 	for _, c := range []struct {
 		args []string
 		want string
 	}{
-		{[]string{"machine", "set", "bench-o", "--price", "1", "--price_from", "recalled", "--actor", "t"},
-			"machine bench-o: --price is a rented machine's, and its --provider is owned; set --provider latitude|aws, or --price ''"},
-		{[]string{"machine", "add", "r1", "--user", "nova", "--provider", "latitude", "--actor", "t"},
-			"machine r1 is rented (--provider latitude) and has no --purpose; give --purpose <value>; machine r1 is rented (--provider latitude) and has no --rented_by; give --rented_by <value>; machine r1 is rented (--provider latitude) and has no --rented_at; give --rented_at <value>"},
-		{rentArgs("r2", "--price_from", ""), "machine r2: --price and --price_from go together"},
-		{rentArgs("r3", "--provider", "latitude"), "machine r3: --market is an aws machine's, and its --provider is latitude; set --market ''"},
-		{rentArgs("r4", "--market", "on-demand"), "machine r4: --spot_request is a spot machine's, and its --market is \"on-demand\"; set --market spot or --spot_request ''"},
+		{[]string{"rented", "add", "r1", "--provider", "latitude", "--actor", "t"}, "missing required flag --purpose, --rented_by, --rented_at"},
+		{rentArgs("r2", "--price_from", ""), "rented r2: --price and --price_from go together"},
+		{rentArgs("r3", "--provider", "latitude"), "rented r3: --market is an aws box's, and its --provider is latitude; set --market ''"},
+		{rentArgs("r4", "--market", "on-demand"), "rented r4: --spot_request is a spot box's, and its --market is \"on-demand\"; set --market spot or --spot_request ''"},
 		{rentArgs("r5", "--price", "4,06"), `--price "4,06": want US dollars per hour, such as 4.06`},
 		{rentArgs("r6", "--rented_at", "yesterday"), `--rented_at "yesterday": want an RFC 3339 time, such as 2026-11-13T04:00:00Z`},
-		{rentArgs("r7", "--provider", "hetzner"), `--provider "hetzner": want one of owned|latitude|aws`},
+		{rentArgs("r7", "--provider", "owned"), `--provider "owned": want one of latitude|aws`},
 		{rentArgs("r8", "--market", "reserved"), `--market "reserved": want one of on-demand|spot`},
 		{rentArgs("r9", "--price_from", "guess"), `--price_from "guess": want one of provider|recalled`},
-		{rentArgs("r10", "--return_by", "2026-11-12T00:00:00Z"), "machine r10: --return_by 2026-11-12T00:00:00Z is before --rented_at 2026-11-13T05:00:00Z; give a later --return_by"},
-		{rentArgs("r11", "--market", "", "--spot_request", ""), "machine r11 is rented at aws and has no --market; give --market on-demand|spot"},
-		{rentArgs("r12", "--runner_scopes", "https://github.com/o/r=1"), "machine r12 is rented at aws, which no play reaches, so the record cannot keep runners on it"},
+		{rentArgs("r10", "--return_by", "2026-11-12T00:00:00Z"), "rented r10: --return_by 2026-11-12T00:00:00Z is before --rented_at 2026-11-13T05:00:00Z; give a later --return_by"},
+		{rentArgs("r11", "--market", "", "--spot_request", ""), "rented r11 is at aws and has no --market; give --market on-demand|spot"},
+		{rentArgs("r12", "--purpose", ""), "rented r12 has no --purpose; give --purpose <value>"},
 	} {
 		code, out, errs := h.run(t, c.args...)
 		assert.NotEqual(t, 0, code, "%v", c.args)
 		assert.Empty(t, out, "%v", c.args)
 		assert.Contains(t, errs, c.want, "%v", c.args)
 	}
-	assert.Len(t, h.st.rows["machine"], 1, "no refused row was written")
+	assert.Empty(t, h.st.rows["rented"], "no refused row was written")
 }
 
-// An aws machine is never in the inventory (no play reaches it), nor is a rented machine with no address yet (asked
-// for, not yet created); a rented Latitude machine with its address is, and an older row with no provider is owned.
-func TestInventoryLeavesOutMachinesNoPlayReaches(t *testing.T) {
+// A rented box is in its own table, which no release before it reads: the machine kind (all an inventory is built
+// from) keeps exactly the columns it had, so a box no play may reach is in no older binary's inventory either.
+func TestRentedBoxesAreInNoTableAnOlderReleaseReads(t *testing.T) {
 	t.Parallel()
-	rented := func(name, provider, address string) Row {
-		return Row{Name: name, F: map[string]string{"user": "nova", "roles": "bench", "provider": provider, "address": address}}
+	older := []string{"machines", "services", "friends", "history"} // v2.0.61's tables
+	assert.NotContains(t, older, kinds["rented"].table)
+	var machine []string
+	for _, f := range kinds["machine"].fields {
+		machine = append(machine, f.name)
 	}
-	inv, err := build([]Row{
-		rented("aws-1", "aws", "203.0.113.7"),
-		rented("asked-1", "latitude", ""),
-		rented("lat-1", "latitude", "lat-1.tailnet.example"),
-		rented("own-1", "owned", ""),
-		{Name: "old-1", F: map[string]string{"user": "nova", "roles": "bench"}},
-	}, nil, "")
-	require.NoError(t, err)
-	assert.Equal(t, []string{"lat-1", "own-1", "old-1"}, inv.All.Hosts)
-	assert.Equal(t, []string{"lat-1", "own-1", "old-1"}, inv.Bench.Hosts)
-	assert.NotContains(t, inv.Meta.Hostvars, "aws-1")
-	assert.NotContains(t, inv.Meta.Hostvars, "asked-1")
+	assert.Equal(t, "address public user os arch cores roles runners runner_scopes windows_runners windows_admin_runners runner_env note", strings.Join(machine, " "), "v2.0.61's machine columns, unchanged")
+	assert.False(t, slices.ContainsFunc(kinds["machine"].fields, func(f field) bool { return f.name == "provider" }))
 }
 
-// A rented row whose box has an id at the provider is not removed: the box may still bill. Once the id is cleared (the
-// box is gone), the row goes.
-func TestRentedRowWithABoxIsNotRemoved(t *testing.T) {
+// A rented record is not removed while it holds either handle at the provider: a box id, or a spot request id (a
+// request with no box yet, or one left after its box went, can still fulfil a billing box). Only with both cleared
+// does it go.
+func TestRentedRowWithAHandleIsNotRemoved(t *testing.T) {
 	t.Parallel()
 	h := newHarness()
 	h.ok(t, rentArgs("spill-1")...)
-	code, out, errs := h.run(t, "machine", "remove", "spill-1", "--actor", "t")
-	assert.Equal(t, 1, code)
-	assert.Empty(t, out)
-	assert.Contains(t, errs, "machine spill-1 is rented at aws as i-0abc, which may still bill;")
-	assert.Contains(t, errs, "; run: nova-fleet rented\n")
-	h.ok(t, "machine", "set", "spill-1", "--provider_id", "", "--actor", "t", "--reason", "the box is gone")
-	h.ok(t, "machine", "remove", "spill-1", "--actor", "t")
+	for _, c := range []struct {
+		clear []string
+		still string
+	}{
+		{nil, "box i-0abc and spot request sir-1"},
+		{[]string{"--provider_id", ""}, "spot request sir-1"},
+		{[]string{"--provider_id", "i-0abc", "--spot_request", ""}, "box i-0abc"},
+	} {
+		if c.clear != nil {
+			h.ok(t, append([]string{"rented", "set", "spill-1", "--actor", "t"}, c.clear...)...)
+		}
+		code, out, errs := h.run(t, "rented", "remove", "spill-1", "--actor", "t")
+		assert.Equal(t, 1, code, c.still)
+		assert.Empty(t, out)
+		assert.Contains(t, errs, "rented spill-1 still has "+c.still+" at aws, which may bill;")
+		assert.Contains(t, errs, "; run: nova-fleet rented\n")
+	}
+	h.ok(t, "rented", "set", "spill-1", "--provider_id", "", "--actor", "t", "--reason", "the box and the request are gone")
+	h.ok(t, "rented", "remove", "spill-1", "--actor", "t")
+	assert.Empty(t, h.st.rows["rented"])
 }

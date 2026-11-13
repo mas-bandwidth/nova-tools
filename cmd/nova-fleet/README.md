@@ -179,8 +179,8 @@ line: ubuntu ALL=(ALL) NOPASSWD:ALL`.
 
 ## Rented machines
 
-A machine rented by the hour is a machine row whose `provider` is not `owned` (cmd/nova-config/README.md, "Machines"):
-what it is for, who rented it and when, when it is to be returned, its id at the provider and its hourly price with
+A box rented by the hour is a `rented` row of the record (cmd/nova-config/README.md, "Rented boxes"), in a table no
+play reads, so an `aws` box (ssh from the control node only) is never in an inventory: what it is for, who rented it and when, when it is to be returned, its id at the provider and its hourly price with
 where the price came from. `rented` lists them from the record, so none bills unseen:
 
 ```sh
@@ -194,11 +194,10 @@ RENTED TOTAL machines=2 rate=4.66 cost=13.08 unknown=0 past=1
 ```
 
 `cost` is the hourly price times the hours since `rented_at` (a stopped box bills less: its disk only); `cost=unknown`
-is a machine with no price or no `rented_at`, left out of the total and counted in `unknown`; `price_from=recalled` is a price not read from the provider; `PAST`
-marks a machine kept beyond its `return_by`. `--json` prints the same as one object, `{"machines": [...], "total":
-{...}}`. A record that cannot be read is one line naming nova-config's own error, and a nova-config on PATH older than
-the rented fields is refused, never read as a fleet with none rented: every control node runs this release's
-nova-config before the first rented row is written, since an older one's inventory would list an `aws` row.
+is a box with no price or no `rented_at`, left out of the total and counted in `unknown`; `price_from=recalled` is a price not read from the provider; `PAST`
+marks a box kept beyond its `return_by`. `--json` prints the same as one object, `{"machines": [...], "total":
+{...}}`. A record that cannot be read is one line naming nova-config's own error; a nova-config on PATH older than the
+rented rows has no `rented` verb, and its refusal is passed on, never read as a fleet with none rented.
 
 ## The plays
 

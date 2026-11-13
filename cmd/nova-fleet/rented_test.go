@@ -15,10 +15,9 @@ var at = time.Unix(1000, 0).UTC()
 
 func stamp(d time.Duration) string { return at.Add(d).Format(time.RFC3339) }
 
-// rentedRows is a record with one machine of each kind a listing meets.
+// rentedRows is a record with one box of each kind a listing meets.
 func rentedRows() []rentedRow {
 	return []rentedRow{
-		{Name: "bench-a", Provider: "owned"},
 		{Name: "spill-1", Provider: "aws", ProviderID: "i-0abc", Market: "spot", Price: "0.60", PriceFrom: "provider", Purpose: "load rows",
 			RentedBy: "alice", RentedAt: stamp(-90 * time.Minute), ReturnBy: stamp(time.Hour)},
 		{Name: "bench-x", Provider: "latitude", ProviderID: "sv_1", Price: "4.06", PriceFrom: "recalled", Purpose: "XDP pair",
@@ -29,7 +28,7 @@ func rentedRows() []rentedRow {
 }
 
 // The listing names every rented machine with its age, rate, cost so far and whether it is past its return-by, and a
-// total; an owned machine, or one written before the rented columns, is not listed.
+// total.
 func TestRentedListsCostAgeAndPast(t *testing.T) {
 	t.Parallel()
 	var out bytes.Buffer
@@ -68,7 +67,7 @@ func TestRentedJSON(t *testing.T) {
 func TestRentedNone(t *testing.T) {
 	t.Parallel()
 	var out bytes.Buffer
-	require.NoError(t, listRented(rentedRows()[:1], at, false, &out))
+	require.NoError(t, listRented(nil, at, false, &out))
 	assert.Equal(t, "RENTED TOTAL machines=0 rate=0 cost=0.00 unknown=0 past=0\n", out.String())
 }
 
@@ -78,25 +77,21 @@ func TestRecordReadsNovaConfig(t *testing.T) {
 	var got []string
 	run := func(bin string, args, env []string) (string, string, int) {
 		got = append([]string{bin}, args...)
-		return `{"items":[{"fields":{"name":"spill-1","provider":"aws","cores":null,"price":"0.59"}}]}`, "", 0
+		return `{"items":[{"fields":{"name":"spill-1","provider":"aws","price":"0.59"}}]}`, "", 0
 	}
 	rows, err := record("/bin/nova-config", run)
 	require.NoError(t, err)
-	assert.Equal(t, []string{"/bin/nova-config", "machine", "list", "--json"}, got)
+	assert.Equal(t, []string{"/bin/nova-config", "rented", "list", "--json"}, got)
 	assert.Equal(t, []rentedRow{{Name: "spill-1", Provider: "aws", Price: "0.59"}}, rows)
 
 	_, err = record("/bin/nova-config", func(string, []string, []string) (string, string, int) {
-		return "", "nova-config machine list: store has no current schema; run: nova-config schema | psql", 2
+		return "", "nova-config: unknown verb \"rented\"; run: nova-config help", 2
 	})
-	assert.EqualError(t, err, "nova-config machine list --json exit 2: nova-config machine list: store has no current schema; run: nova-config schema | psql")
+	assert.EqualError(t, err, "nova-config rented list --json exit 2: nova-config: unknown verb \"rented\"; run: nova-config help", "an older nova-config, with no rented rows, is refused: never a fleet with none rented")
 	_, err = record("/bin/nova-config", func(string, []string, []string) (string, string, int) { return "MACHINE", "", 0 })
 	assert.ErrorContains(t, err, "printed no JSON")
-	_, err = record("/bin/nova-config", func(string, []string, []string) (string, string, int) {
-		return `{"items":[{"fields":{"name":"bench-a","cores":4}}]}`, "", 0
-	})
-	assert.EqualError(t, err, "/bin/nova-config predates the rented fields (row bench-a has no provider), so it cannot say which machines are rented; install this release's nova-config", "an older nova-config is never read as a fleet with none rented")
 	_, err = record("/bin/nova-config", func(string, []string, []string) (string, string, int) { return "", "", 2 })
-	assert.EqualError(t, err, "nova-config machine list --json exit 2: (nothing on stderr)")
+	assert.EqualError(t, err, "nova-config rented list --json exit 2: (nothing on stderr)")
 }
 
 // An argument rented does not take is refused, naming it; -h prints the help.
