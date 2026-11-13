@@ -12,10 +12,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestFunctionalRentedColumnsOnAnOldStore: a store made before the rented columns (testdata/before-rented.sql, the
+// TestFunctionalOldStore (short: macOS caps the socket path, which holds the test name, at 103 bytes): a store made before the rented columns (testdata/before-rented.sql, the
 // schema.sql of the release before them) takes schema.sql; its rows read as owned with the rest empty; a write naming
 // only the old columns, as an older nova-config makes, still goes through and leaves the new ones at their defaults.
-func TestFunctionalRentedColumnsOnAnOldStore(t *testing.T) {
+func TestFunctionalOldStore(t *testing.T) {
 	t.Parallel()
 	dsn := startPG(t, "testdata/before-rented.sql")
 	ctx := context.Background()
