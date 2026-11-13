@@ -106,6 +106,29 @@ func TestSDKToolchainSharesTheSDKAsTheLogin(t *testing.T) {
 	assert.Less(t, taskIndex(link, "everything in the shared SDK is readable by other logins"), taskIndex(link, "the login's own SDK is moved aside and nova_sdk_dir names the shared SDK"))
 	assert.Less(t, taskIndex(link, "an old SDK holding what the shared one lacks is kept"), taskIndex(link, "the login's own SDK is moved aside and nova_sdk_dir names the shared SDK"))
 	assert.Less(t, taskIndex(link, "the login's own SDK is moved aside and nova_sdk_dir names the shared SDK"), taskIndex(link, "the SDK moved aside is deleted"))
+	// compared below the top: a toolchain, a cargo tool or an opam package only the old SDK holds is held
+	extra := asText(runnerTask(t, link, "what the login's own SDK holds that the shared one lacks")["ansible.builtin.shell"])
+	assert.Contains(t, extra, `for e in * .[!.]* */* */.[!.]* rustup-*/cargo/bin rustup-*/toolchains/* rustup-*/cargo/bin/* opam/*/lib opam/*/bin opam/*/lib/* opam/*/bin/*; do`)
+	assert.Contains(t, extra, `if [ "$up" = . ]; then echo "$e"; fi`, "each path once, at its highest missing level")
+	// nothing is moved or deleted while a process runs from it, and nothing is stopped
+	for _, step := range [][2]string{
+		{"the login's own SDK is in use by no process", "the login's own SDK is moved aside and nova_sdk_dir names the shared SDK"},
+		{"the SDK moved aside is in use by no process", "the SDK moved aside is deleted"},
+	} {
+		check := runnerTask(t, link, step[0])
+		assert.Equal(t, "in-use.yml", asText(check["ansible.builtin.include_tasks"]))
+		assert.Equal(t, taskIndex(link, step[0])+1, taskIndex(link, step[1]), "the check comes right before %q", step[1])
+	}
+	inUse := taskFileOf(t, sdkToolchainRole+"/tasks/in-use.yml")
+	for _, task := range inUse {
+		assert.NotContains(t, task, "become", "task %q: the SDK is the login's", asText(task["name"]))
+	}
+	scan := asText(runnerTask(t, inUse, "no process runs from {{ sdk_in_use_dir }}")["ansible.builtin.shell"])
+	for _, want := range []string{`for f in "$p/exe" "$p/cwd" "$p"/fd/*; do`, `grep -q -F " $d/" "$p/maps"`} {
+		assert.Contains(t, scan, want)
+	}
+	assert.NotContains(t, scan, "kill")
+	assert.Contains(t, asText(runnerTask(t, inUse, "a directory in use is neither moved nor deleted")["ansible.builtin.fail"].(map[string]any)["msg"]), "SDK-TOOLCHAIN SDK-IN-USE")
 
 	b, err := os.ReadFile(sdkToolchainRole + "/defaults/main.yml")
 	require.NoError(t, err)

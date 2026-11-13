@@ -1,0 +1,34 @@
+---
+# Nothing is moved or deleted out from under a running process: a process whose executable, working directory, open
+# file or mapped file is in sdk_in_use_dir (the login's own SDK before it is moved aside, the moved-aside one before it
+# is deleted) fails the run naming it, and is never stopped. A JVM or a TLC run reads its runtime's files long after it
+# starts, so a file deleted under it fails it later. The login reads its own processes' /proc entries; another login's
+# cannot reach this directory (the login's home is closed to it).
+- name: no process runs from {{ sdk_in_use_dir }}
+  ansible.builtin.shell: |
+    set -eu
+    d={{ sdk_in_use_dir | quote }}
+    [ -d "$d" ] && [ ! -L "$d" ] || exit 0
+    # the kernel names resolved paths in /proc, so the directory is compared by its own (a home under a linked /home)
+    d=$(cd "$d" && pwd -P)
+    for p in /proc/[0-9]*; do
+      [ "${p#/proc/}" = "$$" ] && continue
+      hit=
+      for f in "$p/exe" "$p/cwd" "$p"/fd/*; do
+        t=$(readlink "$f" 2>/dev/null) || continue
+        case "$t" in "$d" | "$d"/*) hit=1; break ;; esac
+      done
+      if [ -z "$hit" ] && grep -q -F " $d/" "$p/maps" 2>/dev/null; then hit=1; fi
+      if [ -n "$hit" ]; then echo "${p#/proc/}:$(tr '\0' ' ' < "$p/cmdline" 2>/dev/null | cut -c1-60)"; fi
+    done
+  args: { executable: /bin/sh }
+  register: sdk_in_use
+  changed_when: false
+  check_mode: false
+
+- name: a directory in use is neither moved nor deleted
+  ansible.builtin.fail:
+    msg: >-
+      SDK-TOOLCHAIN SDK-IN-USE host={{ inventory_hostname }} dir={{ sdk_in_use_dir }}: {{ sdk_in_use.stdout_lines[:20] | join('; ') }};
+      nothing is moved or deleted while they run. Run again once they have ended.
+  when: sdk_in_use.stdout_lines | length > 0
