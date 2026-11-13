@@ -18,3 +18,15 @@ SSHOff.cfg	SSHOff.tla	pass	-	ignore-terminal
 SSHOffBrokenCheckThenTouch.cfg	SSHOff.tla	invariant	KeptMeansOff	ignore-terminal
 SSHOffBrokenNoWait.cfg	SSHOff.tla	invariant	RerunGreenMeansOff	ignore-terminal
 SSHOffBrokenPrevious.cfg	SSHOff.tla	invariant	KeptMeansOff	ignore-terminal
+Rent.cfg	Rent.tla	pass	-	ignore-terminal
+RentSpot.cfg	Rent.tla	pass	-	ignore-terminal
+RentBrokenNoAsk.cfg	Rent.tla	invariant	NoUnseenBill	ignore-terminal
+RentBrokenNoBusyWait.cfg	Rent.tla	invariant	NoUnseenBill	ignore-terminal
+RentBrokenStoreNoAsk.cfg	Rent.tla	invariant	NoUnseenBill	ignore-terminal
+RentBrokenCreateBeforeRow.cfg	Rent.tla	invariant	NoUnseenBill	ignore-terminal
+RentBrokenRemoveRowBeforeBox.cfg	Rent.tla	invariant	NoUnseenBill	ignore-terminal
+RentBrokenCreateWithoutFind.cfg	Rent.tla	invariant	AtMostOneBox	ignore-terminal
+RentBrokenOnlyRequest.cfg	Rent.tla	invariant	NoUnseenBill	ignore-terminal
+RentBrokenPersistent.cfg	Rent.tla	invariant	NoUnseenBill	ignore-terminal
+RentBrokenFallback.cfg	Rent.tla	invariant	SpotIsSpot	ignore-terminal
+RentBrokenNoCheck.cfg	Rent.tla	invariant	OkIsRight	ignore-terminal

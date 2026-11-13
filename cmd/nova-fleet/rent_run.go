@@ -110,6 +110,16 @@ func (f fleetPieces) teardown(r rentedRow, force bool, scopes []string) error {
 			}
 		}
 	}
+	// 0. work on the box: a clone with commits on no remote, a stash or uncommitted changes refuses the whole
+	// return unless forced, since the disk goes with the box
+	if r.Address != "" && !force {
+		if work, err := unpushed(r.User, r.Address); err != nil {
+			return fmt.Errorf("the clones on %s were not read (%v); run: nova-fleet return %s --force, once its work is safe", r.Name, err, r.Name)
+		} else if work != "" {
+			fmt.Fprint(f.out, work)
+			return fmt.Errorf("%s holds work on no remote (the CLONE lines above); push it, or run: nova-fleet return %s --force", r.Name, r.Name)
+		}
+	}
 	// 1. runners: a busy one refuses the whole return unless forced
 	for _, u := range runnerScopes(row) {
 		if !slices.Contains(scopes, u) {
@@ -233,6 +243,27 @@ func dropDevice(api tsAPI, name string, out io.Writer) error {
 var pciID = regexp.MustCompile(`\[([0-9a-f]{4}:[0-9a-f]{4})\]`)
 
 // sshHardware reads nproc and the PCI ids over ssh as login, accepting the box's host key on first use.
+// clonesScript prints, for each git clone under the box's home directories (a runner's job checkouts aside), its
+// commits on no remote branch, its stashes and its uncommitted changes, as CLONE <dir> and the lines under it;
+// then CLONES READ. Read as root, so every user's clones count.
+const clonesScript = `set -e; for g in $(sudo -n find /home /root -maxdepth 6 -name .git -not -path '*/_work/*' 2>/dev/null); do
+d=${g%/.git}; w=$(sudo -n git -c safe.directory='*' -C "$d" log --branches --not --remotes --oneline; sudo -n git -c safe.directory='*' -C "$d" stash list; sudo -n git -c safe.directory='*' -C "$d" status --porcelain)
+if [ -n "$w" ]; then printf 'CLONE %s\n%s\n' "$d" "$w" | head -40; fi; done; sudo -n true; echo CLONES READ`
+
+// unpushed is the work clonesScript finds on the box at address, "" when none.
+func unpushed(login, address string) (string, error) {
+	ssh, err := lookPath("ssh")
+	if err != nil {
+		return "", err
+	}
+	out, why, c := outCmd(ssh, []string{"-o", "BatchMode=yes", "-o", "ConnectTimeout=10", login + "@" + address, clonesScript}, os.Environ())
+	work, read := strings.CutSuffix(out, "CLONES READ\n")
+	if c != 0 || !read {
+		return "", fmt.Errorf("ssh %s@%s exit %d: %s", login, address, c, oneLine(why))
+	}
+	return work, nil
+}
+
 func sshHardware(key string) func(address, login string) (int, []string, error) {
 	return func(address, login string) (int, []string, error) {
 		ssh, err := lookPath("ssh")

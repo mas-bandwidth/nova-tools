@@ -46,6 +46,9 @@ const returnHelp = `nova-fleet return <name> [--force] [--runners URL]...
 
 Give a rented box back, every piece of it, the record last; refused while a rent's ask is under 15m old (a box
 may land after this looks):
+  0 work     over ssh as the record's user, as root: every git clone under /home and /root (a runner's job
+             checkouts aside) with commits on no remote branch, a stash or uncommitted changes is printed
+             (CLONE <dir> and its lines), and refuses, unless --force: the disk goes with the box
   1 runners  GitHub runners named <name>-* in the record's runner scopes and each --runners URL, removed from
              GitHub; refused while one runs a job, unless --force
   2 seat     the machine's seat removed from the secrets store, which is pushed (Latitude)
@@ -53,7 +56,7 @@ may land after this looks):
   4 row      its machine row removed (nova-config machine remove), and its host keys from known_hosts
   5 request  every live spot request named <name> cancelled, and read back dead
   6 box      every box named <name> deleted (Latitude) or terminated (AWS), and read back gone
-  7 record   the box and request ids and the ask it read cleared, then the record removed
+  7 record   the box and request ids and the ask it read cleared in one write, then the record removed
 Each step reads first: run it again to resume. Exit: 0 returned (RETURN OK); 1 refused or failed; 2 could not run.
 `
 
@@ -170,6 +173,7 @@ func (d rentDeps) rent(a rentArgs) error {
 	if err != nil {
 		return err
 	}
+	d.step("RFind")
 	var live []request
 	for _, q := range reqs {
 		if q.live() {
@@ -178,9 +182,11 @@ func (d rentDeps) rent(a rentArgs) error {
 	}
 	switch {
 	case len(boxes) > 1 || len(live) > 1:
+		d.step("RMany")
 		return fmt.Errorf("%d boxes and %d live spot requests are named %s at %s, where one is the most there may be; run: nova-fleet return %s", len(boxes), len(live), name, a.provider, name)
 	case len(boxes) == 1 && r.ProviderID != boxes[0].ID:
 		if r.ProviderID != "" {
+			d.step("RTwo")
 			return fmt.Errorf("the record holds box %s and %s has %s named %s; run: nova-fleet return %s", r.ProviderID, a.provider, boxes[0].ID, name, name)
 		}
 		if err := d.note(r, a, boxes[0].ID, boxes[0].Request, boxes[0]); err != nil {
@@ -189,6 +195,7 @@ func (d rentDeps) rent(a rentArgs) error {
 		d.step("RAdoptBox")
 	case len(boxes) == 0 && len(live) == 1 && r.SpotRequest != live[0].ID:
 		if r.SpotRequest != "" {
+			d.step("RTwo")
 			return fmt.Errorf("the record holds spot request %s and AWS has %s named %s; run: nova-fleet return %s", r.SpotRequest, live[0].ID, name, name)
 		}
 		if err := d.note(r, a, "", live[0].ID, box{}); err != nil {
@@ -351,6 +358,7 @@ func (d rentDeps) give(r *rentedRow, actor string) error {
 	if err != nil {
 		return err
 	}
+	d.step("XFind")
 	ids := []string{}
 	if r.SpotRequest != "" {
 		ids = append(ids, r.SpotRequest)
@@ -377,13 +385,6 @@ func (d rentDeps) give(r *rentedRow, actor string) error {
 			}
 			d.step("XCancel")
 		}
-	}
-	if r.SpotRequest != "" {
-		if err := d.rec.set(r.Name, actor, "spot_request", ""); err != nil {
-			return err
-		}
-		r.SpotRequest = ""
-		d.step("XClearReq")
 	}
 	gone := []string{}
 	if r.ProviderID != "" {
@@ -413,11 +414,15 @@ func (d rentDeps) give(r *rentedRow, actor string) error {
 		}
 		d.step("XRemove")
 	}
-	// Every box named for it is gone, so the box id and the ask read at the start are over. Only those are cleared:
-	// one written since (a rent's note) names a box this return did not see, and keeps the record.
+	// Every request named for it is dead and every box gone, so the handles and the ask read at the start are over,
+	// cleared in one write: until then the record names each. Only those are cleared: one written since (a rent's
+	// note) names a box this return did not see, and keeps the record.
 	clear := []string{}
 	if r.ProviderID != "" {
 		clear = append(clear, "provider_id", "")
+	}
+	if r.SpotRequest != "" {
+		clear = append(clear, "spot_request", "")
 	}
 	if r.Creating != "" {
 		clear = append(clear, "creating", "")
@@ -426,7 +431,7 @@ func (d rentDeps) give(r *rentedRow, actor string) error {
 		if err := d.rec.set(r.Name, actor, clear...); err != nil {
 			return err
 		}
-		r.ProviderID, r.Creating = "", ""
+		r.ProviderID, r.SpotRequest, r.Creating = "", "", ""
 		d.step("XClearBox")
 	}
 	if err := d.rec.remove(r.Name, actor); err != nil {
