@@ -39,6 +39,14 @@ nova_systemd_scope: user
 # manager's limit, so the health play sets the manager's to this size too.
 nova_service_memlock: 1G
 
+# The locked-memory limit (soft and hard) of the fleet login's ssh sessions, and so of everything they start
+# (nova-reserve's commands among them): pam_limits reads it from /etc/security/limits.d/90-nova-memlock.conf (the
+# health play). It is the runner units' LimitMEMLOCK=infinity, so a bench run of an io_uring step locks what the same
+# step in CI may; the login's user slice MemoryMax still bounds what it can lock, as it bounds all its memory. The
+# audit play fails a machine where ssh, nova-reserve and the runners differ or are below it. Only unlimited is taken:
+# the runner units lock without limit, and health refuses another value by name.
+nova_login_memlock: unlimited
+
 # Units of another tool's (com.nova.service.<name>.plist, nova-service-<name>.service
 # not written by services.yml) to retire by name; every other such unit is left
 # alone and listed.
