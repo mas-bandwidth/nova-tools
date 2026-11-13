@@ -244,12 +244,6 @@ XRead(p) ==
 
 XFind(p) == pc[p] = "gfind" /\ Find(p, "gcancel")
 
-\* looked for again once every request is dead: an open one may have launched its box after the first look
-XRefind(p) ==
-  /\ pc[p] = "gcancel" /\ ToCancel(p) = {}
-  /\ seen' = [seen EXCEPT ![p].boxes = {b \in Boxes : box[b] = "run"}]
-  /\ Go(p, "gremove") /\ UNCHANGED <<rec, young, box, boxReq, hw, req, reqBox, mine, okBox>>
-
 ToCancel(p) == IF Broken = "OnlyRequest" THEN {} ELSE {q \in SQ(p) \cup ({mine[p].rq} \ {None}) : req[q] = "live"}
 ToRemove(p) == {b \in SB(p) \cup ({mine[p].id} \ {None}) : box[b] = "run"}
 ClearRq(p) == mine[p].rq /= None /\ Broken /= "OnlyRequest"
@@ -263,6 +257,12 @@ XCancel(p) ==
   /\ pc[p] = "gcancel"
   /\ \E q \in ToCancel(p) : req' = [req EXCEPT ![q] = "dead"]
   /\ UNCHANGED <<rec, young, box, boxReq, hw, reqBox, pc, mine, seen, okBox>>
+
+\* looked for again once every request is dead: an open one may have launched its box after the first look
+XRefind(p) ==
+  /\ pc[p] = "gcancel" /\ ToCancel(p) = {}
+  /\ seen' = [seen EXCEPT ![p].boxes = {b \in Boxes : box[b] = "run"}]
+  /\ Go(p, "gremove") /\ UNCHANGED <<rec, young, box, boxReq, hw, req, reqBox, mine, okBox>>
 
 XRemove(p) ==
   /\ AtRemove(p)
