@@ -34,7 +34,7 @@ func TestRunnerLoginLockdown(t *testing.T) {
 	assert.Contains(t, sh, `[ -d "$m" ] || { echo "a mount the scan cannot start from: $m" >&2; exit 1; }`, "a mount find cannot start from never passes")
 	assert.Contains(t, sh, "timeout 1800 runuser -u {{ github_runner_user | quote }} -- sh -c '")
 	for _, pruned := range []string{"-path /proc", "-path /sys", "-path /dev", "-path /run", "-path /tmp", "-path /var/tmp", "-path /var/crash",
-		"-path /var/lib/php/sessions", `-path "/var/mail/$me"`, `-path "$home"`, `-path "/run/user/$uid"`, "-path /run/lock", "-path /run/screen"} {
+		"-path /var/lib/php/sessions", `-path "/var/mail/$me"`, `-path "$home"`, `-path "/snap/*/*/dev"`, `-path "/run/user/$uid"`, "-path /run/lock", "-path /run/screen"} {
 		assert.Contains(t, sh, pruned)
 	}
 	assert.Contains(t, sh, `-o \( -writable -o -user "$me" \) ! -type l -print`, "what it can write, and what it owns")
