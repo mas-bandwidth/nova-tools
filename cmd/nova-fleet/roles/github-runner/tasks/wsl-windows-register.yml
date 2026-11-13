@@ -52,26 +52,29 @@
   register: github_runner_win_registration_native
   when: not ansible_check_mode and github_runner_win_native | bool
 
-- name: the registrations, whichever way they ran
-  ansible.builtin.set_fact:
-    github_runner_win_registration: "{{ github_runner_win_registration_native if github_runner_win_native | bool else github_runner_win_registration }}"
-  when: not ansible_check_mode
-  no_log: true   # the registration results: config.cmd's raw output, printed only by the redacting debug below
-
-# no_log hides the whole result, the cause with it: each outcome is printed with the token redacted
+# no_log hides the whole result, the cause with it: each outcome is printed with the token redacted. The results are
+# whichever registration ran (the other was skipped), read in place and never copied into a fact.
 - name: the registrations' outcome (token redacted)
   ansible.builtin.debug:
     msg: >-
       RUNNER REGISTER {{ item.item.name }} rc={{ item.rc | default(-1) }}
       {{ ((item.stdout_lines | default([])) + (item.stderr_lines | default([]))) | join(' ') | replace(github_runner_token, 'REDACTED')
          | regex_replace('[A-Z0-9]{20,}', 'REDACTED') | trim | truncate(600) }}
-  loop: "{{ github_runner_win_registration.results | default([]) }}"
+  loop: "{{ github_runner_win_registration_results }}"
   loop_control: { label: "{{ item.item.name | default('-') }}" }
+  vars:
+    github_runner_win_registration_results: >-
+      {{ (github_runner_win_registration_native.results if github_runner_win_native | bool
+          else github_runner_win_registration.results) | default([]) }}
   when: not ansible_check_mode and item.rc | default(0) != 0
 
 - name: every registration landed
   ansible.builtin.assert:
     quiet: true
-    that: github_runner_win_registration.results | default([]) | rejectattr('rc', 'equalto', 0) | list | length == 0
+    that: github_runner_win_registration_results | rejectattr('rc', 'equalto', 0) | list | length == 0
+  vars:
+    github_runner_win_registration_results: >-
+      {{ (github_runner_win_registration_native.results if github_runner_win_native | bool
+          else github_runner_win_registration.results) | default([]) }}
     fail_msg: "GITHUB-RUNNERS {{ inventory_hostname }}: a Windows runner of {{ github_runner_win_url }} failed to register; the redacted cause is above"
   when: not ansible_check_mode

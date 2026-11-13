@@ -177,8 +177,7 @@ func build(machines []Row, services []Row, local string) (*inventory, error) {
 			hv["ansible_python_interpreter"] = "/usr/bin/python3"
 		}
 		inv.Meta.Hostvars[m] = hv
-		// a plain Windows host (not the Windows side of WSL): reached over its OpenSSH, whose shell is PowerShell, and
-		// in the windows group only, never a worker group, so no play written for Linux or macOS reaches it
+		// a plain Windows host (not WSL's Windows side): PowerShell over its OpenSSH, in no worker group, so no Linux play reaches it
 		if strings.EqualFold(v["os"], "windows") {
 			hv["ansible_shell_type"] = "powershell"
 			groups["windows"] = append(groups["windows"], m)
@@ -194,7 +193,6 @@ func build(machines []Row, services []Row, local string) (*inventory, error) {
 		}
 	}
 	inv.All = group{Hosts: all}
-	inv.Bench, inv.Runner, inv.Services = group{Hosts: groups["bench"]}, group{Hosts: groups["runner"]}, group{Hosts: groups["services"]}
-	inv.Windows = group{Hosts: groups["windows"]}
+	inv.Bench, inv.Runner, inv.Services, inv.Windows = group{Hosts: groups["bench"]}, group{Hosts: groups["runner"]}, group{Hosts: groups["services"]}, group{Hosts: groups["windows"]}
 	return inv, nil
 }
