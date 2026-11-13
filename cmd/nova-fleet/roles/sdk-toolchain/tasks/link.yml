@@ -4,7 +4,8 @@
 # the login later runs) and everything in it must be readable by them. Then nova_sdk_dir becomes a link to it: the
 # login's own SDK is moved aside to <nova_sdk_dir>.home and the link made in one command, and the old SDK is deleted
 # (Go's module cache in it is read-only, so it is made writable first). An old SDK holding anything the shared one lacks
-# (an older version a link still names, a directory put there by hand) is left in use and the run fails naming it.
+# (an older version a link still names, a directory put there by hand) is left in use and the run fails naming it, and
+# so is one a process still runs from (in-use.yml, before the move and before the delete).
 - name: nothing in the shared SDK is writable by other logins
   ansible.builtin.shell: |
     set -eu
@@ -30,13 +31,25 @@
   ansible.builtin.stat: { path: "{{ nova_sdk_dir }}", follow: false, get_checksum: false }
   register: sdk_dir_now
 
+# Compared two levels down everywhere (a tool's directory and what is in it; dl/, the download cache the run fetches
+# again by digest, aside) and one more where a managed tool keeps what a login adds to it: rustup's toolchains and
+# cargo-installed tools, and each opam switch's packages and commands. Each path is named once, at its highest missing
+# level.
 - name: what the login's own SDK holds that the shared one lacks
   ansible.builtin.shell: |
     set -eu
+    shared={{ (nova_shared_dir ~ '/sdk') | quote }}
     cd {{ nova_sdk_dir | quote }}
-    for e in * .[!.]*; do
+    for e in * .[!.]* */* */.[!.]* rustup-*/toolchains/* rustup-*/cargo/bin/* opam/*/lib/* opam/*/bin/*; do
       [ -e "$e" ] || [ -L "$e" ] || continue
-      [ -e {{ (nova_shared_dir ~ '/sdk') | quote }}/"$e" ] || [ -L {{ (nova_shared_dir ~ '/sdk') | quote }}/"$e" ] || echo "$e"
+      case "$e" in dl/*) continue ;; esac
+      [ -e "$shared/$e" ] || [ -L "$shared/$e" ] && continue
+      up=$(dirname "$e")
+      while [ "$up" != . ]; do
+        [ -e "$shared/$up" ] || break
+        up=$(dirname "$up")
+      done
+      if [ "$up" = . ]; then echo "$e"; fi
     done
   args: { executable: /bin/sh }
   register: sdk_dir_extra
@@ -59,6 +72,10 @@
       which {{ nova_shared_dir }}/sdk lacks; it stays in use. Move or delete them (or install them into the shared SDK) and run again.
   when: sdk_dir_extra.stdout_lines | default([]) | length > 0
 
+- name: the login's own SDK is in use by no process
+  ansible.builtin.include_tasks: in-use.yml
+  vars: { sdk_in_use_dir: "{{ nova_sdk_dir }}" }
+
 - name: the login's own SDK is moved aside and nova_sdk_dir names the shared SDK
   ansible.builtin.shell: |
     set -eu
@@ -73,6 +90,10 @@
   register: sdk_link
   changed_when: "'SET' in sdk_link.stdout"
   when: not ansible_check_mode
+
+- name: the SDK moved aside is in use by no process
+  ansible.builtin.include_tasks: in-use.yml
+  vars: { sdk_in_use_dir: "{{ nova_sdk_dir ~ '.home' }}" }
 
 - name: the SDK moved aside is deleted
   ansible.builtin.shell: |
