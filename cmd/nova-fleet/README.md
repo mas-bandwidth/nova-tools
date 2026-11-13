@@ -416,8 +416,8 @@ directories, release cache and `TMPDIR` are then in its home, written as the log
 plant there; root's only act there is deleting a runner directory by name), and the runners' default `PATH` starts
 with `/opt/nova/bin` (`nova_shared_dir`): root's copies of the fleet login's tools, which it runs and cannot change (made here, refreshed by `install` on a runner whose runners are another login's). Its `~/sdk` names `/opt/nova/sdk`, the fleet login's shared SDK, once `sdk-toolchain` has put one there (`nova_sdk_shared`, on for a runner whose runners are another login's), so a workflow's `$HOME/sdk` works for it as for the fleet login. A runner whose unit runs it from another directory (the fleet
 login's, before the switch) moves: `RUNNER-MOVE <runner> from=<dir> to=<dir> user=<login>`, then, once its job ends,
-its unit stops, it registers in the new directory under the same name (`config.sh --replace`, with a fresh token), the
-unit restarts it there and the old directory is deleted; a move that fails starts the runner where it ran and fails
+its unit stops, its registration comes with it (`.runner`, `.credentials`, `.credentials_rsaparams` and `.labels`, read by the old directory's owner and written by the login into its own directory, each checked against its source), so it keeps its name, id and labels in GitHub and no token is asked for (`RUNNER-PLAN ... move-registered=`); one whose old directory holds no registration registers in the new directory under the same name (`config.sh --replace`, with a fresh token); the
+unit restarts it there and the old directory is deleted; a move that fails removes the copied registration, starts the runner where it ran and fails
 the run with `RUNNER-MOVE-FAILED`. A held runner is not moved: the run fails with `RUNNER-HELD` naming it. The
 record's `runner_env` must name nothing in the fleet login's home (the run fails naming the keys, before the machine
 is changed). With `nova_runner_vm_kernel` (on) an x86_64 host gives it the VM tier: root's copies of the kernel
