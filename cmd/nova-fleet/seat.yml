@@ -17,7 +17,7 @@
 #   nova-fleet seat --check --diff -- -l <machine> -e nova_seal_store=<store clone>
 #   nova-fleet seat -- -l <machine> -e nova_seal_store=<store clone>
 - name: the seat key, made on the machine, and its rule in the store
-  hosts: "{{ nova_join_host | default('all') }}"
+  hosts: "{{ nova_join_host | default('all:!windows') }}"   # a plain Windows host (group windows) has no seat or tailnet here
   gather_facts: true
   gather_subset: [min]
   tasks:

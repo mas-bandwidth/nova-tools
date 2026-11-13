@@ -219,3 +219,54 @@ func TestStageCheckScript(t *testing.T) {
 		t.Errorf("the stage check's command line is %d characters; Windows takes 32767: shorten stage-check.ps1", len(line))
 	}
 }
+
+// TestNativeStageGuardsEveryElevatedCall: on a plain Windows host (tasks/windows-stage.yml) win_command cannot join two
+// programs with &&, so every win_command that runs powershell.exe on a staged -File is the task straight after the
+// stage check, under the same condition; and windows-stage.yml stages the very files it hashed.
+func TestNativeStageGuardsEveryElevatedCall(t *testing.T) {
+	t.Parallel()
+	const check = "{{ github_runner_win_stage_check_argv }}"
+	n := 0
+	for file, tasks := range roleTasks(t) {
+		for i, task := range tasks {
+			wc, ok := task["ansible.windows.win_command"].(map[string]any)
+			if !ok {
+				continue
+			}
+			argv := text(t, wc["argv"])
+			if !strings.Contains(argv, "-File") {
+				continue
+			}
+			n++
+			if !strings.Contains(argv, "github_runner_wsl_script") && !strings.Contains(argv, "github_runner_wsl_ci_script") {
+				t.Errorf("%s %q: runs a file that is not staged: %s", file, task["name"], argv)
+			}
+			prev := map[string]any{}
+			if i > 0 {
+				prev = tasks[i-1]
+			}
+			pc, _ := prev["ansible.windows.win_command"].(map[string]any)
+			if pc == nil || pc["argv"] != check {
+				t.Errorf("%s %q: not straight after the stage check", file, task["name"])
+			}
+			if prev["when"] != nil && prev["when"] != task["when"] {
+				t.Errorf("%s %q: the check before it runs under %v, the call under %v", file, task["name"], prev["when"], task["when"])
+			}
+		}
+	}
+	if n != 4 {
+		t.Errorf("found %d elevated win_command calls; the plain Windows path has install, register, ensure and apply", n)
+	}
+	var hashed, staged string
+	for _, task := range roleTasks(t)["windows-stage.yml"] {
+		if task["ansible.builtin.stat"] != nil {
+			hashed = text(t, task["loop"])
+		}
+		if task["ansible.windows.win_copy"] != nil {
+			staged = text(t, task["loop"])
+		}
+	}
+	if hashed == "" || hashed != staged {
+		t.Errorf("windows-stage.yml: the files staged are not the files hashed:\n%s\n%s", hashed, staged)
+	}
+}

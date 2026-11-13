@@ -35,13 +35,13 @@
         # create the directory sealed where it is missing, then prove it (no file named yet)
         github_runner_win_stage_make: >-
           "{{ github_runner_wsl_powershell }}" -NoProfile -NonInteractive -NoLogo -EncodedCommand
-          {{ ("$Make = $true; $Stage = '" ~ github_runner_wsl_stage_dir ~ "'; $Names = @(); $Shas = @()\n" ~ github_runner_win_stage_body)
+          {{ ("$Make = $true; $Stage = '" ~ github_runner_wsl_stage_dir ~ "'; $Names = @(); $Shas = @(); " ~ github_runner_win_stage_body)
              | b64encode(encoding='utf-16-le') }} </dev/null
         # prove it and every staged script, before each elevated call
         github_runner_win_stage_check: >-
           "{{ github_runner_wsl_powershell }}" -NoProfile -NonInteractive -NoLogo -EncodedCommand
           {{ ("$Make = $false; $Stage = '" ~ github_runner_wsl_stage_dir ~ "'; $Names = @('" ~ (github_runner_win_stage_names | join("', '"))
-             ~ "'); $Shas = @('" ~ (github_runner_win_stage_shas | join("', '")) ~ "')\n" ~ github_runner_win_stage_body)
+             ~ "'); $Shas = @('" ~ (github_runner_win_stage_shas | join("', '")) ~ "'); " ~ github_runner_win_stage_body)
              | b64encode(encoding='utf-16-le') }} </dev/null
 
     - name: the stage directory, made sealed and proved

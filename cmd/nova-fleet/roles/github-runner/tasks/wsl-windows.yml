@@ -12,27 +12,44 @@
 # whose service logs on as the local account <account> in Administrators. Its password is the nova-secrets value
 # <secret> in this machine's seat: a run where the seat lacks it stops before changing anything and prints how to mint
 # it. The value reaches powershell.exe only in its environment (nova-secrets exec, then WSLENV through interop).
+#
+# A plain Windows host (github_runner_win_native: its record's os is windows) gets the ordinary runners the same way
+# with no interop: the play connects over its OpenSSH as an administrator, PowerShell as the shell, stages with
+# tasks/windows-stage.yml and runs the same powershell.exe command lines with ansible.windows.win_command, each straight
+# after the stage check (the token still on stdin only). It has no seat, so it takes no admin runners. Each such task
+# registers under its own name (a skipped task still registers) and a set_fact keeps the one that ran.
 
 - name: is this a WSL machine with interop
   ansible.builtin.stat: { path: "{{ github_runner_wsl_interop }}" }
   register: github_runner_wsl_interop_stat
+  when: not github_runner_win_native | bool
 
 - name: is powershell.exe reachable
   ansible.builtin.stat: { path: "{{ github_runner_wsl_powershell }}" }
   register: github_runner_wsl_ps
+  when: not github_runner_win_native | bool
 
-- name: windows_runners is for a WSL machine
+- name: windows_runners is for a WSL machine or a plain Windows host
   ansible.builtin.assert:
     quiet: true
     that:
-      - github_runner_wsl_interop_stat.stat.exists
-      - github_runner_wsl_ps.stat.exists
+      - github_runner_win_native | bool or github_runner_wsl_interop_stat.stat.exists
+      - github_runner_win_native | bool or github_runner_wsl_ps.stat.exists
       - nova_windows_runners | default([]) is sequence and nova_windows_runners | default([]) is not string
       - nova_windows_admin_runners | default([]) is sequence and nova_windows_admin_runners | default([]) is not string
     fail_msg: >-
       GITHUB-RUNNERS {{ inventory_hostname }}: its record names windows_runners or windows_admin_runners, but this is not
-      a WSL machine with interop ({{ github_runner_wsl_powershell }}); clear the fields:
+      a WSL machine with interop ({{ github_runner_wsl_powershell }}) nor a plain Windows host (os windows); clear the fields:
       nova-config machine set {{ inventory_hostname }} --windows_runners '' --windows_admin_runners ''
+
+# An admin runner's password comes from the machine's seat through interop; a plain Windows host has neither.
+- name: a plain Windows host takes no admin runners
+  ansible.builtin.assert:
+    quiet: true
+    that: not github_runner_win_native | bool or nova_windows_admin_runners | default([]) | length == 0
+    fail_msg: >-
+      GITHUB-RUNNERS {{ inventory_hostname }}: a plain Windows host (os windows) has no seat for an admin runner's
+      password; clear the field: nova-config machine set {{ inventory_hostname }} --windows_admin_runners ''
 
 # An admin runner registers to one repository, never an organization: every repository of an organization could send
 # it jobs, and they run as an administrator. nova-config refuses such a record; this holds a hand-made inventory to it.
@@ -173,6 +190,11 @@
 
 - name: the scripts, staged on the Windows side where only Administrators can change them
   ansible.builtin.include_tasks: wsl-stage.yml
+  when: not github_runner_win_native | bool
+
+- name: the scripts, staged where only Administrators can change them (plain Windows host)
+  ansible.builtin.include_tasks: windows-stage.yml
+  when: github_runner_win_native | bool
 
 # Each admin runner's local account: created, or its password set to the seat's where they differ; in Administrators
 # (by SID); allowed to log on as a service and denied interactive and remote-interactive logon. The password reaches
@@ -232,7 +254,25 @@
   loop_control: { label: "{{ item.name }}" }
   register: github_runner_win_installed
   changed_when: github_runner_win_installed.stdout is search('DOWNLOADED|EXTRACTED|ENV-CHANGED|WORKFLOW ')
-  when: not ansible_check_mode
+  when: not ansible_check_mode and not github_runner_win_native | bool
+
+- name: the stage, proved (plain Windows host; before the install)
+  ansible.windows.win_command: { argv: "{{ github_runner_win_stage_check_argv }}" }
+  changed_when: false
+  when: not ansible_check_mode and github_runner_win_native | bool
+
+- name: each wanted runner unpacked, with the .env lines the role owns (plain Windows host)
+  ansible.windows.win_command:
+    argv: >-
+      {{ ['powershell.exe', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', github_runner_wsl_script,
+          '-Action', 'install', '-Dir', item.dir, '-Cache', github_runner_wsl_cache,
+          '-Version', github_runner_version, '-Sha', github_runner_sha256['win-x64']]
+         + (['-PathList', github_runner_windows_path | join(';')] if github_runner_windows_path | length > 0 else []) }}
+  loop: "{{ github_runner_win_want }}"
+  loop_control: { label: "{{ item.name }}" }
+  register: github_runner_win_installed_native
+  changed_when: github_runner_win_installed_native.stdout is search('DOWNLOADED|EXTRACTED|ENV-CHANGED')
+  when: not ansible_check_mode and github_runner_win_native | bool
 
 - name: register, one target at a time (each target's own token)
   ansible.builtin.include_tasks: wsl-windows-register.yml
@@ -296,12 +336,26 @@
   loop_control: { label: "{{ item.name }}" }
   register: github_runner_win_service
   changed_when: "' started ' in github_runner_win_service.stdout"
-  when: not ansible_check_mode
+  when: not ansible_check_mode and not github_runner_win_native | bool
+
+- name: the stage, proved (plain Windows host; before the services)
+  ansible.windows.win_command: { argv: "{{ github_runner_win_stage_check_argv }}" }
+  changed_when: false
+  when: not ansible_check_mode and github_runner_win_native | bool
+
+- name: each wanted runner's service starts at boot and is running (plain Windows host)
+  ansible.windows.win_command:
+    argv: ['powershell.exe', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', "{{ github_runner_wsl_script }}", '-Action', 'ensure', '-Dir', "{{ item.dir }}"]
+  loop: "{{ github_runner_win_want }}"
+  loop_control: { label: "{{ item.name }}" }
+  register: github_runner_win_service_native
+  changed_when: "' started ' in github_runner_win_service_native.stdout"
+  when: not ansible_check_mode and github_runner_win_native | bool
 
 # The CI rules on these runners: nova-ci-rules.ps1 apply with their directories (tasks/ci-rules.yml does every runner
 # on the machine; this does the ones set up here). An idle runner whose .env changed is restarted to read it.
 - name: the CI rules on these runners
-  when: not ansible_check_mode
+  when: not ansible_check_mode and not github_runner_win_native | bool
   block:
     - name: apply them (the hooks were staged with the script)
       ansible.builtin.shell: >-
@@ -314,6 +368,27 @@
       register: github_runner_win_ci
       failed_when: github_runner_win_ci.rc != 0 or 'restart=failed' in github_runner_win_ci.stdout or 'denied=' in github_runner_win_ci.stdout
       changed_when: "'hooks=set' in github_runner_win_ci.stdout or 'restart=done' in github_runner_win_ci.stdout"
+
+- name: the CI rules on these runners (plain Windows host)
+  when: not ansible_check_mode and github_runner_win_native | bool
+  block:
+    - name: the stage, proved (plain Windows host; before the CI rules)
+      ansible.windows.win_command: { argv: "{{ github_runner_win_stage_check_argv }}" }
+      changed_when: false
+    - name: apply them (plain Windows host; the hooks were staged with the script)
+      ansible.windows.win_command:
+        argv: >-
+          {{ ['powershell.exe', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', github_runner_wsl_ci_script,
+              'apply', github_runner_ci_limit_seconds | string, github_runner_ci_push_branches | join(' ')]
+             + (github_runner_win_want | map(attribute='dir') | list) }}
+      register: github_runner_win_ci_native
+      failed_when: github_runner_win_ci_native.rc != 0 or 'restart=failed' in github_runner_win_ci_native.stdout or 'denied=' in github_runner_win_ci_native.stdout
+      changed_when: "'hooks=set' in github_runner_win_ci_native.stdout or 'restart=done' in github_runner_win_ci_native.stdout"
+
+- name: the CI rules, whichever way they ran
+  ansible.builtin.set_fact:
+    github_runner_win_ci: "{{ github_runner_win_ci_native if github_runner_win_native | bool else github_runner_win_ci }}"
+  when: not ansible_check_mode
 
 - name: the CI rules' receipt
   ansible.builtin.debug:

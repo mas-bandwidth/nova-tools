@@ -18,7 +18,7 @@ const roleDir = "roles/github-runner"
 
 // commandModules are the modules that start a program on the machine or the control node.
 var commandModules = []string{"ansible.builtin.command", "ansible.builtin.shell", "ansible.builtin.raw", "ansible.builtin.script",
-	"command", "shell", "raw", "script"}
+	"command", "shell", "raw", "script", "ansible.windows.win_command", "ansible.windows.win_shell"}
 
 // roleTasks is every task of the role's task files, block, rescue and always flattened, with its file.
 func roleTasks(t *testing.T) map[string][]map[string]any {
