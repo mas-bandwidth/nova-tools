@@ -244,11 +244,17 @@ XRead(p) ==
 
 XFind(p) == pc[p] = "gfind" /\ Find(p, "gcancel")
 
+\* looked for again once every request is dead: an open one may have launched its box after the first look
+XRefind(p) ==
+  /\ pc[p] = "gcancel" /\ ToCancel(p) = {}
+  /\ seen' = [seen EXCEPT ![p].boxes = {b \in Boxes : box[b] = "run"}]
+  /\ Go(p, "gremove") /\ UNCHANGED <<rec, young, box, boxReq, hw, req, reqBox, mine, okBox>>
+
 ToCancel(p) == IF Broken = "OnlyRequest" THEN {} ELSE {q \in SQ(p) \cup ({mine[p].rq} \ {None}) : req[q] = "live"}
 ToRemove(p) == {b \in SB(p) \cup ({mine[p].id} \ {None}) : box[b] = "run"}
 ClearRq(p) == mine[p].rq /= None /\ Broken /= "OnlyRequest"
 ClearBox(p) == mine[p].id /= None \/ mine[p].ask \/ ClearRq(p)
-AtRemove(p) == pc[p] = "gremove" \/ (pc[p] = "gcancel" /\ ToCancel(p) = {})
+AtRemove(p) == pc[p] = "gremove"
 AtClearBox(p) == AtRemove(p) /\ ToRemove(p) = {}
 AtDrop(p) == pc[p] = "gdrop" \/ (AtClearBox(p) /\ ~ClearBox(p))
 Given(p) == IF p \in Rents THEN "given" ELSE "done"
@@ -318,7 +324,7 @@ RentStep(p) ==
   \/ RAdoptReq(p) \/ RGone(p) \/ RNoBox(p) \/ RFound(p) \/ RCreate(p) \/ RRefused(p) \/ RFallback(p)
   \/ RNote(p) \/ RWaitBox(p) \/ RWaitDead(p) \/ RCheckGone(p) \/ RCheckOK(p) \/ RCheckBad(p) \/ RRefusedHW(p)
 
-GiveStep(p) == XFind(p) \/ XCancel(p) \/ XRemove(p) \/ XClearBox(p) \/ XDrop(p)
+GiveStep(p) == XFind(p) \/ XRefind(p) \/ XCancel(p) \/ XRemove(p) \/ XClearBox(p) \/ XDrop(p)
 
 ReturnStep(p) == XNone(p) \/ XBusy(p) \/ XRead(p)
 

@@ -353,7 +353,7 @@ func last(v map[string][]string, k string) string {
 }
 
 func prodDeps(p provider, cfg string, key string, up []string, out io.Writer) rentDeps {
-	return rentDeps{prov: p, rec: configRecord{bin: cfg}, hardware: sshHardware(key), sleep: time.Sleep, out: out,
+	return rentDeps{prov: p, rec: configRecord{bin: cfg}, hardware: sshHardware(key), sleep: time.Sleep, now: now, out: out,
 		step: func(string) {},
 		join: func(name, address string) error {
 			at := len(up)

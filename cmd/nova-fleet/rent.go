@@ -54,7 +54,8 @@ may land after this looks):
   2 seat     the machine's seat removed from the secrets store, which is pushed (Latitude)
   3 tailnet  its tailnet device deleted (TAILSCALE_API_KEY)
   4 row      its machine row removed (nova-config machine remove), and its host keys from known_hosts
-  5 request  every live spot request named <name> cancelled, and read back dead
+  5 request  every live spot request named <name> cancelled, and read back dead; then the boxes looked
+             for again (an open request may have launched one)
   6 box      every box named <name> deleted (Latitude) or terminated (AWS), and read back gone
   7 record   the box and request ids and the ask it read cleared in one write, then the record removed
 Each step reads first: run it again to resume. Exit: 0 returned (RETURN OK); 1 refused or failed; 2 could not run.
@@ -90,6 +91,7 @@ type rentDeps struct {
 	join     func(name, address string) error
 	step     func(action string) // the model's action just taken
 	sleep    func(time.Duration)
+	now      func() time.Time
 	out      io.Writer
 }
 
@@ -117,22 +119,22 @@ func askEnd(r rentedRow) string {
 }
 
 // asking is whether a rent may still be in its provider's create call: an ask younger than createWindow.
-func asking(r rentedRow) bool {
+func (d rentDeps) asking(r rentedRow) bool {
 	t, err := time.Parse(time.RFC3339, r.Creating)
-	return r.Creating != "" && (err != nil || now().Before(t.Add(createWindow)))
+	return r.Creating != "" && (err != nil || d.now().Before(t.Add(createWindow)))
 }
 
 func (d rentDeps) say(format string, a ...any) { fmt.Fprintf(d.out, format+"\n", a...) }
 
 // waitFor polls until done says so, or the deadline: the provider's state is read, never assumed.
 func (d rentDeps) waitFor(what string, limit time.Duration, done func() (bool, error)) error {
-	end := now().Add(limit)
+	end := d.now().Add(limit)
 	for {
 		ok, err := done()
 		if err != nil || ok {
 			return err
 		}
-		if now().After(end) {
+		if d.now().After(end) {
 			return fmt.Errorf("%s: not after %s", what, limit)
 		}
 		d.sleep(10 * time.Second)
@@ -154,7 +156,7 @@ func (d rentDeps) rent(a rentArgs) error {
 	// creating names it, so the store keeps the record and another rent or a return waits it out (createWindow).
 	added := r == nil
 	if added {
-		at := now().UTC().Format(time.RFC3339)
+		at := d.now().UTC().Format(time.RFC3339)
 		r = &rentedRow{Name: name, Provider: a.provider, Market: market, Purpose: a.purpose, RentedBy: a.actor,
 			RentedAt: at, ReturnBy: a.returnBy, Creating: at}
 		if err := d.rec.add(*r, a.actor); err != nil {
@@ -163,7 +165,7 @@ func (d rentDeps) rent(a rentArgs) error {
 		d.step("RAdd")
 	} else if r.Provider != a.provider || r.Market != market {
 		return fmt.Errorf("%s is already rented at %s %s, not %s %s; run: nova-fleet return %s first", name, r.Provider, dash(r.Market), a.provider, dash(market), name)
-	} else if asking(*r) {
+	} else if d.asking(*r) {
 		d.step("RBusy")
 		return fmt.Errorf("a rent of %s asked %s for its box at %s and may still be asking; run it again after %s", name, r.Provider, r.Creating, askEnd(*r))
 	} else {
@@ -386,6 +388,12 @@ func (d rentDeps) give(r *rentedRow, actor string) error {
 			d.step("XCancel")
 		}
 	}
+	// Looked for again once every request is dead: an open one may have launched its box after the first look,
+	// and a cancel leaves that box running.
+	if boxes, _, err = d.prov.find(r.Name); err != nil {
+		return err
+	}
+	d.step("XRefind")
 	gone := []string{}
 	if r.ProviderID != "" {
 		gone = append(gone, r.ProviderID)
@@ -452,7 +460,7 @@ func (d rentDeps) giveBack(name, actor string, force bool, scopes []string) erro
 		d.say("RETURN OK %s: no record, nothing rented by that name", name)
 		return nil
 	}
-	if asking(*r) {
+	if d.asking(*r) {
 		d.step("XBusy")
 		return fmt.Errorf("a rent of %s asked %s for its box at %s and may still be asking, so a box may land after this looks; run it again after %s", name, r.Provider, r.Creating, askEnd(*r))
 	}
