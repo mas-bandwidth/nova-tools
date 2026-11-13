@@ -30,6 +30,7 @@
      ("reserve-first-come" "nova-reserve hands freed slots to waiters in arrival order, so a long waiter is not passed by later ones (captain 2026-11-12: a waiter since 17:13Z was passed by three later arrivals)")
      ("tailscale-ssh-boot-revert" "nova-fleet tailscale: the Tailscale SSH switch's revert survives a reboot or a killed job inside its window (a boot-time check of a pending switch), so a power loss there cannot leave Tailscale SSH off without a proven key login")
      ("sshoff-trace" "nova-fleet: the Tailscale SSH switch's functional test writes its runs as traces that a SSHOffTrace.tla checks are behaviours of SSHOff.tla, binding the model to the code")
+     ("rented-machines" "Approved by the owner 2026-11-13, in progress: rented machines as first-class fleet members, built in order: (1) the machine record gains provider, provider id, hourly price, purpose, rented-by and a return-by time, and one command lists rented boxes with their cost and overdue state; (2) nova-fleet rent and return verbs for Latitude and AWS: rent creates the box, checks its hardware against the ask (NIC model, cores) and deletes it on a mismatch, joins it and writes the record; return removes its runners, tailnet entry, record and the box; AWS temporary boxes stay off the tailnet with no seat or secrets; (3) an idle report of rented boxes with no load for N minutes (2026-11-13: four Latitude boxes rented with the wrong NIC, rented boxes billing idle after their drivers died, teardown programs living in a session scratch folder)")
      )
    :columns (("done" "done"))
    :cells (
@@ -57,6 +58,7 @@
      ("reserve-first-come" "done" "t-reserve-first-come")
      ("tailscale-ssh-boot-revert" "done" "t-tailscale-ssh-boot-revert")
      ("sshoff-trace" "done" "t-sshoff-trace")
+     ("rented-machines" "done" "t-rented-machines")
      ))
   (:id "t-reserve-slots-are-cores" :type :task :title "nova-reserve slots bound CPU, so N one-slot jobs cannot saturate a bench" :state :todo)
   (:id "t-fleet-placement" :type :task :title "Place one heavy job on the quietest bench fleet-wide" :state :todo)
@@ -81,4 +83,5 @@
   (:id "t-bus-hook-absent-wake-backoff" :type :task :title "nova-bus hook backs off while its wake target is absent (no Monitor on the wake file, no harness server) instead of exiting 1 and being restarted every 10 s by its supervisor (16,953 restarts in one log, 2026-11-12)" :state :todo)
   (:id "t-reserve-first-come" :type :task :title "nova-reserve hands freed slots to waiters in arrival order, so a long waiter is not passed by later ones (captain 2026-11-12: a waiter since 17:13Z was passed by three later arrivals)" :state :todo)
   (:id "t-tailscale-ssh-boot-revert" :type :task :title "nova-fleet tailscale: the Tailscale SSH switch's revert survives a reboot or a killed job inside its window (a boot-time check of a pending switch), so a power loss there cannot leave Tailscale SSH off without a proven key login" :state :todo)
-  (:id "t-sshoff-trace" :type :task :title "nova-fleet: the Tailscale SSH switch's functional test writes its runs as traces that a SSHOffTrace.tla checks are behaviours of SSHOff.tla, binding the model to the code" :state :todo)))
+  (:id "t-sshoff-trace" :type :task :title "nova-fleet: the Tailscale SSH switch's functional test writes its runs as traces that a SSHOffTrace.tla checks are behaviours of SSHOff.tla, binding the model to the code" :state :todo)
+  (:id "t-rented-machines" :type :task :title "Approved by the owner 2026-11-13, in progress: rented machines as first-class fleet members, built in order: (1) the machine record gains provider, provider id, hourly price, purpose, rented-by and a return-by time, and one command lists rented boxes with their cost and overdue state; (2) nova-fleet rent and return verbs for Latitude and AWS: rent creates the box, checks its hardware against the ask (NIC model, cores) and deletes it on a mismatch, joins it and writes the record; return removes its runners, tailnet entry, record and the box; AWS temporary boxes stay off the tailnet with no seat or secrets; (3) an idle report of rented boxes with no load for N minutes (2026-11-13: four Latitude boxes rented with the wrong NIC, rented boxes billing idle after their drivers died, teardown programs living in a session scratch folder)" :state :todo)))
