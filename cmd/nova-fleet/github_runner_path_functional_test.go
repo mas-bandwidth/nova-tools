@@ -119,4 +119,14 @@ func TestRunnerTmpdirAndTheRecordsEnvironmentRender(t *testing.T) {
 	assert.Contains(t, service, "\nEnvironment=TMPDIR=/home/ghrunner-t/.cache/runner-tmp\n")
 	assert.Contains(t, service, "\nEnvironment=PATH=/opt/nova/bin:/usr/local/sbin:")
 	assert.Contains(t, service, "\nRequires=nova-runner-login-net.service\nAfter=nova-runner-login-net.service\n")
+	// its own rustup and cargo homes, set once, unless the environment names them
+	assert.Contains(t, service, "\nEnvironment=RUSTUP_HOME=/home/ghrunner-t/.rustup\nEnvironment=CARGO_HOME=/home/ghrunner-t/.cargo\n")
+	assert.Equal(t, 1, strings.Count(service, "RUSTUP_HOME="))
+	service, _, _ = renderRunnerUnits(t, "-e", "github_runner_user=ghrunner-t", "-e", `{"github_runner_env": {"RUSTUP_HOME": "/r", "CARGO_HOME": "/c"}}`)
+	assert.Contains(t, service, "\nEnvironment=RUSTUP_HOME=/r\nEnvironment=CARGO_HOME=/c\n")
+	assert.Equal(t, 1, strings.Count(service, "RUSTUP_HOME="))
+	assert.Equal(t, 1, strings.Count(service, "CARGO_HOME="))
+	// the fleet login's runners keep the rustup home their environment gives them
+	service, _, _ = renderRunnerUnits(t)
+	assert.NotContains(t, service, "RUSTUP_HOME")
 }

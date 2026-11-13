@@ -52,6 +52,24 @@ func TestSharedToolsAreRootsCopies(t *testing.T) {
 	link := runnerTask(t, login, "the runner login's ~/sdk names it")
 	assert.Equal(t, "{{ github_runner_user }}", link["become_user"], "the link is the runner login's, made as it")
 	assert.Contains(t, asText(link["ansible.builtin.shell"]), "ln -sfn {{ (nova_shared_dir ~ '/sdk') | quote }} sdk")
+	// its own rustup home, the shared toolchains linked in, made as it after ~/sdk
+	rustup := runnerTask(t, login, "the runner login's rustup home names the shared toolchains")
+	assert.Equal(t, "{{ github_runner_user }}", rustup["become_user"])
+	rsh := asText(rustup["ansible.builtin.shell"])
+	for _, want := range []string{
+		`src=$(env -u RUSTUP_HOME -u CARGO_HOME "$shared_rustup" show home)`,
+		`rh={{ github_runner_env.get('RUSTUP_HOME', github_runner_rustup_home) | quote }}`,
+		`ch={{ github_runner_env.get('CARGO_HOME', github_runner_cargo_home) | quote }}`,
+		`if [ "$(readlink "$l")" != "$t" ]; then ln -sfn "$t" "$l"; set=1; fi`,
+		`cp "$src/update-hashes/$n" "$rh/update-hashes/$n"`,
+		`if [ -L "$l" ] && [ ! -e "$l" ]; then rm -f "$l"; set=1; fi`,
+		`cp "$src/settings.toml" "$rh/settings.toml"`,
+		`if [ "$(readlink "$b")" != "$f" ]; then ln -sfn "$f" "$b"; set=1; fi`,
+	} {
+		assert.Contains(t, rsh, want)
+	}
+	assert.NotContains(t, rsh, "rm -rf", "only dangling links of its own are removed")
+	assert.Less(t, taskIndex(login, "the runner login's ~/sdk names it"), taskIndex(login, "the runner login's rustup home names the shared toolchains"))
 }
 
 // sdk-toolchain never becomes root: with nova_sdk_shared it checks the shared directory is the login's, moves the
