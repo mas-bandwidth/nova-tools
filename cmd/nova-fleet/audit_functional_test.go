@@ -104,7 +104,7 @@ func TestFunctionalAuditMemlockNamesTheOddOneOut(t *testing.T) {
 }
 
 // TestFunctionalAuditJobProbeNamesTheStepThatCannotWrite runs the audit's job probe (audit_job_probe in audit.yml) under
-// bash with fake rustup, cargo, go and cmake: a rustup whose home the login cannot write and a CCACHE_DIR it cannot
+// bash with fake rustup, go and cmake: a rustup whose home the login cannot write and a CCACHE_DIR it cannot
 // write are each named with the reason, the steps that work pass, and the probe's directory is gone after.
 func TestFunctionalAuditJobProbeNamesTheStepThatCannotWrite(t *testing.T) {
 	t.Parallel()
@@ -135,7 +135,6 @@ func TestFunctionalAuditJobProbeNamesTheStepThatCannotWrite(t *testing.T) {
 	}
 	fakes := map[string]string{
 		"rustup": "#!/bin/sh\n[ \"$1\" = show ] && { echo " + ro + "; exit 0; }\nexit 0\n",
-		"cargo":  "#!/bin/sh\nexit 0\n",
 		"go":     "#!/bin/sh\nexit 0\n",
 		"cmake":  "#!/bin/sh\nexit 0\n",
 	}
@@ -153,7 +152,6 @@ func TestFunctionalAuditJobProbeNamesTheStepThatCannotWrite(t *testing.T) {
 	require.NoError(t, err, string(out))
 	s := string(out)
 	assert.Regexp(t, `(?m)^MISSING rustup .*`, s)
-	assert.Contains(t, s, "OK cargo\n")
 	assert.Contains(t, s, "OK go\n")
 	assert.Contains(t, s, "OK cmake\n")
 	assert.Contains(t, s, "MISSING cache-dirs CCACHE_DIR="+filepath.Join(ro, "ccache")+" is not writable by ")

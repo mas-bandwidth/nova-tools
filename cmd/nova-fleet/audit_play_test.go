@@ -109,7 +109,9 @@ func TestAuditPlayOnlyReads(t *testing.T) {
 			text := taskText(t, task)
 			if strings.Contains(text, "audit_job_probe") {
 				job = true
-				assert.Contains(t, text, "systemctl show -p Environment --value \"$u\"", "the job runs with a runner unit's own environment")
+				assert.Contains(t, text, "cat \"/proc/$pid/environ\"", "the job runs with a runner's own environment")
+				assert.Contains(t, text, "$wd/.env", "and what the runner adds to every job")
+				assert.Contains(t, text, "the unit has no User=", "never as root")
 				assert.Contains(t, text, "sudo -n -u \"$login\"", "as that unit's login")
 				assert.Contains(t, text, "env -i", "and nothing of the audit's own")
 				continue
@@ -135,8 +137,8 @@ func TestAuditPlayOnlyReads(t *testing.T) {
 	assert.Contains(t, string(b), "item=memlock ssh={{ audit_memlock.ssh }}")
 	assert.True(t, job, "the first steps of a CI job are run")
 	assert.Contains(t, string(b), "item=job-{{ item.split(' ')[0] }}")
-	assert.Contains(t, string(b), "FLEET-AUDIT NOT-APPLICABLE host={{ inventory_hostname }} item=job reason=no loaded github-runner unit")
-	for _, step := range []string{"step rustup", "step cargo", "step go", "step cmake", "step cache-dirs"} {
+	assert.Contains(t, string(b), "FLEET-AUDIT NOT-APPLICABLE host={{ inventory_hostname }} item=job reason=no active github-runner unit")
+	for _, step := range []string{"step rustup", "step go", "step cmake", "step cache-dirs"} {
 		assert.Contains(t, string(b), step)
 	}
 	assert.Contains(t, string(b), "FLEET-AUDIT MISSING host={{ inventory_hostname }} item={{ item.name }} install={{ item.install }} check={{ item.check }}")
