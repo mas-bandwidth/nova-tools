@@ -142,8 +142,39 @@ func TestRunnerMovesOnlyWhenIdle(t *testing.T) {
 	assert.Equal(t, "{{ github_runner_old_dir }}", vars["github_runner_idle_dir"])
 	move := runnerTask(t, runner, "the move, and the registration here")
 	rescue := mapsOf(t, move["rescue"])
-	require.NotEmpty(t, rescue, "a failed move has a rescue")
-	assert.Equal(t, "a failed move starts the runner where it ran", rescue[0]["name"])
+	require.Len(t, rescue, 3, "a failed move has a rescue")
+	assert.Equal(t, "a failed move leaves no copy of the registration here", rescue[0]["name"])
+	assert.Equal(t, "a failed move starts the runner where it ran", rescue[1]["name"])
+	assert.Equal(t, "{{ github_runner_user }}", rescue[0]["become_user"], "the copy is removed as the login whose directory it is")
+
+	// the registration comes with it, after the stop and in place of a new one: no token, same name, id and labels
+	carry := runnerTask(t, runner, "the moving runner's registration comes with it")
+	assert.Less(t, taskIndex(runner, "the moving runner is stopped where it runs"), taskIndex(runner, "the moving runner's registration comes with it"))
+	assert.Less(t, taskIndex(runner, "the moving runner's registration comes with it"), taskIndex(runner, "register with GitHub"))
+	assert.Equal(t, "github_runner_old_dir != '' and runner_index in github_runner_carry | default([])", asText(carry["when"]))
+	sh := asText(carry["ansible.builtin.shell"])
+	for _, want := range []string{
+		`for f in .runner .credentials .credentials_rsaparams .labels; do`,
+		`runuser -u "$o" -- cat "$old/$f" \`,
+		`| runuser -u "$u" -- sh -c 'umask 077; cat >"$1/$2.new" && mv -f "$1/$2.new" "$1/$2"' sh "$new" "$f"`,
+		`[ -n "$a" ] && [ "$a" = "$b" ] || { echo "$new/$f does not match $old/$f" >&2; exit 1; }`,
+	} {
+		assert.Contains(t, sh, want)
+	}
+	assert.NotContains(t, sh, "install ", "root writes nothing into the runner login's directory")
+	assert.NotContains(t, sh, "cp ", "root reads nothing of the old login's directory")
+	token := runnerTask(t, runner, "a fresh token for the moving runner")
+	assert.Contains(t, asText(token["when"]), "runner_index in github_runner_need", "a carried runner asks for no token")
+
+	unix := flattenTasks(t, roleTaskFile(t, "unix.yml"))
+	carried := runnerTask(t, unix, "the runners moving here with their registration (Linux)")
+	assert.Equal(t, true, carried["become"])
+	csh := asText(carried["ansible.builtin.shell"])
+	assert.Contains(t, csh, `if [ -f "$d/.runner" ] && [ -f "$d/.credentials" ] && [ -f "$d/.credentials_rsaparams" ]; then echo "$i"; fi`)
+	assert.Contains(t, csh, `/*/actions-runner/{{ github_runner_slug }}-"$i") ;;`, "only a runner directory of the same name moves")
+	need := runnerTask(t, unix, "the runners that need registering")["ansible.builtin.set_fact"].(map[string]any)
+	assert.Contains(t, asText(need["github_runner_need"]), "difference(github_runner_carried.stdout_lines")
+	assert.Less(t, taskIndex(unix, "the runners that need registering"), taskIndex(unix, "a token is needed (registering, or removing from GitHub)"))
 	held := runnerTask(t, runner, "a moving runner is not held")
 	assert.Contains(t, asText(held["ansible.builtin.assert"].(map[string]any)["that"]), "not in github_runner_hold")
 	b, err := os.ReadFile("roles/github-runner/tasks/wait-idle.yml")
