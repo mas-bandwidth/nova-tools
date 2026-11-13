@@ -19,20 +19,28 @@ import (
 
 // ssh_names_play_functional_test.go runs ssh-names.yml through ansible-core against an inventory of its own: two
 // machines reached with the local connection, each with its own home (nova_home) and its own host key file
-// (ssh_names_host_key), and a laptop whose ssh is `false`, so it never answers. On PATH: a fake ssh for the mesh that
-// logs its arguments and answers every name but the one FAKE_SSH_FAIL names, and a fake tailscale whose
-// `status --json` is the file FAKE_TS_STATUS names.
+// (ssh_names_host_key), and a laptop whose ssh is `false`, so it never answers. On PATH: a fake ssh for the checks that
+// logs its arguments and answers as the fleet should (see fakeSSH), and a fake tailscale whose `status --json` is the
+// file FAKE_TS_STATUS names.
 
-// fakeSSH logs its arguments, and succeeds unless one of them is $FAKE_SSH_FAIL, failing then as an unreachable port.
+// fakeSSH logs its arguments. A target named in $FAKE_SSH_OPEN lets the login in, one in $FAKE_SSH_TIMEOUT times out,
+// one in $FAKE_SSH_POLICY is refused by Tailscale SSH's policy, one in $FAKE_SSH_HOSTKEY presents another host key,
+// one in $FAKE_SSH_LOCAL fails on a local file with a "Permission denied" of its own (the lists are blank-separated
+// names or addresses). Otherwise the control node's login (-l) gets in, and a machine's login is refused by sshd.
 const fakeSSH = `#!/bin/sh
 echo "$*" >> "$FAKE_SSH_LOG"
+control=
 for a in "$@"; do
-  if [ -n "$FAKE_SSH_FAIL" ] && [ "$a" = "$FAKE_SSH_FAIL" ]; then
-    echo "ssh: connect to host $a port 22: Connection timed out" >&2
-    exit 255
-  fi
+  [ "$a" = "-l" ] && control=1
+  case " $FAKE_SSH_OPEN " in *" $a "*) exit 0;; esac
+  case " $FAKE_SSH_HOSTKEY " in *" $a "*) printf '%s\n' "@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@" "@    WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!     @" "Host key for $a has changed and you have requested strict checking." "Host key verification failed." >&2; exit 255;; esac
+  case " $FAKE_SSH_LOCAL " in *" $a "*) echo "Load key \"/home/alice/.ssh/id_ed25519\": Permission denied" >&2; echo "ssh: connect to host $a port 22: Connection refused" >&2; exit 255;; esac
+  case " $FAKE_SSH_TIMEOUT " in *" $a "*) echo "ssh: connect to host $a port 22: Operation timed out" >&2; exit 255;; esac
+  case " $FAKE_SSH_POLICY " in *" $a "*) echo "tailscale: tailnet policy does not permit you to SSH to this node" >&2; exit 255;; esac
 done
-exit 0
+[ -n "$control" ] && exit 0
+echo "alice@host: Permission denied (publickey)." >&2
+exit 255
 `
 
 // fakeTailscale answers `status --json` with $FAKE_TS_STATUS, as the control node's tailscale would.
@@ -96,16 +104,14 @@ func newSSHNamesFleet(t *testing.T, edit func(h *sshNamesHost)) *sshNamesFleet {
 	return f
 }
 
-// tailnet writes the control node's `tailscale status --json`: every machine a peer tagged tag:nova that publishes its
-// own host key, except where published (a machine's published keys) or tags say otherwise.
+// tailnet writes the control node's `tailscale status --json`: every machine a peer tagged tag:nova that publishes no
+// host key (Tailscale SSH off, as the fleet runs), except where published (a machine's published keys: it still serves
+// Tailscale SSH) or tags say otherwise.
 func (f *sshNamesFleet) tailnet(t *testing.T, published map[string][]string, tags map[string][]string) {
 	t.Helper()
 	peers := map[string]any{}
 	for i, h := range []string{"bench-1", "laptop-1", "mac-1"} {
-		keys, ok := published[h]
-		if !ok {
-			keys = []string{sshNamesKey(h)}
-		}
+		keys := published[h]
 		tg, ok := tags[h]
 		if !ok {
 			tg = []string{"tag:nova"}
@@ -120,7 +126,8 @@ func (f *sshNamesFleet) tailnet(t *testing.T, published map[string][]string, tag
 	require.NoError(t, os.WriteFile(f.tsStatus, b, 0o644))
 }
 
-func (f *sshNamesFleet) run(t *testing.T, fail string, extra ...string) (string, error) {
+// run runs the play; fake is fakeSSH's environment, as "FAKE_SSH_OPEN=mac-1", or "".
+func (f *sshNamesFleet) run(t *testing.T, fake string, extra ...string) (string, error) {
 	t.Helper()
 	play, err := filepath.Abs("ssh-names.yml")
 	require.NoError(t, err)
@@ -129,7 +136,10 @@ func (f *sshNamesFleet) run(t *testing.T, fail string, extra ...string) (string,
 	cmd := exec.CommandContext(ctx, "ansible-playbook", append([]string{"-i", f.inventory, play}, extra...)...)
 	cmd.Env = append(os.Environ(), "ANSIBLE_NOCOLOR=1", "HOME="+f.dir, "TMPDIR="+f.dir,
 		"ANSIBLE_LOCAL_TEMP="+filepath.Join(f.dir, "tmp"), "PATH="+f.bin+":"+os.Getenv("PATH"),
-		"FAKE_SSH_FAIL="+fail, "FAKE_SSH_LOG="+f.sshLog, "FAKE_TS_STATUS="+f.tsStatus)
+		"FAKE_SSH_OPEN=", "FAKE_SSH_TIMEOUT=", "FAKE_SSH_POLICY=", "FAKE_SSH_HOSTKEY=", "FAKE_SSH_LOCAL=", "FAKE_SSH_LOG="+f.sshLog, "FAKE_TS_STATUS="+f.tsStatus)
+	if fake != "" {
+		cmd.Env = append(cmd.Env, fake)
+	}
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }
@@ -213,8 +223,9 @@ func TestSSHNamesWritesEveryMachineAndSkipsTheOneAsleep(t *testing.T) {
 	out, err := f.run(t, "")
 	require.NoError(t, err, out)
 	assert.Contains(t, out, "SSH-NAMES laptop-1 OFFLINE")
+	assert.Contains(t, out, "SSH-NAMES CONTROL ok=2 failed=- tailscale-ssh=- offline=laptop-1")
 	for _, m := range []string{"bench-1", "mac-1"} {
-		assert.Contains(t, out, "SSH-NAMES MESH "+m+" ok=1 check-required=- offline=laptop-1 failed=-")
+		assert.Contains(t, out, "SSH-NAMES MESH "+m+" refused=1 open=- hostkey=- timeout=- unreached=- offline=laptop-1")
 		assert.Equal(t, wantSSHNamesConfig, f.read(t, m, ".ssh/config.d/nova-fleet"), m)
 		entries, err := os.ReadDir(filepath.Join(f.home[m], ".ssh", "config.d"))
 		require.NoError(t, err)
@@ -239,36 +250,67 @@ func TestSSHNamesWritesEveryMachineAndSkipsTheOneAsleep(t *testing.T) {
 	log, err := os.ReadFile(f.sshLog)
 	require.NoError(t, err)
 	assert.Contains(t, string(log), "-o StrictHostKeyChecking=yes -o UserKnownHostsFile="+f.home["bench-1"]+"/.ssh/nova-fleet.known_hosts mac-1 true")
+	assert.Contains(t, string(log), "-n -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=yes -l bob mac-1.tail0test.ts.net true",
+		"the control node logs in as the record's login at the record's address")
+	assert.NotContains(t, string(log), "laptop-1", "a machine asleep is tried by no one")
 
 	out, err = f.run(t, "")
 	require.NoError(t, err, out)
-	assert.Contains(t, out, "SSH-NAMES bench-1 machines=3 online=2 config=same known_hosts=same include=first unchecked=-")
+	assert.Contains(t, out, "SSH-NAMES bench-1 machines=3 online=2 config=same known_hosts=same include=first unchecked=bench-1,mac-1")
 	for _, m := range []string{"bench-1", "mac-1"} {
 		assert.Regexp(t, m+` +: ok=\d+ +changed=0 `, out, "a second run changed something")
 	}
 }
 
-// A pair that fails between two machines that both answered fails the run, naming the target and ssh's own line.
-func TestSSHNamesMeshFailureFailsTheRun(t *testing.T) {
+// A login from one machine to another fails the run, naming the pair; the other machine's refused pair passes.
+func TestFunctionalSSHNamesMachineToMachineLoginFailsTheRun(t *testing.T) {
 	t.Parallel()
 	f := newSSHNamesFleet(t, nil)
-	out, err := f.run(t, "mac-1")
+	out, err := f.run(t, "FAKE_SSH_OPEN=mac-1")
 	require.Error(t, err, out)
-	assert.Contains(t, out, "SSH-NAMES MESH bench-1 ok=0 check-required=- offline=laptop-1 failed=mac-1")
-	assert.Contains(t, out, "SSH-NAMES MESH bench-1 FAILED failed mac-1: ssh: connect to host mac-1 port 22: Connection timed out")
-	assert.Contains(t, out, "SSH-NAMES MESH mac-1 ok=1 check-required=- offline=laptop-1 failed=-")
+	assert.Contains(t, out, "SSH-NAMES MESH bench-1 refused=0 open=bench-1->mac-1 hostkey=- timeout=- unreached=- offline=laptop-1")
+	assert.Contains(t, out, "SSH-NAMES MESH bench-1 OPEN bench-1->mac-1: this machine's login logged in there")
+	assert.Contains(t, out, "SSH-NAMES MESH mac-1 refused=1 open=- hostkey=- timeout=- unreached=- offline=laptop-1")
 }
 
-// Nothing reaches the control node without a person (its ssh rules are checks), so a pair ending there is reported
-// check-required and never tried.
-func TestSSHNamesControlNodeIsCheckRequired(t *testing.T) {
+// Refused by Tailscale SSH's policy counts as refused; a pair that times out or fails another way is reported and
+// passes: it is no login.
+func TestFunctionalSSHNamesTimeoutsAndPolicyRefusalsPass(t *testing.T) {
+	t.Parallel()
+	f := newSSHNamesFleet(t, nil)
+	out, err := f.run(t, "FAKE_SSH_TIMEOUT=mac-1")
+	require.NoError(t, err, out)
+	assert.Contains(t, out, "SSH-NAMES MESH bench-1 refused=0 open=- hostkey=- timeout=mac-1 unreached=- offline=laptop-1")
+	assert.Contains(t, out, "SSH-NAMES MESH mac-1 refused=1 open=- hostkey=- timeout=- unreached=- offline=laptop-1")
+	out, err = f.run(t, "FAKE_SSH_POLICY=bench-1")
+	require.NoError(t, err, out)
+	assert.Contains(t, out, "SSH-NAMES MESH mac-1 refused=1 open=- hostkey=- timeout=- unreached=- offline=laptop-1")
+}
+
+// The control node runs no mesh (it is the one way in) and is a target like any other machine, to be refused; the
+// control node's own login check covers every machine but itself.
+func TestFunctionalSSHNamesControlNodeIsTheWayIn(t *testing.T) {
 	t.Parallel()
 	f := newSSHNamesFleet(t, nil)
 	f.tailnet(t, nil, map[string][]string{"mac-1": {"tag:control"}})
-	out, err := f.run(t, "mac-1")
+	out, err := f.run(t, "")
 	require.NoError(t, err, out)
-	assert.Contains(t, out, "SSH-NAMES MESH bench-1 ok=0 check-required=mac-1 offline=laptop-1 failed=-")
-	assert.Contains(t, out, "SSH-NAMES MESH mac-1 ok=1 check-required=- offline=laptop-1 failed=-")
+	assert.Contains(t, out, "SSH-NAMES MESH bench-1 refused=1 open=- hostkey=- timeout=- unreached=- offline=laptop-1")
+	assert.NotContains(t, out, "SSH-NAMES MESH mac-1")
+	assert.Contains(t, out, "SSH-NAMES CONTROL ok=1 failed=- tailscale-ssh=- offline=laptop-1")
+	log, err := os.ReadFile(f.sshLog)
+	require.NoError(t, err)
+	assert.NotContains(t, string(log), "-l bob", "the control node is not checked into itself")
+}
+
+// A machine the control node cannot log in to by key fails the run, naming it with ssh's own line.
+func TestFunctionalSSHNamesControlLoginFailureFailsTheRun(t *testing.T) {
+	t.Parallel()
+	f := newSSHNamesFleet(t, nil)
+	out, err := f.run(t, "FAKE_SSH_TIMEOUT=bench-1."+sshNamesTailnet)
+	require.Error(t, err, out)
+	assert.Contains(t, out, "SSH-NAMES CONTROL ok=1 failed=bench-1 tailscale-ssh=- offline=laptop-1")
+	assert.Contains(t, out, "SSH-NAMES CONTROL FAILED failed bench-1: ssh: connect to host bench-1."+sshNamesTailnet+" port 22: Operation timed out")
 }
 
 // --check writes nothing and checks no pair, and takes -l.
@@ -277,8 +319,9 @@ func TestSSHNamesCheckWritesNothing(t *testing.T) {
 	f := newSSHNamesFleet(t, nil)
 	out, err := f.run(t, "", "--check")
 	require.NoError(t, err, out)
-	assert.Contains(t, out, "SSH-NAMES bench-1 machines=3 online=2 config=would-be-written known_hosts=would-be-written include=would-be-set unchecked=- (check: nothing changed)")
+	assert.Contains(t, out, "SSH-NAMES bench-1 machines=3 online=2 config=would-be-written known_hosts=would-be-written include=would-be-set unchecked=bench-1,mac-1 (check: nothing changed)")
 	assert.NotContains(t, out, "SSH-NAMES MESH")
+	assert.NotContains(t, out, "SSH-NAMES CONTROL")
 	out, err = f.run(t, "", "--check", "-l", "bench-1")
 	require.NoError(t, err, out)
 	assert.Contains(t, out, "SSH-NAMES bench-1 machines=3 online=1 config=would-be-written")
@@ -357,11 +400,34 @@ func TestSSHNamesCrossChecksHostKeysWithTheTailnet(t *testing.T) {
 	assert.Contains(t, out, "SSH-NAMES REFUSED machine mac-1 host key")
 	f.wroteNothing(t)
 
-	f.tailnet(t, map[string][]string{"bench-1": nil}, nil)
+	// mac-1 publishes its own key (it still serves Tailscale SSH): written, checked; bench-1 publishes none: unchecked.
+	// The control node's login into mac-1 would prove no key, so the run fails on it, naming it.
+	f.tailnet(t, map[string][]string{"mac-1": {sshNamesKey("mac-1")}}, nil)
 	out, err = f.run(t, "")
-	require.NoError(t, err, out)
+	require.Error(t, err, out)
 	assert.Contains(t, out, "SSH-NAMES mac-1 machines=3 online=2 config=written known_hosts=written include=set unchecked=bench-1")
 	assert.Contains(t, f.read(t, "mac-1", ".ssh/nova-fleet.known_hosts"), "bench-1,bench-1.tail0test.ts.net "+f.key["bench-1"]+"\n")
+	assert.Contains(t, out, "SSH-NAMES CONTROL ok=1 failed=- tailscale-ssh=mac-1 offline=laptop-1")
+	assert.Contains(t, out, "SSH-NAMES CONTROL FAILED tailscale-ssh mac-1: Tailscale SSH still on (it lets in a node, not a key)")
+	log, err := os.ReadFile(f.sshLog)
+	require.NoError(t, err)
+	assert.NotContains(t, string(log), "-l bob", "a machine still serving Tailscale SSH is not taken as a key login")
+}
+
+// A target answering with another host key fails the run (a machine answering for another is no refusal); a local
+// "Permission denied" (on a key file) is no refusal by the target either: it is reported unreached.
+func TestFunctionalSSHNamesHostKeyMismatchFailsAndLocalErrorsAreNoRefusal(t *testing.T) {
+	t.Parallel()
+	f := newSSHNamesFleet(t, nil)
+	out, err := f.run(t, "FAKE_SSH_HOSTKEY=mac-1")
+	require.Error(t, err, out)
+	assert.Contains(t, out, "SSH-NAMES MESH bench-1 refused=0 open=- hostkey=mac-1 timeout=- unreached=- offline=laptop-1")
+	assert.Contains(t, out, "SSH-NAMES MESH bench-1 HOSTKEY hostkey mac-1: Host key verification failed.")
+	assert.Contains(t, out, "SSH-NAMES MESH mac-1 refused=1 open=- hostkey=- timeout=- unreached=- offline=laptop-1")
+
+	out, err = f.run(t, "FAKE_SSH_LOCAL=mac-1")
+	require.NoError(t, err, out)
+	assert.Contains(t, out, "SSH-NAMES MESH bench-1 refused=0 open=- hostkey=- timeout=- unreached=mac-1 offline=laptop-1")
 }
 
 // A run that cannot read the tailnet on the control node is refused before anything is written.

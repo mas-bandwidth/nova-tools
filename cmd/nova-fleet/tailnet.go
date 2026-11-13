@@ -78,11 +78,45 @@ func fleetPolicy() (m map[string]any) {
 
 func canon(v any) string { b, _ := json.Marshal(v); return string(b) } // ignored: decoded JSON always marshals
 
-// policyPatch is the JSON Patch (RFC 6902) that adds the fleet's needs (want) to the policy have: each owner of
-// want's tagOwners a tag lacks, and each grant and ssh rule of want with no equal rule in have, appended. It
-// removes and replaces nothing, so a rule the policy had (an "acls" accept * to *:*, say) still holds.
+// retired is an ssh rule the merge removes: the fleet's own machine-to-machine shape, an accept from fleet tags that
+// include tag:nova or tag:runner, into tag:nova and tag:runner only, as autogroup:nonroot only. Tailscale SSH lets in
+// a source node, so it lets a CI job on one machine log in to another as a login that sudoes (cmd/nova-fleet/README.md,
+// "tailscale"). A rule of any other shape (a person in its src, a destination outside the fleet) is someone's own.
+func retired(rule any) bool {
+	r, _ := rule.(map[string]any) // ignored: a rule that is no object has no shape
+	within := func(k string, set ...any) bool {
+		l, _ := r[k].([]any) // ignored: a field that is no list is within nothing
+		return len(l) > 0 && !slices.ContainsFunc(l, func(v any) bool { return !slices.Contains(set, v) })
+	}
+	return r["action"] == "accept" && within("src", "tag:nova", "tag:runner", "tag:control") && !within("src", "tag:control") &&
+		within("dst", "tag:nova", "tag:runner") && canon(r["users"]) == `["autogroup:nonroot"]`
+}
+
+// machineSSH is an ssh rule that names a machine's tag in its src and in its dst: one machine let into another. One
+// the merge keeps (not the fleet's shape) is reported, never removed; it acts only on a machine serving Tailscale SSH.
+func machineSSH(rule any) bool {
+	r, _ := rule.(map[string]any) // ignored: a rule that is no object names no tag
+	names := func(k string) bool {
+		l, _ := r[k].([]any) // ignored: a field that is no list names no tag
+		return slices.Contains(l, any("tag:nova")) || slices.Contains(l, any("tag:runner"))
+	}
+	return names("src") && names("dst")
+}
+
+// policyPatch is the JSON Patch (RFC 6902) that brings the policy have (its ssh list left as the rules kept) to the
+// fleet's needs (want): each retired ssh rule removed, highest index first so each index holds when its op runs; then
+// each owner of want's tagOwners a tag lacks, and each grant and ssh rule of want with no equal rule left, appended.
+// It removes and replaces nothing else, so a rule the policy had (an "acls" accept * to *:*, say) still holds.
 func policyPatch(have, want map[string]any) (ops []map[string]any) {
 	add := func(path string, v any) { ops = append(ops, map[string]any{"op": "add", "path": path, "value": v}) }
+	if ssh, ok := have["ssh"].([]any); ok {
+		for i := len(ssh) - 1; i >= 0; i-- {
+			if retired(ssh[i]) {
+				ops = append(ops, map[string]any{"op": "remove", "path": fmt.Sprintf("/ssh/%d", i)})
+			}
+		}
+		have["ssh"] = slices.DeleteFunc(slices.Clone(ssh), retired)
+	}
 	owners, ok := have["tagOwners"].(map[string]any)
 	if !ok {
 		add("/tagOwners", map[string]any{})
@@ -116,55 +150,63 @@ func policyPatch(have, want map[string]any) (ops []map[string]any) {
 }
 
 // mergePolicy is the HuJSON policy src with policyPatch applied by hujson, so its comments and formatting
-// survive; it reports whether anything was added.
-func mergePolicy(src []byte, want map[string]any) ([]byte, bool, error) {
+// survive; it reports whether anything was added or retired, and each machine-to-machine ssh rule it kept.
+func mergePolicy(src []byte, want map[string]any) ([]byte, bool, []string, error) {
 	if len(bytes.TrimSpace(src)) == 0 {
 		src = []byte("{}")
 	}
 	v, err := hujson.Parse(src)
 	if err != nil {
-		return nil, false, fmt.Errorf("the tailnet policy is not HuJSON: %v", err)
+		return nil, false, nil, fmt.Errorf("the tailnet policy is not HuJSON: %v", err)
 	}
 	std, _ := hujson.Standardize(bytes.Clone(src)) // ignored: it parsed above; a copy, as Standardize writes over its input
 	have := map[string]any{}
 	dec := json.NewDecoder(bytes.NewReader(std))
 	dec.UseNumber()
 	if err := dec.Decode(&have); err != nil {
-		return nil, false, fmt.Errorf("the tailnet policy is not an object: %v", err)
+		return nil, false, nil, fmt.Errorf("the tailnet policy is not an object: %v", err)
 	}
 	ops := policyPatch(have, want)
+	var machine []string
+	ssh, _ := have["ssh"].([]any) // ignored: no ssh list keeps no rule
+	for _, r := range ssh {
+		if machineSSH(r) {
+			machine = append(machine, canon(r))
+		}
+	}
 	if len(ops) == 0 {
-		return src, false, nil
+		return src, false, machine, nil
 	}
 	if err := v.Patch([]byte(canon(ops))); err != nil {
-		return nil, false, fmt.Errorf("the merge into the tailnet policy: %v", err)
+		return nil, false, nil, fmt.Errorf("the merge into the tailnet policy: %v", err)
 	}
-	return v.Pack(), true, nil
+	return v.Pack(), true, machine, nil
 }
 
 // policy merges the fleet's needs into the tailnet policy: read as JSON with its ETag, written back with
-// If-Match only when the merge added something; a 412 (changed in between) reads it again, once.
-func policy(api tsAPI, check bool) (string, error) {
+// If-Match only when the merge changed something; a 412 (changed in between) reads it again, once. It returns the
+// machine-to-machine ssh rules the policy keeps.
+func policy(api tsAPI, check bool) (string, []string, error) {
 	for try := 0; ; try++ {
 		_, etag, b, err := apiDo(api, "GET", "/tailnet/-/acl", "application/hujson", "", nil)
 		if err != nil {
-			return "", err
+			return "", nil, err
 		}
-		merged, changed, err := mergePolicy(b, fleetPolicy())
+		merged, changed, machine, err := mergePolicy(b, fleetPolicy())
 		if err != nil {
-			return "", err
+			return "", nil, err
 		}
 		switch {
 		case !changed:
-			return "unchanged", nil
+			return "unchanged", machine, nil
 		case check:
-			return "would-merge", nil
+			return "would-merge", machine, nil
 		}
 		code, _, _, err := apiDo(api, "POST", "/tailnet/-/acl", "application/hujson", etag, merged)
 		if code == 412 && try == 0 {
 			continue
 		}
-		return "merged", err
+		return "merged", machine, err
 	}
 }
 
@@ -255,7 +297,7 @@ func (u *upRun) tailnet() error {
 		return fmt.Errorf("TAILSCALE_API_KEY cannot be read as one line tskey-api-... (exit %d) %s; %s", c, oneLine(why), newKey)
 	}
 	api := newTailnet(key)
-	pol, err := policy(api, u.check)
+	pol, machine, err := policy(api, u.check)
 	if err != nil {
 		return err
 	}
@@ -317,6 +359,9 @@ func (u *upRun) tailnet() error {
 		u.say("UP TAILNET WOULD policy=%s control=%s keys=%d retagged=%d (check: GETs only, nothing changed)", pol, control, keys, retagged)
 	} else {
 		u.say("UP TAILNET OK policy=%s control=%s keys=%d retagged=%d", pol, control, keys, retagged)
+	}
+	for _, r := range machine {
+		u.say("UP TAILNET MACHINE-SSH %s (kept, not the fleet's rule: it lets one machine into another wherever Tailscale SSH is on, which ssh-names fails)", r)
 	}
 	return nil
 }

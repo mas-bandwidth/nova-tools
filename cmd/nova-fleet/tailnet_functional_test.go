@@ -54,10 +54,10 @@ func TestTailnetHTTP(t *testing.T) {
 	t.Cleanup(func() { tsBase = old })
 	tsBase = srv.URL
 	api := newTailnet(fakeKey("api", "k-S"))
-	if got, err := policy(api, false); err != nil || got != "merged" {
+	if got, _, err := policy(api, false); err != nil || got != "merged" {
 		t.Fatalf("policy = %q %v (%v)", got, err, log)
 	}
-	if got, err := policy(api, false); err != nil || got != "unchanged" {
+	if got, _, err := policy(api, false); err != nil || got != "unchanged" {
 		t.Fatalf("second policy = %q %v", got, err)
 	}
 	if !strings.HasPrefix(doc, "// the human's own note\n{\"acls\": [{\"action\": \"accept\", \"src\": [\"*\"], \"dst\": [\"*:*\"]}], // allow all\n") || !strings.Contains(doc, `"tag:control":["autogroup:admin"]`) {
@@ -66,7 +66,7 @@ func TestTailnetHTTP(t *testing.T) {
 	if k, err := mintKey(api, []string{"tag:nova"}); err != nil || k != fakeKey("auth", "k1-tag:nova") {
 		t.Errorf("mintKey = %q %v", k, err)
 	}
-	if _, err := policy(newTailnet(fakeKey("api", "wrong")), false); err == nil || !strings.Contains(err.Error(), "HTTP 401: TAILSCALE_API_KEY was refused") || strings.Contains(err.Error(), "wrong") {
+	if _, _, err := policy(newTailnet(fakeKey("api", "wrong")), false); err == nil || !strings.Contains(err.Error(), "HTTP 401: TAILSCALE_API_KEY was refused") || strings.Contains(err.Error(), "wrong") {
 		t.Errorf("a refused token: %v", err)
 	}
 }

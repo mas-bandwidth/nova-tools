@@ -15,7 +15,7 @@
     quiet: true
 
 # A Mac runs either the app (its daemon is a network extension) or the open-source tailscaled, Homebrew's formula run
-# as root. The second is driven like Linux: its own CLI beside the daemon, sudo, and Tailscale SSH served.
+# as root. The second is driven like Linux: its own CLI beside the daemon, sudo, and Tailscale SSH set as there.
 - name: the open-source tailscaled (macOS)
   ansible.builtin.shell: "ps -axo comm= | grep '/tailscaled$' | head -n 1"
   register: ts_daemon
@@ -116,6 +116,16 @@
       when: ts_up is not skipped
 
     # on a machine already joined: the hostname and Tailscale SSH set in place, with no new key
+    # A switch from an earlier run still deciding (ssh-off.yml) would turn Tailscale SSH back on after this run read it
+    # off; its pending file goes when it ends, or with the reboot that ends it.
+    - name: no earlier switch still pending (waits for its job to end)
+      ansible.builtin.wait_for:
+        path: "{{ nova_tailscale_ssh_pending }}"
+        state: absent
+        timeout: "{{ nova_tailscale_ssh_deadline | int + 60 }}"
+      check_mode: false
+      when: not ts_join and ts_root_daemon
+
     - name: the running node's preferences (Linux, the open-source tailscaled on macOS)
       ansible.builtin.command: "{{ ts_bin }} debug prefs"
       register: ts_prefs
@@ -124,14 +134,111 @@
       check_mode: false
       when: not ts_join and ts_root_daemon
 
-    - name: tailscale set (hostname, ssh) where the running node differs
+    # Turning Tailscale SSH off on a node that serves it moves the way in to sshd. Before anything changes: sshd must
+    # answer on the node's tailnet address and let this login in by key from the control node, and the control node's
+    # key is authorized for the login. The switch itself is the role's last step (ssh-off.yml).
+    - name: whether this run turns Tailscale SSH off
+      ansible.builtin.set_fact:
+        ts_ssh_off: "{{ not ts_join and ts_root_daemon and ((ts_prefs.stdout | default('{}') | from_json).RunSSH | default(false)) and not (nova_tailscale_ssh | bool) }}"
+        ts_tail_ip: "{{ ts_self.TailscaleIPs | default([], true) | select('match', '^[0-9.]+$') | first | default('') }}"
+
+    - name: the control node's public key (nova_control_ssh_pubkey, else the one key of ssh-add -L)
+      ansible.builtin.include_role: { name: controlkey }
+      when: ts_ssh_off
+
+    - name: the control node on the tailnet (its name and address, as sshd will see them)
+      ansible.builtin.command: tailscale status --json
+      delegate_to: localhost
+      become: false
+      register: ts_control
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      when: ts_ssh_off
+
+    # from the control node, over the tailnet: the path the next connection takes, through the machine's firewall
+    # While Tailscale SSH is on, tailscaled answers port 22 on the tailnet address for connections that come over the
+    # tailnet, so a probe from the control node would meet it, not sshd. From the machine itself the connection is
+    # local and reaches whatever listens there; the banner must be OpenSSH's (Tailscale SSH says SSH-2.0-Tailscale).
+    - name: sshd on this machine's tailnet address, by OpenSSH's banner (a local connection to {{ ts_tail_ip }}:22)
+      ansible.builtin.wait_for:
+        host: "{{ ts_tail_ip }}"
+        port: 22
+        search_regex: '^SSH-2\.0-OpenSSH'
+        timeout: 10   # a guess, unmeasured: a local connection and its banner take well under a second
+      register: ts_sshd
+      ignore_errors: true
+      check_mode: false
+      when: ts_ssh_off and ts_tail_ip | length > 0
+
+    - name: sshd's settings for this login from the control node (sshd -T -C)
       ansible.builtin.command:
-        argv: "{{ [ts_bin, 'set', '--hostname=' ~ inventory_hostname] + (['--ssh=' ~ ((nova_tailscale_ssh | bool) | string | lower)] if ts_root_daemon else []) }}"
+        argv:
+          - "{{ nova_sshd }}"
+          - -T
+          - -C
+          - "user={{ ansible_facts['user_id'] }},host={{ ts_control_self.DNSName | default('') | regex_replace('\\.$', '') }},addr={{ ts_control_self.TailscaleIPs | default([], true) | select('match', '^[0-9.]+$') | first | default('') }}"
+      vars:
+        ts_control_self: "{{ (ts_control.stdout | from_json).Self | default({}) if (ts_control.stdout | default('') | trim).startswith('{') else {} }}"
+      become: true
+      register: ts_sshd_conf
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      when: ts_ssh_off
+
+    - name: sshd takes this login by key from the control node before Tailscale SSH goes off
+      ansible.builtin.assert:
+        that: ts_sshd_why | length == 0
+        fail_msg: >-
+          TAILNET STOP {{ inventory_hostname }}: Tailscale SSH is on, and turning it off would leave the control node no way in:
+          {{ ts_sshd_why | join('; ') }}; nothing was changed. Fix sshd (Linux: sudo systemctl enable --now ssh, and its
+          ListenAddress, AllowUsers and PubkeyAuthentication; macOS: System Settings > General > Sharing > Remote Login),
+          then run: nova-fleet tailscale -- -l {{ inventory_hostname }}
+        quiet: true
+      vars:
+        ts_login: "{{ ansible_facts['user_id'] }}"
+        ts_sshd_why: >-
+          {%- set why, allow, deny, ns = [], [], [], namespace(pub=false) -%}
+          {%- for line in ts_sshd_conf.stdout_lines | default([]) -%}
+          {%-   set w = line.split() -%}
+          {%-   if w | length > 1 and w[0] | lower == 'allowusers' -%}{%- set _ = allow.extend(w[1:]) -%}{%- endif -%}
+          {%-   if w | length > 1 and w[0] | lower == 'denyusers' -%}{%- set _ = deny.extend(w[1:]) -%}{%- endif -%}
+          {%-   if w | length > 1 and w[0] | lower == 'pubkeyauthentication' and w[1] | lower == 'yes' -%}{%- set ns.pub = true -%}{%- endif -%}
+          {%- endfor -%}
+          {%- if not ts_tail_ip -%}{%- set _ = why.append('the node has no tailnet IPv4 address') -%}
+          {%- elif ts_sshd is failed -%}{%- set _ = why.append('no OpenSSH sshd answers on ' ~ ts_tail_ip ~ ':22') -%}{%- endif -%}
+          {%- if not (ts_control.stdout | default('') | trim).startswith('{') -%}
+          {%-   set _ = why.append('the control node cannot read its own tailnet (tailscale status --json)') -%}
+          {%- elif ts_sshd_conf.rc | default(1) != 0 -%}
+          {%-   set _ = why.append(nova_sshd ~ ' -T failed: ' ~ (ts_sshd_conf.stderr_lines | default([]) | last | default(ts_sshd_conf.msg | default('')))) -%}
+          {%- else -%}
+          {%-   if not ns.pub -%}{%- set _ = why.append('sshd has PubkeyAuthentication off for ' ~ ts_login) -%}{%- endif -%}
+          {%-   if ts_login in (deny | map('regex_replace', '@.*$', '') | list) -%}{%- set _ = why.append('sshd DenyUsers names ' ~ ts_login) -%}{%- endif -%}
+          {%-   if allow and not (allow | map('regex_replace', '@.*$', '') | select('in', [ts_login]) | list or allow | select('search', '[*?]') | list) -%}
+          {%-     set _ = why.append('sshd AllowUsers (' ~ allow | join(' ') ~ ') leaves out ' ~ ts_login) -%}
+          {%-   endif -%}
+          {%- endif -%}
+          {{ why }}
+      when: ts_ssh_off
+
+    - name: "the control node's key authorized for {{ ansible_facts['user_id'] | default('the login') }}"
+      ansible.posix.authorized_key:
+        user: "{{ ansible_facts['user_id'] }}"
+        key: "{{ nova_control_key }}"
+        state: present
+      when: ts_ssh_off
+
+    # Tailscale SSH is turned on here, never off: off is the role's last step (ssh-off.yml), detached, since this
+    # run's own connection may be a Tailscale SSH session that the switch ends.
+    - name: tailscale set (hostname, ssh) where the running node differs (ssh only ever turned on here)
+      ansible.builtin.command:
+        argv: "{{ [ts_bin, 'set', '--hostname=' ~ inventory_hostname] + (['--ssh=true'] if (ts_root_daemon and nova_tailscale_ssh | bool) else []) }}"
       become: "{{ ts_root_daemon }}"
       register: ts_set
       when: >-
         not ts_join and (ts_self.HostName | default('') != inventory_hostname
-        or (ts_root_daemon and ((ts_prefs.stdout | default('{}') | from_json).RunSSH | default(false)) != (nova_tailscale_ssh | bool)))
+        or (ts_root_daemon and nova_tailscale_ssh | bool and not ((ts_prefs.stdout | default('{}') | from_json).RunSSH | default(false))))
 
     - name: the state after the join
       ansible.builtin.command: "{{ ts_bin }} status --json"
@@ -170,7 +277,7 @@
   changed_when: not ansible_check_mode
   when: nova_tailscale_record_address | bool and ts_dns | length > 0 and ts_dns != (ansible_host | default(''))
 
-- name: the MagicDNS name's host key (Tailscale SSH's), pinned on the control node
+- name: the MagicDNS name's host key, pinned on the control node
   ansible.builtin.include_role: { name: hostkey }
   vars: { hostkey_name: "{{ ts_dns }}" }
   when: ts_recorded is not skipped and not ansible_check_mode
@@ -182,3 +289,8 @@
       ip={{ ((ts_self.TailscaleIPs | default([], true)) or ['none']) | first }} tags={{ ts_self.Tags | default([], true) | join(',') or 'none' }}
       address={{ ('WOULD-SET ' if ansible_check_mode else 'SET ') ~ ts_dns if ts_recorded is not skipped else 'kept' }}
       {{- ' (check: nothing changed)' if ansible_check_mode else '' }}
+
+# ---- last: Tailscale SSH off, after everything else, detached ----
+- name: Tailscale SSH off (the last step)
+  ansible.builtin.include_tasks: ssh-off.yml
+  when: ts_ssh_off | default(false)

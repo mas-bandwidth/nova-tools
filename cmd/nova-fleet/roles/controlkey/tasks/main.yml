@@ -1,0 +1,40 @@
+---
+# The controlkey role: the control node's public key, the one a fleet login authorizes so the control node logs in by
+# key (cmd/nova-fleet/README.md, "join"; Tailscale SSH is off, so sshd and authorized_keys are the way in). It is
+# nova_control_ssh_pubkey when given (one public key line), else the key `ssh-add -L` lists on the control node when it
+# lists exactly one. An agent holding several is refused rather than guessed from: which one a login takes is not
+# the agent's order to decide, so the var names it. With no key the run stops here, before the play that included it
+# changes anything; the plays that use it prove it later by a real login. Sets nova_control_key; reads, never writes.
+- name: the control node's agent keys (ssh-add -L)
+  ansible.builtin.command: ssh-add -L
+  delegate_to: localhost
+  become: false
+  register: controlkey_agent
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: nova_control_ssh_pubkey | default('') | trim | length == 0
+
+- name: the control node's key
+  ansible.builtin.set_fact:
+    nova_control_key: >-
+      {{ (nova_control_ssh_pubkey | default('') | trim) or
+         ((controlkey_agent.stdout_lines | first | trim) if (controlkey_agent.rc | default(1)) == 0 and (controlkey_agent.stdout_lines | default([]) | select | list | length) == 1 else '') }}
+
+- name: the control node has one public key to authorize
+  ansible.builtin.assert:
+    that: nova_control_key is match('^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(256|384|521)|sk-ssh-ed25519@openssh[.]com|sk-ecdsa-sha2-nistp256@openssh[.]com) AAAA[A-Za-z0-9+/=]+( [ -~]*)?$')
+    fail_msg: >-
+      CONTROLKEY STOP {{ inventory_hostname }}: no one public key for the control node to log in with ({{ controlkey_why }});
+      nothing was changed. Give the key this node logs in with as -e nova_control_ssh_pubkey='ssh-ed25519 AAAA... you@control',
+      or hold only it in the agent; run: ssh-add -L
+    quiet: true
+  vars:
+    controlkey_listed: "{{ controlkey_agent.stdout_lines | default([]) | select | list if (controlkey_agent.rc | default(1)) == 0 else [] }}"
+    controlkey_said: "{{ (controlkey_agent.stdout_lines | default([])) + (controlkey_agent.stderr_lines | default([])) + [controlkey_agent.msg | default('')] }}"
+    controlkey_why: >-
+      {{ ('nova_control_ssh_pubkey is not one public key line: ' ~ (nova_control_key | truncate(40)))
+         if nova_control_ssh_pubkey | default('') | trim | length > 0
+         else (('ssh-add -L lists ' ~ (controlkey_listed | length) ~ ' keys (' ~ (controlkey_listed | map('regex_replace', '^.* ', '') | join(', ')) ~ ') and nova_control_ssh_pubkey does not say which')
+               if controlkey_listed | length > 1
+               else ('ssh-add -L listed none: ' ~ (controlkey_said | select | first | default('no answer')))) }}

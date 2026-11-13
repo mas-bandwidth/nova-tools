@@ -14,3 +14,7 @@ NetWatchBrokenOldClassify.cfg	NetWatch.tla	action	NoRebootForARemoteTailnet	chec
 NetWatchTraceBrokenOldClassify.cfg	NetWatchTrace.tla	invariant	TraceMatches	check
 NetWatchBrokenAnyReply.cfg	NetWatch.tla	action	NoRebootForARemoteTailnet	check
 NetWatchTraceBrokenAnyReply.cfg	NetWatchTrace.tla	invariant	TraceMatches	check
+SSHOff.cfg	SSHOff.tla	pass	-	ignore-terminal
+SSHOffBrokenCheckThenTouch.cfg	SSHOff.tla	invariant	KeptMeansOff	ignore-terminal
+SSHOffBrokenNoWait.cfg	SSHOff.tla	invariant	RerunGreenMeansOff	ignore-terminal
+SSHOffBrokenPrevious.cfg	SSHOff.tla	invariant	KeptMeansOff	ignore-terminal

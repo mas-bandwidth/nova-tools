@@ -1,4 +1,4 @@
-# purpose: ssh <machine> by its tailnet name from every machine of the fleet: each login's ssh config and the fleet's host keys from the record, then every pair checked (all machines; one asleep or away is reported offline)
+# purpose: ssh <machine> by its tailnet name: each login's ssh config and the fleet's host keys from the record, then every machine-to-machine login checked refused and the control node's checked open (all machines; one asleep or away is reported offline)
 #
 # ssh-names.yml (cmd/nova-fleet/README.md, "ssh-names"). On each machine, as its login and never root:
 #
@@ -24,14 +24,23 @@
 #
 # ssh takes the first value it reads for each option, so for a fleet name the HostName and User here win over a
 # hand-written Host block of the same name below; that block's other options (IdentityFile, HostKeyAlias,
-# ControlMaster) still apply. Authentication is the tailnet's when the target serves Tailscale SSH (the tailscale play
-# turns it on, nova_tailscale_ssh), else the target's sshd and its authorized_keys.
+# ControlMaster) still apply. The names say where a machine is; they let no one in. A login from one machine to
+# another is refused by design: CI jobs run as a machine's login, which sudoes with no password, so a machine that
+# could log in to another would give a job root there. Transfers between machines go through the control node.
 #
-# Then the mesh: from each machine, `ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=<the
-# fleet's known hosts> <name> true` to every other machine online in this run. A machine that does not answer the play
-# (a laptop asleep or away) is reported OFFLINE and skipped, never a failure; the control node (tag:control) takes a
-# person's check (the tailnet policy), so a pair ending there is reported check-required and not tried; any other pair
-# that fails fails the run with ssh's own last line.
+# Then the checks, never under --check:
+#   the mesh       from each machine but the control node (tag:control), `ssh -o BatchMode=yes -o ConnectTimeout=10
+#                  -o StrictHostKeyChecking=yes -o UserKnownHostsFile=<the fleet's known hosts> <name> true` to every
+#                  other machine online in this run. Each pair must be refused by the far side (sshd's "Permission
+#                  denied (publickey...", or Tailscale SSH's "tailnet policy does not permit"); a login that succeeds
+#                  fails the run, naming the pair, and so does a host key that does not match the fleet's known hosts
+#                  (that refusal is the client's, and says nothing about the far side). A pair that times out, or
+#                  fails another way (a local error is no refusal), is reported and does not fail the run.
+#   the control    from the control node, `ssh -o BatchMode=yes ... -l <the record's login> <address> true` to every
+#                  machine online in this run but itself: each must log in by key, or the run fails naming it. A
+#                  machine whose node still publishes host keys still serves Tailscale SSH, which lets in a node and
+#                  not a key: it is reported tailscale-ssh and fails the run (run: nova-fleet tailscale).
+# A machine that does not answer the play (a laptop asleep or away) is reported OFFLINE and skipped, never a failure.
 #
 #   nova-fleet ssh-names --check --diff
 #   nova-fleet ssh-names
@@ -50,8 +59,8 @@
     ssh_names_hosts: "{{ groups['all'] | difference(groups['windows'] | default([])) | sort }}"   # not a plain Windows host (group windows)
     ssh_names_online: "{{ ansible_play_hosts_all | map('extract', hostvars) | selectattr('ansible_facts.env', 'defined') | map(attribute='inventory_hostname') | sort }}"
     ssh_names_offline: "{{ ssh_names_hosts | reject('in', ssh_names_online) | list }}"
-    # by the tailnet's node for each machine online: the control node (its ssh rules take a person's check), and the
-    # machines that publish no host key (no Tailscale SSH), whose key is written unchecked
+    # by the tailnet's node for each machine online: the control node (tag:control: no mesh from it, no control check
+    # into it), and the machines that publish no host key (no Tailscale SSH), whose key is written unchecked
     ssh_names_control: >-
       {%- set c = [] -%}
       {%- for h in ssh_names_online if 'tag:control' in (ssh_names_tailnet[hostvars[h].ansible_host] | default({})).tags | default([]) -%}
@@ -64,7 +73,7 @@
       {%-   set _ = c.append(h) -%}
       {%- endfor -%}
       {{ c }}
-    ssh_names_targets: "{{ ssh_names_online | reject('equalto', inventory_hostname) | reject('in', ssh_names_control) | list }}"
+    ssh_names_targets: "{{ ssh_names_online | reject('equalto', inventory_hostname) | list }}"
   tasks:
     - name: a write runs on every machine (each machine's file holds every machine's key)
       ansible.builtin.assert:
@@ -221,18 +230,50 @@
       register: ssh_names_config_include
       when: ssh_names_include_inside | int == 0
 
-    - name: the mesh from this machine (ssh <name> true to every other machine online in this run but the control node)
+    # Every pair must be refused: a login from one machine to another is a CI job's way to root there. Each line is
+    # "<outcome> <target>: <ssh's last line>": open (logged in), hostkey (the target's host key is not the fleet's
+    # record: a failure, as a machine answering under another's name is), refused (the remote said so: sshd's
+    # "Permission denied (publickey...", or Tailscale SSH's "tailnet policy does not permit"; a local "Permission
+    # denied", on a file, is not a refusal), timeout, or unreached (any other failure: no route, no sshd, a local error).
+    - name: the mesh from this machine (ssh <name> true to every other machine online in this run, each to be refused)
       ansible.builtin.shell: |
         d=$(mktemp -d)
         for h in {{ ssh_names_targets | map('quote') | join(' ') }}; do
-          ( if ssh -n -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=yes -o UserKnownHostsFile={{ ssh_names_known_file | quote }} "$h" true >/dev/null 2>"$d/$h"; then echo "ok $h"
-            else echo "failed $h: $(tail -n 1 "$d/$h" | tr -s ' \t' '  ')"; fi ) &
+          ( if ssh -n -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=yes -o UserKnownHostsFile={{ ssh_names_known_file | quote }} "$h" true >/dev/null 2>"$d/$h"; then o=open
+            elif grep -q -e 'Host key verification failed' -e 'REMOTE HOST IDENTIFICATION HAS CHANGED' "$d/$h"; then o=hostkey
+            elif grep -q -E -e 'Permission denied \([a-z,-]*publickey' -e 'tailnet policy does not permit' "$d/$h"; then o=refused
+            elif grep -q -i 'timed out' "$d/$h"; then o=timeout
+            else o=unreached; fi
+            echo "$o $h: $(tail -n 1 "$d/$h" | tr -s ' \t' '  ')" ) &
         done
         wait
         rm -rf "$d"
       register: ssh_names_mesh
       changed_when: false
-      when: not ansible_check_mode   # ConnectTimeout 10 s is a guess, unmeasured: a tailnet peer answers in well under 1 s
+      when: not ansible_check_mode and inventory_hostname not in ssh_names_control   # ConnectTimeout 10 s is a guess, unmeasured: a tailnet peer answers in well under 1 s
+
+    # The way in that stays: the control node logs in to every machine as the record's login, by key (BatchMode: no
+    # password, no prompt), with its own known_hosts, where join pinned each machine's key. A machine that publishes
+    # host keys on the tailnet still serves Tailscale SSH, which lets the control node in as a node, not by key: its
+    # login proves nothing about the key, so it is reported tailscale-ssh and fails.
+    - name: the control node logs in to every machine online in this run (ssh -l <login> <address> true)
+      ansible.builtin.shell: |
+        d=$(mktemp -d)
+        {% for h in ssh_names_online | reject('in', ssh_names_control) %}
+        {% if h not in ssh_names_unchecked %}
+        echo "tailscale-ssh {{ h }}: Tailscale SSH still on (it lets in a node, not a key)"
+        {% else %}
+        ( if ssh -n -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=yes -l {{ hostvars[h].ansible_user | quote }} {{ hostvars[h].ansible_host | quote }} true >/dev/null 2>"$d/{{ h }}"; then echo "ok {{ h }}"
+          else echo "failed {{ h }}: $(tail -n 1 "$d/{{ h }}" | tr -s ' \t' '  ')"; fi ) &
+        {% endif %}
+        {% endfor %}
+        wait
+        rm -rf "$d"
+      delegate_to: localhost
+      run_once: true
+      register: ssh_names_control_login
+      changed_when: false
+      when: not ansible_check_mode
 
     - name: the receipt
       ansible.builtin.debug:
@@ -249,18 +290,52 @@
     - name: the mesh receipt
       ansible.builtin.debug:
         msg: >-
-          SSH-NAMES MESH {{ inventory_hostname }} ok={{ ssh_names_mesh.stdout_lines | select('match', '^ok ') | list | length }}
-          check-required={{ ssh_names_online | reject('equalto', inventory_hostname) | select('in', ssh_names_control) | join(',') or '-' }}
+          SSH-NAMES MESH {{ inventory_hostname }} refused={{ ssh_names_mesh.stdout_lines | select('match', '^refused ') | list | length }}
+          open={{ ssh_names_mesh.stdout_lines | select('match', '^open ') | map('regex_replace', '^open ([^:]*):.*$', inventory_hostname ~ '->\1') | sort | join(',') or '-' }}
+          hostkey={{ ssh_names_mesh.stdout_lines | select('match', '^hostkey ') | map('regex_replace', '^hostkey ([^:]*):.*$', '\1') | sort | join(',') or '-' }}
+          timeout={{ ssh_names_mesh.stdout_lines | select('match', '^timeout ') | map('regex_replace', '^timeout ([^:]*):.*$', '\1') | sort | join(',') or '-' }}
+          unreached={{ ssh_names_mesh.stdout_lines | select('match', '^unreached ') | map('regex_replace', '^unreached ([^:]*):.*$', '\1') | sort | join(',') or '-' }}
           offline={{ ssh_names_offline | join(',') or '-' }}
-          failed={{ ssh_names_mesh.stdout_lines | select('match', '^failed ') | map('regex_replace', '^failed ([^:]*):.*$', '\1') | sort | join(',') or '-' }}
       when: ssh_names_mesh is not skipped
 
-    - name: every machine online reaches every other by name
+    - name: no machine logs in to another
       ansible.builtin.assert:
-        that: ssh_names_mesh.stdout_lines | select('match', '^failed ') | list | length == 0
+        that: ssh_names_mesh.stdout_lines | select('match', '^open ') | list | length == 0
         fail_msg: >-
-          SSH-NAMES MESH {{ inventory_hostname }} FAILED {{ ssh_names_mesh.stdout_lines | select('match', '^failed ') | sort | join('; ') }}
-          (a target without Tailscale SSH needs this login's key in its authorized_keys; run: nova-fleet tailscale
-          to turn Tailscale SSH on where it can run)
+          SSH-NAMES MESH {{ inventory_hostname }} OPEN {{ ssh_names_mesh.stdout_lines | select('match', '^open ') | map('regex_replace', '^open ([^:]*):.*$', inventory_hostname ~ '->\1') | sort | join(',') }}:
+          this machine's login logged in there, so a CI job here has root there. Remove this login's keys from the
+          target's ~/.ssh/authorized_keys, then turn Tailscale SSH off and retire the tailnet's machine-to-machine ssh
+          rule; run: nova-fleet tailscale, then nova-fleet up
         quiet: true
       when: ssh_names_mesh is not skipped
+
+    - name: every machine this one reached presented the host key the fleet recorded
+      ansible.builtin.assert:
+        that: ssh_names_mesh.stdout_lines | select('match', '^hostkey ') | list | length == 0
+        fail_msg: >-
+          SSH-NAMES MESH {{ inventory_hostname }} HOSTKEY {{ ssh_names_mesh.stdout_lines | select('match', '^hostkey ') | sort | join('; ') }}:
+          the host key answering under that name is not the fleet's record of it (a machine answering for another, or a
+          key changed); check which machine it is, then run: nova-fleet ssh-names
+        quiet: true
+      when: ssh_names_mesh is not skipped
+
+    - name: the control node's receipt
+      ansible.builtin.debug:
+        msg: >-
+          SSH-NAMES CONTROL ok={{ ssh_names_control_login.stdout_lines | select('match', '^ok ') | list | length }}
+          failed={{ ssh_names_control_login.stdout_lines | select('match', '^failed ') | map('regex_replace', '^failed ([^:]*):.*$', '\1') | sort | join(',') or '-' }}
+          tailscale-ssh={{ ssh_names_control_login.stdout_lines | select('match', '^tailscale-ssh ') | map('regex_replace', '^tailscale-ssh ([^:]*):.*$', '\1') | sort | join(',') or '-' }}
+          offline={{ ssh_names_offline | join(',') or '-' }}
+      run_once: true
+      when: ssh_names_control_login is not skipped
+
+    - name: the control node logs in to every machine online, by key
+      ansible.builtin.assert:
+        that: ssh_names_control_login.stdout_lines | select('match', '^(failed|tailscale-ssh) ') | list | length == 0
+        fail_msg: >-
+          SSH-NAMES CONTROL FAILED {{ ssh_names_control_login.stdout_lines | select('match', '^(failed|tailscale-ssh) ') | sort | join('; ') }}
+          (the control node reaches a machine by its key in the login's ~/.ssh/authorized_keys, over sshd: add the key
+          nova_control_ssh_pubkey names, or the agent's one key, there, and turn Tailscale SSH off; run: nova-fleet tailscale)
+        quiet: true
+      run_once: true
+      when: ssh_names_control_login is not skipped

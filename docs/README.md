@@ -450,9 +450,11 @@ What each installs and its variables are in
 [sdk-toolchain](../cmd/nova-fleet/README.md#sdk-toolchain) and
 [netwatch](../cmd/nova-fleet/README.md#netwatch).
 
-`ssh-names` makes `ssh <machine>` work by its tailnet name from every machine
-to every other: each login's ssh config and the fleet's host keys, from the
-record, then every pair tried; a machine asleep or away is reported offline
+`ssh-names` makes `ssh <machine>` resolve by its tailnet name on every machine:
+each login's ssh config and the fleet's host keys, from the record. Then it
+checks that no machine's login can log in to another (a CI job would get root
+there) and that the control node logs in to every machine by key; a machine
+asleep or away is reported offline
 ([ssh-names](../cmd/nova-fleet/README.md#ssh-names)):
 
 ```text
