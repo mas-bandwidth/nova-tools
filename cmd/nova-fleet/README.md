@@ -1442,6 +1442,22 @@ FLEET-AUDIT MISSING host=<machine> item=memlock ssh=<soft>/<hard> reserve=<soft>
 `join` it is left out, as `health` and `tools` come after it in `up`; `-e nova_audit_memlock=false`
 leaves it out.
 
+Then the first steps of a CI job, once for each login an active `github-runner-*` unit runs as, with the environment
+a job of that runner starts from: its main process's (`/proc/<MainPID>/environ`, read as that login) with the runner's
+`.env` on top. In a throwaway directory under its `TMPDIR`, removed after: rustup's toolchain install as
+the write it needs (a temporary file in `rustup show home`'s `tmp`, the directories it writes writable), a `go build`
+of an empty module, a CMake configure and build through `ccache` where it is on PATH, and every cache directory the
+environment names (`CCACHE_DIR`, `CARGO_HOME` or `~/.cargo`, `GOCACHE`, `NUGET_PACKAGES`, `HEX_HOME`, `MIX_HOME`,
+`OPAMROOT` and the like) writable. Each step is bounded to 180 seconds. A step that fails, a unit with no `User=`, an
+environment that cannot be read and a probe that never answers (`job-run`):
+
+```
+FLEET-AUDIT MISSING host=<machine> item=job-<step> unit:<unit> login:<login> install=<plays> error=<its last lines>
+```
+
+A machine with no active runner unit runs no CI job: `FLEET-AUDIT NOT-APPLICABLE host=<machine> item=job reason=no
+active github-runner unit`. `-e nova_audit_job=false` leaves the job out.
+
 A machine with anything missing fails: `FLEET-AUDIT FAILED host=<machine> missing=<names>`. The fix is the play
 the line names, run on that machine. A machine that is not Linux prints `FLEET-AUDIT SKIPPED`. `-e
 nova_audit_requirements=<file>` checks another file of the same form.

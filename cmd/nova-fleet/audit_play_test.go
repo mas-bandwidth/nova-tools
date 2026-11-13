@@ -93,7 +93,7 @@ func TestAuditPlayOnlyReads(t *testing.T) {
 	assert.NotContains(t, docs[0], "become", "the checks run as the runner login, never as root")
 	readOnly := []string{"ansible.builtin.debug", "ansible.builtin.meta", "ansible.builtin.assert", "ansible.builtin.set_fact",
 		"ansible.builtin.getent", "ansible.builtin.command", "ansible.builtin.fail"}
-	failed, memlock := false, false
+	failed, memlock, job := false, false, false
 	for _, task := range mapsOf(t, docs[0]["tasks"]) {
 		name := asText(task["name"])
 		var module string
@@ -107,6 +107,15 @@ func TestAuditPlayOnlyReads(t *testing.T) {
 			assert.Equal(t, false, task["changed_when"], "task %q", name)
 			assert.Equal(t, false, task["check_mode"], "task %q runs under --check too", name)
 			text := taskText(t, task)
+			if strings.Contains(text, "audit_job_probe") {
+				job = true
+				assert.Contains(t, text, "cat \"/proc/$pid/environ\"", "the job runs with a runner's own environment")
+				assert.Contains(t, text, "$wd/.env", "and what the runner adds to every job")
+				assert.Contains(t, text, "the unit has no User=", "never as root")
+				assert.Contains(t, text, "sudo -n -u \"$login\"", "as that unit's login")
+				assert.Contains(t, text, "env -i", "and nothing of the audit's own")
+				continue
+			}
 			if strings.Contains(text, "Runner") {
 				memlock = true
 				assert.NotContains(t, text, "sudo", "memlock is read as the fleet login's own ssh session")
@@ -126,6 +135,12 @@ func TestAuditPlayOnlyReads(t *testing.T) {
 	assert.True(t, failed, "a machine with a gap fails by name")
 	assert.True(t, memlock, "the locked-memory limits of ssh, nova-reserve and the runners are read")
 	assert.Contains(t, string(b), "item=memlock ssh={{ audit_memlock.ssh }}")
+	assert.True(t, job, "the first steps of a CI job are run")
+	assert.Contains(t, string(b), "item=job-{{ item.split(' ')[0] }}")
+	assert.Contains(t, string(b), "FLEET-AUDIT NOT-APPLICABLE host={{ inventory_hostname }} item=job reason=no active github-runner unit")
+	for _, step := range []string{"step rustup", "step go", "step cmake", "step cache-dirs"} {
+		assert.Contains(t, string(b), step)
+	}
 	assert.Contains(t, string(b), "FLEET-AUDIT MISSING host={{ inventory_hostname }} item={{ item.name }} install={{ item.install }} check={{ item.check }}")
 	assert.Contains(t, string(b), "FLEET-AUDIT NOT-APPLICABLE host=")
 }

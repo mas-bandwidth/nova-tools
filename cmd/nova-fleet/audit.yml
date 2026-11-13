@@ -1,13 +1,17 @@
-# purpose: checks every Linux bench and runner against runner-requirements.tsv, as the runner login; read-only, fails by name on a gap
+# purpose: checks every Linux bench and runner against runner-requirements.tsv, memlock parity and a CI job's first steps; fails by name on a gap
 #
 # audit.yml: each requirement of runner-requirements.tsv (cmd/nova-fleet/README.md, "audit") checked on each Linux
 # machine of the bench and runner groups, as the login CI jobs run as: github_runner_user where that login exists
-# (ghrunner), else the fleet login, with the PATH a runner's jobs start with and that login's HOME. Read-only: it writes
-# nothing but the nova-reserve probe's temporary directory, removed after, under --check or not. Per machine, one line per requirement missing:
+# (ghrunner), else the fleet login, with the PATH a runner's jobs start with and that login's HOME. It changes nothing a
+# play owns, under --check or not: its only writes are its probes' temporary directories, removed after, and what a
+# job's first steps put in that login's caches. Per machine, one line per requirement missing:
 #   FLEET-AUDIT MISSING host=<machine> item=<name> install=<play> check=<command>
 # one per requirement declared for another architecture (FLEET-AUDIT NOT-APPLICABLE), one where the locked-memory limit
 # of the fleet login's ssh session, of a nova-reserve command and of the runners differ or are below nova_login_memlock
 #   FLEET-AUDIT MISSING host=<machine> item=memlock ssh=<v> reserve=<v> runner=<v> need=<v> install=<plays>
+# one per first step of a CI job (rustup, go, cmake, cache-dirs, run) that fails as each runner unit's login, with
+# its environment (a machine with no runner unit: FLEET-AUDIT NOT-APPLICABLE item=job)
+#   FLEET-AUDIT MISSING host=<machine> item=job-<step> unit:<unit> login:<login> install=<plays> error=<its last lines>
 # then
 #   FLEET-AUDIT host=<machine> login=<login> arch=<arch> ok=<n> missing=<n> not-applicable=<n>
 # and a machine with anything missing fails: FLEET-AUDIT FAILED host=<machine> missing=<names>. A machine that is not
@@ -196,16 +200,135 @@
                      + (['github-runners'] if 'runner' in audit_memlock.low else [])) | join(',') }}
       when: audit_memlock is defined and audit_memlock.gap
 
+    # ---- the first steps of a CI job, as the runner login with a runner's own environment ----
+    # Once for each login an active github-runner unit runs as, with the environment a job of that runner starts from:
+    # its main process's (/proc/<MainPID>/environ, read as that login, the PATH and TMPDIR its jobs inherit) with the
+    # runner's .env from its working directory on top, as the runner gives every job. A unit with no User= (its jobs would run as root) and an
+    # environment that cannot be read are gaps (job-run); a machine with no active runner unit runs no CI job and
+    # prints NOT-APPLICABLE for it. In a throwaway directory under its TMPDIR, removed after, the probe does what the
+    # fleet's workflows do first: dtolnay/rust-toolchain's rustup toolchain install (as the write it needs in rustup's
+    # home: a temporary file in <home>/tmp, the directories it writes writable), go build of an empty module, a CMake
+    # configure and build through ccache where ccache is on PATH, and every cache directory the environment names
+    # (and cargo's home) writable. Each step is bounded to 180 seconds; a failure prints its last lines.
+    - name: the first steps of a CI job, as each runner login with its environment
+      ansible.builtin.command:
+        argv: [bash, -s]
+        stdin: |
+          set -u
+          seen=" "
+          any=
+          while read -r u; do
+            [ "$(systemctl show -p ActiveState --value "$u")" = active ] || continue
+            any=1
+            login=$(systemctl show -p User --value "$u")
+            if [ -z "$login" ]; then echo "MISSING run unit:$u login:- the unit has no User=, so its jobs run as root"; continue; fi
+            case "$seen" in *" $login "*) continue ;; esac
+            seen="$seen$login "
+            pid=$(systemctl show -p MainPID --value "$u")
+            wd=$(systemctl show -p WorkingDirectory --value "$u")
+            home=$(getent passwd "$login" | cut -d: -f6)
+            if [ "$login" = "$(id -un)" ]; then run=(); else run=(sudo -n -u "$login"); fi
+            kv=()
+            mapfile -d '' -t kv < <("${run[@]}" cat "/proc/$pid/environ" 2>/dev/null)
+            if [ -z "${kv[*]:-}" ]; then
+              echo "MISSING run unit:$u login:$login cannot read the environment of its main process $pid as $login"; continue
+            fi
+            if [ -n "$wd" ]; then
+              while IFS= read -r l; do case "$l" in [A-Za-z_]*=*) kv+=("$l") ;; esac; done < <("${run[@]}" cat "$wd/.env" 2>/dev/null)
+            fi
+            out=$("${run[@]}" /usr/bin/env -i "${kv[@]}" HOME="$home" USER="$login" LANG=C.UTF-8 bash -c {{ audit_job_probe | quote }} </dev/null 2>&1)
+            # a probe that never answered (sudo refused, bash missing) is a gap of its own, never a pass
+            if ! printf '%s\n' "$out" | grep -qE '^(OK|MISSING) '; then
+              out="MISSING run $(printf '%s\n' "$out" | grep -v '^[[:space:]]*$' | tail -n 1 | cut -c1-300)"
+            fi
+            printf '%s\n' "$out" | grep -E '^(OK|MISSING) ' | sed "s,^\(OK\|MISSING\) \([^ ]*\),\1 \2 unit:$u login:$login,"
+          done < <(systemctl list-units --type=service --all --plain --no-legend 'github-runner-*' 2>/dev/null | awk '$2 == "loaded" {print $1}')
+          [ -n "$any" ] || echo "ENV none"
+          true
+      register: audit_job_run
+      changed_when: false
+      check_mode: false
+      when: nova_audit_job | default(true) | bool
+      vars:
+        audit_job_probe: |
+          set -u
+          w=$(mktemp -d "${TMPDIR:-/tmp}/fleet-audit-job.XXXXXX" 2>&1) || { echo "MISSING tmpdir mktemp in ${TMPDIR:-/tmp}: $w"; exit 0; }
+          trap 'chmod -R u+w "$w" 2>/dev/null; rm -rf "$w"' EXIT
+          cd "$w" || exit 0
+          step() {
+            n=$1; shift
+            if out=$(timeout 180 bash -c "$1" 2>&1 </dev/null); then echo "OK $n"
+            else echo "MISSING $n $(printf '%s\n' "$out" | grep -v '^[[:space:]]*$' | tail -n 2 | tr '\n' ' ' | cut -c1-300)"; fi
+          }
+          step rustup '
+            command -v rustup >/dev/null || { echo "rustup is not on PATH ($PATH)"; exit 1; }
+            h=$(rustup show home) || exit 1
+            mkdir -p "$h/tmp" && f=$(mktemp "$h/tmp/fleet-audit.XXXXXX") && rm -f "$f" || exit 1
+            for d in "$h" "$h/toolchains" "$h/downloads" "$h/update-hashes"; do
+              [ ! -e "$d" ] || [ -w "$d" ] || { echo "$d is not writable by $(id -un) (RUSTUP_HOME=$h)"; exit 1; }
+            done
+            rustup toolchain list >/dev/null'
+          step go '
+            mkdir g && cd g && printf "module probe\n\ngo 1.21\n" > go.mod && printf "package main\n\nfunc main() {}\n" > main.go &&
+            go build -o probe .'
+          step cmake '
+            mkdir m && cd m && printf "int main() { return 0; }\n" > m.cpp &&
+            printf "cmake_minimum_required(VERSION 3.16)\nproject(probe C CXX)\nadd_executable(probe m.cpp)\n" > CMakeLists.txt &&
+            l=; if command -v ccache >/dev/null; then l="-DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache"; fi &&
+            cmake -S . -B build $l >/dev/null && cmake --build build >/dev/null'
+          step cache-dirs '
+            for v in TMPDIR CCACHE_DIR CARGO_HOME GOCACHE GOPATH GOMODCACHE DOTNET_CLI_HOME NUGET_PACKAGES NUGET_HTTP_CACHE_PATH \
+                     NUGET_PLUGINS_CACHE_PATH HEX_HOME MIX_HOME OPAMROOT XDG_CACHE_HOME; do
+              d=${!v:-}; [ "$v" != CARGO_HOME ] || d=${d:-$HOME/.cargo}; [ -n "$d" ] || continue
+              mkdir -p "$d" 2>/dev/null && f=$(mktemp "$d/.fleet-audit.XXXXXX" 2>/dev/null) && rm -f "$f" ||
+                { echo "$v=$d is not writable by $(id -un)"; exit 1; }
+            done'
+
+    - name: the environment the job ran with
+      ansible.builtin.set_fact:
+        audit_job_env: "{{ audit_job_run.stdout_lines | select('match', '^ENV ') | map('regex_replace', '^ENV ', '') | first | default('unknown') }}"
+      when: audit_job_run is not skipped
+
+    - name: the job steps that failed
+      ansible.builtin.set_fact:
+        # each line: <step> unit:<unit> login:<login> <error>; a probe script that did not run at all is a gap too
+        audit_job_missing: >-
+          {{ (audit_job_run.stdout_lines | select('match', '^MISSING ') | map('regex_replace', '^MISSING ', '') | list)
+             if (audit_job_run.stdout_lines | select('match', '^(OK|MISSING) ') | list | length > 0)
+             else ['run unit:- login:- ' ~ ((audit_job_run.stderr | default('') | trim).splitlines() | last | default('no answer (rc=' ~ audit_job_run.rc ~ ')'))] }}
+        audit_job_ok: "{{ audit_job_run.stdout_lines | select('match', '^OK ') | list | length }}"
+      when: audit_job_run is not skipped and audit_job_env != 'none'
+
+    - name: a machine with no runner runs no job
+      ansible.builtin.debug:
+        msg: "FLEET-AUDIT NOT-APPLICABLE host={{ inventory_hostname }} item=job reason=no active github-runner unit"
+      when: audit_job_run is not skipped and audit_job_env == 'none'
+
+    - name: each job step missing
+      ansible.builtin.debug:
+        msg: >-
+          FLEET-AUDIT MISSING host={{ inventory_hostname }} item=job-{{ item.split(' ')[0] }} {{ item.split(' ')[1] | default('') }}
+          {{ item.split(' ')[2] | default('') }} install={{ audit_job_install.get(item.split(' ')[0], 'github-runners') }}
+          error={{ item.split(' ', 3)[3] | default('') }}
+      loop: "{{ audit_job_missing | default([]) }}"
+      loop_control: { label: "job-{{ item.split(' ')[0] }}" }
+      vars:
+        # the play that puts each step's tools and directories in place
+        audit_job_install: { rustup: "sdk-toolchain,github-runners", go: sdk-toolchain, cmake: runner-packages }
+
     - name: every gap, by name
       ansible.builtin.set_fact:
-        audit_gaps: "{{ audit_missing | map(attribute='name') | list + (['memlock'] if (audit_memlock is defined and audit_memlock.gap) else []) }}"
-        audit_ok_all: "{{ (audit_ok | int) + (1 if (audit_memlock is defined and not audit_memlock.gap) else 0) }}"
+        audit_gaps: >-
+          {{ audit_missing | map(attribute='name') | list + (['memlock'] if (audit_memlock is defined and audit_memlock.gap) else [])
+             + (audit_job_missing | default([]) | map('regex_replace', '^(\S+).*$', 'job-\1') | unique | list) }}
+        audit_ok_all: >-
+          {{ (audit_ok | int) + (1 if (audit_memlock is defined and not audit_memlock.gap) else 0) + (audit_job_ok | default(0) | int) }}
 
     - name: the machine's line
       ansible.builtin.debug:
         msg: >-
           FLEET-AUDIT host={{ inventory_hostname }} login={{ audit_login }} arch={{ audit_arch }} ok={{ audit_ok_all }}
-          missing={{ audit_gaps | length }} not-applicable={{ audit_elsewhere | length }}
+          missing={{ audit_gaps | length }} not-applicable={{ audit_elsewhere | length + (1 if (audit_job_run is not skipped and audit_job_env == 'none') else 0) }}
 
     # join --check installs nothing before the audit, so there a gap is what the real join would have to install
     - name: a gap a join under --check would install first
