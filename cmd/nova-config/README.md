@@ -142,9 +142,11 @@ them with what each has cost.
 
 The store holds the rules that keep a box from billing unseen or being reached by
 a play, whoever writes, a release before this one included: a rented record that
-holds a `provider_id` or a `spot_request` is not deleted; no machine row shares
-its name with an `aws` box (either way round); a handle is cleared once its box
-or request is gone, and the tool refuses to replace one with another. A record
+holds a `provider_id` or a `spot_request` is not deleted, nor the table emptied;
+while it holds one, its name, provider and market stay, and a handle is given or
+cleared, never replaced; one record per box and per spot request; no machine row
+shares its name with an `aws` box (either way round, two writers at once
+included). A record
 may be written before its box exists (neither handle yet): renting writes the
 record first, then makes the box.
 
