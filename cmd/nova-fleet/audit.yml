@@ -12,7 +12,7 @@
 #
 #   nova-fleet audit -- -l <machine>
 - name: the fleet's runner requirements, checked as the runner login
-  hosts: bench:runner
+  hosts: "{{ ('bench:runner:&' ~ nova_join_host) if nova_join_host is defined else 'bench:runner' }}"   # join: the machine joining, when it is a bench or runner
   gather_facts: true
   gather_subset: [min]
   vars:
@@ -22,6 +22,10 @@
     audit_wsl: "{{ 'microsoft' in (ansible_facts['kernel'] | lower) }}"
     audit_lines: "{{ lookup('ansible.builtin.file', nova_audit_requirements).splitlines() | reject('match', '^(#|\\s*$)') | list }}"
   tasks:
+    # a fresh connection, so groups a play just gave the login (kvm) count, as they do for a runner started after it
+    - name: a fresh connection to the machine
+      ansible.builtin.meta: reset_connection
+
     - name: a machine that is not Linux
       ansible.builtin.debug:
         msg: "FLEET-AUDIT SKIPPED host={{ inventory_hostname }} os={{ ansible_facts['system'] }} (runner-requirements.tsv covers Linux)"
@@ -127,7 +131,13 @@
           FLEET-AUDIT host={{ inventory_hostname }} login={{ audit_login }} arch={{ audit_arch }} ok={{ audit_ok }}
           missing={{ audit_missing | length }} not-applicable={{ audit_elsewhere | length }}
 
+    # join --check installs nothing before the audit, so there a gap is what the real join would have to install
+    - name: a gap a join under --check would install first
+      ansible.builtin.debug:
+        msg: "FLEET-AUDIT WOULD-FAIL host={{ inventory_hostname }} missing={{ audit_missing | map(attribute='name') | join(',') }} (join --check installed nothing)"
+      when: audit_missing | length > 0 and ansible_check_mode and nova_join_host is defined
+
     - name: a machine with a gap fails by name
       ansible.builtin.fail:
         msg: "FLEET-AUDIT FAILED host={{ inventory_hostname }} missing={{ audit_missing | map(attribute='name') | join(',') }}"
-      when: audit_missing | length > 0
+      when: audit_missing | length > 0 and not (ansible_check_mode and nova_join_host is defined)

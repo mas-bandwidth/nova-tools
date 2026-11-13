@@ -17,12 +17,14 @@ func TestPlaysTargetTheirGroups(t *testing.T) {
 	t.Parallel()
 	const workers = "bench:runner:services"
 	const joinHost = "{{ nova_join_host | default('!all') }}"
+	// the toolchain plays: bench and runner, or, run by join, the machine joining when it is one
+	const toolchain = "{{ ('bench:runner:&' ~ nova_join_host) if nova_join_host is defined else 'bench:runner' }}"
 	want := map[string][]string{
 		"ci-rules":        {workers},
 		"github-runners":  {"runner"},
-		"audit":           {"bench:runner"},
-		"runner-packages": {"bench:runner"},
-		"sdk-toolchain":   {"bench:runner"},
+		"audit":           {toolchain},
+		"runner-packages": {toolchain},
+		"sdk-toolchain":   {toolchain},
 		"health":          {workers},
 		"netwatch":        {workers},
 		"install":         {workers, "bench"}, // then the pinned opencode, bench only (roles/opencode)

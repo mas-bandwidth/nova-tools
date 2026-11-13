@@ -89,7 +89,7 @@ func TestAuditPlayOnlyReads(t *testing.T) {
 	var docs []map[string]any
 	require.NoError(t, yaml.Unmarshal(b, &docs))
 	require.Len(t, docs, 1)
-	assert.Equal(t, "bench:runner", docs[0]["hosts"])
+	assert.Equal(t, "{{ ('bench:runner:&' ~ nova_join_host) if nova_join_host is defined else 'bench:runner' }}", docs[0]["hosts"])
 	assert.NotContains(t, docs[0], "become", "the checks run as the runner login, never as root")
 	readOnly := []string{"ansible.builtin.debug", "ansible.builtin.meta", "ansible.builtin.assert", "ansible.builtin.set_fact",
 		"ansible.builtin.getent", "ansible.builtin.command", "ansible.builtin.fail"}

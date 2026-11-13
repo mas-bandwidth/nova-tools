@@ -5,13 +5,13 @@
 # toolchain by default. A package already installed is left as it is (never reinstalled or upgraded); only the missing
 # ones are installed. Packages only: no server is started and no service registered (the tests run their own initdb
 # and pg_ctl). One line per machine: RUNNER-PACKAGES host=<machine> wanted=<n> present=<n> installed=<n>; --check
-# prints WOULD-INSTALL for each missing one. nova-fleet up does not run this play. A list given with -e replaces the
+# prints WOULD-INSTALL for each missing one. join runs it for a machine joining as a bench or runner. A list given with -e replaces the
 # default whole.
 #
 #   nova-fleet runner-packages --check -- -l <machine>
 #   nova-fleet runner-packages -- -l <machine>
 - name: the packages the runners' tests need
-  hosts: bench:runner
+  hosts: "{{ ('bench:runner:&' ~ nova_join_host) if nova_join_host is defined else 'bench:runner' }}"   # join: the machine joining, when it is a bench or runner
   gather_facts: true
   gather_subset: [min]
   roles:

@@ -31,7 +31,8 @@ bzip2	any	runner-packages	command -v bzip2
 GNU time	any	runner-packages	test -x /usr/bin/time && /usr/bin/time -v true
 strace	any	runner-packages	strace --seccomp-bpf -f -o /dev/null true
 valgrind	any	runner-packages	command -v valgrind
-cppcheck 2.19.0	any	runner-packages	test "$(cppcheck --version)" = "Cppcheck 2.19.0"
+# by path: the SDK puts its own cppcheck first on a runner's PATH, and the tidy gate names apt's (CPPCHECK=/usr/bin/cppcheck)
+cppcheck 2.19.0	any	runner-packages	test "$(/usr/bin/cppcheck --version)" = "Cppcheck 2.19.0"
 cbmc 6.6.0	any	runner-packages	cbmc --version | head -1 | grep -q '6\.6\.0'
 cadical 2.1.3	any	runner-packages	cadical --version | head -1 | grep -q '2\.1\.3'
 esbmc 8.5.0	amd64	sdk-toolchain	PATH="$PATH:$HOME/sdk/bin" esbmc --version | head -1 | grep -q '8\.5\.0'

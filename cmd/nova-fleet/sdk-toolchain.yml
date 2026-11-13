@@ -10,14 +10,33 @@
 # and Rust from its standalone installer). ~/sdk is used by its real path, every symlink followed. A tool already in
 # its directory is adopted as it is; only what is missing is downloaded. Runs as the login,
 # never as root. One line per machine: SDK-TOOLCHAIN host=<machine> platform=<p> tools=<n> present=<n> installed=<n>
-# dotnet=<runtimes>; --check prints SDK-TOOLCHAIN WOULD-INSTALL for each missing tool. nova-fleet up does not run this
-# play; run runner-packages first (it brings the compilers, cmake, opam and LLVM 18 the source builds need).
+# dotnet=<runtimes>; --check prints SDK-TOOLCHAIN WOULD-INSTALL for each missing tool. join runs it, after
+# runner-packages, for a machine joining as a bench or runner; run runner-packages first (it brings the compilers,
+# cmake, opam and LLVM 18 the source builds need).
 #
 #   nova-fleet sdk-toolchain --check --diff -- -l <machine>
 #   nova-fleet sdk-toolchain -- -l <machine>
 - name: the pinned toolchains in each bench and runner login's SDK
-  hosts: bench:runner
+  hosts: "{{ ('bench:runner:&' ~ nova_join_host) if nova_join_host is defined else 'bench:runner' }}"   # join: the machine joining, when it is a bench or runner
   gather_facts: true
   gather_subset: [min]
+  pre_tasks:
+    # the role installs on x86_64 Linux and Apple-silicon macOS and refuses anything else; a machine joining on another
+    # platform (Windows, Linux arm64, an Intel Mac) is skipped by name instead, and the audit names what it lacks
+    - name: a platform the SDK installs on
+      ansible.builtin.set_fact:
+        sdk_supported: >-
+          {{ ansible_facts['os_family'] != 'Windows' and (
+             (ansible_facts['system'] == 'Linux' and ansible_facts['architecture'] == 'x86_64')
+             or (ansible_facts['system'] == 'Darwin' and ansible_facts['architecture'] in ['arm64', 'aarch64'])) }}
+
+    - name: a machine joining on another platform
+      ansible.builtin.debug:
+        msg: "SDK-TOOLCHAIN host={{ inventory_hostname }} skipped: {{ ansible_facts['system'] | default('Windows') }} {{ ansible_facts['architecture'] | default('') }} (no SDK pins for this platform)"
+      when: not (sdk_supported | bool) and (nova_join_host is defined or ansible_facts['os_family'] == 'Windows')
+
+    - name: only a platform the SDK installs on, under join
+      ansible.builtin.meta: end_host
+      when: not (sdk_supported | bool) and (nova_join_host is defined or ansible_facts['os_family'] == 'Windows')
   roles:
     - sdk-toolchain
