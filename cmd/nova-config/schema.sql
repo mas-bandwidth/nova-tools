@@ -168,6 +168,9 @@ END $$;
 CREATE OR REPLACE TRIGGER rented_not_machine BEFORE INSERT OR UPDATE OF name, provider ON config.rented FOR EACH ROW EXECUTE FUNCTION config.rented_not_machine();
 CREATE OR REPLACE FUNCTION config.rented_keep_all() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
+    IF current_setting('transaction_isolation') <> 'read committed' THEN -- an older snapshot could miss a record just written
+        RAISE EXCEPTION 'config.rented is emptied only at read committed, where every committed record is seen';
+    END IF;
     IF EXISTS (SELECT 1 FROM config.rented WHERE provider_id <> '' OR spot_request <> '') THEN
         RAISE EXCEPTION 'config.rented holds boxes or spot requests that may bill, and is not emptied; return them; run: nova-fleet rented';
     END IF;
