@@ -32,7 +32,7 @@ type change struct {
 }
 
 func newFake() *fake {
-	return &fake{rows: map[string]map[string]Row{"machine": {}, "service": {}, "friend": {}}}
+	return &fake{rows: map[string]map[string]Row{"machine": {}, "service": {}, "friend": {}, "rented": {}}}
 }
 
 func (f *fake) List(_ context.Context, k *kind) ([]Row, error) {
