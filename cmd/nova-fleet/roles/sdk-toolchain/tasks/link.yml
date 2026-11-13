@@ -40,18 +40,18 @@
     set -eu
     shared={{ (nova_shared_dir ~ '/sdk') | quote }}
     cd {{ nova_sdk_dir | quote }}
-    for e in * .[!.]* */* */.[!.]* rustup-*/toolchains/* rustup-*/cargo/bin/* opam/*/lib/* opam/*/bin/*; do
+    for e in * .[!.]* */* */.[!.]* rustup-*/cargo/bin rustup-*/toolchains/* rustup-*/cargo/bin/* opam/*/lib opam/*/bin opam/*/lib/* opam/*/bin/*; do
       [ -e "$e" ] || [ -L "$e" ] || continue
-      case "$e" in dl/*) continue ;; esac
+      case "$e" in dl | dl/*) continue ;; esac
       # below a top-level link nothing is compared, the link itself is (a version it names that the shared SDK lacks is
       # named on its own)
       top=${e%%/*}
       [ "$top" = "$e" ] || [ ! -L "$top" ] || continue
       [ -e "$shared/$e" ] || [ -L "$shared/$e" ] && continue
-      up=$(dirname "$e")
+      up=$(dirname -- "$e")
       while [ "$up" != . ]; do
         [ -e "$shared/$up" ] || [ -L "$shared/$up" ] || break
-        up=$(dirname "$up")
+        up=$(dirname -- "$up")
       done
       if [ "$up" = . ]; then echo "$e"; fi
     done

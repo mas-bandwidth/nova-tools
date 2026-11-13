@@ -59,25 +59,26 @@ func TestFunctionalSDKShareHeldNamesWhatOnlyTheOldSDKHolds(t *testing.T) {
 	tmp := t.TempDir()
 	shared, own := filepath.Join(tmp, "shared"), filepath.Join(tmp, "own")
 	makeTree(t, shared,
-		[]string{"go-1.23/bin", "rustup-1/toolchains/1.80", "rustup-1/cargo/bin", "opam/default/lib/zarith", "opam/default/bin", "dl"},
+		[]string{"go-1.23/bin", "rustup-1/toolchains/1.80", "rustup-1/cargo/bin", "opam/default/lib/zarith", "opam/default/bin", "opam/sw2"},
 		[]string{"go-1.23/bin/go", "rustup-1/cargo/bin/cargo"},
 		map[string]string{"go": "go-1.23", "lost": "nowhere"})
 	makeTree(t, own,
 		[]string{"go-1.22/bin", "go-1.23/bin", "rustup-1/toolchains/1.80", "rustup-1/toolchains/stable/lib", "rustup-1/cargo/bin",
-			"opam/default/lib/zarith", "opam/default/lib/extra", "opam/default/bin", "dl/old", "handmade/sub", "lost/deeper"},
+			"opam/default/lib/zarith", "opam/default/lib/extra", "opam/default/bin", "opam/sw2/lib/pkg", "dl/old", "handmade/sub", "lost/deeper"},
 		[]string{"go-1.22/bin/go", "go-1.22/bin/gofmt", "go-1.23/bin/go", "go-1.23/vet", "rustup-1/cargo/bin/cargo",
-			"rustup-1/cargo/bin/cargo-nextest", "opam/default/bin/why3", ".hidden"},
+			"rustup-1/cargo/bin/cargo-nextest", "opam/default/bin/why3", ".hidden", "-old"},
 		map[string]string{"go": "go-1.22"})
 	sh := sdkToolchainScript(t, "link.yml", "what the login's own SDK holds that the shared one lacks", map[string]string{
 		"{{ (nova_shared_dir ~ '/sdk') | quote }}": shared,
 		"{{ nova_sdk_dir | quote }}":               own,
 	})
 	got := runScript(t, sh)
-	// each once, at its highest missing level; nothing under dl/, nothing again under the go link; a name the shared SDK
-	// holds only as a dangling link is climbed past, so what is below it is named
+	// each once, at its highest missing level (a switch missing its lib directory too, a name starting with a dash);
+	// nothing of dl, even where the shared SDK has none; nothing again under the go link; a name the shared SDK holds
+	// only as a dangling link is climbed past, so what is below it is named
 	assert.ElementsMatch(t, []string{
 		"go-1.22", "go-1.23/vet", "handmade", ".hidden", "rustup-1/toolchains/stable",
-		"rustup-1/cargo/bin/cargo-nextest", "opam/default/lib/extra", "opam/default/bin/why3", "lost/deeper",
+		"rustup-1/cargo/bin/cargo-nextest", "opam/default/lib/extra", "opam/default/bin/why3", "lost/deeper", "opam/sw2/lib", "-old",
 	}, got)
 
 	// an old SDK the shared one covers whole names nothing, and the script ends well with every glob unmatched

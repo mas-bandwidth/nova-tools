@@ -90,7 +90,7 @@ func TestSDKToolchainSharesTheSDKAsTheLogin(t *testing.T) {
 	assert.Less(t, taskIndex(link, "the login's own SDK is moved aside and nova_sdk_dir names the shared SDK"), taskIndex(link, "the SDK moved aside is deleted"))
 	// compared below the top: a toolchain, a cargo tool or an opam package only the old SDK holds is held
 	extra := asText(runnerTask(t, link, "what the login's own SDK holds that the shared one lacks")["ansible.builtin.shell"])
-	assert.Contains(t, extra, `for e in * .[!.]* */* */.[!.]* rustup-*/toolchains/* rustup-*/cargo/bin/* opam/*/lib/* opam/*/bin/*; do`)
+	assert.Contains(t, extra, `for e in * .[!.]* */* */.[!.]* rustup-*/cargo/bin rustup-*/toolchains/* rustup-*/cargo/bin/* opam/*/lib opam/*/bin opam/*/lib/* opam/*/bin/*; do`)
 	assert.Contains(t, extra, `if [ "$up" = . ]; then echo "$e"; fi`, "each path once, at its highest missing level")
 	// nothing is moved or deleted while a process runs from it, and nothing is stopped
 	for _, step := range [][2]string{
