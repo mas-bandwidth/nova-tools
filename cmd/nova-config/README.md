@@ -145,8 +145,8 @@ a play, whoever writes, a release before this one included: a rented record that
 holds a `provider_id` or a `spot_request` is not deleted; no machine row shares
 its name with an `aws` box (either way round); a handle is cleared once its box
 or request is gone, and the tool refuses to replace one with another. A record
-may be written before its box exists (neither handle yet): `nova-fleet rent`
-writes it first, then the box.
+may be written before its box exists (neither handle yet): renting writes the
+record first, then makes the box.
 
 | Field | Meaning |
 |---|---|
