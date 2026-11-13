@@ -144,4 +144,16 @@ func TestFunctionalRentedFixed(t *testing.T) {
 	require.NoError(t, err)
 	_, err = c.Exec(ctx, `UPDATE config.rented SET provider = 'aws', market = 'on-demand' WHERE name = 'lat-1'`)
 	assert.NoError(t, err, "with nothing held it is free")
+
+	_, err = c.Exec(ctx, `INSERT INTO config.rented (name, provider, provider_id, purpose, rented_by, rented_at) VALUES ('lat-3', 'latitude', 'sv_3', 'p', 'a', '2026-11-13T00:00:00Z')`)
+	require.NoError(t, err)
+	_, err = c.Exec(ctx, `INSERT INTO config.rented (name, provider, provider_id, purpose, rented_by, rented_at) VALUES ('lat-4', 'latitude', 'sv_3', 'p', 'a', '2026-11-13T00:00:00Z')`)
+	assert.ErrorContains(t, err, "rented_box", "one record per box")
+	_, err = c.Exec(ctx, `TRUNCATE config.rented`)
+	assert.ErrorContains(t, err, "is not emptied", "a truncate, which fires no row trigger, is refused while a handle is held")
+	tx, err := c.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
+	require.NoError(t, err)
+	_, err = tx.Exec(ctx, `INSERT INTO config.machines (name, "user") VALUES ('m-rr', 'nova')`)
+	assert.ErrorContains(t, err, "not repeatable read", "a snapshot older than the name lock is refused")
+	_ = tx.Rollback(ctx) // ignored: the transaction failed
 }

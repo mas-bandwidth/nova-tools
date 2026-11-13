@@ -144,6 +144,9 @@ END $$;
 CREATE OR REPLACE TRIGGER rented_fixed BEFORE UPDATE ON config.rented FOR EACH ROW EXECUTE FUNCTION config.rented_fixed();
 CREATE OR REPLACE FUNCTION config.machines_not_aws() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
+    IF current_setting('transaction_isolation') = 'repeatable read' THEN -- its snapshot predates the lock: the check would miss a write that just committed
+        RAISE EXCEPTION 'config: a machine or rented write runs at read committed or serializable, not repeatable read';
+    END IF;
     PERFORM pg_advisory_xact_lock(hashtext('config.name:' || NEW.name));
     IF EXISTS (SELECT 1 FROM config.rented WHERE name = NEW.name AND provider = 'aws') THEN
         RAISE EXCEPTION 'machine %: % is a rented aws box, which no play may reach, so it has no machine row', NEW.name, NEW.name;
@@ -153,6 +156,9 @@ END $$;
 CREATE OR REPLACE TRIGGER machines_not_aws BEFORE INSERT OR UPDATE OF name ON config.machines FOR EACH ROW EXECUTE FUNCTION config.machines_not_aws();
 CREATE OR REPLACE FUNCTION config.rented_not_machine() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
+    IF current_setting('transaction_isolation') = 'repeatable read' THEN -- its snapshot predates the lock: the check would miss a write that just committed
+        RAISE EXCEPTION 'config: a machine or rented write runs at read committed or serializable, not repeatable read';
+    END IF;
     PERFORM pg_advisory_xact_lock(hashtext('config.name:' || NEW.name));
     IF NEW.provider = 'aws' AND EXISTS (SELECT 1 FROM config.machines WHERE name = NEW.name) THEN
         RAISE EXCEPTION 'rented %: an aws box, which no play may reach, cannot share its name with machine %', NEW.name, NEW.name;
@@ -160,3 +166,14 @@ BEGIN
     RETURN NEW;
 END $$;
 CREATE OR REPLACE TRIGGER rented_not_machine BEFORE INSERT OR UPDATE OF name, provider ON config.rented FOR EACH ROW EXECUTE FUNCTION config.rented_not_machine();
+CREATE OR REPLACE FUNCTION config.rented_keep_all() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM config.rented WHERE provider_id <> '' OR spot_request <> '') THEN
+        RAISE EXCEPTION 'config.rented holds boxes or spot requests that may bill, and is not emptied; return them; run: nova-fleet rented';
+    END IF;
+    RETURN NULL;
+END $$;
+CREATE OR REPLACE TRIGGER rented_keep_all BEFORE TRUNCATE ON config.rented FOR EACH STATEMENT EXECUTE FUNCTION config.rented_keep_all();
+-- One record per box and per spot request, so none is counted twice.
+CREATE UNIQUE INDEX IF NOT EXISTS rented_box ON config.rented (provider, provider_id) WHERE provider_id <> '';
+CREATE UNIQUE INDEX IF NOT EXISTS rented_spot ON config.rented (spot_request) WHERE spot_request <> '';

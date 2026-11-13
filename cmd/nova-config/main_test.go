@@ -420,7 +420,7 @@ func TestSchemaIsAdditive(t *testing.T) {
 	raw, err := os.ReadFile("schema.sql")
 	require.NoError(t, err)
 	code := regexp.MustCompile(`(?m)--.*$`).ReplaceAllString(string(raw), "")
-	code = regexp.MustCompile(`(?i)\bbefore delete on\b`).ReplaceAllString(code, "") // a trigger that refuses a delete deletes nothing
+	code = regexp.MustCompile(`(?i)\bbefore (delete|truncate) on\b`).ReplaceAllString(code, "") // a trigger that refuses a delete or truncate deletes nothing
 	assert.NotRegexp(t, `(?i)\bdrop\s+(column|table|schema|index)\b|\bdelete\b|\btruncate\b`, code)
 }
 
