@@ -9,6 +9,8 @@
     set -eu
     d={{ sdk_in_use_dir | quote }}
     [ -d "$d" ] && [ ! -L "$d" ] || exit 0
+    # the kernel names resolved paths in /proc, so the directory is compared by its own (a home under a linked /home)
+    d=$(cd "$d" && pwd -P)
     for p in /proc/[0-9]*; do
       [ "${p#/proc/}" = "$$" ] && continue
       hit=
