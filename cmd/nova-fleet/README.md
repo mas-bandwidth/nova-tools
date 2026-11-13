@@ -177,6 +177,27 @@ A first login that answers and cannot sudo without a password stops it too, unde
 makes the fleet's login through it; run: ssh -t ubuntu@203.0.113.9 sudo visudo -f /etc/sudoers.d/90-ubuntu  # the one
 line: ubuntu ALL=(ALL) NOPASSWD:ALL`.
 
+## Rented machines
+
+A machine rented by the hour is a machine row whose `provider` is not `owned` (cmd/nova-config/README.md, "Machines"):
+what it is for, who rented it and when, when it is to be returned, its id at the provider and its hourly price with
+where the price came from. `rented` lists them from the record, so none bills unseen:
+
+```sh
+nova-secrets exec --only NOVA_PG_PASSWORD -- nova-fleet rented
+```
+
+```text
+RENTED spill-1 provider=aws market=spot age=1h30m rate=0.60/h price_from=provider cost=0.90 return_by=2026-11-13T09:00:00Z purpose="load rows"
+RENTED bench-x provider=latitude market=- age=3h00m rate=4.06/h price_from=recalled cost=12.18 return_by=2026-11-13T04:00:00Z PAST purpose="XDP pair"
+RENTED TOTAL machines=2 rate=4.66/h cost=13.08 unpriced=0 past=1
+```
+
+`cost` is the hourly price times the hours since `rented_at` (a stopped box bills less: its disk only); `rate=unpriced`
+is a machine with no price, counted in `unpriced`; `price_from=recalled` is a price not read from the provider; `PAST`
+marks a machine kept beyond its `return_by`. `--json` prints the same as one object, `{"machines": [...], "total":
+{...}}`. A record that cannot be read is one line naming nova-config's own error.
+
 ## The plays
 
 | Play | Purpose | Needs |

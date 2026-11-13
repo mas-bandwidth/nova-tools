@@ -1,9 +1,9 @@
 cmd/nova-bus  2921
 cmd/nova-cairn  2358
-cmd/nova-config  2205
+cmd/nova-config  2292
 cmd/nova-reserve  1319
 cmd/nova-sandbox  1853
 cmd/nova-secrets  1809
-cmd/nova-fleet  2172
+cmd/nova-fleet  2355
 tests/boundary  400
 tests/contract  50

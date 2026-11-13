@@ -44,5 +44,9 @@ func init() {
 			Want: Want{Exit: []int{1}, Reason: []string{"CHECK FAILED"}, Stdout: "CHECK MISSING ansible-playbook", Remedy: None}},
 		Fault{Tool: "fleet", Name: "up: nothing named", Argv: []string{"up"},
 			Want: Want{Exit: []int{2}, Reason: []string{"<name>=<address>", "--tools"}}},
+		Fault{Tool: "fleet", Name: "rented: nova-config not on PATH", Setup: fleetBin("", false), Argv: []string{"rented"},
+			Want: Want{Exit: []int{2}, Reason: []string{"nova-config is not on PATH"}, Remedy: Runs}},
+		Fault{Tool: "fleet", Name: "rented: no store", Setup: fleetBin("", true), Argv: []string{"rented"},
+			Want: Want{Exit: []int{2}, Reason: []string{"the record cannot be read", "nova-config machine list --json exit 2"}, Remedy: Runs}},
 	)
 }
