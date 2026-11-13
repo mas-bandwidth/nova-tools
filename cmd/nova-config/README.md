@@ -140,6 +140,14 @@ inventory, whichever release builds it. A `latitude` box that joins the fleet
 also gets a machine row, as an owned machine does. `nova-fleet rented` lists
 them with what each has cost.
 
+The store holds the rules that keep a box from billing unseen or being reached by
+a play, whoever writes, a release before this one included: a rented record that
+holds a `provider_id` or a `spot_request` is not deleted; no machine row shares
+its name with an `aws` box (either way round); a handle is cleared once its box
+or request is gone, and the tool refuses to replace one with another. A record
+may be written before its box exists (neither handle yet): `nova-fleet rent`
+writes it first, then the box.
+
 | Field | Meaning |
 |---|---|
 | `provider` | `latitude` or `aws`; required. |

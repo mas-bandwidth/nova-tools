@@ -61,4 +61,21 @@ func TestFunctionalOldStore(t *testing.T) {
 	assert.Error(t, err, "and a rented_at that is not an RFC 3339 UTC time")
 	_, err = c.Exec(ctx, `INSERT INTO config.rented (name, provider, purpose, rented_by, rented_at) VALUES ('r-2', 'aws', '', 'a', '2026-11-13T00:00:00Z')`)
 	assert.Error(t, err, "and a rented box with no purpose")
+	_, err = c.Exec(ctx, `INSERT INTO config.rented (name, provider, purpose, rented_by, rented_at) VALUES ('r-3', 'aws', 'p', 'a', '2026-11-13T00:00:00Z')`)
+	assert.Error(t, err, "and an aws box with no market")
+
+	_, err = c.Exec(ctx, `INSERT INTO config.machines (name, "user") VALUES ('spill-1', 'nova')`)
+	assert.ErrorContains(t, err, "is a rented aws box, which no play may reach", "an older tool's machine add cannot put an aws box in reach of a play")
+	_, err = c.Exec(ctx, `UPDATE config.machines SET name = 'spill-1' WHERE name = 'old-1'`)
+	assert.ErrorContains(t, err, "is a rented aws box", "nor a rename onto one")
+	code, _, errs = realRun(t, env, rentArgs("old-1")...)
+	assert.NotEqual(t, 0, code)
+	assert.Contains(t, errs, "cannot share its name with machine old-1")
+
+	_, err = c.Exec(ctx, `DELETE FROM config.rented WHERE name = 'spill-1'`)
+	assert.ErrorContains(t, err, "still has a box or spot request", "the store keeps a record that holds a handle, whoever deletes it")
+	_, err = c.Exec(ctx, `UPDATE config.rented SET provider_id = '', spot_request = '' WHERE name = 'spill-1'`)
+	require.NoError(t, err)
+	_, err = c.Exec(ctx, `DELETE FROM config.rented WHERE name = 'spill-1'`)
+	assert.NoError(t, err, "with both cleared it goes")
 }

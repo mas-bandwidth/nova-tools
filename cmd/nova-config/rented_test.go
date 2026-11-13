@@ -98,3 +98,20 @@ func TestRentedRowWithAHandleIsNotRemoved(t *testing.T) {
 	h.ok(t, "rented", "remove", "spill-1", "--actor", "t")
 	assert.Empty(t, h.st.rows["rented"])
 }
+
+// A handle at the provider is cleared once its thing is gone, never replaced by another: the old box or request may
+// still bill, and its id would be lost.
+func TestRentedHandleIsNotReplaced(t *testing.T) {
+	t.Parallel()
+	h := newHarness()
+	h.ok(t, rentArgs("spill-1")...)
+	for _, f := range []string{"provider_id", "spot_request"} {
+		code, out, errs := h.run(t, "rented", "set", "spill-1", "--"+f, "x-new", "--actor", "t")
+		assert.Equal(t, 1, code, f)
+		assert.Empty(t, out)
+		assert.Contains(t, errs, "rented spill-1: --"+f+" is ")
+		assert.Contains(t, errs, "which may still bill; return it, or once it is gone at the provider clear it (--"+f+" '') before giving another")
+	}
+	h.ok(t, "rented", "set", "spill-1", "--provider_id", "", "--actor", "t")
+	h.ok(t, "rented", "set", "spill-1", "--provider_id", "i-0new", "--actor", "t")
+}

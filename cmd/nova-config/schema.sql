@@ -110,5 +110,36 @@ CREATE TABLE IF NOT EXISTS config.rented (
     rented_at  text NOT NULL CHECK (rented_at ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$'),
     return_by  text NOT NULL DEFAULT '' CHECK (return_by ~ '^([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z)?$'),
     created_at timestamptz NOT NULL DEFAULT now(),
-    updated_at timestamptz NOT NULL DEFAULT now()
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT rented_market CHECK ((provider = 'aws') = (market <> '')),
+    CONSTRAINT rented_spot CHECK (spot_request = '' OR market = 'spot'),
+    CONSTRAINT rented_return CHECK (return_by = '' OR return_by >= rented_at)
 );
+
+-- The store holds these whoever writes, a release before config.rented included: a rented record that still holds a
+-- box id or a spot request id is not deleted (either may still bill; clear it once it is gone at the provider), and
+-- no machine row shares a name with an aws rented box (a machine row is what an inventory, and so a play, reaches).
+CREATE OR REPLACE FUNCTION config.rented_keep() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF OLD.provider_id <> '' OR OLD.spot_request <> '' THEN
+        RAISE EXCEPTION 'rented % still has a box or spot request at %, which may bill; return it (nova-fleet return)', OLD.name, OLD.provider;
+    END IF;
+    RETURN OLD;
+END $$;
+CREATE OR REPLACE TRIGGER rented_keep BEFORE DELETE ON config.rented FOR EACH ROW EXECUTE FUNCTION config.rented_keep();
+CREATE OR REPLACE FUNCTION config.machines_not_aws() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM config.rented WHERE name = NEW.name AND provider = 'aws') THEN
+        RAISE EXCEPTION 'machine %: % is a rented aws box, which no play may reach, so it has no machine row', NEW.name, NEW.name;
+    END IF;
+    RETURN NEW;
+END $$;
+CREATE OR REPLACE TRIGGER machines_not_aws BEFORE INSERT OR UPDATE OF name ON config.machines FOR EACH ROW EXECUTE FUNCTION config.machines_not_aws();
+CREATE OR REPLACE FUNCTION config.rented_not_machine() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF NEW.provider = 'aws' AND EXISTS (SELECT 1 FROM config.machines WHERE name = NEW.name) THEN
+        RAISE EXCEPTION 'rented %: an aws box, which no play may reach, cannot share its name with machine %', NEW.name, NEW.name;
+    END IF;
+    RETURN NEW;
+END $$;
+CREATE OR REPLACE TRIGGER rented_not_machine BEFORE INSERT OR UPDATE OF name, provider ON config.rented FOR EACH ROW EXECUTE FUNCTION config.rented_not_machine();
