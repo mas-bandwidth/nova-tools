@@ -93,7 +93,7 @@ func TestAuditPlayOnlyReads(t *testing.T) {
 	assert.NotContains(t, docs[0], "become", "the checks run as the runner login, never as root")
 	readOnly := []string{"ansible.builtin.debug", "ansible.builtin.meta", "ansible.builtin.assert", "ansible.builtin.set_fact",
 		"ansible.builtin.getent", "ansible.builtin.command", "ansible.builtin.fail"}
-	failed := false
+	failed, memlock := false, false
 	for _, task := range mapsOf(t, docs[0]["tasks"]) {
 		name := asText(task["name"])
 		var module string
@@ -107,15 +107,25 @@ func TestAuditPlayOnlyReads(t *testing.T) {
 			assert.Equal(t, false, task["changed_when"], "task %q", name)
 			assert.Equal(t, false, task["check_mode"], "task %q runs under --check too", name)
 			text := taskText(t, task)
+			if strings.Contains(text, "Runner") {
+				memlock = true
+				assert.NotContains(t, text, "sudo", "memlock is read as the fleet login's own ssh session")
+				assert.Contains(t, text, "run --dir \"$d\" --wait 60s", "a slot of its own, never the machine's, and bounded")
+				assert.Contains(t, text, "LimitMEMLOCK")
+				assert.Contains(t, text, "/proc/$p/limits")
+				continue
+			}
 			assert.Contains(t, text, "sudo', '-n', '-u', audit_login", "the checks run as the runner login")
 			assert.Contains(t, text, "timeout 120 bash -c", "each check is bounded")
 		}
 		if module == "ansible.builtin.fail" && strings.Contains(taskText(t, task), "FLEET-AUDIT FAILED host=") {
 			failed = true
-			assert.Contains(t, asText(task["when"]), "audit_missing | length > 0")
+			assert.Contains(t, asText(task["when"]), "audit_gaps | length > 0")
 		}
 	}
 	assert.True(t, failed, "a machine with a gap fails by name")
+	assert.True(t, memlock, "the locked-memory limits of ssh, nova-reserve and the runners are read")
+	assert.Contains(t, string(b), "item=memlock ssh={{ audit_memlock.ssh }}")
 	assert.Contains(t, string(b), "FLEET-AUDIT MISSING host={{ inventory_hostname }} item={{ item.name }} install={{ item.install }} check={{ item.check }}")
 	assert.Contains(t, string(b), "FLEET-AUDIT NOT-APPLICABLE host=")
 }
