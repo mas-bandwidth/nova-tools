@@ -19,12 +19,12 @@ func stamp(d time.Duration) string { return at.Add(d).Format(time.RFC3339) }
 func rentedRows() []rentedRow {
 	return []rentedRow{
 		{Name: "bench-a", Provider: "owned"},
-		{Name: "old-b"}, // a row written before the rented columns
-		{Name: "spill-1", Provider: "aws", Market: "spot", Price: "0.60", PriceFrom: "provider", Purpose: "load rows",
+		{Name: "spill-1", Provider: "aws", ProviderID: "i-0abc", Market: "spot", Price: "0.60", PriceFrom: "provider", Purpose: "load rows",
 			RentedBy: "alice", RentedAt: stamp(-90 * time.Minute), ReturnBy: stamp(time.Hour)},
-		{Name: "bench-x", Provider: "latitude", Price: "4.06", PriceFrom: "recalled", Purpose: "XDP pair",
+		{Name: "bench-x", Provider: "latitude", ProviderID: "sv_1", Price: "4.06", PriceFrom: "recalled", Purpose: "XDP pair",
 			RentedBy: "alice", RentedAt: stamp(-3 * time.Hour), ReturnBy: stamp(-time.Minute)},
 		{Name: "spill-2", Provider: "aws", Market: "on-demand", Purpose: "mutation", RentedBy: "alice", RentedAt: stamp(-30 * time.Minute)},
+		{Name: "spill-3", Provider: "aws", Market: "on-demand", Price: "0.0049", PriceFrom: "recalled", Purpose: "a row edited by hand", RentedBy: "alice"},
 	}
 }
 
@@ -34,10 +34,11 @@ func TestRentedListsCostAgeAndPast(t *testing.T) {
 	t.Parallel()
 	var out bytes.Buffer
 	require.NoError(t, listRented(rentedRows(), at, false, &out))
-	assert.Equal(t, `RENTED spill-1 provider=aws market=spot age=1h30m rate=0.60/h price_from=provider cost=0.90 return_by=1970-01-01T01:16:40Z purpose="load rows"
-RENTED bench-x provider=latitude market=- age=3h00m rate=4.06/h price_from=recalled cost=12.18 return_by=1970-01-01T00:15:40Z PAST purpose="XDP pair"
-RENTED spill-2 provider=aws market=on-demand age=0h30m rate=unpriced price_from=- cost=0.00 return_by=- purpose="mutation"
-RENTED TOTAL machines=3 rate=4.66/h cost=13.08 unpriced=1 past=1
+	assert.Equal(t, `RENTED spill-1 provider=aws id=i-0abc market=spot age=1h30m rate=0.60 price_from=provider cost=0.90 return_by=1970-01-01T01:16:40Z purpose="load rows"
+RENTED bench-x provider=latitude id=sv_1 market=- age=3h00m rate=4.06 price_from=recalled cost=12.18 return_by=1970-01-01T00:15:40Z PAST purpose="XDP pair"
+RENTED spill-2 provider=aws id=- market=on-demand age=0h30m rate=- price_from=- cost=unknown return_by=- purpose="mutation"
+RENTED spill-3 provider=aws id=- market=on-demand age=0h00m rate=0.0049 price_from=recalled cost=unknown return_by=- purpose="a row edited by hand"
+RENTED TOTAL machines=4 rate=4.6649 cost=13.08 unknown=2 past=1
 `, out.String())
 }
 
@@ -49,25 +50,26 @@ func TestRentedJSON(t *testing.T) {
 	var v struct {
 		Machines []bill
 		Total    struct {
-			Machines, Unpriced, Past int
-			Rate, Cost               float64
+			Machines, Unknown, Past int
+			Rate, Cost              float64
 		}
 	}
 	require.NoError(t, json.Unmarshal(out.Bytes(), &v))
-	require.Len(t, v.Machines, 3)
+	require.Len(t, v.Machines, 4)
 	assert.True(t, v.Machines[1].Past)
 	assert.InDelta(t, 12.18, v.Machines[1].Cost, 0.001)
-	assert.Equal(t, 3, v.Total.Machines)
-	assert.Equal(t, 1, v.Total.Unpriced)
-	assert.InDelta(t, 4.66, v.Total.Rate, 0.001)
+	assert.Equal(t, 4, v.Total.Machines)
+	assert.Equal(t, 2, v.Total.Unknown)
+	assert.InDelta(t, 4.6649, v.Total.Rate, 0.00001)
+	assert.False(t, v.Machines[2].Known)
 }
 
 // No rented machine is a total of none, not an empty answer.
 func TestRentedNone(t *testing.T) {
 	t.Parallel()
 	var out bytes.Buffer
-	require.NoError(t, listRented(rentedRows()[:2], at, false, &out))
-	assert.Equal(t, "RENTED TOTAL machines=0 rate=0.00/h cost=0.00 unpriced=0 past=0\n", out.String())
+	require.NoError(t, listRented(rentedRows()[:1], at, false, &out))
+	assert.Equal(t, "RENTED TOTAL machines=0 rate=0 cost=0.00 unknown=0 past=0\n", out.String())
 }
 
 // The record is read through nova-config; a failed read carries its cause.
@@ -89,6 +91,12 @@ func TestRecordReadsNovaConfig(t *testing.T) {
 	assert.EqualError(t, err, "nova-config machine list --json exit 2: nova-config machine list: store has no current schema; run: nova-config schema | psql")
 	_, err = record("/bin/nova-config", func(string, []string, []string) (string, string, int) { return "MACHINE", "", 0 })
 	assert.ErrorContains(t, err, "printed no JSON")
+	_, err = record("/bin/nova-config", func(string, []string, []string) (string, string, int) {
+		return `{"items":[{"fields":{"name":"bench-a","cores":4}}]}`, "", 0
+	})
+	assert.EqualError(t, err, "/bin/nova-config predates the rented fields (row bench-a has no provider), so it cannot say which machines are rented; install this release's nova-config", "an older nova-config is never read as a fleet with none rented")
+	_, err = record("/bin/nova-config", func(string, []string, []string) (string, string, int) { return "", "", 2 })
+	assert.EqualError(t, err, "nova-config machine list --json exit 2: (nothing on stderr)")
 }
 
 // An argument rented does not take is refused, naming it; -h prints the help.

@@ -54,8 +54,8 @@ CREATE TABLE IF NOT EXISTS config.machines (
     price_from text NOT NULL DEFAULT '' CHECK (price_from IN ('', 'provider', 'recalled')),
     purpose    text NOT NULL DEFAULT '',
     rented_by  text NOT NULL DEFAULT '',
-    rented_at  text NOT NULL DEFAULT '',
-    return_by  text NOT NULL DEFAULT ''
+    rented_at  text NOT NULL DEFAULT '' CHECK (rented_at ~ '^([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z)?$'),
+    return_by  text NOT NULL DEFAULT '' CHECK (return_by ~ '^([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z)?$')
 );
 -- A machines table made before the runner_env column gets it here; on one that has it this does nothing.
 ALTER TABLE config.machines ADD COLUMN IF NOT EXISTS runner_env text NOT NULL DEFAULT '{}' CHECK (runner_env LIKE '{%}');
@@ -76,8 +76,8 @@ ALTER TABLE config.machines ADD COLUMN IF NOT EXISTS price text NOT NULL DEFAULT
 ALTER TABLE config.machines ADD COLUMN IF NOT EXISTS price_from text NOT NULL DEFAULT '' CHECK (price_from IN ('', 'provider', 'recalled'));
 ALTER TABLE config.machines ADD COLUMN IF NOT EXISTS purpose text NOT NULL DEFAULT '';
 ALTER TABLE config.machines ADD COLUMN IF NOT EXISTS rented_by text NOT NULL DEFAULT '';
-ALTER TABLE config.machines ADD COLUMN IF NOT EXISTS rented_at text NOT NULL DEFAULT '';
-ALTER TABLE config.machines ADD COLUMN IF NOT EXISTS return_by text NOT NULL DEFAULT '';
+ALTER TABLE config.machines ADD COLUMN IF NOT EXISTS rented_at text NOT NULL DEFAULT '' CHECK (rented_at ~ '^([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z)?$');
+ALTER TABLE config.machines ADD COLUMN IF NOT EXISTS return_by text NOT NULL DEFAULT '' CHECK (return_by ~ '^([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z)?$');
 
 -- A service: a program one machine keeps running; with every n seconds it runs
 -- every n seconds instead of staying up.

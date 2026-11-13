@@ -53,4 +53,6 @@ func TestFunctionalRentedColumnsOnAnOldStore(t *testing.T) {
 	assert.Contains(t, out, " provider=aws provider_id=i-0abc market=spot spot_request=sir-1 price=0.59 price_from=provider ")
 	_, err = c.Exec(ctx, `UPDATE config.machines SET price = '4,06' WHERE name = 'spill-1'`)
 	assert.Error(t, err, "the store refuses a price that is not a decimal, whoever writes it")
+	_, err = c.Exec(ctx, `UPDATE config.machines SET rented_at = 'yesterday' WHERE name = 'spill-1'`)
+	assert.Error(t, err, "and a rented_at that is not an RFC 3339 UTC time")
 }

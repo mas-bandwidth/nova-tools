@@ -545,14 +545,23 @@ func checkRented(r Row) []string {
 	}
 	for _, f := range []string{"purpose", "rented_by", "rented_at"} {
 		if v[f] == "" {
-			p = append(p, fmt.Sprintf("machine %s is rented (--provider %s) and has no --%s; give it", r.Name, v["provider"], f))
+			p = append(p, fmt.Sprintf("machine %s is rented (--provider %s) and has no --%s; give --%s <value>", r.Name, v["provider"], f, f))
 		}
 	}
+	if v["return_by"] != "" && v["return_by"] < v["rented_at"] { // both RFC 3339 UTC, so they compare as text
+		p = append(p, fmt.Sprintf("machine %s: --return_by %s is before --rented_at %s; give a later --return_by", r.Name, v["return_by"], v["rented_at"]))
+	}
 	if (v["price"] == "") != (v["price_from"] == "") {
-		p = append(p, fmt.Sprintf("machine %s: --price and --price_from go together (provider: read from the provider; recalled: not read)", r.Name))
+		p = append(p, fmt.Sprintf("machine %s: --price and --price_from go together; give --price <usd-per-hour> --price_from provider|recalled (provider: read from the provider; recalled: not read), or neither", r.Name))
 	}
 	if v["market"] != "" && v["provider"] != "aws" {
 		p = append(p, fmt.Sprintf("machine %s: --market is an aws machine's, and its --provider is %s; set --market ''", r.Name, v["provider"]))
+	}
+	if v["market"] == "" && v["provider"] == "aws" {
+		p = append(p, fmt.Sprintf("machine %s is rented at aws and has no --market; give --market on-demand|spot", r.Name))
+	}
+	if v["provider"] == "aws" && (v["runner_scopes"] != "" || v["windows_runners"] != "" || v["runners"] != "0" && v["runners"] != "") {
+		p = append(p, fmt.Sprintf("machine %s is rented at aws, which no play reaches, so the record cannot keep runners on it; set --runners 0 --runner_scopes '' --windows_runners ''", r.Name))
 	}
 	if v["spot_request"] != "" && v["market"] != "spot" {
 		p = append(p, fmt.Sprintf("machine %s: --spot_request is a spot machine's, and its --market is %q; set --market spot or --spot_request ''", r.Name, v["market"]))

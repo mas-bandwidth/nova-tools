@@ -39,7 +39,7 @@ func TestRentedRowRefusals(t *testing.T) {
 		{[]string{"machine", "set", "bench-o", "--price", "1", "--price_from", "recalled", "--actor", "t"},
 			"machine bench-o: --price is a rented machine's, and its --provider is owned; set --provider latitude|aws, or --price ''"},
 		{[]string{"machine", "add", "r1", "--user", "nova", "--provider", "latitude", "--actor", "t"},
-			"machine r1 is rented (--provider latitude) and has no --purpose; give it; machine r1 is rented (--provider latitude) and has no --rented_by; give it; machine r1 is rented (--provider latitude) and has no --rented_at; give it"},
+			"machine r1 is rented (--provider latitude) and has no --purpose; give --purpose <value>; machine r1 is rented (--provider latitude) and has no --rented_by; give --rented_by <value>; machine r1 is rented (--provider latitude) and has no --rented_at; give --rented_at <value>"},
 		{rentArgs("r2", "--price_from", ""), "machine r2: --price and --price_from go together"},
 		{rentArgs("r3", "--provider", "latitude"), "machine r3: --market is an aws machine's, and its --provider is latitude; set --market ''"},
 		{rentArgs("r4", "--market", "on-demand"), "machine r4: --spot_request is a spot machine's, and its --market is \"on-demand\"; set --market spot or --spot_request ''"},
@@ -48,6 +48,9 @@ func TestRentedRowRefusals(t *testing.T) {
 		{rentArgs("r7", "--provider", "hetzner"), `--provider "hetzner": want one of owned|latitude|aws`},
 		{rentArgs("r8", "--market", "reserved"), `--market "reserved": want one of on-demand|spot`},
 		{rentArgs("r9", "--price_from", "guess"), `--price_from "guess": want one of provider|recalled`},
+		{rentArgs("r10", "--return_by", "2026-11-12T00:00:00Z"), "machine r10: --return_by 2026-11-12T00:00:00Z is before --rented_at 2026-11-13T05:00:00Z; give a later --return_by"},
+		{rentArgs("r11", "--market", "", "--spot_request", ""), "machine r11 is rented at aws and has no --market; give --market on-demand|spot"},
+		{rentArgs("r12", "--runner_scopes", "https://github.com/o/r=1"), "machine r12 is rented at aws, which no play reaches, so the record cannot keep runners on it"},
 	} {
 		code, out, errs := h.run(t, c.args...)
 		assert.NotEqual(t, 0, code, "%v", c.args)
@@ -76,4 +79,19 @@ func TestInventoryLeavesOutMachinesNoPlayReaches(t *testing.T) {
 	assert.Equal(t, []string{"lat-1", "own-1", "old-1"}, inv.Bench.Hosts)
 	assert.NotContains(t, inv.Meta.Hostvars, "aws-1")
 	assert.NotContains(t, inv.Meta.Hostvars, "asked-1")
+}
+
+// A rented row whose box has an id at the provider is not removed: the box may still bill. Once the id is cleared (the
+// box is gone), the row goes.
+func TestRentedRowWithABoxIsNotRemoved(t *testing.T) {
+	t.Parallel()
+	h := newHarness()
+	h.ok(t, rentArgs("spill-1")...)
+	code, out, errs := h.run(t, "machine", "remove", "spill-1", "--actor", "t")
+	assert.Equal(t, 1, code)
+	assert.Empty(t, out)
+	assert.Contains(t, errs, "machine spill-1 is rented at aws as i-0abc, which may still bill;")
+	assert.Contains(t, errs, "; run: nova-fleet rented\n")
+	h.ok(t, "machine", "set", "spill-1", "--provider_id", "", "--actor", "t", "--reason", "the box is gone")
+	h.ok(t, "machine", "remove", "spill-1", "--actor", "t")
 }

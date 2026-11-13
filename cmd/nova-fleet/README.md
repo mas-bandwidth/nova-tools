@@ -188,15 +188,17 @@ nova-secrets exec --only NOVA_PG_PASSWORD -- nova-fleet rented
 ```
 
 ```text
-RENTED spill-1 provider=aws market=spot age=1h30m rate=0.60/h price_from=provider cost=0.90 return_by=2026-11-13T09:00:00Z purpose="load rows"
-RENTED bench-x provider=latitude market=- age=3h00m rate=4.06/h price_from=recalled cost=12.18 return_by=2026-11-13T04:00:00Z PAST purpose="XDP pair"
-RENTED TOTAL machines=2 rate=4.66/h cost=13.08 unpriced=0 past=1
+RENTED spill-1 provider=aws id=i-0abc market=spot age=1h30m rate=0.60 price_from=provider cost=0.90 return_by=2026-11-13T09:00:00Z purpose="load rows"
+RENTED bench-x provider=latitude id=sv_1 market=- age=3h00m rate=4.06 price_from=recalled cost=12.18 return_by=2026-11-13T04:00:00Z PAST purpose="XDP pair"
+RENTED TOTAL machines=2 rate=4.66 cost=13.08 unknown=0 past=1
 ```
 
-`cost` is the hourly price times the hours since `rented_at` (a stopped box bills less: its disk only); `rate=unpriced`
-is a machine with no price, counted in `unpriced`; `price_from=recalled` is a price not read from the provider; `PAST`
+`cost` is the hourly price times the hours since `rented_at` (a stopped box bills less: its disk only); `cost=unknown`
+is a machine with no price or no `rented_at`, left out of the total and counted in `unknown`; `price_from=recalled` is a price not read from the provider; `PAST`
 marks a machine kept beyond its `return_by`. `--json` prints the same as one object, `{"machines": [...], "total":
-{...}}`. A record that cannot be read is one line naming nova-config's own error.
+{...}}`. A record that cannot be read is one line naming nova-config's own error, and a nova-config on PATH older than
+the rented fields is refused, never read as a fleet with none rented: every control node runs this release's
+nova-config before the first rented row is written, since an older one's inventory would list an `aws` row.
 
 ## The plays
 
