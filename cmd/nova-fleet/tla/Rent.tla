@@ -14,7 +14,7 @@
 (* record removed while only its spot request lives), StoreNoAsk (the store lets a record holding an ask go),  *)
 (* Persistent (a spot request that opens again), Fallback (a refused spot rent made on demand), NoCheck (a box *)
 (* kept on the wrong hardware).                                                                               *)
-EXTENDS FiniteSets
+EXTENDS Naturals, FiniteSets
 
 CONSTANTS Rents, Returns, Boxes, Reqs, Spot, Broken
 
