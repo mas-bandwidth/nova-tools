@@ -45,17 +45,7 @@ CREATE TABLE IF NOT EXISTS config.machines (
     runner_scopes text NOT NULL DEFAULT '',
     windows_runners text NOT NULL DEFAULT '',
     windows_admin_runners text NOT NULL DEFAULT '',
-    runner_env text NOT NULL DEFAULT '{}' CHECK (runner_env LIKE '{%}'),
-    provider   text NOT NULL DEFAULT 'owned' CHECK (provider IN ('owned', 'latitude', 'aws')),
-    provider_id text NOT NULL DEFAULT '',
-    market     text NOT NULL DEFAULT '' CHECK (market IN ('', 'on-demand', 'spot')),
-    spot_request text NOT NULL DEFAULT '',
-    price      text NOT NULL DEFAULT '' CHECK (price ~ '^([0-9]{1,6}(\.[0-9]{1,4})?)?$'),
-    price_from text NOT NULL DEFAULT '' CHECK (price_from IN ('', 'provider', 'recalled')),
-    purpose    text NOT NULL DEFAULT '',
-    rented_by  text NOT NULL DEFAULT '',
-    rented_at  text NOT NULL DEFAULT '' CHECK (rented_at ~ '^([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z)?$'),
-    return_by  text NOT NULL DEFAULT '' CHECK (return_by ~ '^([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z)?$')
+    runner_env text NOT NULL DEFAULT '{}' CHECK (runner_env LIKE '{%}')
 );
 -- A machines table made before the runner_env column gets it here; on one that has it this does nothing.
 ALTER TABLE config.machines ADD COLUMN IF NOT EXISTS runner_env text NOT NULL DEFAULT '{}' CHECK (runner_env LIKE '{%}');
@@ -63,21 +53,6 @@ ALTER TABLE config.machines ADD COLUMN IF NOT EXISTS runner_env text NOT NULL DE
 ALTER TABLE config.machines ADD COLUMN IF NOT EXISTS runner_scopes text NOT NULL DEFAULT '';
 -- A machines table made before the windows_admin_runners column gets it here ('': none); on one that has it this does nothing.
 ALTER TABLE config.machines ADD COLUMN IF NOT EXISTS windows_admin_runners text NOT NULL DEFAULT '';
--- A machine rented by the hour (nova-fleet rent): provider is owned or the provider it is rented from; provider_id
--- its id there; market on-demand or spot (aws), spot_request the spot request; price US dollars an hour and
--- price_from provider (read from the provider) or recalled (not read); purpose what it is for, rented_by who rented
--- it, rented_at and return_by RFC 3339 UTC times; '' is unset. A machines table made before these columns gets them
--- here, every row owned; on one that has them this does nothing.
-ALTER TABLE config.machines ADD COLUMN IF NOT EXISTS provider text NOT NULL DEFAULT 'owned' CHECK (provider IN ('owned', 'latitude', 'aws'));
-ALTER TABLE config.machines ADD COLUMN IF NOT EXISTS provider_id text NOT NULL DEFAULT '';
-ALTER TABLE config.machines ADD COLUMN IF NOT EXISTS market text NOT NULL DEFAULT '' CHECK (market IN ('', 'on-demand', 'spot'));
-ALTER TABLE config.machines ADD COLUMN IF NOT EXISTS spot_request text NOT NULL DEFAULT '';
-ALTER TABLE config.machines ADD COLUMN IF NOT EXISTS price text NOT NULL DEFAULT '' CHECK (price ~ '^([0-9]{1,6}(\.[0-9]{1,4})?)?$');
-ALTER TABLE config.machines ADD COLUMN IF NOT EXISTS price_from text NOT NULL DEFAULT '' CHECK (price_from IN ('', 'provider', 'recalled'));
-ALTER TABLE config.machines ADD COLUMN IF NOT EXISTS purpose text NOT NULL DEFAULT '';
-ALTER TABLE config.machines ADD COLUMN IF NOT EXISTS rented_by text NOT NULL DEFAULT '';
-ALTER TABLE config.machines ADD COLUMN IF NOT EXISTS rented_at text NOT NULL DEFAULT '' CHECK (rented_at ~ '^([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z)?$');
-ALTER TABLE config.machines ADD COLUMN IF NOT EXISTS return_by text NOT NULL DEFAULT '' CHECK (return_by ~ '^([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z)?$');
 
 -- A service: a program one machine keeps running; with every n seconds it runs
 -- every n seconds instead of staying up.
@@ -113,3 +88,90 @@ CREATE TABLE IF NOT EXISTS config.friends (
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now()
 );
+
+-- A box rented by the hour (nova-fleet rent), in a table of its own: a nova-config that predates it never reads it,
+-- so a box no play may reach (one at aws, or one not created yet) is in no inventory, whichever release builds it.
+-- provider is where it is rented and provider_id its id there; market on-demand or spot (aws) and spot_request its
+-- spot request; address and user what ssh reaches it at; price US dollars an hour and price_from provider (read
+-- from the provider) or recalled (not read); purpose what it is for, rented_by who rented it, rented_at and return_by
+-- RFC 3339 UTC times; '' is unset. A latitude box that joins the fleet also has a machine row, as owned ones do.
+CREATE TABLE IF NOT EXISTS config.rented (
+    name       text PRIMARY KEY CONSTRAINT rented_name_pattern CHECK (name ~ '^[a-z0-9][a-z0-9-]*$'),
+    provider   text NOT NULL CHECK (provider IN ('latitude', 'aws')),
+    provider_id text NOT NULL DEFAULT '',
+    market     text NOT NULL DEFAULT '' CHECK (market IN ('', 'on-demand', 'spot')),
+    spot_request text NOT NULL DEFAULT '',
+    address    text NOT NULL DEFAULT '',
+    "user"     text NOT NULL DEFAULT '',
+    price      text NOT NULL DEFAULT '' CHECK (price ~ '^([0-9]{1,6}(\.[0-9]{1,4})?)?$'),
+    price_from text NOT NULL DEFAULT '' CHECK (price_from IN ('', 'provider', 'recalled')),
+    purpose    text NOT NULL CHECK (purpose <> ''),
+    rented_by  text NOT NULL CHECK (rented_by <> ''),
+    rented_at  text NOT NULL CHECK (rented_at ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$'),
+    return_by  text NOT NULL DEFAULT '' CHECK (return_by ~ '^([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z)?$'),
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT rented_market CHECK ((provider = 'aws') = (market <> '')),
+    CONSTRAINT rented_spot CHECK (spot_request = '' OR market = 'spot'),
+    CONSTRAINT rented_return CHECK (return_by = '' OR return_by >= rented_at)
+);
+
+-- The store holds these whoever writes, a release before config.rented included:
+-- - a rented record that still holds a box id or a spot request id is not deleted (either may still bill; clear it
+--   once it is gone at the provider);
+-- - while it holds either, what the handle names is fixed: name, provider and market do not change, and a handle is
+--   only given (from '') or cleared (to ''), never replaced;
+-- - no machine row shares a name with an aws rented box (a machine row is what an inventory, and so a play, reaches).
+--   Both checks take a transaction lock on the name first, so two writers at once, one to each table, are serialized:
+--   the second reads the first's committed row (each statement of a function reads afresh at READ COMMITTED).
+CREATE OR REPLACE FUNCTION config.rented_keep() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF OLD.provider_id <> '' OR OLD.spot_request <> '' THEN
+        RAISE EXCEPTION 'rented % still has a box or spot request at %, which may bill; return it, then clear them; run: nova-fleet rented', OLD.name, OLD.provider;
+    END IF;
+    RETURN OLD;
+END $$;
+CREATE OR REPLACE TRIGGER rented_keep BEFORE DELETE ON config.rented FOR EACH ROW EXECUTE FUNCTION config.rented_keep();
+CREATE OR REPLACE FUNCTION config.rented_fixed() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF (OLD.provider_id <> '' OR OLD.spot_request <> '') AND (NEW.name <> OLD.name OR NEW.provider <> OLD.provider
+        OR NEW.market <> OLD.market OR (OLD.provider_id <> '' AND NEW.provider_id NOT IN (OLD.provider_id, ''))
+        OR (OLD.spot_request <> '' AND NEW.spot_request NOT IN (OLD.spot_request, ''))) THEN
+        RAISE EXCEPTION 'rented % holds a box or spot request at %, which may bill: its name, provider, market and handles stay as they are until each handle is cleared; run: nova-fleet rented', OLD.name, OLD.provider;
+    END IF;
+    RETURN NEW;
+END $$;
+CREATE OR REPLACE TRIGGER rented_fixed BEFORE UPDATE ON config.rented FOR EACH ROW EXECUTE FUNCTION config.rented_fixed();
+CREATE OR REPLACE FUNCTION config.machines_not_aws() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF current_setting('transaction_isolation') <> 'read committed' THEN -- an older snapshot would miss a write that just committed
+        RAISE EXCEPTION 'config: a machine or rented write runs at read committed, where its name check sees every committed row';
+    END IF;
+    PERFORM pg_advisory_xact_lock(hashtext('config.name:' || NEW.name));
+    IF EXISTS (SELECT 1 FROM config.rented WHERE name = NEW.name AND provider = 'aws') THEN
+        RAISE EXCEPTION 'machine %: % is a rented aws box, which no play may reach, so it has no machine row', NEW.name, NEW.name;
+    END IF;
+    RETURN NEW;
+END $$;
+CREATE OR REPLACE TRIGGER machines_not_aws BEFORE INSERT OR UPDATE OF name ON config.machines FOR EACH ROW EXECUTE FUNCTION config.machines_not_aws();
+CREATE OR REPLACE FUNCTION config.rented_not_machine() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF current_setting('transaction_isolation') <> 'read committed' THEN -- an older snapshot would miss a write that just committed
+        RAISE EXCEPTION 'config: a machine or rented write runs at read committed, where its name check sees every committed row';
+    END IF;
+    PERFORM pg_advisory_xact_lock(hashtext('config.name:' || NEW.name));
+    IF NEW.provider = 'aws' AND EXISTS (SELECT 1 FROM config.machines WHERE name = NEW.name) THEN
+        RAISE EXCEPTION 'rented %: an aws box, which no play may reach, cannot share its name with machine %', NEW.name, NEW.name;
+    END IF;
+    RETURN NEW;
+END $$;
+CREATE OR REPLACE TRIGGER rented_not_machine BEFORE INSERT OR UPDATE OF name, provider ON config.rented FOR EACH ROW EXECUTE FUNCTION config.rented_not_machine();
+CREATE OR REPLACE FUNCTION config.rented_keep_all() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    RAISE EXCEPTION 'config.rented is never emptied at once: a record goes alone, once its box and spot request are gone; run: nova-fleet rented';
+    RETURN NULL;
+END $$;
+CREATE OR REPLACE TRIGGER rented_keep_all BEFORE TRUNCATE ON config.rented FOR EACH STATEMENT EXECUTE FUNCTION config.rented_keep_all();
+-- One record per box and per spot request, so none is counted twice.
+CREATE UNIQUE INDEX IF NOT EXISTS rented_box ON config.rented (provider, provider_id) WHERE provider_id <> '';
+CREATE UNIQUE INDEX IF NOT EXISTS rented_spot ON config.rented (spot_request) WHERE spot_request <> '';

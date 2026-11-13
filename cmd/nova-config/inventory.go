@@ -132,11 +132,6 @@ func build(machines []Row, services []Row, local string) (*inventory, error) {
 	all := []string{}
 	for _, r := range machines {
 		m, v := r.Name, r.F
-		// a rented machine at aws is reached by ssh from the control node only, never by a play (it has no
-		// tailnet, seat or secrets); a rented machine with no address yet is asked for and not yet created
-		if rented := v["provider"] != "" && v["provider"] != "owned"; v["provider"] == "aws" || (rented && v["address"] == "") {
-			continue
-		}
 		all = append(all, m)
 		runners, _ := strconv.Atoi(v["runners"])
 		hv := map[string]any{"ansible_host": m, "runners": runners, "nova_services": append([]invService{}, byMachine[m]...)}

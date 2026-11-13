@@ -47,6 +47,6 @@ func init() {
 		Fault{Tool: "fleet", Name: "rented: nova-config not on PATH", Setup: fleetBin("", false), Argv: []string{"rented"},
 			Want: Want{Exit: []int{2}, Reason: []string{"nova-config is not on PATH"}, Remedy: Runs}},
 		Fault{Tool: "fleet", Name: "rented: no store", Setup: fleetBin("", true), Argv: []string{"rented"},
-			Want: Want{Exit: []int{2}, Reason: []string{"the record cannot be read", "nova-config machine list --json exit 2"}, Remedy: Runs}},
+			Want: Want{Exit: []int{2}, Reason: []string{"the record cannot be read", "nova-config rented list --json exit 2"}, Remedy: Runs}},
 	)
 }

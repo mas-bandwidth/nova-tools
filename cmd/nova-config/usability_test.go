@@ -57,7 +57,7 @@ func TestUsageErrorsAreOneLine(t *testing.T) {
 		assert.Contains(t, errs, "; run: nova-config", "%v", args)
 	}
 	_, _, errs := h.run(t, "nonsense")
-	assert.Contains(t, errs, "machine, service, friend, history, inventory, schema, help; run: nova-config help")
+	assert.Contains(t, errs, "machine, service, friend, rented, history, inventory, schema, help; run: nova-config help")
 }
 
 // What is printed can be pasted back: argv is JSON, = is never escaped, free text is a JSON string.

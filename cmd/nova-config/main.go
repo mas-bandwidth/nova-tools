@@ -281,14 +281,21 @@ func runKind(ctx context.Context, k *kind, verb string, args []string, d deps, s
 		return nil
 	}
 	before := cur
-	if k.name == "machine" && op == "remove" && cur.F["provider_id"] != "" { // the box may still bill: the row goes once it is gone
-		return refused("machine %s is rented at %s as %s, which may still bill; return it, which removes the row once the box is gone (or, once it is gone, nova-config machine set %s --provider_id ''); run: nova-fleet rented", name, cur.F["provider"], cur.F["provider_id"], name)
+	// A rented record goes only once nothing at the provider can bill: no box, and no spot request that could still
+	// fulfil one. An empty instance id alone proves nothing.
+	if handles := rentHandles(cur); k.name == "rented" && op == "remove" && handles != "" {
+		return refused("rented %s still has %s at %s, which may bill; return it, which removes this record once each is gone at the provider (or, once each is gone, clear it: nova-config rented set %s --provider_id '' --spot_request ''); run: nova-fleet rented", name, handles, cur.F["provider"], name)
 	}
 	if op == "add" {
 		before = Row{}
 	} else if op == "set" {
 		if after, err = k.merge(cur, given); err != nil {
 			return refusal{err.Error()}
+		}
+		if k.name == "rented" {
+			if err := handleFixed(cur, after); err != nil {
+				return err
+			}
 		}
 	}
 	if k.name == "machine" && op != "remove" { // an admin runner label is checked against every machine's runners, the row as written

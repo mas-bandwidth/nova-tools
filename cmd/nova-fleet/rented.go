@@ -13,17 +13,17 @@ import (
 
 const rentedHelp = `nova-fleet rented [--json]
 
-The machines rented by the hour, from the record (nova-config machine rows whose provider is not
-owned), so none bills unseen: one line per machine,
+The boxes rented by the hour, from the record (nova-config rented rows), so none bills unseen: one
+line per box,
   RENTED <name> provider=<latitude|aws> id=<provider id|-> market=<on-demand|spot|-> age=<h>h<m>m
          rate=<usd an hour|-> price_from=<provider|recalled|-> cost=<usd so far|unknown> return_by=<time|->
          [PAST] purpose="<text>"
 then RENTED TOTAL machines=<n> rate=<usd an hour> cost=<usd> unknown=<n> past=<n>. cost is the hourly
 price times the hours since rented_at (a stopped box bills less: its disk only); unknown, when either is
 missing, and then not in the total, which counts it in unknown; price_from=recalled is a price not read
-from the provider; PAST marks a machine kept beyond its return_by. A nova-config on PATH older than the
-rented fields is refused, never read as a fleet with none rented. --json prints the same as
-one object. Reads the store through nova-config, so run it as the plays run:
+from the provider; PAST marks a box kept beyond its return_by. A nova-config on PATH older than the
+rented rows has no rented verb, and its refusal is passed on. --json prints the same as one object.
+Reads the store through nova-config, so run it as the plays run:
   nova-secrets exec --only NOVA_PG_PASSWORD -- nova-fleet rented
 Exit: 0 listed (also when none is rented); 2 could not read the record.
 `
@@ -31,20 +31,15 @@ Exit: 0 listed (also when none is rented); 2 could not read the record.
 // now is the clock of the rented verbs; unit tests replace it.
 var now = time.Now
 
-// rentedRow is a machine row of the record as nova-config machine list --json prints its fields.
+// rentedRow is a rented row of the record as nova-config rented list --json prints its fields.
 type rentedRow struct {
 	Name        string `json:"name"`
-	Address     string `json:"address"`
-	Public      string `json:"public"`
-	User        string `json:"user"`
-	OS          string `json:"os"`
-	Cores       *int   `json:"cores"`
-	Scopes      string `json:"runner_scopes"`
-	WinScopes   string `json:"windows_runners"`
 	Provider    string `json:"provider"`
 	ProviderID  string `json:"provider_id"`
 	Market      string `json:"market"`
 	SpotRequest string `json:"spot_request"`
+	Address     string `json:"address"`
+	User        string `json:"user"`
 	Price       string `json:"price"`
 	PriceFrom   string `json:"price_from"`
 	Purpose     string `json:"purpose"`
@@ -53,36 +48,24 @@ type rentedRow struct {
 	ReturnBy    string `json:"return_by"`
 }
 
-func (r rentedRow) rented() bool { return r.Provider != "owned" }
-
 // cmdFunc runs a program to its end: its stdout, stderr and exit code (outCmd).
 type cmdFunc func(bin string, args, env []string) (string, string, int)
 
-// record reads the machine rows through nova-config at cfg, with the caller's environment. A nova-config that
-// prints no provider predates the rented fields: its rows cannot say which machines are rented, so the read is refused
-// rather than taken for a fleet with none.
+// record reads the rented rows through nova-config at cfg, with the caller's environment.
 func record(cfg string, run cmdFunc) ([]rentedRow, error) {
-	out, why, c := run(cfg, []string{"machine", "list", "--json"}, os.Environ())
+	out, why, c := run(cfg, []string{"rented", "list", "--json"}, os.Environ())
 	if c != 0 {
-		return nil, fmt.Errorf("nova-config machine list --json exit %d: %s", c, cmp.Or(oneLine(why), "(nothing on stderr)"))
+		return nil, fmt.Errorf("nova-config rented list --json exit %d: %s", c, cmp.Or(oneLine(why), "(nothing on stderr)"))
 	}
 	var v struct {
-		Items []struct{ Fields json.RawMessage }
+		Items []struct{ Fields rentedRow }
 	}
 	if err := json.Unmarshal([]byte(out), &v); err != nil {
-		return nil, fmt.Errorf("nova-config machine list --json printed no JSON (%v)", err)
+		return nil, fmt.Errorf("nova-config rented list --json printed no JSON (%v)", err)
 	}
 	var rows []rentedRow
 	for _, it := range v.Items {
-		var r rentedRow
-		var keys map[string]json.RawMessage
-		if err := json.Unmarshal(it.Fields, &r); err != nil {
-			return nil, fmt.Errorf("nova-config machine list --json: a row that does not read (%v)", err)
-		}
-		if json.Unmarshal(it.Fields, &keys) != nil || keys["provider"] == nil {
-			return nil, fmt.Errorf("%s predates the rented fields (row %s has no provider), so it cannot say which machines are rented; install this release's nova-config", cfg, r.Name)
-		}
-		rows = append(rows, r)
+		rows = append(rows, it.Fields)
 	}
 	return rows, nil
 }
@@ -129,9 +112,6 @@ func listRented(rows []rentedRow, at time.Time, asJSON bool, w io.Writer) error 
 		Rate, Cost              float64
 	}
 	for _, r := range rows {
-		if !r.rented() {
-			continue
-		}
 		b := billOf(r, at)
 		bills = append(bills, b)
 		total.Machines++
@@ -189,7 +169,7 @@ func runRented(args []string, stdout, stderr io.Writer) int {
 	}
 	rows, err := record(cfg, outCmd)
 	if err != nil {
-		fmt.Fprintf(stderr, "nova-fleet rented: the record cannot be read: %v; with the store's password in the environment (nova-secrets exec --only NOVA_PG_PASSWORD -- nova-fleet rented); run: nova-config machine list\n", err)
+		fmt.Fprintf(stderr, "nova-fleet rented: the record cannot be read: %v; with the store's password in the environment (nova-secrets exec --only NOVA_PG_PASSWORD -- nova-fleet rented); run: nova-config rented list\n", err)
 		return 2
 	}
 	if err := listRented(rows, now().UTC(), asJSON, stdout); err != nil {
