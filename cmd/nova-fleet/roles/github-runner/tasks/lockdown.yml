@@ -15,7 +15,8 @@
   when: not ansible_check_mode
 
 # The proof, as the runner login, over every local filesystem (findmnt --real, network ones aside): each path it can
-# write or owns, but its home, the kernel's (/proc, /sys, /dev), the scratch places every login shares (/tmp, /var/tmp)
+# write or owns, but its home, the kernel's (/proc, /sys, /dev, and each snap image's /dev: the device nodes of a
+# read-only, store-signed squashfs, such as /snap/core24/<rev>/dev/null), the scratch places every login shares (/tmp, /var/tmp)
 # and the ones the system keeps a login's own files in (/var/crash, /var/lib/php/sessions, /var/mail/<login>). In /run
 # (a tmpfs) the same but for sockets, which systemd and dbus give every login and guard themselves, and for the shared
 # /run/lock, /run/screen and the login's own /run/user/<uid>; a container engine's socket it can write is named. Any
@@ -37,7 +38,8 @@
       home=$1; shift
       me=$(id -un); uid=$(id -u)
       find "$@" -xdev \( -path /proc -o -path /sys -o -path /dev -o -path /run -o -path /tmp -o -path /var/tmp \
-          -o -path /var/crash -o -path /var/lib/php/sessions -o -path "/var/mail/$me" -o -path "$home" \) -prune \
+          -o -path /var/crash -o -path /var/lib/php/sessions -o -path "/var/mail/$me" -o -path "$home" \
+          -o -path "/snap/*/*/dev" \) -prune \
         -o \( -writable -o -user "$me" \) ! -type l -print 2>/dev/null
       r1=$?
       find /run -xdev \( -path "/run/user/$uid" -o -path /run/lock -o -path /run/screen \) -prune \
