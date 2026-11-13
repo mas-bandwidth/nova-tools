@@ -14,7 +14,12 @@ User={{ github_runner_user }}
 WorkingDirectory={{ github_runner_dir }}
 Environment=PATH={{ github_runner_env.get('PATH', github_runner_default_path_linux) }}
 Environment=TMPDIR={{ github_runner_env.get('TMPDIR', github_runner_tmpdir) }}
-{% for k, v in github_runner_env.items() | sort if k not in ['PATH', 'TMPDIR'] %}
+{% if github_runner_user != ansible_facts['user_id'] %}
+# the runner login's own rustup and cargo homes, with the shared toolchains linked in (tasks/unix-login.yml)
+Environment=RUSTUP_HOME={{ github_runner_env.get('RUSTUP_HOME', github_runner_rustup_home) }}
+Environment=CARGO_HOME={{ github_runner_env.get('CARGO_HOME', github_runner_cargo_home) }}
+{% endif %}
+{% for k, v in github_runner_env.items() | sort if k not in ['PATH', 'TMPDIR'] and not (github_runner_user != ansible_facts['user_id'] and k in ['RUSTUP_HOME', 'CARGO_HOME']) %}
 Environment={{ k }}={{ v }}
 {% endfor %}
 # A stop ends the whole runner: run.sh turns SIGTERM into SIGINT to run-helper.sh and the listener and waits for them

@@ -122,6 +122,54 @@
   changed_when: "'SET' in github_runner_sdk_link.stdout"
   when: github_runner_shared_sdk.stat.isdir | default(false) and not ansible_check_mode
 
+# Rust for the runner login: its own RUSTUP_HOME and CARGO_HOME (github_runner_rustup_home, github_runner_cargo_home; the
+# unit sets both), because the shared SDK's rustup home is root's to write and a job's `rustup toolchain install stable`
+# (dtolnay/rust-toolchain on a self-hosted runner) writes into the rustup home it is given. The pinned toolchains stay
+# on the shared path: each is a link in the login's toolchains/ to the shared one, with its update hash copied, so an
+# install of a pinned name finds it current and writes nothing there; the login's settings start as the shared ones
+# (the pinned default, self-update off); and its cargo/bin holds a link to each of the shared cargo/bin's entries (the
+# rustup proxies, which read RUSTUP_HOME, and the cargo tools). A link to a toolchain the shared home no longer holds
+# is removed. The shared home is the one <shared>/sdk/bin/rustup names (`rustup show home`).
+- name: the runner login's rustup home names the shared toolchains
+  ansible.builtin.shell: |
+    set -eu
+    shared_rustup={{ (nova_shared_dir ~ '/sdk/bin/rustup') | quote }}
+    [ -x "$shared_rustup" ] || { echo NONE; exit 0; }
+    src=$(env -u RUSTUP_HOME -u CARGO_HOME "$shared_rustup" show home)
+    [ -d "$src/toolchains" ] && [ -d "$src/cargo/bin" ] || { echo "the shared rustup home $src has no toolchains/ or cargo/bin/" >&2; exit 1; }
+    rh={{ github_runner_rustup_home | quote }}
+    ch={{ github_runner_cargo_home | quote }}
+    mkdir -p "$rh/toolchains" "$rh/update-hashes" "$ch/bin"
+    set=
+    for t in "$src"/toolchains/*; do
+      [ -d "$t" ] || continue
+      n=${t##*/}
+      if [ ! -e "$rh/toolchains/$n" ] && [ ! -L "$rh/toolchains/$n" ]; then ln -s "$t" "$rh/toolchains/$n"; set=1; fi
+      if [ -f "$src/update-hashes/$n" ] && ! cmp -s "$src/update-hashes/$n" "$rh/update-hashes/$n"; then
+        if [ "$(readlink "$rh/toolchains/$n")" = "$t" ]; then cp "$src/update-hashes/$n" "$rh/update-hashes/$n"; set=1; fi
+      fi
+    done
+    for l in "$rh"/toolchains/*; do
+      [ -L "$l" ] || continue
+      case "$(readlink "$l")" in "$src"/toolchains/*) [ -e "$l" ] || { rm -f "$l" "$rh/update-hashes/${l##*/}"; set=1; } ;; esac
+    done
+    if [ ! -e "$rh/settings.toml" ] && [ -f "$src/settings.toml" ]; then cp "$src/settings.toml" "$rh/settings.toml"; set=1; fi
+    for f in "$src"/cargo/bin/*; do
+      [ -e "$f" ] || continue
+      if [ "$(readlink "$ch/bin/${f##*/}")" != "$f" ]; then
+        if [ -e "$ch/bin/${f##*/}" ] && [ ! -L "$ch/bin/${f##*/}" ]; then continue; fi
+        ln -sfn "$f" "$ch/bin/${f##*/}"; set=1
+      fi
+    done
+    [ -z "$set" ] || echo SET
+  args: { executable: /bin/sh }
+  become: true
+  become_user: "{{ github_runner_user }}"
+  vars: { ansible_pipelining: true }
+  register: github_runner_rustup
+  changed_when: "'SET' in github_runner_rustup.stdout"
+  when: github_runner_shared_sdk.stat.isdir | default(false) and not ansible_check_mode
+
 - name: sshd refuses the runner login
   ansible.builtin.copy:
     dest: /etc/ssh/sshd_config.d/90-nova-runner-login.conf

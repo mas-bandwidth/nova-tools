@@ -49,6 +49,11 @@ github_runner_env: "{{ nova_runner_env | default({}) }}"
 # it from the units and removes what is left. A macOS daemon gets none (its jobs use /tmp, which macOS cleans).
 github_runner_tmpdir: "{{ github_runner_home }}/.cache/runner-tmp"
 
+# A Linux runner login of its own: its rustup and cargo homes when github_runner_env names none, with the shared SDK's
+# pinned toolchains and cargo/bin linked in (tasks/unix-login.yml), so a job's toolchain install writes here.
+github_runner_rustup_home: "{{ github_runner_home }}/.rustup"
+github_runner_cargo_home: "{{ github_runner_home }}/.cargo"
+
 # The PATH the service starts with when github_runner_env has none; its jobs inherit it, so a step finds the nova
 # tools (`nova-reserve run ...`): github_runner_bin_dir first, then the
 # system's. Linux: systemd's list and the Debian/Ubuntu login tail runners had before; macOS: Homebrew's prefix
