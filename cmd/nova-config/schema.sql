@@ -144,8 +144,8 @@ END $$;
 CREATE OR REPLACE TRIGGER rented_fixed BEFORE UPDATE ON config.rented FOR EACH ROW EXECUTE FUNCTION config.rented_fixed();
 CREATE OR REPLACE FUNCTION config.machines_not_aws() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
-    IF current_setting('transaction_isolation') = 'repeatable read' THEN -- its snapshot predates the lock: the check would miss a write that just committed
-        RAISE EXCEPTION 'config: a machine or rented write runs at read committed or serializable, not repeatable read';
+    IF current_setting('transaction_isolation') <> 'read committed' THEN -- an older snapshot would miss a write that just committed
+        RAISE EXCEPTION 'config: a machine or rented write runs at read committed, where its name check sees every committed row';
     END IF;
     PERFORM pg_advisory_xact_lock(hashtext('config.name:' || NEW.name));
     IF EXISTS (SELECT 1 FROM config.rented WHERE name = NEW.name AND provider = 'aws') THEN
@@ -156,8 +156,8 @@ END $$;
 CREATE OR REPLACE TRIGGER machines_not_aws BEFORE INSERT OR UPDATE OF name ON config.machines FOR EACH ROW EXECUTE FUNCTION config.machines_not_aws();
 CREATE OR REPLACE FUNCTION config.rented_not_machine() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
-    IF current_setting('transaction_isolation') = 'repeatable read' THEN -- its snapshot predates the lock: the check would miss a write that just committed
-        RAISE EXCEPTION 'config: a machine or rented write runs at read committed or serializable, not repeatable read';
+    IF current_setting('transaction_isolation') <> 'read committed' THEN -- an older snapshot would miss a write that just committed
+        RAISE EXCEPTION 'config: a machine or rented write runs at read committed, where its name check sees every committed row';
     END IF;
     PERFORM pg_advisory_xact_lock(hashtext('config.name:' || NEW.name));
     IF NEW.provider = 'aws' AND EXISTS (SELECT 1 FROM config.machines WHERE name = NEW.name) THEN
@@ -168,12 +168,7 @@ END $$;
 CREATE OR REPLACE TRIGGER rented_not_machine BEFORE INSERT OR UPDATE OF name, provider ON config.rented FOR EACH ROW EXECUTE FUNCTION config.rented_not_machine();
 CREATE OR REPLACE FUNCTION config.rented_keep_all() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
-    IF current_setting('transaction_isolation') <> 'read committed' THEN -- an older snapshot could miss a record just written
-        RAISE EXCEPTION 'config.rented is emptied only at read committed, where every committed record is seen';
-    END IF;
-    IF EXISTS (SELECT 1 FROM config.rented WHERE provider_id <> '' OR spot_request <> '') THEN
-        RAISE EXCEPTION 'config.rented holds boxes or spot requests that may bill, and is not emptied; return them; run: nova-fleet rented';
-    END IF;
+    RAISE EXCEPTION 'config.rented is never emptied at once: a record goes alone, once its box and spot request are gone; run: nova-fleet rented';
     RETURN NULL;
 END $$;
 CREATE OR REPLACE TRIGGER rented_keep_all BEFORE TRUNCATE ON config.rented FOR EACH STATEMENT EXECUTE FUNCTION config.rented_keep_all();

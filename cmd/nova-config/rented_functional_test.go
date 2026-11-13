@@ -150,10 +150,26 @@ func TestFunctionalRentedFixed(t *testing.T) {
 	_, err = c.Exec(ctx, `INSERT INTO config.rented (name, provider, provider_id, purpose, rented_by, rented_at) VALUES ('lat-4', 'latitude', 'sv_3', 'p', 'a', '2026-11-13T00:00:00Z')`)
 	assert.ErrorContains(t, err, "rented_box", "one record per box")
 	_, err = c.Exec(ctx, `TRUNCATE config.rented`)
-	assert.ErrorContains(t, err, "is not emptied", "a truncate, which fires no row trigger, is refused while a handle is held")
-	tx, err := c.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
+	assert.ErrorContains(t, err, "never emptied at once", "a truncate, which fires no row trigger, is refused")
+	_, err = c.Exec(ctx, `UPDATE config.rented SET provider_id = ''`)
 	require.NoError(t, err)
-	_, err = tx.Exec(ctx, `INSERT INTO config.machines (name, "user") VALUES ('m-rr', 'nova')`)
-	assert.ErrorContains(t, err, "not repeatable read", "a snapshot older than the name lock is refused")
+	_, err = c.Exec(ctx, `DELETE FROM config.rented`)
+	require.NoError(t, err)
+	_, err = c.Exec(ctx, `TRUNCATE config.rented`)
+	assert.ErrorContains(t, err, "never emptied at once", "and refused when empty too")
+
+	// The ordered case: A, serializable, takes its snapshot; B, read committed, adds machine m-ser and commits; A
+	// then adds an aws box m-ser. A's snapshot cannot see B's row, so A is refused for its isolation.
+	b, err := pgx.Connect(ctx, dsn)
+	require.NoError(t, err)
+	defer func() { _ = b.Close(ctx) }() // ignored: closing the second connection
+	tx, err := c.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.Serializable})
+	require.NoError(t, err)
+	var n int
+	require.NoError(t, tx.QueryRow(ctx, `SELECT count(*) FROM config.machines`).Scan(&n)) // takes the snapshot
+	_, err = b.Exec(ctx, `INSERT INTO config.machines (name, "user") VALUES ('m-ser', 'nova')`)
+	require.NoError(t, err)
+	_, err = tx.Exec(ctx, `INSERT INTO config.rented (name, provider, market, purpose, rented_by, rented_at) VALUES ('m-ser', 'aws', 'on-demand', 'p', 'a', '2026-11-13T00:00:00Z')`)
+	assert.ErrorContains(t, err, "runs at read committed", "a write whose snapshot predates the lock is refused")
 	_ = tx.Rollback(ctx) // ignored: the transaction failed
 }
