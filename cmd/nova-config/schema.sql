@@ -45,7 +45,17 @@ CREATE TABLE IF NOT EXISTS config.machines (
     runner_scopes text NOT NULL DEFAULT '',
     windows_runners text NOT NULL DEFAULT '',
     windows_admin_runners text NOT NULL DEFAULT '',
-    runner_env text NOT NULL DEFAULT '{}' CHECK (runner_env LIKE '{%}')
+    runner_env text NOT NULL DEFAULT '{}' CHECK (runner_env LIKE '{%}'),
+    provider   text NOT NULL DEFAULT 'owned' CHECK (provider IN ('owned', 'latitude', 'aws')),
+    provider_id text NOT NULL DEFAULT '',
+    market     text NOT NULL DEFAULT '' CHECK (market IN ('', 'on-demand', 'spot')),
+    spot_request text NOT NULL DEFAULT '',
+    price      text NOT NULL DEFAULT '' CHECK (price ~ '^([0-9]{1,6}(\.[0-9]{1,4})?)?$'),
+    price_from text NOT NULL DEFAULT '' CHECK (price_from IN ('', 'provider', 'recalled')),
+    purpose    text NOT NULL DEFAULT '',
+    rented_by  text NOT NULL DEFAULT '',
+    rented_at  text NOT NULL DEFAULT '',
+    return_by  text NOT NULL DEFAULT ''
 );
 -- A machines table made before the runner_env column gets it here; on one that has it this does nothing.
 ALTER TABLE config.machines ADD COLUMN IF NOT EXISTS runner_env text NOT NULL DEFAULT '{}' CHECK (runner_env LIKE '{%}');
@@ -53,10 +63,11 @@ ALTER TABLE config.machines ADD COLUMN IF NOT EXISTS runner_env text NOT NULL DE
 ALTER TABLE config.machines ADD COLUMN IF NOT EXISTS runner_scopes text NOT NULL DEFAULT '';
 -- A machines table made before the windows_admin_runners column gets it here ('': none); on one that has it this does nothing.
 ALTER TABLE config.machines ADD COLUMN IF NOT EXISTS windows_admin_runners text NOT NULL DEFAULT '';
--- A machine rented by the hour (nova-fleet rent): provider is owned (every machine made before these columns) or
--- the provider it is rented from; provider_id its id there; market on-demand or spot (aws), spot_request the spot
--- request; price US dollars an hour and price_from provider (read from the provider) or recalled (not read);
--- purpose what it is for, rented_by who rented it, rented_at and return_by RFC 3339 UTC times. '' is unset.
+-- A machine rented by the hour (nova-fleet rent): provider is owned or the provider it is rented from; provider_id
+-- its id there; market on-demand or spot (aws), spot_request the spot request; price US dollars an hour and
+-- price_from provider (read from the provider) or recalled (not read); purpose what it is for, rented_by who rented
+-- it, rented_at and return_by RFC 3339 UTC times; '' is unset. A machines table made before these columns gets them
+-- here, every row owned; on one that has them this does nothing.
 ALTER TABLE config.machines ADD COLUMN IF NOT EXISTS provider text NOT NULL DEFAULT 'owned' CHECK (provider IN ('owned', 'latitude', 'aws'));
 ALTER TABLE config.machines ADD COLUMN IF NOT EXISTS provider_id text NOT NULL DEFAULT '';
 ALTER TABLE config.machines ADD COLUMN IF NOT EXISTS market text NOT NULL DEFAULT '' CHECK (market IN ('', 'on-demand', 'spot'));
