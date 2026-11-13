@@ -281,6 +281,9 @@ func runKind(ctx context.Context, k *kind, verb string, args []string, d deps, s
 		return nil
 	}
 	before := cur
+	if k.name == "machine" && op == "remove" && cur.F["provider_id"] != "" { // the box may still bill: the row goes once it is gone
+		return refused("machine %s is rented at %s as %s, which may still bill; return it, which removes the row once the box is gone (or, once it is gone, nova-config machine set %s --provider_id ''); run: nova-fleet rented", name, cur.F["provider"], cur.F["provider_id"], name)
+	}
 	if op == "add" {
 		before = Row{}
 	} else if op == "set" {

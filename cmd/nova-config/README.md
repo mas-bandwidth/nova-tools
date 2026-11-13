@@ -54,6 +54,12 @@ optional (`--dry-run` runs the write and rolls it back, so it refuses what the w
 | `windows_admin_runners` | A WSL machine's Windows-side runners that run as a local administrator account, one per entry: `<url>=<account>:<label>[+<label>]@<workflow>`, comma-separated. `<workflow>` is required: the file name (`<name>.yml` or `.yaml`) in the repository's `.github/workflows` of the one workflow the runner runs; its job-started hook refuses every other job, and every job but a push, schedule or workflow_dispatch of `refs/heads/main`. The url is a repository, `https://github.com/<owner>/<repo>` (an organization is refused); the account a lower-case letter then at most 19 lower-case letters, digits and dashes (a Windows user name), never a Windows built-in account (`administrator`, `guest`, `defaultaccount`, `wdagutilityaccount`) or the machine's `user`, each account once, and no two entries whose `<owner>-<repo>-<account>` (compared without case) would share a runner directory; at least one label, never one GitHub gives runners (`self-hosted`, `windows`, `x64`, `linux`, `macos`, in any case), nor a label a job of the same repository could select on another runner (the machine's name and every label of its `windows_runners` and `runner_scopes`, with its roles, os and arch where it has `runner_scopes`; on any machine with a runner of the repository or its owner, that runner's labels and the machine's name; any other admin runner's label of the repository), refused on this write and on a write to the other runner, and the runner carries only these (GitHub adds `self-hosted`, `Windows` and `X64`). Its password is the nova-secrets value `NOVA_WINRUNNER_<ACCOUNT>_PASSWORD` (`-` as `_`) in the machine's seat. Stored sorted by url, then account, with labels sorted; `''` is none. nova-fleet's `windows-runners` play converges them (cmd/nova-fleet/README.md, "Windows runners run as a local administrator"). |
 | `runner_env` | The environment the machine's GitHub Actions runners' services start with (every job inherits it): a JSON object of string values, default `{}`; a name is letters, digits and underscores, not starting with a digit. Values are literal, written per machine (`/home/alice/sdk/bin`, never `~` or a template). nova-fleet's `github-runners` play reads it from the inventory. |
 | `roles` | Comma-separated `bench`, `runner`, `services`; default `bench`. |
+| `provider` | `owned` (the default, and every row written before this field) or the provider the machine is rented from by the hour: `latitude` or `aws`. The fields below are a rented machine's; an owned machine with any of them set is refused. A rented machine needs `purpose`, `rented_by` and `rented_at`, and an `aws` one a `market` and no runners (no play reaches it). A rented machine with a `provider_id` is not removed: its box may still bill; once the box is gone, `--provider_id ''` and then `remove`. `nova-fleet rented` lists them with what each has cost. |
+| `provider_id` | The machine's id at its provider (a Latitude server id, an AWS instance id). |
+| `market`, `spot_request` | `aws` only: `on-demand` or `spot`, and a spot machine's spot request id (refused unless `market` is `spot`). |
+| `price`, `price_from` | US dollars an hour, a decimal such as `4.06`, and where it came from: `provider` (read from the provider) or `recalled` (not read: given by hand). One without the other is refused. |
+| `purpose` | One line: what the machine is rented for. |
+| `rented_by`, `rented_at`, `return_by` | Who rented it, when, and when it is to be returned: RFC 3339 times, written back in UTC; a `return_by` before `rented_at` is refused. |
 
 ```sh
 nova-config machine add bench-a --user nova --os linux --arch amd64 --cores 16 --roles bench,services --actor ops --reason 'First machine'
@@ -67,7 +73,7 @@ CONFIG ADD kind=machine name=bench-a rev=1
 next: nova-fleet join bench-a
 CONFIG SET kind=machine name=bench-a rev=2 changed=note
 CONFIG SET kind=machine name=bench-a changed=none rev=unchanged
-MACHINE name=bench-a address=- public=- user=nova os=linux arch=amd64 cores=16 roles=bench,services runners=0 runner_scopes=- windows_runners=- windows_admin_runners=- runner_env={} note="Example host" created=2026-11-05T23:51:58Z updated=2026-11-05T23:51:58Z services=-
+MACHINE name=bench-a address=- public=- user=nova os=linux arch=amd64 cores=16 roles=bench,services runners=0 runner_scopes=- windows_runners=- windows_admin_runners=- runner_env={} note="Example host" provider=owned provider_id=- market=- spot_request=- price=- price_from=- purpose=- rented_by=- rented_at=- return_by=- created=2026-11-05T23:51:58Z updated=2026-11-05T23:51:58Z services=-
 ```
 
 `rev` is the history ID; `changed=` lists only the fields whose value differs.
@@ -170,7 +176,7 @@ left some writes out.
 nova-config inventory --host bench-a
 ```
 
-`--list` (the default) prints Ansible JSON: every machine is in `all`, and its
+`--list` (the default) prints Ansible JSON: every machine but two kinds of rented one is in `all` (a machine whose `provider` is `aws` is reached by ssh from the control node only, never by a play: it has no tailnet, seat or secrets; a rented machine with no `address` yet is asked for and not yet created), and its
 roles put it in `bench` or `services`. A `runner` role, a positive runner
 count or any runner_scopes adds `runner`. `--host <name>` prints one host's variables:
 `ansible_host`, `ansible_user`, `runners`, `nova_services` (always a list of the
