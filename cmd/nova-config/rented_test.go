@@ -99,19 +99,30 @@ func TestRentedRowWithAHandleIsNotRemoved(t *testing.T) {
 	assert.Empty(t, h.st.rows["rented"])
 }
 
-// A handle at the provider is cleared once its thing is gone, never replaced by another: the old box or request may
-// still bill, and its id would be lost.
-func TestRentedHandleIsNotReplaced(t *testing.T) {
+// While a rented record holds a box or a spot request, what the handle names stays fixed: provider and market do not
+// change, and a handle is given (from ”) or cleared (to ”), never replaced. The old box or request may still bill,
+// and the record is all that points at it.
+func TestRentedHandleIdentityIsFixed(t *testing.T) {
 	t.Parallel()
 	h := newHarness()
 	h.ok(t, rentArgs("spill-1")...)
-	for _, f := range []string{"provider_id", "spot_request"} {
-		code, out, errs := h.run(t, "rented", "set", "spill-1", "--"+f, "x-new", "--actor", "t")
-		assert.Equal(t, 1, code, f)
+	h.ok(t, "rented", "add", "lat-1", "--provider", "latitude", "--provider_id", "sv_1", "--purpose", "xdp", "--rented_by", "a", "--rented_at", "2026-11-13T00:00:00Z", "--actor", "t")
+	for _, c := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"rented", "set", "lat-1", "--provider", "aws", "--market", "on-demand"}, "rented lat-1 holds box sv_1 at latitude, which may bill: --provider stays latitude; --market stays -; return it; run: nova-fleet rented"},
+		{[]string{"rented", "set", "spill-1", "--market", "on-demand", "--spot_request", ""}, "--market stays spot"},
+		{[]string{"rented", "set", "spill-1", "--provider_id", "i-0new"}, "--provider_id i-0abc is cleared (--provider_id '') once it is gone at the provider, never replaced"},
+		{[]string{"rented", "set", "spill-1", "--spot_request", "sir-2"}, "--spot_request sir-1 is cleared (--spot_request '') once it is gone at the provider, never replaced"},
+	} {
+		code, out, errs := h.run(t, append(c.args, "--actor", "t")...)
+		assert.Equal(t, 1, code, "%v", c.args)
 		assert.Empty(t, out)
-		assert.Contains(t, errs, "rented spill-1: --"+f+" is ")
-		assert.Contains(t, errs, "which may still bill; return it, or once it is gone at the provider clear it (--"+f+" '') before giving another")
+		assert.Contains(t, errs, c.want, "%v", c.args)
 	}
 	h.ok(t, "rented", "set", "spill-1", "--provider_id", "", "--actor", "t")
-	h.ok(t, "rented", "set", "spill-1", "--provider_id", "i-0new", "--actor", "t")
+	h.ok(t, "rented", "set", "spill-1", "--provider_id", "i-0new", "--actor", "t") // given from '': a new box of the same request
+	h.ok(t, "rented", "set", "lat-1", "--provider_id", "", "--actor", "t")
+	h.ok(t, "rented", "set", "lat-1", "--provider", "aws", "--market", "on-demand", "--actor", "t") // nothing held: free
 }

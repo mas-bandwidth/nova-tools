@@ -292,9 +292,9 @@ func runKind(ctx context.Context, k *kind, verb string, args []string, d deps, s
 		if after, err = k.merge(cur, given); err != nil {
 			return refusal{err.Error()}
 		}
-		for _, f := range []string{"provider_id", "spot_request"} { // a handle at the provider is cleared once its thing is gone, never replaced: the old one may still bill
-			if was := cur.F[f]; k.name == "rented" && was != "" && after.F[f] != "" && after.F[f] != was {
-				return refusal{fmt.Sprintf("rented %s: --%s is %s, which may still bill; return it, or once it is gone at the provider clear it (--%s '') before giving another; run: nova-fleet rented", name, f, was, f)}
+		if k.name == "rented" {
+			if err := handleFixed(cur, after); err != nil {
+				return err
 			}
 		}
 	}

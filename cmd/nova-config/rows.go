@@ -695,3 +695,29 @@ func rentHandles(r Row) string {
 	}
 	return strings.Join(h, " and ")
 }
+
+// handleFixed refuses a set of a rented record that holds a box or spot request (rentHandles) and changes what the
+// handle names: its provider or market, or a handle replaced rather than given (from ”) or cleared (to ”). The old
+// box or request may still bill, and the record is the only thing that points at it. The store holds the same
+// (config.rented_fixed).
+func handleFixed(cur, after Row) error {
+	held := rentHandles(cur)
+	if held == "" {
+		return nil
+	}
+	var p []string
+	for _, f := range []string{"provider", "market"} {
+		if after.F[f] != cur.F[f] {
+			p = append(p, fmt.Sprintf("--%s stays %s", f, value(cur.F[f])))
+		}
+	}
+	for _, f := range []string{"provider_id", "spot_request"} {
+		if was, now := cur.F[f], after.F[f]; was != "" && now != "" && now != was {
+			p = append(p, fmt.Sprintf("--%s %s is cleared (--%s '') once it is gone at the provider, never replaced", f, was, f))
+		}
+	}
+	if len(p) == 0 {
+		return nil
+	}
+	return refused("rented %s holds %s at %s, which may bill: %s; return it; run: nova-fleet rented", cur.Name, held, cur.F["provider"], strings.Join(p, "; "))
+}
