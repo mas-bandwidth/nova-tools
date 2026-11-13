@@ -192,13 +192,24 @@
 # sshd opens each session through PAM, and pam_limits gives it the limits.d lines for its login; a session starts at
 # the kernel's 8 MiB without one, which refuses an io_uring replay the runners (LimitMEMLOCK=infinity) run. What a
 # session starts, nova-reserve's commands among them, inherits it. Open sessions keep theirs; the next one has it.
+# The runner units' LimitMEMLOCK is infinity (roles/github-runner), so any other value would set the sessions apart
+# from CI, which is what this file is for: refused by name.
+- name: nova_login_memlock is the runners' limit
+  ansible.builtin.assert:
+    that: (nova_login_memlock | string) in ['unlimited', 'infinity']
+    fail_msg: >-
+      HEALTH-MEMLOCK-REFUSED host={{ inventory_hostname }} nova_login_memlock={{ nova_login_memlock }}: the runner units
+      lock without limit (LimitMEMLOCK=infinity), and the login's sessions must lock the same
+    quiet: true
+  tags: [memlock]
+
 - name: the login's ssh sessions may lock nova_login_memlock (pam_limits)
   ansible.builtin.copy:
     dest: /etc/security/limits.d/90-nova-memlock.conf
     mode: "0644"
     content: |
-      # managed by Ansible (fleet/health.yml): the fleet login's sessions lock what its runners may (soft and hard, KiB)
-      {{ ansible_facts['user_id'] }} - memlock {{ 'unlimited' if (nova_login_memlock | string) in ['unlimited', 'infinity'] else ((nova_login_memlock | human_to_bytes) // 1024) }}
+      # managed by Ansible (fleet/health.yml): the fleet login's sessions lock what its runners may (soft and hard)
+      {{ ansible_facts['user_id'] }} - memlock unlimited
   become: true
   tags: [memlock]
 

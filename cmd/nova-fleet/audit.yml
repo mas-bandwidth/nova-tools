@@ -161,7 +161,7 @@
       register: audit_memlock_run
       changed_when: false
       check_mode: false
-      when: nova_audit_memlock | default(true) | bool
+      when: nova_audit_memlock | default(nova_join_host is not defined) | bool   # join: health and tools come after it (up)
 
     - name: the limits, against nova_login_memlock
       ansible.builtin.set_fact:
@@ -184,14 +184,15 @@
           {{ {'need': need ~ '/' ~ need, 'ssh': ssh, 'reserve': reserve, 'runner': (runner | join(',')) or 'none',
               'low': ns.low | unique | list, 'differ': values | length > 1,
               'gap': (ns.low | length > 0) or (values | length > 1)} }}
-      when: nova_audit_memlock | default(true) | bool
+      when: nova_audit_memlock | default(nova_join_host is not defined) | bool   # join: health and tools come after it (up)
 
     - name: memlock missing
       ansible.builtin.debug:
         msg: >-
           FLEET-AUDIT MISSING host={{ inventory_hostname }} item=memlock ssh={{ audit_memlock.ssh }}
           reserve={{ audit_memlock.reserve }} runner={{ audit_memlock.runner }} need={{ audit_memlock.need }}
-          install={{ ((['health'] if (audit_memlock.low | intersect(['ssh', 'reserve']) or audit_memlock.differ) else [])
+          install={{ ((['tools'] if audit_memlock.reserve in ['absent', 'failed'] else [])
+                     + (['health'] if ('ssh' in audit_memlock.low or audit_memlock.differ) else [])
                      + (['github-runners'] if 'runner' in audit_memlock.low else [])) | join(',') }}
       when: audit_memlock is defined and audit_memlock.gap
 

@@ -1369,7 +1369,8 @@ or one is below `nova_login_memlock`:
 FLEET-AUDIT MISSING host=<machine> item=memlock ssh=<soft>/<hard> reserve=<soft>/<hard> runner=<values|none> need=<soft>/<hard> install=<plays>
 ```
 
-(bytes, or `unlimited`; `health` fixes the session's, `github-runners` a runner's). `-e nova_audit_memlock=false`
+(bytes, or `unlimited`; `health` fixes the session's, `tools` a missing nova-reserve, `github-runners` a runner's). Under
+`join` it is left out, as `health` and `tools` come after it in `up`; `-e nova_audit_memlock=false`
 leaves it out.
 
 A machine with anything missing fails: `FLEET-AUDIT FAILED host=<machine> missing=<names>`. The fix is the play
