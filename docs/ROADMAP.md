@@ -28,6 +28,8 @@ Ideas and future work for nova-tools. Nothing here is scheduled; the owner decid
 | nova-bus hook --service writes a nova-config service record (seat, keys NOVA_BUS_PASSWORD, env) instead of a launchd or systemd unit holding the bus password in plain text; the services play then owns the unit | ❌ |
 | nova-bus hook backs off while its wake target is absent (no Monitor on the wake file, no harness server) instead of exiting 1 and being restarted every 10 s by its supervisor (16,953 restarts in one log, 2026-11-12) | ❌ |
 | nova-reserve hands freed slots to waiters in arrival order, so a long waiter is not passed by later ones (captain 2026-11-12: a waiter since 17:13Z was passed by three later arrivals) | ❌ |
+| nova-fleet tailscale: the Tailscale SSH switch's revert survives a reboot or a killed job inside its window (a boot-time check of a pending switch), so a power loss there cannot leave Tailscale SSH off without a proven key login | ❌ |
+| nova-fleet: the Tailscale SSH switch's functional test writes its runs as traces that a SSHOffTrace.tla checks are behaviours of SSHOff.tla, binding the model to the code | ❌ |
 | complete | 0% |
 
 [Source data](roadmap.sexp)

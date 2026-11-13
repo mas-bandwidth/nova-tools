@@ -317,7 +317,7 @@ func (u *upRun) config(args ...string) ([]map[string]any, string, int) {
 }
 
 // peer is the machine as the control node's tailscale sees it: its MagicDNS name, its address, and
-// its Tailscale SSH host keys, which are pinned in this node's known_hosts (never trusted on first use).
+// the host keys it publishes (a machine serving Tailscale SSH), which are pinned in this node's known_hosts.
 func (u *upRun) peer(m *machine) bool {
 	st, on := u.status()
 	if !on && !u.check {
@@ -331,7 +331,7 @@ func (u *upRun) peer(m *machine) bool {
 	if ok {
 		m.dns = strings.TrimSuffix(p.DNSName, ".")
 		if len(p.SSH_HostKeys) == 0 {
-			fmt.Fprintf(u.stderr, "nova-fleet up: %s has no Tailscale SSH host key in tailscale status; its ssh over the tailnet is not pinned (is Tailscale SSH on?)\n", m.name)
+			fmt.Fprintf(u.stderr, "nova-fleet up: %s publishes no host key in tailscale status (Tailscale SSH is off); ssh checks the key the tailscale play pinned for its tailnet name\n", m.name)
 			return true
 		}
 		home, _ := os.UserHomeDir()

@@ -66,7 +66,7 @@ func TestFleetPolicyIsTheEmbeddedFile(t *testing.T) {
 
 func merge(t *testing.T, src string) ([]byte, bool) {
 	t.Helper()
-	out, changed, err := mergePolicy([]byte(src), fleetPolicy())
+	out, changed, _, err := mergePolicy([]byte(src), fleetPolicy())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,14 +116,15 @@ func TestMergePolicy(t *testing.T) {
 	if _, changed := merge(t, string(got)); changed {
 		t.Error("a second merge over existing tags changed something")
 	}
-	if _, _, err := mergePolicy([]byte("{"), want); err == nil {
+	if _, _, _, err := mergePolicy([]byte("{"), want); err == nil {
 		t.Error("a policy that does not parse: want an error")
 	}
 }
 
 // The fleet's own rules. Every source is a fleet tag or the tailnet's admins and every destination a fleet tag, so
-// nothing is opened to an untagged or member device; no tagged source gets root; and nothing reaches the control node
-// without a person: no grant opens its port 22 to a tag, and every ssh rule into it is a non-root check.
+// nothing is opened to an untagged or member device; no tagged source gets root; no ssh rule has a machine's tag as a
+// source; and nothing reaches the control node without a person: no grant opens its port 22 to a tag, and every ssh
+// rule into it is a non-root check.
 func TestFleetPolicyGuardsRootAndTheControlNode(t *testing.T) {
 	has := func(list any, v string) bool { l, _ := list.([]any); return slices.Contains(l, any(v)) }
 	isTag := func(v any) bool { s, _ := v.(string); return strings.HasPrefix(s, "tag:") }
@@ -151,6 +152,9 @@ func TestFleetPolicyGuardsRootAndTheControlNode(t *testing.T) {
 			if slices.ContainsFunc(src, isTag) && has(g["users"], "root") {
 				t.Errorf("ssh %s: a tagged source gets root", canon(g))
 			}
+			if retired(g) {
+				t.Errorf("ssh %s: a machine's tag is a source; the merge would retire it and add it back on every run", canon(g))
+			}
 			if has(dst, "tag:control") && (g["action"] != "check" || has(g["users"], "root")) {
 				t.Errorf("ssh %s: into the control node other than a non-root check", canon(g))
 			}
@@ -158,43 +162,142 @@ func TestFleetPolicyGuardsRootAndTheControlNode(t *testing.T) {
 	}
 }
 
-// The merge over the policy main shipped (testdata, main at ee936b822), the policy a fleet tailnet holds today. The
-// merge only adds rules, so a rule main had that this file changed would stay in force ahead of its replacement: the
-// merged ssh rules and grants must be exactly the file's, in its order. Among them, no tag source reaches the control
-// node or gets root, and the admins reach the control node only by a non-root check.
+// The merge over the policies main shipped (testdata, main at ee936b822 and at 428c63444), each holding the ssh rule
+// that let every fleet tag in to every machine. A rule main had that this file changed would stay in force ahead of its
+// replacement unless the merge retires it: the merged ssh rules and grants must be exactly the file's, in its order.
+// Among them, no tag source reaches the control node or gets root, no machine's tag is an ssh source, and the admins
+// reach the control node only by a non-root check.
 func TestMergeOverMainsPolicy(t *testing.T) {
+	t.Parallel()
 	has := func(list any, v string) bool { l, _ := list.([]any); return slices.Contains(l, any(v)) }
 	isTag := func(v any) bool { s, _ := v.(string); return strings.HasPrefix(s, "tag:") }
-	src, err := os.ReadFile("testdata/tailscale-acl-main-ee936b822.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	got, _ := merge(t, string(src))
-	m, want := std(t, got), fleetPolicy()
-	for _, kind := range []string{"ssh", "grants"} {
-		if canon(m[kind]) != canon(want[kind]) {
-			t.Errorf("merged over main, %s is not the file's:\n got %s\nwant %s", kind, canon(m[kind]), canon(want[kind]))
+	for _, file := range []string{"testdata/tailscale-acl-main-ee936b822.json", "testdata/tailscale-acl-main-428c63444.json"} {
+		src, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
 		}
-	}
-	adminIntoControl := 0
-	for _, r := range m["ssh"].([]any) {
-		g := r.(map[string]any)
-		tagSrc := slices.ContainsFunc(g["src"].([]any), isTag)
-		if tagSrc && has(g["dst"], "tag:control") {
-			t.Errorf("merged over main: a tag source into tag:control: %s", canon(g))
+		got, changed := merge(t, string(src))
+		m, want := std(t, got), fleetPolicy()
+		if !changed {
+			t.Errorf("%s: the merge changed nothing", file)
 		}
-		if tagSrc && has(g["users"], "root") {
-			t.Errorf("merged over main: a tag source gets root: %s", canon(g))
-		}
-		if has(g["src"], "autogroup:admin") && has(g["dst"], "tag:control") {
-			adminIntoControl++
-			if g["action"] != "check" || has(g["users"], "root") {
-				t.Errorf("merged over main: the admins into tag:control other than a non-root check: %s", canon(g))
+		for _, kind := range []string{"ssh", "grants"} {
+			if canon(m[kind]) != canon(want[kind]) {
+				t.Errorf("%s: merged, %s is not the file's:\n got %s\nwant %s", file, kind, canon(m[kind]), canon(want[kind]))
 			}
 		}
+		adminIntoControl := 0
+		for _, r := range m["ssh"].([]any) {
+			g := r.(map[string]any)
+			tagSrc := slices.ContainsFunc(g["src"].([]any), isTag)
+			if tagSrc && has(g["dst"], "tag:control") {
+				t.Errorf("%s: merged, a tag source into tag:control: %s", file, canon(g))
+			}
+			if tagSrc && has(g["users"], "root") {
+				t.Errorf("%s: merged, a tag source gets root: %s", file, canon(g))
+			}
+			if has(g["src"], "tag:nova") || has(g["src"], "tag:runner") {
+				t.Errorf("%s: merged, a machine's tag is an ssh source: %s", file, canon(g))
+			}
+			if has(g["src"], "autogroup:admin") && has(g["dst"], "tag:control") {
+				adminIntoControl++
+				if g["action"] != "check" || has(g["users"], "root") {
+					t.Errorf("%s: merged, the admins into tag:control other than a non-root check: %s", file, canon(g))
+				}
+			}
+		}
+		if adminIntoControl == 0 {
+			t.Errorf("%s: merged, no rule lets the admins into tag:control after a check", file)
+		}
+		if again, changed := merge(t, string(got)); changed || string(again) != string(got) {
+			t.Errorf("%s: a second merge changed %v:\n%s", file, changed, again)
+		}
 	}
-	if adminIntoControl == 0 {
-		t.Error("merged over main: no rule lets the admins into tag:control after a check")
+}
+
+// The ssh rule that let every fleet tag in to every machine as the fleet's login, which sudoes with no password, is
+// retired by the merge wherever it sits; so is any rule of its shape (accept, fleet tags in, tag:nova and tag:runner
+// out, autogroup:nonroot), several in one policy included. A rule of another shape naming a machine's tag is kept and
+// reported. Every other rule, comment and line stays; a policy holding the old rule beside the new one loses
+// the old and gains nothing; a second merge, and a merge over the policy as the tailnet holds it once fixed, change
+// nothing, byte for byte.
+func TestMergeRetiresMachineToMachineSSH(t *testing.T) {
+	t.Parallel()
+	const old = `{"action": "accept", "src": ["tag:nova", "tag:runner", "tag:control"], "dst": ["tag:nova", "tag:runner"], "users": ["autogroup:nonroot"]}`
+	const fixed = `{"action": "accept", "src": ["tag:control"], "dst": ["tag:nova", "tag:runner"], "users": ["autogroup:nonroot"]}`
+	const member = `{"action": "check", "src": ["autogroup:member"], "dst": ["autogroup:self"], "users": ["autogroup:nonroot"]}`
+	const runnerOnly = `{"action": "accept", "src": ["tag:runner"], "dst": ["tag:nova"], "users": ["autogroup:nonroot"]}`
+	// someone's own rules naming a machine's tag, of another shape: a person in the src, a destination outside the
+	// fleet, root, a check
+	const withAdmin = `{"action": "accept", "src": ["autogroup:admin", "tag:runner"], "dst": ["tag:nova"], "users": ["autogroup:nonroot"]}`
+	const outside = `{"action": "accept", "src": ["tag:runner"], "dst": ["tag:build"], "users": ["autogroup:nonroot"]}`
+	const asRoot = `{"action": "accept", "src": ["tag:nova"], "dst": ["tag:nova"], "users": ["root"]}`
+	const checked = `{"action": "check", "src": ["tag:nova"], "dst": ["tag:runner"], "users": ["autogroup:nonroot"]}`
+	const admin = `{"action": "accept", "src": ["autogroup:admin"], "dst": ["tag:nova", "tag:runner"], "users": ["autogroup:nonroot", "root"]}`
+	const check = `{"action": "check", "src": ["autogroup:admin"], "dst": ["tag:control"], "users": ["autogroup:nonroot"]}`
+	const owners = `"tagOwners": {"tag:nova": ["autogroup:admin"], "tag:runner": ["autogroup:admin"], "tag:control": ["autogroup:admin"]},`
+	want := fleetPolicy()
+	grants := `"grants": ` + canon(want["grants"]) + `,`
+	policy := func(ssh ...string) string {
+		return "// the fleet's tailnet\n{\n\t" + owners + "\n\t" + grants + "\n\t\"acls\": [{\"action\": \"accept\", \"src\": [\"*\"], \"dst\": [\"*:*\"]}], // allow all\n\t\"ssh\": [\n\t\t" +
+			strings.Join(ssh, ", // a rule\n\t\t") + ",\n\t],\n}\n"
+	}
+	sshOf := func(b []byte) string { return canon(std(t, b)["ssh"]) }
+	list := func(rules ...string) string {
+		var v []any
+		for _, r := range rules {
+			v = append(v, std(t, []byte(r)))
+		}
+		return canon(v)
+	}
+
+	// the old rule first, a member's rule kept between two retired ones (removed from the highest index down)
+	src := policy(old, member, runnerOnly, admin, check)
+	got, changed := merge(t, src)
+	if !changed || sshOf(got) != list(member, admin, check, fixed) {
+		t.Errorf("retire: changed %v, ssh %s", changed, sshOf(got))
+	}
+	have, m := std(t, []byte(src)), std(t, got)
+	for _, k := range []string{"acls", "grants", "tagOwners"} {
+		if canon(m[k]) != canon(have[k]) {
+			t.Errorf("retire: %s changed: %s", k, canon(m[k]))
+		}
+	}
+	for _, line := range []string{"// the fleet's tailnet", "// allow all", `"tagOwners": {"tag:nova": ["autogroup:admin"]`} {
+		if !strings.Contains(string(got), line) {
+			t.Errorf("retire: %q is gone:\n%s", line, got)
+		}
+	}
+	if again, changed := merge(t, string(got)); changed || string(again) != string(got) {
+		t.Errorf("a second merge changed %v:\n%s", changed, again)
+	}
+
+	// the old rule and the fixed one both: the old goes, nothing is added
+	got, changed = merge(t, policy(fixed, admin, old, check))
+	if !changed || sshOf(got) != list(fixed, admin, check) {
+		t.Errorf("both: changed %v, ssh %s", changed, sshOf(got))
+	}
+
+	// a rule of any other shape stays, whatever tag it names
+	got, changed = merge(t, policy(withAdmin, outside, old, asRoot, checked, admin, check, fixed))
+	if !changed || sshOf(got) != list(withAdmin, outside, asRoot, checked, admin, check, fixed) {
+		t.Errorf("other shapes: changed %v, ssh %s", changed, sshOf(got))
+	}
+
+	// the tailnet as it is once fixed by hand (the rule's src cut to tag:control where it stood): nothing to do
+	src = policy(fixed, admin, check)
+	if got, changed = merge(t, src); changed || string(got) != src {
+		t.Errorf("converged: changed %v:\n%s", changed, got)
+	}
+
+	// every kept rule naming a machine's tag on both sides is reported; the retired one, the control node's, a
+	// person's and one leaving the fleet are not
+	_, _, machine, err := mergePolicy([]byte(policy(old, withAdmin, outside, asRoot, checked, admin, check, fixed, member)), want)
+	if err != nil || canon(machine) != canon([]string{canon(std(t, []byte(withAdmin))), canon(std(t, []byte(asRoot))), canon(std(t, []byte(checked)))}) {
+		t.Errorf("machine-to-machine kept: %v %v", machine, err)
+	}
+	if _, _, machine, _ = mergePolicy([]byte(src), want); len(machine) != 0 {
+		t.Errorf("converged policy reports %v", machine)
 	}
 }
 
@@ -232,11 +335,12 @@ func TestMergeKeepsAdminAccess(t *testing.T) {
 	}
 }
 
-// Every fleet machine reaches every machine but the control node over Tailscale SSH whatever the policy was built on:
-// each pair has a grant on tcp:22 and an accepting ssh rule as a non-root login (nova-fleet ssh-names checks the
-// pairs). Into the control node, no tag has port 22 or an ssh rule, and the tailnet's admins get it as a non-root
-// login after a check, never as root.
-func TestMergeLetsEveryFleetTagSSHToEveryOther(t *testing.T) {
+// Only the control node reaches the machines over Tailscale SSH whatever the policy was built on: tag:control has a
+// grant on tcp:22 and an accepting ssh rule as a non-root login into tag:nova and tag:runner, and no machine's tag has
+// an ssh rule into any machine (nova-fleet ssh-names checks the pairs). Into the control node, no tag has port 22 or
+// an ssh rule, and the tailnet's admins get it as a non-root login after a check, never as root.
+func TestMergeLetsOnlyTheControlNodeSSHToMachines(t *testing.T) {
+	t.Parallel()
 	has := func(list any, v string) bool { l, _ := list.([]any); return slices.Contains(l, any(v)) }
 	for name, src := range map[string]string{"allow-all": allowAll, "autogroup:self": selfOnly} {
 		got, _ := merge(t, src)
@@ -249,10 +353,13 @@ func TestMergeLetsEveryFleetTagSSHToEveryOther(t *testing.T) {
 				})
 				ssh := slices.ContainsFunc(m["ssh"].([]any), func(r any) bool {
 					g := r.(map[string]any)
-					return g["action"] == "accept" && has(g["src"], from) && has(g["dst"], to) && has(g["users"], "autogroup:nonroot")
+					return has(g["src"], from) && has(g["dst"], to)
 				})
-				if !port || !ssh {
+				if from == "tag:control" && (!port || !ssh) {
 					t.Errorf("%s: %s cannot ssh to %s (grant on 22: %v, ssh rule: %v):\n%s", name, from, to, port, ssh, got)
+				}
+				if from != "tag:control" && ssh {
+					t.Errorf("%s: %s has an ssh rule into %s:\n%s", name, from, to, got)
 				}
 			}
 		}
@@ -285,7 +392,7 @@ func TestMergeLetsEveryFleetTagSSHToEveryOther(t *testing.T) {
 
 func TestPolicyRetriesOnce(t *testing.T) {
 	a := &fakeAPI{policy: allowAll, conflict: 1}
-	if got, err := policy(a, false); err != nil || got != "merged" {
+	if got, _, err := policy(a, false); err != nil || got != "merged" {
 		t.Fatalf("policy = %q %v", got, err)
 	}
 	var methods []string
@@ -304,18 +411,32 @@ func TestPolicyRetriesOnce(t *testing.T) {
 	}
 	// a second run: one GET, nothing written
 	a.calls = nil
-	if got, err := policy(a, false); err != nil || got != "unchanged" || len(a.calls) != 1 {
+	if got, _, err := policy(a, false); err != nil || got != "unchanged" || len(a.calls) != 1 {
 		t.Errorf("second run: %q %v calls %q", got, err, a.calls)
 	}
 	// two 412s in a row: refused, after one retry
 	a = &fakeAPI{policy: "{}", conflict: 2}
-	if _, err := policy(a, false); err == nil || !strings.Contains(err.Error(), "HTTP 412") || len(a.calls) != 4 {
+	if _, _, err := policy(a, false); err == nil || !strings.Contains(err.Error(), "HTTP 412") || len(a.calls) != 4 {
 		t.Errorf("two conflicts: %v calls %q", err, a.calls)
 	}
 	// --check: GETs only
 	a = &fakeAPI{policy: "{}"}
-	if got, err := policy(a, true); err != nil || got != "would-merge" || len(a.calls) != 1 {
+	if got, _, err := policy(a, true); err != nil || got != "would-merge" || len(a.calls) != 1 {
 		t.Errorf("check: %q %v calls %q", got, err, a.calls)
+	}
+	// a policy that only needs the old ssh rule retired: --check says would-merge; a run writes it once, with If-Match
+	merged, _ := merge(t, "{}")
+	stale := strings.Replace(string(merged), `"ssh":[`, `"ssh":[{"action":"accept","src":["tag:nova","tag:runner","tag:control"],"dst":["tag:nova","tag:runner"],"users":["autogroup:nonroot"]},`, 1)
+	if stale == string(merged) {
+		t.Fatalf("no ssh list to plant the old rule in:\n%s", merged)
+	}
+	a = &fakeAPI{policy: stale}
+	if got, _, err := policy(a, true); err != nil || got != "would-merge" || len(a.calls) != 1 {
+		t.Errorf("check, retire only: %q %v calls %q", got, err, a.calls)
+	}
+	if got, _, err := policy(a, false); err != nil || got != "merged" || len(a.calls) != 3 || !strings.HasPrefix(a.calls[2], `POST /tailnet/-/acl "e0"`) ||
+		canon(std(t, []byte(a.policy))["ssh"]) != canon(fleetPolicy()["ssh"]) {
+		t.Errorf("retire only: %q %v calls %q\n%s", got, err, a.calls, a.policy)
 	}
 }
 
@@ -412,6 +533,19 @@ func TestUpTailnetCheckAndRefusals(t *testing.T) {
 	for _, c := range f.api.calls {
 		if !strings.HasPrefix(c, "GET ") {
 			t.Errorf("--check called %s", c)
+		}
+	}
+	if strings.Contains(out, "MACHINE-SSH") {
+		t.Errorf("a policy with no machine-to-machine rule reported one:\n%s", out)
+	}
+	// a machine-to-machine rule of another shape: kept, and reported under --check and on apply
+	const root = `{"action":"accept","dst":["tag:runner"],"src":["tag:nova"],"users":["root"]}` // as canon prints it
+	for _, args := range [][]string{{"up", "--check", "--tools", "v2.0.0", "first=1.1.1.1"}, {"up", "--tools", "v2.0.0", "first=1.1.1.1"}} {
+		f = &upFake{untagged: true, api: &fakeAPI{policy: `{"ssh": [` + root + `]}`}}
+		f.install(t)
+		code, out, errs = runArgs(args...)
+		if code != 0 || !strings.Contains(out, "UP TAILNET MACHINE-SSH "+root+" (kept, not the fleet's rule:") {
+			t.Errorf("%v: code %d\n%s\n%s", args, code, out, errs)
 		}
 	}
 	// this node off the tailnet: a tag:control key, tailscale up with it on stdin from the environment (sudo on Linux)

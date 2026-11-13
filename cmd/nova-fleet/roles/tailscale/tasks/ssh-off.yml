@@ -1,0 +1,113 @@
+---
+# Tailscale SSH off on a node that serves it: the tailscale role's last step (main.yml checked sshd and authorized the
+# control node's key first). This run's own connection may be a Tailscale SSH session, which `tailscale set
+# --ssh=false` ends, so the switch runs as a detached root job (Ansible's async, poll 0: it outlives the connection,
+# on Linux and macOS alike). The job is a dead-man switch over one decision file: it turns Tailscale SSH off, and at
+# nova_tailscale_ssh_deadline seconds it tries to create the decision file; if it creates it, it turns Tailscale SSH
+# back on. The play reconnects through sshd, checks RunSSH is false and that the control node logs in by key on a
+# fresh connection, and only then tries to create the same file. Creation is exclusive (the shell's noclobber, an
+# O_EXCL open), so exactly one side decides: a play that loses to the deadline fails, it never reports kept. The job
+# holds the pending file while it runs; the role waits for it before it reads Tailscale SSH's state (main.yml). Where
+# netwatch is installed the job also holds its hold file, so netwatch does not reboot the machine inside the window: a
+# reboot ends the job, and Tailscale SSH stays off with no revert (sshd, checked first, is then the way in). The
+# model: tla/SSHOff.tla.
+- name: the switch a run would make (--check)
+  ansible.builtin.debug:
+    msg: "TAILNET SSH-OFF {{ inventory_hostname }} WOULD turn Tailscale SSH off (detached, back on after {{ nova_tailscale_ssh_deadline }} s unless kept)"
+  changed_when: true
+  when: ansible_check_mode
+
+- name: Tailscale SSH off, detached (back on at the deadline unless the play claims the decision first)
+  ansible.builtin.command:
+    argv:
+      - sh
+      - -c
+      - ': > "$3"; if [ -d "${4%/*}" ]; then : > "$4"; fi; rm -f "$1"; sleep 2; "$0" set --ssh=false; sleep "$2"; if (set -C; : > "$1") 2>/dev/null; then "$0" set --ssh=true; fi; rm -f "$3" "$4"'
+      - "{{ ts_bin }}"
+      - "{{ nova_tailscale_ssh_keep }}"
+      - "{{ nova_tailscale_ssh_deadline }}"
+      - "{{ nova_tailscale_ssh_pending }}"
+      - "{{ nova_tailscale_ssh_hold }}"
+  become: true
+  async: "{{ nova_tailscale_ssh_deadline | int + 60 }}"
+  poll: 0
+  register: ts_ssh_job
+  when: not ansible_check_mode
+
+# the job switches 2 s after it starts; 5 s is a guess, unmeasured: the session it ends must be gone before the next
+# connection, or that connection is a Tailscale SSH one the switch cuts
+- name: the switch lands before the next connection
+  ansible.builtin.command: sleep 5
+  delegate_to: localhost
+  become: false
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: the old connection dropped (the next task connects anew, through sshd)
+  ansible.builtin.meta: reset_connection
+
+- name: Tailscale SSH is off (over a new connection)
+  ansible.builtin.command: "{{ ts_bin }} debug prefs"
+  register: ts_prefs_off
+  changed_when: false
+  retries: 10   # 10 x 2 s is a guess, unmeasured: the switch takes well under a second
+  delay: 2
+  until: not ((ts_prefs_off.stdout | default('{}') | from_json).RunSSH | default(true))
+  when: not ansible_check_mode
+
+- name: the control node logs in by key on a fresh connection (ControlPath=none)
+  ansible.builtin.command:
+    argv: [ssh, -n, -o, BatchMode=yes, -o, ControlPath=none, -o, ConnectTimeout=10, -o, StrictHostKeyChecking=yes,
+           -l, "{{ ansible_user | default(ansible_facts['user_id']) }}", "{{ ansible_host | default(inventory_hostname) }}", "true"]
+  delegate_to: localhost
+  become: false
+  register: ts_key_login
+  changed_when: false
+  failed_when: false
+  when: not ansible_check_mode
+
+- name: the control node got in by key
+  ansible.builtin.assert:
+    that: ts_key_login.rc == 0
+    fail_msg: >-
+      TAILNET STOP {{ inventory_hostname }}: Tailscale SSH is off and the control node cannot log in by key
+      ({{ ts_key_login.stderr_lines | default([]) | last | default('rc=' ~ ts_key_login.rc) }}); it turns back on by
+      itself {{ nova_tailscale_ssh_deadline }} s after the switch. Fix the login's ~/.ssh/authorized_keys or sshd, then
+      run: nova-fleet tailscale -- -l {{ inventory_hostname }}
+    quiet: true
+  when: not ansible_check_mode
+
+- name: kept off (the decision file, created only if the job has not created it at its deadline)
+  ansible.builtin.command:
+    argv: [sh, -c, 'set -C; : > "$1"', sh, "{{ nova_tailscale_ssh_keep }}"]
+  become: true
+  register: ts_ssh_kept
+  changed_when: ts_ssh_kept.rc == 0
+  failed_when: false
+  when: not ansible_check_mode
+
+- name: Tailscale SSH's state after the decision
+  ansible.builtin.command: "{{ ts_bin }} debug prefs"
+  register: ts_prefs_kept
+  changed_when: false
+  failed_when: false
+  when: not ansible_check_mode
+
+- name: the play decided, and Tailscale SSH is off
+  ansible.builtin.assert:
+    that: ts_ssh_kept.rc == 0 and not (ts_kept_runssh | bool)
+    fail_msg: >-
+      TAILNET STOP {{ inventory_hostname }}: the key login came after the {{ nova_tailscale_ssh_deadline }} s deadline
+      ({{ 'the detached job decided first and turned Tailscale SSH back on' if ts_ssh_kept.rc != 0 else 'RunSSH reads on after the play decided' }});
+      nothing is kept. Raise -e nova_tailscale_ssh_deadline or run fewer machines at once (-f), then
+      run: nova-fleet tailscale -- -l {{ inventory_hostname }}
+    quiet: true
+  vars:
+    # an answer that is no JSON reads as on: kept is claimed only on a read that says off
+    ts_kept_runssh: "{{ ((ts_prefs_kept.stdout | from_json).RunSSH | default(true)) if (ts_prefs_kept.stdout | default('') | trim).startswith('{') else true }}"
+  when: not ansible_check_mode
+
+- name: the switch's receipt
+  ansible.builtin.debug:
+    msg: "TAILNET SSH-OFF {{ inventory_hostname }} runssh=false key-login=ok kept"
+  when: not ansible_check_mode

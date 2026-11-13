@@ -5,11 +5,15 @@
 # (cmd/nova-fleet/tailscale-acl.json) and mints a single-use auth key per machine with TAILSCALE_API_KEY; this play does the rest:
 #
 #   1. Tailscale installed: Tailscale's apt repository on Debian and Ubuntu, Homebrew's cask on macOS (none where the
-#      open-source tailscaled, Homebrew's formula, already runs: that Mac is driven as Linux is, Tailscale SSH included).
+#      open-source tailscaled, Homebrew's formula, already runs: that Mac is driven as Linux is, Tailscale SSH setting included).
 #   2. `tailscale up --auth-key=file:/dev/stdin --hostname <machine> --advertise-tags=tag:nova[,tag:runner] [--ssh]`,
 #      the key from the control node's environment (NOVA_FLEET_AUTHKEY, which up puts there, else TAILSCALE_AUTHKEY), on stdin, on a machine that is not Running. A Running
 #      machine is never brought up again: a hostname or Tailscale SSH that differs is set in place with no key, and
-#      tags that differ stop the run with the command to retag it at its console.
+#      tags that differ stop the run with the command to retag it at its console. Tailscale SSH is off
+#      (nova_tailscale_ssh): before turning it off on a machine that serves it, the play checks sshd answers on its
+#      tailnet address and that sshd -T lets the login in by key from the control node, and authorizes the control
+#      node's key for the login (roles/controlkey). The switch is the role's last step, detached, with a dead-man revert
+#      (roles/tailscale/tasks/ssh-off.yml): kept off only once the control node logs in by key on a fresh connection.
 #   3. The machine's MagicDNS name (<machine>.<tailnet>.ts.net) recorded as its address in nova-config
 #      (`nova-config machine set <name> --address ...`), then the inventory read again, so the next play, every later
 #      run, the bus and the services reach it there.
@@ -17,7 +21,7 @@
 #      tailnet, so it cannot lock itself out); the application firewall on macOS.
 #
 # The machine's host key is pinned into the control node's known_hosts at the first connection, and the MagicDNS
-# name's (Tailscale SSH's own) once it is recorded (roles/hostkey).
+# name's once it is recorded (roles/hostkey).
 #
 #   nova-secrets exec --only TAILSCALE_AUTHKEY,NOVA_PG_PASSWORD --store S --key K --as SEAT -- \
 #     env NOVA_PG_DSN=postgres://nova_config@HOST:5432/nova nova-fleet tailscale -- -l <machine>

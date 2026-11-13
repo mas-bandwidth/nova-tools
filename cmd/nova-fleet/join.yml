@@ -8,9 +8,11 @@
 #      inventory is read again so the plays below find it. A row that exists is never edited; a row whose user differs
 #      from nova_join_user stops the join by name.
 #   2. the login (Linux, as root over the address given, or as the provider's first login with sudo; skipped once the address is the MagicDNS name): rsync (the control node pushes the secrets store with it), the row's user, no
-#      password, in nova_join_sudo_group with passwordless sudo (checked by visudo before it lands), the first
-#      login's authorized_keys copied to it (or the file nova_join_authorized_keys names on the control node), linger on, the
-#      hostname set to the inventory name.
+#      password, in nova_join_sudo_group with passwordless sudo (checked by visudo before it lands), its authorized_keys
+#      exactly the first login's (or the file nova_join_authorized_keys names on the control node) and the control
+#      node's public key (nova_control_ssh_pubkey, else the one key `ssh-add -L` lists there: read in 1, before anything
+#      changes, and the run stops there without one), linger on, the hostname set to the inventory name. Tailscale SSH
+#      is off, so that key is how the control node logs in from 3 on; no other machine's login is let in.
 #   3. tailscale.yml: Tailscale installed and up with the adopter's tagged auth key, the MagicDNS name recorded as the
 #      machine's address, the firewall closed to everything but the tailnet. From here on the plays reach the machine
 #      over the tailnet, as the login: a run that finds the row's address already the MagicDNS name (the joined
@@ -65,6 +67,10 @@
               {'cmd': 'git', 'for': 'the seat: nova-secrets commits the store'}]
              + [{'cmd': 'rsync', 'for': 'the push of the store to the machine'}, {'cmd': 'ssh-keyscan', 'for': 'pinning the host key'},
                 {'cmd': 'tailscale', 'for': 'the check: the control node sees the peer'}] }}
+
+    # read before anything changes: the login is given it in 2, and with Tailscale SSH off it is the way in
+    - name: the control node's public key (nova_control_ssh_pubkey, else the first of ssh-add -L)
+      ansible.builtin.include_role: { name: controlkey }
 
     - name: nova-config's store is in the environment
       ansible.builtin.assert:
@@ -213,15 +219,20 @@
         mode: "0700"
       register: join_ssh_dir
 
-    # under --check a directory not made yet cannot take the copy; the task above already says it would be made
-    - name: "the authorized keys of {{ join_login }}: the first login's, or the control node's file nova_join_authorized_keys names"
-      ansible.builtin.copy:
-        src: "{{ nova_join_authorized_keys | default(ansible_facts['getent_passwd'][nova_join_root_user][4] ~ '/.ssh/authorized_keys') }}"
-        remote_src: "{{ nova_join_authorized_keys is not defined }}"
-        dest: "{{ join_user.home | default('/home/' ~ join_login) }}/.ssh/authorized_keys"
-        owner: "{{ join_login }}"
-        group: "{{ join_login }}"
-        mode: "0600"
+    - name: "the authorized keys of the first login {{ nova_join_root_user }}"
+      ansible.builtin.slurp: { src: "{{ ansible_facts['getent_passwd'][nova_join_root_user][4] ~ '/.ssh/authorized_keys' }}" }
+      register: join_first_keys
+      when: nova_join_authorized_keys is not defined
+
+    # exactly these keys, so a second run changes nothing; under --check a directory not made yet cannot take the
+    # file, and the task above already says it would be made
+    - name: "the authorized keys of {{ join_login }}: the first login's (or the control node's file nova_join_authorized_keys names), and the control node's key"
+      ansible.posix.authorized_key:
+        user: "{{ join_login }}"
+        path: "{{ join_user.home | default('/home/' ~ join_login) }}/.ssh/authorized_keys"
+        key: "{{ (lookup('ansible.builtin.file', nova_join_authorized_keys) if nova_join_authorized_keys is defined else (join_first_keys.content | b64decode)) ~ '\n' ~ hostvars['localhost']['nova_control_key'] }}"
+        exclusive: true
+        manage_dir: false
       when: not (ansible_check_mode and join_ssh_dir is changed)
 
     - name: "linger for {{ join_login }} (its user units run with no session open)"

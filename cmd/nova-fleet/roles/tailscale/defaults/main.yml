@@ -6,9 +6,25 @@
 # (tagOwners in cmd/nova-fleet/tailscale-acl.json).
 nova_tailscale_tags: "{{ ['tag:nova'] + (['tag:runner'] if inventory_hostname in (groups['runner'] | default([])) else []) }}"
 
-# Tailscale SSH on Linux and on a Mac running the open-source tailscaled (Homebrew's formula, as root); the macOS app
-# does not serve it.
-nova_tailscale_ssh: true
+# Tailscale SSH (Linux, and a Mac running the open-source tailscaled, Homebrew's formula, as root; the macOS app does
+# not serve it): off. It lets in a source node, not a person or a key, so a CI job on one machine could log in to
+# another as its login, which sudoes with no password. Off, a machine is reached by sshd, and only the control node's
+# key is authorized (join.yml; this role adds it before it turns Tailscale SSH off on a machine that has it).
+nova_tailscale_ssh: false
+
+# Turning it off on a node that serves it (tasks/ssh-off.yml): a detached root job switches it off and, at the
+# deadline in seconds, claims the decision file and switches it back on, unless the play, back in by key over sshd,
+# claimed the file first (whoever creates it first decides). 120 s is a guess, unmeasured: the play's check takes
+# well under a minute. The pending file exists while a job runs; it is in /var/run, which a reboot (that ends the
+# job) clears, and the role waits for it to go before reading Tailscale SSH's state. The sshd whose settings the role
+# checks first.
+nova_tailscale_ssh_deadline: 120
+nova_tailscale_ssh_keep: /var/tmp/nova-tailscale-ssh-off.keep
+nova_tailscale_ssh_pending: /var/run/nova-tailscale-ssh-off.pending
+# netwatch's hold file (roles/netwatch): held by the job while it runs, when netwatch's hold directory exists, so
+# netwatch does not reboot the machine (and end the job, and its revert) inside the window
+nova_tailscale_ssh_hold: /run/nova-netwatch/hold.d/tailscale-ssh-off
+nova_sshd: /usr/sbin/sshd
 
 # The machine's MagicDNS name (<machine>.<tailnet>.ts.net) is written as its
 # address in nova-config, so every later play and the bus reach it there.
