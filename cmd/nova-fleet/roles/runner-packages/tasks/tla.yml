@@ -2,8 +2,8 @@
 # Debian, Ubuntu: TLC's jar at nova_runner_tla_jar (root's, 0644, in a root 0755 directory, so the fleet login and a
 # runner login of its own both read it), run by the Java runtime of the debian list. The jar is checked against
 # nova_runner_tla_jar_sha256 by its sha256. A jar already there and matching is left as it is; one that differs is
-# refused by name, never replaced. A missing one is fetched from nova_runner_tla_jar_source (a machine of the inventory
-# that has it, at the same path) into a temporary directory on the control node, checked there, and only then copied.
+# refused by name, never replaced. A missing one is downloaded from nova_runner_tla_jar_url, the TLA+ release,
+# and get_url refuses a download whose sha256 is not the pin before it is moved into place.
 - name: the TLC jar on the machine
   ansible.builtin.stat:
     path: "{{ nova_runner_tla_jar }}"
@@ -21,53 +21,15 @@
       run: nova-fleet runner-packages -- -l {{ inventory_hostname }}
   when: rp_tla.stat.exists and (not rp_tla.stat.isreg or rp_tla.stat.checksum | default('') != nova_runner_tla_jar_sha256)
 
-- name: a missing jar has a machine to come from
-  ansible.builtin.fail:
-    msg: >-
-      TLA-JAR-NO-SOURCE host={{ inventory_hostname }}: no {{ nova_runner_tla_jar }} and nova_runner_tla_jar_source names
-      another machine of the inventory that has it;
-      run: nova-fleet runner-packages -- -l {{ inventory_hostname }} -e nova_runner_tla_jar_source=<a machine with the jar>
-  when: not rp_tla.stat.exists and (nova_runner_tla_jar_source not in hostvars or nova_runner_tla_jar_source == inventory_hostname)
-
-- name: would copy the jar
+- name: would download the jar
   ansible.builtin.debug:
-    msg: "TLA-JAR WOULD-COPY host={{ inventory_hostname }} from={{ nova_runner_tla_jar_source }} {{ nova_runner_tla_jar }} sha256={{ nova_runner_tla_jar_sha256 }}"
+    msg: "TLA-JAR WOULD-DOWNLOAD host={{ inventory_hostname }} from={{ nova_runner_tla_jar_url }} {{ nova_runner_tla_jar }} sha256={{ nova_runner_tla_jar_sha256 }}"
   changed_when: true
   when: ansible_check_mode and not rp_tla.stat.exists
 
-- name: the jar, from the source machine through the control node
+- name: the jar, from the TLA+ release
   when: not ansible_check_mode and not rp_tla.stat.exists
   block:
-    - name: a temporary directory on the control node
-      ansible.builtin.tempfile: { state: directory, suffix: .tla }
-      delegate_to: localhost
-      register: rp_tla_tmp
-
-    # ansible templates delegate_to even for a skipped task, and refuses an empty name; the block runs only once
-    # TLA-JAR-NO-SOURCE has found the source in the inventory, so the default is never the machine fetched from
-    - name: the source machine's jar, fetched to the control node
-      ansible.builtin.fetch:
-        src: "{{ nova_runner_tla_jar }}"
-        dest: "{{ rp_tla_tmp.path }}/tla2tools.jar"
-        flat: true
-      delegate_to: "{{ nova_runner_tla_jar_source | default('localhost', true) }}"
-
-    - name: the fetched jar's digest
-      ansible.builtin.stat:
-        path: "{{ rp_tla_tmp.path }}/tla2tools.jar"
-        get_checksum: true
-        checksum_algorithm: sha256
-      delegate_to: localhost
-      register: rp_tla_fetched
-
-    - name: a fetched jar that differs from the pin is refused before anything is written
-      ansible.builtin.fail:
-        msg: >-
-          TLA-JAR-MISMATCH host={{ nova_runner_tla_jar_source }} path={{ nova_runner_tla_jar }} want={{ nova_runner_tla_jar_sha256 }}
-          got={{ rp_tla_fetched.stat.checksum | default('none') }}; nothing was written to {{ inventory_hostname }};
-          run: nova-fleet runner-packages -- -l {{ inventory_hostname }} -e nova_runner_tla_jar_source=<a machine with the pinned jar>
-      when: rp_tla_fetched.stat.checksum | default('') != nova_runner_tla_jar_sha256
-
     - name: the jar's directory (root's, readable by every login)
       ansible.builtin.file:
         path: "{{ nova_runner_tla_jar | dirname }}"
@@ -77,24 +39,35 @@
         mode: "0755"
       become: true
 
-    - name: the jar (root's, readable by every login)
+    # beside the jar, so the copy below is a move on one file system; get_url refuses a download that is not the pin
+    - name: the jar downloaded beside its place, checked against the pin
+      ansible.builtin.get_url:
+        url: "{{ nova_runner_tla_jar_url }}"
+        dest: "{{ nova_runner_tla_jar }}.download"
+        checksum: "sha256:{{ nova_runner_tla_jar_sha256 }}"
+        owner: root
+        group: root
+        mode: "0644"
+      become: true
+
+    - name: the jar (root's, readable by every login), never over a file that appeared since the check
       ansible.builtin.copy:
-        src: "{{ rp_tla_tmp.path }}/tla2tools.jar"
+        src: "{{ nova_runner_tla_jar }}.download"
         dest: "{{ nova_runner_tla_jar }}"
-        force: false   # a jar that appeared since the check above is never replaced
+        remote_src: true
+        force: false
         owner: root
         group: root
         mode: "0644"
       become: true
   always:
-    - name: the temporary directory removed
-      ansible.builtin.file: { path: "{{ rp_tla_tmp.path }}", state: absent }
-      delegate_to: localhost
-      when: rp_tla_tmp.path is defined
+    - name: the download removed
+      ansible.builtin.file: { path: "{{ nova_runner_tla_jar }}.download", state: absent }
+      become: true
 
 - name: the jar's receipt
   ansible.builtin.debug:
     msg: >-
-      TLA-JAR host={{ inventory_hostname }} {{ 'present' if rp_tla.stat.exists else ('WOULD-COPY' if ansible_check_mode else 'copied from ' ~ nova_runner_tla_jar_source) }}
+      TLA-JAR host={{ inventory_hostname }} {{ 'present' if rp_tla.stat.exists else ('WOULD-DOWNLOAD' if ansible_check_mode else 'downloaded') }}
       {{ nova_runner_tla_jar }} sha256={{ nova_runner_tla_jar_sha256 }}
   changed_when: false

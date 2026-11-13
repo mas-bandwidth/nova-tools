@@ -1,0 +1,35 @@
+---
+# Debian, Ubuntu on x86_64: the MemorySanitizer-instrumented libc++ (libc++ and libc++abi built with
+# LLVM_USE_SANITIZER=MemoryWithOrigins, shared) in <nova_runner_msan_libcxx_prefix><clang version>, for the clang on the
+# system PATH. The library's headers and the compiler move together, so each machine builds it from the llvm-project
+# release of its own clang (msan-libcxx-build.yml), the tarball checked against nova_runner_msan_libcxx_sha256; a clang
+# with no pin is refused. A prefix that holds lib/libc++.so and include/c++/v1/__config_site is left as it is.
+- name: the clang on the system PATH
+  ansible.builtin.command:
+    argv: [/usr/bin/env, "PATH=/usr/local/bin:/usr/bin:/bin", clang++, -dumpversion]
+  register: rp_msan_clang
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: the clang answered
+  ansible.builtin.set_fact:
+    rp_msan_has_clang: "{{ rp_msan_clang.rc == 0 and rp_msan_clang.stdout | trim | length > 0 }}"
+
+# under --check the packages above are not installed, so a new machine has no clang yet
+- name: would build the instrumented libc++ for the clang the packages bring
+  ansible.builtin.debug:
+    msg: "MSAN-LIBCXX WOULD-BUILD host={{ inventory_hostname }} clang=<the one runner-packages installs> {{ nova_runner_msan_libcxx_prefix }}<version>"
+  changed_when: true
+  when: ansible_check_mode and not rp_msan_has_clang
+
+- name: a clang to build for
+  ansible.builtin.fail:
+    msg: >-
+      MSAN-LIBCXX-NO-CLANG host={{ inventory_hostname }}: clang++ -dumpversion did not answer (rc={{ rp_msan_clang.rc }});
+      run: nova-fleet runner-packages -- -l {{ inventory_hostname }}
+  when: not ansible_check_mode and not rp_msan_has_clang
+
+- name: the instrumented libc++ for that clang
+  ansible.builtin.include_tasks: msan-libcxx-build.yml
+  when: rp_msan_has_clang

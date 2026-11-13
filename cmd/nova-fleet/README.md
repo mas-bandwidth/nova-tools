@@ -1384,7 +1384,8 @@ one). A list without the `:s390x` packages goes with the architecture off, `-e '
 | `nova_runner_vm_kernel` | `true` | Debian/Ubuntu (not WSL): keep each kernel image readable by the login, for a VM of the host's own kernel; a runner login of its own gets root's copies in `/opt/nova/vm-kernels` (its `~/vm-kernels`, a kernel hook for each new image) from `github-runners`, which fails with `VM-TIER-MISSING` naming what the tier lacks (vng, qemu, a writable `/dev/kvm`, the image, the modules) |
 | `nova_runner_vm_kernel_dir` | `<home>/vm-kernels` | where the copies go, as `vmlinuz-<version>` |
 | `nova_runner_tla_jar`, `nova_runner_tla_jar_sha256` | `/opt/tla/tla2tools.jar`; the sha256 of TLA+ tools v1.7.4 (the one `tests/tla/tla2tools.sha256` pins) | Debian/Ubuntu: **TLC's jar**, below; an empty sha256 skips it |
-| `nova_runner_tla_jar_source` | none | a machine of the inventory with the pinned jar at the same path, where a machine lacks it |
+| `nova_runner_tla_jar_url` | the TLA+ v1.7.4 release's `tla2tools.jar` | where a missing jar is downloaded from |
+| `nova_runner_msan_libcxx_prefix`, `nova_runner_msan_libcxx_sha256` | `/opt/msan-libcxx-`; the llvm-project source sha256 of clang 18.1.3 and 21.1.8 | Debian/Ubuntu x86_64: **The MemorySanitizer libc++**, below; an empty map skips it |
 
 Both switches apply on Debian and Ubuntu only; another OS skips them. The play reaches every bench as well as every runner: a WSL2 machine (`/proc/sys/fs/binfmt_misc/WSLInterop`) has no `/boot/vmlinuz-<version>` and no `kvm` group, so the VM tier is skipped there.
 
@@ -1414,19 +1415,25 @@ restarts. Copies of kernels later removed stay until deleted.
 **TLC's jar.** A model check runs `java -cp <jar> tlc2.TLC` with the Java runtime of the debian list and the jar at
 `nova_runner_tla_jar`. A jar there whose sha256 is the pin is left as it is. One that differs is refused, and nothing is
 written: `TLA-JAR-MISMATCH host=<machine> path=<jar> want=<sha256> got=<sha256>`; remove it and run again. A missing jar
-is fetched from `nova_runner_tla_jar_source` into a temporary directory on the control node, checked against the pin
-there (a source whose jar differs is refused the same way, naming the source), and copied: the directory root's, 0755,
-the jar root's, 0644, so the fleet login and a runner login of its own both read it. With no source named the machine
-is refused, `TLA-JAR-NO-SOURCE host=<machine>`, with the command to run. `--check` prints `TLA-JAR WOULD-COPY`; each
-machine gets `TLA-JAR host=<machine> present|copied from <source> <jar> sha256=<pin>`.
+is downloaded from `nova_runner_tla_jar_url`, and a download whose sha256 is not the pin is refused before it lands:
+the directory root's, 0755, the jar root's, 0644, so the fleet login and a runner login of its own both read it.
+`--check` prints `TLA-JAR WOULD-DOWNLOAD`; each machine gets `TLA-JAR host=<machine> present|downloaded <jar> sha256=<pin>`.
 
-```
-nova-fleet runner-packages --check --diff -- -l bench -e nova_runner_tla_jar_source=bench-1
-```
+**The MemorySanitizer libc++.** A MSan build links a libc++ and libc++abi built with
+`LLVM_USE_SANITIZER=MemoryWithOrigins`, at the release of the clang that compiles it (the headers and the compiler move
+together), from `<nova_runner_msan_libcxx_prefix><clang version>`. On x86_64 the play asks the system PATH's
+`clang++ -dumpversion`; a prefix holding `lib/libc++.so` and `include/c++/v1/__config_site` is left as it is. Otherwise it
+downloads that release's `llvm-project-<version>.src.tar.xz`, refused unless its sha256 is the pin, configures the
+runtimes with Ninja, builds them as the login under `nova-reserve run` (one slot's share of the machine's CPUs; on a
+machine joining, which has no nova tools yet and runs nothing else, half the CPUs at nice 10), installs
+them as root and removes the build directory. A clang with no pin is refused: `MSAN-LIBCXX-NO-PIN host=<machine>
+clang=<version>`. Each machine builds its own because the library must match its own compiler; on a 48-core bench a
+slot's share builds it in about ten minutes. `--check` prints `MSAN-LIBCXX WOULD-BUILD`; each machine gets
+`MSAN-LIBCXX host=<machine> clang=<version> present|built <prefix>`.
 
 **Check.** `RUNNER-PACKAGES host=<machine> wanted=<n> present=<n> installed=<n>`, one line per machine.
 **Rollback.** The play never removes a package: one taken out of the list stays installed until a play removes it. Nor
-does it remove a foreign architecture, a ports source, the `Architectures` lines, the kernel hook, the copies or TLC's jar.
+does it remove a foreign architecture, a ports source, the `Architectures` lines, the kernel hook, the copies, TLC's jar or the MemorySanitizer libc++.
 
 ## sdk-toolchain
 
