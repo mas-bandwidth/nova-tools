@@ -9,6 +9,7 @@
 - name: Linux only from here
   ansible.builtin.meta: end_host
   when: (nova_system | default(ansible_facts['system'])) != 'Linux'
+  tags: [always]   # --tags memlock as well
 
 # ---- the journal, on disk ----
 - name: the journal directory
@@ -186,6 +187,20 @@
   become: true
   register: health_memlock
   changed_when: "'MEMLOCK-RAISED' in health_memlock.stdout"
+
+# ---- the login's ssh sessions may lock nova_login_memlock ----
+# sshd opens each session through PAM, and pam_limits gives it the limits.d lines for its login; a session starts at
+# the kernel's 8 MiB without one, which refuses an io_uring replay the runners (LimitMEMLOCK=infinity) run. What a
+# session starts, nova-reserve's commands among them, inherits it. Open sessions keep theirs; the next one has it.
+- name: the login's ssh sessions may lock nova_login_memlock (pam_limits)
+  ansible.builtin.copy:
+    dest: /etc/security/limits.d/90-nova-memlock.conf
+    mode: "0644"
+    content: |
+      # managed by Ansible (fleet/health.yml): the fleet login's sessions lock what its runners may (soft and hard, KiB)
+      {{ ansible_facts['user_id'] }} - memlock {{ 'unlimited' if (nova_login_memlock | string) in ['unlimited', 'infinity'] else ((nova_login_memlock | human_to_bytes) // 1024) }}
+  become: true
+  tags: [memlock]
 
 # ---- leftovers of older tooling ----
 # Files that tools this play replaced wrote, removed where found (a unit is stopped and disabled first):

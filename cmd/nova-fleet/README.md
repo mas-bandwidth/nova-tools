@@ -1194,6 +1194,11 @@ applying it restarts only the daemon it configures, never the login's units. A d
 - The login's user manager may lock `nova_service_memlock` (`user@<uid>.service.d/90-nova-memlock.conf`): a user
   unit cannot go past its manager's limit, and the services play gives its units that `LimitMEMLOCK`. A running
   manager's limit is raised in place (`prlimit`), so none of its units restarts.
+- The login's ssh sessions, and what they start (nova-reserve's commands among them), may lock `nova_login_memlock`
+  (`unlimited`, soft and hard; `/etc/security/limits.d/90-nova-memlock.conf`, read by pam_limits): what the runner
+  units' `LimitMEMLOCK=infinity` gives CI, so an io_uring step locks the same on a bench as in CI. The login's user
+  slice `MemoryMax` still bounds it. The next session has it; `nova-fleet health -- -l <machine> --tags memlock`
+  writes this file and nothing else.
 - Leftovers of older tooling are removed where found (a unit stopped and disabled first): rowan-tools'
   `90-nova-host-memory.conf` drop-ins (ssh, tailscaled, user.slice), v1's member and reader `20-memory.conf`
   drop-ins, a `nova-pg-dump.timer` with no `nova-pg-dump.service`, the hand `~/.config/systemd/user/service.d/90-nova-memlock.conf`,
@@ -1354,7 +1359,20 @@ FLEET-AUDIT NOT-APPLICABLE host=<machine> item=<name> arch=<arch> declared=<arch
 FLEET-AUDIT host=<machine> login=<login> arch=<arch> ok=<n> missing=<n> not-applicable=<n>
 ```
 
-and a machine with anything missing fails: `FLEET-AUDIT FAILED host=<machine> missing=<names>`. The fix is the play
+Beside the file, the audit reads the locked-memory limit an io_uring step gets three ways, as the fleet login over
+its own ssh session: that session's (`ulimit -l`, soft and hard), that of a command `nova-reserve run` starts (in a
+directory of its own, so it takes and waits for none of the machine's slots), and the runners' (each loaded
+`github-runner-*` unit's `LimitMEMLOCK`, each running `Runner.Listener`'s `/proc/<pid>/limits`). Where they differ
+or one is below `nova_login_memlock`:
+
+```
+FLEET-AUDIT MISSING host=<machine> item=memlock ssh=<soft>/<hard> reserve=<soft>/<hard> runner=<values|none> need=<soft>/<hard> install=<plays>
+```
+
+(bytes, or `unlimited`; `health` fixes the session's, `github-runners` a runner's). `-e nova_audit_memlock=false`
+leaves it out.
+
+A machine with anything missing fails: `FLEET-AUDIT FAILED host=<machine> missing=<names>`. The fix is the play
 the line names, run on that machine. A machine that is not Linux prints `FLEET-AUDIT SKIPPED`. `-e
 nova_audit_requirements=<file>` checks another file of the same form.
 

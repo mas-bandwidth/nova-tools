@@ -42,7 +42,8 @@ func TestFunctionalAuditNamesWhatIsMissing(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "ansible-playbook", "-i", inv, filepath.Join(fleet, "audit.yml"), "-e", "nova_audit_requirements="+reqs)
+	cmd := exec.CommandContext(ctx, "ansible-playbook", "-i", inv, filepath.Join(fleet, "audit.yml"), "-e", "nova_audit_requirements="+reqs,
+		"-e", "nova_audit_memlock=false")
 	cmd.Env = append(os.Environ(), "ANSIBLE_NOCOLOR=1", "HOME="+home, "ANSIBLE_LOCAL_TEMP="+filepath.Join(dir, "tmp"))
 	b, err := cmd.CombinedOutput()
 	out := string(b)
@@ -58,4 +59,45 @@ func TestFunctionalAuditNamesWhatIsMissing(t *testing.T) {
 	assert.Contains(t, out, "FLEET-AUDIT NOT-APPLICABLE host=localhost item=elsewhere")
 	assert.Contains(t, out, " ok=1 missing=1 not-applicable=1")
 	assert.Contains(t, out, "FLEET-AUDIT FAILED host=localhost missing=unmet thing")
+}
+
+// TestFunctionalAuditMemlockNamesTheOddOneOut gives the audit a nova-reserve whose command reports a 1 KiB locked-memory
+// limit, below and unlike this session's: on Linux the machine fails on memlock by name, with the three values and the
+// play that fixes the session's; another OS is skipped by name.
+func TestFunctionalAuditMemlockNamesTheOddOneOut(t *testing.T) {
+	t.Parallel()
+	if _, err := exec.LookPath("ansible-playbook"); err != nil {
+		t.Skip("ansible-core is not installed on this machine; audit_play_test.go still runs")
+	}
+	fleet, err := filepath.Abs(".")
+	require.NoError(t, err)
+	dir := t.TempDir()
+	reqs := filepath.Join(dir, "reqs.tsv")
+	require.NoError(t, os.WriteFile(reqs, []byte("met\tany\tbase\ttrue\n"), 0o644))
+	bin := filepath.Join(dir, "bin")
+	require.NoError(t, os.MkdirAll(bin, 0o755))
+	// the command a reserve slot would run, as one whose limits are 1 KiB soft and hard
+	require.NoError(t, os.WriteFile(filepath.Join(bin, "nova-reserve"), []byte("#!/bin/sh\necho '1 1'\n"), 0o755))
+	inv := filepath.Join(dir, "inventory")
+	require.NoError(t, os.WriteFile(inv, []byte("[bench]\nlocalhost ansible_connection=local\n"), 0o644))
+	home := filepath.Join(dir, "home")
+	require.NoError(t, os.MkdirAll(home, 0o755))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "ansible-playbook", "-i", inv, filepath.Join(fleet, "audit.yml"), "-e", "nova_audit_requirements="+reqs,
+		"-e", "nova_bin_dir="+bin)
+	cmd.Env = append(os.Environ(), "ANSIBLE_NOCOLOR=1", "HOME="+home, "ANSIBLE_LOCAL_TEMP="+filepath.Join(dir, "tmp"))
+	b, err := cmd.CombinedOutput()
+	out := string(b)
+
+	if runtime.GOOS != "linux" {
+		require.NoError(t, err, out)
+		assert.Contains(t, out, "FLEET-AUDIT SKIPPED host=localhost")
+		return
+	}
+	require.Error(t, err, out)
+	assert.Regexp(t, `FLEET-AUDIT MISSING host=localhost item=memlock ssh=\S+ reserve=1024/1024 runner=\S+ need=unlimited/unlimited install=health`, out)
+	assert.Contains(t, out, " ok=1 missing=1 not-applicable=0")
+	assert.Contains(t, out, "FLEET-AUDIT FAILED host=localhost missing=memlock")
 }
