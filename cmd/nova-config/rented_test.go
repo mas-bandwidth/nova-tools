@@ -10,7 +10,7 @@ import (
 
 // rentArgs is a rented box's add with every field it needs.
 func rentArgs(name string, extra ...string) []string {
-	return append([]string{"rented", "add", name, "--provider", "aws", "--provider_id", "i-0abc",
+	return append([]string{"rented", "add", name, "--provider", "aws", "--provider_id", "i-0abc1234",
 		"--market", "spot", "--spot_request", "sir-1", "--address", "203.0.113.7", "--user", "ubuntu",
 		"--price", "0.59", "--price_from", "provider", "--purpose", "load pair rows", "--rented_by", "alice",
 		"--rented_at", "2026-11-13T00:00:00-05:00", "--return_by", "2026-11-13T09:00:00Z", "--actor", "t"}, extra...)
@@ -23,7 +23,7 @@ func TestRentedRowKeepsItsRecord(t *testing.T) {
 	h := newHarness()
 	h.ok(t, rentArgs("spill-1")...)
 	out := h.ok(t, "rented", "show", "spill-1")
-	assert.Contains(t, out, "RENTED name=spill-1 provider=aws provider_id=i-0abc market=spot spot_request=sir-1 address=203.0.113.7 user=ubuntu price=0.59 price_from=provider purpose=\"load pair rows\" rented_by=alice rented_at=2026-11-13T05:00:00Z return_by=2026-11-13T09:00:00Z ")
+	assert.Contains(t, out, "RENTED name=spill-1 provider=aws provider_id=i-0abc1234 market=spot spot_request=sir-1 address=203.0.113.7 user=ubuntu price=0.59 price_from=provider purpose=\"load pair rows\" rented_by=alice rented_at=2026-11-13T05:00:00Z return_by=2026-11-13T09:00:00Z ")
 	assert.Empty(t, h.st.rows["machine"], "a rented box is no machine row")
 }
 
@@ -81,9 +81,9 @@ func TestRentedRowWithAHandleIsNotRemoved(t *testing.T) {
 		clear []string
 		still string
 	}{
-		{nil, "box i-0abc and spot request sir-1"},
+		{nil, "box i-0abc1234 and spot request sir-1"},
 		{[]string{"--provider_id", ""}, "spot request sir-1"},
-		{[]string{"--provider_id", "i-0abc", "--spot_request", ""}, "box i-0abc"},
+		{[]string{"--provider_id", "i-0abc1234", "--spot_request", ""}, "box i-0abc1234"},
 	} {
 		if c.clear != nil {
 			h.ok(t, append([]string{"rented", "set", "spill-1", "--actor", "t"}, c.clear...)...)
@@ -113,7 +113,7 @@ func TestRentedHandleIdentityIsFixed(t *testing.T) {
 	}{
 		{[]string{"rented", "set", "lat-1", "--provider", "aws", "--market", "on-demand"}, "rented lat-1 holds box sv_1 at latitude, which may bill: --provider stays latitude; --market stays -; return it; run: nova-fleet rented"},
 		{[]string{"rented", "set", "spill-1", "--market", "on-demand", "--spot_request", ""}, "--market stays spot"},
-		{[]string{"rented", "set", "spill-1", "--provider_id", "i-0new"}, "--provider_id i-0abc is cleared (--provider_id '') once it is gone at the provider, never replaced"},
+		{[]string{"rented", "set", "spill-1", "--provider_id", "i-0def5678"}, "--provider_id i-0abc1234 is cleared (--provider_id '') once it is gone at the provider, never replaced"},
 		{[]string{"rented", "set", "spill-1", "--spot_request", "sir-2"}, "--spot_request sir-1 is cleared (--spot_request '') once it is gone at the provider, never replaced"},
 	} {
 		code, out, errs := h.run(t, append(c.args, "--actor", "t")...)
@@ -122,7 +122,7 @@ func TestRentedHandleIdentityIsFixed(t *testing.T) {
 		assert.Contains(t, errs, c.want, "%v", c.args)
 	}
 	h.ok(t, "rented", "set", "spill-1", "--provider_id", "", "--actor", "t")
-	h.ok(t, "rented", "set", "spill-1", "--provider_id", "i-0new", "--actor", "t") // given from '': a new box of the same request
+	h.ok(t, "rented", "set", "spill-1", "--provider_id", "i-0def5678", "--actor", "t") // given from '': a new box of the same request
 	h.ok(t, "rented", "set", "lat-1", "--provider_id", "", "--actor", "t")
 	h.ok(t, "rented", "set", "lat-1", "--provider", "aws", "--market", "on-demand", "--actor", "t") // nothing held: free
 }

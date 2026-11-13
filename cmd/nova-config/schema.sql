@@ -109,35 +109,59 @@ CREATE TABLE IF NOT EXISTS config.rented (
     rented_by  text NOT NULL CHECK (rented_by <> ''),
     rented_at  text NOT NULL CHECK (rented_at ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$'),
     return_by  text NOT NULL DEFAULT '' CHECK (return_by ~ '^([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z)?$'),
+    creating   text NOT NULL DEFAULT '' CHECK (creating ~ '^([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z)?$'),
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT rented_market CHECK ((provider = 'aws') = (market <> '')),
     CONSTRAINT rented_spot CHECK (spot_request = '' OR market = 'spot'),
     CONSTRAINT rented_return CHECK (return_by = '' OR return_by >= rented_at)
 );
+-- creating is when nova-fleet rent asked the provider for the box (RFC 3339 UTC; '' when it is not asking): between
+-- the ask and the write of its ids, the box may bill and the record is the only thing that names it, so it is held
+-- like a handle. A rented table made before the column gets it here; on one that has it this does nothing.
+ALTER TABLE config.rented ADD COLUMN IF NOT EXISTS creating text NOT NULL DEFAULT ''
+    CHECK (creating ~ '^([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z)?$');
+-- A handle is in its provider's form (so a typo never stands for a box that bills), and a price comes with where it
+-- came from. Added once; a table that has them keeps them.
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'rented_handles' AND conrelid = 'config.rented'::regclass) THEN
+        ALTER TABLE config.rented ADD CONSTRAINT rented_handles CHECK (
+            (provider_id = '' OR (provider = 'aws' AND provider_id ~ '^i-[0-9a-f]{8,17}$')
+                OR (provider = 'latitude' AND provider_id ~ '^sv_[A-Za-z0-9]+$'))
+            AND (spot_request = '' OR spot_request ~ '^sir-[a-z0-9]+$'));
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'rented_price' AND conrelid = 'config.rented'::regclass) THEN
+        ALTER TABLE config.rented ADD CONSTRAINT rented_price CHECK ((price = '') = (price_from = ''));
+    END IF;
+END $$;
 
 -- The store holds these whoever writes, a release before config.rented included:
--- - a rented record that still holds a box id or a spot request id is not deleted (either may still bill; clear it
---   once it is gone at the provider);
--- - while it holds either, what the handle names is fixed: name, provider and market do not change, and a handle is
+-- - a rented record that still holds a box id, a spot request id or a create under way (creating) is not deleted
+--   (each may still bill; clear it once it is gone at the provider);
+-- - while it holds any, what the handle names is fixed: name, provider and market do not change, and a handle is
 --   only given (from '') or cleared (to ''), never replaced;
--- - no machine row shares a name with an aws rented box (a machine row is what an inventory, and so a play, reaches).
---   Both checks take a transaction lock on the name first, so two writers at once, one to each table, are serialized:
---   the second reads the first's committed row (each statement of a function reads afresh at READ COMMITTED).
+-- - a machine row shares its name with a rented record only while that record is a latitude box that exists (its
+--   id given, no create under way): an aws box, or one not created yet, is one no play may reach, and a machine row
+--   is what an inventory, and so a play, reaches. Both checks take a transaction lock on the name first, so two
+--   writers at once, one to each table, are serialized: the second reads the first's committed row (each statement
+--   of a function reads afresh at READ COMMITTED).
 CREATE OR REPLACE FUNCTION config.rented_keep() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
-    IF OLD.provider_id <> '' OR OLD.spot_request <> '' THEN
-        RAISE EXCEPTION 'rented % still has a box or spot request at %, which may bill; return it, then clear them; run: nova-fleet rented', OLD.name, OLD.provider;
+    IF OLD.provider_id <> '' OR OLD.spot_request <> '' OR OLD.creating <> '' THEN
+        RAISE EXCEPTION 'rented % still has a box, a spot request or a create under way at %, which may bill; return it, then clear them; run: nova-fleet rented', OLD.name, OLD.provider;
     END IF;
     RETURN OLD;
 END $$;
 CREATE OR REPLACE TRIGGER rented_keep BEFORE DELETE ON config.rented FOR EACH ROW EXECUTE FUNCTION config.rented_keep();
 CREATE OR REPLACE FUNCTION config.rented_fixed() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
-    IF (OLD.provider_id <> '' OR OLD.spot_request <> '') AND (NEW.name <> OLD.name OR NEW.provider <> OLD.provider
-        OR NEW.market <> OLD.market OR (OLD.provider_id <> '' AND NEW.provider_id NOT IN (OLD.provider_id, ''))
-        OR (OLD.spot_request <> '' AND NEW.spot_request NOT IN (OLD.spot_request, ''))) THEN
-        RAISE EXCEPTION 'rented % holds a box or spot request at %, which may bill: its name, provider, market and handles stay as they are until each handle is cleared; run: nova-fleet rented', OLD.name, OLD.provider;
+    IF (OLD.provider_id <> '' OR OLD.spot_request <> '' OR OLD.creating <> '') AND (NEW.name <> OLD.name
+        OR NEW.provider <> OLD.provider OR NEW.market <> OLD.market
+        OR (OLD.provider_id <> '' AND NEW.provider_id NOT IN (OLD.provider_id, ''))
+        OR (OLD.spot_request <> '' AND NEW.spot_request NOT IN (OLD.spot_request, ''))
+        OR (OLD.creating <> '' AND NEW.creating NOT IN (OLD.creating, ''))) THEN
+        RAISE EXCEPTION 'rented % holds a box, a spot request or a create under way at %, which may bill: its name, provider, market and handles stay as they are until each handle is cleared; run: nova-fleet rented', OLD.name, OLD.provider;
     END IF;
     RETURN NEW;
 END $$;
@@ -148,8 +172,8 @@ BEGIN
         RAISE EXCEPTION 'config: a machine or rented write runs at read committed, where its name check sees every committed row';
     END IF;
     PERFORM pg_advisory_xact_lock(hashtext('config.name:' || NEW.name));
-    IF EXISTS (SELECT 1 FROM config.rented WHERE name = NEW.name AND provider = 'aws') THEN
-        RAISE EXCEPTION 'machine %: % is a rented aws box, which no play may reach, so it has no machine row', NEW.name, NEW.name;
+    IF EXISTS (SELECT 1 FROM config.rented WHERE name = NEW.name AND (provider = 'aws' OR provider_id = '' OR creating <> '')) THEN
+        RAISE EXCEPTION 'machine %: % is a rented aws box or one not created yet, which no play may reach, so it has no machine row', NEW.name, NEW.name;
     END IF;
     RETURN NEW;
 END $$;
@@ -160,12 +184,12 @@ BEGIN
         RAISE EXCEPTION 'config: a machine or rented write runs at read committed, where its name check sees every committed row';
     END IF;
     PERFORM pg_advisory_xact_lock(hashtext('config.name:' || NEW.name));
-    IF NEW.provider = 'aws' AND EXISTS (SELECT 1 FROM config.machines WHERE name = NEW.name) THEN
-        RAISE EXCEPTION 'rented %: an aws box, which no play may reach, cannot share its name with machine %', NEW.name, NEW.name;
+    IF (NEW.provider = 'aws' OR NEW.provider_id = '' OR NEW.creating <> '') AND EXISTS (SELECT 1 FROM config.machines WHERE name = NEW.name) THEN
+        RAISE EXCEPTION 'rented %: an aws box, or one not created yet, which no play may reach, cannot share its name with machine %; remove the machine row first', NEW.name, NEW.name;
     END IF;
     RETURN NEW;
 END $$;
-CREATE OR REPLACE TRIGGER rented_not_machine BEFORE INSERT OR UPDATE OF name, provider ON config.rented FOR EACH ROW EXECUTE FUNCTION config.rented_not_machine();
+CREATE OR REPLACE TRIGGER rented_not_machine BEFORE INSERT OR UPDATE OF name, provider, provider_id, creating ON config.rented FOR EACH ROW EXECUTE FUNCTION config.rented_not_machine();
 CREATE OR REPLACE FUNCTION config.rented_keep_all() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     RAISE EXCEPTION 'config.rented is never emptied at once: a record goes alone, once its box and spot request are gone; run: nova-fleet rented';

@@ -188,8 +188,8 @@ nova-secrets exec --only NOVA_PG_PASSWORD -- nova-fleet rented
 ```
 
 ```text
-RENTED spill-1 provider=aws id=i-0abc market=spot age=1h30m rate=0.60 price_from=provider cost=0.90 return_by=2026-11-13T09:00:00Z purpose="load rows"
-RENTED bench-x provider=latitude id=sv_1 market=- age=3h00m rate=4.06 price_from=recalled cost=12.18 return_by=2026-11-13T04:00:00Z PAST purpose="XDP pair"
+RENTED spill-1 provider=aws id=i-0abc1234 req=- asked=- market=spot age=1h30m rate=0.60 price_from=provider cost=0.90 return_by=2026-11-13T09:00:00Z purpose="load rows"
+RENTED bench-x provider=latitude id=sv_1 req=- asked=- market=- age=3h00m rate=4.06 price_from=recalled cost=12.18 return_by=2026-11-13T04:00:00Z PAST purpose="XDP pair"
 RENTED TOTAL machines=2 rate=4.66 cost=13.08 unknown=0 past=1
 ```
 

@@ -55,6 +55,9 @@ var (
 	marketWord    = regexp.MustCompile(`^(on-demand|spot)$`)
 	priceFromWord = regexp.MustCompile(`^(provider|recalled)$`)
 	priceText     = regexp.MustCompile(`^[0-9]{1,6}(\.[0-9]{1,4})?$`)
+	// a handle in its provider's form, as the store holds (rented_handles), so a typo never stands for a box that bills
+	boxID         = map[string]*regexp.Regexp{"aws": regexp.MustCompile(`^i-[0-9a-f]{8,17}$`), "latitude": regexp.MustCompile(`^sv_[A-Za-z0-9]+$`)}
+	spotRequestID = regexp.MustCompile(`^sir-[a-z0-9]+$`)
 )
 
 var kinds = map[string]*kind{
@@ -113,6 +116,7 @@ var kinds = map[string]*kind{
 			{name: "rented_by", typ: "text", required: true},
 			{name: "rented_at", typ: "time", required: true},
 			{name: "return_by", typ: "time"},
+			{name: "creating", typ: "time"},
 		}},
 }
 
@@ -674,6 +678,12 @@ func checkRented(r Row) error {
 	if v["market"] == "" && v["provider"] == "aws" {
 		p = append(p, fmt.Sprintf("rented %s is at aws and has no --market; give --market on-demand|spot", r.Name))
 	}
+	if re := boxID[v["provider"]]; v["provider_id"] != "" && re != nil && !re.MatchString(v["provider_id"]) {
+		p = append(p, fmt.Sprintf("rented %s: --provider_id %q is not a %s box id (%s)", r.Name, v["provider_id"], v["provider"], re))
+	}
+	if v["spot_request"] != "" && !spotRequestID.MatchString(v["spot_request"]) {
+		p = append(p, fmt.Sprintf("rented %s: --spot_request %q is not a spot request id (%s)", r.Name, v["spot_request"], spotRequestID))
+	}
 	if v["spot_request"] != "" && v["market"] != "spot" {
 		p = append(p, fmt.Sprintf("rented %s: --spot_request is a spot box's, and its --market is %q; set --market spot or --spot_request ''", r.Name, v["market"]))
 	}
@@ -693,6 +703,9 @@ func rentHandles(r Row) string {
 	if sr := r.F["spot_request"]; sr != "" {
 		h = append(h, "spot request "+sr)
 	}
+	if c := r.F["creating"]; c != "" {
+		h = append(h, "a box asked for at "+c)
+	}
 	return strings.Join(h, " and ")
 }
 
@@ -711,7 +724,7 @@ func handleFixed(cur, after Row) error {
 			p = append(p, fmt.Sprintf("--%s stays %s", f, value(cur.F[f])))
 		}
 	}
-	for _, f := range []string{"provider_id", "spot_request"} {
+	for _, f := range []string{"provider_id", "spot_request", "creating"} {
 		if was, now := cur.F[f], after.F[f]; was != "" && now != "" && now != was {
 			p = append(p, fmt.Sprintf("--%s %s is cleared (--%s '') once it is gone at the provider, never replaced", f, was, f))
 		}

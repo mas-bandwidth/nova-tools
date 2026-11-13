@@ -161,7 +161,7 @@ record first, then makes the box.
 | `rented_by`, `rented_at`, `return_by` | Who rented it, when, and when it is to be returned: RFC 3339 times, written back in UTC; `rented_by` and `rented_at` are required, and a `return_by` before `rented_at` is refused. |
 
 ```text
-nova-config rented add spill-1 --provider aws --provider_id i-0abc --market spot --spot_request sir-1 --address 203.0.113.7 --user ubuntu --price 0.59 --price_from provider --purpose 'load pair rows' --rented_by alice --rented_at 2026-11-13T05:00:00Z --return_by 2026-11-13T09:00:00Z --actor ops
+nova-config rented add spill-1 --provider aws --provider_id i-0abc1234 --market spot --spot_request sir-1 --address 203.0.113.7 --user ubuntu --price 0.59 --price_from provider --purpose 'load pair rows' --rented_by alice --rented_at 2026-11-13T05:00:00Z --return_by 2026-11-13T09:00:00Z --actor ops
 ```
 
 ## Reading the rows from Go

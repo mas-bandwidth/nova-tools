@@ -1,0 +1,4 @@
+prefix	pci	nic	source
+7c:c2:55	8086:15ff	Intel X710 10GBASE-T (Supermicro onboard)	Latitude m4-metal-large/medium NYC, ETH0 MAC against lspci -nn: space2, bench-nyc-5, -7, -9, bench-xdp-8, -9 (2026-11-12/13)
+90:5a:08	8086:1563	Intel X550	Latitude NYC, ETH0 MAC against lspci -nn: bench-nyc-1 (m4-metal-large), space3 eno2 (m4-metal-xlarge) (2026-11-12)
+d4:04:e6	14e4:16d8	Broadcom BCM57416 NetXtreme-E	Latitude m4-metal-large NYC, ETH0 MAC against lspci -nn: bench-nyc-3, -4, -6, -8 (2026-11-12/13)

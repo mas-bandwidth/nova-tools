@@ -15,13 +15,14 @@ const rentedHelp = `nova-fleet rented [--json]
 
 The boxes rented by the hour, from the record (nova-config rented rows), so none bills unseen: one
 line per box,
-  RENTED <name> provider=<latitude|aws> id=<provider id|-> market=<on-demand|spot|-> age=<h>h<m>m
-         rate=<usd an hour|-> price_from=<provider|recalled|-> cost=<usd so far|unknown> return_by=<time|->
+  RENTED <name> provider=<latitude|aws> id=<provider id|-> req=<spot request|-> asked=<time|-> market=<on-demand|spot|->
+         age=<h>h<m>m rate=<usd an hour|-> price_from=<provider|recalled|-> cost=<usd so far|unknown> return_by=<time|->
          [PAST] purpose="<text>"
 then RENTED TOTAL machines=<n> rate=<usd an hour> cost=<usd> unknown=<n> past=<n>. cost is the hourly
 price times the hours since rented_at (a stopped box bills less: its disk only); unknown, when either is
 missing, and then not in the total, which counts it in unknown; price_from=recalled is a price not read
-from the provider; PAST marks a box kept beyond its return_by. A nova-config on PATH older than the
+from the provider; PAST marks a box kept beyond its return_by; asked is when a rent asked the provider
+for the box, until it noted its ids (a box that may bill with no id yet). A nova-config on PATH older than the
 rented rows has no rented verb, and its refusal is passed on. --json prints the same as one object.
 Reads the store through nova-config, so run it as the plays run:
   nova-secrets exec --only NOVA_PG_PASSWORD -- nova-fleet rented
@@ -46,6 +47,7 @@ type rentedRow struct {
 	RentedBy    string `json:"rented_by"`
 	RentedAt    string `json:"rented_at"`
 	ReturnBy    string `json:"return_by"`
+	Creating    string `json:"creating"` // when rent asked the provider for the box, until its ids are noted
 }
 
 // cmdFunc runs a program to its end: its stdout, stderr and exit code (outCmd).
@@ -73,13 +75,13 @@ func record(cfg string, run cmdFunc) ([]rentedRow, error) {
 // bill is what a rented machine has cost by at: its hourly price times the hours since rented_at. Known is false
 // when either is missing, and then the cost is not counted.
 type bill struct {
-	Name, Provider, ProviderID, Market, Price, PriceFrom, Purpose, ReturnBy string
-	Hours, Rate, Cost                                                       float64
-	Known, Past                                                             bool
+	Name, Provider, ProviderID, SpotRequest, Creating, Market, Price, PriceFrom, Purpose, ReturnBy string
+	Hours, Rate, Cost                                                                              float64
+	Known, Past                                                                                    bool
 }
 
 func billOf(r rentedRow, at time.Time) bill {
-	b := bill{Name: r.Name, Provider: r.Provider, ProviderID: r.ProviderID, Market: r.Market, Price: r.Price, PriceFrom: r.PriceFrom, Purpose: r.Purpose, ReturnBy: r.ReturnBy}
+	b := bill{Name: r.Name, Provider: r.Provider, ProviderID: r.ProviderID, SpotRequest: r.SpotRequest, Creating: r.Creating, Market: r.Market, Price: r.Price, PriceFrom: r.PriceFrom, Purpose: r.Purpose, ReturnBy: r.ReturnBy}
 	t, terr := time.Parse(time.RFC3339, r.RentedAt)
 	p, perr := strconv.ParseFloat(r.Price, 64)
 	if terr == nil {
@@ -141,8 +143,8 @@ func listRented(rows []rentedRow, at time.Time, asJSON bool, w io.Writer) error 
 		}
 		h := int(b.Hours * 60)
 		purpose, _ := json.Marshal(b.Purpose) // ignored: a string always encodes
-		fmt.Fprintf(w, "RENTED %s provider=%s id=%s market=%s age=%dh%02dm rate=%s price_from=%s cost=%s return_by=%s%s purpose=%s\n",
-			b.Name, b.Provider, dash(b.ProviderID), dash(b.Market), h/60, h%60, dash(b.Price), dash(b.PriceFrom), cost, dash(b.ReturnBy), past, purpose)
+		fmt.Fprintf(w, "RENTED %s provider=%s id=%s req=%s asked=%s market=%s age=%dh%02dm rate=%s price_from=%s cost=%s return_by=%s%s purpose=%s\n",
+			b.Name, b.Provider, dash(b.ProviderID), dash(b.SpotRequest), dash(b.Creating), dash(b.Market), h/60, h%60, dash(b.Price), dash(b.PriceFrom), cost, dash(b.ReturnBy), past, purpose)
 	}
 	_, err := fmt.Fprintf(w, "RENTED TOTAL machines=%d rate=%s cost=%s unknown=%d past=%d\n", total.Machines, rate(total.Rate), usd(total.Cost), total.Unknown, total.Past)
 	return err

@@ -682,28 +682,10 @@ func (u *upRun) steps() int {
 	// node; the machines never read it).
 	// A push the remote refuses (a protected branch: changes through a pull request) goes to a branch of
 	// its own instead, named by the commit; the run goes on, and ends 1 with the branch to open a PR from.
-	git := func(args ...string) (string, string, int) {
-		return outCmd(u.bin["git"], append([]string{"-C", u.store}, args...), append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1", "GIT_TERMINAL_PROMPT=0")) // no system credential helper (a Mac's keychain), no prompt
-	}
-	if up, _, c := git("rev-parse", "--abbrev-ref", "@{u}"); c != 0 {
-		u.say("UP STORE NOTE %s has no upstream: nothing to push", u.store)
-	} else if u.check {
-		u.say("UP STORE WOULD-PUSH %s (check: nothing changed)", u.store)
-	} else if _, why, c := git("push", "--quiet"); c != 0 && !strings.Contains(why, "[remote rejected]") {
-		fmt.Fprintf(u.stderr, "nova-fleet up: git push of %s: %s\n", u.store, oneLine(why))
+	if refused, c := pushStore(u.bin["git"], u.store, u.check, "UP", u.stdout, u.stderr); c != 0 {
 		return fail("store", c)
-	} else if c != 0 {
-		sha, _, _ := git("rev-parse", "--short", "HEAD") // ignored: a failure leaves the name nova-fleet-up/, and the push below says so
-		branch := "nova-fleet-up/" + strings.TrimSpace(sha)
-		remote, _, _ := strings.Cut(strings.TrimSpace(up), "/")
-		if _, why2, c := git("push", "--quiet", cmp.Or(remote, "origin"), "HEAD:refs/heads/"+branch); c != 0 {
-			fmt.Fprintf(u.stderr, "nova-fleet up: git push of %s was refused (%s), and so was the branch %s: %s\n", u.store, oneLine(why), branch, oneLine(why2))
-			return fail("store", c)
-		}
-		fmt.Fprintf(u.stderr, "UP STORE PUSH REFUSED: %s is protected (%s); pushed branch %s; open a PR from it\n", strings.TrimSpace(up), oneLine(why), branch)
+	} else if refused {
 		u.refused = true
-	} else {
-		u.say("UP STORE OK pushed %s", u.store)
 	}
 
 	// 8. refresh: secrets-refresh pushes the encrypted store from this node's clone to each machine
@@ -858,4 +840,36 @@ func runUp(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	return u.steps()
+}
+
+// pushStore pushes the secrets store to its upstream, if it has one (up's step 7, and return's seat removal). A push
+// the remote refuses (a protected branch: changes through a pull request) goes to a branch of its own instead, named
+// by the commit; refused says so, and the caller ends 1 with the branch to open a PR from. code is not 0 when
+// neither push went.
+func pushStore(gitBin, store string, check bool, verb string, stdout, stderr io.Writer) (refused bool, code int) {
+	who := "nova-fleet " + strings.ToLower(verb)
+	git := func(args ...string) (string, string, int) {
+		return outCmd(gitBin, append([]string{"-C", store}, args...), append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1", "GIT_TERMINAL_PROMPT=0")) // no system credential helper (a Mac's keychain), no prompt
+	}
+	if up, _, c := git("rev-parse", "--abbrev-ref", "@{u}"); c != 0 {
+		fmt.Fprintf(stdout, "%s STORE NOTE %s has no upstream: nothing to push\n", verb, store)
+	} else if check {
+		fmt.Fprintf(stdout, "%s STORE WOULD-PUSH %s (check: nothing changed)\n", verb, store)
+	} else if _, why, c := git("push", "--quiet"); c != 0 && !strings.Contains(why, "[remote rejected]") {
+		fmt.Fprintf(stderr, "%s: git push of %s: %s\n", who, store, oneLine(why))
+		return false, c
+	} else if c != 0 {
+		sha, _, _ := git("rev-parse", "--short", "HEAD") // ignored: a failure leaves the name nova-fleet-up/, and the push below says so
+		branch := "nova-fleet-up/" + strings.TrimSpace(sha)
+		remote, _, _ := strings.Cut(strings.TrimSpace(up), "/")
+		if _, why2, c := git("push", "--quiet", cmp.Or(remote, "origin"), "HEAD:refs/heads/"+branch); c != 0 {
+			fmt.Fprintf(stderr, "%s: git push of %s was refused (%s), and so was the branch %s: %s\n", who, store, oneLine(why), branch, oneLine(why2))
+			return false, c
+		}
+		fmt.Fprintf(stderr, "%s STORE PUSH REFUSED: %s is protected (%s); pushed branch %s; open a PR from it\n", verb, strings.TrimSpace(up), oneLine(why), branch)
+		return true, 0
+	} else {
+		fmt.Fprintf(stdout, "%s STORE OK pushed %s\n", verb, store)
+	}
+	return false, 0
 }

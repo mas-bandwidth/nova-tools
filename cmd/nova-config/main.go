@@ -284,18 +284,20 @@ func runKind(ctx context.Context, k *kind, verb string, args []string, d deps, s
 	// A rented record goes only once nothing at the provider can bill: no box, and no spot request that could still
 	// fulfil one. An empty instance id alone proves nothing.
 	if handles := rentHandles(cur); k.name == "rented" && op == "remove" && handles != "" {
-		return refused("rented %s still has %s at %s, which may bill; return it, which removes this record once each is gone at the provider (or, once each is gone, clear it: nova-config rented set %s --provider_id '' --spot_request ''); run: nova-fleet rented", name, handles, cur.F["provider"], name)
+		return refused("rented %s still has %s at %s, which may bill; return it, which removes this record once each is gone at the provider (or, once each is gone, clear it: nova-config rented set %s --provider_id '' --spot_request '' --creating ''); run: nova-fleet rented", name, handles, cur.F["provider"], name)
 	}
 	if op == "add" {
 		before = Row{}
 	} else if op == "set" {
-		if after, err = k.merge(cur, given); err != nil {
-			return refusal{err.Error()}
-		}
-		if k.name == "rented" {
-			if err := handleFixed(cur, after); err != nil {
+		if k.name == "rented" { // first, as given: a held handle's refusal says more than the form of what replaces it
+			asGiven := Row{Name: cur.Name, F: maps.Clone(cur.F)}
+			maps.Copy(asGiven.F, given)
+			if err := handleFixed(cur, asGiven); err != nil {
 				return err
 			}
+		}
+		if after, err = k.merge(cur, given); err != nil {
+			return refusal{err.Error()}
 		}
 	}
 	if k.name == "machine" && op != "remove" { // an admin runner label is checked against every machine's runners, the row as written
