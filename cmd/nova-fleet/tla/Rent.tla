@@ -350,6 +350,9 @@ AtMostOneBox == Cardinality({b \in Boxes : box[b] = "run"}) <= 1
 \* a box reported rented is on the hardware asked for
 OkIsRight == \A b \in okBox : hw[b] = "right"
 
+\* a box that went never comes back by itself: no request lives on after its box went, to launch another
+NoComeback == \A b \in Boxes : box[b] = "gone" /\ boxReq[b] /= None => req[boxReq[b]] /= "live"
+
 \* a spot rent is a spot box or nothing
 SpotIsSpot == Spot => \A b \in Boxes : box[b] /= "none" => boxReq[b] /= None
 =============================================================================
