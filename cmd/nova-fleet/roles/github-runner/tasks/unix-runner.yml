@@ -90,8 +90,11 @@
     and not (ansible_check_mode and (github_runner_unpacked is changed or not github_runner_config.stat.exists))
 
 # A runner whose unit runs it from another directory (another login's home: github_runner_user changed) moves here: once
-# its job ends its unit is stopped, it registers here under the same name (config.sh --replace), and its old directory
-# is deleted once the new unit runs it. A held runner is not moved.
+# its job ends its unit is stopped, and its registration comes with it: root copies the files that hold it (.runner,
+# .credentials, .credentials_rsaparams, and .labels, its record of its labels) here, the login's and readable by it
+# alone, so it keeps its name, id and labels in GitHub and no token is asked for (github_runner_carry, unix.yml). One
+# whose old directory lacks them registers here under the same name (config.sh --replace). Its old directory is deleted
+# once the new unit runs it. A held runner is not moved.
 - name: the directory its unit runs it from (Linux)
   ansible.builtin.command: { argv: [systemctl, show, -P, WorkingDirectory, "{{ github_runner_unit }}.service"] }
   register: github_runner_from
@@ -137,6 +140,34 @@
       become: true
       when: github_runner_old_dir != ''
 
+    # Copied, not moved: the old directory keeps its own until it is deleted, so a failure here leaves it whole. Root
+    # reads and writes nothing itself: the old directory's owner reads each file and the runner login writes it into its
+    # own directory, so a link either login's jobs left there reaches nothing beyond what that login could already.
+    - name: the moving runner's registration comes with it
+      ansible.builtin.shell: |
+        set -eu
+        old={{ github_runner_old_dir | quote }}
+        new={{ github_runner_dir | quote }}
+        u={{ github_runner_user | quote }}
+        o=$(stat -c %U "$old")
+        for f in .runner .credentials .credentials_rsaparams .labels; do
+          runuser -u "$o" -- test -f "$old/$f" || continue
+          runuser -u "$o" -- cat "$old/$f" \
+            | runuser -u "$u" -- sh -c 'umask 077; cat >"$1/$2.new" && mv -f "$1/$2.new" "$1/$2"' sh "$new" "$f"
+        done
+        # a read cut short leaves an empty copy, not a failed pipe: each copy is compared with its source
+        for f in .runner .credentials .credentials_rsaparams; do
+          a=$(runuser -u "$o" -- sha256sum "$old/$f" | cut -d' ' -f1)
+          b=$(runuser -u "$u" -- sha256sum "$new/$f" | cut -d' ' -f1)
+          [ -n "$a" ] && [ "$a" = "$b" ] || { echo "$new/$f does not match $old/$f" >&2; exit 1; }
+        done
+        echo CARRIED
+      args: { executable: /bin/sh }
+      become: true
+      register: github_runner_carried_here
+      changed_when: "'CARRIED' in github_runner_carried_here.stdout"
+      when: github_runner_old_dir != '' and runner_index in github_runner_carry | default([])
+
     # the wait above can outlast the hour a registration token lives
     - name: a fresh token for the moving runner
       ansible.builtin.include_tasks: token.yml
@@ -146,6 +177,16 @@
       ansible.builtin.include_tasks: unix-register.yml
       when: runner_index in github_runner_need
   rescue:
+    # the registration stays in one directory only: a later run finds this one unregistered and carries it again
+    - name: a failed move leaves no copy of the registration here
+      ansible.builtin.command:
+        argv: [rm, -f, .runner, .credentials, .credentials_rsaparams, .labels]
+        chdir: "{{ github_runner_dir }}"
+      become: "{{ github_runner_other }}"
+      become_user: "{{ github_runner_user }}"
+      vars: { ansible_pipelining: true }
+      when: github_runner_old_dir != '' and runner_index in github_runner_carry | default([])
+
     - name: a failed move starts the runner where it ran
       ansible.builtin.systemd: { name: "{{ github_runner_unit }}.service", state: started }
       become: true
