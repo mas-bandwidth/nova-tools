@@ -144,7 +144,7 @@ func TestListAndShowLines(t *testing.T) {
 		`"`+strings.Repeat("ab ", 20)+`..."`+rentedNone+"\n"+
 		"CONFIG LIST kind=machine rows=2\n", out)
 	out = h.ok(t, "machine", "show", "bench-b")
-	assert.Contains(t, out, ` ="`+" created=2026-01-01T00:00:00Z updated=2026-01-02T00:00:00Z services=member-b\n", "show does not cut the note")
+	assert.Contains(t, out, ` ="`+rentedNone+" created=2026-01-01T00:00:00Z updated=2026-01-02T00:00:00Z services=member-b\n", "show does not cut the note")
 	out = h.ok(t, "service", "list")
 	assert.Equal(t, `SERVICE name=member-b machine=bench-b argv=["/usr/bin/env","A=b","prog"] seat=s-b keys=A_KEY,B_KEY every=0 keepalive=true enabled=true env={} log=-`+"\nCONFIG LIST kind=service rows=1\n", out)
 }
@@ -221,10 +221,10 @@ func TestRefusals(t *testing.T) {
 		{1, []string{"service", "set", "nope", "--every", "5", "--actor", "a"}, "service nope not found"},
 		{1, []string{"machine", "add", "bench-a", "--user", "u", "--actor", "a"}, "machine bench-a exists"},
 		{2, []string{"machine", "add", "Bad_Name", "--user", "u", "--actor", "a"}, "want lower-case letters"},
-		{2, []string{"machine", "add", "m9", "--actor", "a"}, "missing required flag --user; machine fields: name, address, public, user, os, arch, cores, roles, runners, runner_scopes, windows_runners, windows_admin_runners, runner_env, note; run: nova-config machine add -h"},
+		{2, []string{"machine", "add", "m9", "--actor", "a"}, "missing required flag --user; machine fields: name, address, public, user, os, arch, cores, roles, runners, runner_scopes, windows_runners, windows_admin_runners, runner_env, note, provider, provider_id, market, spot_request, price, price_from, purpose, rented_by, rented_at, return_by; run: nova-config machine add -h"},
 		{2, []string{"service", "add", "l9"}, "missing required flag --machine, --argv, --actor"},
 		{2, []string{"machine", "set", "bench-a", "--roles", "coordination", "--actor", "a"}, `--roles "coordination"`},
-		{2, []string{"machine", "set", "bench-a", "--slots", "4", "--actor", "a"}, "unknown flag --slots; machine fields: name, address, public, user, os, arch, cores, roles, runners, runner_scopes, windows_runners, windows_admin_runners, runner_env, note; run: nova-config machine set -h"},
+		{2, []string{"machine", "set", "bench-a", "--slots", "4", "--actor", "a"}, "unknown flag --slots; machine fields: name, address, public, user, os, arch, cores, roles, runners, runner_scopes, windows_runners, windows_admin_runners, runner_env, note, provider, provider_id, market, spot_request, price, price_from, purpose, rented_by, rented_at, return_by; run: nova-config machine set -h"},
 		{2, []string{"version"}, `unknown verb "version"`},
 		{2, []string{"machine", "set", "bench-a", "--roles", "bench,chef", "--actor", "a"}, `--roles "chef"`},
 		{2, []string{"service", "set", "member-b", "--argv", "prog", "--actor", "a"}, "want the command as a JSON array"},
