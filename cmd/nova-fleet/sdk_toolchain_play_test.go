@@ -550,7 +550,8 @@ func TestSDKToolchainEnvPutsTheSDKFirst(t *testing.T) {
 
 // A Makefile that stages a pin from the SDK (a sandboxed job has no network) finds it by directory: NOVA_SDK names the
 // SDK itself, each interpreter is in <name>-<version> with the command at the path the Makefile looks for, and moo,
-// built from a tag, records the commit it was built from in PIN, written last so it is also the probe.
+// built from a tag, records the commit it was built from in PIN and beside its analyzer in bin/PIN, written last so it
+// is also the probe.
 func TestSDKToolchainPinsAreWhereAMakefileStagesThem(t *testing.T) {
 	t.Parallel()
 	b, err := os.ReadFile(sdkToolchainRole + "/defaults/main.yml")
@@ -571,7 +572,7 @@ func TestSDKToolchainPinsAreWhereAMakefileStagesThem(t *testing.T) {
 		return nil
 	}
 	for name, probe := range map[string]string{"lua": "bin/lua", "luau": "bin/luau", "goose": "goose", "lobster": "bin/lobster",
-		"stylua": "stylua", "moo": "PIN"} {
+		"stylua": "stylua", "moo": "bin/PIN"} {
 		tl := tool(name)
 		dir := strings.TrimSuffix(tl.Dir, "-"+tl.Version)
 		if dir == tl.Dir {
@@ -583,6 +584,8 @@ func TestSDKToolchainPinsAreWhereAMakefileStagesThem(t *testing.T) {
 	moo := tool("moo")
 	assert.Equal(t, "git", moo.Kind)
 	assert.Contains(t, moo.Build, `git rev-parse HEAD >"$dest/PIN"`)
+	assert.True(t, strings.HasSuffix(strings.TrimSpace(moo.Build), `cp "$dest/PIN" "$dest/bin/PIN"`),
+		"moo: the PIN beside the analyzer, where a checker of MOO_ANALYZE reads it, is written last (it is the probe)")
 	assert.Equal(t, []any{"bin/moo", "bin/moo-analyze"}, moo.Links, "moo: the CLI and the analyzer, both built")
 	for _, name := range []string{"goose", "lobster", "stylua", "lua"} {
 		assert.NotNil(t, tool(name).Darwin, "%s: a Mac bench stages it too", name)
