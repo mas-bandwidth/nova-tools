@@ -5,6 +5,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -132,6 +133,63 @@ esac`
 		assert.NotContains(t, out, "GITHUB-STRAY localhost localhost-2 o/r", "a wanted runner is no stray")
 		assert.NotContains(t, out, "GITHUB-STRAY localhost localhost-1 org", "a wanted runner is no stray")
 	}
+}
+
+// A registered runner is handed no new job while it is made idle: its custom labels come off on GitHub first, GitHub
+// is asked until it shows the runner idle, then the host until no Worker runs; the labels are kept beside it and
+// idle-restore.yml puts them back and removes the file. The calls are a fake gh's log, in order.
+func TestFunctionalWaitIdleTakesTheLabelsOffFirst(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	rdir := filepath.Join(dir, "o-r-1")
+	require.NoError(t, os.MkdirAll(rdir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(rdir, ".runner"), []byte("\ufeff{\n  \"agentId\": 182,\n  \"agentName\": \"h-1\",\n  \"gitHubUrl\": \"https://github.com/o/r\"\n}\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(rdir, ".labels"), []byte("amd64,fleet,linux,runner,schema\n"), 0o644))
+	calls := filepath.Join(dir, "calls")
+	n := filepath.Join(dir, "n")
+	gh := `echo "$*" >> ` + calls + `
+case "$*" in
+*"-q [.labels[] | select(.type == \"custom\") | .name] | join(\",\")"*) echo fleet,schema,amd64,runner ;;
+*"-q [.labels[] | select(.type != \"custom\") | .name | ascii_downcase] | join(\",\")"*) echo self-hosted,linux,x64 ;;
+*"-q .busy"*) c=$(cat ` + n + ` 2>/dev/null || echo 0); c=$((c+1)); echo $c > ` + n + `; [ $c -le 2 ] && echo true || echo false ;;
+esac`
+	vars := map[string]any{"github_runner_dir": rdir, "github_runner_idle_retries": 5, "github_runner_idle_delay": 0, "github_runner_gh": "gh"}
+	out, err := runTasksLocally(t, taskGroups(t, "roles/github-runner/tasks/wait-idle.yml")[0], vars, map[string]string{"gh": gh, "pgrep": "exit 1"})
+	require.NoError(t, err, out)
+	b, err := os.ReadFile(calls)
+	require.NoError(t, err)
+	log := strings.Split(strings.TrimSpace(string(b)), "\n")
+	del := slices.IndexFunc(log, func(l string) bool { return l == "api -X DELETE repos/o/r/actions/runners/182/labels" })
+	busy := slices.IndexFunc(log, func(l string) bool { return strings.HasPrefix(l, "api repos/o/r/actions/runners/182 -q .busy") })
+	require.GreaterOrEqual(t, del, 0, "the custom labels come off: %v", log)
+	require.Greater(t, busy, del, "GitHub is asked about busy only once no new job can come: %v", log)
+	b, _ = os.ReadFile(n) // ignored: compared below
+	assert.Equal(t, "3\n", string(b), "asked until GitHub showed it idle")
+	kept, err := os.ReadFile(filepath.Join(rdir, ".nova-labels-off"))
+	require.NoError(t, err)
+	assert.Equal(t, "fleet,schema,amd64,runner\n", string(kept))
+
+	require.NoError(t, os.WriteFile(calls, nil, 0o644))
+	out, err = runTasksLocally(t, taskGroups(t, "roles/github-runner/tasks/idle-restore.yml")[0], vars, map[string]string{"gh": gh})
+	require.NoError(t, err, out)
+	b, err = os.ReadFile(calls)
+	require.NoError(t, err)
+	assert.Equal(t, "api -X PUT repos/o/r/actions/runners/182/labels -f labels[]=fleet -f labels[]=schema -f labels[]=amd64 -f labels[]=runner", strings.TrimSpace(string(b)))
+	_, err = os.Stat(filepath.Join(rdir, ".nova-labels-off"))
+	assert.True(t, os.IsNotExist(err), "the file goes once the labels are back")
+
+	// a runner whose labels an earlier run took off (GitHub holds no custom one, no file kept): its registered
+	// labels less GitHub's read-only ones are kept to put back
+	require.NoError(t, os.WriteFile(calls, nil, 0o644))
+	none := strings.Replace(gh, "echo fleet,schema,amd64,runner", "echo", 1)
+	none = strings.Replace(none, "[ $c -le 2 ] && echo true || echo false", "echo false", 1)
+	out, err = runTasksLocally(t, taskGroups(t, "roles/github-runner/tasks/wait-idle.yml")[0], vars, map[string]string{"gh": none, "pgrep": "exit 1"})
+	require.NoError(t, err, out)
+	b, _ = os.ReadFile(calls) // ignored: compared below
+	assert.NotContains(t, string(b), "-X DELETE", "nothing to take off")
+	kept, err = os.ReadFile(filepath.Join(rdir, ".nova-labels-off"))
+	require.NoError(t, err)
+	assert.Equal(t, "amd64,fleet,runner,schema\n", string(kept))
 }
 
 // A runner with a job (a Runner.Worker from its bin) is waited for; one that stays busy fails the run, never stopped.
