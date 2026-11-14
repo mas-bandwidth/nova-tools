@@ -13,7 +13,7 @@
     # the SDK belongs to the fleet login (sdk-toolchain never becomes root): every login reads it, only it writes there
     [ "$(stat -c %U "$shared/sdk")" = {{ ansible_facts['user_id'] | quote }} ] || chown {{ ansible_facts['user_id'] | quote }}: "$shared/sdk"
     chmod 0755 "$shared/sdk"
-    # and join's pinned sops, age and age-keygen beside them: the jobs that test the tools run them from PATH
+    # and the sops, age and age-keygen that join pins, beside them: the jobs that test the tools run them from PATH
     for t in {{ nova_tools_names | map('quote') | join(' ') }} sops age age-keygen; do
       src={{ nova_bin_dir | quote }}/$t
       [ -f "$src" ] || continue
