@@ -1628,10 +1628,12 @@ rustc starts it by fork with a socketpair that a seccomp sandbox such as `nova-s
 with `could not exec the linker`; cargo's own `-C linker` comes later and wins. `~/sdk/bin/rustup` is a
 wrapper that uses this rustup's home unless the caller set `RUSTUP_HOME`, so a CI job that installs its own toolchain
 into its own home is unaffected. `cargo-fuzz` is built with `--locked` into `~/sdk/cargo-fuzz-<version>`.
-A runner login of its own has that home (its `RUSTUP_HOME`, shared by all its runners), and github-runners keeps
-the channel a job's `dtolnay/rust-toolchain` installs (`github_runner_rust_channel`, `stable`) whole there: installed
-with `github_runner_rust_channel_components` (clippy, rustfmt) when absent, given the ones it lacks when a job
-installed it with the minimal profile, which also made it the default for every later job. rustup keeps installed
+Each runner of a runner login of its own has such a home of its own (`RUSTUP_HOME` and `CARGO_HOME` under
+`~/.rust-homes/<runner>/`, set by its unit whatever the record's `runner_env` names), seeded with links to the shared
+SDK's pinned toolchains, so no two runners' jobs write one rustup tree at once (rustup takes no lock). github-runners
+keeps the channel a job's `dtolnay/rust-toolchain` installs (`github_runner_rust_channel`, `stable`) whole there:
+installed with `github_runner_rust_channel_components` (clippy, rustfmt) when absent, given the ones it lacks when a
+job installed it with the minimal profile, which also made it that runner's default. rustup keeps installed
 components when a later job updates the channel. The default itself is left as it is.
 
 .NET 8: each SDK of `nova_sdk_dotnet_more` (8.0, with its 8.0 runtime) is unpacked from Microsoft's archive, held to
