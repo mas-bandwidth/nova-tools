@@ -460,28 +460,31 @@ func TestSDKToolchainDotnetPacksMatchThe10SDK(t *testing.T) {
 	assert.Contains(t, asText(guard["when"]), "not ansible_check_mode", "the packs are there only after a real run")
 }
 
-// The CLI writes a sentinel per SDK version into <DOTNET_CLI_HOME>/.dotnet on its first run, and every dotnet command of
-// an SDK whose sentinels are missing fails where it cannot ("Access to the path ... toolpath.sentinel is denied"). So
-// the role holds the CLI home and its .dotnet writable by the login, whatever mode it finds them in.
-func TestSDKToolchainDotnetCLIHomeIsWritable(t *testing.T) {
+// The CLI's first run writes NuGet's user config into <DOTNET_CLI_HOME>/.nuget with mode 0600, so the CLI home is the
+// login's own, and on a shared SDK the config a login's dotnet left there is removed once env.sh names the new home,
+// before the shared SDK's readability check.
+func TestSDKToolchainDotnetCLIHomeIsTheLogins(t *testing.T) {
 	t.Parallel()
-	modes := map[string]string{}
 	for _, task := range sdkTasks(t)["dotnet.yml"] {
-		f, ok := task["ansible.builtin.file"].(map[string]any)
-		if !ok || f["state"] != "directory" {
-			continue
+		assert.NotContains(t, taskText(t, task), "dotnet-home", "the role makes no CLI home in the SDK")
+	}
+	envAt, nugetAt, linkAt := -1, -1, -1
+	for i, task := range sdkTasks(t)["main.yml"] {
+		if tpl, ok := task["ansible.builtin.template"].(map[string]any); ok && tpl["src"] == "env.sh.j2" {
+			envAt = i
 		}
-		paths := []any{f["path"]}
-		if f["path"] == "{{ item }}" {
-			paths, _ = task["loop"].([]any)
+		if f, ok := task["ansible.builtin.file"].(map[string]any); ok && f["path"] == "{{ sdk_dir }}/dotnet-home/.nuget" {
+			nugetAt = i
+			assert.Equal(t, "absent", f["state"])
+			assert.Equal(t, "nova_sdk_shared | bool", asText(task["when"]))
 		}
-		for _, p := range paths {
-			modes[asText(p)] = asText(f["mode"])
+		if strings.Contains(taskText(t, task), "link.yml") {
+			linkAt = i
 		}
 	}
-	for _, dir := range []string{"{{ sdk_dir }}/dotnet-home", "{{ sdk_dir }}/dotnet-home/.dotnet"} {
-		assert.Equal(t, "0755", modes[dir], "%s is a directory the login can write", dir)
-	}
+	require.GreaterOrEqual(t, envAt, 0)
+	assert.Greater(t, nugetAt, envAt, "removed after env.sh names the login's own CLI home")
+	assert.Greater(t, linkAt, nugetAt, "removed before the shared SDK's readability check")
 }
 
 // The role installs only what the probe found missing, changes nothing under --check, and never becomes root.
@@ -536,7 +539,7 @@ func TestSDKToolchainEnvPutsTheSDKFirst(t *testing.T) {
 	require.NoError(t, err)
 	env := string(b)
 	assert.Contains(t, env, `PATH="{{ sdk_dir }}/bin:`)
-	assert.Contains(t, env, `export DOTNET_CLI_HOME="{{ sdk_dir }}/dotnet-home"`)
+	assert.Contains(t, env, `export DOTNET_CLI_HOME="$HOME/.dotnet-home"`)
 	assert.NotContains(t, env, "RUSTUP_HOME", "a CI job's own rustup keeps its own home; <sdk>/bin/rustup names the SDK's")
 	rc := ""
 	for _, task := range sdkTasks(t)["main.yml"] {
