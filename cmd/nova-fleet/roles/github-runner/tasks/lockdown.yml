@@ -14,6 +14,41 @@
   changed_when: "'SET' in github_runner_home_closed.stdout"
   when: not ansible_check_mode
 
+# cloud-init (cloud images: EC2's Ubuntu among them) keeps root's temporary files in /run/cloud-init/tmp, and when it
+# finds that directory missing at boot it makes it 1777 (temp_utils._tempfile_dir_arg: makedirs, then chmod 0o1777); it
+# never changes one that is there. Every login could then plant files a root process reads, which the scan below
+# refuses. A tmpfiles rule makes it 0755 root:root at each boot, before cloud-init runs, and corrects it now; the scan
+# still runs after, so anything the runner login wrote or owns inside it is still named, never adopted.
+- name: cloud-init is on this machine
+  ansible.builtin.stat: { path: /usr/bin/cloud-init }
+  register: github_runner_cloud_init
+
+- name: cloud-init's root temporary directory is root's at every boot (tmpfiles rule)
+  ansible.builtin.copy:
+    dest: /etc/tmpfiles.d/nova-cloud-init-tmp.conf
+    content: |
+      # nova-fleet github-runner (lockdown.yml): cloud-init makes this 1777 only when it is missing at boot
+      d /run/cloud-init/tmp 0755 root root -
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+  register: github_runner_cloud_init_rule
+  when: github_runner_cloud_init.stat.exists
+
+- name: cloud-init's root temporary directory, as the rule makes it
+  ansible.builtin.stat: { path: /run/cloud-init/tmp }
+  register: github_runner_cloud_init_tmp
+  when: github_runner_cloud_init.stat.exists
+
+- name: cloud-init's root temporary directory corrected now (systemd-tmpfiles --create)
+  ansible.builtin.command: systemd-tmpfiles --create /etc/tmpfiles.d/nova-cloud-init-tmp.conf
+  become: true
+  when: >-
+    github_runner_cloud_init.stat.exists and not ansible_check_mode and github_runner_cloud_init_tmp.stat.exists
+    and (github_runner_cloud_init_tmp.stat.mode != '0755' or github_runner_cloud_init_tmp.stat.pw_name != 'root'
+         or github_runner_cloud_init_tmp.stat.gr_name != 'root')
+
 # The proof, as the runner login, over every local filesystem (findmnt --real, network ones aside): each path it can
 # write or owns, but its home, the kernel's (/proc, /sys, /dev), each snap image's /dev (device nodes such as
 # /snap/core24/<rev>/dev/null in a read-only squashfs that snapd mounts nodev, so none of them opens), the scratch places

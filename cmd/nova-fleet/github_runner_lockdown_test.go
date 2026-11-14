@@ -28,6 +28,19 @@ func TestRunnerLoginLockdown(t *testing.T) {
 		assert.NotContains(t, asText(task["ansible.builtin.shell"]), "chown", "task %q: a file a job planted is never adopted", asText(task["name"]))
 	}
 
+	// cloud-init's root temporary directory: a boot-time tmpfiles rule keeps it 0755 root:root (cloud-init makes it 1777
+	// only when it is missing), corrected now, and only before the scan, which still names anything inside it
+	rule := runnerTask(t, tasks, "cloud-init's root temporary directory is root's at every boot (tmpfiles rule)")
+	copied := rule["ansible.builtin.copy"].(map[string]any)
+	assert.Equal(t, "/etc/tmpfiles.d/nova-cloud-init-tmp.conf", asText(copied["dest"]))
+	assert.Contains(t, asText(copied["content"]), "d /run/cloud-init/tmp 0755 root root -")
+	assert.Equal(t, "github_runner_cloud_init.stat.exists", asText(rule["when"]), "only where cloud-init is")
+	now := runnerTask(t, tasks, "cloud-init's root temporary directory corrected now (systemd-tmpfiles --create)")
+	assert.Equal(t, "systemd-tmpfiles --create /etc/tmpfiles.d/nova-cloud-init-tmp.conf", asText(now["ansible.builtin.command"]))
+	assert.Contains(t, asText(now["when"]), "not ansible_check_mode")
+	assert.Less(t, taskIndex(tasks, "cloud-init's root temporary directory corrected now (systemd-tmpfiles --create)"),
+		taskIndex(tasks, "the runner login can write no system path"), "the scan runs after, on the corrected directory")
+
 	scan := runnerTask(t, tasks, "the runner login can write no system path")
 	sh := asText(scan["ansible.builtin.shell"])
 	assert.Contains(t, sh, "for m in $(findmnt --real -rn -o TARGET -t nonfs,nfs4,cifs,smb3,9p,fuse.sshfs); do", "every local filesystem")
