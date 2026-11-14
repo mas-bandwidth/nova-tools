@@ -393,9 +393,13 @@ it is offline (its machine side is gone) and left when online, each printing `GI
 <status>`. Each machine ends with `RUNNERS-RECORD <machine> scopes=<n> want=<n> retired=<names>`. A record with
 `runners` above 0 and no `runner_scopes` is refused, not read as none. A Linux unit is the whole of its service: a
 drop-in directory beside it (`<unit>.service.d`) is removed. Before a runner is stopped or restarted onto a changed
-unit, the job it is running ends (`tasks/wait-idle.yml`: a `Runner.Worker` from its `bin`, polled every
-`github_runner_idle_delay` (15) seconds `github_runner_idle_retries` (240) times; still busy then, the run fails and
-the runner keeps running). `-e '{"github_runner_hold": ["<dir>"]}'` holds runners by directory name (one running a
+unit, the job it is running ends and no new one is handed to it (`tasks/wait-idle.yml`). A listener takes the next
+job within a second of finishing one, so the host alone cannot say a runner is idle. A registered runner's custom
+labels are first taken off on GitHub, so no job naming one is dispatched to it, and kept in `<dir>/.nova-labels-off`.
+Then GitHub is asked until it shows the runner `busy=false`, and the host until no `Runner.Worker` from its `bin` runs,
+each polled every `github_runner_idle_delay` (15) seconds `github_runner_idle_retries` (240) times. Still busy then, the
+run fails and the runner keeps running. Once the runner runs again its labels are put back (`tasks/idle-restore.yml`);
+a run that stopped in between leaves the file, and the next run puts them back. `-e '{"github_runner_hold": ["<dir>"]}'` holds runners by directory name (one running a
 job nothing resumes, such as a multi-hour model check): their changed file is written, nothing waits on or restarts
 them, and the run prints `RUNNER-HELD <machine> <dir>` for each, the restart owed to a later run. `-e github_runner_url` with `-e github_runner_scope` is a run for that one url instead, with
 `runners` (or `runner_count`) as its count; the machine's other runners are left as they are.
