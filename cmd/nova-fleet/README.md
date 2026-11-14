@@ -211,6 +211,7 @@ rented rows has no `rented` verb, and its refusal is passed on, never read as a 
 | `netwatch` | a Linux machine that loses its network or the tailnet recovers by itself, and a hung one resets (bench, runner and services groups) | nothing; `-l` the machines |
 | `join` | a new machine joins the fleet: its row, its login, the tailnet, the tools a seat needs, its seat | the machine as the argument; its row's fields; `NOVA_PG_DSN` and `NOVA_PG_PASSWORD` in the environment, and `NOVA_FLEET_AUTHKEY` (`up` mints it) or `TAILSCALE_AUTHKEY` for a machine not on the tailnet |
 | `postgres` | the PostgreSQL nova-config keeps the fleet in, on each machine of the services group | `nova_seal_*` to seal its password |
+| `prompt` | each login's shell prompt, the networknext relay prompt: `<machine> [<linux|mac|wsl2>]` in cyan, then the directory and `#`; a managed block in `~/.bashrc`, and `~/.zshrc` for a zsh login (all machines) | nothing |
 | `redis` | the Redis nova-bus talks to, on each machine of the services group | `nova_seal_*` to seal its password |
 | `runner-packages` | the packages a CI runner's tests need, from `nova_runner_packages` (a CI toolchain by default), on each machine of the bench and runner groups (a sprint card's gate needs what a CI job needs); packages only, nothing started. `join` runs it for a bench or runner | nothing; `-l` the machines |
 | `sdk-toolchain` | the pinned language toolchains in each bench and runner login's `~/sdk` (Go, Node, Dart, Erlang/Elixir, Java, .NET 10 and 8, linters, fuzzers, provers), Rust through a pinned rustup; as the login, only what is missing. `join` runs it for a bench or runner | nothing; `-l` the machines |
@@ -1661,6 +1662,46 @@ one line per machine (`would-install=<n>` under `--check`, counting the tools; t
 `WOULD-INSTALL` lines). Another platform is refused, naming `-l '!<machine>'`.
 **Rollback.** The play removes nothing: set the old version back in the defaults (with its URL and digest) and run it
 again, and the links name the old directory, which is still there.
+
+## prompt
+
+Each login's shell prompt, the one networknext's relays use (networknext/next `scripts/setup_relay.sh`): the machine's
+fleet name and its kind in cyan, the colour reset, the directory with `~` for home, then ` # `. On every machine of the
+inventory (not a plain Windows host), as its login and never root, one managed block at the end of `~/.bashrc`, and of
+`~/.zshrc` when the login's shell is zsh (the Macs):
+
+```
+# BEGIN nova-fleet prompt (nova-tools cmd/nova-fleet prompt.yml)
+PS1='\[\033[36m\]hulk [linux] \[\033[00m\]\w # '
+# END nova-fleet prompt (nova-tools cmd/nova-fleet prompt.yml)
+
+# BEGIN nova-fleet prompt (nova-tools cmd/nova-fleet prompt.yml)
+PS1='%F{cyan}studio [mac] %f%~ # '
+# END nova-fleet prompt (nova-tools cmd/nova-fleet prompt.yml)
+```
+
+The name is the inventory's (the record's name, never `hostname`), and a name that is not one plain name (letters,
+digits, `.`, `_`, `-`) is refused before anything is written. The kind is `mac` on macOS, `wsl2` on a Linux whose
+kernel is Microsoft's, `linux` otherwise. The `#` is literal for every user; there is no window title and no colour
+test, as networknext has none. The block goes at the end, after the stock prompt, so it is the one a shell shows. A run
+changes only what lies between the markers (the file made if there is none, through a symlink to the file it names, its
+mode left as it is); nothing else in the file is touched, and a second run changes nothing.
+
+```
+nova-fleet prompt --check --diff
+nova-fleet prompt
+```
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `nova_prompt_shell` | the login's shell (`ansible_user_shell`) | zsh also gets the block in `~/.zshrc` |
+| `nova_prompt_bash`, `nova_prompt_zsh` | the prompts above | the line between the markers, with `prompt_name` and `prompt_kind` |
+| `nova_prompt_marker` | `# {mark} nova-fleet prompt (nova-tools cmd/nova-fleet prompt.yml)` | the marker lines |
+
+**Check.** `PROMPT host=<machine> kind=<linux|mac|wsl2> files=.bashrc[,.zshrc] <changed|unchanged>`, one line per
+machine (`(check: nothing changed)` under `--check`).
+**Rollback.** Delete the lines from `# BEGIN nova-fleet prompt` to `# END nova-fleet prompt` in `~/.bashrc` and
+`~/.zshrc`; the prompt before it comes back in a new shell.
 
 ## Refusals
 
