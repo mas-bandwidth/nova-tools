@@ -36,6 +36,7 @@ func TestSharedToolsAreRootsCopies(t *testing.T) {
 		`install -o root -g root -m 0755 "$src" "$shared/bin/.$t.new"`,
 		`mv -f "$shared/bin/.$t.new" "$shared/bin/$t"`,
 		`chmod 0755 "$shared/sdk"`,
+		`for t in {{ nova_tools_names | map('quote') | join(' ') }} sops age age-keygen; do`,
 	} {
 		assert.Contains(t, sh, want)
 	}
