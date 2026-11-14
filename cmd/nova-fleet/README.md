@@ -1699,7 +1699,7 @@ nova-fleet prompt
 | `nova_prompt_marker` | `# {mark} nova-fleet prompt (nova-tools cmd/nova-fleet prompt.yml)` | the marker lines |
 
 **Check.** `PROMPT host=<machine> kind=<linux|mac|wsl2> files=.bashrc[,.zshrc] <changed|unchanged>`, one line per
-machine (`(check: nothing changed)` under `--check`).
+machine (`would-change` and `(check: nothing changed)` under `--check`).
 **Rollback.** Delete the lines from `# BEGIN nova-fleet prompt` to `# END nova-fleet prompt` in `~/.bashrc` and
 `~/.zshrc`; the prompt before it comes back in a new shell.
 

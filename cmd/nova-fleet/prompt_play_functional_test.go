@@ -96,7 +96,7 @@ func TestFunctionalPromptManagedBlock(t *testing.T) {
 	fresh := t.TempDir()
 	out, err = runPromptPlay(t, fresh, "/bin/bash", "--check", "--diff")
 	require.NoError(t, err, out)
-	assert.Contains(t, out, "files=.bashrc unchanged (check: nothing changed)")
+	assert.Contains(t, out, "files=.bashrc would-change (check: nothing changed)")
 	assert.Contains(t, out, `\w # '`, "--diff shows the block")
 	_, err = os.Stat(filepath.Join(fresh, ".bashrc"))
 	assert.True(t, os.IsNotExist(err), "--check wrote ~/.bashrc")

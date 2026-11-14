@@ -39,6 +39,6 @@
     msg: >-
       PROMPT host={{ inventory_hostname }} kind={{ prompt_kind }}
       files=.bashrc{{ ',.zshrc' if prompt_zsh | bool else '' }}
-      {{ 'changed' if (prompt_bashrc is changed or prompt_zshrc is changed) else 'unchanged' }}
+      {{ (('would-change' if ansible_check_mode else 'changed') if (prompt_bashrc is changed or prompt_zshrc is changed) else 'unchanged') }}
       {{ '(check: nothing changed)' if ansible_check_mode else '' }}
   changed_when: false
