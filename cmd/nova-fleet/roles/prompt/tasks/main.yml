@@ -1,0 +1,44 @@
+---
+# The prompt role (cmd/nova-fleet/prompt.yml): the managed prompt block in ~/.bashrc, and in ~/.zshrc when the login's
+# shell is zsh. Runs as the login; blockinfile writes only between the markers, so --check and --diff show the block
+# and a second run changes nothing.
+- name: the machine's name and kind
+  ansible.builtin.set_fact:
+    prompt_name: "{{ inventory_hostname }}"
+    prompt_kind: >-
+      {{ 'mac' if ansible_facts['system'] == 'Darwin' else
+         ('wsl2' if 'microsoft' in (ansible_facts['kernel'] | lower) else 'linux') }}
+    prompt_zsh: "{{ (nova_prompt_shell | basename) == 'zsh' }}"
+
+# the name goes into a single-quoted PS1: a quote, backslash, $ or % in it would change the prompt's meaning
+- name: the machine's name is one plain name
+  ansible.builtin.assert:
+    that: prompt_name is match('^[A-Za-z0-9][A-Za-z0-9._-]*$')
+    fail_msg: "prompt: the machine name {{ prompt_name }} is not one plain name (letters, digits, . _ -)"
+    quiet: true
+
+- name: ~/.bashrc sets the prompt
+  ansible.builtin.blockinfile:
+    path: "{{ nova_home }}/.bashrc"
+    marker: "{{ nova_prompt_marker }}"
+    block: "{{ nova_prompt_bash }}"
+    create: true
+  register: prompt_bashrc
+
+- name: ~/.zshrc sets the prompt (zsh login)
+  ansible.builtin.blockinfile:
+    path: "{{ nova_home }}/.zshrc"
+    marker: "{{ nova_prompt_marker }}"
+    block: "{{ nova_prompt_zsh }}"
+    create: true
+  register: prompt_zshrc
+  when: prompt_zsh | bool
+
+- name: the receipt
+  ansible.builtin.debug:
+    msg: >-
+      PROMPT host={{ inventory_hostname }} kind={{ prompt_kind }}
+      files=.bashrc{{ ',.zshrc' if prompt_zsh | bool else '' }}
+      {{ (('would-change' if ansible_check_mode else 'changed') if (prompt_bashrc is changed or prompt_zshrc is changed) else 'unchanged') }}
+      {{ '(check: nothing changed)' if ansible_check_mode else '' }}
+  changed_when: false

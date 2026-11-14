@@ -1,0 +1,12 @@
+---
+# prompt.yml's defaults (cmd/nova-fleet/README.md, "prompt"): the networknext relay prompt, its colour reset, the
+# directory with ~ for home, then a literal #. prompt_name and prompt_kind are set by the role.
+
+# The login's shell: zsh also gets the block in ~/.zshrc.
+nova_prompt_shell: "{{ ansible_facts['user_shell'] | default('') }}"
+# The block's marker lines; {mark} is BEGIN or END.
+nova_prompt_marker: "# {mark} nova-fleet prompt (nova-tools cmd/nova-fleet prompt.yml)"
+nova_prompt_bash: |-
+  PS1='\[\033[36m\]{{ prompt_name }} [{{ prompt_kind }}] \[\033[00m\]\w # '
+nova_prompt_zsh: |-
+  PS1='%F{cyan}{{ prompt_name }} [{{ prompt_kind }}] %f%~ # '
