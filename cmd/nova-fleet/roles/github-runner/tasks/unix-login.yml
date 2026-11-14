@@ -179,6 +179,42 @@
   changed_when: "'SET' in github_runner_rustup.stdout"
   when: github_runner_shared_sdk.stat.isdir | default(false) and not ansible_check_mode
 
+# A job's dtolnay/rust-toolchain installs the stable channel with the minimal profile (no clippy, no rustfmt) into the
+# login's rustup home and makes it the default, so every later job on that login, on any of its runners, resolves cargo
+# to it and `cargo clippy` / `cargo fmt` fail. The channel (github_runner_rust_channel) is kept whole there: installed
+# with its components when absent, given the ones it lacks when a job installed it. The default is not touched (the
+# pinned one stays until a job names another), and a later job's install of the channel is an update, which keeps them.
+- name: the runner login's {{ github_runner_rust_channel }} toolchain carries {{ github_runner_rust_channel_components | join(' and ') }}
+  ansible.builtin.shell: |
+    set -eu
+    PATH={{ (nova_shared_dir ~ '/sdk/bin') | quote }}:$PATH
+    RUSTUP_HOME={{ github_runner_env.get('RUSTUP_HOME', github_runner_rustup_home) | quote }}
+    CARGO_HOME={{ github_runner_env.get('CARGO_HOME', github_runner_cargo_home) | quote }}
+    export PATH RUSTUP_HOME CARGO_HOME
+    command -v rustup >/dev/null || { echo NONE; exit 0; }
+    cd "$RUSTUP_HOME"
+    ch={{ github_runner_rust_channel | quote }}
+    if ! rustup toolchain list | grep -q "^$ch-"; then
+      rustup toolchain install "$ch" --profile minimal --no-self-update{% for c in github_runner_rust_channel_components %} --component {{ c | quote }}{% endfor %}
+
+      echo SET; exit 0
+    fi
+    have=$(rustup component list --installed --toolchain "$ch")
+    want=
+    for c in {{ github_runner_rust_channel_components | map('quote') | join(' ') }}; do
+      echo "$have" | grep -q "^$c-" || want="$want $c"
+    done
+    [ -z "$want" ] && exit 0
+    rustup component add --toolchain "$ch" $want
+    echo SET
+  args: { executable: /bin/sh }
+  become: true
+  become_user: "{{ github_runner_user }}"
+  vars: { ansible_pipelining: true }
+  register: github_runner_rust_channel_whole
+  changed_when: "'SET' in github_runner_rust_channel_whole.stdout"
+  when: github_runner_shared_sdk.stat.isdir | default(false) and not ansible_check_mode
+
 - name: sshd refuses the runner login
   ansible.builtin.copy:
     dest: /etc/ssh/sshd_config.d/90-nova-runner-login.conf
