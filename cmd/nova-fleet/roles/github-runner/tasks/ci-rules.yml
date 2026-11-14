@@ -2,7 +2,12 @@
 # The CI rules on runners (cmd/nova-fleet/README.md, "CI rules"): nova-ci-rules apply puts the job hooks into
 # <runner dir>/.nova-ci-rules/, points the runner's .env at them (a hook the .env held before is chained, not lost) and
 # restarts an idle runner whose .env changed. ci_rules_dirs names the runner directories; empty means every runner
-# running on the machine (the ci-rules play). A busy runner is left running and says restart=busy: run again.
+# running on the machine (the ci-rules play). A busy runner is left running and says restart=busy: run again. With
+# ci_rules_wait (the github-runners play) the apply is run again every github_runner_idle_delay seconds, up to
+# github_runner_idle_retries times, as wait-idle.yml waits, until no runner says restart=busy; each pass restarts the
+# runners that have gone idle, so none is left running on a .env without the hooks, and one still busy at the end fails
+# the run (it is never cut). Without it a runner busy at the run took every later job with no time limit and no load or
+# memory lines (aws-schema-1, 2026-11-14: .env written 20:04, listeners from 19:18).
 # Linux and macOS: nova-ci-rules.sh, as root on Linux (runners of other logins) and wherever ci_rules_become is true (the
 # github-runners play, whose macOS runners are LaunchDaemons); otherwise macOS applies as the login, which reaches the
 # login's own runners only (a daemon says restart=needs-root). A WSL machine also applies nova-ci-rules.ps1 to the Windows side.
@@ -24,7 +29,10 @@
       become: "{{ ci_rules_become | default(ansible_facts['system'] == 'Linux') | bool }}"
       register: ci_rules_applied
       changed_when: "'hooks=set' in ci_rules_applied.stdout or 'restart=done' in ci_rules_applied.stdout"
-      failed_when: ci_rules_applied.rc != 0
+      failed_when: ci_rules_applied.rc != 0 or (ci_rules_wait | default(false) | bool and 'restart=busy' in ci_rules_applied.stdout)
+      until: ci_rules_applied.rc != 0 or not (ci_rules_wait | default(false) | bool) or 'restart=busy' not in ci_rules_applied.stdout
+      retries: "{{ github_runner_idle_retries if ci_rules_wait | default(false) | bool else 0 }}"
+      delay: "{{ github_runner_idle_delay }}"
   always:
     - name: the staging directory is removed
       ansible.builtin.file: { path: "{{ ci_rules_stage.path }}", state: absent }
