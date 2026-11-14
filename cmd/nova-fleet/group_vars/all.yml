@@ -98,7 +98,7 @@ nova_runner_windows_ccache_dir: 'C:\ProgramData\nova\ccache'
 nova_runner_windows_ccache_unix: /mnt/c/ProgramData/nova/ccache
 
 nova_runner_packages:
-  darwin: ["postgresql@18", cmake, libsodium, pkgconf, ccache]
+  darwin: ["postgresql@18", cmake, libsodium, pkgconf, ccache, gh]
   debian:
     # compilers, assemblers, build systems and the tools a build calls
     - build-essential
@@ -122,6 +122,8 @@ nova_runner_packages:
     - xxd
     - jq
     - graphviz
+    # the GitHub CLI a workflow step runs (`gh run download`, `gh api`), on the job's GITHUB_TOKEN
+    - gh
     # libraries the tests link
     - libbpf-dev
     - libcurl4-openssl-dev

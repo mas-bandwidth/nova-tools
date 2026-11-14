@@ -85,10 +85,10 @@ func readRunnerPackagesVars(t *testing.T, path string) runnerPackagesVars {
 func TestRunnerPackagesDefaults(t *testing.T) {
 	t.Parallel()
 	vars := readRunnerPackagesVars(t, "group_vars/all.yml")
-	assert.Equal(t, []string{"postgresql@18", "cmake", "libsodium", "pkgconf", "ccache"}, vars.Packages["darwin"])
+	assert.Equal(t, []string{"postgresql@18", "cmake", "libsodium", "pkgconf", "ccache", "gh"}, vars.Packages["darwin"])
 	debian := vars.Packages["debian"]
 	assert.Greater(t, len(debian), 50, "the debian list is the fleet's toolchain, not a stub")
-	for _, want := range []string{"build-essential", "cmake", "clang", "golang-go", "valgrind", "podman", "postgresql-client-18"} {
+	for _, want := range []string{"build-essential", "cmake", "clang", "golang-go", "valgrind", "podman", "postgresql-client-18", "gh"} {
 		assert.Contains(t, debian, want)
 	}
 	assert.Len(t, slices.Compact(slices.Sorted(slices.Values(debian))), len(debian), "a package is listed once")

@@ -54,6 +54,13 @@ github_runner_tmpdir: "{{ github_runner_home }}/.cache/runner-tmp"
 github_runner_rustup_home: "{{ github_runner_home }}/.rustup"
 github_runner_cargo_home: "{{ github_runner_home }}/.cargo"
 
+# The channel a job's dtolnay/rust-toolchain installs and makes the login's default (`rustup toolchain install <it>
+# --profile minimal`, then `rustup default <it>`), and the components it always carries in the runner login's rustup
+# home: installed with them when absent, given them when a job installed it without. rustup keeps a toolchain's
+# components when a later job updates it, so every job after the first that names the channel finds them.
+github_runner_rust_channel: stable
+github_runner_rust_channel_components: [clippy, rustfmt]
+
 # The PATH the service starts with when github_runner_env has none; its jobs inherit it, so a step finds the nova
 # tools (`nova-reserve run ...`): github_runner_bin_dir first, then the
 # system's. Linux: systemd's list and the Debian/Ubuntu login tail runners had before; macOS: Homebrew's prefix

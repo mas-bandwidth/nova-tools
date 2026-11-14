@@ -71,6 +71,25 @@ func TestSharedToolsAreRootsCopies(t *testing.T) {
 	}
 	assert.NotContains(t, rsh, "rm -rf", "only dangling links of its own are removed")
 	assert.Less(t, taskIndex(login, "the runner login's ~/sdk names it"), taskIndex(login, "the runner login's rustup home names the shared toolchains"))
+
+	// the channel a job's dtolnay/rust-toolchain installs minimal and makes the default keeps clippy and rustfmt there
+	channelName := "the runner login's {{ github_runner_rust_channel }} toolchain carries {{ github_runner_rust_channel_components | join(' and ') }}"
+	channel := runnerTask(t, login, channelName)
+	assert.Equal(t, "{{ github_runner_user }}", channel["become_user"], "in the login's own rustup home, as it")
+	csh := asText(channel["ansible.builtin.shell"])
+	for _, want := range []string{
+		`RUSTUP_HOME={{ github_runner_env.get('RUSTUP_HOME', github_runner_rustup_home) | quote }}`,
+		`CARGO_HOME={{ github_runner_env.get('CARGO_HOME', github_runner_cargo_home) | quote }}`,
+		`rustup toolchain install "$ch" --profile minimal --no-self-update{% for c in github_runner_rust_channel_components %} --component {{ c | quote }}{% endfor %}`,
+		`rustup component add --toolchain "$ch" $want`,
+	} {
+		assert.Contains(t, csh, want)
+	}
+	assert.NotContains(t, csh, "rustup default", "the default is the pinned one until a job names another")
+	assert.Less(t, taskIndex(login, "the runner login's rustup home names the shared toolchains"), taskIndex(login, channelName), "after the homes exist")
+	defaults := runnerDefaults(t)
+	assert.Equal(t, "stable", asText(defaults["github_runner_rust_channel"]))
+	assert.Equal(t, []any{"clippy", "rustfmt"}, defaults["github_runner_rust_channel_components"])
 }
 
 // sdk-toolchain never becomes root: with nova_sdk_shared it checks the shared directory is the login's, moves the
