@@ -406,11 +406,13 @@ nova_sdk_tools:
       root: .
 
   # moo, the deterministic fork of Luau, which publishes no binary: the CLI and the analyzer built from the tag, with the
-  # commit they were built from in PIN, written last (the probe), so a Makefile can check it is its pin.
+  # commit they were built from in PIN, so a Makefile can check it is its pin. A checker reads the PIN beside the
+  # analyzer MOO_ANALYZE names (as `make dist-moo` lays it out), so bin/PIN is written too, last (the probe): an install
+  # made before it lacks the probe and is built again.
   - name: moo
     version: "1.3.0"
     dir: moo-v1.3.0
-    probe: PIN
+    probe: bin/PIN
     links: [bin/moo, bin/moo-analyze]
     kind: git
     build: |
@@ -419,6 +421,7 @@ nova_sdk_tools:
       mkdir -p "$dest/bin"
       cp -a b/moo b/moo-analyze "$dest/bin/"
       git rev-parse HEAD >"$dest/PIN"
+      cp "$dest/PIN" "$dest/bin/PIN"
     linux: &moo { repo: https://github.com/mas-bandwidth/moo, ref: v1.3.0, commit: f60f0239f41c6c0a827ecee44a7f9539c5798068 }
     darwin: *moo
 

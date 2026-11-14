@@ -1603,7 +1603,7 @@ nova-fleet sdk-toolchain -- -l bench
 On x86_64 Linux and WSL: Go, Node, Dart, Erlang/OTP, Elixir, a Temurin JDK, .NET 10 with the .NET 8 SDK and runtime in
 the same directory, golangci-lint, staticcheck, nilaway, ESBMC, SpotBugs with find-sec-bugs, Deno, Jazzer,
 google-java-format, TypeScript, ESLint, sbcl, Lua, luacheck, StyLua, Luau, moo (built from its tag, the commit it was
-built from in `~/sdk/moo-v<version>/PIN`), Goose, Lobster, Squirrel (and a second Squirrel built as sq64 with
+built from in `~/sdk/moo-v<version>/PIN` and, beside the analyzer, `bin/PIN`), Goose, Lobster, Squirrel (and a second Squirrel built as sq64 with
 `SQUSEDOUBLE`, not on PATH, named by `SQ`), CPython 3.11 and 3.15 built from source, each with mypy from hash-locked
 wheels (`python3.11`, `python3.15`, as `~/sdk/python-<version>`), clang-format, LLVM (as `~/sdk/llvm`, not on PATH), cppcheck, AFL++ and Frama-C with Alt-Ergo and Why3 in their own opam root (`~/sdk/opam`). A Mac gets the tools
 with a `darwin` pin: Go, Node, Dart, Erlang/OTP, Elixir, the JDK, .NET, Lua, StyLua, Luau, moo, Goose, Lobster, the
