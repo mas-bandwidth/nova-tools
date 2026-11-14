@@ -807,7 +807,10 @@ each for the fleet (`group_vars` or `-e`), never per repository.
 runner reads `.env` only at start) by what supervises it: its systemd unit (system or user, found from the listener's
 cgroup), its launchd job (found by `WorkingDirectory`), or its Windows service. Before the restart every process of a systemd unit gets SIGINT, so
 the listener ends even where the unit is `KillMode=process`; a restart counts only once a new listener is seen. A
-runner running a job is left alone and says `restart=busy`: run the play again. Linux applies as root, and then the
+runner running a job is left alone and says `restart=busy`: run the play again. `github-runners` does that itself: it
+applies again every `github_runner_idle_delay` seconds, up to `github_runner_idle_retries` times (as it waits for a job
+before a restart), until no runner says `restart=busy`, and fails the run if one still does, so no runner it set up is
+left taking jobs on a `.env` without the hooks. Linux applies as root, and then the
 hooks and `limit` belong to root, so a job cannot rewrite them (only `state/`, the watchdog's, is the runner login's).
 macOS applies as root from `github-runners` (its runners are LaunchDaemons) and as the login from `ci-rules`, so there a
 runner of another login says `denied=` and a LaunchDaemon `restart=needs-root`. A WSL machine also applies `nova-ci-rules.ps1` to the Windows side's
