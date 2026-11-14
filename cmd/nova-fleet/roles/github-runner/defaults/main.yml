@@ -49,10 +49,12 @@ github_runner_env: "{{ nova_runner_env | default({}) }}"
 # it from the units and removes what is left. A macOS daemon gets none (its jobs use /tmp, which macOS cleans).
 github_runner_tmpdir: "{{ github_runner_home }}/.cache/runner-tmp"
 
-# A Linux runner login of its own: its rustup and cargo homes when github_runner_env names none, with the shared SDK's
-# pinned toolchains and cargo/bin linked in (tasks/unix-login.yml), so a job's toolchain install writes here.
-github_runner_rustup_home: "{{ github_runner_home }}/.rustup"
-github_runner_cargo_home: "{{ github_runner_home }}/.cargo"
+# A Linux runner login of its own: each runner's own rustup and cargo homes, with the shared SDK's pinned toolchains and
+# cargo/bin linked in (tasks/runner-rust.yml), so a job's toolchain install writes there and no two runners write one
+# home at once. Its unit sets both, whatever the record's runner_env names. github_runner_dir is the runner's own.
+github_runner_rust_homes: "{{ github_runner_home }}/.rust-homes"
+github_runner_rustup_home: "{{ github_runner_rust_homes }}/{{ github_runner_dir | basename }}/rustup"
+github_runner_cargo_home: "{{ github_runner_rust_homes }}/{{ github_runner_dir | basename }}/cargo"
 
 # The channel a job's dtolnay/rust-toolchain installs and makes the login's default (`rustup toolchain install <it>
 # --profile minimal`, then `rustup default <it>`), and the components it always carries in the runner login's rustup
