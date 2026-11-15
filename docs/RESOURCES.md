@@ -118,9 +118,11 @@ numbers true.
 - **A CI runner.** Today a runner's jobs are counted nowhere. With resources a
   runner has tags (the labels a workflow selects it by) and takes a hold like
   anything else. It holds only while it runs a job. Glenn: "holds only when it
-  runs work." An idle runner holds nothing, so its share is free for other
-  work, and a job that starts on a full machine waits for room as any work
-  does.
+  runs work." An idle runner holds nothing, so no CPU is wasted while CI is not
+  running. When a CI job does run, it comes ahead of other work, and other
+  work waits for it. Glenn: "The design I want does not waste CPU while we are
+  not running CI, so it does work, but then prioritizes CI ahead of work, when
+  we do.", "CI can make cards wait".
 - **A person or a script** running a command on a machine.
 
 Glenn, on runners: "previously, they were sort of an invisible resource. now
