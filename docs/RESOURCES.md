@@ -179,10 +179,10 @@ spend its own time waiting, and a job that must finish in two minutes would
 fail with no test failing. So a CI job never waits.
 
 - **It takes its hold at once,** even on a full machine.
-- **Other work is paused to make the room.** Enough other work on the machine,
-  lowest priority first, is counted as paused: it holds no CPU until the CI
-  job ends, and then it holds its CPU again. Paused work is not killed and
-  does not start over.
+- **Other work yields to it.** Glenn: "the card yields to CI". Enough other
+  work on the machine, lowest priority first, is paused: it holds no CPU until
+  the CI job ends, and then it holds its CPU again. Paused work is not killed
+  and does not start over.
 - **The machine is never counted over what it has.** What CI holds and what
   the work still running holds always come to at most the whole machine.
 
