@@ -179,16 +179,24 @@ spend its own time waiting, and a job that must finish in two minutes would
 fail with no test failing. So a CI job never waits.
 
 - **It takes its hold at once,** even on a full machine.
-- **Other work gives up CPU to it.** The CPU other work holds is cut back by
-  what the CI job takes, lowest priority first. That work keeps running,
-  slower, and gets its CPU back when the CI job ends.
+- **Other work is paused to make the room.** Enough other work on the machine,
+  lowest priority first, is counted as paused: it holds no CPU until the CI
+  job ends, and then it holds its CPU again. Paused work is not killed and
+  does not start over.
 - **The machine is never counted over what it has.** What CI holds and what
-  other work holds always come to at most the whole machine. Glenn: "the CPU
-  usage of CI and cards sums to 100% always on that machine."
-- **If there is not enough memory,** other work on the machine is stopped,
-  lowest priority first, until there is. Memory cannot be shared by slowing
-  down. Work stopped this way is run again later and is not counted as a
-  failure (*Rowan's*).
+  the work still running holds always come to at most the whole machine.
+
+Glenn: "the CPU usage of CI and cards sums to 100% always on that machine.",
+"we don't go over 100% of cpu units, just cause ci starts running -- the cards
+that are now under budget are logically paused (from our point of view.)"
+
+A hold is therefore in one of two states, held or paused, and its size never
+changes.
+
+Pausing frees CPU, not memory: paused work keeps the memory it is using. If a
+CI job finds too little memory, other work on the machine is stopped, lowest
+priority first, until there is enough. Work stopped this way is run again
+later and is not counted as a failure (*Rowan's*).
 
 While no CI job is running, a runner holds nothing and other work uses the
 whole machine.
