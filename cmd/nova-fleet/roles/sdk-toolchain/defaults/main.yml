@@ -46,6 +46,9 @@ nova_sdk_env_files:
   LUAU_ANALYZE: luau-0.741/bin/luau-analyze
   MOO: moo-v1.3.0/bin/moo
   MOO_ANALYZE: moo-v1.3.0/bin/moo-analyze
+  MOO_CHECKED: moo-v1.3.0-checked/bin/moo
+  RUBY_FLOOR: ruby-3.4.12/bin/ruby
+  RUBY: ruby-4.0.9/bin/ruby
   GOOSE: goose-v2026.2/goose
   LOBSTER: lobster-v2026.8/bin/lobster
 
@@ -425,6 +428,44 @@ nova_sdk_tools:
     linux: &moo { repo: https://github.com/mas-bandwidth/moo, ref: v1.3.0, commit: f60f0239f41c6c0a827ecee44a7f9539c5798068 }
     darwin: *moo
 
+  # The checked moo: the same tag built with MOO_OVERFLOW_ERRORS=ON, so arithmetic that leaves moo's number range
+  # raises instead of saturating, as `make dist-moo-checked` lays it out (the CLI only: a checked build loads and runs
+  # modules, it does not analyze them). Reached through MOO_CHECKED (nova_sdk_env_files) and linked as moo-checked, so
+  # the release moo keeps the name moo. bin/PIN is written last, the probe, as moo's.
+  - name: moo-checked
+    version: "1.3.0"
+    dir: moo-v1.3.0-checked
+    probe: bin/PIN
+    links: [{name: moo-checked, path: bin/moo}]
+    kind: git
+    build: |
+      cmake -S . -B b -DCMAKE_BUILD_TYPE=Release -DMOO_OVERFLOW_ERRORS=ON >/dev/null
+      cmake --build b --target Luau.Repl.CLI -j"$jobs" >/dev/null
+      mkdir -p "$dest/bin"
+      cp -a b/moo "$dest/bin/"
+      git rev-parse HEAD >"$dest/PIN"
+      cp "$dest/PIN" "$dest/bin/PIN"
+    linux: *moo
+    darwin: *moo
+
+  # serialize's release, the family corpus a port is judged by (conformance/ and conformance-controls/) with the
+  # standard beside it: the v2.1.1 tag's tree as it is, without .git, and the commit in PIN, written last (the probe).
+  # Nothing is built and nothing is linked: a sandboxed job reads it under NOVA_SDK, where it has no network to fetch.
+  - name: serialize
+    version: "2.1.1"
+    dir: serialize-v2.1.1
+    probe: PIN
+    links: []
+    kind: git
+    build: |
+      git rev-parse HEAD >"$stage/PIN"
+      rm -rf .git
+      mkdir -p "$dest"
+      cp -a . "$dest/"
+      cp "$stage/PIN" "$dest/PIN"
+    linux: &serialize { repo: https://github.com/mas-bandwidth/serialize, ref: v2.1.1, commit: bd3d67e23c8acc2c45eff69633dbe16c029a2cba }
+    darwin: *serialize
+
   # The interpreter serialize.nut pins (its Makefile's dist-squirrel): the v3.2 tag's archive, built as sq64 with
   # SQUSEDOUBLE, so _intsize_ and _floatsize_ are both 8. The squirrel above is the float-32 build; this one is not
   # linked into bin and is reached through SQ (nova_sdk_env_files). Apple's clang takes the makefiles' -m64 on arm64.
@@ -492,6 +533,190 @@ nova_sdk_tools:
       sha256: f74e1db0eabd651cd01e4e2a00201bd41866abe74869ab716f9bf33cbbaa0943
       extras: *mypy_wheels
     darwin: *python315
+
+  # CRuby from the ruby-lang.org source tarball (docs/PORT-RUBY.md in mas-bandwidth/schema, D2 and D3): the floor, the
+  # oldest series in normal maintenance, and the current, the newest stable, each confirmed on ruby-lang.org the day it
+  # was pinned (2026-11-15: 4.0 and 3.4 in normal maintenance, 4.0.9 the stable release). Configured with its own
+  # directory as the prefix (from a copy of the unpacked tree set aside, as CPython's), with YJIT where the SDK holds a
+  # rustc, and psych built against libyaml's source (an extra: no host needs libyaml's headers). RuboCop, Steep and RBS
+  # are then installed offline from the extras: source gems (platform ruby, the same lock on Linux and macOS), each
+  # held to rubygems.org's sha256 by the download and again by the lock before gem sees it; gem resolves only among
+  # them. ANALYZERS, written last after the analyzers answer, is the probe. Not linked as ruby: a pin is named by its
+  # series, and RUBY_FLOOR and RUBY (nova_sdk_env_files) name the two. The run probe rebuilds a ruby built before the
+  # SDK had a rustc, so YJIT is in every install.
+  - name: ruby3.4
+    version: "3.4.12"
+    dir: ruby-3.4.12
+    probe: ANALYZERS
+    links: [{name: ruby3.4, path: bin/ruby}]
+    run: "bin/ruby --disable-gems --yjit -e 'exit(RubyVM::YJIT.enabled? ? 0 : 1)'"
+    build: &ruby_build |
+      mv "$dest" "$stage/s"
+      mkdir -p "$dest" "$stage/g"
+      mv "$stage"/s/*.gem "$stage/g/"
+      tar -xf "$stage/s/yaml-0.2.5.tar.gz" -C "$stage"
+      rm "$stage/s/yaml-0.2.5.tar.gz"
+      unset GEM_HOME GEM_PATH RUBYOPT
+      yjit=--disable-yjit
+      if [ -x "$sdk/bin/rustc" ]; then yjit=--enable-yjit; export PATH="$sdk/bin:$PATH"; fi
+      cd "$stage/s"
+      { ./configure --prefix="$dest" --disable-install-doc "$yjit" --with-libyaml-source-dir="$stage/yaml-0.2.5" \
+          && nice -n 15 make -j"$jobs" && make install; } >"$stage/build.log" 2>&1 || { tail -40 "$stage/build.log"; exit 1; }
+      printf '%s\n' \
+        'ast 2.4.3 954615157c1d6a382bc27d690d973195e79db7f55e9765ac7c481c60bdb4d383' \
+        'concurrent-ruby 1.3.8 b2f1be836e968ccc78ccfce277ea79c72a88633f22306782c16ff23fb415d1e1' \
+        'csv 3.3.7 15a3f16f6628da8664d455eb634e7f22031bcf53044923caf56975109e71b9f8' \
+        'ffi 1.17.4 bcd1642e06f0d16fc9e09ac6d49c3a7298b9789bcb58127302f934e437d60acf' \
+        'fileutils 1.8.1 2d541a1ee34a9ed5c4f054be8fb819a26b5d654488a31dc8806917cf448b9cc3' \
+        'json 3.1.0 3ce7ccf8fde58960177a3a756c31f292a4c1e1dedee884547096a5b0604e3bd8' \
+        'language_server-protocol 3.17.0.6 5ef2c0c138f8267e1bc631d3328347d354f96724b0af22f2c79516120443b7f0' \
+        'lint_roller 1.1.0 2c0c845b632a7d172cb849cc90c1bce937a28c5c8ccccb50dfd46a485003cc87' \
+        'listen 3.10.1 4c3f32855657f348747da4dd2372ff3790d90a6b1d3e4f21a3706adb2d04783c' \
+        'logger 1.7.0 196edec7cc44b66cfb40f9755ce11b392f21f7967696af15d274dde7edff0203' \
+        'parallel 2.3.0 f75a3e904101ce6a1ccb6b8dc800cbafd42166d83330192438dcf29395167a6f' \
+        'parser 3.3.13.0 e02f9b63c2fe05b0c68f692ba4df89b3cb113b663964f75d988fbebfd6c3deca' \
+        'prism 2.1.0 1c0a7c6dea0e93183390fb123f007564dbe663198e2f86ad87204151147601f3' \
+        'racc 1.8.1 4a7f6929691dbec8b5209a0b373bc2614882b55fc5d2e447a21aaa691303d62f' \
+        'rainbow 3.1.1 039491aa3a89f42efa1d6dec2fc4e62ede96eb6acd95e52f1ad581182b79bc6a' \
+        'rb-fsevent 0.11.2 43900b972e7301d6570f64b850a5aa67833ee7d87b458ee92805d56b7318aefe' \
+        'rb-inotify 0.11.1 a0a700441239b0ff18eb65e3866236cd78613d6b9f78fea1f9ac47a85e47be6e' \
+        'rbs 4.2.0 51f7b886dcc05bc09e10b901daa6a81829f6adc03101d6ca9ea4aac6103e0674' \
+        'regexp_parser 2.13.1 5aedb6b7c35688f51e86eef17a15374dfd287c83f4ca644b2c5f3ec50a33b44b' \
+        'rubocop 1.92.2 14fb31eed143a0dc6f78186c550c1715e81cd38f59d05d1165050e445c1f5382' \
+        'rubocop-ast 1.51.0 0ec311e36b191b3872d909078a35274e962ae97dbce64be6812d145ca59acfcb' \
+        'ruby-progressbar 1.13.0 80fc9c47a9b640d6834e0dc7b3c94c9df37f08cb072b7761e4a71e22cff29b33' \
+        'securerandom 0.4.1 cc5193d414a4341b6e225f0cb4446aceca8e50d5e1888743fac16987638ea0b1' \
+        'steep 2.1.0 1daf53573283b0e6d404a7273cca41fe5c15b14ece05167934f5ffc179e171d9' \
+        'strscan 3.1.8 aae2db611a225559f21ffbb71765c9a4e60fd262534a9ea84f4f11c7f32f679e' \
+        'terminal-table 4.0.0 f504793203f8251b2ea7c7068333053f0beeea26093ec9962e62ea79f94301d2' \
+        'tsort 0.2.0 9650a793f6859a43b6641671278f79cfead60ac714148aabe4e3f0060480089f' \
+        'unicode-display_width 3.3.0 4b7aa66a4b11db50f6f7e98411215cd0dd10eaecb665d36eec5bcacb3fa0b613' \
+        'unicode-emoji 4.3.0 11c02fa73290378c066bb0562cd4c87d8e1b706fbbe0059ca12746a4244de8ce' \
+        'uri 1.1.2 89292e98eabbef6248b0a0ed5e7e398e152f83f17560023a6d94a7f492b169fb' >"$stage/analyzers.lock"
+      cd "$stage/g"
+      "$dest/bin/ruby" --disable-gems -rdigest -e '
+        lock = File.readlines(ARGV[0], chomp: true).map(&:split)
+        want = lock.map { |n, v, _| "#{n}-#{v}.gem" }.sort
+        abort "SDK-TOOLCHAIN ruby: the gems are #{Dir["*.gem"].sort}, the lock names #{want}" unless Dir["*.gem"].sort == want
+        lock.each do |n, v, s|
+          got = Digest::SHA256.file("#{n}-#{v}.gem").hexdigest
+          abort "SDK-TOOLCHAIN ruby: #{n}-#{v}.gem is sha256 #{got}, the lock says #{s}" unless got == s
+        end' "$stage/analyzers.lock"
+      "$dest/bin/gem" install --local --no-document --quiet ./*.gem >"$stage/gems.log" 2>&1 || { tail -40 "$stage/gems.log"; exit 1; }
+      { echo "rubocop $("$dest/bin/rubocop" --version)"; echo "steep $("$dest/bin/steep" --version)"; echo "rbs $("$dest/bin/rbs" --version)"; } >"$stage/ANALYZERS"
+      mv "$stage/ANALYZERS" "$dest/ANALYZERS"
+    linux: &ruby34
+      url: https://cache.ruby-lang.org/pub/ruby/3.4/ruby-3.4.12.tar.gz
+      sha256: 5e5d85ad93b0adcccbad47733680f4892bd0078e3342437f7babce01c1872479
+      # libyaml publishes no digest: this is the archive's, recorded when it was first pinned (2026-11-15)
+      extras: &ruby_extras
+        - url: https://github.com/yaml/libyaml/releases/download/0.2.5/yaml-0.2.5.tar.gz
+          sha256: c642ae9b75fee120b2d96c712538bd2cf283228d2337df2cf2988e3c02678ef4
+          path: yaml-0.2.5.tar.gz
+        - url: https://rubygems.org/downloads/ast-2.4.3.gem
+          sha256: 954615157c1d6a382bc27d690d973195e79db7f55e9765ac7c481c60bdb4d383
+          path: ast-2.4.3.gem
+        - url: https://rubygems.org/downloads/concurrent-ruby-1.3.8.gem
+          sha256: b2f1be836e968ccc78ccfce277ea79c72a88633f22306782c16ff23fb415d1e1
+          path: concurrent-ruby-1.3.8.gem
+        - url: https://rubygems.org/downloads/csv-3.3.7.gem
+          sha256: 15a3f16f6628da8664d455eb634e7f22031bcf53044923caf56975109e71b9f8
+          path: csv-3.3.7.gem
+        - url: https://rubygems.org/downloads/ffi-1.17.4.gem
+          sha256: bcd1642e06f0d16fc9e09ac6d49c3a7298b9789bcb58127302f934e437d60acf
+          path: ffi-1.17.4.gem
+        - url: https://rubygems.org/downloads/fileutils-1.8.1.gem
+          sha256: 2d541a1ee34a9ed5c4f054be8fb819a26b5d654488a31dc8806917cf448b9cc3
+          path: fileutils-1.8.1.gem
+        - url: https://rubygems.org/downloads/json-3.1.0.gem
+          sha256: 3ce7ccf8fde58960177a3a756c31f292a4c1e1dedee884547096a5b0604e3bd8
+          path: json-3.1.0.gem
+        - url: https://rubygems.org/downloads/language_server-protocol-3.17.0.6.gem
+          sha256: 5ef2c0c138f8267e1bc631d3328347d354f96724b0af22f2c79516120443b7f0
+          path: language_server-protocol-3.17.0.6.gem
+        - url: https://rubygems.org/downloads/lint_roller-1.1.0.gem
+          sha256: 2c0c845b632a7d172cb849cc90c1bce937a28c5c8ccccb50dfd46a485003cc87
+          path: lint_roller-1.1.0.gem
+        - url: https://rubygems.org/downloads/listen-3.10.1.gem
+          sha256: 4c3f32855657f348747da4dd2372ff3790d90a6b1d3e4f21a3706adb2d04783c
+          path: listen-3.10.1.gem
+        - url: https://rubygems.org/downloads/logger-1.7.0.gem
+          sha256: 196edec7cc44b66cfb40f9755ce11b392f21f7967696af15d274dde7edff0203
+          path: logger-1.7.0.gem
+        - url: https://rubygems.org/downloads/parallel-2.3.0.gem
+          sha256: f75a3e904101ce6a1ccb6b8dc800cbafd42166d83330192438dcf29395167a6f
+          path: parallel-2.3.0.gem
+        - url: https://rubygems.org/downloads/parser-3.3.13.0.gem
+          sha256: e02f9b63c2fe05b0c68f692ba4df89b3cb113b663964f75d988fbebfd6c3deca
+          path: parser-3.3.13.0.gem
+        - url: https://rubygems.org/downloads/prism-2.1.0.gem
+          sha256: 1c0a7c6dea0e93183390fb123f007564dbe663198e2f86ad87204151147601f3
+          path: prism-2.1.0.gem
+        - url: https://rubygems.org/downloads/racc-1.8.1.gem
+          sha256: 4a7f6929691dbec8b5209a0b373bc2614882b55fc5d2e447a21aaa691303d62f
+          path: racc-1.8.1.gem
+        - url: https://rubygems.org/downloads/rainbow-3.1.1.gem
+          sha256: 039491aa3a89f42efa1d6dec2fc4e62ede96eb6acd95e52f1ad581182b79bc6a
+          path: rainbow-3.1.1.gem
+        - url: https://rubygems.org/downloads/rb-fsevent-0.11.2.gem
+          sha256: 43900b972e7301d6570f64b850a5aa67833ee7d87b458ee92805d56b7318aefe
+          path: rb-fsevent-0.11.2.gem
+        - url: https://rubygems.org/downloads/rb-inotify-0.11.1.gem
+          sha256: a0a700441239b0ff18eb65e3866236cd78613d6b9f78fea1f9ac47a85e47be6e
+          path: rb-inotify-0.11.1.gem
+        - url: https://rubygems.org/downloads/rbs-4.2.0.gem
+          sha256: 51f7b886dcc05bc09e10b901daa6a81829f6adc03101d6ca9ea4aac6103e0674
+          path: rbs-4.2.0.gem
+        - url: https://rubygems.org/downloads/regexp_parser-2.13.1.gem
+          sha256: 5aedb6b7c35688f51e86eef17a15374dfd287c83f4ca644b2c5f3ec50a33b44b
+          path: regexp_parser-2.13.1.gem
+        - url: https://rubygems.org/downloads/rubocop-1.92.2.gem
+          sha256: 14fb31eed143a0dc6f78186c550c1715e81cd38f59d05d1165050e445c1f5382
+          path: rubocop-1.92.2.gem
+        - url: https://rubygems.org/downloads/rubocop-ast-1.51.0.gem
+          sha256: 0ec311e36b191b3872d909078a35274e962ae97dbce64be6812d145ca59acfcb
+          path: rubocop-ast-1.51.0.gem
+        - url: https://rubygems.org/downloads/ruby-progressbar-1.13.0.gem
+          sha256: 80fc9c47a9b640d6834e0dc7b3c94c9df37f08cb072b7761e4a71e22cff29b33
+          path: ruby-progressbar-1.13.0.gem
+        - url: https://rubygems.org/downloads/securerandom-0.4.1.gem
+          sha256: cc5193d414a4341b6e225f0cb4446aceca8e50d5e1888743fac16987638ea0b1
+          path: securerandom-0.4.1.gem
+        - url: https://rubygems.org/downloads/steep-2.1.0.gem
+          sha256: 1daf53573283b0e6d404a7273cca41fe5c15b14ece05167934f5ffc179e171d9
+          path: steep-2.1.0.gem
+        - url: https://rubygems.org/downloads/strscan-3.1.8.gem
+          sha256: aae2db611a225559f21ffbb71765c9a4e60fd262534a9ea84f4f11c7f32f679e
+          path: strscan-3.1.8.gem
+        - url: https://rubygems.org/downloads/terminal-table-4.0.0.gem
+          sha256: f504793203f8251b2ea7c7068333053f0beeea26093ec9962e62ea79f94301d2
+          path: terminal-table-4.0.0.gem
+        - url: https://rubygems.org/downloads/tsort-0.2.0.gem
+          sha256: 9650a793f6859a43b6641671278f79cfead60ac714148aabe4e3f0060480089f
+          path: tsort-0.2.0.gem
+        - url: https://rubygems.org/downloads/unicode-display_width-3.3.0.gem
+          sha256: 4b7aa66a4b11db50f6f7e98411215cd0dd10eaecb665d36eec5bcacb3fa0b613
+          path: unicode-display_width-3.3.0.gem
+        - url: https://rubygems.org/downloads/unicode-emoji-4.3.0.gem
+          sha256: 11c02fa73290378c066bb0562cd4c87d8e1b706fbbe0059ca12746a4244de8ce
+          path: unicode-emoji-4.3.0.gem
+        - url: https://rubygems.org/downloads/uri-1.1.2.gem
+          sha256: 89292e98eabbef6248b0a0ed5e7e398e152f83f17560023a6d94a7f492b169fb
+          path: uri-1.1.2.gem
+    darwin: *ruby34
+
+  - name: ruby4.0
+    version: "4.0.9"
+    dir: ruby-4.0.9
+    probe: ANALYZERS
+    links: [{name: ruby4.0, path: bin/ruby}]
+    run: "bin/ruby --disable-gems --yjit -e 'exit(RubyVM::YJIT.enabled? ? 0 : 1)'"
+    build: *ruby_build
+    linux: &ruby40
+      url: https://cache.ruby-lang.org/pub/ruby/4.0/ruby-4.0.9.tar.gz
+      sha256: c35350682ff050b79702d57ade4516e7336063f510155d19fb2fb5b3f3909511
+      extras: *ruby_extras
+    darwin: *ruby40
 
   # Rust on a Mac (Linux gets it through rustup, nova_sdk_rustup): the release's standalone installer for the first
   # toolchain there, with clippy and rustfmt, installed into a stage and moved into place whole, so a cut-short install

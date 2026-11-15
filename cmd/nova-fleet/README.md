@@ -1611,11 +1611,15 @@ nova-fleet sdk-toolchain -- -l bench
 On x86_64 Linux and WSL: Go, Node, Dart, Erlang/OTP, Elixir, a Temurin JDK, .NET 10 with the .NET 8 SDK and runtime in
 the same directory, golangci-lint, staticcheck, nilaway, ESBMC, SpotBugs with find-sec-bugs, Deno, Jazzer,
 google-java-format, TypeScript, ESLint, sbcl, Lua, luacheck, StyLua, Luau, moo (built from its tag, the commit it was
-built from in `~/sdk/moo-v<version>/PIN` and, beside the analyzer, `bin/PIN`), Goose, Lobster, Squirrel (and a second Squirrel built as sq64 with
+built from in `~/sdk/moo-v<version>/PIN` and, beside the analyzer, `bin/PIN`; and the same tag built with
+`MOO_OVERFLOW_ERRORS=ON`, the CLI only, as `~/sdk/moo-v<version>-checked`, linked as `moo-checked` and named by `MOO_CHECKED`), Goose, Lobster, Squirrel (and a second Squirrel built as sq64 with
 `SQUSEDOUBLE`, not on PATH, named by `SQ`), CPython 3.11 and 3.15 built from source, each with mypy from hash-locked
-wheels (`python3.11`, `python3.15`, as `~/sdk/python-<version>`), clang-format, LLVM (as `~/sdk/llvm`, not on PATH), cppcheck, AFL++ and Frama-C with Alt-Ergo and Why3 in their own opam root (`~/sdk/opam`). A Mac gets the tools
+wheels (`python3.11`, `python3.15`, as `~/sdk/python-<version>`), CRuby 3.4 (the floor) and 4.0 built from source with YJIT
+and psych against a pinned libyaml source, each with RuboCop, Steep and RBS from hash-locked source gems (`ruby3.4`, `ruby4.0`,
+as `~/sdk/ruby-<version>`, named by `RUBY_FLOOR` and `RUBY`), serialize v2.1.1's release tree, the family corpus, as
+`~/sdk/serialize-v2.1.1` (its commit in `PIN`, nothing built or linked), clang-format, LLVM (as `~/sdk/llvm`, not on PATH), cppcheck, AFL++ and Frama-C with Alt-Ergo and Why3 in their own opam root (`~/sdk/opam`). A Mac gets the tools
 with a `darwin` pin: Go, Node, Dart, Erlang/OTP, Elixir, the JDK, .NET, Lua, StyLua, Luau, moo, Goose, Lobster, the
-double Squirrel, CPython 3.11 and 3.15 with mypy, and Rust. Erlang/OTP there is built from the release's source (hex.pm
+double Squirrel, CPython 3.11 and 3.15 with mypy, CRuby 3.4 and 4.0 with their analyzers, the checked moo, serialize's tree, and Rust. Erlang/OTP there is built from the release's source (hex.pm
 publishes no macOS build), with crypto and ssl linked statically against Homebrew's `openssl@3` or `openssl@4`, one of which must be on the
 host (`postgresql@18` from `runner-packages` brings one), as must the Xcode command-line tools. Rust there is the
 release's standalone installer (`static.rust-lang.org`, held to its `.sha256`) with `clippy` and `rustfmt`, giving the
@@ -1668,7 +1672,7 @@ version bump installs the new directory beside the old and moves the links.
 | `nova_sdk_rustup` | rustup 1.29.1; `1.98.1` with `clippy` and `rustfmt`, and `nightly-2026-10-01` | `version`, the `linux` rustup-init `url`, `sha256` and `host`, the `toolchains` (each `name`, `components`, `targets`; the first is on PATH) and the commands `links` puts in `~/sdk/bin` |
 | `nova_sdk_cargo_tools` | `cargo-fuzz` 0.13.1 | crates built with `cargo install --locked` |
 | `nova_sdk_env` | `DART`, `NODE`, `JAVA`, `JAVAC`, `ELIXIR`, `MIX` set to their commands | make variables `env.sh` exports |
-| `nova_sdk_env_files` | `SQ`: `squirrel-3.2-double/bin/sq`; `LUA`, `LUAU`, `LUAU_ANALYZE`, `MOO`, `MOO_ANALYZE`, `GOOSE`, `LOBSTER`: each the interpreter or analyzer under its tool's directory; `NOVA_SDK`: `.` (the SDK directory, for a Makefile that stages a pinned toolchain from `~/sdk/<tool>-<version>` instead of downloading it) | make variables naming a file under the SDK; `env.sh` exports each only where that file is executable |
+| `nova_sdk_env_files` | `SQ`: `squirrel-3.2-double/bin/sq`; `LUA`, `LUAU`, `LUAU_ANALYZE`, `MOO`, `MOO_ANALYZE`, `MOO_CHECKED`, `GOOSE`, `LOBSTER`, `RUBY_FLOOR`, `RUBY`: each the interpreter or analyzer under its tool's directory; `NOVA_SDK`: `.` (the SDK directory, for a Makefile that stages a pinned toolchain from `~/sdk/<tool>-<version>` instead of downloading it) | make variables naming a file under the SDK; `env.sh` exports each only where that file is executable |
 | `nova_sdk_shell_rc` | `true` | Linux: `~/.bashrc` sources `env.sh` on its first line, unless a line of it already names `sdk/env.sh` |
 
 **Check.** `SDK-TOOLCHAIN host=<machine> platform=<linux|darwin> tools=<n> present=<n> installed=<n> dotnet=<runtimes>`,
