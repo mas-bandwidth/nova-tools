@@ -190,11 +190,11 @@ fail with no test failing. So a CI job never waits.
 While no CI job is running, a runner holds nothing and other work uses the
 whole machine.
 
-CI winning does not have to mean CI can take a whole machine. A machine may
-get a most that CI can hold on it. Glenn: "maybe we decide to set some max ci
-usage per-machine or whatever". It is an idea, not settled. There is already
-a natural limit: a machine has a set number of runners, so CI can hold at most
-that many jobs' worth at once.
+By default CI can take all of a machine. Glenn: "by default, 100%". A machine
+may later be given a most that CI can hold on it ("maybe we decide to set some
+max ci usage per-machine or whatever"); that is an idea, not settled. There is
+already a natural limit: a machine has a set number of runners, so CI holds at
+most that many jobs' worth at once.
 
 ## Asking the whole fleet
 
