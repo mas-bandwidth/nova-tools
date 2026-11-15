@@ -321,11 +321,16 @@ taking holds. Each is a later step that builds on those three.
 
 1. **Asking the whole fleet.** Which tool answers, and from what: each
    machine's own report of what it has free, and how fresh that must be.
-2. **CI runners.** Four things are open. GitHub picks the runner for a job, so
-   a job that finds its machine full cannot move; it waits inside the job,
-   against the rule that CI finishes in two minutes. A job is not one command,
-   so what its hold belongs to, and how it is freed if the runner dies, is not
-   designed. Who states how much a runner's jobs hold is not chosen (the
+2. **CI runners.** GitHub, not the fleet, chooses which runner gets a job, and
+   it starts the job's clock when it hands the job over. If the runner then
+   had to wait for room on a full machine, that wait would be part of the
+   job's time, and a job that must finish in two minutes would fail without
+   any test failing. So a CI job does not wait (*Rowan's*): it takes its hold
+   at once, even if that puts the machine over what it has for a while. Other
+   work on the machine runs at a lower priority, as it does today, so the CI
+   job still gets its CPU, and nothing new is sent to that machine until it is
+   back under. Three things remain open. A job is not one command, so what its
+   hold belongs to, and how it is freed if the runner dies, is not designed. Who states how much a runner's jobs hold is not chosen (the
    runner's configuration is the likely place). And nova-reserve has no
    Windows build, while the fleet has Windows runners.
 3. **Operating system and architecture as tags.** nova-config already holds
