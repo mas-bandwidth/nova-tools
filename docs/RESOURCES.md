@@ -193,6 +193,10 @@ that are now under budget are logically paused (from our point of view.)"
 A hold is therefore in one of two states, held or paused, and its size never
 changes.
 
+Paused work comes back first. When a CI job ends, the CPU it frees goes to the
+work that was paused, before any waiting or new work gets it. Glenn:
+"unpausing cards are done, before new cards are dealt."
+
 Pausing frees CPU, not memory: paused work keeps the memory it is using. If a
 CI job finds too little memory, other work on the machine is stopped, lowest
 priority first, until there is enough. Work stopped this way is run again
