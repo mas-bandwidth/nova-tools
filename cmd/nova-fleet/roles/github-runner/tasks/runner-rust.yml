@@ -6,7 +6,10 @@
 # has no lock: schema rust-strict, 2026-11-14). One runner runs one job at a time, so its home has one writer.
 #
 # The pinned toolchains stay on the shared path: each is a link in the runner's toolchains/ to the shared one, with its
-# update hash copied, so an install of a pinned name finds it current and writes nothing there; the runner's settings
+# update hash copied, so an install of a pinned name finds it current and writes nothing there. The channel the runner
+# keeps (github_runner_rust_channel) is never a link: a job that ran as the fleet login can leave that channel in the
+# shared home, minimal and read-only to this login, and the next task and a job's update of the channel write into
+# it; a link to it is removed and the next task installs the channel here. The runner's settings
 # are the shared ones (the pinned default, self-update off) while its default names no toolchain it holds; and its
 # cargo/bin holds a link to each of the shared cargo/bin's entries (the rustup proxies, which read RUSTUP_HOME, and the
 # cargo tools). A link naming another target is pointed at the current one, a dangling one is removed, and a real file
@@ -21,6 +24,7 @@
     [ -d "$src/toolchains" ] && [ -d "$src/cargo/bin" ] || { echo "the shared rustup home $src has no toolchains/ or cargo/bin/" >&2; exit 1; }
     rh={{ github_runner_rustup_home | quote }}
     ch={{ github_runner_cargo_home | quote }}
+    keep={{ github_runner_rust_channel | quote }}
     mkdir -p "$rh/toolchains" "$rh/update-hashes" "$ch/bin"
     set=
     for t in "$src"/toolchains/*; do
@@ -28,6 +32,7 @@
       n=${t##*/}
       l="$rh/toolchains/$n"
       if [ -e "$l" ] && [ ! -L "$l" ]; then continue; fi
+      case $n in "$keep"-*) if [ -L "$l" ]; then rm -f "$l"; set=1; fi; continue ;; esac
       if [ "$(readlink "$l")" != "$t" ]; then ln -sfn "$t" "$l"; set=1; fi
       if [ -f "$src/update-hashes/$n" ] && ! cmp -s "$src/update-hashes/$n" "$rh/update-hashes/$n"; then
         cp "$src/update-hashes/$n" "$rh/update-hashes/$n"; set=1

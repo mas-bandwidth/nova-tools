@@ -1642,7 +1642,8 @@ into its own home is unaffected. `cargo-fuzz` is built with `--locked` into `~/s
 Each runner of a runner login of its own has such a home of its own (`RUSTUP_HOME` and `CARGO_HOME` under
 `~/.rust-homes/<runner>/`, set by its unit whatever the record's `runner_env` names), seeded with links to the shared
 SDK's pinned toolchains, so no two runners' jobs write one rustup tree at once (rustup takes no lock). github-runners
-keeps the channel a job's `dtolnay/rust-toolchain` installs (`github_runner_rust_channel`, `stable`) whole there:
+keeps the channel a job's `dtolnay/rust-toolchain` installs (`github_runner_rust_channel`, `stable`) whole there,
+never as a link to one a fleet-login job left in the shared home:
 installed with `github_runner_rust_channel_components` (clippy, rustfmt) when absent, given the ones it lacks when a
 job installed it with the minimal profile, which also made it that runner's default. rustup keeps installed
 components when a later job updates the channel. The default itself is left as it is.
