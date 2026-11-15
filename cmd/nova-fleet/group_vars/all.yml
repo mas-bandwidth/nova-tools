@@ -134,10 +134,6 @@ nova_runner_packages:
     - zlib1g-dev
     - libopengl0
     - libglx0
-    # the 32-bit libc and libgcc that cc -m32 links against, for the SDK Rust's i686-unknown-linux-gnu target; not
-    # gcc-multilib, which would remove the s390x cross compilers
-    - libc6-dev-i386
-    - lib32gcc-15-dev
     # the same libraries built for s390x, for the big-endian build (nova_runner_foreign_architectures)
     - "libsodium-dev:s390x"
     - "libbpf-dev:s390x"
