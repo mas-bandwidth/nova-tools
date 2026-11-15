@@ -846,7 +846,9 @@ nova_sdk_rustup:
   toolchains:
     - name: "1.98.1"
       components: [clippy, rustfmt]
-      targets: []
+      # i686's std, for a test that builds and runs a leg where usize is 32 bits; it links with cc -m32 against the
+      # 32-bit libc and libgcc that runner-packages brings (libc6-dev-i386, lib32gcc-15-dev)
+      targets: [i686-unknown-linux-gnu]
     - name: nightly-2026-10-01
       components: []
       targets: []
