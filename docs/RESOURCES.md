@@ -2,8 +2,10 @@
 
 What each machine in a fleet has, and what work takes from it.
 
-This page is a design. Nothing on it is built. It was settled with Glenn on
-2026-11-15. Rules marked *Rowan's* are choices he left to Rowan and can
+This page is a design. Nothing on it is built. The text under review is the
+nova-sprint v3.0.0 specification, `docs/SPEC-V3.md` in nova-sprint, which
+states the same rules with numbers; where the two differ, that one is right.
+It was settled with Glenn on 2026-11-15. Rules marked *Rowan's* are choices he left to Rowan and can
 overrule. [Not settled](#not-settled) lists what is still open.
 
 Everything here belongs to nova-tools and works without nova-sprint.
