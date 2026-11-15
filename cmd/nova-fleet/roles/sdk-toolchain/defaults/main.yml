@@ -51,6 +51,8 @@ nova_sdk_env_files:
   RUBY: ruby-4.0.9/bin/ruby
   GOOSE: goose-v2026.2/goose
   LOBSTER: lobster-v2026.8/bin/lobster
+  # cargo runs a wasm32-wasip1 binary (cargo run, cargo test) under this; a test that runs one reads it too
+  CARGO_TARGET_WASM32_WASIP1_RUNNER: wasmtime-50.0.1/wasmtime
 
 # One entry per tool. A tool is installed on a platform (linux: x86_64 Linux and WSL; darwin: Apple silicon) only when
 # it has an entry for it. Keys:
@@ -207,6 +209,16 @@ nova_sdk_tools:
     links: [nilaway]
     kind: go
     linux: { package: go.uber.org/nilaway/cmd/nilaway, version: v0.0.0-20260918162853-acb8859b9031 }
+
+  # the runner for Rust's wasm32-wasip1 target (CARGO_TARGET_WASM32_WASIP1_RUNNER, nova_sdk_env_files)
+  - name: wasmtime
+    version: "50.0.1"
+    dir: wasmtime-50.0.1
+    probe: wasmtime
+    links: [wasmtime]
+    linux:
+      url: https://github.com/bytecodealliance/wasmtime/releases/download/v50.0.1/wasmtime-v50.0.1-x86_64-linux.tar.xz
+      sha256: 685466455dd42a14774a86c36c8f2e45cbb9bd6d92a850139315df60a75498a5
 
   # gopls's modernize analyzer as a command, prebuilt so a gate can run it with GOPROXY=off (go run would fetch it)
   - name: modernize
@@ -846,9 +858,10 @@ nova_sdk_rustup:
   toolchains:
     - name: "1.98.1"
       components: [clippy, rustfmt]
-      # i686's std, for a test that builds and runs a leg where usize is 32 bits; it links with cc -m32 against the
-      # 32-bit libc and libgcc that runner-packages brings (libc6-dev-i386, lib32gcc-15-dev)
-      targets: [i686-unknown-linux-gnu]
+      # wasm32-wasip1's std, for a test that builds and runs a leg where usize is 32 bits and u64 still aligns to 8
+      # (i686 aligns it to 4). It links with the toolchain's own rust-lld, named by absolute path (a bare name is
+      # started by fork, which the sandbox refuses), and runs under the SDK's wasmtime.
+      targets: [wasm32-wasip1]
     - name: nightly-2026-10-01
       components: []
       targets: []

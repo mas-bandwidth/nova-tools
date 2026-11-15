@@ -1504,8 +1504,7 @@ packages on `debian`. The default is the toolchain of a fleet whose repositories
 and Python and test them: on macOS `postgresql@18` (the functional tier), `cmake`, `libsodium`, `pkgconf` and `ccache` (the compiler cache); on
 Debian and Ubuntu the compilers, assemblers and build systems (`build-essential`, `clang-18`, `lld`, `cmake`,
 `ninja-build`, `ccache`, `nasm`), the libraries the tests link (libsodium, libbpf, libxdp, liburing, libcurl, MPFR,
-zlib, OpenGL, and the 32-bit libc and libgcc (`libc6-dev-i386`, `lib32gcc-15-dev`) the SDK Rust's i686 target links
-against; not `gcc-multilib`, which removes the s390x cross compilers), the runtimes (`golang-go`, `dotnet-sdk-10.0`, Mono, a Java runtime, `opam`, Python's pip and venv),
+zlib, OpenGL), the runtimes (`golang-go`, `dotnet-sdk-10.0`, Mono, a Java runtime, `opam`, Python's pip and venv),
 the analysers and provers (`cppcheck`, `valgrind`, `cbmc`, `cadical`, `z3`, `gappa`, `sollya`), the store clients
 (`postgresql-client-18`, `redis-tools`, `sqlite3`), containers, VMs and emulation (`podman`, `bubblewrap`, `virtme-ng`,
 `qemu-system-x86`, `qemu-user`, `qemu-system-s390x` with the s390x cross compilers, and the s390x libraries a
@@ -1610,7 +1609,7 @@ nova-fleet sdk-toolchain -- -l bench
 ```
 
 On x86_64 Linux and WSL: Go, Node, Dart, Erlang/OTP, Elixir, a Temurin JDK, .NET 10 with the .NET 8 SDK and runtime in
-the same directory, golangci-lint, staticcheck, nilaway, modernize (gopls v0.23.0's analyzer, prebuilt so a gate runs it offline), ESBMC, SpotBugs with find-sec-bugs, Deno, Jazzer,
+the same directory, golangci-lint, staticcheck, nilaway, wasmtime (the wasm32-wasip1 runner), modernize (gopls v0.23.0's analyzer, prebuilt so a gate runs it offline), ESBMC, SpotBugs with find-sec-bugs, Deno, Jazzer,
 google-java-format, TypeScript, ESLint, sbcl, Lua, luacheck, StyLua, Luau, moo (built from its tag, the commit it was
 built from in `~/sdk/moo-v<version>/PIN` and, beside the analyzer, `bin/PIN`; and the same tag built with
 `MOO_OVERFLOW_ERRORS=ON`, the CLI only, as `~/sdk/moo-v<version>-checked`, linked as `moo-checked` and named by `MOO_CHECKED`), Goose, Lobster, Squirrel (and a second Squirrel built as sq64 with
@@ -1633,7 +1632,8 @@ and `script` (a build alone: Frama-C's opam root, at pinned package versions fro
 Rust, on Linux, comes through a pinned rustup: `rustup-init` at `nova_sdk_rustup.version`, checked against its
 `.sha256`, installs rustup into `~/sdk/rustup-<version>` with the first toolchain (a release, `1.98.1`) as the
 default and self-update off; each toolchain then gets its components (`clippy`, `rustfmt`) and targets (the release
-gets `i686-unknown-linux-gnu`, a 32-bit std linked against `runner-packages`' 32-bit libc), and the dated
+gets `wasm32-wasip1`, a 32-bit std where `u64` still aligns to 8, linked by the toolchain's `rust-lld` named by its
+absolute path and run under the SDK's wasmtime, which env.sh names as `CARGO_TARGET_WASM32_WASIP1_RUNNER`), and the dated
 nightly that `cargo fuzz` runs on is installed beside it. The first toolchain's own binaries (`cargo`, `rustdoc`,
 `rustfmt`, `cargo-fmt`, `cargo-clippy`, `clippy-driver`) are linked into `~/sdk/bin`. `~/sdk/bin/rustc` is a wrapper
 that runs the toolchain's `rustc` with `-C linker=/usr/bin/cc` (`nova_sdk_rustup.linux.linker`): given a bare `cc`,
