@@ -149,17 +149,21 @@ and are given a machine and a hold on it.
 
 This does not exist and is not designed. See [Not settled](#not-settled).
 
-## The resource view
+## What can be asked
 
-One view of the fleet: each machine, its tags, how much of each resource it
-has, and every hold on it. It answers one question: are we using the fleet's
-resources fully, yes or no.
+nova-tools has no view of resources. It answers questions, for the AIs and
+people who use the fleet:
 
-It shows everything that holds, CI included. Glenn: "the resource view shows
-what resources are being used.", "(including everything, CI etc...)".
+- what tags and resources there are, and on which machines;
+- what is held now, and by what;
+- to be given resources, and to release them.
 
-In nova-tools it is a command that prints the fleet (*Rowan's*). nova-sprint's
-board draws the same data.
+Glenn: "there is no resource view without a sprint. except whatever info the
+AIs want to be able to query, to seew hat resources there are and ask for
+resources/release them."
+
+The answers cover everything that holds, CI included, so a picture drawn from
+them is complete. nova-sprint's board draws one.
 
 ## CPU units
 
@@ -231,7 +235,7 @@ sent only where a fast core is free. `fast-core` is a resource like any other.
 ## The check
 
 Each machine still measures its real CPU use. The measurement is kept for
-checking and is not drawn on any view.
+checking and can be asked for like the rest.
 
 Glenn: "you should still have this data, so you can be aware of it internalyl
 and check it".
@@ -248,9 +252,8 @@ uses far more or far less than it held was given the wrong numbers.
    set by hand.
 2. nova-reserve holds named resources on one machine.
 
-Not in the first version: asking the whole fleet, the benchmark, `fast-core`,
-CI runners taking holds, and the resource view. Each is a later step that
-builds on those two.
+Not in the first version: asking the whole fleet, the benchmark, `fast-core`
+and CI runners taking holds. Each is a later step that builds on those two.
 
 ## Not settled
 
