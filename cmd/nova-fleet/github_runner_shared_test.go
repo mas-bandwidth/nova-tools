@@ -63,6 +63,8 @@ func TestSharedToolsAreRootsCopies(t *testing.T) {
 		`src=$(env -u RUSTUP_HOME -u CARGO_HOME "$shared_rustup" show home)`,
 		`rh={{ github_runner_rustup_home | quote }}`,
 		`ch={{ github_runner_cargo_home | quote }}`,
+		`keep={{ github_runner_rust_channel | quote }}`,
+		`case $n in "$keep"-*) if [ -L "$l" ]; then rm -f "$l"; set=1; fi; continue ;; esac`,
 		`if [ "$(readlink "$l")" != "$t" ]; then ln -sfn "$t" "$l"; set=1; fi`,
 		`cp "$src/update-hashes/$n" "$rh/update-hashes/$n"`,
 		`if [ -L "$l" ] && [ ! -e "$l" ]; then rm -f "$l"; set=1; fi`,
