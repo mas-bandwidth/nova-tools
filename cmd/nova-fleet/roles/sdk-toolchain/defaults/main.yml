@@ -208,6 +208,15 @@ nova_sdk_tools:
     kind: go
     linux: { package: go.uber.org/nilaway/cmd/nilaway, version: v0.0.0-20260918162853-acb8859b9031 }
 
+  # gopls's modernize analyzer as a command, prebuilt so a gate can run it with GOPROXY=off (go run would fetch it)
+  - name: modernize
+    version: "0.23.0"
+    dir: modernize-0.23.0
+    probe: modernize
+    links: [modernize]
+    kind: go
+    linux: { package: golang.org/x/tools/gopls/internal/analysis/modernize/cmd/modernize, version: v0.23.0 }
+
   - name: esbmc
     version: "8.5"
     dir: esbmc-8.5

@@ -1609,7 +1609,7 @@ nova-fleet sdk-toolchain -- -l bench
 ```
 
 On x86_64 Linux and WSL: Go, Node, Dart, Erlang/OTP, Elixir, a Temurin JDK, .NET 10 with the .NET 8 SDK and runtime in
-the same directory, golangci-lint, staticcheck, nilaway, ESBMC, SpotBugs with find-sec-bugs, Deno, Jazzer,
+the same directory, golangci-lint, staticcheck, nilaway, modernize (gopls v0.23.0's analyzer, prebuilt so a gate runs it offline), ESBMC, SpotBugs with find-sec-bugs, Deno, Jazzer,
 google-java-format, TypeScript, ESLint, sbcl, Lua, luacheck, StyLua, Luau, moo (built from its tag, the commit it was
 built from in `~/sdk/moo-v<version>/PIN` and, beside the analyzer, `bin/PIN`; and the same tag built with
 `MOO_OVERFLOW_ERRORS=ON`, the CLI only, as `~/sdk/moo-v<version>-checked`, linked as `moo-checked` and named by `MOO_CHECKED`), Goose, Lobster, Squirrel (and a second Squirrel built as sq64 with
