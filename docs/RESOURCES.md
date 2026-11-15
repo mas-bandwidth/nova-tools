@@ -179,9 +179,12 @@ spend its own time waiting, and a job that must finish in two minutes would
 fail with no test failing. So a CI job never waits.
 
 - **It takes its hold at once,** even on a full machine.
-- **Other work gives up CPU to it.** Other work runs at a lower priority, as
-  it does today, so it slows down and the CI job runs at full speed.
-- **Nothing new is sent to that machine** until it is back under what it has.
+- **Other work gives up CPU to it.** The CPU other work holds is cut back by
+  what the CI job takes, lowest priority first. That work keeps running,
+  slower, and gets its CPU back when the CI job ends.
+- **The machine is never counted over what it has.** What CI holds and what
+  other work holds always come to at most the whole machine. Glenn: "the CPU
+  usage of CI and cards sums to 100% always on that machine."
 - **If there is not enough memory,** other work on the machine is stopped,
   lowest priority first, until there is. Memory cannot be shared by slowing
   down. Work stopped this way is run again later and is not counted as a
