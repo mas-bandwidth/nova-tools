@@ -178,28 +178,53 @@ one.
 Glenn's example: "we could reserve say, 4 cores for a CI runner doing golang
 tests that must finish in under 2m on a slower machine like hulk".
 
-The number is approximate, and that is accepted. Glenn: "this will all be
+A machine's number is approximate, and that is accepted. Glenn: "this will all be
 approximate, but better than what we have which is weirdly non-scientific
 around guessing the # of cards per-machine".
 
-### Scoring a machine
+### What a CPU unit is for
+
+A CPU unit has one job: to let work say how much compute it needs, once, in a
+way that means the same thing on every machine. Three things follow from that.
+
+- Work can be sent to any machine with enough free, without its writer knowing
+  the machines.
+- The machine it lands on can turn the request into the right number of its
+  own cores.
+- What a machine hands out can be added up, and never comes to more than it
+  has.
+
+It is not a promise of speed and not a precise measurement.
+
+### How big it is
 
 *Rowan's.*
 
-One CPU unit is one core of hulk, the fleet's slow machine, with every core
-busy. So a request reads as "this many cores of our slow machine", and a
-faster machine has more CPU units than cores.
+One CPU unit is one standard core: about one core of an ordinary machine.
+"This build needs `cpu 4`" reads as "about four cores". A machine with fast
+cores is worth more CPU units than it has cores, and a machine with slow cores
+or hyperthreads is worth fewer.
 
-In the first version a machine's CPU number is set by hand.
+Nobody ever sets or thinks about the number. Glenn: "no user of nova tools or
+sprint will want to think for more than 1 second about how cpu units are
+measured. they just want it working."
 
-Later it is measured. The benchmark is one small Go program with no
-dependencies, the same binary on every machine. It does a fixed mix of the
-work a compiler and a test run do, for a few seconds, and counts how much got
-done. It runs with every thread busy, so hyperthreads and slow cores are
-inside the measurement and need no rule of their own. One CPU unit is a
-constant in the benchmark, set once from hulk and then fixed, so retiring hulk
-changes nothing. A machine's CPU units are its score divided by the constant,
-rounded down.
+### How a machine gets its number
+
+*Rowan's.*
+
+nova-tools measures it. The benchmark is built into the tools: a small fixed
+mix of the work a compiler and a test run do, for a few seconds, counting how
+much got done. It runs with every thread busy, so hyperthreads and slow cores
+are inside the measurement and need no rule of their own.
+
+The standard core is a constant inside the benchmark, the same in every copy
+of the tools, so one CPU unit is the same amount on every fleet. A machine's
+CPU units are its score divided by the constant, rounded down, at least 1.
+
+A machine is measured once, when it joins a fleet, or the first time
+nova-reserve is used on a machine with no fleet. The number is kept, and it is
+measured again only when asked.
 
 ### From CPU units to cores
 
@@ -216,9 +241,9 @@ plus the cores it would hold are at most the cores the machine has. A machine
 never gives out more cores than it has, and work never gets less compute than
 it asked for.
 
-With made-up numbers: hulk has 16 cores and 16 CPU units, so `cpu 4` holds 4
-cores there. A machine with 16 stronger cores and 48 CPU units holds 2 cores
-for the same `cpu 4`.
+With made-up numbers: a machine with 16 ordinary cores measures 16 CPU units,
+so `cpu 4` holds 4 cores there. A machine with 16 stronger cores measures 48
+CPU units and holds 2 cores for the same `cpu 4`.
 
 Where nova-reserve can pin (Linux), it pins the work to the cores it holds.
 
@@ -248,12 +273,14 @@ uses far more or far less than it held was given the wrong numbers.
 
 *Rowan's.*
 
-1. nova-config keeps each machine's tags, CPU units and memory. CPU units are
-   set by hand.
-2. nova-reserve holds named resources on one machine.
+1. The benchmark, so every machine's CPU units are measured from the start.
+2. nova-config keeps each machine's tags, CPU units and memory. CPU units and
+   memory are filled in by measuring the machine; tags are written by its
+   owner.
+3. nova-reserve holds named resources on one machine.
 
-Not in the first version: asking the whole fleet, the benchmark, `fast-core`
-and CI runners taking holds. Each is a later step that builds on those two.
+Not in the first version: asking the whole fleet, `fast-core` and CI runners
+taking holds. Each is a later step that builds on those three.
 
 ## Not settled
 
@@ -271,8 +298,6 @@ and CI runners taking holds. Each is a later step that builds on those two.
    measured, from the numbers.
 5. **Memory on a machine with no way to hold it.** Holding memory is a count,
    not a limit. Whether that is enough is not known until it is used.
-6. **The size of a CPU unit.** This page says one CPU unit is one core of the
-   slow machine. Glenn recalls a finer unit, about 100 to a core. It is open.
 
 ## Ideas for later
 
