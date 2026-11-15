@@ -329,7 +329,10 @@ taking holds. Each is a later step that builds on those three.
    at once, even if that puts the machine over what it has for a while. Other
    work on the machine runs at a lower priority, as it does today, so the CI
    job still gets its CPU, and nothing new is sent to that machine until it is
-   back under. Three things remain open. A job is not one command, so what its
+   back under. Giving way works for CPU: lower priority work slows down and
+   the CI job runs at full speed. It does not work for memory, which cannot be
+   taken back from work that is using it, so a machine short of memory when a
+   CI job starts is a case this does not solve. Three more things remain open. A job is not one command, so what its
    hold belongs to, and how it is freed if the runner dies, is not designed. Who states how much a runner's jobs hold is not chosen (the
    runner's configuration is the likely place). And nova-reserve has no
    Windows build, while the fleet has Windows runners.
