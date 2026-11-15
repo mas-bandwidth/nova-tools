@@ -162,10 +162,33 @@ Four rules, all *Rowan's*:
   CPUs they have. Nothing stops work using more than it holds. The measurement
   [below](#the-check) shows when it did.
 - **No room means wait.** Work that fits the machine but finds no room now
-  waits for it. Nothing running is ever stopped to make room.
+  waits for it. Nothing running is stopped to make room, with one exception:
+  [CI wins](#ci-wins).
 - **Waiters are served strictly in arrival order** on a machine, as
   nova-reserve's roadmap already asks: a later, smaller request does not pass
   an earlier one. Sending important work first is the job of whoever sends it.
+
+## CI wins
+
+CI comes ahead of all other work on a machine. Glenn: "Ci wins.", "over cards.
+it wins".
+
+GitHub, not the fleet, chooses which runner gets a job, and it starts the
+job's clock when it hands the job over. A CI job that waited for room would
+spend its own time waiting, and a job that must finish in two minutes would
+fail with no test failing. So a CI job never waits.
+
+- **It takes its hold at once,** even on a full machine.
+- **Other work gives up CPU to it.** Other work runs at a lower priority, as
+  it does today, so it slows down and the CI job runs at full speed.
+- **Nothing new is sent to that machine** until it is back under what it has.
+- **If there is not enough memory,** other work on the machine is stopped,
+  lowest priority first, until there is. Memory cannot be shared by slowing
+  down. Work stopped this way is run again later and is not counted as a
+  failure (*Rowan's*).
+
+While no CI job is running, a runner holds nothing and other work uses the
+whole machine.
 
 ## Asking the whole fleet
 
@@ -323,19 +346,9 @@ taking holds. Each is a later step that builds on those three.
 
 1. **Asking the whole fleet.** Which tool answers, and from what: each
    machine's own report of what it has free, and how fresh that must be.
-2. **CI runners.** GitHub, not the fleet, chooses which runner gets a job, and
-   it starts the job's clock when it hands the job over. If the runner then
-   had to wait for room on a full machine, that wait would be part of the
-   job's time, and a job that must finish in two minutes would fail without
-   any test failing. So a CI job does not wait (*Rowan's*): it takes its hold
-   at once, even if that puts the machine over what it has for a while. Other
-   work on the machine runs at a lower priority, as it does today, so the CI
-   job still gets its CPU, and nothing new is sent to that machine until it is
-   back under. Giving way works for CPU: lower priority work slows down and
-   the CI job runs at full speed. It does not work for memory, which cannot be
-   taken back from work that is using it, so a machine short of memory when a
-   CI job starts is a case this does not solve. Three more things remain open. A job is not one command, so what its
-   hold belongs to, and how it is freed if the runner dies, is not designed. Who states how much a runner's jobs hold is not chosen (the
+2. **CI runners.** Three things are open. A job is not one command, so what
+   its hold belongs to, and how it is freed if the runner dies, is not
+   designed. Who states how much a runner's jobs hold is not chosen (the
    runner's configuration is the likely place). And nova-reserve has no
    Windows build, while the fleet has Windows runners.
 3. **Operating system and architecture as tags.** nova-config already holds
