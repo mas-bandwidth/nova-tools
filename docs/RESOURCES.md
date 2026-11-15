@@ -18,7 +18,8 @@ Glenn: "The actual pattern is that cards require resources, and can run anywhere
 those resources are provided. Be it CPU, memory, GPU, dev tools whatever..."
 
 Today a fleet machine has one number that limits work: how many jobs it runs at
-once. Every job costs one, whatever it does, and CI jobs are not counted at all.
+once. A job costs one of them whatever it does (or all of them, when it asks
+for the whole machine), and CI jobs are not counted at all.
 The number is a guess. With resources a machine says what it has, work says what
 it needs, and how many jobs fit follows from the two.
 
@@ -52,6 +53,9 @@ The same hardware can be a tag or a resource, and the choice says whether work
 shares it. `gpu` as a tag means everything sent to the machine may use its GPU
 at once. `gpu 1` as a resource means one piece of work holds the GPU.
 
+Within a fleet a name is one or the other, on every machine. `gpu` is never a
+tag on one machine and a resource on another.
+
 ## Machines
 
 A machine's tags and resources are configuration, kept in nova-config beside
@@ -74,32 +78,43 @@ only some machines have.
 
 ## Work
 
-A piece of work states what it needs as one list of tags and numbers. A number
-left out means 1.
+A piece of work states what it needs as one list of names, some with numbers.
 
     cpu 4, memory 8, mac, metal, ps5
 
-Here `cpu 4` and `memory 8` are amounts, `ps5` is `ps5 1`, and `mac` and
-`metal` are tags. The writer does not have to know which names are tags and
-which are resources. The fleet's configuration says what each name is.
+Here `cpu 4` and `memory 8` are amounts, and `mac` and `metal` are tags. `ps5`
+is a resource with no number, and a resource with no number means 1. The
+writer does not have to know which names are tags and which are resources:
+each machine's configuration says what it has, and a bare name reads correctly
+either way.
+
+Work that names no `cpu` holds `cpu 1`, and work that names no `memory` holds
+`memory 1` (*Rowan's*). Everything that runs uses some of both.
 
 Work fits on a machine when the machine has every tag the work names, and for
 every resource the work names, the amount already held plus the amount asked
-is at most what the machine has.
+is at most what the machine has. This one rule covers every resource, CPU
+included.
+
+Work that names something a machine does not have, or more of a resource than
+the machine has in all, can never fit there. It is refused at once and does
+not wait.
 
 Work acquires everything it needs before it starts, holds it while it runs,
 and releases all of it when it ends, however it ends. Together that is a
-**hold**.
+**hold**. A hold carries a short label saying what it is for, so anyone asking
+what is held can tell a CI job from a build.
 
 ## What takes holds
 
 Everything that uses a machine goes through holds. That is what makes the
 numbers true.
 
-- **Work a sprint's dealer places on a machine.** The dealer decides where.
-- **Work a friend does.** A friend (an AI working a card) decides where its
-  own work runs. Where its session runs does not matter; what matters is the
-  machine it chooses to do the work on, which it reaches over ssh.
+- **Work an AI does.** An AI decides where its own work runs. Where its session
+  runs does not matter; what matters is the machine it chooses to do the work
+  on, which it reaches over ssh.
+- **Work placed by nova-sprint,** for a fleet that uses it. The sprint decides
+  where.
 - **A CI runner.** Today a runner's jobs are counted nowhere. With resources a
   runner has tags (the labels a workflow selects it by) and takes a hold like
   anything else. It holds only while it runs a job. Glenn: "holds only when it
@@ -126,26 +141,39 @@ reserved. It needs no server.
 
 The upgrade is from one number to named numbers. A machine's capacity is its
 tags and resources. A command states what it needs by name, and nova-reserve
-holds exactly that. It still works on one machine with no fleet: the capacity
-can be set locally, as slots are today.
+holds exactly that. It still works on one machine with no fleet.
 
-Three rules, all *Rowan's*:
+A hold always belongs to one command running on the machine, as it does today.
+There are no tokens and no leases. When the command ends, for any reason, the
+operating system frees the hold. An AI working on another machine runs each
+command there through nova-reserve over ssh, so the hold lives and dies with
+that command and not with the AI's session.
 
+Asking for the whole machine stays, as it is today: it holds everything the
+machine has.
+
+Four rules, all *Rowan's*:
+
+- **nova-reserve on a machine is the one authority on what is held there.**
+  Two askers can never hold the same resources, whoever sent them.
 - **A hold steers; it does not police.** It tells the work's tools how many
   CPUs they have. Nothing stops work using more than it holds. The measurement
   [below](#the-check) shows when it did.
-- **No room means wait.** Work that finds no room waits for it. Nothing running
-  is ever stopped to make room.
-- **Waiters are served in arrival order** on a machine, as nova-reserve's
-  roadmap already asks. Sending important work first is the job of whoever
-  sends it.
+- **No room means wait.** Work that fits the machine but finds no room now
+  waits for it. Nothing running is ever stopped to make room.
+- **Waiters are served strictly in arrival order** on a machine, as
+  nova-reserve's roadmap already asks: a later, smaller request does not pass
+  an earlier one. Sending important work first is the job of whoever sends it.
 
 ## Asking the whole fleet
 
 nova-reserve knows one machine. To send work to the right machine, something
-has to answer for the whole fleet: given tags and amounts, which machine has
-them free. A friend, a sprint's dealer and a person all ask the same question
-and are given a machine and a hold on it.
+has to answer for the whole fleet: given tags and amounts, which machines have
+them free. An AI, nova-sprint and a person all ask the same question.
+
+The answer is advice, a moment old. The hold itself is still taken on the
+machine, by nova-reserve, when the work starts there. If two askers were
+pointed at the same free room, one gets it and the other waits or asks again.
 
 This does not exist and is not designed. See [Not settled](#not-settled).
 
@@ -230,22 +258,27 @@ measured again only when asked.
 
 *Rowan's.*
 
-A machine knows its CPU units and its cores (the CPUs the operating system
-shows, hyperthreads included). Work that asks for CPU units holds a whole
-number of the machine's cores:
+CPU is counted in CPU units, like every other resource. Cores are not counted.
+They are only what the work is told to use.
 
-    cores held = units asked x machine's cores / machine's CPU units, rounded up, at least 1
+A machine knows its CPU units and its cores: the CPUs nova-reserve can use on
+it, hyperthreads included, counted by the tool. Work that holds some CPU units
+is told to use a whole number of the machine's cores:
 
-The machine counts CPU in its own cores. Work fits when the cores already held
-plus the cores it would hold are at most the cores the machine has. A machine
-never gives out more cores than it has, and work never gets less compute than
-it asked for.
+    cores to use = units held x machine's cores / machine's CPU units, rounded down, at least 1
 
 With made-up numbers: a machine with 16 ordinary cores measures 16 CPU units,
-so `cpu 4` holds 4 cores there. A machine with 16 stronger cores measures 48
-CPU units and holds 2 cores for the same `cpu 4`.
+so `cpu 4` is told to use 4 cores there. A machine with 16 stronger cores
+measures 48 CPU units, so `cpu 4` is told to use 1 core, and `cpu 12` to use 4.
 
-Where nova-reserve can pin (Linux), it pins the work to the cores it holds.
+Rounding down means the cores handed out never come to more than the machine
+has, except where several small pieces of work each get the minimum of one.
+Those share cores, which is right: `cpu 1` on that stronger machine is a third
+of a core. What work gets is within one core of what it asked for. That is
+the approximation this design accepts.
+
+Where nova-reserve can pin (Linux), it pins the work to that many cores. On
+macOS it cannot, and the number is only what the work's tools are told.
 
 ### Work that cannot be split
 
@@ -253,9 +286,11 @@ Where nova-reserve can pin (Linux), it pins the work to the cores it holds.
 
 More cores do not help work that runs on one thread. It needs one fast core.
 
-A machine has a resource, `fast-core`: how many of its cores clear a fixed
-speed. Work that cannot be split asks for `cpu 1` and `fast-core 1`, so it is
-sent only where a fast core is free. `fast-core` is a resource like any other.
+The benchmark also runs once on a single thread, which gives the speed of the
+machine's best core. A machine whose best core clears a fixed speed has a
+resource, `fast-core`: how many such cores it has. Work that cannot be split
+asks for `fast-core 1`, so it is sent only where a fast core is free.
+`fast-core` is a resource like any other.
 
 ## The check
 
@@ -284,13 +319,15 @@ taking holds. Each is a later step that builds on those three.
 
 ## Not settled
 
-1. **Asking the whole fleet.** Which tool answers, how the hold is kept while
-   a command runs over ssh, and how it is freed if the session that asked
-   dies.
-2. **A CI job that finds its machine full.** GitHub picks the runner for a job,
-   so the job cannot be moved to a machine with room. It waits where it is.
-   How long that wait may be before it breaks the rule that CI finishes in two
-   minutes, and what is done about it, is not chosen.
+1. **Asking the whole fleet.** Which tool answers, and from what: each
+   machine's own report of what it has free, and how fresh that must be.
+2. **CI runners.** Four things are open. GitHub picks the runner for a job, so
+   a job that finds its machine full cannot move; it waits inside the job,
+   against the rule that CI finishes in two minutes. A job is not one command,
+   so what its hold belongs to, and how it is freed if the runner dies, is not
+   designed. Who states how much a runner's jobs hold is not chosen (the
+   runner's configuration is the likely place). And nova-reserve has no
+   Windows build, while the fleet has Windows runners.
 3. **Operating system and architecture as tags.** nova-config already holds
    both for each machine. Whether they become tags automatically, or every tag
    is written by hand, is not chosen.
