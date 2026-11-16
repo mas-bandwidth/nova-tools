@@ -198,6 +198,12 @@ nova_runner_ports_uri: "http://ports.ubuntu.com/ubuntu-ports/"
 # and a run that fails while its VM tier lacks anything.
 nova_runner_vm_kernel: true
 nova_runner_vm_kernel_dir: "{{ ansible_facts['user_dir'] }}/vm-kernels"
+# Debian/Ubuntu: the hosts whose login (the fleet login, as for kvm) joins render, the group a GPU's render node
+# (/dev/dri/renderD*) is open to, so Vulkan finds the GPU and not only lavapipe (debian-gpu.yml). None by default.
+nova_runner_gpu_hosts: []
+# Packages removed where dpkg has them (apt remove, no purge, no autoremove), per OS as nova_runner_packages: one that
+# came on outside the list and must not stay. None by default.
+nova_runner_packages_absent: {}
 # Debian/Ubuntu: TLC's jar (TLA+ tools v1.7.4), root's at this path and readable by every login, pinned by its sha256.
 # A missing one is downloaded from the TLA+ release and checked against the pin before it lands; a jar that differs
 # from the pin is refused, never replaced. An empty sha256 skips it.
