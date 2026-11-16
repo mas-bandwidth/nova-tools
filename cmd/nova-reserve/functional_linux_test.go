@@ -22,12 +22,13 @@ func TestFunctionalRunPinsTheSlotsCPUs(t *testing.T) {
 	bin, dir := build(t), t.TempDir()
 	out, err := exec.Command(bin, "set", "--slots", "2", "--dir", dir).CombinedOutput()
 	require.NoError(t, err, "%s", out)
+	groups := smtGroups(usable)
 	for _, c := range []struct {
 		args []string
 		want []int
 		held string
 	}{
-		{nil, share(usable, 2, 1), "HELD mode=shared slot=1/2 pid="},
+		{nil, slotShare(usable, groups, 2, 1), "HELD mode=shared slot=1/2 pid="},
 		{[]string{"--exclusive"}, usable, "HELD mode=exclusive slot=all pid="},
 	} {
 		cmd := slotCmd(t, bin, dir, "cpus", c.args...)

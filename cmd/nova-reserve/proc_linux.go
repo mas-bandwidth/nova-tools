@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"runtime"
 	"slices"
 	"strconv"
@@ -21,7 +22,10 @@ func sysAttr() *syscall.SysProcAttr {
 	return &syscall.SysProcAttr{Setpgid: true, Pdeathsig: syscall.SIGKILL}
 }
 
-const isolatedPath = "/sys/devices/system/cpu/isolated"
+const (
+	isolatedPath = "/sys/devices/system/cpu/isolated"
+	cpuSysfsDir  = "/sys/devices/system/cpu"
+)
 
 // usableCPUs is the CPUs this process may run on, less those the kernel
 // isolates from the scheduler (isolcpus), which are kept for work placed there
@@ -40,6 +44,25 @@ func usableCPUs() ([]int, error) {
 	return withoutIsolated(allowed, isolatedPath)
 }
 
+func parseCPUList(s string) (map[int]bool, error) {
+	out := map[int]bool{}
+	for _, r := range strings.FieldsFunc(strings.TrimSpace(s), func(c rune) bool { return c == ',' }) {
+		lo, hi, isRange := strings.Cut(r, "-")
+		a, err := strconv.Atoi(lo)
+		b := a
+		if isRange && err == nil {
+			b, err = strconv.Atoi(hi)
+		}
+		if err != nil || a < 0 || b < a {
+			return nil, fmt.Errorf("not a CPU list")
+		}
+		for c := a; c <= b; c++ {
+			out[c] = true
+		}
+	}
+	return out, nil
+}
+
 // withoutIsolated is allowed less the CPUs the file at path lists in the
 // kernel's list form (1-15 or 0,4-7); a missing file lists none.
 func withoutIsolated(allowed []int, path string) ([]int, error) {
@@ -48,26 +71,51 @@ func withoutIsolated(allowed []int, path string) ([]int, error) {
 		return nil, err
 	}
 	isolated := strings.TrimSpace(string(b))
-	gone := map[int]bool{}
-	for _, r := range strings.FieldsFunc(isolated, func(c rune) bool { return c == ',' }) {
-		lo, hi, isRange := strings.Cut(r, "-")
-		a, err := strconv.Atoi(lo)
-		b := a
-		if isRange && err == nil {
-			b, err = strconv.Atoi(hi)
-		}
-		if err != nil {
-			return nil, fmt.Errorf("%s holds %q, not a CPU list", path, isolated)
-		}
-		for c := a; c <= b; c++ {
-			gone[c] = true
-		}
+	gone, err := parseCPUList(isolated)
+	if err != nil {
+		return nil, fmt.Errorf("%s holds %q, not a CPU list", path, isolated)
 	}
 	usable := slices.DeleteFunc(slices.Clone(allowed), func(c int) bool { return gone[c] })
 	if len(usable) == 0 {
 		return nil, fmt.Errorf("every CPU this process may use (%s) is isolated", cpuList(allowed))
 	}
 	return usable, nil
+}
+
+func smtGroups(usable []int) [][]int { return readSMTGroups(usable, cpuSysfsDir) }
+
+// readSMTGroups groups usable CPUs into physical-core sibling sets using
+// <sysfsDir>/cpu<N>/topology/thread_siblings_list.
+func readSMTGroups(usable []int, sysfsDir string) [][]int {
+	allow, seen := map[int]bool{}, map[int]bool{}
+	for _, c := range usable {
+		allow[c] = true
+	}
+	var groups [][]int
+	for _, c := range usable {
+		if seen[c] {
+			continue
+		}
+		var g []int
+		if b, err := os.ReadFile(filepath.Join(sysfsDir, "cpu"+strconv.Itoa(c), "topology", "thread_siblings_list")); err == nil {
+			if m, perr := parseCPUList(string(b)); perr == nil {
+				for cpu := range m {
+					if allow[cpu] && !seen[cpu] {
+						g = append(g, cpu)
+					}
+				}
+			}
+		}
+		if len(g) == 0 {
+			g = []int{c}
+		}
+		slices.Sort(g)
+		for _, cpu := range g {
+			seen[cpu] = true
+		}
+		groups = append(groups, g)
+	}
+	return groups
 }
 
 // pin binds this thread to cpus. Linux affinity is per thread and a child

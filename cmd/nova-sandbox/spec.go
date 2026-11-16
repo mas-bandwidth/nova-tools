@@ -269,7 +269,15 @@ func developerDir(link string) []string {
 // envNameOK is a letter or underscore, then letters, digits and underscores.
 var envNameOK = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`).MatchString
 
-// passedEnv keeps PATH, HOME, LANG, TERM and extra. Never nil: syscall.Exec inherits a nil env.
+var posIntOK = regexp.MustCompile(`^[1-9][0-9]*$`).MatchString
+
+var reserveCountVars = map[string]bool{
+	"NOVA_RESERVE_CPUS": true, "GOMAXPROCS": true, "CARGO_BUILD_JOBS": true,
+	"RAYON_NUM_THREADS": true, "CMAKE_BUILD_PARALLEL_LEVEL": true,
+}
+
+// passedEnv keeps PATH, HOME, LANG, TERM, positive-integer nova-reserve thread
+// counts and extra. Never nil: syscall.Exec inherits a nil env.
 func passedEnv(env, extra []string) []string {
 	keep := map[string]bool{"PATH": true, "HOME": true, "LANG": true, "TERM": true}
 	for _, n := range extra {
@@ -277,7 +285,7 @@ func passedEnv(env, extra []string) []string {
 	}
 	out, seen := []string{}, map[string]bool{}
 	for _, e := range env {
-		if n, _, ok := strings.Cut(e, "="); ok && keep[n] && !seen[n] {
+		if n, v, ok := strings.Cut(e, "="); ok && !seen[n] && (keep[n] || (reserveCountVars[n] && posIntOK(v))) {
 			seen[n], out = true, append(out, e)
 		}
 	}
