@@ -168,9 +168,19 @@ func TestReserveValidation(t *testing.T) {
 	assert.Contains(t, err.String(), "unknown flag --bogus")
 }
 
-func TestReserveR12RefusalWhenNoMachineCanFit(t *testing.T) {
-	t.Parallel()
+func setTestReserveSeam(s reserveSeam) func() {
+	reserveSeamMu.Lock()
+	old := activeReserveSeam
+	activeReserveSeam = s
+	reserveSeamMu.Unlock()
+	return func() {
+		reserveSeamMu.Lock()
+		activeReserveSeam = old
+		reserveSeamMu.Unlock()
+	}
+}
 
+func TestReserveR12RefusalWhenNoMachineCanFit(t *testing.T) {
 	cpu4 := 4
 	mem8 := 8
 	cores4 := 4
@@ -192,9 +202,7 @@ func TestReserveR12RefusalWhenNoMachineCanFit(t *testing.T) {
 		},
 	}
 
-	oldSeam := activeReserveSeam
-	defer func() { activeReserveSeam = oldSeam }()
-	activeReserveSeam = fakeSeam
+	defer setTestReserveSeam(fakeSeam)()
 
 	var out, err bytes.Buffer
 	code := runReserve([]string{"--needs", "cpu 16, memory 32"}, &out, &err)
@@ -204,8 +212,6 @@ func TestReserveR12RefusalWhenNoMachineCanFit(t *testing.T) {
 }
 
 func TestReserveAcquiresAndPrints(t *testing.T) {
-	t.Parallel()
-
 	cpu8 := 8
 	mem16 := 16
 	cores8 := 8
@@ -238,9 +244,7 @@ func TestReserveAcquiresAndPrints(t *testing.T) {
 		},
 	}
 
-	oldSeam := activeReserveSeam
-	defer func() { activeReserveSeam = oldSeam }()
-	activeReserveSeam = fakeSeam
+	defer setTestReserveSeam(fakeSeam)()
 
 	// Text output with command
 	var out, err bytes.Buffer
@@ -253,9 +257,11 @@ func TestReserveAcquiresAndPrints(t *testing.T) {
 	out.Reset()
 	err.Reset()
 	sess2 := &fakeHoldSession{line: "HELD cpu=4 cores=4 slot0"}
-	activeReserveSeam.probeHold = func(ctx context.Context, m fleetMachine, holdArgs []string) (holdSession, error) {
+	fakeSeam.probeHold = func(ctx context.Context, m fleetMachine, holdArgs []string) (holdSession, error) {
 		return sess2, nil
 	}
+	defer setTestReserveSeam(fakeSeam)()
+
 	code = runReserve([]string{"--needs", "cpu 4, memory 8", "--json", "--", "echo", "ok"}, &out, &err)
 	assert.Equal(t, 0, code)
 	var j map[string]any
@@ -267,8 +273,6 @@ func TestReserveAcquiresAndPrints(t *testing.T) {
 }
 
 func TestReserveClosesLosingCandidates(t *testing.T) {
-	t.Parallel()
-
 	cpu8 := 8
 	mem16 := 16
 	cores8 := 8
@@ -293,9 +297,7 @@ func TestReserveClosesLosingCandidates(t *testing.T) {
 		},
 	}
 
-	oldSeam := activeReserveSeam
-	defer func() { activeReserveSeam = oldSeam }()
-	activeReserveSeam = fakeSeam
+	defer setTestReserveSeam(fakeSeam)()
 
 	var out, err bytes.Buffer
 	code := runReserve([]string{"--needs", "cpu 2, memory 4", "--", "true"}, &out, &err)
@@ -305,8 +307,6 @@ func TestReserveClosesLosingCandidates(t *testing.T) {
 }
 
 func TestResourcesQuery(t *testing.T) {
-	t.Parallel()
-
 	cpu16 := 16
 	mem64 := 64
 	cores16 := 16
@@ -335,9 +335,7 @@ func TestResourcesQuery(t *testing.T) {
 		},
 	}
 
-	oldSeam := activeReserveSeam
-	defer func() { activeReserveSeam = oldSeam }()
-	activeReserveSeam = fakeSeam
+	defer setTestReserveSeam(fakeSeam)()
 
 	var out, err bytes.Buffer
 	code := runResources([]string{}, &out, &err)

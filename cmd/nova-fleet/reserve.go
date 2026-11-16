@@ -316,11 +316,33 @@ func defaultLoadMachines() ([]fleetMachine, error) {
 	return res, nil
 }
 
-var activeReserveSeam = reserveSeam{
-	configMachines: defaultLoadMachines,
-	probeHold:      defaultProbeHold,
-	runRemote:      defaultRunRemote,
-	queryStatus:    defaultQueryStatus,
+var (
+	reserveSeamMu     sync.RWMutex
+	activeReserveSeam = reserveSeam{
+		configMachines: defaultLoadMachines,
+		probeHold:      defaultProbeHold,
+		runRemote:      defaultRunRemote,
+		queryStatus:    defaultQueryStatus,
+	}
+)
+
+func getReserveSeam() reserveSeam {
+	reserveSeamMu.RLock()
+	defer reserveSeamMu.RUnlock()
+	s := activeReserveSeam
+	if s.configMachines == nil {
+		s.configMachines = defaultLoadMachines
+	}
+	if s.probeHold == nil {
+		s.probeHold = defaultProbeHold
+	}
+	if s.runRemote == nil {
+		s.runRemote = defaultRunRemote
+	}
+	if s.queryStatus == nil {
+		s.queryStatus = defaultQueryStatus
+	}
+	return s
 }
 
 var heldCorePattern = regexp.MustCompile(`cores=(\d+)`)
@@ -429,7 +451,8 @@ func runReserve(args []string, stdout, stderr io.Writer) int {
 		waitDur = d
 	}
 
-	machines, err := activeReserveSeam.configMachines()
+	seam := getReserveSeam()
+	machines, err := seam.configMachines()
 	if err != nil {
 		fmt.Fprintf(stderr, "nova-fleet reserve: %v\n", err)
 		return 2
@@ -502,7 +525,7 @@ func runReserve(args []string, stdout, stderr io.Writer) int {
 
 		for _, m := range cands {
 			go func(mach fleetMachine) {
-				sess, err := activeReserveSeam.probeHold(pCtx, mach, args)
+				sess, err := seam.probeHold(pCtx, mach, args)
 				if err != nil {
 					resCh <- probeResult{machine: mach, err: err}
 					return
@@ -597,7 +620,7 @@ func runReserve(args []string, stdout, stderr io.Writer) int {
 	}
 
 	if len(remoteCmd) > 0 {
-		return activeReserveSeam.runRemote(winMachine, remoteCmd, os.Stdin, stdout, stderr)
+		return seam.runRemote(winMachine, remoteCmd, os.Stdin, stdout, stderr)
 	}
 
 	sigCh := make(chan os.Signal, 1)
@@ -649,7 +672,8 @@ func runResources(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 
-	machines, err := activeReserveSeam.configMachines()
+	seam := getReserveSeam()
+	machines, err := seam.configMachines()
 	if err != nil {
 		fmt.Fprintf(stderr, "nova-fleet resources: %v\n", err)
 		return 2
@@ -682,7 +706,7 @@ func runResources(args []string, stdout, stderr io.Writer) int {
 		wg.Add(1)
 		go func(idx int, mach fleetMachine) {
 			defer wg.Done()
-			raw, err := activeReserveSeam.queryStatus(ctx, mach)
+			raw, err := seam.queryStatus(ctx, mach)
 			mu.Lock()
 			defer mu.Unlock()
 			if err != nil {
