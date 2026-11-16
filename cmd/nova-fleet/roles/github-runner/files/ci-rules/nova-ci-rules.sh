@@ -151,6 +151,39 @@ disarm() {
 		case $(ps -o command= -p "$w" 2>/dev/null) in *nova-ci-rules.sh\ watchdog*) kill "$w" 2>/dev/null ;; esac
 		rm -f "$state/watchdog.pid"
 	fi
+	if [ -r "$state/hold.pid" ]; then
+		h=$(cat "$state/hold.pid")
+		case $(ps -o command= -p "$h" 2>/dev/null) in *nova-ci-rules.sh\ ci-hold*|*nova-reserve\ hold*) kill "$h" 2>/dev/null ;; esac
+		rm -f "$state/hold.pid"
+	fi
+}
+
+fail_started() {
+	why=$1
+	echo "::error::CI rule: $why"
+	worker=
+	for i in 1 2 3; do
+		worker=$(procs comm 2>/dev/null | ancestor $$ Runner.Worker) && [ -n "$worker" ] && break
+		worker=
+	done
+	if [ -n "$worker" ]; then
+		kill -9 "$worker" 2>/dev/null || true
+	else
+		echo "::error::CI rule: no Runner.Worker above this hook was found to end, so the job's always() steps may still run; the fleet admin looks"
+	fi
+	exit 1
+}
+
+ci_hold() {
+	worker=$1
+	needs=${NOVA_CI_NEEDS:-cpu 4, memory 8}
+	reserve=${NOVA_CI_RESERVE:-nova-reserve}
+	unset RUNNER_TRACKING_ID
+	(
+		while kill -0 "$worker" 2>/dev/null; do
+			sleep 1
+		done
+	) | "$reserve" hold --holder ci --label ci --needs "$needs"
 }
 
 started() {
@@ -160,23 +193,52 @@ started() {
 	event=${GITHUB_EVENT_NAME:-} ref=${GITHUB_REF:-}
 	if [ "$event" = push ] && ! push_ok "$ref"; then
 		set -f
-		echo "::error::CI rule: push CI runs only on $(echo $branches | sed 's/ /, /g') and tags, not $ref; set on.push.branches to [$(echo $branches | sed "s/[^ ]*/'&'/g; s/ /, /g")] and let this branch get CI through its pull request"
-		exit 1
+		fail_started "push CI runs only on $(echo $branches | sed 's/ /, /g') and tags, not $ref; set on.push.branches to [$(echo $branches | sed "s/[^ ]*/'&'/g; s/ /, /g")] and let this branch get CI through its pull request"
 	fi
 	if command -v pmset >/dev/null 2>&1 && pmset -g batt 2>/dev/null | on_battery; then
-		echo "::error::CI rule: $(hostname -s) is on battery power (pmset -g batt), so it may sleep with this job in flight; the job is refused before it starts; rerun it and another runner takes it"
+		fail_started "$(hostname -s) is on battery power (pmset -g batt), so it may sleep with this job in flight; the job is refused before it starts; rerun it and another runner takes it"
+	fi
+	if ! chain "${NOVA_CI_CHAIN_JOB_STARTED:-}"; then
+		worker=$(procs comm 2>/dev/null | ancestor $$ Runner.Worker) || worker=
+		[ -n "$worker" ] && kill -9 "$worker" 2>/dev/null || true
 		exit 1
 	fi
-	chain "${NOVA_CI_CHAIN_JOB_STARTED:-}" || exit $?
 	# measuring never fails or delays a job: any error inside is dropped
 	(measure_start) >/dev/null 2>&1 || true
+
+	reserve=${NOVA_CI_RESERVE:-nova-reserve}
+	if command -v "$reserve" >/dev/null 2>&1; then
+		worker=$(procs comm 2>/dev/null | ancestor $$ Runner.Worker) || worker=
+		if [ -n "$worker" ]; then
+			mkdir -p "$state"
+			rm -f "$state/hold.log" "$state/hold.pid"
+			nohup sh "$here/nova-ci-rules.sh" ci-hold "$worker" </dev/null >>"$state/hold.log" 2>&1 &
+			hold_pid=$!
+			echo "$hold_pid" >"$state/hold.pid"
+			held=0
+			for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+				if [ -r "$state/hold.log" ] && grep -q '^HELD ' "$state/hold.log" 2>/dev/null; then
+					held=1
+					break
+				fi
+				if ! kill -0 "$hold_pid" 2>/dev/null; then
+					break
+				fi
+				sleep 0.1 2>/dev/null || sleep 1
+			done
+			if [ "$held" -ne 1 ]; then
+				err=$(cat "$state/hold.log" 2>/dev/null || echo "hold process exited")
+				fail_started "failed to acquire CI hold: $err"
+			fi
+		fi
+	fi
+
 	if ! limited "$event"; then
 		echo "CI rule: a $event job has no time limit"
 		exit 0
 	fi
 	worker=$(procs comm | ancestor $$ Runner.Worker) || {
-		echo "::error::CI rule: no Runner.Worker above this hook, so the $(limit_text "$limit") limit cannot be enforced; tell the fleet admin"
-		exit 1
+		fail_started "no Runner.Worker above this hook, so the $(limit_text "$limit") limit cannot be enforced; tell the fleet admin"
 	}
 	mkdir -p "$state"
 	deadline=$(($(date +%s) + limit))
@@ -274,7 +336,13 @@ measure_end() {
 	fi
 	if [ "$secs" -gt 100 ]; then
 		load=$(cut -d' ' -f1 /proc/loadavg 2>/dev/null || sysctl -n vm.loadavg 2>/dev/null | awk '{ print $2 }')
-		holders=$(${NOVA_CI_RESERVE:-nova-reserve} status 2>/dev/null | sed -n 's/^slot[0-9]* held .*why=\([^ ]*\).*$/\1/p')
+		st=$(${NOVA_CI_RESERVE:-nova-reserve} status 2>/dev/null || true)
+		if echo "$st" | grep -q '^[[:space:]]*{'; then
+			holders=$(echo "$st" | sed -n 's/.*"sprint_consumers":[[:space:]]*\[\([^]]*\)\].*/\1/p' | tr -d '"' | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -v '^$')
+			[ -z "$holders" ] && holders=$(echo "$st" | sed -n 's/.*"why":[[:space:]]*"\([^"]*\)".*/\1/p')
+		else
+			holders=$(echo "$st" | sed -n 's/^.*held .*why=\([^ ]*\).*$/\1/p')
+		fi
 		n=$(printf '%s' "$holders" | grep -c . || true)
 		line="JOB-LOAD $id load1=${load:-?} holders=$n why=$(printf '%s' "$holders" | tr '\n' ',' | sed 's/,$//')"
 		echo "$line"
@@ -518,6 +586,7 @@ case $cmd in
 started) started ;;
 completed) completed ;;
 watchdog) watchdog "$@" ;;
+ci-hold) ci_hold "$@" ;;
 apply) apply "$@" ;;
 push-ok) push_ok "$1" ;;
 limited) limited "$1" ;;

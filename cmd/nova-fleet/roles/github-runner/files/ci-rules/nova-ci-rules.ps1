@@ -135,6 +135,23 @@ function Invoke-Disarm {
         }
         Remove-Item -Force $pidFile
     }
+    $holdPidFile = Join-Path $state 'ci-hold.pid'
+    if (Test-Path $holdPidFile) {
+        $h = [long](Get-Content -Raw $holdPidFile).Trim()
+        Stop-Process -Id $h -Force -ErrorAction SilentlyContinue
+        Remove-Item -Force $holdPidFile
+    }
+}
+
+function Invoke-CiHold([long]$worker) {
+    $needs = if ($env:NOVA_CI_NEEDS) { $env:NOVA_CI_NEEDS } else { 'cpu 4, memory 8' }
+    $proc = Start-Process -FilePath 'wsl.exe' -ArgumentList @('nova-reserve', 'hold', '--holder', 'ci', '--label', 'ci', '--needs', $needs) -PassThru -WindowStyle Hidden -NoNewWindow
+    while ((Get-Process -Id $worker -ErrorAction SilentlyContinue) -and -not $proc.HasExited) {
+        Start-Sleep -Seconds 1
+    }
+    if (-not $proc.HasExited) {
+        Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+    }
 }
 
 # Add-AdminApi: NovaCiAdmin, an administrator runner's rules on the job (the tests compile it on its own, with fake inputs).
@@ -235,6 +252,27 @@ function Invoke-Started {
     }
     $rc = Invoke-Chain "$env:NOVA_CI_CHAIN_JOB_STARTED"
     if ($rc) { exit $rc }
+    # On WSL2 hybrid hosts, route CI hold acquisition through wsl.exe ... nova-reserve hold --holder ci
+    if (Get-Command 'wsl.exe' -ErrorAction SilentlyContinue) {
+        $wslHasReserve = $false
+        try {
+            $testOut = & wsl.exe sh -c 'command -v nova-reserve' 2>$null
+            if ($LASTEXITCODE -eq 0 -and $testOut) { $wslHasReserve = $true }
+        } catch { }
+        if ($wslHasReserve) {
+            $wWorker = $null
+            for ($i = 0; $i -lt 3 -and -not $wWorker; $i++) {
+                try { $wWorker = Find-Ancestor $PID 'Runner.Worker' (Get-Rows 'name') } catch { $wWorker = $null }
+            }
+            if ($wWorker) {
+                New-Item -ItemType Directory -Force -Path $state | Out-Null
+                $shell = (Get-Process -Id $PID).Path
+                $holdProc = Start-Process -FilePath $shell -WindowStyle Hidden -PassThru -ArgumentList @(
+                    '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $here 'nova-ci-rules.ps1'), 'ci-hold', $wWorker)
+                Set-Content -Path (Join-Path $state 'ci-hold.pid') -Value $holdProc.Id
+            }
+        }
+    }
     if (-not (Test-Limited $event)) { "CI rule: a $event job has no time limit"; exit 0 }
     $worker = Find-Ancestor $PID 'Runner.Worker' (Get-Rows 'name')
     if (-not $worker) {
@@ -339,6 +377,7 @@ switch -CaseSensitive ($verb) {
     'started' { Invoke-Started }
     'completed' { Invoke-Completed }
     'watchdog' { Invoke-Watchdog ([long]$rest[0]) ([long]$rest[1]) }
+    'ci-hold' { Invoke-CiHold ([long]$rest[0]) }
     'apply' { Invoke-Apply ([int]$rest[0]) $rest[1] @($rest | Select-Object -Skip 2) }
     'push-ok' { if (Test-PushOk $rest[0]) { exit 0 } exit 1 }
     'limited' { if (Test-Limited $rest[0]) { exit 0 } exit 1 }

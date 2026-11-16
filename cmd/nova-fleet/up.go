@@ -743,6 +743,50 @@ func (u *upRun) steps() int {
 	}
 	mark("tools", u.machines...)
 	u.say("UP TOOLS %s %s", u.would("INSTALL"), u.tools)
+
+	// Measure resources and sync capacity to nova-reserve for bench/runner machines
+	for _, m := range u.machines {
+		if m.self || m.row == nil {
+			continue
+		}
+		roles, _ := m.row["roles"].(string)
+		isWorker := slices.Contains(strings.Split(roles, ","), "bench") || slices.Contains(strings.Split(roles, ","), "runner")
+		if !isWorker {
+			continue
+		}
+		if u.check {
+			u.say("UP MEASURE %s WOULD-MEASURE (check: nothing changed)", m.name)
+			continue
+		}
+		sshCmd := []string{"-o", "BatchMode=yes", "-o", "ConnectTimeout=10", m.user + "@" + m.address, "sh", "-c", "PATH=$HOME/.local/bin:/opt/homebrew/bin:$PATH nova-reserve measure --force --json"}
+		out, _, c := outCmd("ssh", sshCmd, os.Environ())
+		if c == 0 && strings.HasPrefix(strings.TrimSpace(out), "{") {
+			var meas struct {
+				CPU    int `json:"cpu"`
+				Memory int `json:"memory"`
+				Cores  int `json:"cores"`
+			}
+			if err := json.Unmarshal([]byte(out), &meas); err == nil && meas.CPU > 0 && meas.Memory > 0 {
+				m.row["cpu_units"] = float64(meas.CPU)
+				m.row["memory_gb"] = float64(meas.Memory)
+				setArgs := []string{"machine", "set", m.name, "--cpu-units", strconv.Itoa(meas.CPU), "--memory-gb", strconv.Itoa(meas.Memory), "--actor", u.seat, "--reason", "nova-fleet up measure"}
+				if meas.Cores > 0 {
+					setArgs = append(setArgs, "--cores", strconv.Itoa(meas.Cores))
+				}
+				outCmd(u.bin["nova-config"], setArgs, pg)
+				reserveArgs := fmt.Sprintf("PATH=$HOME/.local/bin:/opt/homebrew/bin:$PATH nova-reserve set --cpu %d --memory %d", meas.CPU, meas.Memory)
+				if meas.Cores > 0 {
+					reserveArgs += fmt.Sprintf(" --cores %d", meas.Cores)
+				}
+				if tags, ok := m.row["tags"].(string); ok && tags != "" {
+					reserveArgs += fmt.Sprintf(" --tags %s", tags)
+				}
+				outCmd("ssh", []string{"-o", "BatchMode=yes", m.user + "@" + m.address, "sh", "-c", reserveArgs}, os.Environ())
+				u.say("UP MEASURE %s cpu=%d memory=%d", m.name, meas.CPU, meas.Memory)
+			}
+		}
+	}
+
 	if c := u.play("services", false, pg, limit...); c != 0 {
 		return fail("services", c)
 	}
@@ -756,10 +800,46 @@ func (u *upRun) steps() int {
 			return fail("runners", 1)
 		} else if len(on) == 0 {
 			wouldRun("RUNNERS", "once the runner role is on the rows")
-		} else if c := u.play("github-runners", false, pg, "-e", "github_runner_url="+u.runners, "-e", "github_runner_scope="+runnerScope(u.runners),
-			"-e", "runner_count="+u.runnerCount, "-l", strings.Join(on, ",")); c != 0 {
-			return fail("runners", c)
 		} else {
+			// R39a check: verify runner needs fit inside machine cpu_units and memory_gb
+			for _, mName := range on {
+				var mach *machine
+				for _, m := range u.machines {
+					if m.name == mName {
+						mach = m
+						break
+					}
+				}
+				if mach == nil || mach.row == nil {
+					continue
+				}
+				rCount := 1
+				if u.runnerCount == "cores" {
+					cores := 4
+					if cVal, ok := mach.row["cores"].(float64); ok && cVal > 0 {
+						cores = int(cVal)
+					}
+					rCount = max(1, cores/4)
+				} else if n, err := strconv.Atoi(u.runnerCount); err == nil && n > 0 {
+					rCount = n
+				}
+				if cpuVal, ok := mach.row["cpu_units"].(float64); ok && int(cpuVal) > 0 {
+					if rCount*4 > int(cpuVal) {
+						fmt.Fprintf(u.stderr, "nova-fleet up: R39a configuration error on %s: %d runners need cpu %d, which exceeds machine capacity (cpu_units=%d); runners must fit inside machine resources\n", mach.name, rCount, rCount*4, int(cpuVal))
+						return fail("runners", 1)
+					}
+				}
+				if memVal, ok := mach.row["memory_gb"].(float64); ok && int(memVal) > 0 {
+					if rCount*8 > int(memVal) {
+						fmt.Fprintf(u.stderr, "nova-fleet up: R39a configuration error on %s: %d runners need memory %d GB, which exceeds machine capacity (memory_gb=%d); runners must fit inside machine resources\n", mach.name, rCount, rCount*8, int(memVal))
+						return fail("runners", 1)
+					}
+				}
+			}
+			if c := u.play("github-runners", false, pg, "-e", "github_runner_url="+u.runners, "-e", "github_runner_scope="+runnerScope(u.runners),
+				"-e", "runner_count="+u.runnerCount, "-l", strings.Join(on, ",")); c != 0 {
+				return fail("runners", c)
+			}
 			for _, m := range u.machines {
 				pass[m.name] = append(pass[m.name], map[bool][]string{true: {"runners"}}[slices.Contains(on, m.name)]...)
 			}

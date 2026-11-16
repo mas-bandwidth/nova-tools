@@ -199,6 +199,27 @@ marks a box kept beyond its `return_by`. `--json` prints the same as one object,
 {...}}`. A record that cannot be read is one line naming nova-config's own error; a nova-config on PATH older than the
 rented rows has no `rented` verb, and its refusal is passed on, never read as a fleet with none rented.
 
+## Atomic Fleet Reservation
+
+`nova-fleet reserve` requests an atomic reservation across eligible fleet machines, locking the hold on the remote bench before SSH.
+It filters machines that have the `bench` role and satisfy all required tags and capacities (`R12`).
+Candidates are probed so the first machine that atomically locks the hold (`HELD`) wins; all losing SSH attempts are closed immediately.
+If all eligible machines are full, it waits across candidates up to `--wait`.
+
+```sh
+nova-fleet reserve --needs "cpu 4, memory 8"
+nova-fleet reserve --needs "cpu 4, memory 8, linux, amd64" -- ls -la
+```
+
+## Fleet Resources
+
+`nova-fleet resources` queries the resource status across fleet machines in parallel (`R21`), reading the machines from `nova-config` and querying each bench's status over SSH.
+
+```sh
+nova-fleet resources
+nova-fleet resources --json
+```
+
 ## The plays
 
 | Play | Purpose | Needs |

@@ -66,7 +66,7 @@
           -DLIBCXX_INCLUDE_BENCHMARKS=OFF -DLIBCXX_INCLUDE_TESTS=OFF -DLIBCXXABI_INCLUDE_TESTS=OFF \
           -DCMAKE_INSTALL_DEFAULT_DIRECTORY_PERMISSIONS="OWNER_READ;OWNER_WRITE;OWNER_EXECUTE;GROUP_READ;GROUP_EXECUTE;WORLD_READ;WORLD_EXECUTE" >/dev/null
         {% if rp_msan_reserve.stat.exists %}
-        {{ nova_bin_dir | quote }}/nova-reserve run --why msan-libcxx -- bash -c 'cmake --build build --parallel "$(nproc)"' >/dev/null
+        {{ nova_bin_dir | quote }}/nova-reserve run --exclusive --why msan-libcxx -- bash -c 'cmake --build build --parallel "$(nproc)"' >/dev/null
         {% else %}
         nice -n 10 cmake --build build --parallel "$(( $(nproc) / 2 > 0 ? $(nproc) / 2 : 1 ))" >/dev/null
         {% endif %}
