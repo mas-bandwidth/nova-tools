@@ -51,6 +51,24 @@
   ansible.builtin.set_fact:
     github_runner_want: "{{ range(1, (github_runner_count | int if github_runner_state == 'present' else 0) + 1) | list }}"
 
+- name: the summed runner needs for R39a check
+  ansible.builtin.set_fact:
+    github_runner_total_count: >-
+      {{ (github_runner_record_want | default([])) | length if (github_runner_record_want | default([]) | length > 0)
+         else (github_runner_count | int) }}
+
+- name: R39a verify runner scope needs fit inside machine cpu_units and memory_gb
+  ansible.builtin.assert:
+    quiet: true
+    that:
+      - (cpu_units is not defined) or (cpu_units is none) or (cpu_units | int <= 0) or ((github_runner_total_count | int) * 4 <= (cpu_units | int))
+      - (memory_gb is not defined) or (memory_gb is none) or (memory_gb | int <= 0) or ((github_runner_total_count | int) * 8 <= (memory_gb | int))
+    fail_msg: >-
+      github-runner: R39a configuration error on {{ inventory_hostname }}: {{ github_runner_total_count }} runners need
+      cpu {{ (github_runner_total_count | int) * 4 }}, memory {{ (github_runner_total_count | int) * 8 }} GB, which exceeds
+      machine capacity (cpu_units={{ cpu_units | default('?') }}, memory_gb={{ memory_gb | default('?') }});
+      summed runner scope needs must fit inside machine resources
+
 - name: this platform is one the runner ships
   ansible.builtin.assert:
     quiet: true

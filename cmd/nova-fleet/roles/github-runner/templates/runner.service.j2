@@ -30,6 +30,9 @@ Environment=RUNNER_MANUALLY_TRAP_SIG=1
 # one budget that grows with the runner count; systemd's default (8 MiB) refuses that. Only a limit: it lets the login
 # lock its own memory and gives it no privilege.
 LimitMEMLOCK=infinity
+CPUWeight=10000
+IOWeight=10000
+Nice=-10
 ExecStart={{ github_runner_dir }}/run.sh
 Restart=always
 RestartSec=10

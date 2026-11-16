@@ -129,7 +129,7 @@ func TestRunnerPackagesMSanLibcxxIsPinnedAndBuiltUnderReserve(t *testing.T) {
 	}
 	text := taskText(t, top[block])
 	assert.Contains(t, text, `checksum: sha256:{{ nova_runner_msan_libcxx_sha256[rp_msan_version] }}`)
-	assert.Contains(t, text, "nova-reserve run --why msan-libcxx --")
+	assert.Contains(t, text, "nova-reserve run --exclusive --why msan-libcxx --")
 	assert.Contains(t, text, "-DLLVM_USE_SANITIZER=MemoryWithOrigins")
 	for _, task := range mapsOf(t, top[block]["block"]) {
 		if task["become"] == true {

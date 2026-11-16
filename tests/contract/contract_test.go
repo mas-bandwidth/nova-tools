@@ -52,8 +52,8 @@ var toolSpecs = []toolSpec{
 		{"service", "list"}, {"service", "show"}, {"service", "add"}, {"service", "set"}, {"service", "remove"},
 		{"history"}, {"inventory"}, {"resources"}, {"schema"}},
 		missing: []missingCase{{[]string{"machine", "list"}, []string{"--pg"}}}},
-	{dir: "fleet", verbs: [][]string{{"plays"}, {"show"}, {"check"}, {"up"}, {"rented"}, {"help"}},
-		missing: []missingCase{{[]string{"show"}, []string{"play or file name"}}, {[]string{"up"}, []string{"<name>=<address>", "--tools"}}}},
+	{dir: "fleet", verbs: [][]string{{"plays"}, {"show"}, {"check"}, {"up"}, {"rented"}, {"reserve"}, {"resources"}, {"help"}},
+		missing: []missingCase{{[]string{"show"}, []string{"play or file name"}}, {[]string{"up"}, []string{"<name>=<address>", "--tools"}}, {[]string{"reserve"}, []string{"--needs"}}}},
 	{dir: "reserve", verbs: [][]string{{"hold"}, {"measure"}, {"set"}, {"status"}}, extra: []int{126, 127},
 		missing: []missingCase{
 			{[]string{"--nowait"}, []string{"command"}},
