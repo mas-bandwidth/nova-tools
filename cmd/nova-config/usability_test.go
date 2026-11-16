@@ -33,7 +33,7 @@ func TestVerbHelp(t *testing.T) {
 		}
 	}
 	_, out, _ := h.run(t, "machine", "add", "--help")
-	assert.Contains(t, out, "machine fields: name, address, public, user, os, arch, cores, roles, runners, runner_scopes, windows_runners, windows_admin_runners, runner_env, note")
+	assert.Contains(t, out, "machine fields: name, address, public, user, os, arch, cores, roles, runners, runner_scopes, windows_runners, windows_admin_runners, runner_env, cpu_units, memory_gb, tags, resources, note")
 	assert.Contains(t, out, "--user <text>")
 	for _, p := range paths[6:] { // the banner names each verb path
 		assert.Contains(t, usage, "nova-config "+strings.Join(p, " "))
@@ -57,7 +57,7 @@ func TestUsageErrorsAreOneLine(t *testing.T) {
 		assert.Contains(t, errs, "; run: nova-config", "%v", args)
 	}
 	_, _, errs := h.run(t, "nonsense")
-	assert.Contains(t, errs, "machine, service, friend, rented, history, inventory, schema, help; run: nova-config help")
+	assert.Contains(t, errs, "machine, service, friend, rented, history, inventory, resources, schema, help; run: nova-config help")
 }
 
 // What is printed can be pasted back: argv is JSON, = is never escaped, free text is a JSON string.

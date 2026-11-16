@@ -27,12 +27,20 @@ import (
 // see canonicalScopes) or admins (Windows runners run as a local administrator, see canonicalAdmins).
 type field struct {
 	name, typ string
+	flag      string // flag name when different from name (e.g. "cpu-units" for "cpu_units")
 	required  bool
 	def       string
 	null      bool // an int that may be unset: the value "default" unsets it
 	cut       bool // cut to 60 characters in list lines
 	free      bool // free text: always printed as a JSON string
 	word      *regexp.Regexp
+}
+
+func (f field) flagName() string {
+	if f.flag != "" {
+		return f.flag
+	}
+	return f.name
 }
 
 type kind struct {
@@ -72,6 +80,10 @@ var kinds = map[string]*kind{
 			{name: "windows_runners", typ: "scopes"},
 			{name: "windows_admin_runners", typ: "admins"},
 			{name: "runner_env", typ: "env", def: "{}"},
+			{name: "cpu_units", flag: "cpu-units", typ: "unit", null: true},
+			{name: "memory_gb", flag: "memory-gb", typ: "unit", null: true},
+			{name: "tags", typ: "tags"},
+			{name: "resources", typ: "resources", def: "{}"},
 			{name: "note", typ: "text", cut: true, free: true},
 		}},
 	"service": {name: "service", table: "services", check: checkService,
@@ -137,6 +149,19 @@ func (f field) canonical(raw string) (string, error) {
 			return "", fmt.Errorf("--%s %q: want a non-negative integer", f.name, raw)
 		}
 		return strconv.FormatInt(n, 10), nil
+	case "unit":
+		if f.null && (raw == "default" || raw == "") {
+			return "", nil
+		}
+		n, err := strconv.ParseInt(raw, 10, 32)
+		if err != nil || n < 1 {
+			return "", fmt.Errorf("--%s %q: want an integer >= 1", f.flagName(), raw)
+		}
+		return strconv.FormatInt(n, 10), nil
+	case "tags":
+		return canonicalTags(f, raw)
+	case "resources":
+		return canonicalResources(f, raw)
 	case "bool":
 		b, err := strconv.ParseBool(raw)
 		if err != nil {
@@ -202,6 +227,69 @@ func (f field) canonical(raw string) (string, error) {
 		return "", fmt.Errorf("--%s: want a value", f.name)
 	}
 	return raw, nil
+}
+
+// canonicalTags is a tags value as it is stored: unique, sorted, comma-separated lower-case names.
+func canonicalTags(f field, raw string) (string, error) {
+	if raw == "" || raw == "default" {
+		return "", nil
+	}
+	words := strings.FieldsFunc(raw, func(r rune) bool { return r == ',' || unicode.IsSpace(r) })
+	slices.Sort(words)
+	words = slices.Compact(words)
+	for _, w := range words {
+		if !namePattern.MatchString(w) {
+			return "", fmt.Errorf("--tags %q: want lower-case letters, digits and dashes", w)
+		}
+		if w == "cpu" || w == "memory" {
+			fl := map[string]string{"cpu": "cpu-units", "memory": "memory-gb"}[w]
+			return "", fmt.Errorf("--tags: %s is not a tag; use --%s", w, fl)
+		}
+	}
+	return strings.Join(words, ","), nil
+}
+
+// canonicalResources is a resources value as it is stored: JSON object of name to integer >= 1.
+func canonicalResources(f field, raw string) (string, error) {
+	if raw == "" || raw == "{}" || raw == "default" {
+		return "{}", nil
+	}
+	res := map[string]int{}
+	if strings.HasPrefix(raw, "{") {
+		dec := json.NewDecoder(strings.NewReader(raw))
+		if err := dec.Decode(&res); err != nil || dec.More() {
+			return "", fmt.Errorf(`--resources: want a JSON object or <name>=<amount> pairs: '{"gpu":1}' or gpu=1`)
+		}
+	} else {
+		for _, pair := range strings.FieldsFunc(raw, func(r rune) bool { return r == ',' || unicode.IsSpace(r) }) {
+			k, v, ok := strings.Cut(pair, "=")
+			if !ok {
+				return "", fmt.Errorf("--resources %q: want <name>=<amount>, such as gpu=1", pair)
+			}
+			k = strings.TrimSpace(k)
+			n, err := strconv.Atoi(strings.TrimSpace(v))
+			if err != nil || n < 1 {
+				return "", fmt.Errorf("--resources %s: want an integer >= 1", pair)
+			}
+			if _, dup := res[k]; dup {
+				return "", fmt.Errorf("--resources %s is named twice", k)
+			}
+			res[k] = n
+		}
+	}
+	for k, n := range res {
+		if !namePattern.MatchString(k) {
+			return "", fmt.Errorf("--resources name %q: want lower-case letters, digits and dashes", k)
+		}
+		if n < 1 {
+			return "", fmt.Errorf("--resources %s=%d: want an integer >= 1", k, n)
+		}
+		if k == "cpu" || k == "memory" {
+			fl := map[string]string{"cpu": "cpu-units", "memory": "memory-gb"}[k]
+			return "", fmt.Errorf("--resources: %s is not a custom resource; use --%s", k, fl)
+		}
+	}
+	return marshal(res), nil
 }
 
 // canonicalEnv is an env object as it is stored: keys sorted, one line; the
@@ -535,25 +623,61 @@ func checkService(r Row) error {
 }
 
 // checkMachine refuses an admin runner whose account is the machine's login, or whose label another runner of the
-// machine carries (adminClashes). A field that does not parse is left to its own refusal.
+// machine carries (adminClashes), conflicting tags, or a name that is both a tag and a resource.
 func checkMachine(r Row) error {
-	admins, err := parseAdmins(r.F["windows_admin_runners"])
-	if err != nil {
-		return nil
-	}
 	var p []string
-	for _, a := range admins {
-		if strings.EqualFold(a.Account, r.F["user"]) {
-			p = append(p, fmt.Sprintf("machine %s: admin runner account %s is the machine's user; give the runner its own account", r.Name, a.Account))
+	if admins, err := parseAdmins(r.F["windows_admin_runners"]); err == nil {
+		for _, a := range admins {
+			if strings.EqualFold(a.Account, r.F["user"]) {
+				p = append(p, fmt.Sprintf("machine %s: admin runner account %s is the machine's user; give the runner its own account", r.Name, a.Account))
+			}
+		}
+		for _, c := range adminClashes([]Row{r}, "") {
+			p = append(p, c.msg)
 		}
 	}
-	for _, c := range adminClashes([]Row{r}, "") {
-		p = append(p, c.msg)
+	mOS := r.F["os"]
+	if mOS == "darwin" {
+		mOS = "mac"
+	}
+	mArch := r.F["arch"]
+	osWords := map[string]string{"linux": "linux", "mac": "mac", "darwin": "mac", "windows": "windows"}
+	archWords := map[string]bool{"amd64": true, "arm64": true}
+	var tags []string
+	if r.F["tags"] != "" {
+		tags = strings.Split(r.F["tags"], ",")
+	}
+	for _, t := range tags {
+		if tagOS, ok := osWords[t]; ok && mOS != "" && tagOS != mOS {
+			p = append(p, fmt.Sprintf("machine %s: tag %q conflicts with machine os %q; run: nova-config machine set %s --tags %q", r.Name, t, r.F["os"], r.Name, withoutTag(tags, t)))
+		}
+		if archWords[t] && mArch != "" && t != mArch {
+			p = append(p, fmt.Sprintf("machine %s: tag %q conflicts with machine arch %q; run: nova-config machine set %s --tags %q", r.Name, t, r.F["arch"], r.Name, withoutTag(tags, t)))
+		}
+	}
+	var res map[string]int
+	if r.F["resources"] != "" && r.F["resources"] != "{}" {
+		_ = json.Unmarshal([]byte(r.F["resources"]), &res) // ignored: canonical checked the field
+	}
+	for _, t := range tags {
+		if _, ok := res[t]; ok {
+			p = append(p, fmt.Sprintf("machine %s: %s cannot be both a tag and a resource; run: nova-config machine set %s", r.Name, t, r.Name))
+		}
 	}
 	if len(p) > 0 {
 		return fmt.Errorf("%s", strings.Join(p, "; "))
 	}
 	return nil
+}
+
+func withoutTag(tags []string, remove string) string {
+	var keep []string
+	for _, t := range tags {
+		if t != remove {
+			keep = append(keep, t)
+		}
+	}
+	return strings.Join(keep, ",")
 }
 
 // adminClash is one admin runner label another runner carries: machine is the admin runner's.

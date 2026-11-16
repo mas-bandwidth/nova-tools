@@ -9,7 +9,7 @@ import (
 var kindOps = []string{"list", "show", "add", "set", "remove"}
 
 // verbs are the root verbs, for an unknown-verb refusal.
-const verbs = "machine, service, friend, rented, history, inventory, schema, help"
+const verbs = "machine, service, friend, rented, history, inventory, resources, schema, help"
 
 const writeLine = "[--actor <name>] [--reason <line>] [--dry-run]"
 
@@ -28,17 +28,17 @@ var usage = func() string {
 			b.WriteString("  " + kinds[n].opLine(op) + "\n")
 		}
 	}
-	return b.String() + "  " + historyLine + "\n  nova-config inventory [--list | --host <name>]\n  nova-config schema\n  nova-config help [<verb>]\n\n" +
+	return b.String() + "  " + historyLine + "\n  nova-config inventory [--list | --host <name>]\n  nova-config resources [--json]\n  nova-config schema\n  nova-config help [<verb>]\n\n" +
 		kinds["machine"].fieldsLine() + "\n" + kinds["service"].fieldsLine() + "\n" + kinds["friend"].fieldsLine() + "\n" + kinds["rented"].fieldsLine() + "\n" +
 		`Every verb takes -h or --help. Use inventory as an Ansible script: #!/bin/sh, then: exec nova-config inventory "$@".
 Make a store current with: nova-config schema | PGPASSWORD="$NOVA_PG_PASSWORD" psql "$NOVA_PG_DSN"
 ` + trailer
 }()
 
-var placeholders = map[string]string{"int": "<n>", "bool": "<true|false>", "list": "<a,b>", "argv": "<json-array>",
+var placeholders = map[string]string{"int": "<n>", "unit": "<n>", "bool": "<true|false>", "list": "<a,b>", "argv": "<json-array>",
 	"env": "<json-object>", "path": "<path>", "ref": "<machine>", "public": "<addr>",
 	"scopes": "<url=n[:label+label],...>", "admins": "<url=account:label[+label]@workflow,...>",
-	"price": "<usd-per-hour>", "time": "<rfc3339>"}
+	"price": "<usd-per-hour>", "time": "<rfc3339>", "tags": "<a,b>", "resources": "<k=n,...>"}
 
 // opLine is the usage line of a kind's verb, from its field table.
 func (k *kind) opLine(op string) string {
@@ -60,7 +60,7 @@ func (k *kind) opLine(op string) string {
 		if p == "" {
 			p = "<text>"
 		}
-		s := "--" + f.name + " " + p
+		s := "--" + f.flagName() + " " + p
 		if !f.required || op == "set" {
 			s = "[" + s + "]"
 		}
@@ -93,6 +93,8 @@ func helpText(path []string) (string, bool) {
 		return "usage: " + historyLine + "\nPrints the writes, newest first, --max of them (default 20, 0 for all; more=true says rows were left out); --since is a duration back from now (90m, 24h, 7d) or an RFC 3339 time.\n", true
 	case "inventory":
 		return "usage: nova-config inventory [--list | --host <name>]\nPrints Ansible's dynamic inventory as JSON; the groups are all, bench, runner and services.\n", true
+	case "resources":
+		return "usage: nova-config resources [--json]\nPrints machines and their effective tags and resources, and tags and resources to machines.\n", true
 	case "schema":
 		return "usage: nova-config schema\nPrints schema.sql: apply it with: nova-config schema | PGPASSWORD=\"$NOVA_PG_PASSWORD\" psql \"$NOVA_PG_DSN\"\n", true
 	case "help":

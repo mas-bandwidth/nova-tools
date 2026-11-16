@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"slices"
 	"strconv"
+	"strings"
 )
 
 // The row types. Their json tags are the column names and the field names
@@ -33,9 +35,56 @@ type Machine struct {
 	WindowsAdminRunners string `json:"windows_admin_runners"`
 	// RunnerEnv is the environment its GitHub Actions runners' services start with (the github-runners play)
 	RunnerEnv map[string]string `json:"runner_env"`
+	CPUUnits  *int              `json:"cpu_units"`
+	MemoryGB  *int              `json:"memory_gb"`
+	Tags      string            `json:"tags"`
+	Resources map[string]int    `json:"resources"`
 	Note      string            `json:"note"`
 	Created   string            `json:"created"`
 	Updated   string            `json:"updated"`
+}
+
+// EffectiveOS returns "mac" when OS is "darwin", otherwise OS.
+func (m Machine) EffectiveOS() string {
+	if m.OS == "darwin" {
+		return "mac"
+	}
+	return m.OS
+}
+
+// EffectiveTags returns the sorted unique union of Tags, EffectiveOS (if non-empty) and Arch (if non-empty).
+func (m Machine) EffectiveTags() []string {
+	var tags []string
+	if m.Tags != "" {
+		for _, t := range strings.Split(m.Tags, ",") {
+			if t = strings.TrimSpace(t); t != "" {
+				tags = append(tags, t)
+			}
+		}
+	}
+	if os := m.EffectiveOS(); os != "" {
+		tags = append(tags, os)
+	}
+	if m.Arch != "" {
+		tags = append(tags, m.Arch)
+	}
+	slices.Sort(tags)
+	return slices.Compact(tags)
+}
+
+// EffectiveResources returns a clone of Resources with cpu and memory added when non-nil.
+func (m Machine) EffectiveResources() map[string]int {
+	out := make(map[string]int, len(m.Resources)+2)
+	for k, v := range m.Resources {
+		out[k] = v
+	}
+	if m.CPUUnits != nil {
+		out["cpu"] = *m.CPUUnits
+	}
+	if m.MemoryGB != nil {
+		out["memory"] = *m.MemoryGB
+	}
+	return out
 }
 
 // Friend is an AI that works on the fleet, named by its bus name.
@@ -172,6 +221,9 @@ func fill(v reflect.Value, r Row) error {
 		default: // a JSON array or object
 			if err := json.Unmarshal([]byte(text), f.Addr().Interface()); text != "" && err != nil {
 				return fmt.Errorf("%s: not JSON of its type", tag)
+			}
+			if f.Kind() == reflect.Map && f.IsNil() {
+				f.Set(reflect.MakeMap(f.Type()))
 			}
 		}
 	}
