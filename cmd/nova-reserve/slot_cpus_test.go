@@ -143,3 +143,37 @@ func TestRunThatCannotPinRunsUnpinned(t *testing.T) {
 		assert.Empty(t, *pinned, c.name)
 	}
 }
+
+func TestSlotShareAssignsDisjointPhysicalCoresAcrossSMTNumberings(t *testing.T) {
+	t.Parallel()
+	// Split numbering: 16 physical cores (0,16), (1,17), ..., (15,31), 8 slots.
+	usable := span(0, 31)
+	var splitGroups [][]int
+	for c := 0; c < 16; c++ {
+		splitGroups = append(splitGroups, []int{c, c + 16})
+	}
+	assert.Equal(t, "0-1,16-17", cpuList(slotShare(usable, splitGroups, 8, 1)))
+	assert.Equal(t, "8-9,24-25", cpuList(slotShare(usable, splitGroups, 8, 5)),
+		"slot 5 gets physical cores 8-9, never slot 1's SMT siblings 16-17")
+	seenCore := map[int]bool{}
+	for k := 1; k <= 8; k++ {
+		for _, cpu := range slotShare(usable, splitGroups, 8, k) {
+			core := cpu % 16
+			if cpu < 16 {
+				assert.False(t, seenCore[core], "physical core %d shared across slots", core)
+				seenCore[core] = true
+			}
+		}
+	}
+
+	// Adjacent numbering: 4 physical cores (0,1), (2,3), (4,5), (6,7) with 8 slots (n > len(groups)):
+	// slots 1..4 claim distinct physical cores before slot 5 touches a sibling.
+	adjGroups := [][]int{{0, 1}, {2, 3}, {4, 5}, {6, 7}}
+	var firstFour []int
+	for k := 1; k <= 4; k++ {
+		s := slotShare(span(0, 7), adjGroups, 8, k)
+		require.Len(t, s, 1)
+		firstFour = append(firstFour, s[0])
+	}
+	assert.Equal(t, []int{0, 2, 4, 6}, firstFour)
+}

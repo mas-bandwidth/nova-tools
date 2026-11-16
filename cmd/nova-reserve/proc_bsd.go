@@ -12,5 +12,7 @@ func sysAttr() *syscall.SysProcAttr { return &syscall.SysProcAttr{Setpgid: true}
 // (macOS has no CPU affinity to set), so here it runs on every CPU.
 func usableCPUs() ([]int, error) { return nil, nil }
 
+func smtGroups([]int) [][]int { return nil }
+
 // pin is never reached with no usable CPUs.
 func pin([]int) error { return nil }

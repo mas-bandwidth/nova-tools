@@ -189,13 +189,21 @@ func TestMadeFilesAreForEveryUser(t *testing.T) {
 		require.NoError(t, err)
 		return fi.Mode().Perm()
 	}
-	h.w.exec = func(string, []string) int {
+	h.w.exec = func(string, []string, []string) int {
 		assert.Equal(t, os.FileMode(0o666), mode("slot1.holder"), "slot1.holder")
 		return 0
 	}
 	require.Equal(t, 0, run([]string{"--slots", "2", "--", "make"}, h.w), h.err.String())
 	for _, name := range []string{"capacity", "gate", "all", "slot1"} {
 		assert.Equal(t, os.FileMode(0o666), mode(name), name)
+	}
+
+	// openIn refuses a FIFO on O_WRONLY|O_NONBLOCK (ENXIO before f.Stat()) as a special file.
+	fifo := filepath.Join(h.dir, "pipe")
+	if syscall.Mkfifo(fifo, 0o600) == nil {
+		_, err := openIn(fifo, os.O_WRONLY)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "is not a regular file")
 	}
 }
 
