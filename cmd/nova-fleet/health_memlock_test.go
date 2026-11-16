@@ -93,3 +93,34 @@ func TestHealthLetsTheLoginsSessionsLockWhatTheRunnersMay(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(r), "\nLimitMEMLOCK=infinity\n", "the sessions' limit is the runners'")
 }
+
+// Cross-slice Linux priority: /system.slice (CI runners) outweighs /user.slice (bench services and ssh builds) via
+// health's slice drop-ins, and bench units in nova-service.service.j2 carry CPUWeight=1 and IOWeight=1.
+func TestHealthAndServicePriorityFavorCIRunnersAcrossSlices(t *testing.T) {
+	t.Parallel()
+	d, err := os.ReadFile("roles/health/defaults/main.yml")
+	require.NoError(t, err)
+	ds := string(d)
+	assert.Contains(t, ds, "\nnova_health_slice_priority: true\n")
+	assert.Contains(t, ds, "\nnova_health_system_slice_weight: 10000\n")
+	assert.Contains(t, ds, "\nnova_health_user_slice_weight: 1\n")
+
+	h, err := os.ReadFile("roles/health/tasks/main.yml")
+	require.NoError(t, err)
+	hs := string(h)
+	for _, want := range []string{
+		"dest: /etc/systemd/system/system.slice.d/90-nova-priority.conf",
+		"CPUWeight={{ nova_health_system_slice_weight | int }}",
+		"IOWeight={{ nova_health_system_slice_weight | int }}",
+		"dest: /etc/systemd/system/user.slice.d/90-nova-priority.conf",
+		"CPUWeight={{ nova_health_user_slice_weight | int }}",
+		"IOWeight={{ nova_health_user_slice_weight | int }}",
+		"nova_health_slice_priority | bool and ('bench' in group_names or 'runner' in group_names)",
+	} {
+		assert.Contains(t, hs, want)
+	}
+
+	svc, err := os.ReadFile("templates/nova-service.service.j2")
+	require.NoError(t, err)
+	assert.Contains(t, string(svc), "{% if 'bench' in group_names %}\nCPUWeight=1\nIOWeight=1\n{% endif %}\n")
+}

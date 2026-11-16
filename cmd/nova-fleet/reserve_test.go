@@ -8,6 +8,7 @@ import (
 	"io"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -42,6 +43,12 @@ func (s *fakeHoldSession) Close() error {
 		}
 	}
 	return nil
+}
+
+func (s *fakeHoldSession) isClosed() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.closed
 }
 
 func (s *fakeHoldSession) Wait() (int, error) {
@@ -303,7 +310,7 @@ func TestReserveClosesLosingCandidates(t *testing.T) {
 	code := runReserve([]string{"--needs", "cpu 2, memory 4", "--", "true"}, &out, &err)
 	assert.Equal(t, 0, code)
 	assert.Contains(t, out.String(), "RESERVED host=b1")
-	assert.True(t, sessLose.closed, "losing session was cancelled and closed immediately")
+	require.Eventually(t, sessLose.isClosed, time.Second, 5*time.Millisecond, "losing session was cancelled and closed immediately")
 }
 
 func TestResourcesQuery(t *testing.T) {

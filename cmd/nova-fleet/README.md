@@ -1311,6 +1311,9 @@ applying it restarts only the daemon it configures, never the login's units. A d
   `nova_health_log_trim` bytes is cut to its first and last 32 MiB (kept beside it as `.flood`) and emptied.
 - The login's user slice is killed inside at `nova_health_user_memory_max_pct` of RAM, and a killed user manager comes
   back (`user-<uid>.slice.d/90-nova-memory.conf`, `user@.service.d/90-nova-restart.conf`).
+- On a `bench` or `runner` machine, `/system.slice` (`CPUWeight` and `IOWeight` `nova_health_system_slice_weight`, `10000`)
+  outweighs `/user.slice` (`nova_health_user_slice_weight`, `1`) in `system.slice.d/90-nova-priority.conf` and
+  `user.slice.d/90-nova-priority.conf`, so user builds yield CPU and disk I/O to 2-minute CI jobs while taking 100% when CI is idle.
 - The login's user manager may lock `nova_service_memlock` (`user@<uid>.service.d/90-nova-memlock.conf`): a user
   unit cannot go past its manager's limit, and the services play gives its units that `LimitMEMLOCK`. A running
   manager's limit is raised in place (`prlimit`), so none of its units restarts.
@@ -1358,6 +1361,7 @@ daemon's environment says `WOULD` and removes nothing.
 | `nova_health_ssh_killable`, `nova_health_ssh_unit` | `true`, `ssh` | `sshd` on Red Hat |
 | `nova_health_log_maxsize`, `nova_health_log_trim`, `nova_health_log_files` | `1G`, 4 GiB, syslog and kern.log | `0` trim is off |
 | `nova_health_user_memory_max_pct` | `85` | `0` is no limit |
+| `nova_health_slice_priority`, `nova_health_system_slice_weight`, `nova_health_user_slice_weight` | `true`, `10000`, `1` | cross-slice priority on `bench` and `runner` hosts |
 | `nova_health_disk_report`, `nova_health_disk_warn_pct`, `nova_health_disk_on_calendar` | `true`, `80`, every 6 hours | |
 | `nova_health_disk_clean`, `nova_health_disk_clean_dirs`, `nova_health_disk_clean_caches` | `true`, `/tmp`, `~/.cache/go-build` | |
 | `nova_health_disk_clean_age_min`, `nova_health_disk_clean_pressed_min`, `nova_health_disk_clean_on_calendar` | `2880`, `360`, hourly | minutes |
