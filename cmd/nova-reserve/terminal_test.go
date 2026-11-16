@@ -160,3 +160,27 @@ func TestFunctionalBackgroundedWhileWaitingStillRelays(t *testing.T) {
 		t.Fatal("the shell never exited")
 	}
 }
+
+// TestFunctionalCtrlZWhenSessionLeaderDoesNotSelfDeadlock: when nova-reserve
+// runs directly as the session leader of a PTY (as ssh -t runs a remote
+// command with no parent job-control shell), Ctrl-Z must not make nova-reserve
+// SIGSTOP itself with nobody above it to send SIGCONT.
+func TestFunctionalCtrlZWhenSessionLeaderDoesNotSelfDeadlock(t *testing.T) {
+	t.Parallel()
+	bin, dir := build(t), t.TempDir()
+	initCap(t, bin, dir, 1, 2)
+	master, seen, _, done := onTerminal(t, bin, "--dir", dir, "--", "sh", "-c", "echo re\"\"ady; read x; echo got:$x")
+	require.Eventually(t, seen("ready"), patience, 20*time.Millisecond)
+	_, err := master.Write([]byte("\x1a"))
+	require.NoError(t, err)
+	time.Sleep(100 * time.Millisecond)
+	_, err = master.Write([]byte("hi\n"))
+	require.NoError(t, err)
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("session-leader nova-reserve deadlocked on Ctrl-Z")
+	}
+	require.Eventually(t, seen("got:hi"), patience, 20*time.Millisecond)
+}

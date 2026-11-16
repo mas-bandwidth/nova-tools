@@ -65,3 +65,15 @@ func TestRunnerDaemonRunsWithoutBackgroundLimits(t *testing.T) {
 		assert.NotContains(t, string(b), limit)
 	}
 }
+
+// On Linux, a runner unit carries high CPU and I/O weights and negative nice inside /system.slice, so CI wins
+// immediately under contention against background units.
+func TestRunnerServiceCarriesHighPriorityWeights(t *testing.T) {
+	t.Parallel()
+	b, err := os.ReadFile(runnerStopService)
+	require.NoError(t, err)
+	s := string(b)
+	assert.Contains(t, s, "\nCPUWeight=10000\n")
+	assert.Contains(t, s, "\nIOWeight=10000\n")
+	assert.Contains(t, s, "\nNice=-10\n")
+}

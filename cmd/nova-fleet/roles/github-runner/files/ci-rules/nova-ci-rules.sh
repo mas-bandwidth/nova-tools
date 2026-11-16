@@ -329,7 +329,7 @@ measure_start() {
 	cg=${NOVA_CI_CGROUP:-}
 	[ -n "$cg" ] || { [ -r /proc/self/cgroup ] && cg=/sys/fs/cgroup$(cgroup_of </proc/self/cgroup); }
 	# only inside a job: the sampler ends with the job's Runner.Worker
-	w=$(procs comm | ancestor $$ Runner.Worker) || w=
+	w=$(my_worker) || w=
 	if [ -n "$w" ] && [ -n "$cg" ] && [ -r "$cg/memory.current" ]; then
 		nohup sh "$here/nova-ci-rules.sh" sampler "$cg" "$state/mem" "$w" </dev/null >/dev/null 2>&1 &
 		echo $! >"$state/sampler.pid"
@@ -360,7 +360,7 @@ measure_end() {
 			holders=$(echo "$st" | sed -n 's/.*"sprint_consumers":[[:space:]]*\[\([^]]*\)\].*/\1/p' | tr -d '"' | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -v '^$')
 			[ -z "$holders" ] && holders=$(echo "$st" | sed -n 's/.*"why":[[:space:]]*"\([^"]*\)".*/\1/p')
 		else
-			holders=$(echo "$st" | sed -n 's/^.*held .*why=\([^ ]*\).*$/\1/p')
+			holders=$(echo "$st" | sed -En 's/^(hold [0-9]+ state=|slot[0-9]+ |all )held .*why=([^ ]*).*$/\2/p')
 		fi
 		n=$(printf '%s' "$holders" | grep -c . || true)
 		line="JOB-LOAD $id load1=${load:-?} holders=$n why=$(printf '%s' "$holders" | tr '\n' ',' | sed 's/,$//')"

@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -309,7 +310,7 @@ func TestCIRulesCompletedPrintsTheMeasurement(t *testing.T) {
 	state := filepath.Join(dir, "state")
 	require.NoError(t, os.MkdirAll(state, 0o755))
 	reserve := filepath.Join(t.TempDir(), "reserve")
-	require.NoError(t, os.WriteFile(reserve, []byte("#!/bin/sh\necho 'capacity=2 set_by_pid=1'\necho 'slot1 held pid=7 since=x why=fix-a cmd=make'\necho 'slot2 held pid=8 since=x why=hunt-b cmd=test'\necho 'slot3 free'\n"), 0o755))
+	require.NoError(t, os.WriteFile(reserve, []byte("#!/bin/sh\necho 'capacity=2 set_by_pid=1'\necho 'slot1 held pid=7 since=x why=fix-a cmd=make'\necho 'slot2 held pid=8 since=x why=hunt-b cmd=test'\necho 'slot3 free'\necho 'all held pid=9 since=x why=excl-c cmd=bench # the exclusive lock'\necho 'hold 4 state=held holder=bench label=work priority=normal cpu=4 memory=8 cores=4 pid=10 since=x why=v3-d'\necho 'hold 5 state=paused holder=bench label=work priority=normal cpu=4 memory=8 cores=4 pid=11 since=x why=paused-e'\n"), 0o755))
 	log := filepath.Join(t.TempDir(), "ci-jobs.log")
 	env := []string{"NOVA_CI_CHAIN_JOB_COMPLETED=", "NOVA_CI_JOBS_LOG=" + log, "NOVA_CI_RESERVE=" + reserve,
 		"RUNNER_NAME=h-1", "GITHUB_REPOSITORY=o/r", "GITHUB_WORKFLOW=CI", "GITHUB_JOB=unit", "GITHUB_RUN_ID=42"}
@@ -319,7 +320,7 @@ func TestCIRulesCompletedPrintsTheMeasurement(t *testing.T) {
 	code, out := ciRun(t, sh, dir, "", env, "completed")
 	assert.Equal(t, 0, code, out)
 	assert.Regexp(t, `MEMORY-PEAK host=\S+ runner=h-1 repo=o/r workflow="CI" job=unit run=42 secs=\d+ peak_mib=3072 anon_mib=2048\n`, out)
-	assert.Regexp(t, `JOB-LOAD host=\S+ runner=h-1 .* load1=\S+ holders=2 why=fix-a,hunt-b\n`, out)
+	assert.Regexp(t, `JOB-LOAD host=\S+ runner=h-1 .* load1=\S+ holders=4 why=fix-a,hunt-b,excl-c,v3-d\n`, out)
 	b, err := os.ReadFile(log)
 	require.NoError(t, err)
 	assert.Equal(t, 2, strings.Count(string(b), "\n"), "both lines are in the host's log")
@@ -385,5 +386,54 @@ func TestCIRulesStartedForgetsAnEarlierVerdict(t *testing.T) {
 		if code, out := ciRun(t, sh, dir, "", env, "completed"); code != 0 || strings.Contains(out, "::error::") {
 			t.Errorf("%s completed after a stale verdict = %d %q, want 0", sh.name, code, out)
 		}
+	}
+}
+
+// A refused job-started hook ends Runner.Worker inside a real runner (or NOVA_CI_WORKER_PID in tests) so workflow
+// steps with if: always() cannot run, while preserving a chained hook's exit code and never touching processes outside
+// a runner's .nova-ci-rules directory.
+func TestCIRulesStartedRefusalKillsScopedRunnerWorker(t *testing.T) {
+	for _, sh := range ciShells(t) {
+		dir := ciCopy(t, "")
+		// 1. Disallowed push kills NOVA_CI_WORKER_PID.
+		w1 := exec.Command("sleep", "60")
+		require.NoError(t, w1.Start())
+		t.Cleanup(func() { _ = w1.Process.Kill(); _ = w1.Wait() })
+		code, out := ciRun(t, sh, dir, "", []string{
+			"GITHUB_EVENT_NAME=push",
+			"GITHUB_REF=refs/heads/sprint/v2-review/c1",
+			"NOVA_CI_CHAIN_JOB_STARTED=",
+			"NOVA_CI_WORKER_PID=" + strconv.Itoa(w1.Process.Pid),
+		}, "started")
+		assert.Equal(t, 1, code, "%s: %s", sh.name, out)
+		assert.Error(t, w1.Wait(), "%s: disallowed push must kill Runner.Worker", sh.name)
+
+		// 2. Failing chained hook kills NOVA_CI_WORKER_PID and preserves its exit code.
+		w2 := exec.Command("sleep", "60")
+		require.NoError(t, w2.Start())
+		t.Cleanup(func() { _ = w2.Process.Kill(); _ = w2.Wait() })
+		hook := filepath.Join(t.TempDir(), "fail.sh")
+		require.NoError(t, os.WriteFile(hook, []byte("echo chain-denied; exit 7\n"), 0o755))
+		code, out = ciRun(t, sh, dir, "", []string{
+			"GITHUB_EVENT_NAME=schedule",
+			"GITHUB_REF=refs/heads/main",
+			"NOVA_CI_CHAIN_JOB_STARTED=" + hook,
+			"NOVA_CI_WORKER_PID=" + strconv.Itoa(w2.Process.Pid),
+		}, "started")
+		assert.Equal(t, 7, code, "%s: %s", sh.name, out)
+		assert.Contains(t, out, "chain-denied")
+		assert.Error(t, w2.Wait(), "%s: failing chained hook must kill Runner.Worker", sh.name)
+
+		// 3. Outside .nova-ci-rules (no NOVA_CI_WORKER_PID), measure_start spawns no sampler in a temp dir.
+		cg := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(cg, "memory.current"), []byte("1024\n"), 0o644))
+		code, _ = ciRun(t, sh, dir, "", []string{
+			"GITHUB_EVENT_NAME=schedule",
+			"GITHUB_REF=refs/heads/main",
+			"NOVA_CI_CHAIN_JOB_STARTED=",
+			"NOVA_CI_CGROUP=" + cg,
+		}, "started")
+		assert.Equal(t, 0, code)
+		assert.NoFileExists(t, filepath.Join(dir, "state", "sampler.pid"), "%s: non-runner dir must not spawn a sampler", sh.name)
 	}
 }

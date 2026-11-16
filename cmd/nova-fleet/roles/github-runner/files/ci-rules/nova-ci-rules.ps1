@@ -225,7 +225,15 @@ function Get-AdminRefusal {
     return $null
 }
 
+function Get-MyWorker {
+    if ($env:NOVA_CI_WORKER_PID) { return [long]$env:NOVA_CI_WORKER_PID }
+    $inRealRunner = ((Split-Path -Leaf $here) -eq '.nova-ci-rules') -and (Test-Path -LiteralPath (Join-Path (Split-Path $here) 'bin\Runner.Worker.exe'))
+    if (-not $inRealRunner) { return $null }
+    return Find-Ancestor $PID 'Runner.Worker' (Get-Rows 'name')
+}
+
 function Invoke-Started {
+    $inRealRunner = [bool]$env:NOVA_CI_WORKER_PID -or (((Split-Path -Leaf $here) -eq '.nova-ci-rules') -and (Test-Path -LiteralPath (Join-Path (Split-Path $here) 'bin\Runner.Worker.exe')))
     # a check that throws is a refusal, never a pass
     try { $why = Get-AdminRefusal }
     catch { $why = "the administrator runner check failed ($($_.Exception.Message)); the fleet admin looks" }
@@ -234,12 +242,15 @@ function Invoke-Started {
         # A failed job-started hook fails the job but does not stop it: the runner adds the hook as a pre-job step, and
         # a step with if: always() or failure() still runs after it, here as an administrator. So the job's
         # Runner.Worker is ended now, before any step of the job runs; a process listing that fails is tried again.
-        $worker = $null
-        for ($i = 0; $i -lt 3 -and -not $worker; $i++) {
-            try { $worker = Find-Ancestor $PID 'Runner.Worker' (Get-Rows 'name') } catch { $worker = $null }
+        if ($inRealRunner) {
+            $worker = $null
+            for ($i = 0; $i -lt 3 -and -not $worker; $i++) {
+                if ($env:NOVA_CI_WORKER_PID) { $worker = [long]$env:NOVA_CI_WORKER_PID }
+                else { try { $worker = Find-Ancestor $PID 'Runner.Worker' (Get-Rows 'name') } catch { $worker = $null } }
+            }
+            if ($worker) { Stop-Process -Id $worker -Force -ErrorAction SilentlyContinue }
+            else { "::error::CI rule: no Runner.Worker above this hook was found to end, so the job's always() steps may still run; the fleet admin looks" }
         }
-        if ($worker) { Stop-Process -Id $worker -Force -ErrorAction SilentlyContinue }
-        else { "::error::CI rule: no Runner.Worker above this hook was found to end, so the job's always() steps may still run; the fleet admin looks" }
         exit 1
     }
     Invoke-Disarm
@@ -248,13 +259,27 @@ function Invoke-Started {
     if ($event -eq 'push' -and -not (Test-PushOk $ref)) {
         $list = @($branches -split '\s+' | Where-Object { $_ })
         "::error::CI rule: push CI runs only on $($list -join ', ') and tags, not $ref; set on.push.branches to [$(($list | ForEach-Object { "'$_'" }) -join ', ')] and let this branch get CI through its pull request"
+        if ($inRealRunner) {
+            $worker = $null
+            for ($i = 0; $i -lt 3 -and -not $worker; $i++) {
+                try { $worker = Get-MyWorker } catch { $worker = $null }
+            }
+            if ($worker) { Stop-Process -Id $worker -Force -ErrorAction SilentlyContinue }
+            else { "::error::CI rule: no Runner.Worker above this hook was found to end, so the job's always() steps may still run; the fleet admin looks" }
+        }
         exit 1
     }
     $rc = Invoke-Chain "$env:NOVA_CI_CHAIN_JOB_STARTED"
-    if ($rc) { exit $rc }
+    if ($rc) {
+        if ($inRealRunner) {
+            try { $worker = Get-MyWorker } catch { $worker = $null }
+            if ($worker) { Stop-Process -Id $worker -Force -ErrorAction SilentlyContinue }
+        }
+        exit $rc
+    }
     # On WSL2 hybrid hosts, route CI hold acquisition through wsl.exe ... nova-reserve hold --holder ci
-    $inRealRunner = ((Split-Path -Leaf $here) -eq '.nova-ci-rules') -and (Test-Path (Join-Path (Split-Path $here) 'bin\Runner.Worker.exe'))
-    if ($inRealRunner -and (Get-Command 'wsl.exe' -ErrorAction SilentlyContinue)) {
+    $inWslRunnerDir = ((Split-Path -Leaf $here) -eq '.nova-ci-rules') -and (Test-Path -LiteralPath (Join-Path (Split-Path $here) 'bin\Runner.Worker.exe'))
+    if ($inWslRunnerDir -and (Get-Command 'wsl.exe' -ErrorAction SilentlyContinue)) {
         $wslHasReserve = $false
         try {
             $testOut = & wsl.exe sh -c 'command -v nova-reserve' 2>$null
@@ -263,7 +288,7 @@ function Invoke-Started {
         if ($wslHasReserve) {
             $wWorker = $null
             for ($i = 0; $i -lt 3 -and -not $wWorker; $i++) {
-                try { $wWorker = Find-Ancestor $PID 'Runner.Worker' (Get-Rows 'name') } catch { $wWorker = $null }
+                try { $wWorker = Get-MyWorker } catch { $wWorker = $null }
             }
             if ($wWorker) {
                 New-Item -ItemType Directory -Force -Path $state | Out-Null
@@ -275,9 +300,12 @@ function Invoke-Started {
         }
     }
     if (-not (Test-Limited $event)) { "CI rule: a $event job has no time limit"; exit 0 }
-    $worker = Find-Ancestor $PID 'Runner.Worker' (Get-Rows 'name')
+    $worker = Get-MyWorker
     if (-not $worker) {
         "::error::CI rule: no Runner.Worker above this hook, so the $(Get-LimitText $limit) limit cannot be enforced; tell the fleet admin"
+        if ($inRealRunner) {
+            "::error::CI rule: no Runner.Worker above this hook was found to end, so the job's always() steps may still run; the fleet admin looks"
+        }
         exit 1
     }
     New-Item -ItemType Directory -Force -Path $state | Out-Null

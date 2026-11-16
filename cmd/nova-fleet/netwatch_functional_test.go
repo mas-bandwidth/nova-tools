@@ -112,7 +112,7 @@ func newNW(t *testing.T) *nw {
 			t.Fatal(err)
 		}
 	}
-	n.write("etc/busy-patterns", "Runner\\.Worker\nnova-reserve( --dir [^ ]+)? run \n")
+	n.write("etc/busy-patterns", "Runner\\.Worker\nnova-reserve(( --dir [^ ]+)? (run|hold)( |$)| .* -- )\n")
 	n.write("ts/status", nwHealthyStatus)
 	n.write("ts/answer", "100.64.0.2\n")
 	n.write("ts/control_ok", "")
@@ -328,7 +328,23 @@ var nwCases = []struct {
 		}
 	}},
 	{"a held reservation counts as a protected job", func(t *testing.T, n *nw) {
-		n.write("procs", "nice -n 15 nova-reserve --dir /home/bench/.local/share/nova-reserve run --wait 5s --why card-12 -- nova-sandbox -- opencode run\n")
+		n.write("procs", "nice -n 15 nova-reserve run --dir /var/tmp/nova-reserve --wait 5s --why card-12 -- nova-sandbox -- opencode run\n")
+		n.climbToReboot()
+		n.tick()
+		if !n.logHas("DEFER reboot") || n.last() == "systemctl reboot" {
+			t.Fatalf("log %q calls %q", n.read("log"), n.calls())
+		}
+	}},
+	{"an implicit-run or exclusive reservation also defers the reboot", func(t *testing.T, n *nw) {
+		n.write("procs", "nova-reserve --exclusive --why bench-cal -- make check\n")
+		n.climbToReboot()
+		n.tick()
+		if !n.logHas("DEFER reboot") || n.last() == "systemctl reboot" {
+			t.Fatalf("log %q calls %q", n.read("log"), n.calls())
+		}
+	}},
+	{"a v3 hold reservation also defers the reboot", func(t *testing.T, n *nw) {
+		n.write("procs", "nova-reserve hold --holder bench --consumer card-12 --needs cpu 4, memory 8\n")
 		n.climbToReboot()
 		n.tick()
 		if !n.logHas("DEFER reboot") || n.last() == "systemctl reboot" {
@@ -336,7 +352,7 @@ var nwCases = []struct {
 		}
 	}},
 	{"an unrelated process does not defer the reboot", func(t *testing.T, n *nw) {
-		n.write("procs", "/home/bench/actions-runner/repo-1/bin/Runner.Listener run\nnova-reserve help\n")
+		n.write("procs", "/home/bench/actions-runner/repo-1/bin/Runner.Listener run\nnova-reserve help\nnova-reserve status\n")
 		n.climbToReboot()
 		n.tick()
 		if n.last() != "systemctl reboot" {

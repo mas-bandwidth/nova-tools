@@ -238,6 +238,13 @@ func wait(cmd *exec.Cmd) (ws syscall.WaitStatus, err error) {
 			return ws, err
 		}
 		if err == nil {
+			if sid, serr := unix.Getsid(0); serr == nil && sid == self {
+				// session leader on the terminal (ssh -t): no shell above to resume us, so never self-stop
+				passTerminal(self, pid)
+				// ignored: a group that has already ended needs no SIGCONT
+				_ = syscall.Kill(-pid, syscall.SIGCONT)
+				continue
+			}
 			passTerminal(pid, self)
 			conts := make(chan os.Signal, 1)
 			signal.Notify(conts, syscall.SIGCONT)
