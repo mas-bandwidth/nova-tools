@@ -455,6 +455,32 @@ login in four runs, each `--check --diff` first: `install` (the shared tools and
 `sdk-toolchain` (the shared SDK, while `~/sdk` stays in use until it is whole), `runner-packages`, then `github-runners`
 once the record's `runner_env` names the runner login's paths.
 
+**Deploy keys.** A job that fetches a private repository with the runner's own git (a submodule a workflow names
+by its https URL) needs the runner login to hold a way in, and no job token or workflow secret carries it.
+`github_runner_deploy_keys` lists read-only deploy keys, each `{url: https://<host>/<owner>/<repo>.git, secret: <NAME>}`:
+the repository's deploy key (read-only, one repository per key), its private half base64 on one line under `NAME` in the
+machine's seat (`nova-secrets set` on the control node, then `nova-secrets grant NAME --to <machine>`, the store pushed,
+and `secrets-refresh`). For each, written as the runner login: the key in `<home>/.ssh/deploy-key-<owner>-<repo>` (0600,
+replaced only when it differs, and only by a value `ssh-keygen -y` reads as a private key), a `Host
+deploy-key-<owner>-<repo>` block first in `~/.ssh/config`, closed by `Match all` so the lines after it stay global,
+that offers that key alone (`IdentitiesOnly`, `BatchMode`) and checks the host against `github_runner_deploy_known_hosts` (GitHub's published host keys) in
+`~/.ssh/deploy-keys.known_hosts`, and in `~/.gitconfig` a `url.<alias>.insteadOf` of exactly that URL, with a
+`pushInsteadOf` that keeps a push to it on https. No credential helper is written, and no other repository's URL is
+rewritten. The value leaves the seat only through `nova-secrets exec` into a pipe, inside a `no_log` task; its receipt is
+`DEPLOY-KEY-SET`, `DEPLOY-KEY-SAME` or `DEPLOY-KEY-BAD <alias>`. A name the seat lacks fails the run before anything
+is written, naming the grant that fixes it. Each URL is then listed by `git ls-remote` as the runner login:
+`DEPLOY-KEY <machine> <login> <url> ls-remote=ok`, or the run fails. Under `--check` each prints `DEPLOY-KEY-PLAN`. A
+run writes both blocks whole from the list it is given, so name every key the login keeps; an empty list (the default)
+installs and removes nothing. Every job the login runs, on any of its runners, can read the key: it reads that one
+repository. Where the runners run as the fleet login (macOS, WSL, `-e github_runner_user=<the fleet login>`), that
+login's own fetches of the URL go through the key too. `--tags deploy-keys` runs this step alone, leaving the runners
+as they are:
+
+```
+nova-fleet github-runners --check --diff -- -l MACHINE --tags deploy-keys -e '{"github_runner_deploy_keys": [{"url": "https://github.com/OWNER/REPO.git", "secret": "NAME"}]}'
+nova-fleet github-runners -- -l MACHINE --tags deploy-keys -e '{"github_runner_deploy_keys": [{"url": "https://github.com/OWNER/REPO.git", "secret": "NAME"}]}'
+```
+
 **Public repositories.** A self-hosted runner runs the code of any workflow that reaches it, and on a public repository
 that includes pull requests from forks. Use these runners on private repositories, or restrict which workflows and
 events may use them.
@@ -475,6 +501,8 @@ events may use them.
 | `github_runner_version`, `github_runner_sha256` | the pinned actions/runner release and its digests |
 | `github_runner_ci_limit_seconds` | 120: the per-commit job limit every runner enforces ("CI rules") |
 | `github_runner_ci_push_branches` | `[main, sprint/*]`: the branches a push may run CI on, as globs where `*` and `?` stop at a `/` (tags always may); any other branch gets CI through its pull request |
+| `github_runner_deploy_keys` | `[]`: the runner login's read-only deploy keys, each `{url, secret}` ("Deploy keys") |
+| `github_runner_deploy_known_hosts` | the host keys a deploy key's connection accepts, in known_hosts form: GitHub's |
 
 **The token.** The play asks GitHub for it on the control node with that node's own `gh` login, `gh api -X POST
 <repos|orgs>/<path>/actions/runners/registration-token -q .token` (`remove-token` to retire), never a pasted token,
