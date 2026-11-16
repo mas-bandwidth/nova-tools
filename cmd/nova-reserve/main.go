@@ -1,12 +1,11 @@
-// Command nova-reserve takes a reservation on a machine's shared resources for the
-// duration of a command. A machine has one capacity, N slots, stored in
-// DIR/capacity; a reservation is one of them. The slots are OS file locks, so the
-// kernel frees a dead holder's slot.
+// Command nova-reserve coordinates shared machine resources across local
+// commands, CI runners, and sprint workers using crash-safe OS file locks.
 package main
 
 import (
 	"bufio"
 	"cmp"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -24,70 +23,111 @@ import (
 	"time"
 )
 
-const banner = `nova-reserve: reservations on a machine's shared resources so people and AIs can coordinate
+const banner = `nova-reserve: named multi-resource holds on a machine's shared capacity
 
-A machine has one capacity, N slots, kept in DIR/capacity. A reservation holds one
-slot, or with --exclusive every slot, while a command runs.
+A machine's tags, usable cores, and resources (cpu, memory, and custom devices)
+live in DIR/capacity.json. Holds and waiters use OS file locks so the kernel
+frees them on exit or SIGKILL.
 
-  nova-reserve [run] [--slots N | --exclusive] [--wait D] [--why TEXT] [--dir DIR] -- <cmd> [args...]
-  nova-reserve status [--dir DIR]
-  nova-reserve set --slots N [--dir DIR]
-  nova-reserve help [run|status|set]
+  nova-reserve [run] [--needs SPEC | --exclusive] [--nowait | --wait D] [--holder H] [--consumer ID] [--label L] [--priority P] [--why TEXT] [--dir DIR] -- <cmd> [args...]
+  nova-reserve hold [--needs SPEC | --exclusive] [--nowait | --wait D] [--holder H] [--consumer ID] [--label L] [--priority P] [--why TEXT] [--dir DIR]
+  nova-reserve measure [--force] [--json] [--dir DIR]
+  nova-reserve set [--cpu N] [--memory G] [--cores C] [--tags A,B] [--resources K=N,...] [--dir DIR]
+  nova-reserve status [--json] [--dir DIR]
+  nova-reserve help [run|hold|measure|set|status]
 
-DIR: --dir, else $NOVA_RESERVE_DIR, else /var/tmp/nova-reserve; one per machine, on a
-local disk. Exit: 0 done; 1 refused (no slot within --wait, capacity in use); 2 could not
-run; 126 the command cannot be executed; 127 the command is not found; else the command's
-status. cmd/nova-reserve/README.md has the rest.
+DIR: --dir, else /var/tmp/nova-reserve. When $NOVA_RESERVE_DIR matches DIR, nested
+calls run directly without taking a second hold. Exit: 0 ok; 1 refused (never-fit,
+NO ROOM, timeout, busy measure); 2 bad invocation or directory fault; 126/127
+command launch failure; else the command's exit status.
 `
 
 var verbHelp = map[string]string{
-	"run": `nova-reserve [run] [--slots N | --exclusive] [--wait D] [--why TEXT] [--dir DIR] -- <cmd> [args...]
+	"run": `nova-reserve [run] [--needs SPEC | --exclusive] [--nowait | --wait D] [--holder H] [--consumer ID] [--label L] [--priority P] [--why TEXT] [--dir DIR] -- <cmd> [args...]
 
-Wait for a slot, run the command, free the slot; exit with the command's status.
-  --slots N    the capacity you expect, 1..1024; refused (exit 2) if the machine's differs.
-               The first taker stores it (CAPACITY SET); with none, the stored one, else CPU/4
-  --exclusive  take every slot: wait for every holder and keep new ones out
-  --wait D     give up after D (above 0: 90s, 15m), exit 1; default no bound
-  --why TEXT   a label for status and refusals
-The command is found before a slot is taken (127, 126). It dies with nova-reserve, even on SIGKILL (a watchdog
-process kills its group within about a second).
-On Linux the command runs on its slot's share of the CPUs nova-reserve may use, less the kernel's isolated ones (an
---exclusive run: all of them), so nproc, make -j$(nproc) and Go count that share; HELD names them (cpus=0-3).
-The pin is advisory: a job can widen its own mask again (taskset), so it steers honest tools and is not a limit.
-A share is fixed by the slot count, not by how many slots are busy: set slots to CPUs / the CPUs one job should get.
-Shares are per directory: the machine's and a private --dir each give their slot 1 the first CPUs, so use one
-directory per machine for work that should not overlap. macOS and the BSDs: no pinning.
+Acquire the needed resources, steer CPU count and OS priority, run the command,
+and release the hold; exit with the command's status.
+  --needs SPEC   comma-separated tags and resource amounts, e.g. "cpu 4, memory 8, gpu";
+                 defaults to "cpu 1, memory 1" when omitted
+  --exclusive    hold every resource on the machine
+  --nowait       exit 1 (NO ROOM) immediately if resources are not free right now
+  --wait D       give up after D (above 0: 90s, 15m), exit 1; default waits in line
+  --holder H     bench, friend, ci, or person (default person); ci acquires immediately
+                 and marks lowest-priority active holds paused
+  --consumer ID  caller continuity id; resumes ahead of queued waiters after a CI pause
+  --label L      board/status category (default ci for --holder ci, else work)
+  --priority P   low, normal, high, read, critical, or blocker (default normal)
+  --why TEXT     human note shown in status and timeout refusals
+  --dir DIR      state directory (default /var/tmp/nova-reserve)
 `,
-	"status": `nova-reserve status [--dir DIR]
+	"hold": `nova-reserve hold [--needs SPEC | --exclusive] [--nowait | --wait D] [--holder H] [--consumer ID] [--label L] [--priority P] [--why TEXT] [--dir DIR]
 
-The capacity; each slot, free or held (pid= since= why= cmd=); gate and all; free=n/N.
-An --exclusive run holds gate from when it starts waiting until it ends, and all while
-it runs, when free=0. A holder is read from <lock>.holder, if its pid is alive.
+Acquire a hold without spawning a child command, print one HELD line on stdout,
+and hold until stdin reaches EOF or SIGINT/SIGTERM arrives.
+  --needs SPEC   comma-separated tags and resource amounts (default "cpu 1, memory 1")
+  --exclusive    hold every resource on the machine
+  --nowait       exit 1 (NO ROOM) immediately if resources are not free right now
+  --wait D       give up after D (above 0: 90s, 15m), exit 1
+  --holder H     bench, friend, ci, or person (default person)
+  --consumer ID  caller continuity id
+  --label L      board/status category (default ci for --holder ci, else work)
+  --priority P   low, normal, high, read, critical, or blocker (default normal)
+  --why TEXT     human note shown in status and timeout refusals
+  --dir DIR      state directory (default /var/tmp/nova-reserve)
 `,
-	"set": `nova-reserve set --slots N [--dir DIR]
+	"measure": `nova-reserve measure [--force] [--json] [--dir DIR]
 
-Store this machine's capacity, N slots (1..1024); prints CAPACITY SET slots=N.
-Refused (exit 1) while any slot is held.
+Measure this machine's CPU units with the built-in compiler/test benchmark and
+read usable memory (cgroup memory.max when bounded, else physical GiB), holding
+--exclusive on DIR while measuring, then write DIR/capacity.json.
+  --force    bypass the background CPU idle check
+  --json     print JSON instead of MEASURE OK
+  --dir DIR  state directory (default /var/tmp/nova-reserve)
+`,
+	"set": `nova-reserve set [--cpu N] [--memory G] [--cores C] [--tags A,B] [--resources K=N,...] [--dir DIR]
+
+Atomically create or update DIR/capacity.json, even while holds are active.
+  --cpu N          CPU units (>= 1)
+  --memory G       usable memory in GiB (>= 1)
+  --cores C        usable logical cores (>= 1)
+  --tags A,B       comma-separated machine tags (empty string clears custom tags)
+  --resources K=N  comma-separated custom whole-number resources (empty clears custom)
+  --dir DIR        state directory (default /var/tmp/nova-reserve)
+`,
+	"status": `nova-reserve status [--json] [--dir DIR]
+
+Show capacity, active and paused holds, queued waiters, and free resources.
+  --json     print machine-readable status JSON
+  --dir DIR  state directory (default /var/tmp/nova-reserve)
 `,
 }
 
-// verbFlags is what each verb takes; any other flag is a refusal.
 var verbFlags = map[string][]string{
-	"run":    {"slots", "exclusive", "wait", "why", "dir"},
-	"status": {"dir"},
-	"set":    {"slots", "dir"},
+	"run":     {"needs", "exclusive", "nowait", "wait", "holder", "consumer", "label", "priority", "why", "dir"},
+	"hold":    {"needs", "exclusive", "nowait", "wait", "holder", "consumer", "label", "priority", "why", "dir"},
+	"measure": {"force", "json", "dir"},
+	"set":     {"cpu", "memory", "cores", "tags", "resources", "dir"},
+	"status":  {"json", "dir"},
 }
 
-// wants is what a flag's value must be, for the one-line refusal.
+var boolFlags = map[string]bool{"exclusive": true, "nowait": true, "force": true, "json": true}
+
 var wants = map[string]string{
-	"slots": "1..1024",
-	"wait":  "a duration above 0, like 90s or 15m",
-	"why":   "text",
-	"dir":   "a directory",
+	"needs":     `a comma-separated resource/tag list like "cpu 4, memory 8"`,
+	"wait":      "a duration above 0, like 90s or 15m",
+	"holder":    "one of bench, friend, ci, person",
+	"consumer":  "a non-empty consumer id",
+	"label":     "a non-empty label",
+	"priority":  "one of low, normal, high, read, critical, blocker",
+	"why":       "text",
+	"dir":       "a directory",
+	"cpu":       "an integer >= 1",
+	"memory":    "an integer >= 1",
+	"cores":     "an integer >= 1",
+	"tags":      "comma-separated tag names",
+	"resources": "comma-separated k=n pairs with n >= 1",
 }
 
-// exitError is a refusal with its exit code: 1 the tool said no, 2 could not run,
-// 126 and 127 the command could not be started; an empty msg passes a code on.
 type exitError struct {
 	code int
 	msg  string
@@ -102,18 +142,35 @@ func refuse(code int, format string, a ...any) *exitError {
 type options struct {
 	verb      string
 	help      bool
-	slots     int // 0: no --slots
+	needs     []needItem
 	exclusive bool
-	wait      time.Duration // 0: no bound
+	nowait    bool
+	wait      time.Duration
+	holder    string
+	consumer  string
+	label     string
+	priority  string
 	why       string
+	force     bool
+	jsonOut   bool
+	cpu       int
+	memory    int
+	cores     int
+	tags      []string
+	tagsSet   bool
+	res       map[string]int
+	resSet    bool
 	dir       string
 	dirSet    bool
+	dirFrom   string
 	argv      []string
-	args      []string // the command line as given, for a remedy that reruns it
-	dirFrom   string   // where dir came from, to name it in a refusal
+	args      []string
 }
 
-// remedy is a nova-reserve command line that keeps an explicit --dir.
+func (o options) hasSetField() bool {
+	return o.cpu > 0 || o.memory > 0 || o.cores > 0 || o.tagsSet || o.resSet
+}
+
 func (o options) remedy(args ...string) string {
 	if o.dirSet {
 		args = append(args, "--dir", o.dir)
@@ -121,15 +178,13 @@ func (o options) remedy(args ...string) string {
 	return "nova-reserve " + quoteAll(args)
 }
 
-// helpFor is a malformed invocation's remedy (one refusal line plus at most one hint line).
 func helpFor(verb string) string {
-	if verb == "run" {
+	if verb == "run" || verb == "" {
 		return "nova-reserve -h"
 	}
 	return "nova-reserve " + verb + " -h"
 }
 
-// prefix starts every refusal line: the tool, and the verb when one was named.
 func prefix(verb string) string {
 	if verb == "run" || verb == "" {
 		return "nova-reserve:"
@@ -152,24 +207,18 @@ func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
-func defaultDir(env func(string) string) string { return cmp.Or(env("NOVA_RESERVE_DIR"), systemDir) }
-
-// parse reads a command line. Every malformed one is one line and exit 2.
-func parse(args []string, env func(string) string) (options, error) {
-	o := options{verb: "run", dir: defaultDir(env), args: args, dirFrom: "the default directory"}
-	if env("NOVA_RESERVE_DIR") != "" {
-		o.dirFrom = "NOVA_RESERVE_DIR"
-	}
+func parse(args []string) (options, error) {
+	o := options{verb: "run", holder: "person", priority: "normal", dir: systemDir, dirFrom: "the default directory", args: args}
 	if len(args) == 1 && (args[0] == "-h" || args[0] == "--help") {
 		o.help, o.verb = true, ""
 		return o, nil
 	}
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		switch args[0] {
-		case "run", "status", "set", "help":
+		case "run", "hold", "measure", "set", "status", "help":
 			o.verb, args = args[0], args[1:]
 		default:
-			return o, refuse(2, "unknown verb %q; verbs: run, status, set, help; a command goes after --: nova-reserve -- %s; run: nova-reserve help",
+			return o, refuse(2, "unknown verb %q; verbs: run, hold, measure, set, status, help; a command goes after --: nova-reserve -- %s; run: nova-reserve help",
 				args[0], shellQuote(args[0]))
 		}
 	}
@@ -180,12 +229,13 @@ func parse(args []string, env func(string) string) (options, error) {
 		case len(args) == 1 && verbHelp[args[0]] != "":
 			o.help, o.verb = true, args[0]
 		default:
-			return o, refuse(2, "help takes one of run, status, set, not %q; run: nova-reserve -h", strings.Join(args, " "))
+			return o, refuse(2, "help takes one of run, hold, measure, set, status, not %q; run: nova-reserve -h", strings.Join(args, " "))
 		}
 		return o, nil
 	}
 	end := slices.Index(args, "--")
-	if end < 0 {
+	hasDashDash := end >= 0
+	if !hasDashDash {
 		end = len(args)
 	}
 	if slices.ContainsFunc(args[:end], func(a string) bool { return a == "-h" || a == "--help" }) {
@@ -201,9 +251,8 @@ func parse(args []string, env func(string) string) (options, error) {
 		}
 		name, val, hasVal := strings.Cut(strings.TrimLeft(a, "-"), "=")
 		if !slices.Contains(verbFlags[o.verb], name) {
-			if _, known := wants[name]; known || name == "exclusive" {
-				return o, refuse(2, "%s takes no --%s; it takes --%s; run: %s", o.verb, name,
-					strings.Join(verbFlags[o.verb], ", --"), hint)
+			if _, known := wants[name]; known || boolFlags[name] {
+				return o, refuse(2, "%s takes no --%s; it takes --%s; run: %s", o.verb, name, strings.Join(verbFlags[o.verb], ", --"), hint)
 			}
 			return o, refuse(2, "unknown flag %s; run: %s", a, hint)
 		}
@@ -211,11 +260,14 @@ func parse(args []string, env func(string) string) (options, error) {
 			return o, refuse(2, "--%s given twice; run: %s", name, hint)
 		}
 		seen[name] = true
-		if name == "exclusive" {
+		if boolFlags[name] {
 			if hasVal {
-				return o, refuse(2, "--exclusive takes no value, not %q; run: %s", val, hint)
+				return o, refuse(2, "--%s takes no value, not %q; run: %s", name, val, hint)
 			}
-			o.exclusive = true
+			o.exclusive = o.exclusive || name == "exclusive"
+			o.nowait = o.nowait || name == "nowait"
+			o.force = o.force || name == "force"
+			o.jsonOut = o.jsonOut || name == "json"
 			continue
 		}
 		if !hasVal {
@@ -225,76 +277,158 @@ func parse(args []string, env func(string) string) (options, error) {
 			i++
 			val = args[i]
 		}
-		if !o.set(name, val) {
+		if !o.setFlag(name, val) {
 			return o, refuse(2, "--%s wants %s, not %q; run: %s", name, wants[name], val, hint)
 		}
 	}
-	if end < len(args) {
+	if hasDashDash {
 		o.argv = args[end+1:]
+	}
+	if o.label == "" {
+		o.label = map[bool]string{true: "ci", false: "work"}[o.holder == "ci"]
 	}
 	switch {
 	case o.verb == "run" && len(o.argv) == 0:
 		return o, refuse(2, "no command: nova-reserve [flags] -- <cmd> [args...]; run: %s", hint)
-	case o.verb != "run" && end < len(args):
+	case o.verb != "run" && hasDashDash:
 		return o, refuse(2, "%s takes no command, not %q; run: %s", o.verb, strings.Join(o.argv, " "), hint)
-	case o.exclusive && o.slots > 0:
-		return o, refuse(2, "--exclusive takes every slot; --slots does not apply; run: %s", hint)
-	case o.verb == "set" && o.slots == 0:
-		return o, refuse(2, "set wants --slots N (1..1024); run: %s", hint)
+	case o.exclusive && len(o.needs) > 0:
+		return o, refuse(2, "--exclusive takes every resource; --needs does not apply; run: %s", hint)
+	case o.nowait && o.wait > 0:
+		return o, refuse(2, "--nowait and --wait cannot both be given; run: %s", hint)
+	case o.verb == "set" && !o.hasSetField():
+		return o, refuse(2, "set wants at least one of --cpu, --memory, --cores, --tags, --resources; run: %s", hint)
 	}
 	return o, nil
 }
 
-// set stores one flag's value; false when the value is not what it wants.
-func (o *options) set(name, val string) bool {
+func (o *options) setFlag(name, val string) bool {
 	switch name {
-	case "slots":
-		n, err := strconv.Atoi(val)
-		o.slots = n
-		return err == nil && n >= 1 && n <= 1024
+	case "needs":
+		items, err := parseNeedItems(val)
+		o.needs = items
+		return err == nil
 	case "wait":
 		d, err := time.ParseDuration(val)
 		o.wait = d
 		return err == nil && d > 0
+	case "holder":
+		o.holder = val
+		return val == "bench" || val == "friend" || val == "ci" || val == "person"
+	case "consumer":
+		o.consumer = val
+		return val != "" && !strings.ContainsAny(val, " \t\r\n")
+	case "label":
+		o.label = val
+		return identRe.MatchString(val)
+	case "priority":
+		_, ok := prioRanks[val]
+		o.priority = val
+		return ok
 	case "why":
 		o.why = val
+		return val != ""
 	case "dir":
 		o.dir, o.dirSet, o.dirFrom = val, true, "--dir"
+		return val != ""
+	case "cpu", "memory", "cores":
+		n, err := strconv.Atoi(val)
+		switch name {
+		case "cpu":
+			o.cpu = n
+		case "memory":
+			o.memory = n
+		case "cores":
+			o.cores = n
+		}
+		return err == nil && n >= 1
+	case "tags":
+		o.tagsSet, o.tags = true, nil
+		if val == "" {
+			return true
+		}
+		seen := map[string]bool{}
+		for _, t := range strings.Split(val, ",") {
+			t = strings.TrimSpace(t)
+			if !identRe.MatchString(t) || t == "cpu" || t == "memory" || seen[t] {
+				return false
+			}
+			seen[t] = true
+			o.tags = append(o.tags, t)
+		}
+		slices.Sort(o.tags)
+		return true
+	case "resources":
+		o.resSet, o.res = true, map[string]int{}
+		if val == "" {
+			return true
+		}
+		for _, part := range strings.Split(val, ",") {
+			k, v, ok := strings.Cut(strings.TrimSpace(part), "=")
+			n, err := strconv.Atoi(v)
+			if !ok || !identRe.MatchString(k) || err != nil || n < 1 || o.res[k] > 0 {
+				return false
+			}
+			o.res[k] = n
+		}
+		return true
 	}
-	return val != ""
+	return false
 }
 
-// tryLock takes the OS lock on path, shared or exclusive, without waiting.
-// ok is false when another holder has it; release lets go of a held lock.
 type tryLock func(path string, exclusive bool) (release func(), ok bool, err error)
 
-// world is everything run touches outside itself, so the unit tests fake it.
-type world struct {
-	env            func(string) string
-	lock           tryLock
-	now            func() time.Time
-	sleep          func(d time.Duration)
-	resolve        func(name string) (string, error) // exec.LookPath
-	exec           func(path string, argv []string) int
-	running        func(pid int) bool
-	pid            int
-	cpus           int
-	usable         func() ([]int, error) // the CPUs a command may be pinned to; none where the OS pins none
-	pin            func(cpus []int) error
-	stdout, stderr io.Writer
+type watcher interface {
+	drain()
+	wait(pids []int, d time.Duration)
+	close()
 }
 
-// poll is how often a waiting taker tries again; a --wait shorter than the
-// remaining poll cuts the last sleep short.
+type fallbackWatcher struct{}
+
+func (fallbackWatcher) drain()                        {}
+func (fallbackWatcher) wait(_ []int, d time.Duration) { time.Sleep(min(d, 50*time.Millisecond)) }
+func (fallbackWatcher) close()                        {}
+
+type world struct {
+	env     func(string) string
+	environ func() []string
+	lock    tryLock
+	watch   func(dir string) watcher
+	now     func() time.Time
+	sleep   func(d time.Duration)
+	resolve func(name string) (string, error)
+	exec    func(path string, argv, env []string, lower bool) int
+	waitEOF func(in io.Reader)
+	running func(pid int) bool
+	bench   func(cores int, force bool) (cpuUnits, memGB int, err error)
+	pid     int
+	cpus    int
+	goos    string
+	goarch  string
+	usable  func() ([]int, error)
+	groups  func(usable []int) [][]int
+	pin     func(cpus []int) error
+	stdin   io.Reader
+	stdout  io.Writer
+	stderr  io.Writer
+}
+
 const poll = time.Second
 
 func main() {
-	os.Exit(run(os.Args[1:], world{os.Getenv, osLock, time.Now, time.Sleep,
-		exec.LookPath, runCommand, running, os.Getpid(), runtime.NumCPU(), usableCPUs, pin, os.Stdout, os.Stderr}))
+	os.Exit(run(os.Args[1:], world{
+		env: os.Getenv, environ: os.Environ, lock: osLock, watch: newOSWatcher,
+		now: time.Now, sleep: time.Sleep, resolve: exec.LookPath, exec: runCommand,
+		waitEOF: waitHoldSignalOrEOF, running: running, bench: defaultBench,
+		pid: os.Getpid(), cpus: runtime.NumCPU(), goos: runtime.GOOS, goarch: runtime.GOARCH,
+		usable: usableCPUs, groups: smtGroups, pin: pin,
+		stdin: os.Stdin, stdout: os.Stdout, stderr: os.Stderr,
+	}))
 }
 
 func run(args []string, w world) int {
-	o, err := parse(args, w.env)
+	o, err := parse(args)
 	if err == nil && o.help {
 		fmt.Fprint(w.stdout, cmp.Or(verbHelp[o.verb], banner))
 		return 0
@@ -317,12 +451,38 @@ func run(args []string, w world) int {
 	}
 }
 
-// do carries out a parsed command line; an exitError from it is a refusal,
-// any other error could not run (exit 2). run's exit is the command's.
+func sameDir(a, b string) bool {
+	if a == "" || b == "" {
+		return false
+	}
+	if aa, e1 := filepath.Abs(a); e1 == nil {
+		if ab, e2 := filepath.Abs(b); e2 == nil && aa == ab {
+			return true
+		}
+	}
+	if ra, e1 := filepath.EvalSymlinks(a); e1 == nil {
+		if rb, e2 := filepath.EvalSymlinks(b); e2 == nil && ra == rb {
+			return true
+		}
+	}
+	if fa, e1 := os.Stat(a); e1 == nil {
+		if fb, e2 := os.Stat(b); e2 == nil && os.SameFile(fa, fb) {
+			return true
+		}
+	}
+	return filepath.Clean(a) == filepath.Clean(b)
+}
+
+func flushOut(w io.Writer) {
+	if fl, ok := w.(interface{ Flush() error }); ok {
+		// ignored: stdout flush best-effort
+		_ = fl.Flush()
+	}
+}
+
 func do(o options, w world) error {
 	path := ""
 	if o.verb == "run" {
-		// the command is found before any slot is taken, so a typo never holds one
 		p, err := w.resolve(o.argv[0])
 		switch {
 		case errors.Is(err, fs.ErrPermission) || errors.Is(err, syscall.EISDIR):
@@ -335,577 +495,527 @@ func do(o options, w world) error {
 		}
 		path = p
 	}
+	if (o.verb == "run" || o.verb == "hold") && sameDir(w.env("NOVA_RESERVE_DIR"), o.dir) {
+		if o.verb == "hold" {
+			fmt.Fprintf(w.stdout, "HELD cpu=1 memory=1 cores=1 pid=%d note=reentrant\n", w.pid)
+			flushOut(w.stdout)
+			w.waitEOF(w.stdin)
+			return nil
+		}
+		if code := w.exec(path, o.argv, nil, false); code != 0 {
+			return &exitError{code: code}
+		}
+		return nil
+	}
 	if o.verb == "status" {
-		// status reads; a directory no one ever reserved in is a missing input
-		if fi, err := os.Stat(o.dir); err != nil || !fi.IsDir() {
+		fi, err := os.Lstat(o.dir)
+		if err != nil {
 			return refuse(2, "%s %s is not a reservation directory (no reservation was taken there); run: %s",
 				o.dirFrom, shellQuote(o.dir), helpFor("status"))
 		}
-		return status(o, w)
-	}
-	// the one directory is the create target; its parent must exist
-	if err := os.Mkdir(o.dir, 0o777); err != nil && !errors.Is(err, fs.ErrExist) {
-		parent := filepath.Dir(o.dir)
-		if _, perr := os.Stat(parent); errors.Is(perr, fs.ErrNotExist) {
-			return refuse(2, "%s %s: parent %s does not exist; run: mkdir -p %s && %s", o.dirFrom, o.dir, parent,
-				shellQuote(parent), "nova-reserve "+quoteAll(o.args))
+		if fi.Mode()&os.ModeSymlink != 0 {
+			return refuse(2, "%s %s is a symbolic link; nova-reserve uses no link as its directory: give the directory it names, or remove the link; run: ls -ld %s",
+				o.dirFrom, o.dir, shellQuote(o.dir))
 		}
-		if errors.Is(err, fs.ErrPermission) {
-			return refuse(2, "%s %s: parent %s is not writable by this user; run: ls -ld %s", o.dirFrom, o.dir, parent, shellQuote(parent))
+		if !fi.IsDir() {
+			return refuse(2, "%s %s is a file, not a directory; run: ls -ld %s", o.dirFrom, o.dir, shellQuote(o.dir))
 		}
-		return refuse(2, "%s %s: %v; run: ls -ld %s", o.dirFrom, o.dir, errors.Unwrap(err), shellQuote(parent))
+		return statusCmd(o, w)
 	}
-	// the directory itself is opened, following no link, and its mode is set
-	// on what is open; the files in it are still reached by path
-	d, err := os.OpenFile(o.dir, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_DIRECTORY, 0)
-	if fi, lerr := os.Lstat(o.dir); err != nil && lerr == nil && fi.Mode()&os.ModeSymlink != 0 {
-		return refuse(2, "%s %s is a symbolic link; nova-reserve uses no link as its directory: give the directory it names, or remove the link; run: ls -ld %s",
-			o.dirFrom, o.dir, shellQuote(o.dir))
+	if err := ensureLayout(o.dir, o.dirFrom, "nova-reserve "+quoteAll(o.args)); err != nil {
+		return err
 	}
-	if err == nil {
-		fi, serr := d.Stat()
-		if serr == nil && fi.IsDir() {
-			// ignored: only the directory's owner may widen it; others share it as it is
-			_ = d.Chmod(0o777 | os.ModeSticky)
-		}
-		// ignored: opened read-only to set its mode
-		_ = d.Close()
-		if serr != nil || !fi.IsDir() {
-			err = syscall.ENOTDIR
-		}
-	}
-	// any other error (a directory this user may not read) leaves its mode as
-	// it is, as a failed chmod by a user who does not own it does
-	if errors.Is(err, syscall.ENOTDIR) {
-		return refuse(2, "%s %s is a file, not a directory; run: ls -ld %s", o.dirFrom, o.dir, shellQuote(o.dir))
-	}
-	if o.verb == "set" {
+	switch o.verb {
+	case "set":
 		return setCapacity(o, w)
-	}
-	t, err := acquire(w, o)
-	if err != nil {
-		return err
-	}
-	defer t.release()
-	if err := t.mark(t.name()); err != nil {
-		return err
-	}
-	if t.capSet > 0 {
-		fmt.Fprintf(w.stderr, "nova-reserve: CAPACITY SET slots=%d\n", t.capSet)
-	}
-	cpus := t.pin()
-	fmt.Fprintf(w.stderr, "nova-reserve: HELD %s%s\n", t.describe(), cpus)
-	if code := w.exec(path, o.argv); code != 0 {
-		return &exitError{code: code}
-	}
-	return nil
-}
-
-// --- capacity --------------------------------------------------------------
-
-// capacity is DIR/capacity: the slot count on the first line, then who set it
-// ("pid 123 at 2026-11-05T22:03:32Z"), read as pid and at.
-type capacity struct {
-	n       int
-	pid, at string
-}
-
-func (c capacity) who() string {
-	if c.pid == "" {
-		return "an unknown taker"
-	}
-	return "pid " + c.pid + " at " + c.at
-}
-
-// corrupt is a capacity file that holds no capacity: refused, never guessed.
-type corrupt string
-
-func (c corrupt) Error() string { return string(c) }
-
-// readIn reads a file of the reservation directory, opened as openIn opens it.
-func readIn(path string) ([]byte, error) {
-	f, err := openIn(path, os.O_RDONLY)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close() // read only
-	return io.ReadAll(f)
-}
-
-func readCapacity(dir string) (capacity, bool, error) {
-	b, err := readIn(filepath.Join(dir, "capacity"))
-	if errors.Is(err, fs.ErrNotExist) {
-		return capacity{}, false, nil
-	}
-	if err != nil {
-		return capacity{}, false, err
-	}
-	first, rest, _ := strings.Cut(string(b), "\n")
-	n, err := strconv.Atoi(strings.TrimSpace(first))
-	if err != nil || n < 1 || n > 1024 {
-		return capacity{}, false, corrupt(fmt.Sprintf("%s holds %q, not a capacity of 1..1024",
-			filepath.Join(dir, "capacity"), strings.TrimSpace(first)))
-	}
-	who, _, _ := strings.Cut(rest, "\n")
-	c := capacity{n: n}
-	if f := strings.Fields(who); len(f) == 4 && f[0] == "pid" && f[2] == "at" {
-		c.pid, c.at = f[1], f[3]
-	}
-	return c, true, nil
-}
-
-// writeCapacity is called with gate and all held exclusive. A new file is a
-// complete, synced temporary file renamed into place. An existing one (maybe
-// another user's, which a sticky directory forbids replacing) is rewritten
-// by one write at offset 0 and then cut to length: a kill between the two
-// leaves the record followed by old bytes, which readCapacity ignores, so no
-// kill leaves it empty (tla/Capacity.tla writes it in one step).
-func writeCapacity(dir string, n, pid int, at time.Time) error {
-	path := filepath.Join(dir, "capacity")
-	rec := fmt.Appendf(nil, "%d\npid %d at %s\n", n, pid, at.UTC().Format(time.RFC3339))
-	target := path
-	f, err := openIn(path, os.O_RDWR) // no O_CREATE: fs.protected_regular refuses it on another user's file
-	if errors.Is(err, fs.ErrNotExist) {
-		target = path + "." + strconv.Itoa(pid) + ".tmp"
-		f, err = openIn(target, os.O_RDWR|os.O_CREATE)
-	}
-	if err != nil {
-		return err
-	}
-	_, err = f.WriteAt(rec, 0)
-	err = errors.Join(err, f.Truncate(int64(len(rec))), f.Sync(), f.Close())
-	if err == nil && target != path {
-		err = os.Rename(target, path)
-		if d, derr := os.Open(dir); derr == nil {
-			// ignored: Windows syncs no directory; the rename is the record elsewhere
-			_ = d.Sync()
-			_ = d.Close()
-		}
-	}
-	if err != nil && target != path {
-		// ignored: a temporary file that is already gone
-		_ = os.Remove(target)
-	}
-	return err
-}
-
-// locksFree takes gate and all exclusive without waiting: no shared taker is
-// past the gate and no holder is left. It returns nil when either is taken.
-func locksFree(w world, dir string) (func(), error) {
-	gate, ok, err := w.lock(filepath.Join(dir, "gate"), true)
-	if !ok || err != nil {
-		return nil, err
-	}
-	all, ok, err := w.lock(filepath.Join(dir, "all"), true)
-	if !ok || err != nil {
-		gate()
-		return nil, err
-	}
-	return func() { all(); gate() }, nil
-}
-
-func setCapacity(o options, w world) error {
-	c, have, err := readCapacity(o.dir)
-	var bad corrupt
-	if err != nil && !errors.As(err, &bad) {
-		return err
-	}
-	if have && c.n == o.slots {
-		fmt.Fprintf(w.stdout, "CAPACITY SET slots=%d note=unchanged\n", o.slots)
-		return nil
-	}
-	free, err := locksFree(w, o.dir)
-	if err != nil {
-		return err
-	}
-	if free == nil {
-		in := cmp.Or(strings.Join(holders(w, o.dir, c.n), ", "), "a taker mid-take")
-		return refuse(1, "capacity in use (%s); retry when free; run: %s", in, o.remedy("status"))
-	}
-	defer free()
-	if err := writeCapacity(o.dir, o.slots, w.pid, w.now()); err != nil {
-		if odd := (*exitError)(nil); errors.As(err, &odd) {
-			return err // openIn's refusal carries its own remedy
-		}
-		p := filepath.Join(o.dir, "capacity")
-		return refuse(2, "%v; run: sudo rm -f %s && nova-reserve %s", err, shellQuote(p), quoteAll(o.args))
-	}
-	fmt.Fprintf(w.stdout, "CAPACITY SET slots=%d\n", o.slots)
-	return nil
-}
-
-// --- taking ----------------------------------------------------------------
-
-// taker takes the locks of one hold (tla/SlotFiles.tla, tla/Capacity.tla): a
-// shared taker passes the gate (held shared only while it reads the capacity
-// and takes its own locks), one free slot<k> of the stored capacity, and "all"
-// shared; an exclusive taker holds the gate exclusive, so no new shared taker
-// passes, then "all" exclusive, which waits for every shared holder; it keeps
-// both until it ends.
-type taker struct {
-	w      world
-	o      options
-	held   []func() // released last to first: locks, and the holder files on them
-	slot   int      // 0 until a shared hold; an exclusive hold names no slot
-	cap    int      // the capacity the shared hold was taken under
-	capSet int      // the capacity this taker stored, if it was the first
-	// claiming: this taker found no capacity and polls its claim, never the
-	// gate shared, which would keep another first taker's claim out
-	// (tla/Capacity.tla SClaimOK); once the file exists it goes back to the
-	// gate (SClaimSeen), since the claim waits on all, which a holder keeps.
-	claiming bool
-}
-
-func (t *taker) path(name string) string { return filepath.Join(t.o.dir, name) }
-
-// mark writes <name>.holder for status to read and keeps it open, so release,
-// before the lock it names, empties the file this hold wrote, whatever the
-// path names by then, and removes it. A holder is believed only while its pid
-// lives. Another user's file in the sticky directory cannot be removed, so it
-// is rewritten in place, opened without O_CREATE, which fs.protected_regular
-// refuses there; a new one is made with O_EXCL, so nothing put there since the
-// remove is opened. A file that cannot be written is a refusal: status would
-// show the slot free, or held by a stale pid.
-func (t *taker) mark(name string) error {
-	f := []string{"pid=" + strconv.Itoa(t.w.pid), "since=" + t.w.now().UTC().Format(time.RFC3339)}
-	if t.o.why != "" {
-		f = append(f, "why="+esc(t.o.why))
-	}
-	if len(t.o.argv) > 0 {
-		f = append(f, "cmd="+esc(strings.Join(t.o.argv, " ")))
-	}
-	p := t.path(name + ".holder")
-	// ignored: a file that stays is rewritten in place
-	_ = os.Remove(p)
-	file, err := openIn(p, os.O_WRONLY)
-	if errors.Is(err, fs.ErrNotExist) {
-		file, err = openIn(p, os.O_WRONLY|os.O_CREATE|os.O_EXCL)
-	}
-	if line := strings.Join(f, " ") + "\n"; err == nil {
-		_, err = file.WriteAt([]byte(line), 0)
-		err = errors.Join(err, file.Truncate(int64(len(line))))
-	}
-	if odd := (*exitError)(nil); err != nil && !errors.As(err, &odd) { // openIn's refusal carries its own remedy
-		err = refuse(2, "%v; status could not show this hold; run: sudo rm -f %s && nova-reserve %s", err, shellQuote(p), quoteAll(t.o.args))
-	}
-	if err != nil {
-		return err
-	}
-	// ignored: emptied, a file that cannot be removed names no holder
-	t.held = append(t.held, func() { _ = file.Truncate(0); _ = file.Close(); _ = os.Remove(p) })
-	return nil
-}
-
-// step makes one attempt without waiting; it reports true once held.
-func (t *taker) step() (bool, error) {
-	if t.o.exclusive {
-		if len(t.held) == 0 {
-			gate, ok, err := t.w.lock(t.path("gate"), true)
-			if !ok || err != nil {
-				return false, err
-			}
-			t.held = []func(){gate}
-			if err := t.mark("gate"); err != nil {
-				return false, err
-			}
-		}
-		all, ok, err := t.w.lock(t.path("all"), true)
-		if ok {
-			t.held = append(t.held, all)
-		}
-		return ok, err
-	}
-	for range 3 { // read (no file), store it, read again and take under it
-		if t.claiming {
-			if _, have, err := readCapacity(t.o.dir); have || err != nil {
-				t.claiming = false // another first taker stored it: SClaimSeen
-				continue
-			}
-			if ok, err := t.storeCapacity(); !ok || err != nil {
-				return false, err
-			}
-			t.claiming = false
-		}
-		gate, ok, err := t.w.lock(t.path("gate"), false)
-		if !ok || err != nil {
-			return false, err
-		}
-		c, have, err := readCapacity(t.o.dir)
-		if err != nil || have {
-			defer gate()
-			if bad := (corrupt("")); errors.As(err, &bad) {
-				return false, refuse(2, "%s; run: %s", bad, setRemedy(t.o, cmp.Or(t.o.slots, t.defaultSlots())))
-			}
-			if err != nil {
-				return false, err
-			}
-			return t.scan(c)
-		}
-		gate()
-		t.claiming = true
-	}
-	return false, nil
-}
-
-// setRemedy repairs a corrupt capacity file; n is a suggestion, so it comes
-// last, after --dir, with a comment the shell ignores.
-func setRemedy(o options, n int) string {
-	return o.remedy("set") + " --slots " + strconv.Itoa(n) + "  # your choice"
-}
-
-func (t *taker) defaultSlots() int { return max(1, t.w.cpus/4) }
-
-// storeCapacity is the first taker's write of --slots, or of CPU count / 4:
-// under gate and all exclusive, and only if no capacity is there by then
-// (tla/Capacity.tla SClaim2; "racyfirst" is the witness without the locks).
-func (t *taker) storeCapacity() (bool, error) {
-	free, err := locksFree(t.w, t.o.dir)
-	if free == nil || err != nil {
-		return false, err
-	}
-	defer free()
-	if _, have, err := readCapacity(t.o.dir); have || err != nil {
-		return err == nil, err
-	}
-	n := cmp.Or(t.o.slots, t.defaultSlots())
-	if err := writeCapacity(t.o.dir, n, t.w.pid, t.w.now()); err != nil {
-		return false, err
-	}
-	t.capSet = n
-	return true, nil
-}
-
-// scan takes slot1..slot<c.n> in order, the first free one, then all shared.
-// A --slots that differs from the stored capacity is refused, never counted
-// on its own (tla/Capacity.tla, "percaller" is the witness of that bug).
-func (t *taker) scan(c capacity) (bool, error) {
-	if t.o.slots > 0 && t.o.slots != c.n {
-		return false, refuse(2, "this machine's capacity is %d (set by %s); you asked %d; run: %s",
-			c.n, c.who(), t.o.slots, t.o.remedy("set", "--slots", strconv.Itoa(t.o.slots)))
-	}
-	for k := 1; k <= c.n; k++ {
-		slot, ok, err := t.w.lock(t.path("slot"+strconv.Itoa(k)), true)
+	case "measure":
+		return measureCmd(o, w)
+	case "hold":
+		h, err := acquire(w, o)
 		if err != nil {
-			return false, err
+			return err
 		}
-		if !ok {
-			continue
+		defer h.release(false)
+		if h.measured != nil {
+			fmt.Fprintf(w.stderr, "nova-reserve: MEASURE OK cpu=%d memory=%d cores=%d\n",
+				h.measured.Resources["cpu"], h.measured.Resources["memory"], h.measured.UsableCores)
 		}
-		all, ok, err := t.w.lock(t.path("all"), false)
-		if !ok || err != nil {
-			slot()
-			return false, err
-		}
-		t.held, t.slot, t.cap = []func(){slot, all}, k, c.n
-		return true, nil
-	}
-	return false, nil
-}
-
-func (t *taker) release() {
-	for _, rel := range slices.Backward(t.held) {
-		rel()
-	}
-	t.held = nil
-}
-
-// acquire polls step until it holds, or until o.wait (0: no bound) has passed.
-func acquire(w world, o options) (*taker, error) {
-	t := &taker{w: w, o: o}
-	deadline := w.now().Add(o.wait)
-	for {
-		ok, err := t.step()
-		if ok {
-			return t, nil
-		}
-		if err == nil && o.wait > 0 && !w.now().Before(deadline) {
-			t.release()
-			c, _, _ := readCapacity(o.dir)
-			what := map[bool]string{false: "slot", true: "exclusive hold"}[o.exclusive]
-			return nil, refuse(1, "no %s within %s: %s; run: %s", what, o.wait,
-				cmp.Or(strings.Join(holders(w, o.dir, c.n), ", "), "every slot busy"), o.remedy("status"))
-		}
-		if err != nil {
-			t.release()
-			return nil, err
-		}
-		d := poll
-		if o.wait > 0 {
-			d = min(d, deadline.Sub(w.now()))
-		}
-		w.sleep(d)
-	}
-}
-
-// name is the hold's lock, whose <name>.holder file status reads: slot<k>, or all.
-func (t *taker) name() string {
-	if t.o.exclusive {
-		return "all"
-	}
-	return "slot" + strconv.Itoa(t.slot)
-}
-
-func (t *taker) describe() string {
-	if t.o.exclusive {
-		return fmt.Sprintf("mode=exclusive slot=all pid=%d", t.w.pid)
-	}
-	return fmt.Sprintf("mode=shared slot=%d/%d pid=%d", t.slot, t.cap, t.w.pid)
-}
-
-// pin starts the command on its slot's share of the usable CPUs, or all of
-// them for an exclusive hold, so tools that size themselves by the CPUs they
-// may use (nproc, Go) count that share. It returns " cpus=LIST", or
-// "" where the OS pins nothing. A failure is one stderr line; the command
-// then runs unpinned.
-func (t *taker) pin() string {
-	cpus, err := t.w.usable()
-	if !t.o.exclusive {
-		cpus = share(cpus, t.cap, t.slot)
-	}
-	if err == nil && len(cpus) > 0 {
-		err = t.w.pin(cpus)
-	}
-	switch {
-	case err != nil:
-		fmt.Fprintf(t.w.stderr, "nova-reserve: running unpinned: %v\n", err)
-	case len(cpus) > 0:
-		return " cpus=" + cpuList(cpus)
-	}
-	return ""
-}
-
-// share is slot k's part (k in 1..n) of the usable CPUs, in ascending order:
-// n contiguous parts as near equal as they can be. With more slots than CPUs
-// the parts wrap, one CPU each, so every slot has one.
-func share(usable []int, n, k int) []int {
-	switch m := len(usable); {
-	case m == 0:
+		fmt.Fprintf(w.stdout, "HELD %s\n", describeHold(h.rec, nil))
+		flushOut(w.stdout)
+		w.waitEOF(w.stdin)
 		return nil
-	case n > m:
-		i := (k - 1) % m
-		return usable[i : i+1]
 	default:
-		return usable[(k-1)*m/n : k*m/n]
+		h, err := acquire(w, o)
+		if err != nil {
+			return err
+		}
+		if h.measured != nil {
+			fmt.Fprintf(w.stderr, "nova-reserve: MEASURE OK cpu=%d memory=%d cores=%d\n",
+				h.measured.Resources["cpu"], h.measured.Resources["memory"], h.measured.UsableCores)
+		}
+		if h.pinWarn != nil {
+			fmt.Fprintf(w.stderr, "nova-reserve: running unpinned: %v\n", h.pinWarn)
+		}
+		fmt.Fprintf(w.stderr, "nova-reserve: HELD %s\n", describeHold(h.rec, h.pinWarn))
+		code := w.exec(path, o.argv, steerEnv(w.environ, o.dir, h.rec.Cores), o.holder != "ci")
+		h.release(true)
+		if code != 0 {
+			return &exitError{code: code}
+		}
+		return nil
 	}
 }
 
-// cpuList is ascending CPUs in the kernel's list form, such as 0,2,4-5.
-func cpuList(cpus []int) string {
-	var parts []string
-	for i := 0; i < len(cpus); {
-		j := i
-		for j+1 < len(cpus) && cpus[j+1] == cpus[j]+1 {
-			j++
-		}
-		parts = append(parts, strconv.Itoa(cpus[i]))
-		if j > i {
-			parts[len(parts)-1] += "-" + strconv.Itoa(cpus[j])
-		}
-		i = j + 1
-	}
-	return strings.Join(parts, ",")
-}
-
-// --- who holds what --------------------------------------------------------
-
-// holderOf reads <name>.holder. It takes no lock, so it can never be seen as
-// a holder or make a scanning taker skip a free slot (tla/Capacity.tla
-// "lockprobe"); a file is believed only while the pid in it is alive, so a
-// SIGKILLed holder's leftover file reads as free.
-func holderOf(w world, dir, name string) (string, bool) {
-	b, err := readIn(filepath.Join(dir, name+".holder"))
-	line := strings.TrimSpace(string(b))
-	for _, f := range strings.Fields(line) {
-		if v, ok := strings.CutPrefix(f, "pid="); ok && err == nil {
-			pid, err := strconv.Atoi(v)
-			return line, err == nil && pid > 0 && w.running(pid)
-		}
-	}
-	return "", false
-}
-
-// holders is each held lock (the slots, gate and all) as status prints it.
-func holders(w world, dir string, n int) []string {
-	var in []string
-	for _, name := range append(slots(dir, n), "gate", "all") {
-		if line, held := holderOf(w, dir, name); held {
-			in = append(in, name+" held "+line)
-		}
-	}
-	return in
-}
-
-// slots is slot1..slot<n> and any other slot file on disk, in order.
-func slots(dir string, n int) []string {
-	nums := map[int]bool{}
-	for k := 1; k <= n; k++ {
-		nums[k] = true
-	}
-	files, _ := filepath.Glob(filepath.Join(dir, "slot*"))
-	for _, p := range files {
-		num := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(p), "slot"), ".holder")
-		if k, err := strconv.Atoi(num); err == nil && k > 0 {
-			nums[k] = true
-		}
-	}
-	var s []string
-	for _, k := range slices.Sorted(maps.Keys(nums)) {
-		s = append(s, "slot"+strconv.Itoa(k))
+func describeHold(r holdRecord, pinWarn error) string {
+	s := fmt.Sprintf("cpu=%d memory=%d cores=%d pid=%d", r.Needs["cpu"], r.Needs["memory"], r.Cores, r.PID)
+	if pinWarn == nil && len(r.CPUs) > 0 {
+		s += " cpus=" + cpuList(r.CPUs)
 	}
 	return s
 }
 
-func status(o options, w world) error {
-	c, have, err := readCapacity(o.dir)
+func steerEnv(baseFn func() []string, dir string, cores int) []string {
+	absDir := dir
+	if a, err := filepath.Abs(dir); err == nil {
+		absDir = a
+	}
+	cs := strconv.Itoa(max(1, cores))
+	overrides := map[string]string{
+		"NOVA_RESERVE_DIR": absDir, "NOVA_RESERVE_CPUS": cs, "GOMAXPROCS": cs,
+		"CARGO_BUILD_JOBS": cs, "RAYON_NUM_THREADS": cs, "CMAKE_BUILD_PARALLEL_LEVEL": cs,
+	}
+	var base []string
+	if baseFn != nil {
+		base = baseFn()
+	}
+	out := make([]string, 0, len(base)+len(overrides))
+	for _, kv := range base {
+		if k, _, _ := strings.Cut(kv, "="); overrides[k] == "" {
+			out = append(out, kv)
+		}
+	}
+	for _, k := range slices.Sorted(maps.Keys(overrides)) {
+		out = append(out, k+"="+overrides[k])
+	}
+	return out
+}
+
+func waitHoldSignalOrEOF(in io.Reader) {
+	done := make(chan struct{}, 1)
+	if in != nil {
+		go func() {
+			var buf [64]byte
+			for {
+				if _, err := in.Read(buf[:]); err != nil {
+					done <- struct{}{}
+					return
+				}
+			}
+		}()
+	}
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sigs)
+	select {
+	case <-done:
+	case <-sigs:
+	}
+}
+
+// measureInto runs the benchmark while holding exclusive access on o.dir.
+// When auto is true, it skips measurement if another caller already wrote capacity.json.
+func measureInto(w world, o options, auto bool, deadline time.Time) (capRecord, bool, error) {
+	for {
+		var existing capRecord
+		var haveExisting bool
+		c, have, err := readCapacity(o.dir)
+		if bad := corrupt(""); err != nil && !errors.As(err, &bad) {
+			return capRecord{}, false, err
+		}
+		if have {
+			if auto {
+				return c, false, nil
+			}
+			existing, haveExisting = c, true
+		}
+
+		var exHold *activeHold
+		var bootUnlock func()
+		var bootSeq uint64
+		if haveExisting {
+			exOpts := options{
+				verb: "hold", exclusive: true, holder: "person", label: "measure",
+				priority: "blocker", why: "measure", dir: o.dir, dirSet: o.dirSet, dirFrom: o.dirFrom,
+			}
+			exHold, err = acquire(w, exOpts)
+			if err != nil {
+				return capRecord{}, false, err
+			}
+		} else {
+			var already bool
+			merr := withMutex(w, o.dir, true, deadline, func() error {
+				cur, ok, cerr := readCapacity(o.dir)
+				if bad := corrupt(""); cerr != nil && !errors.As(cerr, &bad) {
+					return cerr
+				}
+				if ok && auto {
+					c, already = cur, true
+					return nil
+				}
+				holds, waiters, lerr := loadStateLocked(w, o.dir, false)
+				if lerr != nil || len(holds) > 0 {
+					return lerr
+				}
+				seq, serr := nextSeqLocked(o.dir, holds, waiters, w.pid)
+				if serr != nil {
+					return serr
+				}
+				lp := lockPath(o.dir, "holds", seq)
+				u, ok, lerr := w.lock(lp, true)
+				if lerr != nil || !ok {
+					return lerr
+				}
+				h := &holdRecord{
+					Seq: seq, PID: w.pid, Since: w.now().UTC().Format(time.RFC3339),
+					Holder: "person", Label: "measure", Priority: "blocker", Exclusive: true,
+					Needs: map[string]int{"cpu": 1, "memory": 1}, Cores: max(1, w.cpus), Why: "measure",
+				}
+				if serr := saveHoldLocked(o.dir, h, w.pid); serr != nil {
+					u()
+					return serr
+				}
+				bootUnlock, bootSeq = u, seq
+				return nil
+			})
+			if merr != nil {
+				if errors.Is(merr, errTimedOut) {
+					return capRecord{}, false, refuse(1, "no hold within %s: measure in progress; run: %s", o.wait, o.remedy("status"))
+				}
+				return capRecord{}, false, merr
+			}
+			if already {
+				return c, false, nil
+			}
+			if bootUnlock == nil {
+				if !deadline.IsZero() && !w.now().Before(deadline) {
+					return capRecord{}, false, refuse(1, "no hold within %s: measure in progress; run: %s", o.wait, o.remedy("status"))
+				}
+				d := min(poll, 100*time.Millisecond)
+				if !deadline.IsZero() {
+					d = min(d, deadline.Sub(w.now()))
+				}
+				w.sleep(d)
+				continue
+			}
+		}
+
+		cores := usableCoreCount(w)
+		if u, uerr := w.usable(); uerr == nil && len(u) > 0 {
+			// ignored: advisory affinity across all usable CPUs for benchmark
+			_ = w.pin(u)
+		}
+		cpuU, memG, berr := w.bench(cores, o.force || auto)
+
+		var written capRecord
+		werr := withMutex(w, o.dir, true, time.Time{}, func() error {
+			if bootUnlock != nil {
+				removePair(seqFiles(o.dir, "holds", bootSeq))
+				bootUnlock()
+			}
+			if berr != nil {
+				return refuse(1, "%v; run: %s", berr, o.remedy("measure", "--force"))
+			}
+			res := map[string]int{"cpu": cpuU, "memory": memG}
+			tags := effectiveTags(nil, w)
+			if haveExisting {
+				for k, v := range existing.Resources {
+					if k != "cpu" && k != "memory" {
+						res[k] = v
+					}
+				}
+				tags = slices.Clone(existing.Tags)
+			}
+			written = capRecord{
+				Tags: tags, UsableCores: cores, Resources: res,
+				SetByPID: w.pid, SetAt: w.now().UTC().Format(time.RFC3339),
+			}
+			if err := writeCapacity(o.dir, written, w.pid); err != nil {
+				return err
+			}
+			if hs, ws, lerr := loadStateLocked(w, o.dir, false); lerr == nil {
+				// ignored: best-effort unpause pass after measure update
+				_, _ = reconcileLocked(w, o.dir, written, hs, ws)
+			}
+			notifyLocked(o.dir, w.pid, w.now())
+			return nil
+		})
+		if exHold != nil {
+			exHold.release(false)
+		}
+		if werr != nil {
+			return capRecord{}, false, werr
+		}
+		return written, true, nil
+	}
+}
+
+func measureCmd(o options, w world) error {
+	written, _, err := measureInto(w, o, false, time.Time{})
+	if err != nil {
+		return err
+	}
+	if o.jsonOut {
+		out := struct {
+			CPU         int      `json:"cpu"`
+			Memory      int      `json:"memory"`
+			UsableCores int      `json:"usable_cores"`
+			Tags        []string `json:"tags"`
+		}{written.Resources["cpu"], written.Resources["memory"], written.UsableCores, effectiveTags(written.Tags, w)}
+		// ignored: marshaling fixed primitive struct cannot fail
+		b, _ := json.Marshal(out)
+		fmt.Fprintln(w.stdout, string(b))
+		return nil
+	}
+	fmt.Fprintf(w.stdout, "MEASURE OK cpu=%d memory=%d cores=%d\n",
+		written.Resources["cpu"], written.Resources["memory"], written.UsableCores)
+	return nil
+}
+
+func setCapacity(o options, w world) error {
+	var unchanged bool
+	var next capRecord
+	err := withMutex(w, o.dir, true, time.Time{}, func() error {
+		cur, have, cerr := readCapacity(o.dir)
+		if bad := corrupt(""); cerr != nil && !errors.As(cerr, &bad) {
+			return cerr
+		}
+		res := map[string]int{}
+		var tags []string
+		cores := usableCoreCount(w)
+		if have {
+			res, tags, cores = maps.Clone(cur.Resources), slices.Clone(cur.Tags), cur.UsableCores
+		}
+		if o.resSet {
+			kept := map[string]int{}
+			for _, base := range []string{"cpu", "memory"} {
+				if res[base] > 0 {
+					kept[base] = res[base]
+				}
+			}
+			maps.Copy(kept, o.res)
+			res = kept
+		}
+		if o.cpu > 0 {
+			res["cpu"] = o.cpu
+		}
+		if o.memory > 0 {
+			res["memory"] = o.memory
+		}
+		if o.cores > 0 {
+			cores = o.cores
+		}
+		if o.tagsSet {
+			tags = slices.Clone(o.tags)
+		} else if !have {
+			tags = effectiveTags(nil, w)
+		}
+		if res["cpu"] < 1 || res["memory"] < 1 {
+			return refuse(2, "%s %s has no capacity.json; pass both --cpu and --memory, or measure first; run: %s",
+				o.dirFrom, o.dir, o.remedy("measure", "--force"))
+		}
+		effTags := effectiveTags(tags, w)
+		for k := range res {
+			if slices.Contains(tags, k) || (k != "cpu" && k != "memory" && slices.Contains(effTags, k)) {
+				return refuse(2, "%q cannot be both a tag and a resource; run: %s", k, helpFor("set"))
+			}
+		}
+		if tags == nil {
+			tags = []string{}
+		}
+		slices.Sort(tags)
+		unchanged = have && cur.UsableCores == cores && slices.Equal(cur.Tags, tags) && maps.Equal(cur.Resources, res)
+		next = capRecord{Tags: tags, UsableCores: cores, Resources: res, SetByPID: w.pid, SetAt: w.now().UTC().Format(time.RFC3339)}
+		if unchanged {
+			return nil
+		}
+		if err := writeCapacity(o.dir, next, w.pid); err != nil {
+			if odd := (*exitError)(nil); errors.As(err, &odd) {
+				return err
+			}
+			return refuse(2, "%v; run: sudo rm -f %s && nova-reserve %s", err, shellQuote(capPath(o.dir)), quoteAll(o.args))
+		}
+		if hs, ws, lerr := loadStateLocked(w, o.dir, false); lerr == nil {
+			// ignored: best-effort unpause pass after live capacity update
+			_, _ = reconcileLocked(w, o.dir, next, hs, ws)
+		}
+		notifyLocked(o.dir, w.pid, w.now())
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	note := map[bool]string{true: " note=unchanged"}[unchanged]
+	fmt.Fprintf(w.stdout, "CAPACITY SET cpu=%d memory=%d cores=%d%s\n",
+		next.Resources["cpu"], next.Resources["memory"], next.UsableCores, note)
+	return nil
+}
+
+type statusJSON struct {
+	Tags            []string                  `json:"tags"`
+	UsableCores     int                       `json:"usable_cores"`
+	Resources       map[string]int            `json:"resources"`
+	HeldSprint      map[string]int            `json:"held_sprint"`
+	HeldOther       map[string]int            `json:"held_other"`
+	HeldByLabel     map[string]map[string]int `json:"held_by_label"`
+	PausedByLabel   map[string]map[string]int `json:"paused_by_label"`
+	AnyPaused       bool                      `json:"any_paused"`
+	SprintConsumers []string                  `json:"sprint_consumers"`
+	PausedConsumers []string                  `json:"paused_consumers"`
+}
+
+func addByLabel(dst map[string]map[string]int, label string, src map[string]int) {
+	label = cmp.Or(label, "work")
+	if dst[label] == nil {
+		dst[label] = map[string]int{}
+	}
+	for r, v := range src {
+		dst[label][r] += v
+	}
+}
+
+func statusCmd(o options, w world) error {
+	var c capRecord
+	var have bool
+	var capErr error
+	var holds []*holdRecord
+	var waiters []*waiterRecord
+
+	err := withMutex(w, o.dir, false, time.Time{}, func() error {
+		c, have, capErr = readCapacity(o.dir)
+		if bad := corrupt(""); capErr != nil && !errors.As(capErr, &bad) {
+			return capErr
+		}
+		var lerr error
+		holds, waiters, lerr = loadStateLocked(w, o.dir, true)
+		return lerr
+	})
+	if err != nil {
+		return err
+	}
 	var bad corrupt
+	if o.jsonOut {
+		if errors.As(capErr, &bad) {
+			return refuse(2, "%s; run: %s", bad, o.remedy("measure", "--force"))
+		}
+		sj := statusJSON{
+			Tags: effectiveTags(c.Tags, w), UsableCores: c.UsableCores,
+			Resources: map[string]int{}, HeldSprint: map[string]int{}, HeldOther: map[string]int{},
+			HeldByLabel: map[string]map[string]int{}, PausedByLabel: map[string]map[string]int{},
+			SprintConsumers: []string{}, PausedConsumers: []string{},
+		}
+		if have {
+			sj.Resources = maps.Clone(c.Resources)
+		}
+		sprintSet, pausedSet := map[string]bool{}, map[string]bool{}
+		for _, h := range holds {
+			if h.Paused {
+				sj.AnyPaused = true
+				addByLabel(sj.PausedByLabel, h.Label, h.Needs)
+				if h.Consumer != "" {
+					pausedSet[h.Consumer] = true
+				}
+				continue
+			}
+			dst := sj.HeldOther
+			if h.Holder == "bench" {
+				dst = sj.HeldSprint
+				if h.Consumer != "" {
+					sprintSet[h.Consumer] = true
+				}
+			}
+			for r, v := range h.Needs {
+				dst[r] += v
+			}
+			addByLabel(sj.HeldByLabel, h.Label, h.Needs)
+		}
+		if len(sprintSet) > 0 {
+			sj.SprintConsumers = slices.Sorted(maps.Keys(sprintSet))
+		}
+		if len(pausedSet) > 0 {
+			sj.PausedConsumers = slices.Sorted(maps.Keys(pausedSet))
+		}
+		b, merr := json.Marshal(sj)
+		if merr != nil {
+			return merr
+		}
+		fmt.Fprintln(w.stdout, string(b))
+		return nil
+	}
+
 	out := bufio.NewWriter(w.stdout)
 	switch {
-	case errors.As(err, &bad):
-		fmt.Fprintf(out, "capacity=? # corrupt: %s; %s\n", bad, setRemedy(o, max(1, w.cpus/4)))
-	case err != nil:
-		return err
+	case errors.As(capErr, &bad):
+		fmt.Fprintf(out, "capacity=? # corrupt: %s; %s\n", bad, o.remedy("measure", "--force"))
 	case have:
-		fmt.Fprintf(out, "capacity=%d set_by_pid=%s set_at=%s\n", c.n, cmp.Or(c.pid, "?"), cmp.Or(c.at, "?"))
+		tags := strings.Join(effectiveTags(c.Tags, w), ",")
+		fmt.Fprintf(out, "capacity cpu=%d memory=%d cores=%d tags=%s set_by_pid=%d set_at=%s\n",
+			c.Resources["cpu"], c.Resources["memory"], c.UsableCores, cmp.Or(tags, "-"), c.SetByPID, cmp.Or(c.SetAt, "?"))
 	default:
-		fmt.Fprintf(out, "capacity=unset # the first run stores its --slots (or CPU count / 4); or: %s\n",
-			o.remedy("set", "--slots", "N"))
+		fmt.Fprintf(out, "capacity=unset # run: %s\n", o.remedy("measure", "--force"))
 	}
-	free := 0
-	line := func(name, note string) bool {
-		holder, held := holderOf(w, o.dir, name)
-		parts := []string{name, "free"}
-		if held {
-			parts = []string{name, "held", holder}
+	// ignored: exclusive flag not needed when printing resource free counts
+	used, _ := sumUnpaused(holds)
+	pausedCount := 0
+	for _, h := range holds {
+		state := "held"
+		if h.Paused {
+			state = "paused"
+			pausedCount++
 		}
-		if note != "" {
-			parts = append(parts, "#", note)
+		fmt.Fprintf(out, "hold %d state=%s holder=%s label=%s priority=%s %s cores=%d pid=%d since=%s",
+			h.Seq, state, h.Holder, h.Label, h.Priority, formatNeedsKV(h.Needs), h.Cores, h.PID, cmp.Or(h.Since, "?"))
+		if h.Consumer != "" {
+			fmt.Fprintf(out, " consumer=%s", esc(h.Consumer))
 		}
-		fmt.Fprintln(out, strings.Join(parts, " "))
-		return held
+		if h.Why != "" {
+			fmt.Fprintf(out, " why=%s", esc(h.Why))
+		}
+		if h.Cmd != "" {
+			fmt.Fprintf(out, " cmd=%s", esc(h.Cmd))
+		}
+		fmt.Fprintln(out)
 	}
-	for i, name := range slots(o.dir, c.n) {
-		if have && i >= c.n {
-			line(name, "beyond capacity, from an older one; no new holder takes it")
-		} else if !line(name, "") {
-			free++
+	for _, wr := range waiters {
+		fmt.Fprintf(out, "waiter %d holder=%s label=%s priority=%s %s pid=%d since=%s",
+			wr.Seq, wr.Holder, wr.Label, wr.Priority, formatNeedsKV(wr.Needs), wr.PID, cmp.Or(wr.Since, "?"))
+		if wr.Consumer != "" {
+			fmt.Fprintf(out, " consumer=%s", esc(wr.Consumer))
 		}
-	}
-	line("gate", "held by an --exclusive run from when it starts waiting until it ends")
-	if line("all", "the exclusive lock: held by an --exclusive run while it runs") {
-		free = 0
+		if wr.Why != "" {
+			fmt.Fprintf(out, " why=%s", esc(wr.Why))
+		}
+		fmt.Fprintln(out)
 	}
 	if have {
-		fmt.Fprintf(out, "free=%d/%d\n", free, c.n)
+		var fparts []string
+		for _, r := range slices.Sorted(maps.Keys(c.Resources)) {
+			fparts = append(fparts, fmt.Sprintf("%s=%d/%d", r, max(0, c.Resources[r]-used[r]), c.Resources[r]))
+		}
+		fmt.Fprintf(out, "free %s paused=%d waiting=%d\n", strings.Join(fparts, " "), pausedCount, len(waiters))
 	} else {
-		fmt.Fprintln(out, "free=?")
+		fmt.Fprintf(out, "free=? paused=%d waiting=%d\n", pausedCount, len(waiters))
 	}
 	return out.Flush()
 }
 
-// --- the outside -------------------------------------------------------------
+func formatNeedsKV(needs map[string]int) string {
+	var parts []string
+	for _, r := range slices.Sorted(maps.Keys(needs)) {
+		parts = append(parts, fmt.Sprintf("%s=%d", r, needs[r]))
+	}
+	return strings.Join(parts, " ")
+}
 
-// esc makes text one whitespace-free field: backslash, space, tab, newline
-// and other control bytes become \\, \s, \t, \n and \xHH.
 func esc(s string) string {
 	var b strings.Builder
 	for i := 0; i < len(s); i++ {
@@ -925,38 +1035,4 @@ func esc(s string) string {
 		}
 	}
 	return b.String()
-}
-
-// runCommand runs the resolved path with argv and this process's stdio, tied
-// to this process so it cannot outlive the slot (tie, per OS), forwards
-// interrupts to it, and returns its exit status (128+signal when a signal
-// ended it; 126 when it was found but could not be started).
-func runCommand(path string, argv []string) int {
-	cmd := exec.Command(path, argv[1:]...)
-	cmd.Args[0] = argv[0]
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
-	untie, err := tie(cmd)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "nova-reserve:", err)
-		return 126
-	}
-	defer untie()
-	sigs := make(chan os.Signal, 1)
-	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
-	go func() {
-		for s := range sigs {
-			forward(cmd, s)
-		}
-	}()
-	ws, err := wait(cmd)
-	signal.Stop(sigs)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "nova-reserve:", err)
-		return 126
-	}
-	if ws.Signaled() {
-		fmt.Fprintf(os.Stderr, "nova-reserve: %s ended by signal %s; exit %d\n", argv[0], signalName(ws.Signal()), 128+int(ws.Signal()))
-		return 128 + int(ws.Signal())
-	}
-	return ws.ExitStatus()
 }

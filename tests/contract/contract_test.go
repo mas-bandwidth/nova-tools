@@ -54,8 +54,11 @@ var toolSpecs = []toolSpec{
 		missing: []missingCase{{[]string{"machine", "list"}, []string{"--pg"}}}},
 	{dir: "fleet", verbs: [][]string{{"plays"}, {"show"}, {"check"}, {"up"}, {"rented"}, {"help"}},
 		missing: []missingCase{{[]string{"show"}, []string{"play or file name"}}, {[]string{"up"}, []string{"<name>=<address>", "--tools"}}}},
-	{dir: "reserve", verbs: [][]string{{"set"}, {"status"}}, extra: []int{126, 127},
-		missing: []missingCase{{[]string{"status", "--dir", "@tmp/no-such-dir"}, []string{"--dir"}}}},
+	{dir: "reserve", verbs: [][]string{{"hold"}, {"measure"}, {"set"}, {"status"}}, extra: []int{126, 127},
+		missing: []missingCase{
+			{[]string{"--nowait"}, []string{"command"}},
+			{[]string{"set"}, []string{"--cpu", "--memory", "--cores", "--tags", "--resources"}},
+			{[]string{"status", "--dir", "@tmp/no-such-dir"}, []string{"--dir"}}}},
 	{dir: "sandbox", verbs: [][]string{{"check"}, {"probe"}}, extra: []int{125, 126, 127},
 		missing: []missingCase{{[]string{"--read", "@tmp/no-such-dir"}, []string{"--read|command"}}}},
 	{dir: "secrets", verbs: [][]string{{"exec"}, {"set"}, {"seat", "add"}, {"seat", "remove"}, {"init"}, {"names"}, {"grant"}}, extra: []int{125},
