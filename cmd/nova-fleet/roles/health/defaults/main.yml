@@ -26,6 +26,12 @@ nova_health_log_files: [/var/log/syslog, /var/log/kern.log]
 # limit), and a killed user manager comes back.
 nova_health_user_memory_max_pct: 85
 
+# On a bench or runner machine, /system.slice (where GitHub runners run) outweighs /user.slice (where bench services
+# and ssh builds run), so user builds yield CPU and disk I/O to 2-minute CI jobs and still take 100% when CI is idle.
+nova_health_slice_priority: true
+nova_health_system_slice_weight: 10000
+nova_health_user_slice_weight: 1
+
 # The disk report: every 6 hours one DISK line in the journal for /, the home
 # filesystem and swap, DISK-WARN (priority warning) over this percent.
 nova_health_disk_report: true

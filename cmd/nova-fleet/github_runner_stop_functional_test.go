@@ -26,6 +26,9 @@ func TestRunnerServiceRendersAWholeRunnerStop(t *testing.T) {
 		assert.Equal(t, 1, strings.Count(service, "Environment=RUNNER_MANUALLY_TRAP_SIG=1\n"), name)
 		assert.Equal(t, 1, strings.Count(service, "\nKillMode="), name)
 		assert.Contains(t, service, "\nKillMode=mixed\n", name)
+		assert.Contains(t, service, "\nCPUWeight=10000\n", name)
+		assert.Contains(t, service, "\nIOWeight=10000\n", name)
+		assert.Contains(t, service, "\nNice=-10\n", name)
 		assert.Contains(t, service, "\nKillSignal=SIGTERM\n", name)
 		assert.Contains(t, service, "\nTimeoutStopSec=5min\n", name)
 		if extra != nil {
