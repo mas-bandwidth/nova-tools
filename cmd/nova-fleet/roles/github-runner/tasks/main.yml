@@ -44,6 +44,15 @@
   ansible.builtin.meta: end_host
   when: github_runner_other | bool and ansible_check_mode and 'ABSENT' in github_runner_existing.stdout
 
+# The read-only deploy keys the runner login fetches private repositories with (deploy-keys.yml), before any runner
+# takes a job. --tags deploy-keys runs them alone, leaving the runners as they are.
+- name: the runner login's deploy keys
+  ansible.builtin.include_tasks:
+    file: deploy-keys.yml
+    apply: { tags: [deploy-keys] }
+  tags: [deploy-keys]
+  when: github_runner_deploy_keys | length > 0
+
 - name: one url, named with -e github_runner_url
   ansible.builtin.include_tasks: scope.yml
   when: github_runner_url is defined
