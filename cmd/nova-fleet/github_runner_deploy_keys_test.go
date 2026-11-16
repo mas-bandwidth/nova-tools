@@ -60,6 +60,7 @@ func TestDeployKeysScopeAndSecrecy(t *testing.T) {
 		"UserKnownHostsFile {{ github_runner_home }}/.ssh/deploy-keys.known_hosts", "BatchMode yes"} {
 		assert.Contains(t, ssh, want)
 	}
+	assert.True(t, strings.HasSuffix(ssh, "{% endfor %}\nMatch all\n"), "the last Host block is closed, so what follows the block stays global")
 	git := asText(runnerTask(t, tasks, "each deploy key's URL fetched through its alias")["ansible.builtin.blockinfile"].(map[string]any)["block"])
 	assert.Contains(t, git, "[url \"{{ k.ssh }}\"]\n  insteadOf = {{ k.url }}\n")
 	assert.Contains(t, git, "[url \"{{ k.url }}\"]\n  pushInsteadOf = {{ k.url }}\n")

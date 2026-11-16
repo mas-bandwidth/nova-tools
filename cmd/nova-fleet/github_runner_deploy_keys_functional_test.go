@@ -126,6 +126,10 @@ func TestFunctionalDeployKeysInstallScopedToOneURL(t *testing.T) {
 	assert.NoFileExists(t, filepath.Join(r.home, ".ssh", "deploy-key-o-r"), "--check writes no key")
 	assert.NoFileExists(t, filepath.Join(r.home, ".gitconfig"), "--check writes no config")
 
+	// a global line already in the login's ssh config stays global once the block is put above it
+	require.NoError(t, os.MkdirAll(filepath.Join(r.home, ".ssh"), 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(r.home, ".ssh", "config"), []byte("Port 2222\n"), 0o600))
+
 	out, err = r.play(t, "DEPLOY_O_R\n")
 	require.NoError(t, err, out)
 	assert.Contains(t, out, "DEPLOY-KEY-SET deploy-key-o-r")
@@ -172,6 +176,10 @@ func TestFunctionalDeployKeysInstallScopedToOneURL(t *testing.T) {
 		"hostkeyalias github.com"} {
 		assert.Contains(t, cfg, "\n"+line+"\n")
 	}
+	b, err = exec.CommandContext(ctx, "ssh", "-F", filepath.Join(r.home, ".ssh", "config"), "-G", "elsewhere.example").CombinedOutput()
+	require.NoError(t, err, string(b))
+	assert.Contains(t, string(b), "\nport 2222\n", "the line after the block is still global")
+	assert.NotContains(t, string(b), "deploy-key-o-r", "the alias's options reach no other host")
 
 	out, err = r.play(t, "DEPLOY_O_R\n")
 	require.NoError(t, err, out)

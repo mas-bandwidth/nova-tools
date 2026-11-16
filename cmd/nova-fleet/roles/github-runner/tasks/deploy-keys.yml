@@ -73,7 +73,8 @@
   become_user: "{{ github_runner_user }}"
   vars: { ansible_pipelining: true }
 
-# First in the file: an earlier Host * block would set what these options set first.
+# First in the file: an earlier Host * block would set what these options set first. Match all closes the last Host
+# block, so every line after the block (ssh-names' Include among them) stays global.
 - name: one ssh host alias per deploy key, offering that key alone
   ansible.builtin.blockinfile:
     path: "{{ github_runner_home }}/.ssh/config"
@@ -93,6 +94,7 @@
         StrictHostKeyChecking yes
         BatchMode yes
       {% endfor %}
+      Match all
   become: "{{ github_runner_user != ansible_facts['user_id'] }}"
   become_user: "{{ github_runner_user }}"
   vars: { ansible_pipelining: true }

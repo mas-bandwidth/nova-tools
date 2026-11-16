@@ -462,15 +462,18 @@ the repository's deploy key (read-only, one repository per key), its private hal
 machine's seat (`nova-secrets set` on the control node, then `nova-secrets grant NAME --to <machine>`, the store pushed,
 and `secrets-refresh`). For each, written as the runner login: the key in `<home>/.ssh/deploy-key-<owner>-<repo>` (0600,
 replaced only when it differs, and only by a value `ssh-keygen -y` reads as a private key), a `Host
-deploy-key-<owner>-<repo>` block first in `~/.ssh/config` that offers that key alone (`IdentitiesOnly`, `BatchMode`)
-and checks the host against `github_runner_deploy_known_hosts` (GitHub's published host keys) in
+deploy-key-<owner>-<repo>` block first in `~/.ssh/config`, closed by `Match all` so the lines after it stay global,
+that offers that key alone (`IdentitiesOnly`, `BatchMode`) and checks the host against `github_runner_deploy_known_hosts` (GitHub's published host keys) in
 `~/.ssh/deploy-keys.known_hosts`, and in `~/.gitconfig` a `url.<alias>.insteadOf` of exactly that URL, with a
 `pushInsteadOf` that keeps a push to it on https. No credential helper is written, and no other repository's URL is
 rewritten. The value leaves the seat only through `nova-secrets exec` into a pipe, inside a `no_log` task; its receipt is
 `DEPLOY-KEY-SET`, `DEPLOY-KEY-SAME` or `DEPLOY-KEY-BAD <alias>`. A name the seat lacks fails the run before anything
 is written, naming the grant that fixes it. Each URL is then listed by `git ls-remote` as the runner login:
-`DEPLOY-KEY <machine> <login> <url> ls-remote=ok`, or the run fails. Under `--check` each prints `DEPLOY-KEY-PLAN`. An
-empty list (the default) installs and removes nothing. `--tags deploy-keys` runs this step alone, leaving the runners
+`DEPLOY-KEY <machine> <login> <url> ls-remote=ok`, or the run fails. Under `--check` each prints `DEPLOY-KEY-PLAN`. A
+run writes both blocks whole from the list it is given, so name every key the login keeps; an empty list (the default)
+installs and removes nothing. Every job the login runs, on any of its runners, can read the key: it reads that one
+repository. Where the runners run as the fleet login (macOS, WSL, `-e github_runner_user=<the fleet login>`), that
+login's own fetches of the URL go through the key too. `--tags deploy-keys` runs this step alone, leaving the runners
 as they are:
 
 ```
