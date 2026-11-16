@@ -746,42 +746,49 @@ func (u *upRun) steps() int {
 
 	// Measure resources and sync capacity to nova-reserve for bench/runner machines
 	for _, m := range u.machines {
-		if m.self || m.row == nil {
+		if m.unreachable != "" || m.later || m.self {
 			continue
 		}
-		roles, _ := m.row["roles"].(string)
-		isWorker := slices.Contains(strings.Split(roles, ","), "bench") || slices.Contains(strings.Split(roles, ","), "runner")
-		if !isWorker {
+		roles := "bench"
+		if m.row != nil {
+			roles, _ = m.row["roles"].(string)
+		}
+		if !slices.Contains(strings.Split(roles, ","), "bench") && !slices.Contains(strings.Split(roles, ","), "runner") {
 			continue
 		}
 		if u.check {
 			u.say("UP MEASURE %s WOULD-MEASURE (check: nothing changed)", m.name)
 			continue
 		}
-		sshCmd := []string{"-o", "BatchMode=yes", "-o", "ConnectTimeout=10", m.user + "@" + m.address, "sh", "-c", "PATH=$HOME/.local/bin:/opt/homebrew/bin:$PATH nova-reserve measure --force --json"}
-		out, _, c := outCmd("ssh", sshCmd, os.Environ())
+		target := m.user + "@" + cmp.Or(m.dns, m.host, m.address)
+		binPath := strings.Join(slices.Compact([]string{u.binDir, "$HOME/.local/bin"}), ":") + ":/opt/homebrew/bin:$PATH"
+		out, _, c := outCmd(u.bin["ssh"], []string{"-o", "BatchMode=yes", "-o", "ConnectTimeout=10", target, "sh", "-c", "PATH=" + binPath + " nova-reserve measure --force --json"}, os.Environ())
 		if c == 0 && strings.HasPrefix(strings.TrimSpace(out), "{") {
 			var meas struct {
-				CPU    int `json:"cpu"`
-				Memory int `json:"memory"`
-				Cores  int `json:"cores"`
+				CPU, Memory int
+				Cores       int `json:"usable_cores"`
 			}
 			if err := json.Unmarshal([]byte(out), &meas); err == nil && meas.CPU > 0 && meas.Memory > 0 {
-				m.row["cpu_units"] = float64(meas.CPU)
-				m.row["memory_gb"] = float64(meas.Memory)
+				if m.row == nil {
+					m.row = map[string]any{"roles": roles}
+				}
+				m.row["cpu_units"], m.row["memory_gb"] = float64(meas.CPU), float64(meas.Memory)
 				setArgs := []string{"machine", "set", m.name, "--cpu-units", strconv.Itoa(meas.CPU), "--memory-gb", strconv.Itoa(meas.Memory), "--actor", u.seat, "--reason", "nova-fleet up measure"}
 				if meas.Cores > 0 {
 					setArgs = append(setArgs, "--cores", strconv.Itoa(meas.Cores))
 				}
-				outCmd(u.bin["nova-config"], setArgs, pg)
-				reserveArgs := fmt.Sprintf("PATH=$HOME/.local/bin:/opt/homebrew/bin:$PATH nova-reserve set --cpu %d --memory %d", meas.CPU, meas.Memory)
+				if _, why, sc := u.config(setArgs...); sc != 0 {
+					fmt.Fprintf(u.stderr, "nova-fleet up: set measured resources on %s: %s\n", m.name, why)
+					return fail("measure "+m.name, sc)
+				}
+				rArgs := fmt.Sprintf("PATH=%s nova-reserve set --cpu %d --memory %d", binPath, meas.CPU, meas.Memory)
 				if meas.Cores > 0 {
-					reserveArgs += fmt.Sprintf(" --cores %d", meas.Cores)
+					rArgs += fmt.Sprintf(" --cores %d", meas.Cores)
 				}
 				if tags, ok := m.row["tags"].(string); ok && tags != "" {
-					reserveArgs += fmt.Sprintf(" --tags %s", tags)
+					rArgs += " --tags " + tags
 				}
-				outCmd("ssh", []string{"-o", "BatchMode=yes", m.user + "@" + m.address, "sh", "-c", reserveArgs}, os.Environ())
+				outCmd(u.bin["ssh"], []string{"-o", "BatchMode=yes", "-o", "ConnectTimeout=10", target, "sh", "-c", rArgs}, os.Environ())
 				u.say("UP MEASURE %s cpu=%d memory=%d", m.name, meas.CPU, meas.Memory)
 			}
 		}

@@ -180,6 +180,9 @@ type realHoldSession struct {
 	reader *bufio.Reader
 	stdin  io.WriteCloser
 	cancel context.CancelFunc
+	once   sync.Once
+	waitRc int
+	waitEr error
 }
 
 func (s *realHoldSession) StdoutLine() (string, error) {
@@ -195,21 +198,24 @@ func (s *realHoldSession) Close() error {
 		_ = s.stdin.Close() // ignored: process being closed
 	}
 	if s.cmd != nil && s.cmd.Process != nil {
-		return s.cmd.Process.Kill()
+		err := s.cmd.Process.Kill()
+		_, _ = s.Wait() // ignored: reap child after kill
+		return err
 	}
 	return nil
 }
 
 func (s *realHoldSession) Wait() (int, error) {
-	err := s.cmd.Wait()
-	var ee *exec.ExitError
-	if errors.As(err, &ee) {
-		return max(ee.ExitCode(), 1), nil
-	}
-	if err != nil {
-		return 1, err
-	}
-	return 0, nil
+	s.once.Do(func() {
+		err := s.cmd.Wait()
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			s.waitRc = max(ee.ExitCode(), 1)
+		} else if err != nil {
+			s.waitRc, s.waitEr = 1, err
+		}
+	})
+	return s.waitRc, s.waitEr
 }
 
 type reserveSeam struct {
@@ -225,7 +231,7 @@ func defaultProbeHold(ctx context.Context, m fleetMachine, holdArgs []string) (h
 	if m.User != "" {
 		target = m.User + "@" + m.Address
 	}
-	remoteCmd := fmt.Sprintf("PATH=$HOME/.local/bin:/opt/homebrew/bin:$PATH nova-reserve hold %s", strings.Join(holdArgs, " "))
+	remoteCmd := fmt.Sprintf("export PATH=\"$HOME/.local/bin:/opt/homebrew/bin:$PATH\"; exec nova-reserve hold %s", strings.Join(holdArgs, " "))
 	cmd := exec.CommandContext(cCtx, "ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", target, remoteCmd)
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
@@ -274,7 +280,7 @@ func defaultQueryStatus(ctx context.Context, m fleetMachine) (string, error) {
 		target = m.User + "@" + m.Address
 	}
 	cmd := exec.CommandContext(ctx, "ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", target,
-		"PATH=$HOME/.local/bin:/opt/homebrew/bin:$PATH nova-reserve status --json")
+		"export PATH=\"$HOME/.local/bin:/opt/homebrew/bin:$PATH\"; exec nova-reserve status --json")
 	out, err := cmd.Output()
 	if err != nil {
 		return "", err
@@ -481,25 +487,26 @@ func runReserve(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
+	shQuote := func(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
 	makeHoldArgs := func(nowait bool, wait string) []string {
 		var a []string
 		if nowait {
 			a = append(a, "--nowait")
 		} else if wait != "" {
-			a = append(a, "--wait", wait)
+			a = append(a, "--wait", shQuote(wait))
 		}
-		a = append(a, "--needs", fmt.Sprintf("%q", needsSpec))
+		a = append(a, "--needs", shQuote(needsSpec))
 		if holder != "" {
-			a = append(a, "--holder", holder)
+			a = append(a, "--holder", shQuote(holder))
 		}
 		if consumer != "" {
-			a = append(a, "--consumer", consumer)
+			a = append(a, "--consumer", shQuote(consumer))
 		}
 		if label != "" {
-			a = append(a, "--label", label)
+			a = append(a, "--label", shQuote(label))
 		}
 		if priority != "" {
-			a = append(a, "--priority", priority)
+			a = append(a, "--priority", shQuote(priority))
 		}
 		return a
 	}
@@ -521,19 +528,33 @@ func runReserve(args []string, stdout, stderr io.Writer) int {
 		var (
 			sessMu   sync.Mutex
 			sessions []holdSession
+			closed   bool
 		)
-
+		closeExcept := func(keep holdSession) {
+			sessMu.Lock()
+			closed = true
+			list := slices.Clone(sessions)
+			sessMu.Unlock()
+			for _, s := range list {
+				if s != keep {
+					_ = s.Close() // ignored: closing losing probe session
+				}
+			}
+		}
 		for _, m := range cands {
 			go func(mach fleetMachine) {
-				sess, err := seam.probeHold(pCtx, mach, args)
+				sess, err := seam.probeHold(context.Background(), mach, args)
 				if err != nil {
 					resCh <- probeResult{machine: mach, err: err}
 					return
 				}
 				sessMu.Lock()
-				sessions = append(sessions, sess)
+				stop := closed
+				if !stop {
+					sessions = append(sessions, sess)
+				}
 				sessMu.Unlock()
-				if pCtx.Err() != nil {
+				if stop || pCtx.Err() != nil {
 					_ = sess.Close() // ignored: context cancelled
 					resCh <- probeResult{machine: mach, err: pCtx.Err()}
 					return
@@ -553,17 +574,12 @@ func runReserve(args []string, stdout, stderr io.Writer) int {
 		for failed < len(cands) {
 			select {
 			case <-pCtx.Done():
+				closeExcept(nil)
 				return fleetMachine{}, nil, "", pCtx.Err()
 			case r := <-resCh:
 				if r.session != nil {
 					pCancel()
-					sessMu.Lock()
-					for _, s := range sessions {
-						if s != r.session {
-							_ = s.Close() // ignored: closing losing probe session
-						}
-					}
-					sessMu.Unlock()
+					closeExcept(r.session)
 					return r.machine, r.session, r.line, nil
 				}
 				failed++
@@ -572,6 +588,7 @@ func runReserve(args []string, stdout, stderr io.Writer) int {
 				}
 			}
 		}
+		closeExcept(nil)
 		return fleetMachine{}, nil, "", cmpError(firstErr, errors.New("no room right now"))
 	}
 
@@ -710,30 +727,12 @@ func runResources(args []string, stdout, stderr io.Writer) int {
 			mu.Lock()
 			defer mu.Unlock()
 			if err != nil {
-				rows[idx] = statusRow{
-					Machine: mach.Name,
-					Address: mach.Address,
-					Status:  "unreachable",
-					Error:   err.Error(),
-				}
+				rows[idx] = statusRow{Machine: mach.Name, Address: mach.Address, Status: "unreachable", Error: err.Error()}
 				return
 			}
-			var parsed any
-			if jsonErr := json.Unmarshal([]byte(raw), &parsed); jsonErr == nil {
-				rows[idx] = statusRow{
-					Machine: mach.Name,
-					Address: mach.Address,
-					Status:  "ok",
-					Data:    parsed,
-				}
-			} else {
-				rows[idx] = statusRow{
-					Machine: mach.Name,
-					Address: mach.Address,
-					Status:  "ok",
-					Data:    raw,
-				}
-			}
+			var parsed any = raw
+			_ = json.Unmarshal([]byte(raw), &parsed) // ignored: raw text kept if non-JSON
+			rows[idx] = statusRow{Machine: mach.Name, Address: mach.Address, Status: "ok", Data: parsed}
 		}(i, m)
 	}
 	wg.Wait()

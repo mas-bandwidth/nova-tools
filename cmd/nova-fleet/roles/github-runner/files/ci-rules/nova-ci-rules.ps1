@@ -253,7 +253,8 @@ function Invoke-Started {
     $rc = Invoke-Chain "$env:NOVA_CI_CHAIN_JOB_STARTED"
     if ($rc) { exit $rc }
     # On WSL2 hybrid hosts, route CI hold acquisition through wsl.exe ... nova-reserve hold --holder ci
-    if (Get-Command 'wsl.exe' -ErrorAction SilentlyContinue) {
+    $inRealRunner = ((Split-Path -Leaf $here) -eq '.nova-ci-rules') -and (Test-Path (Join-Path (Split-Path $here) 'bin\Runner.Worker.exe'))
+    if ($inRealRunner -and (Get-Command 'wsl.exe' -ErrorAction SilentlyContinue)) {
         $wslHasReserve = $false
         try {
             $testOut = & wsl.exe sh -c 'command -v nova-reserve' 2>$null

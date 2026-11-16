@@ -577,10 +577,13 @@
           {{ [nova_bin_dir ~ '/nova-reserve', 'set',
               '--cpu', (join_measure.stdout | from_json).cpu | string,
               '--memory', (join_measure.stdout | from_json).memory | string]
-             + (['--cores', (join_measure.stdout | from_json).cores | string] if (join_measure.stdout | from_json).cores is defined else [])
-             + (['--tags', ((((join_updated_row.stdout | from_json).get('items') or [{}]) | first).get('fields', {})).tags]
-                if ((((join_updated_row.stdout | from_json).get('items') or [{}]) | first).get('fields', {})).tags | default('') | length > 0 else [])
+             + (['--cores', (join_measure.stdout | from_json).usable_cores | string] if (join_measure.stdout | from_json).usable_cores is defined else [])
+             + (['--tags', join_fields.tags] if join_fields.tags | default('') | length > 0 else [])
+             + (['--resources', join_fields.resources | dict2items | map(attribute='key') | zip(join_fields.resources | dict2items | map(attribute='value')) | map('join', '=') | join(',')]
+                if (join_fields.resources | default({}) | length > 0) else [])
           }}
+      vars:
+        join_fields: "{{ (((join_updated_row.stdout | from_json).get('items') or [{}]) | first).get('fields', {}) }}"
       when: join_measure is defined and join_measure.rc | default(1) == 0 and not ansible_check_mode
 
     - name: the measurement receipt

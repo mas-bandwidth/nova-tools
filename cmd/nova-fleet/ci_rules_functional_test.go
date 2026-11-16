@@ -3,10 +3,19 @@
 package main
 
 import (
+	"bufio"
+	"encoding/json"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // The branches a push may run CI on come from push-branches beside the hooks, which apply writes.
@@ -92,4 +101,91 @@ func TestCIRulesApplyFollowsNoLinkInTheRunnerDirectory(t *testing.T) {
 	if entries, err := os.ReadDir(elsewhere); err != nil || len(entries) != 1 {
 		t.Errorf("the .nova-ci-rules link's target holds %d entries, %v; want only its own file", len(entries), err)
 	}
+}
+
+func TestCIRulesHoldPausesWorkAndReleasesOnCompleted(t *testing.T) {
+	t.Parallel()
+	realReserve := filepath.Join(t.TempDir(), "nova-reserve-real")
+	buildOut, err := exec.Command("go", "build", "-o", realReserve, "../nova-reserve").CombinedOutput()
+	require.NoError(t, err, "build nova-reserve: %s", string(buildOut))
+
+	work := t.TempDir()
+	resDir := filepath.Join(work, "reserve")
+	setOut, err := exec.Command(realReserve, "set", "--dir", resDir, "--cpu", "4", "--memory", "8", "--cores", "4").CombinedOutput()
+	require.NoError(t, err, "nova-reserve set: %s", string(setOut))
+
+	reserveWrap := filepath.Join(work, "nova-reserve")
+	wrapScript := fmt.Sprintf("#!/bin/sh\nv=$1; shift\nexec %q \"$v\" --dir %q \"$@\"\n", realReserve, resDir)
+	require.NoError(t, os.WriteFile(reserveWrap, []byte(wrapScript), 0o755))
+
+	// Bench worker holds full machine capacity (cpu 4, memory 8).
+	benchHold := exec.Command(realReserve, "hold", "--dir", resDir,
+		"--holder", "bench", "--consumer", "card-1.w1@1", "--label", "work", "--needs", "cpu 4, memory 8")
+	benchIn, err := benchHold.StdinPipe()
+	require.NoError(t, err)
+	benchOut, err := benchHold.StdoutPipe()
+	require.NoError(t, err)
+	require.NoError(t, benchHold.Start())
+	t.Cleanup(func() {
+		_ = benchIn.Close()
+		_ = benchHold.Wait()
+	})
+	line, err := bufio.NewReader(benchOut).ReadString('\n')
+	require.NoError(t, err)
+	require.True(t, strings.HasPrefix(line, "HELD "))
+
+	// Fake Runner.Worker process watched by ci-hold.
+	workerCmd := exec.Command("sleep", "60")
+	require.NoError(t, workerCmd.Start())
+	t.Cleanup(func() {
+		if workerCmd.Process != nil {
+			_ = workerCmd.Process.Kill()
+		}
+		_ = workerCmd.Wait()
+	})
+
+	hooks := ciCopy(t, "")
+	sh := ciShells(t)[0]
+	env := []string{
+		"GITHUB_EVENT_NAME=schedule",
+		"GITHUB_REF=refs/heads/main",
+		"NOVA_CI_WORKER_PID=" + strconv.Itoa(workerCmd.Process.Pid),
+		"NOVA_CI_RESERVE=" + reserveWrap,
+		"NOVA_CI_NEEDS=cpu 4, memory 8",
+		"NOVA_RESERVE_DIR=",
+	}
+	code, out := ciRun(t, sh, hooks, "", env, "started")
+	require.Equal(t, 0, code, out)
+
+	// Verify CI hold took over immediately and marked bench hold paused.
+	statusBytes, err := exec.Command(realReserve, "status", "--dir", resDir, "--json").Output()
+	require.NoError(t, err)
+	var st struct {
+		AnyPaused       bool                      `json:"any_paused"`
+		HeldByLabel     map[string]map[string]int `json:"held_by_label"`
+		PausedByLabel   map[string]map[string]int `json:"paused_by_label"`
+		SprintConsumers []string                  `json:"sprint_consumers"`
+		PausedConsumers []string                  `json:"paused_consumers"`
+	}
+	require.NoError(t, json.Unmarshal(statusBytes, &st))
+	assert.True(t, st.AnyPaused)
+	assert.Equal(t, 4, st.HeldByLabel["ci"]["cpu"])
+	assert.Equal(t, 4, st.PausedByLabel["work"]["cpu"])
+	assert.Equal(t, []string{"card-1.w1@1"}, st.PausedConsumers)
+
+	// Completed disarms ci-hold; wait briefly for flock release and verify bench hold unpauses.
+	code, out = ciRun(t, sh, hooks, "", env, "completed")
+	require.Equal(t, 0, code, out)
+
+	require.Eventually(t, func() bool {
+		b, err := exec.Command(realReserve, "status", "--dir", resDir, "--json").Output()
+		if err != nil {
+			return false
+		}
+		var cur struct {
+			AnyPaused       bool     `json:"any_paused"`
+			SprintConsumers []string `json:"sprint_consumers"`
+		}
+		return json.Unmarshal(b, &cur) == nil && !cur.AnyPaused && len(cur.SprintConsumers) == 1
+	}, 3*time.Second, 25*time.Millisecond)
 }

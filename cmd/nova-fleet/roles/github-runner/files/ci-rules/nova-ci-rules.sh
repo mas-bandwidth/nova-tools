@@ -158,18 +158,29 @@ disarm() {
 	fi
 }
 
+my_worker() {
+	if [ -n "${NOVA_CI_WORKER_PID:-}" ]; then
+		echo "$NOVA_CI_WORKER_PID"
+		return 0
+	fi
+	[ "$(basename "$here")" = .nova-ci-rules ] && [ -e "$(dirname "$here")/bin/Runner.Worker" ] || return 1
+	procs comm 2>/dev/null | ancestor $$ Runner.Worker
+}
+
 fail_started() {
 	why=$1
 	echo "::error::CI rule: $why"
-	worker=
-	for i in 1 2 3; do
-		worker=$(procs comm 2>/dev/null | ancestor $$ Runner.Worker) && [ -n "$worker" ] && break
+	if [ -n "${NOVA_CI_WORKER_PID:-}" ] || { [ "$(basename "$here")" = .nova-ci-rules ] && [ -e "$(dirname "$here")/bin/Runner.Worker" ]; }; then
 		worker=
-	done
-	if [ -n "$worker" ]; then
-		kill -9 "$worker" 2>/dev/null || true
-	else
-		echo "::error::CI rule: no Runner.Worker above this hook was found to end, so the job's always() steps may still run; the fleet admin looks"
+		for i in 1 2 3; do
+			worker=$(my_worker) && [ -n "$worker" ] && break
+			worker=
+		done
+		if [ -n "$worker" ]; then
+			kill -9 "$worker" 2>/dev/null || true
+		else
+			echo "::error::CI rule: no Runner.Worker above this hook was found to end, so the job's always() steps may still run; the fleet admin looks"
+		fi
 	fi
 	exit 1
 }
@@ -179,11 +190,17 @@ ci_hold() {
 	needs=${NOVA_CI_NEEDS:-cpu 4, memory 8}
 	reserve=${NOVA_CI_RESERVE:-nova-reserve}
 	unset RUNNER_TRACKING_ID
-	(
-		while kill -0 "$worker" 2>/dev/null; do
-			sleep 1
-		done
-	) | "$reserve" hold --holder ci --label ci --needs "$needs"
+	fifo=$state/hold.fifo.$$
+	rm -f "$fifo"
+	mkfifo "$fifo" || exit 1
+	"$reserve" hold --holder ci --label ci --needs "$needs" <"$fifo" &
+	rpid=$!
+	exec 3>"$fifo"
+	rm -f "$fifo"
+	trap 'exec 3>&-; kill "$rpid" 2>/dev/null || true; wait "$rpid" 2>/dev/null || true; exit 0' TERM INT HUP EXIT
+	while kill -0 "$worker" 2>/dev/null && kill -0 "$rpid" 2>/dev/null; do
+		sleep 1
+	done
 }
 
 started() {
@@ -198,17 +215,19 @@ started() {
 	if command -v pmset >/dev/null 2>&1 && pmset -g batt 2>/dev/null | on_battery; then
 		fail_started "$(hostname -s) is on battery power (pmset -g batt), so it may sleep with this job in flight; the job is refused before it starts; rerun it and another runner takes it"
 	fi
-	if ! chain "${NOVA_CI_CHAIN_JOB_STARTED:-}"; then
-		worker=$(procs comm 2>/dev/null | ancestor $$ Runner.Worker) || worker=
+	rc=0
+	chain "${NOVA_CI_CHAIN_JOB_STARTED:-}" || rc=$?
+	if [ "$rc" -ne 0 ]; then
+		worker=$(my_worker) || worker=
 		[ -n "$worker" ] && kill -9 "$worker" 2>/dev/null || true
-		exit 1
+		exit "$rc"
 	fi
 	# measuring never fails or delays a job: any error inside is dropped
 	(measure_start) >/dev/null 2>&1 || true
 
 	reserve=${NOVA_CI_RESERVE:-nova-reserve}
 	if command -v "$reserve" >/dev/null 2>&1; then
-		worker=$(procs comm 2>/dev/null | ancestor $$ Runner.Worker) || worker=
+		worker=$(my_worker) || worker=
 		if [ -n "$worker" ]; then
 			mkdir -p "$state"
 			rm -f "$state/hold.log" "$state/hold.pid"
@@ -237,7 +256,7 @@ started() {
 		echo "CI rule: a $event job has no time limit"
 		exit 0
 	fi
-	worker=$(procs comm | ancestor $$ Runner.Worker) || {
+	worker=$(my_worker) || {
 		fail_started "no Runner.Worker above this hook, so the $(limit_text "$limit") limit cannot be enforced; tell the fleet admin"
 	}
 	mkdir -p "$state"

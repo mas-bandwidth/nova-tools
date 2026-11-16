@@ -135,8 +135,10 @@ func build(machines []Row, services []Row, local string) (*inventory, error) {
 		all = append(all, m)
 		runners, _ := strconv.Atoi(v["runners"])
 		hv := map[string]any{"ansible_host": m, "runners": runners, "nova_services": append([]invService{}, byMachine[m]...)}
-		if cores, err := strconv.Atoi(v["cores"]); err == nil {
-			hv["cores"] = cores
+		for _, k := range []string{"cores", "cpu_units", "memory_gb"} {
+			if n, err := strconv.Atoi(v[k]); err == nil {
+				hv[k] = n
+			}
 		}
 		for k, val := range map[string]string{"ansible_host": v["address"], "ansible_user": v["user"], "nova_os": v["os"], "nova_arch": v["arch"], "nova_public": v["public"]} {
 			if val != "" {
@@ -170,12 +172,7 @@ func build(machines []Row, services []Row, local string) (*inventory, error) {
 			hv["nova_runner_env"] = env
 		}
 		if v["tags"] != "" {
-			var tags []string
-			for _, t := range strings.Split(v["tags"], ",") {
-				if t = strings.TrimSpace(t); t != "" {
-					tags = append(tags, t)
-				}
-			}
+			tags := strings.FieldsFunc(v["tags"], func(r rune) bool { return r == ',' || r == ' ' })
 			slices.Sort(tags)
 			hv["nova_tags"] = slices.Compact(tags)
 		}

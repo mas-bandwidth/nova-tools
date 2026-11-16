@@ -763,6 +763,9 @@ resources stayed busy for the whole `--wait`. Wait longer, or inspect `status`.
 The others are in [cmd/nova-reserve/README.md](../cmd/nova-reserve/README.md#refusals-and-what-to-do-next).
 
 The whole tool: [cmd/nova-reserve/README.md](../cmd/nova-reserve/README.md).
+Across a fleet, `nova-fleet reserve --needs "cpu 4, memory 8"` locks a hold
+before SSH and `nova-fleet resources` queries status in parallel; see
+[docs/RESOURCES.md](RESOURCES.md).
 
 ## Run untrusted work inside a sandbox
 

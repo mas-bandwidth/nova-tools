@@ -131,11 +131,13 @@ func TestInventoryWithTagsAndResources(t *testing.T) {
 	t.Parallel()
 	h := newHarness()
 	h.ok(t, "machine", "add", "bench-a", "--user", "nova", "--os", "linux", "--arch", "amd64",
-		"--tags", "gpu,metal", "--resources", "ps5=1", "--actor", "ops")
+		"--cpu-units", "16", "--memory-gb", "64", "--tags", "gpu,metal", "--resources", "ps5=1", "--actor", "ops")
 
 	_, out, _ := h.run(t, "inventory", "--host", "bench-a")
 	var hv map[string]any
 	require.NoError(t, json.Unmarshal([]byte(out), &hv))
+	assert.Equal(t, float64(16), hv["cpu_units"])
+	assert.Equal(t, float64(64), hv["memory_gb"])
 	assert.Equal(t, []any{"gpu", "metal"}, hv["nova_tags"])
 	assert.Equal(t, map[string]any{"ps5": float64(1)}, hv["nova_resources"])
 }
