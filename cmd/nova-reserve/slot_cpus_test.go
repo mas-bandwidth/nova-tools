@@ -2,80 +2,21 @@ package main
 
 import (
 	"errors"
-	"maps"
-	"slices"
+	"os"
+	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// span is lo..hi, ascending.
 func span(lo, hi int) []int {
 	var s []int
 	for c := lo; c <= hi; c++ {
 		s = append(s, c)
 	}
 	return s
-}
-
-func TestSlotShareIsItsPartOfTheUsableCPUs(t *testing.T) {
-	t.Parallel()
-	holes := append(span(0, 3), span(8, 11)...) // an allowed set of 0-3,8-11
-	for _, c := range []struct {
-		name   string
-		usable []int
-		n, k   int
-		want   string
-	}{
-		{"16 cpus 8 slots, first", span(0, 15), 8, 1, "0-1"},
-		{"16 cpus 8 slots, third", span(0, 15), 8, 3, "4-5"},
-		{"16 cpus 8 slots, last", span(0, 15), 8, 8, "14-15"},
-		{"32 cpus 16 slots, third", span(0, 31), 16, 3, "4-5"},
-		{"32 cpus 16 slots, last", span(0, 31), 16, 16, "30-31"},
-		{"64 cpus less 1-15, 8 slots, first", append([]int{0}, span(16, 63)...), 8, 1, "0,16-20"},
-		{"64 cpus less 1-15, 8 slots, second", append([]int{0}, span(16, 63)...), 8, 2, "21-26"},
-		{"64 cpus less 1-15, 8 slots, last", append([]int{0}, span(16, 63)...), 8, 8, "57-63"},
-		{"4 cpus 16 slots, first", span(0, 3), 16, 1, "0"},
-		{"4 cpus 16 slots, fourth", span(0, 3), 16, 4, "3"},
-		{"4 cpus 16 slots, fifth wraps", span(0, 3), 16, 5, "0"},
-		{"4 cpus 16 slots, last", span(0, 3), 16, 16, "3"},
-		{"holes, 2 slots, first", holes, 2, 1, "0-3"},
-		{"holes, 2 slots, second", holes, 2, 2, "8-11"},
-		{"holes, 3 slots, second", holes, 3, 2, "2-3,8"},
-		{"holes, 3 slots, third", holes, 3, 3, "9-11"},
-		{"one slot", span(0, 7), 1, 1, "0-7"},
-	} {
-		assert.Equal(t, c.want, cpuList(share(c.usable, c.n, c.k)), c.name)
-	}
-}
-
-// TestSlotSharesCoverTheUsableCPUsOnce: with no more slots than CPUs, the
-// shares are disjoint, in order, cover every usable CPU, and differ in size by
-// at most one; with more, every slot still has one CPU.
-func TestSlotSharesCoverTheUsableCPUsOnce(t *testing.T) {
-	t.Parallel()
-	for m := 1; m <= 40; m++ {
-		usable := span(100, 100+m-1)
-		for n := 1; n <= 50; n++ {
-			var all []int
-			sizes := map[int]bool{}
-			for k := 1; k <= n; k++ {
-				s := share(usable, n, k)
-				require.NotEmpty(t, s, "m=%d n=%d k=%d", m, n, k)
-				all = append(all, s...)
-				sizes[len(s)] = true
-			}
-			if n > m {
-				assert.Len(t, all, n, "m=%d n=%d: one CPU each", m, n)
-				continue
-			}
-			assert.Equal(t, usable, all, "m=%d n=%d", m, n)
-			size := slices.Sorted(maps.Keys(sizes))
-			assert.LessOrEqual(t, size[len(size)-1]-size[0], 1, "m=%d n=%d", m, n)
-		}
-	}
-	assert.Empty(t, share(nil, 8, 1), "no usable CPUs: nothing to pin")
 }
 
 func TestCPUListIsTheKernelsRangeForm(t *testing.T) {
@@ -86,60 +27,102 @@ func TestCPUListIsTheKernelsRangeForm(t *testing.T) {
 	assert.Equal(t, "0,2,4-5,9", cpuList([]int{0, 2, 4, 5, 9}))
 }
 
-// pinning gives a harness 16 usable CPUs and records what run pins.
-func pinning(h *harness) *[]int {
-	var pinned []int
-	h.w.usable = func() ([]int, error) { return span(0, 15), nil }
-	h.w.pin = func(cpus []int) error { pinned = cpus; return nil }
-	return &pinned
+func TestCoresForHoldFollowsR28Formula(t *testing.T) {
+	t.Parallel()
+	// 16 ordinary cores = 16 CPU units: cpu 4 -> 4 cores.
+	ordinary := capRecord{UsableCores: 16, Resources: map[string]int{"cpu": 16, "memory": 64}}
+	assert.Equal(t, 4, coresForHold(4, false, ordinary))
+	assert.Equal(t, 1, coresForHold(1, false, ordinary))
+	assert.Equal(t, 16, coresForHold(1, true, ordinary))
+
+	// 16 stronger cores = 48 CPU units: cpu 4 -> 1 core, cpu 12 -> 4 cores, cpu 1 -> min 1 core.
+	strong := capRecord{UsableCores: 16, Resources: map[string]int{"cpu": 48, "memory": 64}}
+	assert.Equal(t, 1, coresForHold(4, false, strong))
+	assert.Equal(t, 4, coresForHold(12, false, strong))
+	assert.Equal(t, 1, coresForHold(1, false, strong))
 }
 
-func TestRunPinsTheCommandToItsSlotsShare(t *testing.T) {
+func TestSMTGroupsAndDisjointPhysicalCoreSelection(t *testing.T) {
 	t.Parallel()
-	h := newHarness(t)
-	h.setCap(t, 8)
-	pinned := pinning(h)
-	h.take(t, h.opts(0, false, 0)) // slot1 is someone else's
-	require.Equal(t, 0, run([]string{"--", "make"}, h.w))
-	assert.Equal(t, "nova-reserve: HELD mode=shared slot=2/8 pid=42 cpus=2-3\n", h.err.String())
-	assert.Equal(t, []int{2, 3}, *pinned)
-	assert.Equal(t, []string{"make"}, h.ran)
-}
-
-func TestExclusiveRunPinsTheCommandToEveryUsableCPU(t *testing.T) {
-	t.Parallel()
-	h := newHarness(t)
-	h.setCap(t, 8)
-	pinned := pinning(h)
-	require.Equal(t, 0, run([]string{"--exclusive", "--", "make"}, h.w))
-	assert.Equal(t, "nova-reserve: HELD mode=exclusive slot=all pid=42 cpus=0-15\n", h.err.String())
-	assert.Equal(t, span(0, 15), *pinned)
-}
-
-func TestRunThatCannotPinRunsUnpinned(t *testing.T) {
-	t.Parallel()
-	for _, c := range []struct {
-		name       string
-		usableErr  error
-		pinErr     error
-		wantReason string
-	}{
-		{"setting fails", nil, errors.New("sched_setaffinity: operation not permitted"), "sched_setaffinity: operation not permitted"},
-		{"reading fails", errors.New("sched_getaffinity: invalid argument"), nil, "sched_getaffinity: invalid argument"},
-	} {
-		h := newHarness(t)
-		h.setCap(t, 8)
-		pinned := pinning(h)
-		if c.usableErr != nil {
-			h.w.usable = func() ([]int, error) { return nil, c.usableErr }
+	sysfs := t.TempDir()
+	// 8 logical CPUs = 4 physical cores: (0,4), (1,5), (2,6), (3,7).
+	for c := range 4 {
+		for _, sib := range []int{c, c + 4} {
+			dir := filepath.Join(sysfs, "cpu"+strconv.Itoa(sib), "topology")
+			require.NoError(t, os.MkdirAll(dir, 0o755))
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "thread_siblings_list"),
+				[]byte(strconv.Itoa(c)+","+strconv.Itoa(c+4)+"\n"), 0o644))
 		}
-		if c.pinErr != nil {
-			h.w.pin = func([]int) error { return c.pinErr }
-		}
-		h.code = 3
-		assert.Equal(t, 3, run([]string{"--", "make"}, h.w), c.name)
-		assert.Equal(t, "nova-reserve: running unpinned: "+c.wantReason+"\nnova-reserve: HELD mode=shared slot=1/8 pid=42\n", h.err.String(), c.name)
-		assert.Equal(t, []string{"make"}, h.ran, c.name)
-		assert.Empty(t, *pinned, c.name)
 	}
+	usable := span(0, 7)
+	groups := readSMTGroups(usable, sysfs)
+	assert.Equal(t, [][]int{{0, 4}, {1, 5}, {2, 6}, {3, 7}}, groups)
+
+	// Two 2-core holds get disjoint SMT sibling pairs: (0,4) then (1,5).
+	inUse := map[int]int{}
+	a := chooseCPUs(usable, groups, 2, inUse)
+	assert.Equal(t, []int{0, 4}, a)
+	for _, c := range a {
+		inUse[c]++
+	}
+	b := chooseCPUs(usable, groups, 2, inUse)
+	assert.Equal(t, []int{1, 5}, b)
+	for _, c := range b {
+		inUse[c]++
+	}
+
+	// Two 1-core holds get separate free physical cores: 2 then 3 (not 2 and 6!).
+	c1 := chooseCPUs(usable, groups, 1, inUse)
+	assert.Equal(t, []int{2}, c1)
+	inUse[2]++
+	c2 := chooseCPUs(usable, groups, 1, inUse)
+	assert.Equal(t, []int{3}, c2)
+}
+
+func TestLinuxCgroupMemoryBoundsPhysicalMemory(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	meminfo := filepath.Join(root, "meminfo")
+	require.NoError(t, os.WriteFile(meminfo, []byte("MemTotal:       67108864 kB\n"), 0o644)) // 64 GiB
+
+	cgRoot := filepath.Join(root, "cgroup")
+	sliceDir := filepath.Join(cgRoot, "user.slice", "job.scope")
+	require.NoError(t, os.MkdirAll(sliceDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(cgRoot, "user.slice", "memory.max"), []byte("17179869184\n"), 0o644)) // 16 GiB
+	require.NoError(t, os.WriteFile(filepath.Join(sliceDir, "memory.max"), []byte("max\n"), 0o644))
+
+	selfCg := filepath.Join(root, "self.cgroup")
+	require.NoError(t, os.WriteFile(selfCg, []byte("0::/user.slice/job.scope\n"), 0o644))
+
+	got := linuxMemoryBytes(meminfo, selfCg, cgRoot)
+	assert.Equal(t, uint64(16)<<30, got)
+}
+
+func TestRunPinsDisjointCPUsAndHandlesPinFailure(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	usable := span(0, 7)
+	groups := [][]int{{0, 4}, {1, 5}, {2, 6}, {3, 7}}
+	var pinned []int
+	h.w.usable = func() ([]int, error) { return usable, nil }
+	h.w.groups = func([]int) [][]int { return groups }
+	h.w.pin = func(cpus []int) error { pinned = cpus; return nil }
+	h.setCap(t, 8, 16, 8)
+
+	// Hold 1 takes cpu 2 -> cpus 0,4.
+	other := h.sibling(10).take(t, "--needs", "cpu 2, memory 2")
+	defer other.release(false)
+
+	// Run takes cpu 2 -> gets disjoint physical core cpus 1,5!
+	require.Equal(t, 0, run([]string{"--dir", h.dir, "--needs", "cpu 2, memory 2", "--", "make"}, h.w))
+	assert.Equal(t, []int{1, 5}, pinned)
+	assert.Contains(t, h.err.String(), "nova-reserve: HELD cpu=2 memory=2 cores=2 pid=42 cpus=1,5\n")
+
+	// When pinning fails, command still runs with one warning line on stderr.
+	h.err.Reset()
+	pinned = nil
+	h.w.pin = func([]int) error { return errors.New("sched_setaffinity: operation not permitted") }
+	h.code = 3
+	assert.Equal(t, 3, run([]string{"--dir", h.dir, "--needs", "cpu 2, memory 2", "--", "make"}, h.w))
+	assert.Equal(t, "nova-reserve: running unpinned: sched_setaffinity: operation not permitted\nnova-reserve: HELD cpu=2 memory=2 cores=2 pid=42\n", h.err.String())
 }

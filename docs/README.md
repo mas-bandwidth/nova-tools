@@ -738,26 +738,28 @@ environment ([cmd/nova-secrets/README.md](../cmd/nova-secrets/README.md#clone-a-
 
 ## Share machines without stepping on each other
 
-A **slot** is one place in a machine's limit on jobs that run at once. A job
-waits for a free slot, holds it while it runs, and frees it when it exits,
-even if it is killed. Everyone who shares the limit uses the same directory:
+A **hold** claims the whole-number **resources** (`cpu` in CPU units, `memory`
+in GiB, and custom devices) and **tags** a command needs on one machine. Later
+arrivals wait in line when resources do not fit, and the kernel frees the hold
+when its process exits, even if killed. Everyone sharing a machine uses the
+same directory:
 
 ```sh
-export NOVA_RESERVE_DIR="$work/reserve"
-nova-reserve set --slots 2
-nova-reserve --why "first job" -- sleep 1 &
-nova-reserve --why "second job" -- sleep 1
+nova-reserve set --dir "$work/reserve" --cpu 2 --memory 4 --cores 2
+nova-reserve --dir "$work/reserve" --needs "cpu 1, memory 2" --why "first job" -- sleep 1 &
+nova-reserve --dir "$work/reserve" --needs "cpu 1, memory 2" --why "second job" -- sleep 1
 wait
-nova-reserve status
+nova-reserve status --dir "$work/reserve"
 ```
 
-`set` prints `CAPACITY SET slots=2`. Each job prints
-`nova-reserve: HELD mode=shared slot=<n>/2 ...` on stderr before its command
-runs, and `status` ends with `free=2/2` once both have finished.
+`set` prints `CAPACITY SET cpu=2 memory=4 cores=2`. Each job prints
+`nova-reserve: HELD cpu=1 memory=2 cores=1 ...` on stderr before its command
+runs, and `status` ends with `free cpu=2/2 memory=4/4 paused=0 waiting=0` once
+both have finished.
 
-The refusal you will meet first is `no slot within <d>: ...` (exit 1): every
-slot stayed taken for the whole `--wait`. Wait longer, or look at `status`. The
-others are in [cmd/nova-reserve/README.md](../cmd/nova-reserve/README.md#refusals-and-what-to-do-next).
+The refusal you will meet first is `no hold within <d>: ...` (exit 1): needed
+resources stayed busy for the whole `--wait`. Wait longer, or inspect `status`.
+The others are in [cmd/nova-reserve/README.md](../cmd/nova-reserve/README.md#refusals-and-what-to-do-next).
 
 The whole tool: [cmd/nova-reserve/README.md](../cmd/nova-reserve/README.md).
 
@@ -860,7 +862,7 @@ The whole tool: [cmd/nova-cairn/README.md](../cmd/nova-cairn/README.md).
 ## Is it working?
 
 Paste this in the session above, before you clean up. Elsewhere, set
-`NOVA_BUS_REDIS`, `NOVA_PG_DSN`, `NOVA_SECRETS_STORE` and `NOVA_RESERVE_DIR`
+`NOVA_BUS_REDIS`, `NOVA_PG_DSN` and `NOVA_SECRETS_STORE`
 first. Each line
 prints the first line shown beside it, and a command that fails shows its exit
 status (`first` prints the first line of the output and returns the command's
@@ -871,7 +873,7 @@ first() { local out rc; out=$("$@"); rc=$?; printf '%s\n' "${out%%$'\n'*}"; retu
 first nova-bus -h           # nova-bus: messages between named inboxes, kept in Redis.
 first nova-config -h        # nova-config: a fleet's machines, services and friends, kept as rows in PostgreSQL.
 first nova-secrets -h       # nova-secrets: sops-encrypted secrets in a git store, handed to one command at a time.
-first nova-reserve status   # capacity=<n> set_by_pid=<pid> set_at=<time>
+first nova-reserve status --dir "$work/reserve"  # capacity cpu=2 memory=4 cores=2 tags=... set_by_pid=<pid> set_at=<time>
 first nova-sandbox check    # CHECK OK backend=landlock ... (Linux) or backend=sandbox-exec ... (macOS)
 first nova-cairn version    # nova-cairn <version> (dev when built from a clone)
 first nova-bus who          # WHO OK present=0 once the demo hooks are stopped

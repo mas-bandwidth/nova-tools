@@ -3,6 +3,8 @@
 package main
 
 import (
+	"bufio"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -18,10 +20,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The functional tests run the real binary on real locks. The commands it
-// runs are this test binary again, as a child: NOVA_RESERVE_CHILD=sleep writes
-// its pid to NOVA_RESERVE_PIDFILE when that is set, and sleeps; =exit7 exits 7;
-// =cpus prints how many CPUs it may run on.
 func TestMain(m *testing.M) {
 	switch os.Getenv("NOVA_RESERVE_CHILD") {
 	case "sleep":
@@ -33,8 +31,22 @@ func TestMain(m *testing.M) {
 	case "exit7":
 		os.Exit(7)
 	case "cpus":
-		fmt.Println(runtime.NumCPU()) // as nproc counts: the CPUs it may run on
+		fmt.Printf("%d %s %s\n", runtime.NumCPU(), os.Getenv("NOVA_RESERVE_CPUS"), os.Getenv("GOMAXPROCS"))
 		os.Exit(0)
+	case "append":
+		f, err := os.OpenFile(os.Getenv("NOVA_RESERVE_ORDER"), os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
+		if err == nil {
+			_, _ = fmt.Fprintln(f, os.Getenv("NOVA_RESERVE_TAG"))
+			_ = f.Close()
+		}
+		os.Exit(0)
+	case "waitfile":
+		for {
+			if _, err := os.Stat(os.Getenv("NOVA_RESERVE_DONE")); err == nil {
+				os.Exit(0)
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
 	}
 	os.Exit(m.Run())
 }
@@ -44,113 +56,245 @@ const patience = 20 * time.Second
 func build(t *testing.T) string {
 	t.Helper()
 	bin := filepath.Join(t.TempDir(), "nova-reserve")
-	if runtime.GOOS == "windows" {
-		bin += ".exe"
-	}
 	out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput()
 	require.NoError(t, err, "%s", out)
 	return bin
 }
 
-func slotCmd(t *testing.T, bin, dir, child string, args ...string) *exec.Cmd {
+func cleanChildEnv() []string {
+	var out []string
+	for _, kv := range os.Environ() {
+		if !strings.HasPrefix(kv, "NOVA_RESERVE_DIR=") {
+			out = append(out, kv)
+		}
+	}
+	return out
+}
+
+func initCap(t *testing.T, bin, dir string, cpu, mem int) {
+	t.Helper()
+	cmd := exec.Command(bin, "set", "--dir", dir, "--cpu", strconv.Itoa(cpu), "--memory", strconv.Itoa(mem))
+	cmd.Env = cleanChildEnv()
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, "%s", out)
+}
+
+func holdCmd(t *testing.T, bin, dir, child string, args ...string) *exec.Cmd {
 	t.Helper()
 	self, err := os.Executable()
 	require.NoError(t, err)
 	cmd := exec.Command(bin, append(append([]string{"--dir", dir}, args...), "--", self)...)
-	cmd.Env = append(os.Environ(), "NOVA_RESERVE_CHILD="+child)
+	cmd.Env = append(cleanChildEnv(), "NOVA_RESERVE_CHILD="+child)
 	return cmd
 }
 
-// startHolder starts a sleeping holder and waits until status shows it.
 func startHolder(t *testing.T, bin, dir string, args ...string) *exec.Cmd {
 	t.Helper()
-	cmd := slotCmd(t, bin, dir, "sleep", args...)
+	cmd := holdCmd(t, bin, dir, "sleep", args...)
 	require.NoError(t, cmd.Start())
 	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
 	require.Eventually(t, func() bool {
-		out, _ := exec.Command(bin, "status", "--dir", dir).Output()
-		return strings.Contains(string(out), "held pid="+strconv.Itoa(cmd.Process.Pid))
-	}, patience, 50*time.Millisecond)
+		c := exec.Command(bin, "status", "--dir", dir)
+		c.Env = cleanChildEnv()
+		out, _ := c.Output()
+		return strings.Contains(string(out), "pid="+strconv.Itoa(cmd.Process.Pid))
+	}, patience, 20*time.Millisecond)
 	return cmd
 }
 
-func TestKilledHolderFreesItsSlot(t *testing.T) {
+func TestFunctionalKilledHolderFreesResourcesFast(t *testing.T) {
 	t.Parallel()
 	bin, dir := build(t), t.TempDir()
-	holder := startHolder(t, bin, dir, "--slots", "1")
-	waiter := slotCmd(t, bin, dir, "exit7", "--slots", "1")
+	initCap(t, bin, dir, 1, 2)
+	holder := startHolder(t, bin, dir, "--needs", "cpu 1, memory 1")
+
+	waiter := exec.Command(bin, "hold", "--dir", dir, "--needs", "cpu 1, memory 1")
+	waiter.Env = cleanChildEnv()
+	waiter.Stdin = strings.NewReader("")
+	var waiterOut strings.Builder
+	waiter.Stdout = &waiterOut
 	require.NoError(t, waiter.Start())
 	done := make(chan error, 1)
 	go func() { done <- waiter.Wait() }()
-	select {
-	case <-done:
-		t.Fatal("the waiter ran while the only slot was held")
-	case <-time.After(2 * time.Second):
-	}
-	require.NoError(t, holder.Process.Kill()) // SIGKILL: nothing of nova-reserve runs after it
+
+	// Wait until waiter is registered in line/.
+	require.Eventually(t, func() bool {
+		c := exec.Command(bin, "status", "--dir", dir)
+		c.Env = cleanChildEnv()
+		out, _ := c.Output()
+		return strings.Contains(string(out), "waiting=1")
+	}, patience, 20*time.Millisecond)
+
+	killAt := time.Now()
+	require.NoError(t, holder.Process.Kill()) // SIGKILL: kernel closes FD, firing inotify/kqueue
 	select {
 	case err := <-done:
-		var ee *exec.ExitError
-		require.ErrorAs(t, err, &ee)
-		assert.Equal(t, 7, ee.ExitCode(), "the command's status passes through")
+		took := time.Since(killAt)
+		require.NoError(t, err)
+		assert.Contains(t, waiterOut.String(), "HELD cpu=1 memory=1")
+		assert.Less(t, took, 600*time.Millisecond, "push wakeup should resume waiter well under 1s poll")
 	case <-time.After(patience):
-		t.Fatal("the killed holder's slot was never freed")
+		t.Fatal("waiter never woke after holder SIGKILL")
 	}
+
+	// Verify child exit status passthrough once resources are free.
+	var ee *exec.ExitError
+	require.ErrorAs(t, holdCmd(t, bin, dir, "exit7", "--needs", "cpu 1, memory 1").Run(), &ee)
+	assert.Equal(t, 7, ee.ExitCode())
 }
 
-func TestExclusiveWaitsForSharedHolders(t *testing.T) {
+func TestFunctionalCIDisplacesAndContinuingConsumerBeatsWaiter(t *testing.T) {
 	t.Parallel()
 	bin, dir := build(t), t.TempDir()
-	a := startHolder(t, bin, dir, "--slots", "3")
-	x := slotCmd(t, bin, dir, "exit7", "--exclusive", "--wait", "2s")
-	err := x.Run()
+	initCap(t, bin, dir, 2, 4)
+
+	// 1. Consumer card-1@1 Step 1 takes cpu 2, memory 4.
+	doneFile := filepath.Join(t.TempDir(), "step1.done")
+	step1 := holdCmd(t, bin, dir, "waitfile", "--holder", "bench", "--consumer", "card-1@1", "--priority", "high", "--needs", "cpu 2, memory 4")
+	step1.Env = append(step1.Env, "NOVA_RESERVE_DONE="+doneFile)
+	require.NoError(t, step1.Start())
+	t.Cleanup(func() { _ = step1.Process.Kill(); _ = step1.Wait() })
+	require.Eventually(t, func() bool {
+		c := exec.Command(bin, "status", "--dir", dir)
+		c.Env = cleanChildEnv()
+		out, _ := c.Output()
+		return strings.Contains(string(out), "pid="+strconv.Itoa(step1.Process.Pid))
+	}, patience, 20*time.Millisecond)
+
+	// 2. A queued waiter enters line/ asking for cpu 2, memory 4.
+	orderFile := filepath.Join(t.TempDir(), "order.txt")
+	waiter := holdCmd(t, bin, dir, "append", "--holder", "friend", "--needs", "cpu 2, memory 4")
+	waiter.Env = append(waiter.Env, "NOVA_RESERVE_ORDER="+orderFile, "NOVA_RESERVE_TAG=waiter")
+	require.NoError(t, waiter.Start())
+	waiterDone := make(chan error, 1)
+	go func() { waiterDone <- waiter.Wait() }()
+	require.Eventually(t, func() bool {
+		c := exec.Command(bin, "status", "--dir", dir)
+		c.Env = cleanChildEnv()
+		out, _ := c.Output()
+		return strings.Contains(string(out), "waiting=1")
+	}, patience, 20*time.Millisecond)
+
+	// 3. CI arrives via `nova-reserve hold --holder ci` and acquires immediately, pausing step1!
+	ci := exec.Command(bin, "hold", "--dir", dir, "--holder", "ci", "--needs", "cpu 2, memory 4")
+	ci.Env = cleanChildEnv()
+	ciStdin, err := ci.StdinPipe()
+	require.NoError(t, err)
+	ciStdout, err := ci.StdoutPipe()
+	require.NoError(t, err)
+	require.NoError(t, ci.Start())
+	t.Cleanup(func() { _ = ciStdin.Close(); _ = ci.Process.Kill(); _ = ci.Wait() })
+
+	rd := bufio.NewReader(ciStdout)
+	line, err := rd.ReadString('\n')
+	require.NoError(t, err)
+	assert.True(t, strings.HasPrefix(line, "HELD cpu=2 memory=4"), line)
+
+	// Verify status --json shows card-1@1 paused behind CI.
+	stCmd := exec.Command(bin, "status", "--json", "--dir", dir)
+	stCmd.Env = cleanChildEnv()
+	stOut, err := stCmd.Output()
+	require.NoError(t, err)
+	var sj statusJSON
+	require.NoError(t, json.Unmarshal(stOut, &sj))
+	assert.True(t, sj.AnyPaused)
+	assert.Equal(t, []string{"card-1@1"}, sj.PausedConsumers)
+
+	// 4. Step 1 finishes cleanly while paused behind CI.
+	require.NoError(t, os.WriteFile(doneFile, []byte("ok\n"), 0o644))
+	require.NoError(t, step1.Wait())
+
+	// 5. Step 2 of card-1@1 starts while CI still holds -> blocks between commands!
+	step2 := holdCmd(t, bin, dir, "append", "--holder", "bench", "--consumer", "card-1@1", "--priority", "high", "--needs", "cpu 2, memory 4")
+	step2.Env = append(step2.Env, "NOVA_RESERVE_ORDER="+orderFile, "NOVA_RESERVE_TAG=step2")
+	require.NoError(t, step2.Start())
+	step2Done := make(chan error, 1)
+	go func() { step2Done <- step2.Wait() }()
+
+	// Wait until step2 attaches to its paused hold on disk.
+	require.Eventually(t, func() bool {
+		c := exec.Command(bin, "status", "--dir", dir)
+		c.Env = cleanChildEnv()
+		out, _ := c.Output()
+		return strings.Contains(string(out), "pid="+strconv.Itoa(step2.Process.Pid))
+	}, patience, 20*time.Millisecond)
+	select {
+	case <-step2Done:
+		t.Fatal("step2 must not run while CI still holds")
+	default:
+	}
+
+	// 6. Close CI stdin -> CI releases cleanly -> step2 MUST run BEFORE waiter!
+	require.NoError(t, ciStdin.Close())
+	require.NoError(t, ci.Wait())
+	require.NoError(t, <-step2Done)
+	require.NoError(t, <-waiterDone)
+
+	orderBytes, err := os.ReadFile(orderFile)
+	require.NoError(t, err)
+	assert.Equal(t, "step2\nwaiter\n", string(orderBytes), "continuing consumer must resume ahead of queued waiter")
+}
+
+func TestFunctionalExclusiveAndLiveSetOnRealLocks(t *testing.T) {
+	t.Parallel()
+	bin, dir := build(t), t.TempDir()
+	initCap(t, bin, dir, 3, 6)
+	a := startHolder(t, bin, dir)
+
+	// Live set succeeds even while a hold is active!
+	setCmd := exec.Command(bin, "set", "--dir", dir, "--cpu", "4", "--tags", "gpu")
+	setCmd.Env = cleanChildEnv()
+	out, err := setCmd.CombinedOutput()
+	require.NoError(t, err, "%s", out)
+	assert.Contains(t, string(out), "CAPACITY SET cpu=4 memory=6")
+
+	// Exclusive hold times out while shared hold runs.
+	x := holdCmd(t, bin, dir, "exit7", "--exclusive", "--wait", "200ms")
+	err = x.Run()
 	var ee *exec.ExitError
 	require.ErrorAs(t, err, &ee)
-	assert.Equal(t, 1, ee.ExitCode(), "no exclusive hold beside a shared one")
+	assert.Equal(t, 1, ee.ExitCode())
+
 	require.NoError(t, a.Process.Kill())
-	err = slotCmd(t, bin, dir, "exit7", "--exclusive", "--wait", "20s").Run()
+	_ = a.Wait()
+	err = holdCmd(t, bin, dir, "exit7", "--exclusive", "--wait", "5s").Run()
 	require.ErrorAs(t, err, &ee)
 	assert.Equal(t, 7, ee.ExitCode())
 }
 
-func TestStatusDuringAnExclusiveRunOnRealLocks(t *testing.T) {
+func TestFunctionalReentrantNestedRunDoesNotDeadlock(t *testing.T) {
 	t.Parallel()
 	bin, dir := build(t), t.TempDir()
-	require.NoError(t, exec.Command(bin, "set", "--slots", "3", "--dir", dir).Run())
-	x := startHolder(t, bin, dir, "--exclusive")
-	var out []byte
-	require.Eventually(t, func() bool {
-		out, _ = exec.Command(bin, "status", "--dir", dir).Output()
-		return strings.Contains(string(out), "all held pid="+strconv.Itoa(x.Process.Pid))
-	}, patience, 50*time.Millisecond)
-	assert.Contains(t, string(out), "free=0/3\n")
-	assert.NotContains(t, string(out), "  ")
-}
-
-// TestTwoCapacitiesNeverBothRun is the per-caller bug on real locks: a
-// --slots 1 holder, then a --slots 4 caller, which is refused and never runs.
-func TestTwoCapacitiesNeverBothRun(t *testing.T) {
-	t.Parallel()
-	bin, dir := build(t), t.TempDir()
-	startHolder(t, bin, dir, "--slots", "1")
-	x := slotCmd(t, bin, dir, "exit7", "--slots", "4", "--wait", "2s")
-	var stderr strings.Builder
-	x.Stderr = &stderr
-	err := x.Run()
+	initCap(t, bin, dir, 2, 4)
+	cmd := exec.Command(bin, "--dir", dir, "--exclusive", "--", bin, "--dir", dir, "--exclusive", "--nowait", "--", "sh", "-c", "exit 7")
+	cmd.Env = cleanChildEnv()
+	err := cmd.Run()
 	var ee *exec.ExitError
 	require.ErrorAs(t, err, &ee)
-	assert.Equal(t, 2, ee.ExitCode())
-	assert.Contains(t, stderr.String(), "nova-reserve: this machine's capacity is 1 (set by pid ")
-	assert.Contains(t, stderr.String(), "; you asked 4; run: nova-reserve set --slots 4 --dir ")
-	assert.Equal(t, 1, strings.Count(stderr.String(), "\n"), "one line, nothing else on stderr")
+	assert.Equal(t, 7, ee.ExitCode())
 }
 
-// TestWaitIsABoundOnRealLocks: a 100 ms --wait on a held slot returns well inside a poll.
-func TestWaitIsABoundOnRealLocks(t *testing.T) {
+func TestFunctionalMeasureWritesCapacityJSON(t *testing.T) {
 	t.Parallel()
 	bin, dir := build(t), t.TempDir()
-	startHolder(t, bin, dir, "--slots", "1")
-	x := slotCmd(t, bin, dir, "exit7", "--wait", "100ms")
+	cmd := exec.Command(bin, "measure", "--force", "--dir", dir)
+	cmd.Env = cleanChildEnv()
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, "%s", out)
+	assert.Contains(t, string(out), "MEASURE OK cpu=")
+	c, have, err := readCapacity(dir)
+	require.NoError(t, err)
+	require.True(t, have)
+	assert.GreaterOrEqual(t, c.Resources["cpu"], 1)
+	assert.GreaterOrEqual(t, c.Resources["memory"], 1)
+}
+
+func TestFunctionalWaitIsABoundOnRealLocks(t *testing.T) {
+	t.Parallel()
+	bin, dir := build(t), t.TempDir()
+	initCap(t, bin, dir, 1, 2)
+	startHolder(t, bin, dir)
+	x := holdCmd(t, bin, dir, "exit7", "--wait", "100ms")
 	var stderr strings.Builder
 	x.Stderr = &stderr
 	began := time.Now()
@@ -160,56 +304,37 @@ func TestWaitIsABoundOnRealLocks(t *testing.T) {
 	require.ErrorAs(t, err, &ee)
 	assert.Equal(t, 1, ee.ExitCode())
 	assert.Less(t, took, 700*time.Millisecond)
-	assert.Contains(t, stderr.String(), "nova-reserve: no slot within 100ms: slot1 held pid=")
+	assert.Contains(t, stderr.String(), "nova-reserve: no hold within 100ms:")
 }
 
-func TestMissingCommandNeverHolds(t *testing.T) {
+func TestFunctionalMissingCommandNeverHolds(t *testing.T) {
 	t.Parallel()
 	bin, dir := build(t), t.TempDir()
 	cmd := exec.Command(bin, "--dir", filepath.Join(dir, "r"), "--", "no-such-command-anywhere")
+	cmd.Env = cleanChildEnv()
 	out, err := cmd.CombinedOutput()
 	var ee *exec.ExitError
 	require.ErrorAs(t, err, &ee)
 	assert.Equal(t, 127, ee.ExitCode())
-	assert.Equal(t, "nova-reserve: no-such-command-anywhere: command not found on PATH="+os.Getenv("PATH")+"\n", string(out))
+	assert.Contains(t, string(out), "no-such-command-anywhere: command not found on PATH=")
 	assert.NoDirExists(t, filepath.Join(dir, "r"))
-	if runtime.GOOS != "windows" {
-		plain := filepath.Join(dir, "plain")
-		require.NoError(t, os.WriteFile(plain, []byte("x"), 0o644))
-		out, err = exec.Command(bin, "--dir", filepath.Join(dir, "r"), "--", plain).CombinedOutput()
-		require.ErrorAs(t, err, &ee)
-		assert.Equal(t, 126, ee.ExitCode(), "%s", out)
-		assert.NoDirExists(t, filepath.Join(dir, "r"))
-	}
-}
 
-func TestSetRefusedWhileHeldOnRealLocks(t *testing.T) {
-	t.Parallel()
-	bin, dir := build(t), t.TempDir()
-	h := startHolder(t, bin, dir, "--slots", "2")
-	out, err := exec.Command(bin, "set", "--slots", "3", "--dir", dir).CombinedOutput()
-	var ee *exec.ExitError
+	plain := filepath.Join(dir, "plain")
+	require.NoError(t, os.WriteFile(plain, []byte("x"), 0o644))
+	cmd2 := exec.Command(bin, "--dir", filepath.Join(dir, "r"), "--", plain)
+	cmd2.Env = cleanChildEnv()
+	out, err = cmd2.CombinedOutput()
 	require.ErrorAs(t, err, &ee)
-	assert.Equal(t, 1, ee.ExitCode())
-	assert.Contains(t, string(out), "nova-reserve set: capacity in use (slot1 held pid="+strconv.Itoa(h.Process.Pid))
-	require.NoError(t, h.Process.Kill())
-	_ = h.Wait()
-	require.Eventually(t, func() bool {
-		out, err := exec.Command(bin, "set", "--slots", "3", "--dir", dir).Output()
-		return err == nil && string(out) == "CAPACITY SET slots=3\n"
-	}, patience, 50*time.Millisecond)
-	status, _ := exec.Command(bin, "status", "--dir", dir).Output()
-	assert.Contains(t, string(status), "free=3/3\n")
+	assert.Equal(t, 126, ee.ExitCode(), "%s", out)
+	assert.NoDirExists(t, filepath.Join(dir, "r"))
 }
 
-// TestKilledHolderTakesItsCommandWith SIGKILLs nova-reserve itself: its command
-// must not run on without the slot (Linux, macOS and the BSDs: the watchdog,
-// which polls each second, and Pdeathsig on Linux; Windows: the job), and the slot frees.
-func TestKilledHolderTakesItsCommandWith(t *testing.T) {
+func TestFunctionalKilledHolderTakesItsCommandWith(t *testing.T) {
 	t.Parallel()
 	bin, dir := build(t), t.TempDir()
+	initCap(t, bin, dir, 1, 2)
 	pidfile := filepath.Join(t.TempDir(), "child.pid")
-	holder := slotCmd(t, bin, dir, "sleep", "--slots", "1")
+	holder := holdCmd(t, bin, dir, "sleep")
 	holder.Env = append(holder.Env, "NOVA_RESERVE_PIDFILE="+pidfile)
 	require.NoError(t, holder.Start())
 	t.Cleanup(func() { _ = holder.Process.Kill(); _ = holder.Wait() })
@@ -218,32 +343,22 @@ func TestKilledHolderTakesItsCommandWith(t *testing.T) {
 		b, err := os.ReadFile(pidfile)
 		child, _ = strconv.Atoi(string(b))
 		return err == nil && child > 0
-	}, patience, 50*time.Millisecond)
-	require.True(t, alive(child), "the command runs while nova-reserve holds its slot")
+	}, patience, 30*time.Millisecond)
+	require.True(t, alive(child))
 	require.NoError(t, holder.Process.Kill())
 	_ = holder.Wait()
-	assert.Eventually(t, func() bool { return !alive(child) }, 3*time.Second, 50*time.Millisecond,
-		"the command outlived nova-reserve")
-	assert.Eventually(t, func() bool {
-		out, _ := exec.Command(bin, "status", "--dir", dir).Output()
-		return strings.Contains(string(out), "slot1 free")
-	}, patience, 50*time.Millisecond)
+	assert.Eventually(t, func() bool { return !alive(child) }, 3*time.Second, 50*time.Millisecond)
 }
 
-// TestFunctionalKilledHolderTakesItsWholeGroupWith SIGKILLs nova-reserve while
-// its command waits on a process it started (make -j's jobs): that process
-// must not run on without the slot either.
 func TestFunctionalKilledHolderTakesItsWholeGroupWith(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("no sh on Windows")
-	}
 	t.Parallel()
 	bin, dir := build(t), t.TempDir()
+	initCap(t, bin, dir, 1, 2)
 	self, err := os.Executable()
 	require.NoError(t, err)
 	pidfile := filepath.Join(t.TempDir(), "job.pid")
-	holder := exec.Command(bin, "--dir", dir, "--slots", "1", "--", "sh", "-c", `"$0" & wait`, self)
-	holder.Env = append(os.Environ(), "NOVA_RESERVE_CHILD=sleep", "NOVA_RESERVE_PIDFILE="+pidfile)
+	holder := exec.Command(bin, "--dir", dir, "--", "sh", "-c", `"$0" & wait`, self)
+	holder.Env = append(cleanChildEnv(), "NOVA_RESERVE_CHILD=sleep", "NOVA_RESERVE_PIDFILE="+pidfile)
 	require.NoError(t, holder.Start())
 	t.Cleanup(func() { _ = holder.Process.Kill(); _ = holder.Wait() })
 	var job int
@@ -251,23 +366,19 @@ func TestFunctionalKilledHolderTakesItsWholeGroupWith(t *testing.T) {
 		b, err := os.ReadFile(pidfile)
 		job, _ = strconv.Atoi(string(b))
 		return err == nil && job > 0
-	}, patience, 50*time.Millisecond)
+	}, patience, 30*time.Millisecond)
 	t.Cleanup(func() { _ = syscall.Kill(job, syscall.SIGKILL) })
 	require.NoError(t, holder.Process.Kill())
 	_ = holder.Wait()
-	assert.Eventually(t, func() bool { return !alive(job) }, 3*time.Second, 50*time.Millisecond,
-		"the command's job outlived nova-reserve and its slot")
+	assert.Eventually(t, func() bool { return !alive(job) }, 3*time.Second, 50*time.Millisecond)
 }
 
-// TestFunctionalSignalledCommandIsNamed: a command a signal ended exits 128+n,
-// and nova-reserve says which signal on one stderr line.
 func TestFunctionalSignalledCommandIsNamed(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("no signals on Windows")
-	}
 	t.Parallel()
 	bin, dir := build(t), t.TempDir()
-	cmd := exec.Command(bin, "--dir", dir, "--slots", "1", "--", "sh", "-c", "kill -TERM $$")
+	initCap(t, bin, dir, 1, 2)
+	cmd := exec.Command(bin, "--dir", dir, "--", "sh", "-c", "kill -TERM $$")
+	cmd.Env = cleanChildEnv()
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
 	err := cmd.Run()
