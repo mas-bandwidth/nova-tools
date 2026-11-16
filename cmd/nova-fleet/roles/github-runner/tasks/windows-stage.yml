@@ -19,7 +19,7 @@
         get_checksum: true
       delegate_to: localhost
       become: false
-      loop: [runner-windows.ps1, ci-rules/nova-ci-rules.ps1, ci-rules/job-started.ps1, ci-rules/job-completed.ps1]
+      loop: [runner-windows.ps1, wsl-watchdog.ps1, ci-rules/nova-ci-rules.ps1, ci-rules/job-started.ps1, ci-rules/job-completed.ps1]
       register: github_runner_win_stage_stat
 
     - name: the stage check, made once for this run (plain Windows host)
@@ -50,7 +50,7 @@
 
     - name: the scripts, staged (plain Windows host)
       ansible.windows.win_copy: { src: "{{ item }}", dest: "{{ github_runner_wsl_stage_dir }}\\{{ item | basename }}" }
-      loop: [runner-windows.ps1, ci-rules/nova-ci-rules.ps1, ci-rules/job-started.ps1, ci-rules/job-completed.ps1]
+      loop: [runner-windows.ps1, wsl-watchdog.ps1, ci-rules/nova-ci-rules.ps1, ci-rules/job-started.ps1, ci-rules/job-completed.ps1]
       when: not ansible_check_mode
 
     - name: the staged scripts, proved (plain Windows host)
