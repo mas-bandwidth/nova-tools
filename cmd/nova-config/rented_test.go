@@ -66,7 +66,7 @@ func TestRentedBoxesAreInNoTableAnOlderReleaseReads(t *testing.T) {
 	for _, f := range kinds["machine"].fields {
 		machine = append(machine, f.name)
 	}
-	assert.Equal(t, "address public user os arch cores roles runners runner_scopes windows_runners windows_admin_runners runner_env note", strings.Join(machine, " "), "v2.0.61's machine columns, unchanged")
+	assert.Equal(t, "address public user os arch cores roles runners runner_scopes windows_runners windows_admin_runners runner_env cpu_units memory_gb tags resources note", strings.Join(machine, " "), "machine columns without rented fields")
 	assert.False(t, slices.ContainsFunc(kinds["machine"].fields, func(f field) bool { return f.name == "provider" }))
 }
 

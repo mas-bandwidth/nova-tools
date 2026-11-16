@@ -169,6 +169,22 @@ func build(machines []Row, services []Row, local string) (*inventory, error) {
 			_ = json.Unmarshal([]byte(v["runner_env"]), &env) // ignored: checked above
 			hv["nova_runner_env"] = env
 		}
+		if v["tags"] != "" {
+			var tags []string
+			for _, t := range strings.Split(v["tags"], ",") {
+				if t = strings.TrimSpace(t); t != "" {
+					tags = append(tags, t)
+				}
+			}
+			slices.Sort(tags)
+			hv["nova_tags"] = slices.Compact(tags)
+		}
+		if v["resources"] != "" && v["resources"] != "{}" {
+			var res map[string]int
+			if err := json.Unmarshal([]byte(v["resources"]), &res); err == nil && len(res) > 0 {
+				hv["nova_resources"] = res
+			}
+		}
 		if m == local {
 			hv["ansible_connection"] = "local"
 		}

@@ -45,7 +45,11 @@ CREATE TABLE IF NOT EXISTS config.machines (
     runner_scopes text NOT NULL DEFAULT '',
     windows_runners text NOT NULL DEFAULT '',
     windows_admin_runners text NOT NULL DEFAULT '',
-    runner_env text NOT NULL DEFAULT '{}' CHECK (runner_env LIKE '{%}')
+    runner_env text NOT NULL DEFAULT '{}' CHECK (runner_env LIKE '{%}'),
+    cpu_units integer CHECK (cpu_units IS NULL OR cpu_units >= 1),
+    memory_gb integer CHECK (memory_gb IS NULL OR memory_gb >= 1),
+    tags text NOT NULL DEFAULT '',
+    resources jsonb NOT NULL DEFAULT '{}'::jsonb
 );
 -- A machines table made before the runner_env column gets it here; on one that has it this does nothing.
 ALTER TABLE config.machines ADD COLUMN IF NOT EXISTS runner_env text NOT NULL DEFAULT '{}' CHECK (runner_env LIKE '{%}');
@@ -53,6 +57,14 @@ ALTER TABLE config.machines ADD COLUMN IF NOT EXISTS runner_env text NOT NULL DE
 ALTER TABLE config.machines ADD COLUMN IF NOT EXISTS runner_scopes text NOT NULL DEFAULT '';
 -- A machines table made before the windows_admin_runners column gets it here ('': none); on one that has it this does nothing.
 ALTER TABLE config.machines ADD COLUMN IF NOT EXISTS windows_admin_runners text NOT NULL DEFAULT '';
+-- A machines table made before the cpu_units column gets it here; on one that has it this does nothing.
+ALTER TABLE config.machines ADD COLUMN IF NOT EXISTS cpu_units integer CHECK (cpu_units IS NULL OR cpu_units >= 1);
+-- A machines table made before the memory_gb column gets it here; on one that has it this does nothing.
+ALTER TABLE config.machines ADD COLUMN IF NOT EXISTS memory_gb integer CHECK (memory_gb IS NULL OR memory_gb >= 1);
+-- A machines table made before the tags column gets it here ('': none); on one that has it this does nothing.
+ALTER TABLE config.machines ADD COLUMN IF NOT EXISTS tags text NOT NULL DEFAULT '';
+-- A machines table made before the resources column gets it here ('{}': none); on one that has it this does nothing.
+ALTER TABLE config.machines ADD COLUMN IF NOT EXISTS resources jsonb NOT NULL DEFAULT '{}'::jsonb;
 
 -- A service: a program one machine keeps running; with every n seconds it runs
 -- every n seconds instead of staying up.

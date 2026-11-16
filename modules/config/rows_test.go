@@ -11,9 +11,33 @@ import (
 
 func TestColumns(t *testing.T) {
 	t.Parallel()
-	assert.Equal(t, []string{"address", "public", "user", "os", "arch", "cores", "roles", "runners", "runner_scopes", "windows_runners", "windows_admin_runners", "runner_env", "note"}, Columns[Machine]())
+	assert.Equal(t, []string{"address", "public", "user", "os", "arch", "cores", "roles", "runners", "runner_scopes", "windows_runners", "windows_admin_runners", "runner_env", "cpu_units", "memory_gb", "tags", "resources", "note"}, Columns[Machine]())
 	assert.Equal(t, []string{"harness", "model", "width", "tiers", "pronouns", "note", "enabled"}, Columns[Friend]())
 	assert.Equal(t, []string{"machine", "argv", "seat", "keys", "every", "keepalive", "enabled", "env", "log"}, Columns[Service]())
+}
+
+func TestMachineEffective(t *testing.T) {
+	t.Parallel()
+	m1 := Machine{OS: "darwin", Arch: "arm64", Tags: "gpu,metal"}
+	assert.Equal(t, "mac", m1.EffectiveOS())
+	assert.Equal(t, []string{"arm64", "gpu", "mac", "metal"}, m1.EffectiveTags())
+
+	m2 := Machine{OS: "linux", Arch: "amd64", Tags: "linux,gpu"}
+	assert.Equal(t, "linux", m2.EffectiveOS())
+	assert.Equal(t, []string{"amd64", "gpu", "linux"}, m2.EffectiveTags())
+
+	cpu, mem := 16, 64
+	m3 := Machine{Resources: map[string]int{"gpu": 1}, CPUUnits: &cpu, MemoryGB: &mem}
+	effRes := m3.EffectiveResources()
+	assert.Equal(t, map[string]int{"cpu": 16, "gpu": 1, "memory": 64}, effRes)
+	// Mutating the returned map should not affect the struct
+	effRes["gpu"] = 2
+	assert.Equal(t, 1, m3.Resources["gpu"])
+
+	m4 := Machine{}
+	assert.Equal(t, "", m4.EffectiveOS())
+	assert.Equal(t, []string(nil), m4.EffectiveTags())
+	assert.Equal(t, map[string]int{}, m4.EffectiveResources())
 }
 
 // TestListSQLNamesItsColumns: no *, and none of the old columns, so a store
@@ -38,9 +62,17 @@ func TestFillTypesEachField(t *testing.T) {
 	require.NoError(t, fill(reflect.ValueOf(&f).Elem(), r))
 	assert.Equal(t, Friend{Name: "alice", Harness: "claude", Width: 16, Tiers: "flash,pro", Pronouns: "she/her", Enabled: true, Created: "c", Updated: "u"}, f)
 	var m Machine
-	require.NoError(t, fill(reflect.ValueOf(&m).Elem(), Row{Name: "m1", F: map[string]string{"cores": "12", "runners": "0"}}))
+	require.NoError(t, fill(reflect.ValueOf(&m).Elem(), Row{Name: "m1", F: map[string]string{
+		"cores": "12", "runners": "0", "cpu_units": "16", "memory_gb": "64", "tags": "gpu,metal", "resources": `{"gpu":1}`,
+	}}))
 	require.NotNil(t, m.Cores)
 	assert.Equal(t, 12, *m.Cores)
+	require.NotNil(t, m.CPUUnits)
+	assert.Equal(t, 16, *m.CPUUnits)
+	require.NotNil(t, m.MemoryGB)
+	assert.Equal(t, 64, *m.MemoryGB)
+	assert.Equal(t, "gpu,metal", m.Tags)
+	assert.Equal(t, map[string]int{"gpu": 1}, m.Resources)
 	assert.Empty(t, m.Public, "an unset public address is empty")
 	require.NoError(t, fill(reflect.ValueOf(&m).Elem(), Row{Name: "m1", F: map[string]string{"public": "edge.example.com"}}))
 	assert.Equal(t, "edge.example.com", m.Public)

@@ -144,7 +144,7 @@ func arg(f field, v string) any {
 	switch {
 	case v == "" && (f.null || f.typ == "ref"):
 		return nil
-	case f.typ == "int":
+	case f.typ == "int" || f.typ == "unit":
 		n, _ := strconv.ParseInt(v, 10, 64)
 		return n
 	case f.typ == "bool":

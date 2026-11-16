@@ -56,7 +56,7 @@ func value(s string) string {
 // in an old row cannot reach the terminal), else a string.
 func jsonValue(f field, v string) string {
 	switch f.typ {
-	case "int":
+	case "int", "unit":
 		if v == "" {
 			return "null"
 		}
@@ -73,13 +73,18 @@ func jsonValue(f field, v string) string {
 		if json.Unmarshal([]byte(v), &m) == nil {
 			return oddEscapes.Replace(marshal(m))
 		}
+	case "resources":
+		var m map[string]int
+		if json.Unmarshal([]byte(v), &m) == nil {
+			return oddEscapes.Replace(marshal(m))
+		}
 	}
 	return jsonString(v)
 }
 
 // fieldValue is a field's value as a line prints it.
 func fieldValue(f field, v string) string {
-	if v != "" && (f.free || f.typ == "argv" || f.typ == "env") {
+	if v != "" && (f.free || f.typ == "argv" || f.typ == "env" || f.typ == "resources") {
 		return jsonValue(f, v)
 	}
 	return value(v)

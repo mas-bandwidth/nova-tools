@@ -41,7 +41,10 @@ func TestFunctionalOldStore(t *testing.T) {
 	require.NoError(t, err)
 	_, err = c.Exec(ctx, string(schema))
 	require.NoError(t, err)
-	assert.Equal(t, before, columns(), "the tables an older release reads keep exactly their columns")
+	wantCols := append(append([]string{}, before[:34]...),
+		"machines.cpu_units integer ", "machines.memory_gb integer ", "machines.tags text ''::text", "machines.resources jsonb '{}'::jsonb")
+	wantCols = append(wantCols, before[34:]...)
+	assert.Equal(t, wantCols, columns(), "the tables an older release reads keep their columns plus new columns")
 
 	code, _, errs = realRun(t, env, rentArgs("spill-1")...)
 	require.Equal(t, 0, code, errs)

@@ -8,6 +8,7 @@ import (
 	"cmp"
 	"context"
 	_ "embed"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -87,6 +88,8 @@ func run(ctx context.Context, args []string, d deps, stdout, stderr io.Writer) i
 		fmt.Fprintln(stderr, "CONFIG SCHEMA OK\nnext: nova-config schema | PGPASSWORD=\"$NOVA_PG_PASSWORD\" psql \"$NOVA_PG_DSN\"")
 	case path[0] == "inventory":
 		err = runInventory(ctx, rest, d, stdout)
+	case path[0] == "resources":
+		err = runResources(ctx, rest, d, stdout)
 	case path[0] == "history":
 		err = runHistory(ctx, rest, d, stdout)
 	default:
@@ -188,6 +191,9 @@ func runKind(ctx context.Context, k *kind, verb string, args []string, d deps, s
 		for _, f := range k.fields {
 			if op != "remove" {
 				fs.String(f.name, "", f.typ)
+				if f.flag != "" && f.flag != f.name {
+					fs.String(f.flag, "", f.typ)
+				}
 			}
 		}
 	})
@@ -195,9 +201,12 @@ func runKind(ctx context.Context, k *kind, verb string, args []string, d deps, s
 		return err
 	}
 	given := map[string]string{} // the field flags on the line
-	fs.Visit(func(f *flag.Flag) {
-		if slices.ContainsFunc(k.fields, func(x field) bool { return x.name == f.Name }) {
-			given[f.Name] = f.Value.String()
+	fs.Visit(func(fl *flag.Flag) {
+		name := fl.Name
+		for _, f := range k.fields {
+			if f.name == name || (f.flag != "" && f.flag == name) {
+				given[f.name] = fl.Value.String()
+			}
 		}
 	})
 	if len(words) > 1 {
@@ -312,6 +321,9 @@ func runKind(ctx context.Context, k *kind, verb string, args []string, d deps, s
 			}
 			return refusal{strings.Join(msgs, "; ")}
 		}
+		if err := checkFleetR5(fleetRows, name); err != nil {
+			return err
+		}
 	}
 	if str(fs, "dry-run") == "true" {
 		if _, err := st.Write(ctx, k, op, before, after, actor, reason, true); err != nil {
@@ -343,6 +355,50 @@ func runKind(ctx context.Context, k *kind, verb string, args []string, d deps, s
 		fmt.Fprintln(stdout, "next: nova-fleet join "+name)
 	} else if k.name == "service" && op != "remove" {
 		fmt.Fprintln(stdout, "next: nova-fleet services --check")
+	}
+	return nil
+}
+
+// checkFleetR5 enforces that within a fleet, a name is either a tag or a resource everywhere (R5).
+func checkFleetR5(rows []Row, targetName string) error {
+	tagsOn := map[string]string{}
+	resOn := map[string]string{}
+	for _, r := range rows {
+		if r.F["tags"] != "" {
+			for _, t := range strings.Split(r.F["tags"], ",") {
+				if t != "" && tagsOn[t] == "" {
+					tagsOn[t] = r.Name
+				}
+			}
+		}
+		os := r.F["os"]
+		if os == "darwin" {
+			os = "mac"
+		}
+		if os != "" && tagsOn[os] == "" {
+			tagsOn[os] = r.Name
+		}
+		if r.F["arch"] != "" && tagsOn[r.F["arch"]] == "" {
+			tagsOn[r.F["arch"]] = r.Name
+		}
+		if r.F["resources"] != "" && r.F["resources"] != "{}" {
+			var m map[string]int
+			if json.Unmarshal([]byte(r.F["resources"]), &m) == nil {
+				for k := range m {
+					if resOn[k] == "" {
+						resOn[k] = r.Name
+					}
+				}
+			}
+		}
+	}
+	for name, tMach := range tagsOn {
+		if rMach, ok := resOn[name]; ok {
+			if tMach == rMach {
+				return refused("machine %s: %s cannot be both a tag and a resource; a name is a tag or a resource everywhere; run: nova-config machine set %s", targetName, name, targetName)
+			}
+			return refused("machine %s: %s is a tag on %s and a resource on %s; a name is a tag or a resource everywhere; run: nova-config machine set %s", targetName, name, tMach, rMach, targetName)
+		}
 	}
 	return nil
 }

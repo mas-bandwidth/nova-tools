@@ -53,6 +53,10 @@ optional (`--dry-run` runs the write and rolls it back, so it refuses what the w
 | `windows_runners` | A WSL machine's Windows-side runners: `<url>=<count>[:<label>+<label>]`, comma-separated, the url `https://github.com/<owner>/<repo>` or `https://github.com/<org>`, the count 1 to 99. Stored sorted by url with labels sorted; `''` is none. nova-fleet's `windows-runners` play converges them. |
 | `windows_admin_runners` | A WSL machine's Windows-side runners that run as a local administrator account, one per entry: `<url>=<account>:<label>[+<label>]@<workflow>`, comma-separated. `<workflow>` is required: the file name (`<name>.yml` or `.yaml`) in the repository's `.github/workflows` of the one workflow the runner runs; its job-started hook refuses every other job, and every job but a push, schedule or workflow_dispatch of `refs/heads/main`. The url is a repository, `https://github.com/<owner>/<repo>` (an organization is refused); the account a lower-case letter then at most 19 lower-case letters, digits and dashes (a Windows user name), never a Windows built-in account (`administrator`, `guest`, `defaultaccount`, `wdagutilityaccount`) or the machine's `user`, each account once, and no two entries whose `<owner>-<repo>-<account>` (compared without case) would share a runner directory; at least one label, never one GitHub gives runners (`self-hosted`, `windows`, `x64`, `linux`, `macos`, in any case), nor a label a job of the same repository could select on another runner (the machine's name and every label of its `windows_runners` and `runner_scopes`, with its roles, os and arch where it has `runner_scopes`; on any machine with a runner of the repository or its owner, that runner's labels and the machine's name; any other admin runner's label of the repository), refused on this write and on a write to the other runner, and the runner carries only these (GitHub adds `self-hosted`, `Windows` and `X64`). Its password is the nova-secrets value `NOVA_WINRUNNER_<ACCOUNT>_PASSWORD` (`-` as `_`) in the machine's seat. Stored sorted by url, then account, with labels sorted; `''` is none. nova-fleet's `windows-runners` play converges them (cmd/nova-fleet/README.md, "Windows runners run as a local administrator"). |
 | `runner_env` | The environment the machine's GitHub Actions runners' services start with (every job inherits it): a JSON object of string values, default `{}`; a name is letters, digits and underscores, not starting with a digit. Values are literal, written per machine (`/home/alice/sdk/bin`, never `~` or a template). nova-fleet's `github-runners` play reads it from the inventory. |
+| `cpu_units` | Measured CPU units: positive integer; `--cpu-units default` unsets it. |
+| `memory_gb` | Memory in GiB: positive integer; `--memory-gb default` unsets it. |
+| `tags` | Comma-separated lower-case tag names; `--tags ''` unsets it. Refuses `cpu`, `memory`, or OS/arch words that conflict with the row's `os` or `arch`. |
+| `resources` | JSON object or `<name>=<amount>` pairs of integer `>= 1`, default `{}`; `--resources ''` unsets it. Refuses `cpu`, `memory`, or any name that appears in `tags` on any machine in the fleet. |
 | `roles` | Comma-separated `bench`, `runner`, `services`; default `bench`. |
 
 ```sh
@@ -67,7 +71,7 @@ CONFIG ADD kind=machine name=bench-a rev=1
 next: nova-fleet join bench-a
 CONFIG SET kind=machine name=bench-a rev=2 changed=note
 CONFIG SET kind=machine name=bench-a changed=none rev=unchanged
-MACHINE name=bench-a address=- public=- user=nova os=linux arch=amd64 cores=16 roles=bench,services runners=0 runner_scopes=- windows_runners=- windows_admin_runners=- runner_env={} note="Example host" created=2026-11-05T23:51:58Z updated=2026-11-05T23:51:58Z services=-
+MACHINE name=bench-a address=- public=- user=nova os=linux arch=amd64 cores=16 roles=bench,services runners=0 runner_scopes=- windows_runners=- windows_admin_runners=- runner_env={} cpu_units=- memory_gb=- tags=- resources={} note="Example host" created=2026-11-05T23:51:58Z updated=2026-11-05T23:51:58Z services=-
 ```
 
 `rev` is the history ID; `changed=` lists only the fields whose value differs.
@@ -216,6 +220,15 @@ nova-secrets name of the account's password; a store holding an admin runner lab
 Ansible reads them as data and never as a template. The local host (the first label of the hostname,
 lower-cased) gets `ansible_connection: local`. As an Ansible script, use
 a file containing `exec nova-config inventory "$@"`.
+
+## Resources
+
+```sh
+nova-config resources
+```
+
+Prints the bidirectional index of the fleet's effective tags and resources:
+from each machine to its effective tags and resources, and from each tag and resource to the machines that provide it. `--json` prints typed JSON.
 
 ## Refusals
 

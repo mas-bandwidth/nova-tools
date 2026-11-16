@@ -539,6 +539,7 @@ nova-config friend add <friend> --harness <harness> --width 4 --actor you
 
 That prints `CONFIG ADD kind=friend name=<friend> rev=3`; `nova-config friend list`
 then shows `width=4` and the default `tiers=flash,frontier,heavy,pro`.
+`nova-config resources` prints the bidirectional index of effective tags and whole-number resources.
 
 The refusal you will meet first is
 `NOVA_PG_DSN carries a password; remove it and set NOVA_PG_PASSWORD` (exit 2):
