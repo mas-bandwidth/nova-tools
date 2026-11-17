@@ -1,0 +1,25 @@
+---
+# Debian, Ubuntu: a host named in nova_runner_gpu_hosts. Its GPU's render node (/dev/dri/renderD*) is open to the render
+# group only, so a login outside it sees no GPU in Vulkan (only lavapipe, Mesa's CPU driver). The login (the fleet
+# login, as for kvm in debian-vm-kernel.yml) joins render. Nothing else changes: no device rule, no other group.
+- name: the render group
+  ansible.builtin.command: getent group render
+  register: rp_render_group
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: the host has a render group
+  ansible.builtin.assert:
+    that: rp_render_group.rc == 0
+    fail_msg: >-
+      {{ inventory_hostname }} is in nova_runner_gpu_hosts and has no render group (getent group render:
+      rc={{ rp_render_group.rc }}): no GPU render node for the login to open; take it out of nova_runner_gpu_hosts
+    quiet: true
+
+- name: the login is in render
+  ansible.builtin.user:
+    name: "{{ ansible_facts['user_id'] }}"
+    groups: [render]
+    append: true
+  become: true
