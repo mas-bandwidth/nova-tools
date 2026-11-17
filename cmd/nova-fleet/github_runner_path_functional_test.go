@@ -91,6 +91,27 @@ func TestRunnerEnvPathStillWins(t *testing.T) {
 	assert.Equal(t, 1, strings.Count(plist, "<key>PATH</key>"))
 }
 
+// The Linux unit names the online CPUs less the kernel's isolated ones (a host booted with isolcpus=1-15), and no
+// affinity where none is isolated, so every other host's unit is unchanged.
+func TestRunnerServiceKeepsOffIsolatedCPUs(t *testing.T) {
+	t.Parallel()
+	if _, err := exec.LookPath("ansible-playbook"); err != nil {
+		t.Skip("ansible-core is not installed on this machine; TestRunnerUnitNamesTheBalancedCPUs still runs")
+	}
+	service, plist, _ := renderRunnerUnits(t, "-e", "github_runner_cpus_online=0-31", "-e", "github_runner_cpus_isolated=1-15")
+	assert.Contains(t, service, "\nCPUAffinity=0 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31\n")
+	assert.Equal(t, 1, strings.Count(service, "CPUAffinity="))
+	assert.NotContains(t, plist, "CPUAffinity")
+
+	service, _, _ = renderRunnerUnits(t, "-e", "github_runner_cpus_online=0-7,16-23", "-e", "github_runner_cpus_isolated=2,4-7,16")
+	assert.Contains(t, service, "\nCPUAffinity=0 1 3 17 18 19 20 21 22 23\n")
+
+	service, _, _ = renderRunnerUnits(t, "-e", "github_runner_cpus_online=0-31", "-e", "github_runner_cpus_isolated=")
+	assert.NotContains(t, service, "CPUAffinity", "a host that isolates no CPU keeps the scheduler's default")
+	service, _, _ = renderRunnerUnits(t)
+	assert.NotContains(t, service, "CPUAffinity", "nothing read: no affinity")
+}
+
 // The Linux unit's TMPDIR is the login's runner-tmp unless the environment names one; the environment is the machine
 // record's (the inventory's nova_runner_env) when no -e replaces it. The plist sets none by default.
 func TestRunnerTmpdirAndTheRecordsEnvironmentRender(t *testing.T) {
