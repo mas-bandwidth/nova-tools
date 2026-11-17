@@ -126,8 +126,9 @@ machine is the one nova-config's rows say ("Adding a machine" below). Nothing he
 | 9 | health | `health` on every machine of the bench, runner and services groups (Linux; a Mac is skipped) | the guards are in place before anything long-running starts |
 | 10 | tools | `install` on every machine of the bench, runner and services groups, from the release `--tools vX.Y.Z` or a local build `--tools DIR`; a machine with no role (a seat only) gets no software | the services run these binaries |
 | 11 | services | `services` | each seat holds its granted values now |
-| 12 | runners | `github-runners` on every machine named except this control node, `--runner-count` per machine (default `cores`: one per `github_runner_cores_per_runner`, 4, cores, at least 1) (only with `--runners`; with only this control node named, no runner is registered and the step fails); the play asks GitHub for its token with this node's `gh` login | |
-| 13 | bus | `nova-bus who` over the store machine's Redis with the fleet's `NOVA_BUS_PASSWORD`; it names no inbox and sends nothing as a person (receipt `UP BUS OK <redis> present=<n>`) | the fleet is reached end to end |
+| 12 | windows-runners | `windows-runners`: on each WSL machine, the keepalive, the `SYSTEM` self-heal watchdog, unattended Windows power/crash/Tailscale settings, out-of-band Windows OpenSSH on port 2222, and any `windows_runners` on its record (other Linux and macOS machines skip the WSL steps) | `nova-secrets` and the seat's store are already in place for any `windows_admin_runners` |
+| 13 | runners | `github-runners` on every machine named except this control node, `--runner-count` per machine (default `cores`: one per `github_runner_cores_per_runner`, 4, cores, at least 1) (only with `--runners`; with only this control node named, no runner is registered and the step fails); the play asks GitHub for its token with this node's `gh` login | |
+| 14 | bus | `nova-bus who` over the store machine's Redis with the fleet's `NOVA_BUS_PASSWORD`; it names no inbox and sends nothing as a person (receipt `UP BUS OK <redis> present=<n>`) | the fleet is reached end to end |
 
 Each play prints its own receipts; each step adds `UP <step> OK` (or `WOULD-...` under `--check`), and the run ends
 with one line per machine, `UP MACHINE <name> OK address=<address> steps=<the steps it passed>`, and on a new fleet
@@ -229,7 +230,7 @@ nova-fleet resources --json
 | `secrets-refresh` | the control node's encrypted store pushed to every machine with `ansible.posix.synchronize` (`verify_host: true`, no `.git`, stale files deleted, 0700/0600); no machine runs a timer (pull mode is retired; one left is removed) | `nova_seal_store` (the control node's clone) to push |
 | `services` | one supervised unit per service record, on the machine the record names (bench, runner and services groups) | the inventory's `nova_services` |
 | `ssh-names` | `ssh <machine>` by its tailnet name: each login's ssh config and the fleet's host keys from the record, then every machine-to-machine login checked refused and the control node's checked open (all machines; one asleep or away is reported offline) | nothing |
-| `windows-runners` | a WSL machine held running from boot, and its Windows-side GitHub Actions runners from its record's `windows_runners`, through WSL interop | the record's `windows_runners` and `windows_admin_runners`; `gh` on the control node logged in with admin on each repository or organization; each admin runner's password in the machine's seat |
+| `windows-runners` | a WSL machine held running from boot with its `SYSTEM` self-heal watchdog, unattended Windows settings, out-of-band Windows OpenSSH, and any Windows-side GitHub Actions runners | the record's `windows_runners` and `windows_admin_runners`; `gh` on the control node logged in with admin on each repository or organization; each admin runner's password in the machine's seat |
 | `tailscale` | each machine on the tailnet, its address the MagicDNS name, its firewall closed to all but the tailnet | `TAILSCALE_AUTHKEY` in the environment for a machine not on the tailnet (`up` mints it) |
 
 ```
@@ -453,8 +454,8 @@ directories, release cache and `TMPDIR` are then in its home, written as the log
 plant there; root's only act there is deleting a runner directory by name), and the runners' default `PATH` starts
 with `/opt/nova/bin` (`nova_shared_dir`): root's copies of the fleet login's tools and of join's sops, age and age-keygen, which it runs and cannot change (made here, refreshed by `install` on a runner whose runners are another login's). Its `~/sdk` names `/opt/nova/sdk`, the fleet login's shared SDK, once `sdk-toolchain` has put one there (`nova_sdk_shared`, on for a runner whose runners are another login's), so a workflow's `$HOME/sdk` works for it as for the fleet login. A runner whose unit runs it from another directory (the fleet
 login's, before the switch) moves: `RUNNER-MOVE <runner> from=<dir> to=<dir> user=<login>`, then, once its job ends,
-its unit stops, it registers in the new directory under the same name (`config.sh --replace`, with a fresh token), the
-unit restarts it there and the old directory is deleted; a move that fails starts the runner where it ran and fails
+its unit stops, its registration comes with it (`.runner`, `.credentials`, `.credentials_rsaparams` and `.labels`, read by the old directory's owner and written by the login into its own directory, each checked against its source), so it keeps its name, id and labels in GitHub and no token is asked for (`RUNNER-PLAN ... move-registered=`); one whose old directory holds no registration registers in the new directory under the same name (`config.sh --replace`, with a fresh token); the
+unit restarts it there and the old directory is deleted; a move that fails removes the copied registration, starts the runner where it ran and fails
 the run with `RUNNER-MOVE-FAILED`. A held runner is not moved: the run fails with `RUNNER-HELD` naming it. The
 record's `runner_env` must name nothing in the fleet login's home (the run fails naming the keys, before the machine
 is changed). With `nova_runner_vm_kernel` (on) an x86_64 host gives it the VM tier: root's copies of the kernel
@@ -798,15 +799,60 @@ a person picks the moment. `--check` prints `PAGEFILE-PLAN`.
 WSL starts a distro only when something on Windows asks for one, and stops it when the last `wsl.exe` holding it ends
 (a WSL update from Windows Update does this). So the same play gives every WSL machine with interop, whether or not
 its record names `windows_runners`, one scheduled task on the Windows side: `WSL2 keepalive (<distro>)`, which runs
-`wsl.exe -d <distro> -u <login> --exec /bin/sleep infinity` (under `conhost.exe --headless`) as the Windows account that
-started WSL, logon type S4U: it runs with nobody logged in, and no password is stored. Its boot trigger repeats every
-minute with `IgnoreNew`, so WSL is up at boot and is started again within a minute after a WSL update, a `wsl
---shutdown` or a reboot inside the distro; inside it systemd starts the services as at any boot (a login's units need
-lingering, which `join` sets). The distro is the running one whose `/etc/machine-id` is this machine's
-(`github_runner_wsl_machine_id_file`), read through `\\wsl.localhost`; none is `NO-DISTRO` and fails the run. A task
-of that name is set when what it does differs and started when it is not running; one line per machine: `KEEPALIVE
-<machine> <distro> ok|set|started|set,started task=<name>`. `--check` reads nothing on the Windows side and prints
-`KEEPALIVE-PLAN <machine> machine-id=<id> user=<login>`.
+`wsl.exe -d <distro> -u <login> --exec /bin/sleep infinity` (under `conhost.exe --headless`, preferring the machine-wide
+`C:\Program Files\WSL\wsl.exe` over the `System32` alias) as the Windows account that started WSL, logon type S4U with
+`RunLevel` `HighestAvailable`, after granting that account `SeBatchLogonRight` through the LSA so Task Scheduler starts
+the task elevated at cold boot with nobody signed in and no password stored. Its boot trigger repeats every minute with `IgnoreNew`, so WSL is up at boot and is
+started again within a minute after a WSL update, a `wsl --shutdown` or a reboot inside the distro; inside it systemd
+starts the services as at any boot (a login's units need lingering, which `join` sets). The distro is the running one
+whose `/etc/machine-id` is this machine's (`github_runner_wsl_machine_id_file`), read through `\\wsl.localhost`; none is
+`NO-DISTRO` and fails the run. One line per machine: `KEEPALIVE <machine> <distro> ok|set|started|batch-right task=<name>`.
+`--check` reads nothing on the Windows side and prints `KEEPALIVE-PLAN <machine> machine-id=<id> user=<login>`.
+
+### WSL self-heal watchdog and Windows OpenSSH
+
+A wedged `WslService` or Hyper-V utility VM leaves `wsl.exe` alive while guest execution and WSL `sshd` stop answering,
+so `IgnoreNew` on the keepalive task alone does not recover it, and SSH to port 22 reaches only WSL. Alongside the
+keepalive, `windows-runners` (`tasks/wsl-watchdog.yml`, `files/wsl-watchdog.ps1`) sets three standard guards on every WSL
+machine with interop:
+
+1. **The `SYSTEM` watchdog ladder** (`WSL2 watchdog (<distro>)`, modeled in `cmd/nova-fleet/tla/WslWatch.tla` and
+   trace-bound by `WslWatchTrace.tla`). Runs as `NT AUTHORITY\SYSTEM` (`S-1-5-18`) every minute from boot and on a
+   repeating 1-minute timer with a hard `ExecutionTimeLimit` of `PT5M` (never `PT0S`, so a hung OS call cannot wedge the
+   task under `IgnoreNew`) and millisecond process and socket timeouts on every `wsl.exe`, `schtasks.exe`, `sc.exe` and
+   `tailscale.exe` call. Each tick starts any stopped automatic `actions.runner.*` or `sshd` service, probes WSL2
+   (the keepalive task `Running`, `wsl.exe -d <distro> -u <login> --exec /bin/true` within 10 s under the WSL owner's
+   elevated token—or an LSA `MSV1_0_S4U_LOGON` token with `LoadUserProfileW` when nobody is signed in—plus a 5 s TCP
+   banner check on WSL `sshd`) and Windows Tailscale (classifying local faults versus remote coordination, relay or ISP outages
+   as `netwatch` does). After `github_runner_wsl_watchdog_threshold` (2) consecutive misses:
+   - **Rung 1**: stops the keepalive task, runs `wsl.exe --shutdown`, terminates lingering `wsl`/`wslhost`/`wslrelay`
+     processes, restarts `WslService` and starts `WSL2 keepalive (<distro>)` again (when WSL2 itself is healthy and only
+     Windows Tailscale missed, Rung 1 restarts only the Windows `Tailscale` service).
+   - **Rung 2** (after `github_runner_wsl_watchdog_backoff` ticks when WSL2 or local Windows Tailscale still fails):
+     reboots Windows (`shutdown.exe /r /t 5 /f`), bounded by `github_runner_wsl_watchdog_max_reboots` (2) reboots in
+     `github_runner_wsl_watchdog_window` (21600 s) and the same count in a single outage. Once spent, the watchdog
+     writes `C:\nova-watchdog\ALERT` and halts until a healthy tick or until an administrator deletes `ALERT`. An
+     operator hold file in `C:\nova-watchdog\hold.d` always defers the reboot; a `Runner.Worker` defers it while WSL2 is
+     healthy, and does not block recovery when WSL2 is dead (where a Windows worker may be wedged on WSL interop).
+     State and capped logs (`watchdog.log`, 256 KiB) live in `C:\nova-watchdog`, created sealed to `SYSTEM` and
+     `Administrators`.
+2. **Unattended Windows host settings**: AC standby and hibernate timeouts set to `0` (`powercfg`), kernel bugcheck
+   `AutoReboot = 1` (`HKLM\SYSTEM\CurrentControlSet\Control\CrashControl`), Windows Error Reporting `DontShowUI = 1`,
+   and `tailscale.exe set --unattended` (`ForceDaemon = true`) when Windows Tailscale is installed.
+3. **Out-of-band Windows OpenSSH (`sshd`) on Tailscale**: Windows OpenSSH `sshd` installed, `Automatic` (with
+   `DelayedAutostart` cleared) and `Running` on `github_runner_win_sshd_port` (`2222`, separate from WSL2 `sshd` on 22),
+   `PasswordAuthentication no`, host private keys (`ssh_host_*_key`) and `C:\ProgramData\ssh\administrators_authorized_keys`
+   populated from `nova_control_ssh_pubkey` (else the machine login's `~/.ssh/authorized_keys`) and sealed strictly to
+   `SYSTEM` and `Administrators`, config verified with `sshd.exe -t -f` before write, stock `OpenSSH-Server-In-TCP`
+   disabled, and Windows Firewall rule `nova-fleet-winssh-tailscale` allowing TCP `2222` strictly from `100.64.0.0/10`
+   and `fd7a:115c:a1e0::/48` (`tailscale-acl.json` grants `tag:control` `tcp:2222` on `tag:nova` and `tag:runner`).
+   Reach Windows `sshd` as the Windows Administrator account (`ssh -p 2222 <win-admin>@<machine>`; `ssh-names` sets the
+   WSL Linux login on port 22).
+
+Receipts: `WATCHDOG <machine> <distro> ok|set task=WSL2 watchdog (<distro>) limit=PT5M dir=C:\nova-watchdog`,
+`UNATTENDED <machine> ok|set sleep=off crash_autoreboot=1 wer_noui=1 tailscale_unattended=yes|absent`, and
+`WINSSH <machine> ok|set port=2222 auth=key-only keys=<n> firewall=tailscale service=running admin=<win-admin>`. Under `--check`, nothing
+on Windows is touched and the play prints `WATCHDOG-PLAN` and `WINSSH-PLAN`.
 
 ## CI rules
 
@@ -1530,6 +1576,11 @@ FLEET-AUDIT MISSING host=<machine> item=job-<step> unit:<unit> login:<login> ins
 A machine with no active runner unit runs no CI job: `FLEET-AUDIT NOT-APPLICABLE host=<machine> item=job reason=no
 active github-runner unit`. `-e nova_audit_job=false` leaves the job out.
 
+On a WSL machine (skipped during `join`, before `windows-runners` has run; `-e nova_audit_wsl=false` leaves it out), the
+audit also checks the Windows side's unattended reliability over a bounded read-only PowerShell probe:
+`wsl-keepalive`, `wsl-watchdog`, `wsl-sleep`, `wsl-crash`, `wsl-tailscale-unattended` and `wsl-winssh`. Any gap prints
+`FLEET-AUDIT MISSING` with `install=windows-runners` and fails with `run: nova-fleet windows-runners -- -l <machine>`.
+
 A machine with anything missing fails: `FLEET-AUDIT FAILED host=<machine> missing=<names>`. The fix is the play
 the line names, run on that machine. A machine that is not Linux prints `FLEET-AUDIT SKIPPED`. `-e
 nova_audit_requirements=<file>` checks another file of the same form.
@@ -1578,6 +1629,8 @@ one). A list without the `:s390x` packages goes with the architecture off, `-e '
 | `nova_runner_ports_uri` | `http://ports.ubuntu.com/ubuntu-ports/` | the archive a foreign architecture comes from |
 | `nova_runner_vm_kernel` | `true` | Debian/Ubuntu (not WSL): keep each kernel image readable by the login, for a VM of the host's own kernel; a runner login of its own gets root's copies in `/opt/nova/vm-kernels` (its `~/vm-kernels`, a kernel hook for each new image) from `github-runners`, which fails with `VM-TIER-MISSING` naming what the tier lacks (vng, qemu, a writable `/dev/kvm`, the image, the modules) |
 | `nova_runner_vm_kernel_dir` | `<home>/vm-kernels` | where the copies go, as `vmlinuz-<version>` |
+| `nova_runner_gpu_hosts` | `[]` | Debian/Ubuntu: the hosts whose login (the fleet login) joins `render`, the group the GPU's render node `/dev/dri/renderD*` is open to, so Vulkan finds the GPU and not only lavapipe; a named host with no `render` group is refused |
+| `nova_runner_packages_absent` | `{}` | per OS as `nova_runner_packages`: packages removed where dpkg has them (`apt remove`: no purge, no autoremove; `WOULD-REMOVE` under `--check`), for one that came on outside the list and must not stay |
 | `nova_runner_tla_jar`, `nova_runner_tla_jar_sha256` | `/opt/tla/tla2tools.jar`; the sha256 of TLA+ tools v1.7.4 (the one `tests/tla/tla2tools.sha256` pins) | Debian/Ubuntu: **TLC's jar**, below; an empty sha256 skips it |
 | `nova_runner_tla_jar_url` | the TLA+ v1.7.4 release's `tla2tools.jar` | where a missing jar is downloaded from |
 | `nova_runner_msan_libcxx_prefix`, `nova_runner_msan_libcxx_sha256` | `/opt/msan-libcxx-`; the llvm-project source sha256 of clang 18.1.3 and 21.1.8 | Debian/Ubuntu x86_64: **The MemorySanitizer libc++**, below; an empty map skips it |
@@ -1711,7 +1764,7 @@ version bump installs the new directory beside the old and moves the links.
 | Variable | Default | |
 |---|---|---|
 | `nova_sdk_dir` | `<home>/sdk` | the SDK directory, used by its real path |
-| `nova_sdk_shared` | on for a Linux runner whose runners are another login's (`github_runner_user`) | Linux: the SDK in `/opt/nova/sdk` (`nova_shared_dir`, made by `github-runners` with a runner login of its own), the login's and readable by every login, with `nova_sdk_dir` a link to it, so a runner login of its own runs the same tools. The shared SDK is installed fresh (its files name their own path) while `~/sdk` stays in use; at the end of the run `~/sdk` becomes a link to it (`SDK-TOOLCHAIN SHARE`) and the old one is deleted. Nothing in it is left writable by other logins, and a run fails on anything in it they cannot read; an old `~/sdk` holding what the shared one lacks (an older version a link names, a directory put there by hand) stays in use and the run fails naming it (`SDK-TOOLCHAIN SHARE-HELD`) |
+| `nova_sdk_shared` | on for a Linux runner whose runners are another login's (`github_runner_user`) | Linux: the SDK in `/opt/nova/sdk` (`nova_shared_dir`, made by `github-runners` with a runner login of its own), the login's and readable by every login, with `nova_sdk_dir` a link to it, so a runner login of its own runs the same tools. The shared SDK is installed fresh (its files name their own path) while `~/sdk` stays in use; at the end of the run `~/sdk` becomes a link to it (`SDK-TOOLCHAIN SHARE`) and the old one is deleted. Nothing in it is left writable by other logins, and a run fails on anything in it they cannot read; an old `~/sdk` holding what the shared one lacks (an older version a link names, a directory put there by hand) stays in use and the run fails naming it (`SDK-TOOLCHAIN SHARE-HELD`; compared two levels down, and further into rustup's toolchains and cargo tools and each opam switch's packages and commands); and while any process runs from the old `~/sdk` (its executable, working directory, an open or mapped file) nothing is moved or deleted and the run fails naming the processes, which it never stops (`SDK-TOOLCHAIN SDK-IN-USE`) |
 | `nova_sdk_tools` | the toolchain above | one entry per tool: `name`, `version`, `dir`, `probe`, `links`, `kind`, `build`, `alias`, `wrapper`, `run`, and a `linux` and/or `darwin` pin (a pin's own `build` replaces the tool's on that platform); a list given with `-e` replaces it whole |
 | `nova_sdk_dotnet_more` | the .NET 8.0 SDK | more SDKs in the dotnet directory, each a `version` and a `url` and `sha512` per platform |
 | `nova_sdk_rustup` | rustup 1.29.1; `1.98.1` with `clippy` and `rustfmt`, and `nightly-2026-10-01` | `version`, the `linux` rustup-init `url`, `sha256` and `host`, the `toolchains` (each `name`, `components`, `targets`; the first is on PATH) and the commands `links` puts in `~/sdk/bin` |

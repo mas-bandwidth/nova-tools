@@ -54,9 +54,37 @@
   vars: { ansible_pipelining: true }
   register: github_runner_registered
 
+# A wanted runner not registered here whose unit runs it from another login's directory (github_runner_user changed)
+# keeps its registration: the files that hold it (.runner, .credentials, .credentials_rsaparams) move here with it,
+# root copying them for the login (unix-runner.yml), so it needs no registration token and keeps its name, id and
+# labels in GitHub. Root reads them: the other login's home is closed to this one.
+- name: the runners moving here with their registration (Linux)
+  ansible.builtin.shell: |
+    set -eu
+    for i in {{ github_runner_unregistered | map('string') | join(' ') }}; do
+      d=$(systemctl show -P WorkingDirectory "github-runner-{{ github_runner_slug }}-$i.service" 2>/dev/null) || continue
+      case "$d" in
+        {{ github_runner_base_dir | quote }}/*) continue ;;
+        /*/actions-runner/{{ github_runner_slug }}-"$i") ;;
+        *) continue ;;
+      esac
+      if [ -f "$d/.runner" ] && [ -f "$d/.credentials" ] && [ -f "$d/.credentials_rsaparams" ]; then echo "$i"; fi
+    done
+  args: { executable: /bin/sh }
+  become: true
+  register: github_runner_carried
+  changed_when: false
+  check_mode: false
+  vars:
+    github_runner_unregistered: "{{ github_runner_registered.results | rejectattr('stat.exists') | map(attribute='item') | list }}"
+  when: ansible_facts['system'] == 'Linux' and github_runner_other | bool and github_runner_unregistered | length > 0
+
 - name: the runners that need registering
   ansible.builtin.set_fact:
-    github_runner_need: "{{ github_runner_registered.results | rejectattr('stat.exists') | map(attribute='item') | list }}"
+    github_runner_carry: "{{ github_runner_carried.stdout_lines | default([]) | map('int') | list }}"
+    github_runner_need: >-
+      {{ github_runner_registered.results | rejectattr('stat.exists') | map(attribute='item') | list
+         | difference(github_runner_carried.stdout_lines | default([]) | map('int') | list) }}
 
 - name: a token is needed (registering, or removing from GitHub)
   ansible.builtin.include_tasks: token.yml
@@ -67,9 +95,10 @@
     msg: >-
       RUNNER-PLAN {{ inventory_hostname }} want={{ github_runner_want | length }}
       register={{ github_runner_need | map('regex_replace', '^', inventory_hostname ~ '-') | join(',') or '-' }}
+      move-registered={{ github_runner_carry | map('regex_replace', '^', inventory_hostname ~ '-') | join(',') or '-' }}
       retire={{ github_runner_retire | map('regex_replace', '^', inventory_hostname ~ '-') | join(',') or '-' }}
       labels={{ github_runner_label_string }} (check: nothing changed)
-  when: ansible_check_mode and (github_runner_need | length > 0 or github_runner_retire | length > 0)
+  when: ansible_check_mode and (github_runner_need | length > 0 or github_runner_carry | length > 0 or github_runner_retire | length > 0)
 
 - name: retire the runners above the count
   ansible.builtin.include_tasks: unix-retire.yml

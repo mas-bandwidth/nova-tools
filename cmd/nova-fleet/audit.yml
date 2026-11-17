@@ -316,13 +316,132 @@
         # the play that puts each step's tools and directories in place
         audit_job_install: { rustup: "sdk-toolchain,github-runners", go: sdk-toolchain, cmake: runner-packages }
 
+    # ---- WSL2 / Windows unattended reliability (WSL machines only; windows-runners fixes any gap) ----
+    - name: the Windows side's unattended reliability (keepalive, SYSTEM watchdog, sleep/crash, Tailscale unattended, Windows OpenSSH)
+      ansible.builtin.command:
+        argv:
+          - bash
+          - -c
+          - |
+            set -u
+            [ -e {{ audit_wsl_interop | quote }} ] || { echo "WSL none"; exit 0; }
+            [ -x {{ audit_wsl_powershell | quote }} ] || { echo "MISSING wsl-interop powershell.exe not reachable at {{ audit_wsl_powershell }}"; exit 0; }
+            mid=$(tr -d ' \r\n' < {{ audit_wsl_machine_id_file | quote }} 2>/dev/null || true)
+            out=$(WSLENV=NOVA_AUDIT_MID NOVA_AUDIT_MID="$mid" timeout 60 {{ audit_wsl_powershell | quote }} -NoProfile -NonInteractive -NoLogo -EncodedCommand {{ audit_wsl_ps_encoded | quote }} </dev/null 2>&1 | tr -d '\r')
+            if ! printf '%s\n' "$out" | grep -qE '^(OK|MISSING) wsl-'; then
+              echo "MISSING wsl-probe $(printf '%s\n' "$out" | grep -v '^[[:space:]]*$' | tail -n 1 | cut -c1-240)"
+              exit 0
+            fi
+            printf '%s\n' "$out" | grep -E '^(OK|MISSING) wsl-'
+      register: audit_wsl_run
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      when: audit_wsl and (nova_audit_wsl | default(nova_join_host is not defined) | bool)
+      vars:
+        audit_wsl_interop: "{{ github_runner_wsl_interop | default('/proc/sys/fs/binfmt_misc/WSLInterop') }}"
+        audit_wsl_powershell: "{{ github_runner_wsl_powershell | default('/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe') }}"
+        audit_wsl_machine_id_file: "{{ github_runner_wsl_machine_id_file | default('/etc/machine-id') }}"
+        audit_wsl_watchdog_dir: "{{ github_runner_wsl_watchdog_dir | default('C:\\nova-watchdog') }}"
+        audit_win_sshd_port: "{{ github_runner_win_sshd_port | default(2222) }}"
+        audit_wsl_ps_encoded: "{{ audit_wsl_ps_body | b64encode(encoding='utf-16-le') }}"
+        audit_wsl_ps_body: |
+          $ErrorActionPreference = 'Stop'
+          $WatchdogDir = '{{ audit_wsl_watchdog_dir }}'
+          $WinPort = {{ audit_win_sshd_port | int }}
+          $MachineId = "$env:NOVA_AUDIT_MID".Trim()
+          $wslExe = if (Test-Path -LiteralPath 'C:\Program Files\WSL\wsl.exe' -PathType Leaf) { 'C:\Program Files\WSL\wsl.exe' } else { 'C:\Windows\System32\wsl.exe' }
+          $psi = New-Object Diagnostics.ProcessStartInfo($wslExe, '--list --running --quiet')
+          $psi.UseShellExecute = $false; $psi.CreateNoWindow = $true; $psi.RedirectStandardOutput = $true; $psi.StandardOutputEncoding = [Text.Encoding]::Unicode
+          $pr = [Diagnostics.Process]::Start($psi)
+          $outTask = $pr.StandardOutput.ReadToEndAsync()
+          if (-not $pr.WaitForExit(15000)) { try { $pr.Kill() } catch { }; 'MISSING wsl-keepalive wsl.exe --list timed out'; exit 0 }
+          $pr.WaitForExit()
+          $raw = $outTask.GetAwaiter().GetResult()
+          $distros = @($raw -split '\r?\n' | ForEach-Object { ("$_" -replace '\0', '').Trim() } | Where-Object { $_ })
+          $cfgPath = Join-Path $WatchdogDir 'config.json'
+          $distro = if (Test-Path -LiteralPath $cfgPath -PathType Leaf) { try { "$((Get-Content -Raw -LiteralPath $cfgPath | ConvertFrom-Json).distro)" } catch { '' } } else { '' }
+          if (-not $distro -and $MachineId) {
+            $distro = $distros | Where-Object { try { (Get-Content -LiteralPath "\\wsl.localhost\$_\etc\machine-id" -TotalCount 1 -ErrorAction Stop).Trim() -eq $MachineId } catch { $false } } | Select-Object -First 1
+          }
+          if (-not $distro -and $distros.Count -gt 0) { $distro = $distros[0] }
+          $kaName = if ($distro) { "WSL2 keepalive ($distro)" } else { '' }
+          $ka = if ($kaName) { Get-ScheduledTask -TaskPath '\' -TaskName $kaName -ErrorAction SilentlyContinue } else { $null }
+          if (-not $ka -or -not $ka.Settings.Enabled) { "MISSING wsl-keepalive task '$kaName' missing or disabled" }
+          else {
+            $kx = [xml](Export-ScheduledTask -TaskPath '\' -TaskName $kaName)
+            $ki = Get-ScheduledTaskInfo -TaskPath '\' -TaskName $kaName -ErrorAction SilentlyContinue
+            $cmdText = "$($kx.Task.Actions.Exec.Command) $($kx.Task.Actions.Exec.Arguments)"
+            if ($ki -and $ki.LastTaskResult -eq 2147943785) {
+              'MISSING wsl-keepalive LastTaskResult=0x80070569 (SeBatchLogonRight missing for S4U)'
+            } elseif ("$($kx.Task.Principals.Principal.RunLevel)" -ne 'HighestAvailable') {
+              "MISSING wsl-keepalive RunLevel is $($kx.Task.Principals.Principal.RunLevel), want HighestAvailable"
+            } elseif ((Test-Path -LiteralPath 'C:\Program Files\WSL\wsl.exe' -PathType Leaf) -and $cmdText -notlike '*Program Files\WSL\wsl.exe*') {
+              'MISSING wsl-keepalive keepalive uses System32 stub instead of C:\Program Files\WSL\wsl.exe'
+            } else { 'OK wsl-keepalive' }
+          }
+          $wdName = if ($distro) { "WSL2 watchdog ($distro)" } else { '' }
+          $wd = if ($wdName) { Get-ScheduledTask -TaskPath '\' -TaskName $wdName -ErrorAction SilentlyContinue } else { $null }
+          $alertFile = Join-Path $WatchdogDir 'ALERT'
+          if (-not $wd -or -not $wd.Settings.Enabled) { "MISSING wsl-watchdog task '$wdName' missing or disabled" }
+          elseif ("$($wd.Principal.UserId)" -notin @('S-1-5-18', 'SYSTEM', 'NT AUTHORITY\SYSTEM')) { "MISSING wsl-watchdog principal is $($wd.Principal.UserId), want SYSTEM" }
+          elseif ("$($wd.Settings.ExecutionTimeLimit)" -in @('', 'PT0S')) { "MISSING wsl-watchdog ExecutionTimeLimit is $($wd.Settings.ExecutionTimeLimit) (unbounded)" }
+          elseif (Test-Path -LiteralPath $alertFile -PathType Leaf) { "MISSING wsl-watchdog ALERT active: $((Get-Content -LiteralPath $alertFile -TotalCount 1).Trim())" }
+          else { 'OK wsl-watchdog' }
+          $p1 = (& powercfg.exe /query SCHEME_CURRENT SUB_SLEEP STANDBYIDLE 2>$null) -join "`n"
+          $p2 = (& powercfg.exe /query SCHEME_CURRENT SUB_SLEEP HIBERNATEIDLE 2>$null) -join "`n"
+          if (($p1 -and $p1 -notmatch 'Current AC Power Setting Index:\s*0x00000000') -or ($p2 -and $p2 -notmatch 'Current AC Power Setting Index:\s*0x00000000')) {
+            'MISSING wsl-sleep AC standby or hibernate timeout is non-zero'
+          } else { 'OK wsl-sleep' }
+          $ar = (Get-ItemProperty -LiteralPath 'HKLM:\SYSTEM\CurrentControlSet\Control\CrashControl' -Name AutoReboot -ErrorAction SilentlyContinue).AutoReboot
+          $wer = (Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting' -Name DontShowUI -ErrorAction SilentlyContinue).DontShowUI
+          if ($ar -ne 1 -or $wer -ne 1) { "MISSING wsl-crash AutoReboot=$ar DontShowUI=$wer (want 1 and 1)" }
+          else { 'OK wsl-crash' }
+          $tsExe = 'C:\Program Files\Tailscale\tailscale.exe'
+          if (Test-Path -LiteralPath $tsExe -PathType Leaf) {
+            $dp = (& $tsExe debug prefs 2>$null) -join "`n"
+            $fd = try { [bool](($dp | ConvertFrom-Json).ForceDaemon) } catch { $false }
+            if (-not $fd) { 'MISSING wsl-tailscale-unattended Tailscale ForceDaemon is false (tailscale set --unattended)' }
+            else { 'OK wsl-tailscale-unattended' }
+          } else { 'OK wsl-tailscale-unattended' }
+          $sshd = Get-CimInstance Win32_Service -Filter "Name = 'sshd'" -OperationTimeoutSec 10
+          $cfgSsh = if (Test-Path -LiteralPath 'C:\ProgramData\ssh\sshd_config' -PathType Leaf) { [IO.File]::ReadAllText('C:\ProgramData\ssh\sshd_config') } else { '' }
+          $ak = 'C:\ProgramData\ssh\administrators_authorized_keys'
+          $fw = Get-NetFirewallRule -Name 'nova-fleet-winssh-tailscale' -ErrorAction SilentlyContinue
+          if (-not $sshd -or $sshd.StartMode -ne 'Auto' -or $sshd.State -ne 'Running') { 'MISSING wsl-winssh sshd service not Auto/Running' }
+          elseif ($cfgSsh -notmatch "(?m)^Port\s+$WinPort\s*$" -or $cfgSsh -notmatch '(?m)^PasswordAuthentication\s+no\s*$') { "MISSING wsl-winssh sshd_config lacks Port $WinPort or PasswordAuthentication no" }
+          elseif (-not (Test-Path -LiteralPath $ak -PathType Leaf) -or (Get-Item -LiteralPath $ak).Length -eq 0) { 'MISSING wsl-winssh administrators_authorized_keys missing or empty' }
+          elseif (-not (Get-Acl -LiteralPath $ak).AreAccessRulesProtected -or @((Get-Acl -LiteralPath $ak).GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]) | Where-Object { @('S-1-5-18', 'S-1-5-32-544') -notcontains $_.IdentityReference.Value }).Count -gt 0) { 'MISSING wsl-winssh administrators_authorized_keys ACL is not sealed to SYSTEM and Administrators' }
+          elseif (-not $fw -or $fw.Enabled -ne 'True') { 'MISSING wsl-winssh firewall rule nova-fleet-winssh-tailscale missing or disabled' }
+          else { 'OK wsl-winssh' }
+
+    - name: the Windows side's reliability gaps
+      ansible.builtin.set_fact:
+        audit_wsl_missing: >-
+          {{ audit_wsl_run.stdout_lines | default([]) | select('match', '^MISSING ')
+             | map('regex_replace', '^MISSING ', '') | list }}
+        audit_wsl_ok: "{{ audit_wsl_run.stdout_lines | default([]) | select('match', '^OK ') | list | length }}"
+      when: audit_wsl_run is not skipped
+
+    - name: each Windows reliability item missing
+      ansible.builtin.debug:
+        msg: >-
+          FLEET-AUDIT MISSING host={{ inventory_hostname }} item={{ item.split(' ')[0] }}
+          install=windows-runners fix="nova-fleet windows-runners -- -l {{ inventory_hostname }}"
+          error={{ item.split(' ', 1)[1] | default('') }}
+      loop: "{{ audit_wsl_missing | default([]) }}"
+      loop_control: { label: "{{ item.split(' ')[0] }}" }
+      when: audit_wsl_run is not skipped
+
     - name: every gap, by name
       ansible.builtin.set_fact:
         audit_gaps: >-
           {{ audit_missing | map(attribute='name') | list + (['memlock'] if (audit_memlock is defined and audit_memlock.gap) else [])
-             + (audit_job_missing | default([]) | map('regex_replace', '^(\S+).*$', 'job-\1') | unique | list) }}
+             + (audit_job_missing | default([]) | map('regex_replace', '^(\S+).*$', 'job-\1') | unique | list)
+             + (audit_wsl_missing | default([]) | map('regex_replace', '^(\S+).*$', '\1') | unique | list) }}
         audit_ok_all: >-
-          {{ (audit_ok | int) + (1 if (audit_memlock is defined and not audit_memlock.gap) else 0) + (audit_job_ok | default(0) | int) }}
+          {{ (audit_ok | int) + (1 if (audit_memlock is defined and not audit_memlock.gap) else 0)
+             + (audit_job_ok | default(0) | int) + (audit_wsl_ok | default(0) | int) }}
 
     - name: the machine's line
       ansible.builtin.debug:
@@ -338,5 +457,7 @@
 
     - name: a machine with a gap fails by name
       ansible.builtin.fail:
-        msg: "FLEET-AUDIT FAILED host={{ inventory_hostname }} missing={{ audit_gaps | join(',') }}"
+        msg: >-
+          FLEET-AUDIT FAILED host={{ inventory_hostname }} missing={{ audit_gaps | join(',') }}
+          {{- '; run: nova-fleet windows-runners -- -l ' ~ inventory_hostname if (audit_wsl_missing | default([]) | length > 0) else '' }}
       when: audit_gaps | length > 0 and not (ansible_check_mode and nova_join_host is defined)

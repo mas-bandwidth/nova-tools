@@ -1,0 +1,90 @@
+---
+# A WSL machine's Windows-side self-heal watchdog, unattended host settings, and out-of-band Windows OpenSSH on
+# Tailscale (cmd/nova-fleet/README.md, "WSL self-heal watchdog and Windows OpenSSH"; files/wsl-watchdog.ps1, modeled in
+# cmd/nova-fleet/tla/WslWatch.tla). Runs on every WSL machine with interop, whether or not its record names
+# windows_runners. --check touches nothing on Windows and prints WATCHDOG-PLAN and WINSSH-PLAN.
+
+- name: is this a WSL machine with interop (watchdog)
+  ansible.builtin.stat: { path: "{{ github_runner_wsl_interop }}" }
+  register: github_runner_watchdog_interop
+
+- name: WSL self-heal watchdog, unattended host settings, and out-of-band Windows OpenSSH
+  when: github_runner_watchdog_interop.stat.exists
+  block:
+    - name: this distro's machine-id (watchdog)
+      ansible.builtin.slurp: { src: "{{ github_runner_wsl_machine_id_file }}" }
+      register: github_runner_watchdog_mid
+
+    - name: this login's authorized_keys (for out-of-band Windows OpenSSH when nova_control_ssh_pubkey is unset)
+      ansible.builtin.stat: { path: "{{ ansible_facts['env']['HOME'] }}/.ssh/authorized_keys" }
+      register: github_runner_watchdog_ak_stat
+      when: nova_control_ssh_pubkey | default('') | trim | length == 0
+
+    - name: read this login's authorized_keys
+      ansible.builtin.slurp: { src: "{{ ansible_facts['env']['HOME'] }}/.ssh/authorized_keys" }
+      register: github_runner_watchdog_ak_slurp
+      when: nova_control_ssh_pubkey | default('') | trim | length == 0 and github_runner_watchdog_ak_stat.stat.exists
+
+    - name: the public keys to authorize on Windows OpenSSH
+      ansible.builtin.set_fact:
+        github_runner_win_ssh_keys: >-
+          {{ [nova_control_ssh_pubkey | trim] if (nova_control_ssh_pubkey | default('') | trim | length > 0)
+             else ((github_runner_watchdog_ak_slurp.content | b64decode).splitlines()
+                   | map('trim')
+                   | select('match', '^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(256|384|521)|sk-ssh-ed25519@openssh[.]com|sk-ecdsa-sha2-nistp256@openssh[.]com) AAAA[A-Za-z0-9+/=]+')
+                   | list)
+             if (github_runner_watchdog_ak_stat.stat.exists | default(false)) else [] }}
+
+    - name: Windows OpenSSH has at least one public key to authorize
+      ansible.builtin.assert:
+        quiet: true
+        that: github_runner_win_ssh_keys | length > 0
+        fail_msg: >-
+          WINSSH STOP {{ inventory_hostname }}: no public key in {{ ansible_facts['env']['HOME'] }}/.ssh/authorized_keys
+          and nova_control_ssh_pubkey is unset; give -e nova_control_ssh_pubkey='ssh-ed25519 AAAA... you@control'
+
+    - name: the plan (watchdog)
+      ansible.builtin.debug:
+        msg: >-
+          WATCHDOG-PLAN {{ inventory_hostname }} machine-id={{ github_runner_watchdog_mid.content | b64decode | trim }}
+          user={{ ansible_user_id }} limit=PT5M dir={{ github_runner_wsl_watchdog_dir }}
+          threshold={{ github_runner_wsl_watchdog_threshold }} max_reboots={{ github_runner_wsl_watchdog_max_reboots }}
+          window={{ github_runner_wsl_watchdog_window }}s (check: nothing changed)
+      when: ansible_check_mode
+
+    - name: the plan (Windows OpenSSH)
+      ansible.builtin.debug:
+        msg: >-
+          WINSSH-PLAN {{ inventory_hostname }} port={{ github_runner_win_sshd_port }} auth=key-only
+          keys={{ github_runner_win_ssh_keys | length }} firewall=100.64.0.0/10,fd7a:115c:a1e0::/48 (check: nothing changed)
+      when: ansible_check_mode
+
+    - name: the scripts, staged (watchdog)
+      ansible.builtin.include_tasks: wsl-stage.yml
+
+    - name: the watchdog, unattended settings, and Windows OpenSSH converged
+      ansible.builtin.shell: >-
+        {{ github_runner_win_stage_check }} &&
+        "{{ github_runner_wsl_powershell }}" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File {{ github_runner_wsl_watchdog_script | quote }}
+        -Action install -MachineId {{ github_runner_watchdog_mid.content | b64decode | trim | quote }}
+        -User {{ ansible_user_id | quote }} -WatchdogDir {{ github_runner_wsl_watchdog_dir | quote }}
+        -WinSshPort {{ github_runner_win_sshd_port | int }} -WslSshPort {{ github_runner_wsl_sshd_port | int }}
+        -Threshold {{ github_runner_wsl_watchdog_threshold | int }} -Backoff {{ github_runner_wsl_watchdog_backoff | int }}
+        -BusyBackoff {{ github_runner_wsl_watchdog_busy_backoff | int }} -BusyWaitLimit {{ github_runner_wsl_watchdog_busy_wait_limit | int }}
+        -MaxReboots {{ github_runner_wsl_watchdog_max_reboots | int }} -WindowSeconds {{ github_runner_wsl_watchdog_window | int }}
+      args:
+        executable: /bin/sh
+        stdin: "{{ (github_runner_win_ssh_keys | join('\n')) ~ '\n' }}"
+      vars:
+        ansible_pipelining: true
+      register: github_runner_watchdog
+      changed_when: github_runner_watchdog.stdout is search('^(WATCHDOG \S+|UNATTENDED|WINSSH) set\b', multiline=True)
+      when: not ansible_check_mode
+
+    - name: the watchdog's receipt
+      ansible.builtin.debug:
+        msg: >-
+          {{ github_runner_watchdog.stdout_lines
+             | map('regex_replace', '^(WATCHDOG|UNATTENDED|WINSSH) ', '\1 ' ~ inventory_hostname ~ ' ')
+             | join('\n') }}
+      when: not ansible_check_mode

@@ -31,8 +31,9 @@ Ansible are not optional: nothing here skips one.
    9 health    the self-healing guards and the disk report (Linux)
   10 tools     the nova-tools release (TAG) or local build (DIR) on every machine
   11 services  the service units
-  12 runners   GitHub Actions runners (only with --runners)
-  13 bus       list present inboxes over the bus
+  12 windows   windows-runners: WSL keepalive, watchdog, unattended settings, Windows OpenSSH, and any windows_runners
+  13 runners   GitHub Actions runners (only with --runners)
+  14 bus       list present inboxes over the bus
   <name>=<address>  a machine, reached at first over ssh at <address> as its first login; os/arch default
                     linux/amd64; <name>=<login>@<address> names that machine's own first login
   --user LOGIN      the login join makes on each machine (default nova)
@@ -578,7 +579,7 @@ func (u *upRun) steps() int {
 			u.say("UP FIRST %s %s pg=%s:5432 bus=%s:6379", first.name, u.would("RUN"), first.dns, first.dns)
 		}
 		if u.check && !haveStore {
-			for _, s := range []string{"JOIN", "GRANT", "STORE", "REFRESH", "HEALTH", "TOOLS", "SERVICES", "RUNNERS", "BUS"} {
+			for _, s := range []string{"JOIN", "GRANT", "STORE", "REFRESH", "HEALTH", "TOOLS", "SERVICES", "WINDOWS-RUNNERS", "RUNNERS", "BUS"} {
 				wouldRun(s, "after PostgreSQL exists")
 			}
 			return u.end(pass, "(the rest once PostgreSQL exists)")
@@ -710,7 +711,7 @@ func (u *upRun) steps() int {
 	// (rsync over the tailnet: no .git, stale files deleted, 0700/0600); a rerun pushes again.
 	in := u.ready(false)
 	if len(in) == 0 { // every machine named waits for its row: nothing to check the plays against
-		for _, s := range []string{"REFRESH", "HEALTH", "TOOLS", "SERVICES", "RUNNERS", "BUS"} {
+		for _, s := range []string{"REFRESH", "HEALTH", "TOOLS", "SERVICES", "WINDOWS-RUNNERS", "RUNNERS", "BUS"} {
 			wouldRun(s, "once join has made the rows")
 		}
 		return u.end(pass, "")
@@ -799,6 +800,11 @@ func (u *upRun) steps() int {
 	}
 	mark("services", u.machines...)
 	u.say("UP SERVICES %s", u.would("RUN"))
+	if c := u.play("windows-runners", false, pg, limit...); c != 0 {
+		return fail("windows-runners", c)
+	}
+	mark("windows-runners", u.machines...)
+	u.say("UP WINDOWS-RUNNERS %s", u.would("RUN"))
 	if u.runners != "" {
 		on := u.ready(true)           // the machines whose row has the runner role, so the play finds them in its group
 		if len(on) == 0 && !u.check { // only this control node is named (one machine), and it never gets runners

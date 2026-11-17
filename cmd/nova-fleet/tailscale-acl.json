@@ -68,6 +68,18 @@
 		},
 		{
 			"src": [
+				"tag:control"
+			],
+			"dst": [
+				"tag:nova",
+				"tag:runner"
+			],
+			"ip": [
+				"tcp:2222"
+			]
+		},
+		{
+			"src": [
 				"tag:nova",
 				"tag:runner",
 				"tag:control"
