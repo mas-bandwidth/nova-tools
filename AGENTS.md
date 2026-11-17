@@ -48,7 +48,7 @@ and use the build and review rules below.
 - Reach another tool only through its documented command line. Reach the bus only by executing `nova-bus`.
 - Keep no dead code. Delete code only with evidence it is unused.
 - Tools write no secret value to an argument, log, transcript or message.
-- On a fleet machine, a private repository is cloned one way: the recipe in `nova-secrets help exec` (a bare `nova-secrets exec --only GH_GATE_TOKEN` with git's credential helper reading the token from the environment). No other credential helper, token file or token in a URL.
+- On a fleet machine, a private repository is cloned one way: the recipe in `nova-secrets help exec` (a bare `nova-secrets exec --only GH_GATE_TOKEN` with git's credential helper reading the token from the environment). No other credential helper, token file or token in a URL. The one exception is a CI runner login's fetch of a repository its jobs name: a read-only deploy key for that one repository, installed by github-runners (cmd/nova-fleet/README.md, "Deploy keys").
 
 ## Change discipline
 
