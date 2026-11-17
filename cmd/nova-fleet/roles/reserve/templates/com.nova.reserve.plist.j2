@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.nova.reserve</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/sh</string>
+		<string>-eu</string>
+		<string>-c</string>
+		<string>NOVA_RESERVE_PASSWORD=$(tr -d "\n" &lt; "{{ nova_reserve_dir }}/reserve.pass") exec "{{ nova_bin_dir }}/nova-secrets" exec --as "{{ nova_reserve_seat }}" --only NOVA_PG_PASSWORD -- "{{ nova_bin_dir }}/nova-reserve" serve --listen "{{ reserve_bind[0] }}:{{ nova_reserve_port }}"</string>
+	</array>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>HOME</key>
+		<string>{{ nova_home }}</string>
+		<key>PATH</key>
+		<string>{{ nova_bin_dir }}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+{% if nova_reserve_pg_dsn | length > 0 %}
+		<key>NOVA_PG_DSN</key>
+		<string>{{ nova_reserve_pg_dsn }}</string>
+{% endif %}
+	</dict>
+	<key>KeepAlive</key>
+	<true/>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>StandardOutPath</key>
+	<string>{{ nova_reserve_dir }}/serve.log</string>
+	<key>StandardErrorPath</key>
+	<string>{{ nova_reserve_dir }}/serve.log</string>
+</dict>
+</plist>

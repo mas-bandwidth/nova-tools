@@ -189,11 +189,12 @@ ci_hold() {
 	worker=$1
 	needs=${NOVA_CI_NEEDS:-cpu 4, memory 8}
 	reserve=${NOVA_CI_RESERVE:-nova-reserve}
+	self_host=$(hostname -s 2>/dev/null || hostname)
 	unset RUNNER_TRACKING_ID
 	fifo=$state/hold.fifo.$$
 	rm -f "$fifo"
 	mkfifo "$fifo" || exit 1
-	"$reserve" hold --holder ci --label ci --needs "$needs" <"$fifo" &
+	"$reserve" hold --host "$self_host" --holder ci --label ci --needs "$needs" <"$fifo" &
 	rpid=$!
 	exec 3>"$fifo"
 	rm -f "$fifo"
@@ -235,7 +236,9 @@ started() {
 			hold_pid=$!
 			echo "$hold_pid" >"$state/hold.pid"
 			held=0
-			for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+			i=0
+			while [ "$i" -lt 40 ]; do
+				i=$((i + 1))
 				if [ -r "$state/hold.log" ] && grep -q '^HELD ' "$state/hold.log" 2>/dev/null; then
 					held=1
 					break
@@ -246,8 +249,9 @@ started() {
 				sleep 0.1 2>/dev/null || sleep 1
 			done
 			if [ "$held" -ne 1 ]; then
-				err=$(cat "$state/hold.log" 2>/dev/null || echo "hold process exited")
-				fail_started "failed to acquire CI hold: $err"
+				err=$(tr '\n' ' ' <"$state/hold.log" 2>/dev/null | sed 's/[[:space:]]*$//')
+				[ -n "$err" ] || err="hold process exited"
+				echo "::warning::CI rule: failed to acquire CI hold ($err); proceeding in fail-open mode"
 			fi
 		fi
 	fi
@@ -358,9 +362,10 @@ measure_end() {
 		st=$(${NOVA_CI_RESERVE:-nova-reserve} status 2>/dev/null || true)
 		if echo "$st" | grep -q '^[[:space:]]*{'; then
 			holders=$(echo "$st" | sed -n 's/.*"sprint_consumers":[[:space:]]*\[\([^]]*\)\].*/\1/p' | tr -d '"' | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -v '^$')
-			[ -z "$holders" ] && holders=$(echo "$st" | sed -n 's/.*"why":[[:space:]]*"\([^"]*\)".*/\1/p')
+			[ -z "$holders" ] && holders=$(echo "$st" | tr '{' '\n' | grep '"paused":false' | sed -n 's/.*"why":[[:space:]]*"\([^"]*\)".*/\1/p')
+			[ -z "$holders" ] && holders=$(echo "$st" | tr '{' '\n' | grep '"paused":false' | sed -n 's/.*"source":[[:space:]]*"\([^"]*\)".*/\1/p')
 		else
-			holders=$(echo "$st" | sed -En 's/^(hold [0-9]+ state=|slot[0-9]+ |all )held .*why=([^ ]*).*$/\2/p')
+			holders=$(echo "$st" | sed -En 's/^(lease [^ ]+ state=|hold [0-9]+ state=|slot[0-9]+ |all )held .*why=([^ ]*).*$/\2/p')
 		fi
 		n=$(printf '%s' "$holders" | grep -c . || true)
 		line="JOB-LOAD $id load1=${load:-?} holders=$n why=$(printf '%s' "$holders" | tr '\n' ',' | sed 's/,$//')"

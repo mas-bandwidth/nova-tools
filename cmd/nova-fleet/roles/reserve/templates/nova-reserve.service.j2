@@ -1,0 +1,19 @@
+[Unit]
+Description=nova-reserve central fleet resource arbitrator
+After=network-online.target
+
+[Service]
+Type=simple
+Environment="HOME={{ nova_home }}"
+Environment="PATH={{ nova_bin_dir }}:/usr/local/bin:/usr/bin:/bin"
+{% if nova_reserve_pg_dsn | length > 0 %}
+Environment="NOVA_PG_DSN={{ nova_reserve_pg_dsn }}"
+{% endif %}
+ExecStart=/bin/sh -eu -c 'NOVA_RESERVE_PASSWORD=$(tr -d "\n" < "{{ nova_reserve_dir }}/reserve.pass") exec "{{ nova_bin_dir }}/nova-secrets" exec --as "{{ nova_reserve_seat }}" --only NOVA_PG_PASSWORD -- "{{ nova_bin_dir }}/nova-reserve" serve --listen "{{ reserve_bind[0] }}:{{ nova_reserve_port }}"'
+Restart=always
+RestartSec=2
+StandardOutput=append:{{ nova_reserve_dir }}/serve.log
+StandardError=append:{{ nova_reserve_dir }}/serve.log
+
+[Install]
+WantedBy=default.target

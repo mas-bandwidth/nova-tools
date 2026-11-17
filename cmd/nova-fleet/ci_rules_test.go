@@ -310,7 +310,7 @@ func TestCIRulesCompletedPrintsTheMeasurement(t *testing.T) {
 	state := filepath.Join(dir, "state")
 	require.NoError(t, os.MkdirAll(state, 0o755))
 	reserve := filepath.Join(t.TempDir(), "reserve")
-	require.NoError(t, os.WriteFile(reserve, []byte("#!/bin/sh\necho 'capacity=2 set_by_pid=1'\necho 'slot1 held pid=7 since=x why=fix-a cmd=make'\necho 'slot2 held pid=8 since=x why=hunt-b cmd=test'\necho 'slot3 free'\necho 'all held pid=9 since=x why=excl-c cmd=bench # the exclusive lock'\necho 'hold 4 state=held holder=bench label=work priority=normal cpu=4 memory=8 cores=4 pid=10 since=x why=v3-d'\necho 'hold 5 state=paused holder=bench label=work priority=normal cpu=4 memory=8 cores=4 pid=11 since=x why=paused-e'\n"), 0o755))
+	require.NoError(t, os.WriteFile(reserve, []byte("#!/bin/sh\necho 'capacity=2 set_by_pid=1'\necho 'slot1 held pid=7 since=x why=fix-a cmd=make'\necho 'slot2 held pid=8 since=x why=hunt-b cmd=test'\necho 'slot3 free'\necho 'all held pid=9 since=x why=excl-c cmd=bench # the exclusive lock'\necho 'hold 4 state=held holder=bench label=work priority=normal cpu=4 memory=8 cores=4 pid=10 since=x why=v3-d'\necho 'hold 5 state=paused holder=bench label=work priority=normal cpu=4 memory=8 cores=4 pid=11 since=x why=paused-e'\necho 'lease L-9 state=held host=h1 holder=friend source=alice label=work priority=normal cpu=4 memory=8 cores=4 pid=12 since=x why=cs-f'\necho 'lease L-10 state=paused host=h1 holder=friend source=bob label=work priority=normal cpu=4 memory=8 cores=4 pid=13 since=x why=paused-g'\n"), 0o755))
 	log := filepath.Join(t.TempDir(), "ci-jobs.log")
 	env := []string{"NOVA_CI_CHAIN_JOB_COMPLETED=", "NOVA_CI_JOBS_LOG=" + log, "NOVA_CI_RESERVE=" + reserve,
 		"RUNNER_NAME=h-1", "GITHUB_REPOSITORY=o/r", "GITHUB_WORKFLOW=CI", "GITHUB_JOB=unit", "GITHUB_RUN_ID=42"}
@@ -320,7 +320,7 @@ func TestCIRulesCompletedPrintsTheMeasurement(t *testing.T) {
 	code, out := ciRun(t, sh, dir, "", env, "completed")
 	assert.Equal(t, 0, code, out)
 	assert.Regexp(t, `MEMORY-PEAK host=\S+ runner=h-1 repo=o/r workflow="CI" job=unit run=42 secs=\d+ peak_mib=3072 anon_mib=2048\n`, out)
-	assert.Regexp(t, `JOB-LOAD host=\S+ runner=h-1 .* load1=\S+ holders=4 why=fix-a,hunt-b,excl-c,v3-d\n`, out)
+	assert.Regexp(t, `JOB-LOAD host=\S+ runner=h-1 .* load1=\S+ holders=5 why=fix-a,hunt-b,excl-c,v3-d,cs-f\n`, out)
 	b, err := os.ReadFile(log)
 	require.NoError(t, err)
 	assert.Equal(t, 2, strings.Count(string(b), "\n"), "both lines are in the host's log")
@@ -435,5 +435,21 @@ func TestCIRulesStartedRefusalKillsScopedRunnerWorker(t *testing.T) {
 		}, "started")
 		assert.Equal(t, 0, code)
 		assert.NoFileExists(t, filepath.Join(dir, "state", "sampler.pid"), "%s: non-runner dir must not spawn a sampler", sh.name)
+
+		// 4. Failing nova-reserve hold emits a fail-open ::warning:: and never kills Runner.Worker.
+		w3 := exec.Command("sleep", "60")
+		require.NoError(t, w3.Start())
+		t.Cleanup(func() { _ = w3.Process.Kill(); _ = w3.Wait() })
+		badReserve := filepath.Join(t.TempDir(), "nova-reserve-fail")
+		require.NoError(t, os.WriteFile(badReserve, []byte("#!/bin/sh\necho 'arbitrator down' >&2\nexit 2\n"), 0o755))
+		code, out = ciRun(t, sh, dir, "", []string{
+			"GITHUB_EVENT_NAME=schedule",
+			"GITHUB_REF=refs/heads/main",
+			"NOVA_CI_CHAIN_JOB_STARTED=",
+			"NOVA_CI_RESERVE=" + badReserve,
+			"NOVA_CI_WORKER_PID=" + strconv.Itoa(w3.Process.Pid),
+		}, "started")
+		assert.Equal(t, 0, code, "%s: %s", sh.name, out)
+		assert.Contains(t, out, "::warning::CI rule: failed to acquire CI hold")
 	}
 }

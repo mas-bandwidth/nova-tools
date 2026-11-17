@@ -1,0 +1,103 @@
+---
+# The reserve role (cmd/nova-fleet/reserve.yml): provisions nova-reserve serve
+# bound strictly to the host's Tailscale IPv4 address on tcp:7680 across Linux
+# (systemd user/system unit) and macOS (launchd LaunchAgent).
+- name: the tailnet address (when nova_reserve_bind is empty)
+  ansible.builtin.command: tailscale ip -4
+  register: reserve_ts
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: nova_reserve_bind | length == 0
+
+- name: the address to listen on
+  ansible.builtin.set_fact:
+    reserve_darwin: "{{ (nova_system | default(ansible_facts['system'])) == 'Darwin' }}"
+    reserve_bind: >-
+      {{ [nova_reserve_bind] if nova_reserve_bind | length > 0
+         else ((reserve_ts.stdout_lines | default([]))[:1] if reserve_ts.rc | default(1) == 0 else []) }}
+
+- name: an address to listen on (the tailnet's, never a public one)
+  ansible.builtin.assert:
+    that: reserve_bind | length > 0
+    fail_msg: "{{ inventory_hostname }}: no tailnet address (tailscale ip -4) and no nova_reserve_bind; join the tailnet first (tailscale.yml)"
+    quiet: true
+
+- name: the state directory
+  ansible.builtin.file:
+    path: "{{ nova_reserve_dir }}"
+    state: directory
+    mode: "0700"
+
+- name: the arbitrator password, made once on this machine (it leaves only through nova-secrets)
+  ansible.builtin.shell: "umask 077; openssl rand -hex 32 > {{ nova_reserve_dir }}/reserve.pass"
+  args: { creates: "{{ nova_reserve_dir }}/reserve.pass" }
+  no_log: true
+  failed_when: false
+  register: reserve_pass
+
+- name: an arbitrator password file that could not be made (value redacted)
+  ansible.builtin.debug:
+    msg: "RESERVE PASS rc={{ reserve_pass.rc | default(0) }} {{ (reserve_pass.stderr | default('') ~ ' ' ~ reserve_pass.stdout | default('')) | regex_replace('[0-9a-f]{64}', 'REDACTED') | trim | truncate(400) }}"
+  when: reserve_pass.rc | default(0) != 0
+
+- name: the arbitrator password file is ready
+  ansible.builtin.assert:
+    that: reserve_pass.rc | default(0) == 0
+    fail_msg: "{{ inventory_hostname }}: {{ nova_reserve_dir }}/reserve.pass could not be made; the redacted cause is above"
+    quiet: true
+
+- name: the systemd user directory on Linux
+  ansible.builtin.file:
+    path: "{{ nova_home }}/.config/systemd/user"
+    state: directory
+    mode: "0755"
+  when: not reserve_darwin
+
+- name: the systemd unit on Linux
+  ansible.builtin.template:
+    src: nova-reserve.service.j2
+    dest: "{{ nova_home }}/.config/systemd/user/{{ nova_reserve_unit }}.service"
+    mode: "0644"
+  register: reserve_systemd_unit
+  when: not reserve_darwin
+
+- name: the systemd unit enabled and running on Linux
+  ansible.builtin.systemd_service:
+    name: "{{ nova_reserve_unit }}"
+    scope: user
+    enabled: true
+    state: "{{ 'restarted' if reserve_systemd_unit is changed else 'started' }}"
+    daemon_reload: true
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ ansible_facts['user_uid'] }}"
+  when: not reserve_darwin and not ansible_check_mode
+
+- name: the LaunchAgents directory on macOS
+  ansible.builtin.file:
+    path: "{{ nova_home }}/Library/LaunchAgents"
+    state: directory
+    mode: "0755"
+  when: reserve_darwin
+
+- name: the LaunchAgent plist on macOS
+  ansible.builtin.template:
+    src: com.nova.reserve.plist.j2
+    dest: "{{ nova_home }}/Library/LaunchAgents/com.nova.reserve.plist"
+    mode: "0644"
+  register: reserve_plist
+  when: reserve_darwin
+
+- name: the LaunchAgent bootstrapped and running on macOS
+  ansible.builtin.shell: |
+    set -eu
+    dom="gui/{{ ansible_facts['user_uid'] }}"
+    plist="{{ nova_home }}/Library/LaunchAgents/com.nova.reserve.plist"
+    launchctl bootout "$dom/com.nova.reserve" 2>/dev/null || true
+    launchctl bootstrap "$dom" "$plist"
+    launchctl kickstart -k "$dom/com.nova.reserve"
+  when: reserve_darwin and reserve_plist is changed and not ansible_check_mode
+
+- name: the receipt
+  ansible.builtin.debug:
+    msg: "RESERVE {{ inventory_hostname }} port={{ nova_reserve_port }} bind={{ reserve_bind[0] }}{{ ' (check: nothing changed)' if ansible_check_mode else '' }}"

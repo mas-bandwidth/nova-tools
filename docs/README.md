@@ -25,7 +25,7 @@ and [how our team uses the message bus for reviews across models](https://rowans
 |---|---|---|
 | Let AI sessions on different models or harnesses exchange messages | [nova-bus](../cmd/nova-bus/README.md) | Redis 6.2+. A receiving harness needs its documented hook to wake a session; storing a message is not proof an AI read it. |
 | Keep and search notes across sessions | [nova-cairn](../cmd/nova-cairn/README.md) | Local files; no server. Search matches keywords, not semantic similarity. It publishes nothing. |
-| Share a machine without running too many jobs at once | [nova-reserve](../cmd/nova-reserve/README.md) | Local file locks; no server. Only jobs using the same reservation directory share the limit. |
+| Share machines without running too many jobs at once | [nova-reserve](../cmd/nova-reserve/README.md) | Client/server resource arbitrator: Tailscale TCP across a fleet (`nova-reserve serve`) or auto-spawned local Unix socket (`--local`). |
 | Restrict the files and network a command can access | [nova-sandbox](../cmd/nova-sandbox/README.md) | Linux with Landlock (5.13+) or macOS. Run `probe` on the host; CPU, memory, process count and disk use are not limited. |
 | Give a command only the secrets it needs | [nova-secrets](../cmd/nova-secrets/README.md) | sops, age and git, with a key and encrypted store. Secret values go through stdin or the command's environment. |
 | Keep machines, services and AI friends as rows, with change history | [nova-config](../cmd/nova-config/README.md) | PostgreSQL. Rows and Ansible inventory describe machines; writing a row starts no service. |
@@ -754,18 +754,19 @@ nova-reserve status --dir "$work/reserve"
 ```
 
 `set` prints `CAPACITY SET cpu=2 memory=4 cores=2`. Each job prints
-`nova-reserve: HELD cpu=1 memory=2 cores=1 ...` on stderr before its command
-runs, and `status` ends with `free cpu=2/2 memory=4/4 paused=0 waiting=0` once
-both have finished.
+`nova-reserve: HELD lease_id=L-1 host=local cpu=1 memory=2 cores=1 ...` on stderr
+before its command runs, and `status` ends with
+`free host=local cpu=2/2 memory=4/4 leases=0 claims=0 queued=0` once both have
+finished.
 
 The refusal you will meet first is `no hold within <d>: ...` (exit 1): needed
 resources stayed busy for the whole `--wait`. Wait longer, or inspect `status`.
 The others are in [cmd/nova-reserve/README.md](../cmd/nova-reserve/README.md#refusals-and-what-to-do-next).
 
 The whole tool: [cmd/nova-reserve/README.md](../cmd/nova-reserve/README.md).
-Across a fleet, `nova-fleet reserve --needs "cpu 4, memory 8"` locks a hold
-before SSH and `nova-fleet resources` queries status in parallel; see
-[docs/RESOURCES.md](RESOURCES.md).
+Across a fleet, `nova-reserve ssh --needs "cpu 4, memory 8, linux" -- make test`
+acquires a central lease before opening SSH, and `nova-fleet resources` prints
+the fleet snapshot; see [docs/RESOURCES.md](RESOURCES.md).
 
 ## Run untrusted work inside a sandbox
 
@@ -877,7 +878,7 @@ first() { local out rc; out=$("$@"); rc=$?; printf '%s\n' "${out%%$'\n'*}"; retu
 first nova-bus -h           # nova-bus: messages between named inboxes, kept in Redis.
 first nova-config -h        # nova-config: a fleet's machines, services and friends, kept as rows in PostgreSQL.
 first nova-secrets -h       # nova-secrets: sops-encrypted secrets in a git store, handed to one command at a time.
-first nova-reserve status --dir "$work/reserve"  # capacity cpu=2 memory=4 cores=2 tags=... set_by_pid=<pid> set_at=<time>
+first nova-reserve status --dir "$work/reserve"  # machine local online=true cpu=2 memory=4 cores=2 tags=...
 first nova-sandbox check    # CHECK OK backend=landlock ... (Linux) or backend=sandbox-exec ... (macOS)
 first nova-cairn version    # nova-cairn <version> (dev when built from a clone)
 first nova-bus who          # WHO OK present=0 once the demo hooks are stopped

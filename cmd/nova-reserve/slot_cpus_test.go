@@ -27,16 +27,16 @@ func TestCPUListIsTheKernelsRangeForm(t *testing.T) {
 	assert.Equal(t, "0,2,4-5,9", cpuList([]int{0, 2, 4, 5, 9}))
 }
 
-func TestCoresForHoldFollowsR28Formula(t *testing.T) {
+func TestCoresForHoldFollowsFormula(t *testing.T) {
 	t.Parallel()
 	// 16 ordinary cores = 16 CPU units: cpu 4 -> 4 cores.
-	ordinary := capRecord{UsableCores: 16, Resources: map[string]int{"cpu": 16, "memory": 64}}
+	ordinary := &MachineSpec{UsableCores: 16, Resources: map[string]int{"cpu": 16, "memory": 64}}
 	assert.Equal(t, 4, coresForHold(4, false, ordinary))
 	assert.Equal(t, 1, coresForHold(1, false, ordinary))
 	assert.Equal(t, 16, coresForHold(1, true, ordinary))
 
 	// 16 stronger cores = 48 CPU units: cpu 4 -> 1 core, cpu 12 -> 4 cores, cpu 1 -> min 1 core.
-	strong := capRecord{UsableCores: 16, Resources: map[string]int{"cpu": 48, "memory": 64}}
+	strong := &MachineSpec{UsableCores: 16, Resources: map[string]int{"cpu": 48, "memory": 64}}
 	assert.Equal(t, 1, coresForHold(4, false, strong))
 	assert.Equal(t, 4, coresForHold(12, false, strong))
 	assert.Equal(t, 1, coresForHold(1, false, strong))
@@ -108,15 +108,17 @@ func TestRunPinsDisjointCPUsAndHandlesPinFailure(t *testing.T) {
 	h.w.groups = func([]int) [][]int { return groups }
 	h.w.pin = func(cpus []int) error { pinned = cpus; return nil }
 	h.setCap(t, 8, 16, 8)
+	h.startInMemoryLocalServer(t, usable, groups)
 
 	// Hold 1 takes cpu 2 -> cpus 0,4.
-	other := h.sibling(10).take(t, "--needs", "cpu 2, memory 2")
-	defer other.release(false)
+	other := h.sibling(10)
+	stopHold := other.startHold(t, "--needs", "cpu 2, memory 2")
+	defer stopHold()
 
 	// Run takes cpu 2 -> gets disjoint physical core cpus 1,5!
 	require.Equal(t, 0, run([]string{"--dir", h.dir, "--needs", "cpu 2, memory 2", "--", "make"}, h.w))
 	assert.Equal(t, []int{1, 5}, pinned)
-	assert.Contains(t, h.err.String(), "nova-reserve: HELD cpu=2 memory=2 cores=2 pid=42 cpus=1,5\n")
+	assert.Contains(t, h.err.String(), "host=local cpu=2 memory=2 cores=2 pid=42 cpus=1,5\n")
 
 	// When pinning fails, command still runs with one warning line on stderr.
 	h.err.Reset()
@@ -124,5 +126,6 @@ func TestRunPinsDisjointCPUsAndHandlesPinFailure(t *testing.T) {
 	h.w.pin = func([]int) error { return errors.New("sched_setaffinity: operation not permitted") }
 	h.code = 3
 	assert.Equal(t, 3, run([]string{"--dir", h.dir, "--needs", "cpu 2, memory 2", "--", "make"}, h.w))
-	assert.Equal(t, "nova-reserve: running unpinned: sched_setaffinity: operation not permitted\nnova-reserve: HELD cpu=2 memory=2 cores=2 pid=42\n", h.err.String())
+	assert.Contains(t, h.err.String(), "nova-reserve: running unpinned: sched_setaffinity: operation not permitted\n")
+	assert.Contains(t, h.err.String(), "host=local cpu=2 memory=2 cores=2 pid=42\n")
 }

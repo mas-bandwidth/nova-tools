@@ -269,15 +269,35 @@ func developerDir(link string) []string {
 // envNameOK is a letter or underscore, then letters, digits and underscores.
 var envNameOK = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`).MatchString
 
-var posIntOK = regexp.MustCompile(`^[1-9][0-9]*$`).MatchString
+var (
+	posIntOK       = regexp.MustCompile(`^[1-9][0-9]*$`).MatchString
+	makeFlagsOK    = regexp.MustCompile(`^-j[1-9][0-9]*$`).MatchString
+	reserveLeaseOK = regexp.MustCompile(`^[A-Za-z0-9_.:-]{1,64}$`).MatchString
+	reserveHostOK  = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,62}$`).MatchString
+)
 
 var reserveCountVars = map[string]bool{
 	"NOVA_RESERVE_CPUS": true, "GOMAXPROCS": true, "CARGO_BUILD_JOBS": true,
 	"RAYON_NUM_THREADS": true, "CMAKE_BUILD_PARALLEL_LEVEL": true,
 }
 
-// passedEnv keeps PATH, HOME, LANG, TERM, positive-integer nova-reserve thread
-// counts and extra. Never nil: syscall.Exec inherits a nil env.
+func reserveAutoOK(n, v string) bool {
+	switch {
+	case reserveCountVars[n]:
+		return posIntOK(v)
+	case n == "MAKEFLAGS":
+		return makeFlagsOK(v)
+	case n == "NOVA_RESERVE_LEASE":
+		return reserveLeaseOK(v)
+	case n == "NOVA_RESERVE_HOST":
+		return reserveHostOK(v)
+	default:
+		return false
+	}
+}
+
+// passedEnv keeps PATH, HOME, LANG, TERM, validated nova-reserve lease/thread
+// steering variables and extra. Never nil: syscall.Exec inherits a nil env.
 func passedEnv(env, extra []string) []string {
 	keep := map[string]bool{"PATH": true, "HOME": true, "LANG": true, "TERM": true}
 	for _, n := range extra {
@@ -285,7 +305,7 @@ func passedEnv(env, extra []string) []string {
 	}
 	out, seen := []string{}, map[string]bool{}
 	for _, e := range env {
-		if n, v, ok := strings.Cut(e, "="); ok && !seen[n] && (keep[n] || (reserveCountVars[n] && posIntOK(v))) {
+		if n, v, ok := strings.Cut(e, "="); ok && !seen[n] && (keep[n] || reserveAutoOK(n, v)) {
 			seen[n], out = true, append(out, e)
 		}
 	}

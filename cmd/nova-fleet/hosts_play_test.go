@@ -32,6 +32,7 @@ func TestPlaysTargetTheirGroups(t *testing.T) {
 		"services":        {workers},
 		"postgres":        {"{{ nova_store_hosts | default('services') }}", "localhost"},
 		"redis":           {"{{ nova_store_hosts | default('services') }}"},
+		"reserve":         {"{{ nova_store_hosts | default('services') }}"},
 		"join":            {joinHost, "localhost"},
 		"seat":            {"{{ nova_join_host | default('all:!windows') }}"},
 		"tailscale":       {"{{ nova_join_host | default('all:!windows') }}"},

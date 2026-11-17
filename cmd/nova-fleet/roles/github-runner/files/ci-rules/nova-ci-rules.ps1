@@ -145,7 +145,8 @@ function Invoke-Disarm {
 
 function Invoke-CiHold([long]$worker) {
     $needs = if ($env:NOVA_CI_NEEDS) { $env:NOVA_CI_NEEDS } else { 'cpu 4, memory 8' }
-    $proc = Start-Process -FilePath 'wsl.exe' -ArgumentList @('nova-reserve', 'hold', '--holder', 'ci', '--label', 'ci', '--needs', $needs) -PassThru -WindowStyle Hidden -NoNewWindow
+    $hostName = "$env:COMPUTERNAME".ToLower()
+    $proc = Start-Process -FilePath 'wsl.exe' -ArgumentList @('nova-reserve', 'hold', '--host', $hostName, '--holder', 'ci', '--label', 'ci', '--needs', $needs) -PassThru -WindowStyle Hidden -NoNewWindow
     while ((Get-Process -Id $worker -ErrorAction SilentlyContinue) -and -not $proc.HasExited) {
         Start-Sleep -Seconds 1
     }

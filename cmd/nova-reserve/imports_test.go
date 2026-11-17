@@ -12,9 +12,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestSelfContained holds reserve to the standard library and golang.org/x/sys, so it can
-// be lifted out of this repository as it is: it reads the imports of every
-// .go file here; the tests may also import testify.
+// TestSelfContained holds reserve to the standard library, golang.org/x/sys,
+// and modules/config (to read config.machines in nova-reserve serve); tests
+// may also import testify.
 func TestSelfContained(t *testing.T) {
 	t.Parallel()
 	files, err := filepath.Glob("*.go")
@@ -27,7 +27,7 @@ func TestSelfContained(t *testing.T) {
 			path, err := strconv.Unquote(imp.Path.Value)
 			require.NoError(t, err)
 			assert.True(t, allowed(path, strings.HasSuffix(name, "_test.go")),
-				"%s imports %s: reserve imports only the standard library and golang.org/x/sys", name, path)
+				"%s imports %s: reserve imports only stdlib, golang.org/x/sys, and modules/config", name, path)
 		}
 	}
 }
@@ -35,7 +35,10 @@ func TestSelfContained(t *testing.T) {
 func allowed(path string, test bool) bool {
 	under := func(mod string) bool { return path == mod || strings.HasPrefix(path, mod+"/") }
 	std := !strings.Contains(strings.SplitN(path, "/", 2)[0], ".")
-	return std || under("golang.org/x/sys") || (test && under("github.com/stretchr/testify"))
+	return std ||
+		under("golang.org/x/sys") ||
+		path == "github.com/mas-bandwidth/nova-tools/v2/modules/config" ||
+		(test && under("github.com/stretchr/testify"))
 }
 
 // TestAllowedRefusesTheRepository is the rule's reversed witness.
@@ -43,7 +46,9 @@ func TestAllowedRefusesTheRepository(t *testing.T) {
 	t.Parallel()
 	assert.False(t, allowed("github.com/mas-bandwidth/nova-tools/v2/pkg/tool", false))
 	assert.False(t, allowed("github.com/mas-bandwidth/nova-tools/v2/pkg/tool", true))
+	assert.False(t, allowed("github.com/mas-bandwidth/nova-tools/v2/cmd/nova-bus", false))
 	assert.False(t, allowed("github.com/stretchr/testify/require", false))
+	assert.True(t, allowed("github.com/mas-bandwidth/nova-tools/v2/modules/config", false))
 	assert.True(t, allowed("golang.org/x/sys/windows", false))
 	assert.True(t, allowed("net/http", false))
 }

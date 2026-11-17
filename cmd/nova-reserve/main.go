@@ -1,16 +1,18 @@
-// Command nova-reserve coordinates shared machine resources across local
-// commands, CI runners, and sprint workers using crash-safe OS file locks.
+// Command nova-reserve arbitrates fleet and single-machine resources across
+// peer friends, workers, CI runners, people, scripts, and nova-sprint.
 package main
 
 import (
 	"bufio"
 	"cmp"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
 	"maps"
+	"net"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -23,109 +25,148 @@ import (
 	"time"
 )
 
-const banner = `nova-reserve: named multi-resource holds on a machine's shared capacity
+const poll = time.Second
 
-A machine's tags, usable cores, and resources (cpu, memory, and custom devices)
-live in DIR/capacity.json. Holds and waiters use OS file locks so the kernel
-frees them on exit or SIGKILL.
+const banner = `nova-reserve: client/server fleet and local resource arbitrator
 
-  nova-reserve [run] [--needs SPEC | --exclusive] [--nowait | --wait D] [--holder H] [--consumer ID] [--label L] [--priority P] [--why TEXT] [--dir DIR] -- <cmd> [args...]
-  nova-reserve hold [--needs SPEC | --exclusive] [--nowait | --wait D] [--holder H] [--consumer ID] [--label L] [--priority P] [--why TEXT] [--dir DIR]
-  nova-reserve measure [--force] [--json] [--dir DIR]
+Peers connect to nova-reserve serve over Tailscale TCP ($NOVA_RESERVE_ADDR) or a
+local Unix domain socket (--local, /var/tmp/nova-reserve/sock) using one
+newline-delimited JSON protocol.
+
+  nova-reserve serve [--local] [--listen ADDR] [--socket PATH] [--reconnect-grace D] [--idle-exit D] [--dir DIR]
+  nova-reserve run [--host M] [--needs SPEC | --exclusive] [--nowait | --wait D] [--holder H] [--source S] [--consumer ID] [--label L] [--priority P] [--why TEXT] [--addr ADDR] [--dir DIR] -- <cmd> [args...]
+  nova-reserve [flags] -- <cmd> [args...]
+  nova-reserve hold [--host M] [--needs SPEC | --exclusive] [--nowait | --wait D] [--holder H] [--source S] [--consumer ID] [--label L] [--priority P] [--why TEXT] [--json] [--addr ADDR] [--dir DIR]
+  nova-reserve ssh [--needs SPEC | --exclusive] [--nowait | --wait D] [--holder H] [--source S] [--consumer ID] [--label L] [--priority P] [--why TEXT] [--addr ADDR] [--dir DIR] -- <cmd> [args...]
+  nova-reserve claim [--host M] [--needs SPEC | --exclusive] [--ttl D] [--source S] [--why TEXT] [--json] [--addr ADDR] [--dir DIR]
+  nova-reserve release <lease_id> [--addr ADDR] [--dir DIR]
+  nova-reserve status [--host M] [--json] [--addr ADDR] [--dir DIR]
+  nova-reserve subscribe [--host M] [--addr ADDR] [--dir DIR]
+  nova-reserve bench [--force] [--write-config] [--json] [--dir DIR]
   nova-reserve set [--cpu N] [--memory G] [--cores C] [--tags A,B] [--resources K=N,...] [--dir DIR]
-  nova-reserve status [--json] [--dir DIR]
-  nova-reserve help [run|hold|measure|set|status]
+  nova-reserve help [serve|run|hold|ssh|claim|release|status|subscribe|bench|set]
 
-DIR: --dir, else /var/tmp/nova-reserve. When $NOVA_RESERVE_DIR matches DIR, nested
-calls run directly without taking a second hold. Exit: 0 ok; 1 refused (never-fit,
-NO ROOM, timeout, busy measure); 2 bad invocation or directory fault; 126/127
-command launch failure; else the command's exit status.
+Exit: 0 ok; 1 refused (impossible, NO ROOM, timeout, RESERVE DEADLOCK, busy bench);
+2 bad invocation or setup/connection fault; 126/127 command launch failure; else
+the command's exit status.
 `
 
 var verbHelp = map[string]string{
-	"run": `nova-reserve [run] [--needs SPEC | --exclusive] [--nowait | --wait D] [--holder H] [--consumer ID] [--label L] [--priority P] [--why TEXT] [--dir DIR] -- <cmd> [args...]
+	"serve": `nova-reserve serve [--local] [--listen ADDR] [--socket PATH] [--reconnect-grace D] [--idle-exit D] [--dir DIR]
 
-Acquire the needed resources, steer CPU count and OS priority, run the command,
-and release the hold; exit with the command's status.
-  --needs SPEC   comma-separated tags and resource amounts, e.g. "cpu 4, memory 8, gpu";
-                 defaults to "cpu 1, memory 1" when omitted
-  --exclusive    hold every resource on the machine
-  --nowait       exit 1 (NO ROOM) immediately if resources are not free right now
-  --wait D       give up after D (above 0: 90s, 15m), exit 1; default waits in line
-  --holder H     bench, friend, ci, or person (default person); ci acquires immediately
-                 and marks lowest-priority active holds paused
-  --consumer ID  caller continuity id; resumes ahead of queued waiters after a CI pause
-  --label L      board/status category (default ci for --holder ci, else work)
-  --priority P   low, normal, high, read, critical, or blocker (default normal)
-  --why TEXT     human note shown in status and timeout refusals
-  --dir DIR      state directory (default /var/tmp/nova-reserve)
+Run the central fleet TCP arbitrator (reading config.machines from $NOVA_PG_DSN
+and authenticating peers with $NOVA_RESERVE_PASSWORD) or the standalone local
+Unix-socket arbitrator (--local).
+  --local              serve single-machine Unix socket instead of fleet TCP
+  --listen ADDR        TCP listen address (default :7680)
+  --socket PATH        Unix socket path for --local (default DIR/sock)
+  --reconnect-grace D  startup reconnect window before new non-CI grants (default 15s fleet, 0s local)
+  --idle-exit D        exit cleanly after D with zero peers/leases/claims (0 disables)
+  --dir DIR            local state directory (default /var/tmp/nova-reserve)
 `,
-	"hold": `nova-reserve hold [--needs SPEC | --exclusive] [--nowait | --wait D] [--holder H] [--consumer ID] [--label L] [--priority P] [--why TEXT] [--dir DIR]
+	"run": `nova-reserve [run] [--host M] [--needs SPEC | --exclusive] [--nowait | --wait D] [--holder H] [--source S] [--consumer ID] [--label L] [--priority P] [--why TEXT] [--addr ADDR] [--dir DIR] -- <cmd> [args...]
 
-Acquire a hold without spawning a child command, print one HELD line on stdout,
-and hold until stdin reaches EOF or SIGINT/SIGTERM arrives.
-  --needs SPEC   comma-separated tags and resource amounts (default "cpu 1, memory 1")
+Acquire a lease on this machine, steer CPU count, Linux affinity, and OS
+priority, run the command, and release the lease; exit with the command's status.
+  --host M       target machine name (default: this host)
+  --needs SPEC   comma-separated tags and resource amounts, e.g. "cpu 4, memory 8"
   --exclusive    hold every resource on the machine
   --nowait       exit 1 (NO ROOM) immediately if resources are not free right now
   --wait D       give up after D (above 0: 90s, 15m), exit 1
-  --holder H     bench, friend, ci, or person (default person)
-  --consumer ID  caller continuity id
-  --label L      board/status category (default ci for --holder ci, else work)
+  --holder H     friend, bench, ci, person, sprint, or script (default person)
+  --source S     caller identity for round-robin fairness (default holder)
+  --consumer ID  caller continuity id across steps
+  --label L      status category (default ci for --holder ci, else work)
   --priority P   low, normal, high, read, critical, or blocker (default normal)
-  --why TEXT     human note shown in status and timeout refusals
-  --dir DIR      state directory (default /var/tmp/nova-reserve)
+  --why TEXT     human note shown in status and diagnostics
+  --addr ADDR    arbitrator TCP host:port (overrides $NOVA_RESERVE_ADDR)
+  --dir DIR      local state directory when standalone (default /var/tmp/nova-reserve)
 `,
-	"measure": `nova-reserve measure [--force] [--json] [--dir DIR]
+	"hold": `nova-reserve hold [--host M] [--needs SPEC | --exclusive] [--nowait | --wait D] [--holder H] [--source S] [--consumer ID] [--label L] [--priority P] [--why TEXT] [--json] [--addr ADDR] [--dir DIR]
+
+Acquire a fleet-any (no --host) or host-pinned (--host M) lease, print one HELD
+line (or granted JSON with --json) on stdout, and hold until stdin EOF or
+SIGINT/SIGTERM, reconnecting automatically across arbitrator restarts.
+`,
+	"ssh": `nova-reserve ssh [--needs SPEC | --exclusive] [--nowait | --wait D] [--holder H] [--source S] [--consumer ID] [--label L] [--priority P] [--why TEXT] [--addr ADDR] [--dir DIR] -- <cmd> [args...]
+
+Acquire a fleet-any lease, connect over SSH to the granted machine with
+NOVA_RESERVE_LEASE and thread-count steering exported, run <cmd>, and release
+the lease when <cmd> exits.
+`,
+	"claim": `nova-reserve claim [--host M] [--needs SPEC | --exclusive] [--ttl D] [--source S] [--why TEXT] [--json] [--addr ADDR] [--dir DIR]
+
+Place an immediate soft operator claim on a machine (default --ttl 4h). Running
+commands finish undisturbed; no new non-CI work starts on claimed resources
+until usage drops below the line or nova-reserve release <lease_id> is called.
+`,
+	"release": `nova-reserve release <lease_id> [--addr ADDR] [--dir DIR]
+
+Release an active claim or lease early by its ID (e.g. C-1 or L-1).
+`,
+	"status": `nova-reserve status [--host M] [--json] [--addr ADDR] [--dir DIR]
+
+Query fleet or single-machine capacity, free resources, active/paused leases,
+soft claims, and queued waiters.
+`,
+	"subscribe": `nova-reserve subscribe [--host M] [--addr ADDR] [--dir DIR]
+
+Stream the initial snapshot JSON frame followed by live event JSON frames until
+interrupted.
+`,
+	"bench": `nova-reserve bench [--force] [--write-config] [--json] [--dir DIR]
 
 Measure this machine's CPU units with the built-in compiler/test benchmark and
-read usable memory (cgroup memory.max when bounded, else physical GiB), holding
---exclusive on DIR while measuring, then write DIR/capacity.json.
-  --force    bypass the background CPU idle check
-  --json     print JSON instead of MEASURE OK
-  --dir DIR  state directory (default /var/tmp/nova-reserve)
+usable slice memory in GiB, write DIR/capacity.json, and optionally record the
+result in nova-config (--write-config).
 `,
 	"set": `nova-reserve set [--cpu N] [--memory G] [--cores C] [--tags A,B] [--resources K=N,...] [--dir DIR]
 
-Atomically create or update DIR/capacity.json, even while holds are active.
-  --cpu N          CPU units (>= 1)
-  --memory G       usable memory in GiB (>= 1)
-  --cores C        usable logical cores (>= 1)
-  --tags A,B       comma-separated machine tags (empty string clears custom tags)
-  --resources K=N  comma-separated custom whole-number resources (empty clears custom)
-  --dir DIR        state directory (default /var/tmp/nova-reserve)
-`,
-	"status": `nova-reserve status [--json] [--dir DIR]
-
-Show capacity, active and paused holds, queued waiters, and free resources.
-  --json     print machine-readable status JSON
-  --dir DIR  state directory (default /var/tmp/nova-reserve)
+Atomically create or update DIR/capacity.json for standalone local operation.
 `,
 }
+
+var allVerbs = []string{"serve", "run", "hold", "ssh", "claim", "release", "status", "subscribe", "bench", "set", "help"}
 
 var verbFlags = map[string][]string{
-	"run":     {"needs", "exclusive", "nowait", "wait", "holder", "consumer", "label", "priority", "why", "dir"},
-	"hold":    {"needs", "exclusive", "nowait", "wait", "holder", "consumer", "label", "priority", "why", "dir"},
-	"measure": {"force", "json", "dir"},
-	"set":     {"cpu", "memory", "cores", "tags", "resources", "dir"},
-	"status":  {"json", "dir"},
+	"serve":     {"local", "listen", "socket", "reconnect-grace", "idle-exit", "dir"},
+	"run":       {"host", "needs", "exclusive", "nowait", "wait", "holder", "source", "consumer", "label", "priority", "why", "addr", "socket", "dir"},
+	"hold":      {"host", "needs", "exclusive", "nowait", "wait", "holder", "source", "consumer", "label", "priority", "why", "json", "addr", "socket", "dir"},
+	"ssh":       {"host", "needs", "exclusive", "nowait", "wait", "holder", "source", "consumer", "label", "priority", "why", "addr", "socket", "dir"},
+	"claim":     {"host", "needs", "exclusive", "ttl", "source", "why", "json", "addr", "socket", "dir"},
+	"release":   {"addr", "socket", "dir"},
+	"status":    {"host", "json", "addr", "socket", "dir"},
+	"subscribe": {"host", "addr", "socket", "dir"},
+	"bench":     {"force", "write-config", "json", "dir"},
+	"set":       {"cpu", "memory", "cores", "tags", "resources", "dir"},
 }
 
-var boolFlags = map[string]bool{"exclusive": true, "nowait": true, "force": true, "json": true}
+var boolFlags = map[string]bool{
+	"local": true, "exclusive": true, "nowait": true, "force": true, "write-config": true, "json": true,
+}
 
 var wants = map[string]string{
-	"needs":     `a comma-separated resource/tag list like "cpu 4, memory 8"`,
-	"wait":      "a duration above 0, like 90s or 15m",
-	"holder":    "one of bench, friend, ci, person",
-	"consumer":  "a non-empty consumer id",
-	"label":     "a non-empty label",
-	"priority":  "one of low, normal, high, read, critical, blocker",
-	"why":       "text",
-	"dir":       "a directory",
-	"cpu":       "an integer >= 1",
-	"memory":    "an integer >= 1",
-	"cores":     "an integer >= 1",
-	"tags":      "comma-separated tag names",
-	"resources": "comma-separated k=n pairs with n >= 1",
+	"listen":          "a TCP listen address like :7680",
+	"socket":          "a Unix socket path",
+	"reconnect-grace": "a duration >= 0, like 15s or 0s",
+	"idle-exit":       "a duration >= 0, like 10s or 0s",
+	"host":            "a machine name",
+	"needs":           `a comma-separated resource/tag list like "cpu 4, memory 8"`,
+	"wait":            "a duration above 0, like 90s or 15m",
+	"ttl":             "a duration above 0, like 4h or 30m",
+	"holder":          "one of friend, bench, ci, person, sprint, script",
+	"source":          "a non-empty caller name",
+	"consumer":        "a non-empty consumer id",
+	"label":           "a non-empty label",
+	"priority":        "one of low, normal, high, read, critical, blocker",
+	"why":             "text",
+	"addr":            "a host:port address",
+	"dir":             "a directory",
+	"cpu":             "an integer >= 1",
+	"memory":          "an integer >= 1",
+	"cores":           "an integer >= 1",
+	"tags":            "comma-separated tag names",
+	"resources":       "comma-separated k=n pairs with n >= 1",
 }
 
 type exitError struct {
@@ -140,31 +181,45 @@ func refuse(code int, format string, a ...any) *exitError {
 }
 
 type options struct {
-	verb      string
-	help      bool
-	needs     []needItem
-	exclusive bool
-	nowait    bool
-	wait      time.Duration
-	holder    string
-	consumer  string
-	label     string
-	priority  string
-	why       string
-	force     bool
-	jsonOut   bool
-	cpu       int
-	memory    int
-	cores     int
-	tags      []string
-	tagsSet   bool
-	res       map[string]int
-	resSet    bool
-	dir       string
-	dirSet    bool
-	dirFrom   string
-	argv      []string
-	args      []string
+	verb        string
+	rawVerb     string
+	help        bool
+	local       bool
+	listen      string
+	socket      string
+	reconnGrace time.Duration
+	reconnSet   bool
+	idleExit    time.Duration
+	host        string
+	needsRaw    string
+	needs       []needItem
+	exclusive   bool
+	nowait      bool
+	wait        time.Duration
+	ttl         time.Duration
+	holder      string
+	source      string
+	consumer    string
+	label       string
+	priority    string
+	why         string
+	addr        string
+	leaseID     string
+	force       bool
+	writeConfig bool
+	jsonOut     bool
+	cpu         int
+	memory      int
+	cores       int
+	tags        []string
+	tagsSet     bool
+	res         map[string]int
+	resSet      bool
+	dir         string
+	dirSet      bool
+	dirFrom     string
+	argv        []string
+	args        []string
 }
 
 func (o options) hasSetField() bool {
@@ -172,21 +227,23 @@ func (o options) hasSetField() bool {
 }
 
 func (o options) remedy(args ...string) string {
-	if o.dirSet {
+	if o.addr != "" {
+		args = append(args, "--addr", o.addr)
+	} else if o.dirSet {
 		args = append(args, "--dir", o.dir)
 	}
 	return "nova-reserve " + quoteAll(args)
 }
 
 func helpFor(verb string) string {
-	if verb == "run" || verb == "" {
+	if verb == "" {
 		return "nova-reserve -h"
 	}
 	return "nova-reserve " + verb + " -h"
 }
 
 func prefix(verb string) string {
-	if verb == "run" || verb == "" {
+	if verb == "" {
 		return "nova-reserve:"
 	}
 	return "nova-reserve " + verb + ":"
@@ -208,31 +265,44 @@ func shellQuote(s string) string {
 }
 
 func parse(args []string) (options, error) {
-	o := options{verb: "run", holder: "person", priority: "normal", dir: systemDir, dirFrom: "the default directory", args: args}
+	o := options{
+		verb: "run", rawVerb: "", listen: ":" + defaultReservePort,
+		holder: "person", priority: "normal", ttl: defaultClaimTTLMs * time.Millisecond,
+		dir: systemDir, dirFrom: "the default directory", args: args,
+	}
 	if len(args) == 1 && (args[0] == "-h" || args[0] == "--help") {
-		o.help, o.verb = true, ""
+		o.help, o.verb, o.rawVerb = true, "", ""
 		return o, nil
 	}
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		switch args[0] {
-		case "run", "hold", "measure", "set", "status", "help":
-			o.verb, args = args[0], args[1:]
+		case "serve", "run", "hold", "ssh", "claim", "release", "status", "subscribe", "bench", "set", "help":
+			o.verb, o.rawVerb, args = args[0], args[0], args[1:]
+		case "measure", "calibrate":
+			o.verb, o.rawVerb, args = "bench", args[0], args[1:]
 		default:
-			return o, refuse(2, "unknown verb %q; verbs: run, hold, measure, set, status, help; a command goes after --: nova-reserve -- %s; run: nova-reserve help",
-				args[0], shellQuote(args[0]))
+			return o, refuse(2, "unknown verb %q; verbs: %s; a command goes after --: nova-reserve -- %s; run: nova-reserve help",
+				args[0], strings.Join(allVerbs, ", "), shellQuote(args[0]))
 		}
 	}
 	if o.verb == "help" {
+		if slices.ContainsFunc(args, func(a string) bool { return strings.HasPrefix(a, "-") }) {
+			return o, refuse(2, "help takes no flags; run: nova-reserve help")
+		}
 		switch {
 		case len(args) == 0:
-			o.help, o.verb = true, ""
+			o.help, o.verb, o.rawVerb = true, "", ""
+		case len(args) == 1 && (args[0] == "measure" || args[0] == "calibrate"):
+			o.help, o.verb = true, "bench"
 		case len(args) == 1 && verbHelp[args[0]] != "":
 			o.help, o.verb = true, args[0]
 		default:
-			return o, refuse(2, "help takes one of run, hold, measure, set, status, not %q; run: nova-reserve -h", strings.Join(args, " "))
+			return o, refuse(2, "help takes one of %s, not %q; run: nova-reserve help",
+				strings.Join(allVerbs[:len(allVerbs)-1], ", "), strings.Join(args, " "))
 		}
 		return o, nil
 	}
+
 	end := slices.Index(args, "--")
 	hasDashDash := end >= 0
 	if !hasDashDash {
@@ -242,11 +312,16 @@ func parse(args []string) (options, error) {
 		o.help = true
 		return o, nil
 	}
-	hint := helpFor(o.verb)
+
+	hint := helpFor(o.rawVerb)
 	seen := map[string]bool{}
 	for i := 0; i < end; i++ {
 		a := args[i]
 		if !strings.HasPrefix(a, "-") || a == "-" {
+			if o.verb == "release" && o.leaseID == "" && a != "-" {
+				o.leaseID = a
+				continue
+			}
 			return o, refuse(2, "unexpected %q; a command goes after --; run: %s", a, hint)
 		}
 		name, val, hasVal := strings.Cut(strings.TrimLeft(a, "-"), "=")
@@ -264,9 +339,11 @@ func parse(args []string) (options, error) {
 			if hasVal {
 				return o, refuse(2, "--%s takes no value, not %q; run: %s", name, val, hint)
 			}
+			o.local = o.local || name == "local"
 			o.exclusive = o.exclusive || name == "exclusive"
 			o.nowait = o.nowait || name == "nowait"
 			o.force = o.force || name == "force"
+			o.writeConfig = o.writeConfig || name == "write-config"
 			o.jsonOut = o.jsonOut || name == "json"
 			continue
 		}
@@ -285,13 +362,26 @@ func parse(args []string) (options, error) {
 		o.argv = args[end+1:]
 	}
 	if o.label == "" {
-		o.label = map[bool]string{true: "ci", false: "work"}[o.holder == "ci"]
+		switch {
+		case o.verb == "claim":
+			o.label = "claim"
+		case o.holder == "ci":
+			o.label = "ci"
+		default:
+			o.label = "work"
+		}
 	}
 	switch {
-	case o.verb == "run" && len(o.argv) == 0:
-		return o, refuse(2, "no command: nova-reserve [flags] -- <cmd> [args...]; run: %s", hint)
-	case o.verb != "run" && hasDashDash:
+	case (o.verb == "run" || o.verb == "ssh") && len(o.argv) == 0:
+		sub := ""
+		if o.rawVerb != "" {
+			sub = " " + o.rawVerb
+		}
+		return o, refuse(2, "no command: nova-reserve%s [flags] -- <cmd> [args...]; run: %s", sub, hint)
+	case o.verb != "run" && o.verb != "ssh" && hasDashDash:
 		return o, refuse(2, "%s takes no command, not %q; run: %s", o.verb, strings.Join(o.argv, " "), hint)
+	case o.verb == "release" && o.leaseID == "":
+		return o, refuse(2, "release wants <lease_id>; run: %s", hint)
 	case o.exclusive && len(o.needs) > 0:
 		return o, refuse(2, "--exclusive takes every resource; --needs does not apply; run: %s", hint)
 	case o.nowait && o.wait > 0:
@@ -304,17 +394,41 @@ func parse(args []string) (options, error) {
 
 func (o *options) setFlag(name, val string) bool {
 	switch name {
+	case "listen":
+		o.listen = val
+		return val != ""
+	case "socket":
+		o.socket = val
+		return val != ""
+	case "reconnect-grace":
+		d, err := time.ParseDuration(val)
+		o.reconnGrace, o.reconnSet = d, true
+		return err == nil && d >= 0
+	case "idle-exit":
+		d, err := time.ParseDuration(val)
+		o.idleExit = d
+		return err == nil && d >= 0
+	case "host":
+		o.host = val
+		return val != "" && !strings.ContainsAny(val, " \t\r\n")
 	case "needs":
 		items, err := parseNeedItems(val)
-		o.needs = items
-		return err == nil
+		o.needs, o.needsRaw = items, val
+		return err == nil && strings.TrimSpace(val) != ""
 	case "wait":
 		d, err := time.ParseDuration(val)
 		o.wait = d
 		return err == nil && d > 0
+	case "ttl":
+		d, err := time.ParseDuration(val)
+		o.ttl = d
+		return err == nil && d > 0
 	case "holder":
 		o.holder = val
-		return val == "bench" || val == "friend" || val == "ci" || val == "person"
+		return slices.Contains([]string{"friend", "bench", "ci", "person", "sprint", "script"}, val)
+	case "source":
+		o.source = val
+		return val != "" && !strings.ContainsAny(val, " \t\r\n")
 	case "consumer":
 		o.consumer = val
 		return val != "" && !strings.ContainsAny(val, " \t\r\n")
@@ -328,6 +442,9 @@ func (o *options) setFlag(name, val string) bool {
 	case "why":
 		o.why = val
 		return val != ""
+	case "addr":
+		o.addr = val
+		return val != "" && !strings.ContainsAny(val, " \t\r\n")
 	case "dir":
 		o.dir, o.dirSet, o.dirFrom = val, true, "--dir"
 		return val != ""
@@ -376,32 +493,15 @@ func (o *options) setFlag(name, val string) bool {
 	return false
 }
 
-type tryLock func(path string, exclusive bool) (release func(), ok bool, err error)
-
-type watcher interface {
-	drain()
-	wait(pids []int, d time.Duration)
-	close()
-}
-
-type fallbackWatcher struct{}
-
-func (fallbackWatcher) drain()                        {}
-func (fallbackWatcher) wait(_ []int, d time.Duration) { time.Sleep(min(d, 50*time.Millisecond)) }
-func (fallbackWatcher) close()                        {}
-
 type world struct {
 	env     func(string) string
 	environ func() []string
-	lock    tryLock
-	watch   func(dir string) watcher
 	now     func() time.Time
-	sleep   func(d time.Duration)
 	resolve func(name string) (string, error)
 	exec    func(path string, argv, env []string, lower bool) int
 	waitEOF func(in io.Reader)
-	running func(pid int) bool
 	bench   func(cores int, force bool) (cpuUnits, memGB int, err error)
+	dial    func(ep endpoint, o options) (net.Conn, error)
 	pid     int
 	cpus    int
 	goos    string
@@ -414,14 +514,12 @@ type world struct {
 	stderr  io.Writer
 }
 
-const poll = time.Second
-
 func main() {
 	os.Exit(run(os.Args[1:], world{
-		env: os.Getenv, environ: os.Environ, lock: osLock, watch: newOSWatcher,
-		now: time.Now, sleep: time.Sleep, resolve: exec.LookPath, exec: runCommand,
-		waitEOF: waitHoldSignalOrEOF, running: running, bench: defaultBench,
-		pid: os.Getpid(), cpus: runtime.NumCPU(), goos: runtime.GOOS, goarch: runtime.GOARCH,
+		env: os.Getenv, environ: os.Environ, now: time.Now,
+		resolve: exec.LookPath, exec: runCommand, waitEOF: waitHoldSignalOrEOF,
+		bench: defaultBench, pid: os.Getpid(), cpus: runtime.NumCPU(),
+		goos: runtime.GOOS, goarch: runtime.GOARCH,
 		usable: usableCPUs, groups: smtGroups, pin: pin,
 		stdin: os.Stdin, stdout: os.Stdout, stderr: os.Stderr,
 	}))
@@ -442,35 +540,13 @@ func run(args []string, w world) int {
 		return 0
 	case errors.As(err, &e):
 		if e.msg != "" {
-			fmt.Fprintln(w.stderr, prefix(o.verb), e.msg)
+			fmt.Fprintln(w.stderr, prefix(o.rawVerb), e.msg)
 		}
 		return e.code
 	default:
-		fmt.Fprintln(w.stderr, prefix(o.verb), err)
+		fmt.Fprintln(w.stderr, prefix(o.rawVerb), err)
 		return 2
 	}
-}
-
-func sameDir(a, b string) bool {
-	if a == "" || b == "" {
-		return false
-	}
-	if aa, e1 := filepath.Abs(a); e1 == nil {
-		if ab, e2 := filepath.Abs(b); e2 == nil && aa == ab {
-			return true
-		}
-	}
-	if ra, e1 := filepath.EvalSymlinks(a); e1 == nil {
-		if rb, e2 := filepath.EvalSymlinks(b); e2 == nil && ra == rb {
-			return true
-		}
-	}
-	if fa, e1 := os.Stat(a); e1 == nil {
-		if fb, e2 := os.Stat(b); e2 == nil && os.SameFile(fa, fb) {
-			return true
-		}
-	}
-	return filepath.Clean(a) == filepath.Clean(b)
 }
 
 func flushOut(w io.Writer) {
@@ -481,123 +557,418 @@ func flushOut(w io.Writer) {
 }
 
 func do(o options, w world) error {
-	path := ""
-	if o.verb == "run" {
-		p, err := w.resolve(o.argv[0])
-		switch {
-		case errors.Is(err, fs.ErrPermission) || errors.Is(err, syscall.EISDIR):
-			return refuse(126, "%s: not executable", o.argv[0])
-		case err != nil:
-			if strings.ContainsAny(o.argv[0], `/\`) {
-				return refuse(127, "%s: no such file", o.argv[0])
-			}
-			return refuse(127, "%s: command not found on PATH=%s", o.argv[0], w.env("PATH"))
-		}
-		path = p
-	}
-	if (o.verb == "run" || o.verb == "hold") && sameDir(w.env("NOVA_RESERVE_DIR"), o.dir) {
-		if o.verb == "hold" {
-			fmt.Fprintf(w.stdout, "HELD cpu=1 memory=1 cores=1 pid=%d note=reentrant\n", w.pid)
-			flushOut(w.stdout)
-			w.waitEOF(w.stdin)
-			return nil
-		}
-		if code := w.exec(path, o.argv, nil, false); code != 0 {
-			return &exitError{code: code}
-		}
-		return nil
-	}
-	if o.verb == "status" {
-		fi, err := os.Lstat(o.dir)
-		if err != nil {
-			return refuse(2, "%s %s is not a reservation directory (no reservation was taken there); run: %s",
-				o.dirFrom, shellQuote(o.dir), helpFor("status"))
-		}
-		if fi.Mode()&os.ModeSymlink != 0 {
-			return refuse(2, "%s %s is a symbolic link; nova-reserve uses no link as its directory: give the directory it names, or remove the link; run: ls -ld %s",
-				o.dirFrom, o.dir, shellQuote(o.dir))
-		}
-		if !fi.IsDir() {
-			return refuse(2, "%s %s is a file, not a directory; run: ls -ld %s", o.dirFrom, o.dir, shellQuote(o.dir))
-		}
-		return statusCmd(o, w)
-	}
-	if err := ensureLayout(o.dir, o.dirFrom, "nova-reserve "+quoteAll(o.args)); err != nil {
-		return err
-	}
 	switch o.verb {
+	case "serve":
+		return serveCmd(o, w)
 	case "set":
 		return setCapacity(o, w)
-	case "measure":
-		return measureCmd(o, w)
+	case "bench":
+		return benchCmd(o, w)
+	case "claim":
+		return claimRemote(o, w)
+	case "release":
+		return releaseRemote(o, w)
+	case "status":
+		return statusCmd(o, w)
+	case "subscribe":
+		return subscribeRemote(o, w)
 	case "hold":
-		h, err := acquire(w, o)
-		if err != nil {
-			return err
-		}
-		defer h.release(false)
-		if h.measured != nil {
-			fmt.Fprintf(w.stderr, "nova-reserve: MEASURE OK cpu=%d memory=%d cores=%d\n",
-				h.measured.Resources["cpu"], h.measured.Resources["memory"], h.measured.UsableCores)
-		}
-		fmt.Fprintf(w.stdout, "HELD %s\n", describeHold(h.rec, nil))
-		flushOut(w.stdout)
-		w.waitEOF(w.stdin)
-		return nil
-	default:
-		h, err := acquire(w, o)
-		if err != nil {
-			return err
-		}
-		if h.measured != nil {
-			fmt.Fprintf(w.stderr, "nova-reserve: MEASURE OK cpu=%d memory=%d cores=%d\n",
-				h.measured.Resources["cpu"], h.measured.Resources["memory"], h.measured.UsableCores)
-		}
-		if h.pinWarn != nil {
-			fmt.Fprintf(w.stderr, "nova-reserve: running unpinned: %v\n", h.pinWarn)
-		}
-		fmt.Fprintf(w.stderr, "nova-reserve: HELD %s\n", describeHold(h.rec, h.pinWarn))
-		code := w.exec(path, o.argv, steerEnv(w.environ, o.dir, h.rec.Cores), o.holder != "ci")
-		h.release(true)
-		if code != 0 {
-			return &exitError{code: code}
-		}
-		return nil
+		return holdCmd(o, w)
+	case "ssh":
+		return sshCmd(o, w)
+	case "run":
+		return runCmdVerb(o, w)
 	}
+	return refuse(2, "unknown verb %q; run: nova-reserve help", o.verb)
 }
 
-func describeHold(r holdRecord, pinWarn error) string {
-	s := fmt.Sprintf("cpu=%d memory=%d cores=%d pid=%d", r.Needs["cpu"], r.Needs["memory"], r.Cores, r.PID)
-	if pinWarn == nil && len(r.CPUs) > 0 {
-		s += " cpus=" + cpuList(r.CPUs)
+func serveCmd(o options, w world) error {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	if o.local {
+		if err := ensureDir(o.dir, o.dirFrom, "nova-reserve "+quoteAll(o.args)); err != nil {
+			return err
+		}
+		var initMachines []MachineSpec
+		var mtime int64
+		if m, mt, err := localMachineFromDir(o.dir); err == nil {
+			initMachines = []MachineSpec{m}
+			mtime = mt
+		} else if filepath.Clean(o.dir) == systemDir {
+			if mc, merr := calibrateLocal(o.dir, true, w); merr == nil {
+				initMachines = []MachineSpec{{
+					Host: "local", Online: true,
+					Tags:        effectiveTags(mc.Tags, w.goos, w.goarch),
+					UsableCores: mc.UsableCores, Resources: mc.Resources,
+				}}
+			}
+		} else {
+			return refuse(2, "%s %s has no capacity.json; run: %s", o.dirFrom, o.dir, o.remedy("bench", "--force"))
+		}
+		sock := resolveSocketPath(o.dir, o.socket)
+		// ignored: remove stale Unix socket file before listening
+		_ = os.Remove(sock)
+		ln, err := net.Listen("unix", sock)
+		if err != nil {
+			return refuse(2, "listen unix %s: %v; run: rm -f %s", sock, err, shellQuote(sock))
+		}
+		// ignored: widen socket permissions for shared local users
+		_ = os.Chmod(sock, 0o666)
+		defer func() {
+			// ignored: cleanup Unix socket on exit
+			_ = os.Remove(sock)
+		}()
+		grace := int64(0)
+		if o.reconnSet {
+			grace = o.reconnGrace.Milliseconds()
+		}
+		srv := NewServer(ServerConfig{
+			Local: true, Dir: o.dir, SocketPath: sock,
+			ReconnectGraceMs: grace, IdleExit: o.idleExit,
+		}, initMachines)
+		srv.capMtime = mtime
+		fmt.Fprintf(w.stderr, "nova-reserve serve: listening unix %s\n", sock)
+		return srv.Serve(ctx, ln)
+	}
+
+	dsn := strings.TrimSpace(w.env("NOVA_PG_DSN"))
+	pgPass := w.env("NOVA_PG_PASSWORD")
+	resPass := w.env("NOVA_RESERVE_PASSWORD")
+	if dsn == "" || resPass == "" {
+		var missing []string
+		if dsn == "" {
+			missing = append(missing, "NOVA_PG_DSN")
+		}
+		if resPass == "" {
+			missing = append(missing, "NOVA_RESERVE_PASSWORD")
+		}
+		return refuse(2, "fleet serve wants %s in the environment (or pass --local); run: nova-reserve serve -h", strings.Join(missing, " and "))
+	}
+	loader := func(c context.Context) ([]MachineSpec, error) {
+		return loadMachinesFromStore(c, dsn, pgPass)
+	}
+	initMachines, err := loader(ctx)
+	if err != nil {
+		return refuse(2, "%v; run: nova-config machine list", err)
+	}
+	ln, err := net.Listen("tcp", o.listen)
+	if err != nil {
+		return refuse(2, "listen tcp %s: %v; run: nova-reserve serve -h", o.listen, err)
+	}
+	grace := int64(defaultReconnectMs)
+	if o.reconnSet {
+		grace = o.reconnGrace.Milliseconds()
+	}
+	srv := NewServer(ServerConfig{
+		Local: false, ListenAddr: o.listen, Password: resPass,
+		ReconnectGraceMs: grace, IdleExit: o.idleExit, LoadMachines: loader,
+	}, initMachines)
+
+	hup := make(chan os.Signal, 1)
+	signal.Notify(hup, syscall.SIGHUP)
+	defer signal.Stop(hup)
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-hup:
+				// ignored: SIGHUP reload errors leave previous machine table intact
+				_ = srv.Reload(ctx)
+			}
+		}
+	}()
+
+	fmt.Fprintf(w.stderr, "nova-reserve serve: listening tcp %s machines=%d\n", ln.Addr().String(), len(initMachines))
+	return srv.Serve(ctx, ln)
+}
+
+func runCmdVerb(o options, w world) error {
+	p, err := w.resolve(o.argv[0])
+	switch {
+	case errors.Is(err, fs.ErrPermission) || errors.Is(err, syscall.EISDIR):
+		return refuse(126, "%s: not executable", o.argv[0])
+	case err != nil:
+		if strings.ContainsAny(o.argv[0], `/\`) {
+			return refuse(127, "%s: no such file", o.argv[0])
+		}
+		return refuse(127, "%s: command not found on PATH=%s", o.argv[0], w.env("PATH"))
+	}
+
+	h, autoCap, err := acquireHold(o, w)
+	if err != nil {
+		return err
+	}
+	defer h.Close()
+
+	if autoCap != nil {
+		fmt.Fprintf(w.stderr, "nova-reserve: BENCH OK cpu=%d memory=%d cores=%d\n",
+			autoCap.Resources["cpu"], autoCap.Resources["memory"], autoCap.UsableCores)
+	}
+	var pinWarn error
+	if len(h.granted.CPUs) > 0 && w.pin != nil {
+		if perr := w.pin(h.granted.CPUs); perr != nil {
+			pinWarn = perr
+			fmt.Fprintf(w.stderr, "nova-reserve: running unpinned: %v\n", perr)
+		}
+	}
+	fmt.Fprintf(w.stderr, "nova-reserve: HELD %s\n", describeGranted(h.granted, w.pid, pinWarn, h.failOpen))
+	code := w.exec(p, o.argv, mergeProcessEnv(w.environ, h.granted.Env), o.holder != "ci")
+	h.Close()
+	if code != 0 {
+		return &exitError{code: code}
+	}
+	return nil
+}
+
+func holdCmd(o options, w world) error {
+	h, _, err := acquireHold(o, w)
+	if err != nil {
+		return err
+	}
+	defer h.Close()
+
+	if o.jsonOut {
+		b, merr := MarshalServerFrame(h.granted)
+		if merr != nil {
+			return merr
+		}
+		fmt.Fprintln(w.stdout, string(b))
+	} else {
+		fmt.Fprintf(w.stdout, "HELD %s\n", describeGranted(h.granted, w.pid, nil, h.failOpen))
+	}
+	flushOut(w.stdout)
+	w.waitEOF(w.stdin)
+	return nil
+}
+
+func sshCmd(o options, w world) error {
+	sshBin, err := w.resolve("ssh")
+	if err != nil {
+		return refuse(127, "ssh: command not found on PATH=%s", w.env("PATH"))
+	}
+	h, _, err := acquireHold(o, w)
+	if err != nil {
+		return err
+	}
+	defer h.Close()
+
+	fmt.Fprintf(w.stderr, "nova-reserve ssh: HELD %s\n", describeGranted(h.granted, w.pid, nil, h.failOpen))
+	target := cmp.Or(h.granted.Address, h.granted.Host)
+	if h.granted.User != "" && !strings.Contains(target, "@") {
+		target = h.granted.User + "@" + target
+	}
+	var envPairs []string
+	for _, k := range slices.Sorted(maps.Keys(h.granted.Env)) {
+		envPairs = append(envPairs, k+"="+shellQuote(h.granted.Env[k]))
+	}
+	remoteLine := "env " + strings.Join(envPairs, " ") + " " + quoteAll(o.argv)
+	sshArgv := []string{"ssh", "-o", "BatchMode=yes", target, remoteLine}
+	code := w.exec(sshBin, sshArgv, nil, false)
+	h.Close()
+	if code != 0 {
+		return &exitError{code: code}
+	}
+	return nil
+}
+
+func describeGranted(sf ServerFrame, pid int, pinWarn error, failOpen bool) string {
+	s := fmt.Sprintf("lease_id=%s host=%s cpu=%d memory=%d cores=%d pid=%d",
+		sf.LeaseID, sf.Host, sf.Needs["cpu"], sf.Needs["memory"], sf.Cores, pid)
+	if pinWarn == nil && len(sf.CPUs) > 0 {
+		s += " cpus=" + cpuList(sf.CPUs)
+	}
+	if sf.Sublease {
+		s += " sublease=true"
+	}
+	if failOpen {
+		s += " note=fail-open"
 	}
 	return s
 }
 
-func steerEnv(baseFn func() []string, dir string, cores int) []string {
-	absDir := dir
-	if a, err := filepath.Abs(dir); err == nil {
-		absDir = a
+func calibrateLocal(dir string, force bool, w world) (capRecord, error) {
+	cores := max(1, w.cpus)
+	if u, err := w.usable(); err == nil && len(u) > 0 {
+		cores = len(u)
 	}
-	cs := strconv.Itoa(max(1, cores))
-	overrides := map[string]string{
-		"NOVA_RESERVE_DIR": absDir, "NOVA_RESERVE_CPUS": cs, "GOMAXPROCS": cs,
-		"CARGO_BUILD_JOBS": cs, "RAYON_NUM_THREADS": cs, "CMAKE_BUILD_PARALLEL_LEVEL": cs,
+	cpuUnits, memGB, err := w.bench(cores, force)
+	if err != nil {
+		return capRecord{}, refuse(1, "%v; run: nova-reserve bench --force --dir %s", err, shellQuote(dir))
 	}
-	var base []string
-	if baseFn != nil {
-		base = baseFn()
-	}
-	out := make([]string, 0, len(base)+len(overrides))
-	for _, kv := range base {
-		if k, _, _ := strings.Cut(kv, "="); overrides[k] == "" {
-			out = append(out, kv)
+	var prevTags []string
+	res := map[string]int{"cpu": max(1, cpuUnits), "memory": max(1, memGB)}
+	if old, ok, rerr := readCapacity(dir); rerr == nil && ok {
+		prevTags = old.Tags
+		for k, v := range old.Resources {
+			if k != "cpu" && k != "memory" {
+				res[k] = v
+			}
 		}
 	}
-	for _, k := range slices.Sorted(maps.Keys(overrides)) {
-		out = append(out, k+"="+overrides[k])
+	c := capRecord{
+		Tags:        prevTags,
+		UsableCores: cores,
+		Resources:   res,
+		SetByPID:    w.pid,
+		SetAt:       w.now().UTC().Format(time.RFC3339),
 	}
-	return out
+	if err := writeCapacity(dir, c, w.pid); err != nil {
+		return capRecord{}, err
+	}
+	return c, nil
+}
+
+func benchCmd(o options, w world) error {
+	if err := ensureDir(o.dir, o.dirFrom, "nova-reserve "+quoteAll(o.args)); err != nil {
+		return err
+	}
+	c, err := calibrateLocal(o.dir, o.force, w)
+	if err != nil {
+		return err
+	}
+	if o.writeConfig {
+		cfgBin, lerr := w.resolve("nova-config")
+		if lerr != nil {
+			return refuse(2, "nova-config not found on PATH=%s; run: nova-config machine list", w.env("PATH"))
+		}
+		hn := shortHost()
+		argv := []string{"nova-config", "machine", "set", hn,
+			"--cpu", strconv.Itoa(c.Resources["cpu"]),
+			"--memory", strconv.Itoa(c.Resources["memory"]),
+			"--cores", strconv.Itoa(c.UsableCores)}
+		if code := w.exec(cfgBin, argv, nil, false); code != 0 {
+			return &exitError{code: code}
+		}
+	}
+	if o.jsonOut {
+		b, merr := json.Marshal(map[string]any{
+			"cpu":          c.Resources["cpu"],
+			"memory":       c.Resources["memory"],
+			"usable_cores": c.UsableCores,
+			"tags":         effectiveTags(c.Tags, w.goos, w.goarch),
+			"resources":    c.Resources,
+		})
+		if merr != nil {
+			return merr
+		}
+		fmt.Fprintln(w.stdout, string(b))
+		return nil
+	}
+	fmt.Fprintf(w.stdout, "BENCH OK cpu=%d memory=%d cores=%d\n",
+		c.Resources["cpu"], c.Resources["memory"], c.UsableCores)
+	return nil
+}
+
+func setCapacity(o options, w world) error {
+	if err := ensureDir(o.dir, o.dirFrom, "nova-reserve "+quoteAll(o.args)); err != nil {
+		return err
+	}
+	cur, have, err := readCapacity(o.dir)
+	var bad corrupt
+	if err != nil && !errors.As(err, &bad) {
+		return err
+	}
+	if !have {
+		cur = capRecord{
+			Tags:        []string{},
+			UsableCores: max(1, w.cpus),
+			Resources:   map[string]int{"cpu": max(1, w.cpus), "memory": 4},
+		}
+	}
+	if o.tagsSet {
+		cur.Tags = slices.Clone(o.tags)
+	}
+	if o.resSet {
+		keepCPU, keepMem := cur.Resources["cpu"], cur.Resources["memory"]
+		cur.Resources = maps.Clone(o.res)
+		if cur.Resources["cpu"] == 0 {
+			cur.Resources["cpu"] = max(1, keepCPU)
+		}
+		if cur.Resources["memory"] == 0 {
+			cur.Resources["memory"] = max(1, keepMem)
+		}
+	}
+	if o.cpu > 0 {
+		cur.Resources["cpu"] = o.cpu
+	}
+	if o.memory > 0 {
+		cur.Resources["memory"] = o.memory
+	}
+	if o.cores > 0 {
+		cur.UsableCores = o.cores
+	} else if !have && o.cpu > 0 {
+		cur.UsableCores = o.cpu
+	}
+	for _, t := range cur.Tags {
+		if cur.Resources[t] > 0 {
+			return refuse(2, "%q cannot be both a tag and a resource; run: %s", t, helpFor("set"))
+		}
+	}
+	cur.SetByPID = w.pid
+	cur.SetAt = w.now().UTC().Format(time.RFC3339)
+	if err := writeCapacity(o.dir, cur, w.pid); err != nil {
+		return err
+	}
+	fmt.Fprintf(w.stdout, "CAPACITY SET cpu=%d memory=%d cores=%d\n",
+		cur.Resources["cpu"], cur.Resources["memory"], cur.UsableCores)
+	return nil
+}
+
+func statusCmd(o options, w world) error {
+	sf, err := querySnapshot(o, w)
+	if err != nil {
+		return err
+	}
+	if o.jsonOut {
+		b, merr := MarshalServerFrame(sf)
+		if merr != nil {
+			return merr
+		}
+		fmt.Fprintln(w.stdout, string(b))
+		return nil
+	}
+	out := bufio.NewWriter(w.stdout)
+	if len(sf.Machines) == 0 {
+		fmt.Fprintf(out, "capacity=unset # run: %s\n", o.remedy("bench", "--force"))
+		return out.Flush()
+	}
+	for _, m := range sf.Machines {
+		tags := strings.Join(m.Tags, ",")
+		fmt.Fprintf(out, "machine %s online=%t cpu=%d memory=%d cores=%d tags=%s\n",
+			m.Host, m.Online, m.Resources["cpu"], m.Resources["memory"], m.UsableCores, cmp.Or(tags, "-"))
+		for _, l := range m.Leases {
+			st := "held"
+			if l.Paused {
+				st = "paused"
+			}
+			fmt.Fprintf(out, "lease %s state=%s host=%s holder=%s source=%s label=%s priority=%s %s cores=%d pid=%d since=%s",
+				l.LeaseID, st, l.Host, l.Holder, l.Source, l.Label, l.Priority, formatNeedsKV(l.Needs), l.Cores, l.PID, cmp.Or(l.Since, "?"))
+			if l.Sublease {
+				fmt.Fprintf(out, " sublease=true parent=%s", l.ParentLease)
+			}
+			if l.Why != "" {
+				fmt.Fprintf(out, " why=%s", esc(l.Why))
+			}
+			fmt.Fprintln(out)
+		}
+		for _, c := range m.Claims {
+			fmt.Fprintf(out, "claim %s host=%s source=%s %s expires_at=%s",
+				c.LeaseID, c.Host, c.Source, formatNeedsKV(c.Needs), c.ExpiresAt)
+			if c.Why != "" {
+				fmt.Fprintf(out, " why=%s", esc(c.Why))
+			}
+			fmt.Fprintln(out)
+		}
+		var fparts []string
+		for _, r := range slices.Sorted(maps.Keys(m.Free)) {
+			fparts = append(fparts, fmt.Sprintf("%s=%d/%d", r, m.Free[r], m.Resources[r]))
+		}
+		fmt.Fprintf(out, "free host=%s %s leases=%d claims=%d queued=%d\n",
+			m.Host, strings.Join(fparts, " "), len(m.Leases), len(m.Claims), len(m.Queue))
+	}
+	return out.Flush()
 }
 
 func waitHoldSignalOrEOF(in io.Reader) {
@@ -620,400 +991,6 @@ func waitHoldSignalOrEOF(in io.Reader) {
 	case <-done:
 	case <-sigs:
 	}
-}
-
-// measureInto runs the benchmark while holding exclusive access on o.dir.
-// When auto is true, it skips measurement if another caller already wrote capacity.json.
-func measureInto(w world, o options, auto bool, deadline time.Time) (capRecord, bool, error) {
-	for {
-		var existing capRecord
-		var haveExisting bool
-		c, have, err := readCapacity(o.dir)
-		if bad := corrupt(""); err != nil && !errors.As(err, &bad) {
-			return capRecord{}, false, err
-		}
-		if have {
-			if auto {
-				return c, false, nil
-			}
-			existing, haveExisting = c, true
-		}
-
-		var exHold *activeHold
-		var bootUnlock func()
-		var bootSeq uint64
-		if haveExisting {
-			exOpts := options{
-				verb: "hold", exclusive: true, holder: "person", label: "measure",
-				priority: "blocker", why: "measure", dir: o.dir, dirSet: o.dirSet, dirFrom: o.dirFrom,
-			}
-			exHold, err = acquire(w, exOpts)
-			if err != nil {
-				return capRecord{}, false, err
-			}
-		} else {
-			var already bool
-			merr := withMutex(w, o.dir, true, deadline, func() error {
-				cur, ok, cerr := readCapacity(o.dir)
-				if bad := corrupt(""); cerr != nil && !errors.As(cerr, &bad) {
-					return cerr
-				}
-				if ok && auto {
-					c, already = cur, true
-					return nil
-				}
-				holds, waiters, lerr := loadStateLocked(w, o.dir, false)
-				if lerr != nil || len(holds) > 0 {
-					return lerr
-				}
-				seq, serr := nextSeqLocked(o.dir, holds, waiters, w.pid)
-				if serr != nil {
-					return serr
-				}
-				lp := lockPath(o.dir, "holds", seq)
-				u, ok, lerr := w.lock(lp, true)
-				if lerr != nil || !ok {
-					return lerr
-				}
-				h := &holdRecord{
-					Seq: seq, PID: w.pid, Since: w.now().UTC().Format(time.RFC3339),
-					Holder: "person", Label: "measure", Priority: "blocker", Exclusive: true,
-					Needs: map[string]int{"cpu": 1, "memory": 1}, Cores: max(1, w.cpus), Why: "measure",
-				}
-				if serr := saveHoldLocked(o.dir, h, w.pid); serr != nil {
-					u()
-					return serr
-				}
-				bootUnlock, bootSeq = u, seq
-				return nil
-			})
-			if merr != nil {
-				if errors.Is(merr, errTimedOut) {
-					return capRecord{}, false, refuse(1, "no hold within %s: measure in progress; run: %s", o.wait, o.remedy("status"))
-				}
-				return capRecord{}, false, merr
-			}
-			if already {
-				return c, false, nil
-			}
-			if bootUnlock == nil {
-				if !deadline.IsZero() && !w.now().Before(deadline) {
-					return capRecord{}, false, refuse(1, "no hold within %s: measure in progress; run: %s", o.wait, o.remedy("status"))
-				}
-				d := min(poll, 100*time.Millisecond)
-				if !deadline.IsZero() {
-					d = min(d, deadline.Sub(w.now()))
-				}
-				w.sleep(d)
-				continue
-			}
-		}
-
-		cores := usableCoreCount(w)
-		if u, uerr := w.usable(); uerr == nil && len(u) > 0 {
-			// ignored: advisory affinity across all usable CPUs for benchmark
-			_ = w.pin(u)
-		}
-		cpuU, memG, berr := w.bench(cores, o.force || auto)
-
-		var written capRecord
-		werr := withMutex(w, o.dir, true, time.Time{}, func() error {
-			if bootUnlock != nil {
-				removePair(seqFiles(o.dir, "holds", bootSeq))
-				bootUnlock()
-			}
-			if berr != nil {
-				return refuse(1, "%v; run: %s", berr, o.remedy("measure", "--force"))
-			}
-			res := map[string]int{"cpu": cpuU, "memory": memG}
-			tags := effectiveTags(nil, w)
-			if haveExisting {
-				for k, v := range existing.Resources {
-					if k != "cpu" && k != "memory" {
-						res[k] = v
-					}
-				}
-				tags = slices.Clone(existing.Tags)
-			}
-			written = capRecord{
-				Tags: tags, UsableCores: cores, Resources: res,
-				SetByPID: w.pid, SetAt: w.now().UTC().Format(time.RFC3339),
-			}
-			if err := writeCapacity(o.dir, written, w.pid); err != nil {
-				return err
-			}
-			if hs, ws, lerr := loadStateLocked(w, o.dir, false); lerr == nil {
-				// ignored: best-effort unpause pass after measure update
-				_, _ = reconcileLocked(w, o.dir, written, hs, ws)
-			}
-			notifyLocked(o.dir, w.pid, w.now())
-			return nil
-		})
-		if exHold != nil {
-			exHold.release(false)
-		}
-		if werr != nil {
-			return capRecord{}, false, werr
-		}
-		return written, true, nil
-	}
-}
-
-func measureCmd(o options, w world) error {
-	written, _, err := measureInto(w, o, false, time.Time{})
-	if err != nil {
-		return err
-	}
-	if o.jsonOut {
-		out := struct {
-			CPU         int      `json:"cpu"`
-			Memory      int      `json:"memory"`
-			UsableCores int      `json:"usable_cores"`
-			Tags        []string `json:"tags"`
-		}{written.Resources["cpu"], written.Resources["memory"], written.UsableCores, effectiveTags(written.Tags, w)}
-		// ignored: marshaling fixed primitive struct cannot fail
-		b, _ := json.Marshal(out)
-		fmt.Fprintln(w.stdout, string(b))
-		return nil
-	}
-	fmt.Fprintf(w.stdout, "MEASURE OK cpu=%d memory=%d cores=%d\n",
-		written.Resources["cpu"], written.Resources["memory"], written.UsableCores)
-	return nil
-}
-
-func setCapacity(o options, w world) error {
-	var unchanged bool
-	var next capRecord
-	err := withMutex(w, o.dir, true, time.Time{}, func() error {
-		cur, have, cerr := readCapacity(o.dir)
-		if bad := corrupt(""); cerr != nil && !errors.As(cerr, &bad) {
-			return cerr
-		}
-		res := map[string]int{}
-		var tags []string
-		cores := usableCoreCount(w)
-		if have {
-			res, tags, cores = maps.Clone(cur.Resources), slices.Clone(cur.Tags), cur.UsableCores
-		}
-		if o.resSet {
-			kept := map[string]int{}
-			for _, base := range []string{"cpu", "memory"} {
-				if res[base] > 0 {
-					kept[base] = res[base]
-				}
-			}
-			maps.Copy(kept, o.res)
-			res = kept
-		}
-		if o.cpu > 0 {
-			res["cpu"] = o.cpu
-		}
-		if o.memory > 0 {
-			res["memory"] = o.memory
-		}
-		if o.cores > 0 {
-			cores = o.cores
-		}
-		if o.tagsSet {
-			tags = slices.Clone(o.tags)
-		} else if !have {
-			tags = effectiveTags(nil, w)
-		}
-		if res["cpu"] < 1 || res["memory"] < 1 {
-			return refuse(2, "%s %s has no capacity.json; pass both --cpu and --memory, or measure first; run: %s",
-				o.dirFrom, o.dir, o.remedy("measure", "--force"))
-		}
-		effTags := effectiveTags(tags, w)
-		for k := range res {
-			if slices.Contains(tags, k) || (k != "cpu" && k != "memory" && slices.Contains(effTags, k)) {
-				return refuse(2, "%q cannot be both a tag and a resource; run: %s", k, helpFor("set"))
-			}
-		}
-		if tags == nil {
-			tags = []string{}
-		}
-		slices.Sort(tags)
-		unchanged = have && cur.UsableCores == cores && slices.Equal(cur.Tags, tags) && maps.Equal(cur.Resources, res)
-		next = capRecord{Tags: tags, UsableCores: cores, Resources: res, SetByPID: w.pid, SetAt: w.now().UTC().Format(time.RFC3339)}
-		if unchanged {
-			return nil
-		}
-		if err := writeCapacity(o.dir, next, w.pid); err != nil {
-			if odd := (*exitError)(nil); errors.As(err, &odd) {
-				return err
-			}
-			return refuse(2, "%v; run: sudo rm -f %s && nova-reserve %s", err, shellQuote(capPath(o.dir)), quoteAll(o.args))
-		}
-		if hs, ws, lerr := loadStateLocked(w, o.dir, false); lerr == nil {
-			// ignored: best-effort unpause pass after live capacity update
-			_, _ = reconcileLocked(w, o.dir, next, hs, ws)
-		}
-		notifyLocked(o.dir, w.pid, w.now())
-		return nil
-	})
-	if err != nil {
-		return err
-	}
-	note := map[bool]string{true: " note=unchanged"}[unchanged]
-	fmt.Fprintf(w.stdout, "CAPACITY SET cpu=%d memory=%d cores=%d%s\n",
-		next.Resources["cpu"], next.Resources["memory"], next.UsableCores, note)
-	return nil
-}
-
-type statusJSON struct {
-	Tags            []string                  `json:"tags"`
-	UsableCores     int                       `json:"usable_cores"`
-	Resources       map[string]int            `json:"resources"`
-	HeldSprint      map[string]int            `json:"held_sprint"`
-	HeldOther       map[string]int            `json:"held_other"`
-	HeldByLabel     map[string]map[string]int `json:"held_by_label"`
-	PausedByLabel   map[string]map[string]int `json:"paused_by_label"`
-	AnyPaused       bool                      `json:"any_paused"`
-	SprintConsumers []string                  `json:"sprint_consumers"`
-	PausedConsumers []string                  `json:"paused_consumers"`
-}
-
-func addByLabel(dst map[string]map[string]int, label string, src map[string]int) {
-	label = cmp.Or(label, "work")
-	if dst[label] == nil {
-		dst[label] = map[string]int{}
-	}
-	for r, v := range src {
-		dst[label][r] += v
-	}
-}
-
-func statusCmd(o options, w world) error {
-	var c capRecord
-	var have bool
-	var capErr error
-	var holds []*holdRecord
-	var waiters []*waiterRecord
-
-	err := withMutex(w, o.dir, false, time.Time{}, func() error {
-		c, have, capErr = readCapacity(o.dir)
-		if bad := corrupt(""); capErr != nil && !errors.As(capErr, &bad) {
-			return capErr
-		}
-		var lerr error
-		holds, waiters, lerr = loadStateLocked(w, o.dir, true)
-		return lerr
-	})
-	if err != nil {
-		return err
-	}
-	var bad corrupt
-	if o.jsonOut {
-		if errors.As(capErr, &bad) {
-			return refuse(2, "%s; run: %s", bad, o.remedy("measure", "--force"))
-		}
-		sj := statusJSON{
-			Tags: effectiveTags(c.Tags, w), UsableCores: c.UsableCores,
-			Resources: map[string]int{}, HeldSprint: map[string]int{}, HeldOther: map[string]int{},
-			HeldByLabel: map[string]map[string]int{}, PausedByLabel: map[string]map[string]int{},
-			SprintConsumers: []string{}, PausedConsumers: []string{},
-		}
-		if have {
-			sj.Resources = maps.Clone(c.Resources)
-		}
-		sprintSet, pausedSet := map[string]bool{}, map[string]bool{}
-		for _, h := range holds {
-			if h.Paused {
-				sj.AnyPaused = true
-				addByLabel(sj.PausedByLabel, h.Label, h.Needs)
-				if h.Consumer != "" {
-					pausedSet[h.Consumer] = true
-				}
-				continue
-			}
-			dst := sj.HeldOther
-			if h.Holder == "bench" {
-				dst = sj.HeldSprint
-				if h.Consumer != "" {
-					sprintSet[h.Consumer] = true
-				}
-			}
-			for r, v := range h.Needs {
-				dst[r] += v
-			}
-			addByLabel(sj.HeldByLabel, h.Label, h.Needs)
-		}
-		if len(sprintSet) > 0 {
-			sj.SprintConsumers = slices.Sorted(maps.Keys(sprintSet))
-		}
-		if len(pausedSet) > 0 {
-			sj.PausedConsumers = slices.Sorted(maps.Keys(pausedSet))
-		}
-		b, merr := json.Marshal(sj)
-		if merr != nil {
-			return merr
-		}
-		fmt.Fprintln(w.stdout, string(b))
-		return nil
-	}
-
-	out := bufio.NewWriter(w.stdout)
-	switch {
-	case errors.As(capErr, &bad):
-		fmt.Fprintf(out, "capacity=? # corrupt: %s; %s\n", bad, o.remedy("measure", "--force"))
-	case have:
-		tags := strings.Join(effectiveTags(c.Tags, w), ",")
-		fmt.Fprintf(out, "capacity cpu=%d memory=%d cores=%d tags=%s set_by_pid=%d set_at=%s\n",
-			c.Resources["cpu"], c.Resources["memory"], c.UsableCores, cmp.Or(tags, "-"), c.SetByPID, cmp.Or(c.SetAt, "?"))
-	default:
-		fmt.Fprintf(out, "capacity=unset # run: %s\n", o.remedy("measure", "--force"))
-	}
-	// ignored: exclusive flag not needed when printing resource free counts
-	used, _ := sumUnpaused(holds)
-	pausedCount := 0
-	for _, h := range holds {
-		state := "held"
-		if h.Paused {
-			state = "paused"
-			pausedCount++
-		}
-		fmt.Fprintf(out, "hold %d state=%s holder=%s label=%s priority=%s %s cores=%d pid=%d since=%s",
-			h.Seq, state, h.Holder, h.Label, h.Priority, formatNeedsKV(h.Needs), h.Cores, h.PID, cmp.Or(h.Since, "?"))
-		if h.Consumer != "" {
-			fmt.Fprintf(out, " consumer=%s", esc(h.Consumer))
-		}
-		if h.Why != "" {
-			fmt.Fprintf(out, " why=%s", esc(h.Why))
-		}
-		if h.Cmd != "" {
-			fmt.Fprintf(out, " cmd=%s", esc(h.Cmd))
-		}
-		fmt.Fprintln(out)
-	}
-	for _, wr := range waiters {
-		fmt.Fprintf(out, "waiter %d holder=%s label=%s priority=%s %s pid=%d since=%s",
-			wr.Seq, wr.Holder, wr.Label, wr.Priority, formatNeedsKV(wr.Needs), wr.PID, cmp.Or(wr.Since, "?"))
-		if wr.Consumer != "" {
-			fmt.Fprintf(out, " consumer=%s", esc(wr.Consumer))
-		}
-		if wr.Why != "" {
-			fmt.Fprintf(out, " why=%s", esc(wr.Why))
-		}
-		fmt.Fprintln(out)
-	}
-	if have {
-		var fparts []string
-		for _, r := range slices.Sorted(maps.Keys(c.Resources)) {
-			fparts = append(fparts, fmt.Sprintf("%s=%d/%d", r, max(0, c.Resources[r]-used[r]), c.Resources[r]))
-		}
-		fmt.Fprintf(out, "free %s paused=%d waiting=%d\n", strings.Join(fparts, " "), pausedCount, len(waiters))
-	} else {
-		fmt.Fprintf(out, "free=? paused=%d waiting=%d\n", pausedCount, len(waiters))
-	}
-	return out.Flush()
-}
-
-func formatNeedsKV(needs map[string]int) string {
-	var parts []string
-	for _, r := range slices.Sorted(maps.Keys(needs)) {
-		parts = append(parts, fmt.Sprintf("%s=%d", r, needs[r]))
-	}
-	return strings.Join(parts, " ")
 }
 
 func esc(s string) string {

@@ -176,10 +176,14 @@ func imports(t *testing.T, f string) (string, []string) {
 
 func isOwn(p string) bool { return p == modulePath || strings.HasPrefix(p, modulePath+"/") }
 
-// toolLibs are the approved library for a tool. The library imports nothing
-// from this module and is imported by that tool alone; its lines count toward
-// the tool's budget. modules/config is the only one (AGENTS.md).
-var toolLibs = map[string]struct{ dir, pkg string }{"config": {"modules/config", "config"}}
+// toolLibs are the approved libraries for tools. Each library imports nothing
+// from this module and is imported only by its approved tools; its lines count
+// toward each importing tool's budget. modules/config is shared by nova-config
+// and nova-reserve (AGENTS.md).
+var toolLibs = map[string]struct{ dir, pkg string }{
+	"config":  {"modules/config", "config"},
+	"reserve": {"modules/config", "config"},
+}
 
 func TestToolsAreIndependentMains(t *testing.T) {
 	base := root(t)

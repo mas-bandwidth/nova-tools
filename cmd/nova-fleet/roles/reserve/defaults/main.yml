@@ -1,0 +1,8 @@
+---
+nova_reserve_port: 7680
+nova_reserve_bind: ""
+nova_reserve_dir: "{{ nova_home }}/.local/state/nova/reserve"
+nova_reserve_unit: nova-reserve
+nova_reserve_seal_name: NOVA_RESERVE_PASSWORD
+nova_reserve_seat: "{{ inventory_hostname }}"
+nova_reserve_pg_dsn: ""

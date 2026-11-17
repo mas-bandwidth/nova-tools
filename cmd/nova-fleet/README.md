@@ -199,21 +199,9 @@ marks a box kept beyond its `return_by`. `--json` prints the same as one object,
 {...}}`. A record that cannot be read is one line naming nova-config's own error; a nova-config on PATH older than the
 rented rows has no `rented` verb, and its refusal is passed on, never read as a fleet with none rented.
 
-## Atomic Fleet Reservation
-
-`nova-fleet reserve` requests an atomic reservation across eligible fleet machines, locking the hold on the remote bench before SSH.
-It filters machines that have the `bench` role and satisfy all required tags and capacities (`R12`).
-Candidates are probed so the first machine that atomically locks the hold (`HELD`) wins; all losing SSH attempts are closed immediately.
-If all eligible machines are full, it waits across candidates up to `--wait`.
-
-```sh
-nova-fleet reserve --needs "cpu 4, memory 8"
-nova-fleet reserve --needs "cpu 4, memory 8, linux, amd64" -- ls -la
-```
-
 ## Fleet Resources
 
-`nova-fleet resources` queries the resource status across fleet machines in parallel (`R21`), reading the machines from `nova-config` and querying each bench's status over SSH.
+`nova-fleet resources` queries `nova-reserve serve` (`nova-reserve status --json`) in one client/server snapshot RPC, reporting capacity, free headroom, active/paused leases, timed soft claims, and queued waiters across the fleet without SSH fan-out. Peer callers acquire leases directly with `nova-reserve hold` or `nova-reserve ssh`.
 
 ```sh
 nova-fleet resources
@@ -232,6 +220,7 @@ nova-fleet resources --json
 | `netwatch` | a Linux machine that loses its network or the tailnet recovers by itself, and a hung one resets (bench, runner and services groups) | nothing; `-l` the machines |
 | `join` | a new machine joins the fleet: its row, its login, the tailnet, the tools a seat needs, its seat | the machine as the argument; its row's fields; `NOVA_PG_DSN` and `NOVA_PG_PASSWORD` in the environment, and `NOVA_FLEET_AUTHKEY` (`up` mints it) or `TAILSCALE_AUTHKEY` for a machine not on the tailnet |
 | `postgres` | the PostgreSQL nova-config keeps the fleet in, on each machine of the services group | `nova_seal_*` to seal its password |
+| `reserve` | the `nova-reserve serve` fleet resource arbitrator on `tcp:7680` (Tailscale bind), on each machine of the services group | `nova_seal_*` to seal `NOVA_RESERVE_PASSWORD` |
 | `prompt` | each login's shell prompt, the networknext relay prompt: `<machine> [<linux|mac|wsl2>]` in cyan, then the directory and `#`; a managed block in `~/.bashrc`, and `~/.zshrc` for a zsh login (all machines) | nothing |
 | `redis` | the Redis nova-bus talks to, on each machine of the services group | `nova_seal_*` to seal its password |
 | `runner-packages` | the packages a CI runner's tests need, from `nova_runner_packages` (a CI toolchain by default), on each machine of the bench and runner groups (a sprint card's gate needs what a CI job needs); packages only, nothing started. `join` runs it for a bench or runner | nothing; `-l` the machines |

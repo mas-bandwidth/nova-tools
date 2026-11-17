@@ -3,13 +3,10 @@ package main
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"io"
-	"io/fs"
+	"net"
 	"os"
-	"os/exec"
-	"path/filepath"
-	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -19,182 +16,156 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// fakeLocks models kernel flock(2) in memory: exclusive locks conflict with all
-// locks; shared locks conflict only with exclusive locks.
-type fakeLocks struct {
-	mu sync.Mutex
-	ex map[string]bool
-	sh map[string]int
+var testEpoch = time.Date(2026, 11, 16, 12, 0, 0, 0, time.UTC)
+
+type testHarness struct {
+	dir     string
+	out     bytes.Buffer
+	err     bytes.Buffer
+	envs    map[string]string
+	code    int
+	lastCmd []string
+	lastEnv []string
+	lowered bool
+	srv     *Server
+	w       world
 }
 
-func newFake() *fakeLocks { return &fakeLocks{ex: map[string]bool{}, sh: map[string]int{}} }
-
-func (f *fakeLocks) lock(path string, exclusive bool) (func(), bool, error) {
-	if fi, err := os.Lstat(path); err == nil {
-		if fi.Mode()&os.ModeSymlink != 0 || !fi.Mode().IsRegular() {
-			_, ok, oerr := osLock(path, exclusive)
-			return nil, ok, oerr
-		}
-	} else if errors.Is(err, os.ErrNotExist) {
-		if !exclusive {
-			return nil, false, os.ErrNotExist
-		}
-		f0, oerr := openIn(path, os.O_RDWR|os.O_CREATE)
-		if oerr != nil {
-			return nil, false, oerr
-		}
-		_ = f0.Close()
-	}
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.ex[path] || (exclusive && f.sh[path] > 0) {
-		return nil, false, nil
-	}
-	if exclusive {
-		f.ex[path] = true
-		var once sync.Once
-		return func() {
-			once.Do(func() {
-				f.mu.Lock()
-				delete(f.ex, path)
-				f.mu.Unlock()
-			})
-		}, true, nil
-	}
-	f.sh[path]++
-	var once sync.Once
-	return func() {
-		once.Do(func() {
-			f.mu.Lock()
-			f.sh[path]--
-			if f.sh[path] <= 0 {
-				delete(f.sh, path)
-			}
-			f.mu.Unlock()
-		})
-	}, true, nil
-}
-
-func (f *fakeLocks) idle() bool {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return len(f.ex) == 0 && len(f.sh) == 0
-}
-
-// clock starts at Unix timestamp 1000 and advances deterministically on sleep.
-var epoch = time.Unix(1000, 0).UTC()
-
-type clock struct {
-	mu      sync.Mutex
-	t       time.Time
-	slept   []time.Duration
-	onSleep func(n int)
-}
-
-func (c *clock) now() time.Time {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.t
-}
-
-func (c *clock) sleep(d time.Duration) {
-	c.mu.Lock()
-	c.slept = append(c.slept, d)
-	c.t = c.t.Add(d)
-	n := len(c.slept)
-	fn := c.onSleep
-	c.mu.Unlock()
-	if fn != nil {
-		fn(n)
-	}
-}
-
-type fakeWatch struct {
-	c *clock
-}
-
-func (w fakeWatch) drain()                        {}
-func (w fakeWatch) wait(_ []int, d time.Duration) { w.c.sleep(d) }
-func (w fakeWatch) close()                        {}
-
-type harness struct {
-	f        *fakeLocks
-	c        *clock
-	envMap   map[string]string
-	dir      string
-	ran      []string
-	ranEnv   []string
-	ranLower bool
-	code     int
-	out, err bytes.Buffer
-	w        world
-}
-
-func newHarness(t *testing.T) *harness {
-	h := &harness{
-		f:      newFake(),
-		c:      &clock{t: epoch},
-		envMap: map[string]string{"PATH": "/usr/bin:/bin"},
-		dir:    t.TempDir(),
+func newHarness(t *testing.T) *testHarness {
+	t.Helper()
+	h := &testHarness{
+		dir:  t.TempDir(),
+		envs: map[string]string{"PATH": "/usr/bin", "USER": "alice"},
 	}
 	h.w = world{
-		env:     func(k string) string { return h.envMap[k] },
-		environ: func() []string { return []string{"PATH=/usr/bin:/bin", "HOME=/nonexistent"} },
-		lock:    h.f.lock,
-		watch:   func(string) watcher { return fakeWatch{c: h.c} },
-		now:     h.c.now,
-		sleep:   h.c.sleep,
-		resolve: func(name string) (string, error) { return "/bin/" + name, nil },
-		exec: func(_ string, argv, env []string, lower bool) int {
-			h.ran, h.ranEnv, h.ranLower = argv, env, lower
+		env: func(k string) string { return h.envs[k] },
+		environ: func() []string {
+			var out []string
+			for k, v := range h.envs {
+				out = append(out, k+"="+v)
+			}
+			return out
+		},
+		now:     func() time.Time { return testEpoch },
+		resolve: func(name string) (string, error) { return "/usr/bin/" + name, nil },
+		exec: func(path string, argv, env []string, lower bool) int {
+			h.lastCmd = append([]string{path}, argv...)
+			h.lastEnv = slices.Clone(env)
+			h.lowered = lower
 			return h.code
 		},
 		waitEOF: func(in io.Reader) {
 			if in != nil {
-				_, _ = io.Copy(io.Discard, in)
+				_, _ = io.ReadAll(in)
 			}
 		},
-		running: func(int) bool { return true },
-		bench:   func(cores int, _ bool) (int, int, error) { return max(1, cores), 32, nil },
-		pid:     42,
-		cpus:    8,
-		goos:    "linux",
-		goarch:  "amd64",
-		usable:  func() ([]int, error) { return nil, nil },
-		groups:  func([]int) [][]int { return nil },
-		pin:     func([]int) error { panic("pinned with no usable CPUs") },
-		stdin:   strings.NewReader(""),
-		stdout:  &h.out,
-		stderr:  &h.err,
+		bench:  func(cores int, force bool) (int, int, error) { return cores, 16, nil },
+		pid:    42,
+		cpus:   8,
+		goos:   "linux",
+		goarch: "amd64",
+		usable: func() ([]int, error) { return nil, nil },
+		groups: smtGroups,
+		pin:    func([]int) error { return nil },
+		stdin:  strings.NewReader(""),
+		stdout: &h.out,
+		stderr: &h.err,
 	}
 	return h
 }
 
-func (h *harness) sibling(pid int) *harness {
-	s := &harness{f: h.f, c: h.c, envMap: map[string]string{"PATH": "/usr/bin:/bin"}, dir: h.dir}
-	s.w = h.w
-	s.w.pid, s.w.stdout, s.w.stderr = pid, &s.out, &s.err
-	s.w.env = func(k string) string { return s.envMap[k] }
-	s.w.exec = func(_ string, argv, env []string, lower bool) int {
-		s.ran, s.ranEnv, s.ranLower = argv, env, lower
-		return s.code
+func (h *testHarness) setCap(t *testing.T, cpu, mem, cores int) {
+	t.Helper()
+	var so, se bytes.Buffer
+	w := h.w
+	w.stdout, w.stderr = &so, &se
+	require.Equal(t, 0, run([]string{"set", "--dir", h.dir, "--cpu", itoa(cpu), "--memory", itoa(mem), "--cores", itoa(cores)}, w), se.String())
+}
+
+func (h *testHarness) startInMemoryLocalServer(t *testing.T, usable []int, groups [][]int) {
+	t.Helper()
+	c, ok, err := readCapacity(h.dir)
+	require.NoError(t, err)
+	require.True(t, ok)
+	m := MachineSpec{
+		Host: "local", Online: true, Tags: effectiveTags(c.Tags, "linux", "amd64"),
+		UsableCores: c.UsableCores, Resources: c.Resources, UsableCPUs: usable, SMTGroups: groups,
 	}
+	srv := NewServer(ServerConfig{Local: true, Dir: h.dir}, []MachineSpec{m})
+	if fi, serr := os.Stat(capPath(h.dir)); serr == nil {
+		srv.capMtime = fi.ModTime().UnixNano()
+	}
+	t.Cleanup(srv.Close)
+	h.srv = srv
+	h.w.dial = func(ep endpoint, o options) (net.Conn, error) {
+		cConn, sConn := net.Pipe()
+		go srv.handleConn(sConn)
+		return cConn, nil
+	}
+}
+
+func (h *testHarness) startInMemoryFleetServer(t *testing.T, password string, machines []MachineSpec) *Server {
+	t.Helper()
+	srv := NewServer(ServerConfig{Local: false, Password: password}, machines)
+	t.Cleanup(srv.Close)
+	h.srv = srv
+	h.envs["NOVA_RESERVE_ADDR"] = "studio:7680"
+	h.envs["NOVA_RESERVE_PASSWORD"] = password
+	h.w.dial = func(ep endpoint, o options) (net.Conn, error) {
+		cConn, sConn := net.Pipe()
+		go srv.handleConn(sConn)
+		return cConn, nil
+	}
+	return srv
+}
+
+func (h *testHarness) sibling(pid int) *testHarness {
+	s := &testHarness{
+		dir:  h.dir,
+		envs: map[string]string{"PATH": "/usr/bin", "USER": "bob"},
+		srv:  h.srv,
+		w:    h.w,
+	}
+	s.w.pid = pid
+	s.w.stdout = &s.out
+	s.w.stderr = &s.err
 	return s
 }
 
-func (h *harness) setCap(t *testing.T, cpu, mem, cores int, tags ...string) {
+func (h *testHarness) startHold(t *testing.T, extraArgs ...string) func() {
 	t.Helper()
-	args := []string{"set", "--dir", h.dir, "--cpu", itoaTest(cpu), "--memory", itoaTest(mem), "--cores", itoaTest(cores)}
-	if len(tags) > 0 {
-		args = append(args, "--tags", strings.Join(tags, ","))
+	pr, pw := io.Pipe()
+	ready := make(chan struct{})
+	var once sync.Once
+	w := h.w
+	w.stdin = pr
+	w.stdout = writerFunc(func(p []byte) (int, error) {
+		n, err := h.out.Write(p)
+		if strings.Contains(h.out.String(), "\n") {
+			once.Do(func() { close(ready) })
+		}
+		return n, err
+	})
+	var done sync.WaitGroup
+	done.Add(1)
+	args := append([]string{"hold", "--dir", h.dir}, extraArgs...)
+	go func() {
+		defer done.Done()
+		run(args, w)
+	}()
+	<-ready
+	return func() {
+		_ = pw.Close()
+		done.Wait()
 	}
-	require.Equal(t, 0, run(args, h.w), h.err.String())
-	h.out.Reset()
-	h.err.Reset()
 }
 
-func itoaTest(n int) string {
-	return strings.TrimSpace(strings.ReplaceAll(jsonNumber(n), "\n", ""))
+type writerFunc func([]byte) (int, error)
+
+func (f writerFunc) Write(p []byte) (int, error) { return f(p) }
+
+func itoa(n int) string {
+	return jsonNumber(n)
 }
 
 func jsonNumber(n int) string {
@@ -202,457 +173,247 @@ func jsonNumber(n int) string {
 	return string(b)
 }
 
-func (h *harness) take(t *testing.T, extra ...string) *activeHold {
-	t.Helper()
-	args := append([]string{"hold", "--dir", h.dir}, extra...)
-	o, err := parse(args)
+func TestParseVerbsFlagsAndRefusals(t *testing.T) {
+	t.Parallel()
+	o, err := parse([]string{"--needs", "cpu 4, memory 8, linux", "--holder", "friend", "--source", "alice", "--", "go", "test", "./..."})
 	require.NoError(t, err)
-	require.NoError(t, ensureLayout(o.dir, o.dirFrom, "nova-reserve"))
-	ah, err := acquire(h.w, o)
+	assert.Equal(t, "run", o.verb)
+	assert.Equal(t, "", o.rawVerb)
+	assert.Equal(t, "friend", o.holder)
+	assert.Equal(t, "alice", o.source)
+	assert.Equal(t, "work", o.label)
+	assert.Equal(t, []string{"go", "test", "./..."}, o.argv)
+
+	// Alias calibrate / measure -> bench.
+	o2, err := parse([]string{"calibrate", "--force", "--write-config"})
 	require.NoError(t, err)
-	return ah
-}
+	assert.Equal(t, "bench", o2.verb)
+	assert.True(t, o2.force)
+	assert.True(t, o2.writeConfig)
 
-func envLookup(env []string, key string) string {
-	for _, kv := range env {
-		if v, ok := strings.CutPrefix(kv, key+"="); ok {
-			return v
-		}
+	// Invalid combinations exit 2 with clean single-line refusal.
+	badCases := [][]string{
+		{"no-such-verb"},
+		{"--exclusive", "--needs", "cpu 2", "--", "true"},
+		{"--nowait", "--wait", "5s", "--", "true"},
+		{"hold", "--", "true"},
+		{"release"},
+		{"set"},
+		{"--holder", "invalid", "--", "true"},
+		{"--priority", "urgent", "--", "true"},
+		{"--needs", "cpu 0", "--", "true"},
+		{"ssh"},
 	}
-	return ""
-}
-
-// --- measure & set -----------------------------------------------------------
-
-func TestMeasureWritesCapacityAndHonorsForce(t *testing.T) {
-	t.Parallel()
-	h := newHarness(t)
-	h.w.bench = func(cores int, force bool) (int, int, error) {
-		if !force {
-			return 0, 0, errors.New("machine is busy (60% CPU in use); stop other work or pass --force")
-		}
-		return 12, 64, nil
-	}
-	assert.Equal(t, 1, run([]string{"measure", "--dir", h.dir}, h.w))
-	assert.Contains(t, h.err.String(), "machine is busy")
-	assert.Contains(t, h.err.String(), "run: nova-reserve measure --force --dir "+shellQuote(h.dir))
-	h.err.Reset()
-
-	assert.Equal(t, 0, run([]string{"measure", "--force", "--dir", h.dir}, h.w))
-	assert.Equal(t, "MEASURE OK cpu=12 memory=64 cores=8\n", h.out.String())
-	h.out.Reset()
-
-	// Add custom tag and custom resource, then re-measure --json: tags & custom resources stay.
-	assert.Equal(t, 0, run([]string{"set", "--dir", h.dir, "--tags", "gpu", "--resources", "ps5=1"}, h.w))
-	h.out.Reset()
-	assert.Equal(t, 0, run([]string{"measure", "--force", "--json", "--dir", h.dir}, h.w))
-	var got struct {
-		CPU         int      `json:"cpu"`
-		Memory      int      `json:"memory"`
-		UsableCores int      `json:"usable_cores"`
-		Tags        []string `json:"tags"`
-	}
-	require.NoError(t, json.Unmarshal(h.out.Bytes(), &got))
-	assert.Equal(t, 12, got.CPU)
-	assert.Equal(t, 64, got.Memory)
-	assert.Equal(t, 8, got.UsableCores)
-	assert.Equal(t, []string{"amd64", "gpu", "linux"}, got.Tags)
-
-	c, have, err := readCapacity(h.dir)
-	require.NoError(t, err)
-	require.True(t, have)
-	assert.Equal(t, 1, c.Resources["ps5"])
-	assert.True(t, h.f.idle())
-}
-
-func TestCustomDirNeverAutoMeasures(t *testing.T) {
-	t.Parallel()
-	h := newHarness(t)
-	calledBench := false
-	h.w.bench = func(int, bool) (int, int, error) { calledBench = true; return 8, 16, nil }
-	assert.Equal(t, 2, run([]string{"--dir", h.dir, "--", "make"}, h.w))
-	assert.False(t, calledBench, "custom --dir must never auto-measure")
-	assert.Contains(t, h.err.String(), "has no capacity.json")
-	assert.Nil(t, h.ran)
-}
-
-func TestSetUpdatesAtomicallyWhileHoldsAreActive(t *testing.T) {
-	t.Parallel()
-	h := newHarness(t)
-	h.setCap(t, 4, 8, 4)
-	a := h.take(t, "--needs", "cpu 4, memory 8")
-	defer a.release(false)
-
-	s := h.sibling(99)
-	assert.Equal(t, 0, run([]string{"set", "--dir", h.dir, "--cpu", "8", "--tags", "gpu", "--resources", "ps5=1"}, s.w))
-	assert.Equal(t, "CAPACITY SET cpu=8 memory=8 cores=4\n", s.out.String())
-	s.out.Reset()
-	assert.Equal(t, 0, run([]string{"set", "--dir", h.dir, "--cpu", "8", "--tags", "gpu", "--resources", "ps5=1"}, s.w))
-	assert.Equal(t, "CAPACITY SET cpu=8 memory=8 cores=4 note=unchanged\n", s.out.String())
-}
-
-// --- multi-resource fit, never-fit (R12), and FIFO waiter line (R18) --------
-
-func TestNeverFitRefusesImmediatelyWithoutWaiting(t *testing.T) {
-	t.Parallel()
-	h := newHarness(t)
-	h.setCap(t, 4, 8, 4, "gpu")
-	for _, spec := range []string{
-		"cpu 8",
-		"memory 16",
-		"metal",
-		"ps5 1",
-	} {
-		h.err.Reset()
-		assert.Equal(t, 1, run([]string{"--dir", h.dir, "--needs", spec, "--wait", "10m", "--", "make"}, h.w), spec)
-		assert.Empty(t, h.c.slept, "never-fit must not sleep or queue: %s", spec)
-		assert.Nil(t, h.ran)
-	}
-	assert.True(t, h.f.idle())
-}
-
-func TestStrictArrivalOrderWaiterLineAndNoWait(t *testing.T) {
-	t.Parallel()
-	h := newHarness(t)
-	h.setCap(t, 4, 8, 4)
-
-	// Hold 1 takes cpu 3 (leaving cpu 1 free).
-	h1 := h.take(t, "--needs", "cpu 3, memory 2")
-
-	// Waiter W1 needs cpu 2 -> does not fit in cpu 1, so enters line/ at seq 2.
-	w1 := h.sibling(101)
-	w1.c.onSleep = func(n int) {
-		if n == 1 {
-			// While W1 waits at the head of line/, a smaller --nowait caller asking cpu 1
-			// MUST NOT jump ahead of W1, even though 1 CPU is free!
-			jumper := h.sibling(102)
-			code := run([]string{"--dir", h.dir, "--needs", "cpu 1, memory 1", "--nowait", "--", "echo"}, jumper.w)
-			assert.Equal(t, 1, code, "smaller caller must not bypass head of waiter line")
-			assert.Contains(t, jumper.err.String(), "NO ROOM")
-		}
-		if n == 2 {
-			h1.release(false)
-		}
-	}
-	w1Hold := w1.take(t, "--needs", "cpu 2, memory 2")
-	w1.c.onSleep = nil
-	w1Hold.release(false)
-	assert.True(t, h.f.idle())
-}
-
-func TestWaitDeadlineClampsSleepAndCleansLine(t *testing.T) {
-	t.Parallel()
-	h := newHarness(t)
-	h.setCap(t, 2, 4, 2)
-	held := h.take(t, "--needs", "cpu 2, memory 2", "--why", "heavy build")
-	defer held.release(false)
-
-	s := h.sibling(88)
-	assert.Equal(t, 1, run([]string{"--dir", h.dir, "--wait", "100ms", "--", "make"}, s.w))
-	assert.Equal(t, []time.Duration{100 * time.Millisecond}, h.c.slept)
-	assert.Equal(t, epoch.Add(100*time.Millisecond), h.c.now())
-	assert.Contains(t, s.err.String(), `no hold within 100ms: hold 1 held holder=person label=work pid=42 why=heavy\sbuild`)
-}
-
-// --- CI immediate acquisition, priority displacement, and between-command pause ---
-
-func TestCIDisplacesLowestPriorityYoungestFirstAndNeverExceedsCapacity(t *testing.T) {
-	t.Parallel()
-	h := newHarness(t)
-	h.setCap(t, 6, 12, 6, "gpu")
-	assert.Equal(t, 0, run([]string{"set", "--dir", h.dir, "--resources", "ps5=1"}, h.w))
-	h.out.Reset()
-
-	// Three active holds filling all 6 CPUs:
-	// seq 1: high, cpu 2, mem 4, ps5 1
-	// seq 2: normal (older), cpu 2, mem 4
-	// seq 3: normal (younger), cpu 2, mem 4
-	s1 := h.sibling(201).take(t, "--holder", "bench", "--consumer", "c-high@1", "--label", "critical", "--priority", "high", "--needs", "cpu 2, memory 4, ps5")
-	s2 := h.sibling(202).take(t, "--holder", "bench", "--consumer", "c-old@1", "--label", "work", "--priority", "normal", "--needs", "cpu 2, memory 4")
-	s3 := h.sibling(203).take(t, "--holder", "bench", "--consumer", "c-young@1", "--label", "work", "--priority", "normal", "--needs", "cpu 2, memory 4")
-
-	// CI arrives needing cpu 2, memory 4 -> displaces ONLY s3 (normal, youngest: seq 3)!
-	ci := h.sibling(300).take(t, "--holder", "ci", "--needs", "cpu 2, memory 4")
-
-	st := h.sibling(400)
-	require.Equal(t, 0, run([]string{"status", "--json", "--dir", h.dir}, st.w))
-	var sj statusJSON
-	require.NoError(t, json.Unmarshal(st.out.Bytes(), &sj))
-	assert.True(t, sj.AnyPaused)
-	assert.Equal(t, []string{"c-high@1", "c-old@1"}, sj.SprintConsumers)
-	assert.Equal(t, []string{"c-young@1"}, sj.PausedConsumers)
-	assert.Equal(t, map[string]int{"cpu": 4, "memory": 8, "ps5": 1}, sj.HeldSprint)
-	assert.Equal(t, map[string]int{"cpu": 2, "memory": 4}, sj.HeldOther)
-	assert.Equal(t, map[string]map[string]int{"work": {"cpu": 2, "memory": 4}}, sj.PausedByLabel)
-	assert.Equal(t, map[string]map[string]int{
-		"ci":       {"cpu": 2, "memory": 4},
-		"critical": {"cpu": 2, "memory": 4, "ps5": 1},
-		"work":     {"cpu": 2, "memory": 4},
-	}, sj.HeldByLabel)
-
-	// While c-young@1 is paused, even if s2 finishes (freeing cpu 2!), a new --nowait
-	// friend caller is barred until paused work unpauses first — and s2's release
-	// immediately unpauses s3!
-	s2.release(true)
-	st.out.Reset()
-	require.Equal(t, 0, run([]string{"status", "--json", "--dir", h.dir}, st.w))
-	require.NoError(t, json.Unmarshal(st.out.Bytes(), &sj))
-	assert.False(t, sj.AnyPaused, "s2 releasing freed enough room to unpause s3 immediately")
-	assert.Equal(t, []string{"c-high@1", "c-young@1"}, sj.SprintConsumers)
-
-	ci.release(false)
-	s1.release(false)
-	s3.release(false)
-	assert.True(t, h.f.idle())
-}
-
-func TestBetweenCommandPauseResumesAheadOfWaiters(t *testing.T) {
-	t.Parallel()
-	h := newHarness(t)
-	h.setCap(t, 4, 8, 4)
-
-	// Step 1 of consumer card-1.w1@1 holds cpu 4, memory 8.
-	step1 := h.sibling(210).take(t, "--holder", "bench", "--consumer", "card-1.w1@1", "--priority", "high", "--needs", "cpu 4, memory 8")
-
-	// CI arrives taking all cpu 4, memory 8 -> pauses step1.
-	ci := h.sibling(310).take(t, "--holder", "ci", "--needs", "cpu 4, memory 8")
-
-	// Step 1 finishes its in-flight command while CI is still running!
-	step1.release(true)
-
-	// Status still reports card-1.w1@1 as paused between commands!
-	st := h.sibling(410)
-	require.Equal(t, 0, run([]string{"status", "--json", "--dir", h.dir}, st.w))
-	var sj statusJSON
-	require.NoError(t, json.Unmarshal(st.out.Bytes(), &sj))
-	assert.True(t, sj.AnyPaused)
-	assert.Equal(t, []string{"card-1.w1@1"}, sj.PausedConsumers)
-
-	// A new waiter tries --nowait for cpu 1 even if CI only held cpu 2 -> refused because AnyPaused!
-	waiter := h.sibling(510)
-	assert.Equal(t, 1, run([]string{"--dir", h.dir, "--nowait", "--needs", "cpu 1, memory 1", "--", "true"}, waiter.w))
-
-	// Step 2 of card-1.w1@1 starts while CI runs; when CI releases on sleep 1, Step 2 unpauses and runs!
-	step2 := h.sibling(211)
-	h.c.onSleep = func(n int) {
-		if n == 1 {
-			ci.release(false)
-		}
-	}
-	assert.Equal(t, 0, run([]string{"--dir", h.dir, "--holder", "bench", "--consumer", "card-1.w1@1", "--priority", "high", "--needs", "cpu 4, memory 8", "--", "cargo", "test"}, step2.w))
-	h.c.onSleep = nil
-	assert.Equal(t, []string{"cargo", "test"}, step2.ran)
-	assert.True(t, h.f.idle())
-}
-
-// --- Re-entrancy, OS steering, hold verb, CLI refusals -----------------------
-
-func TestReentrantNestedCallExecsDirectlyWithoutDeadlocking(t *testing.T) {
-	t.Parallel()
-	h := newHarness(t)
-	h.setCap(t, 2, 4, 2)
-
-	// Outer exclusive run sets NOVA_RESERVE_DIR in child env; simulated nested run
-	// targeting the same dir bypasses locking instead of self-deadlocking!
-	h.w.exec = func(_ string, argv, env []string, lower bool) int {
-		h.ran, h.ranEnv, h.ranLower = argv, env, lower
-		nested := h.sibling(77)
-		nested.envMap["NOVA_RESERVE_DIR"] = envLookup(env, "NOVA_RESERVE_DIR")
-		assert.Equal(t, 0, run([]string{"--dir", h.dir, "--exclusive", "--nowait", "--", "true"}, nested.w))
-		assert.Equal(t, []string{"true"}, nested.ran)
-		assert.Empty(t, nested.err.String(), "re-entrant run prints no second HELD receipt")
-		return 0
-	}
-	assert.Equal(t, 0, run([]string{"--dir", h.dir, "--exclusive", "--", "make"}, h.w))
-	assert.True(t, h.ranLower)
-	assert.Equal(t, "2", envLookup(h.ranEnv, "NOVA_RESERVE_CPUS"))
-	assert.Equal(t, "2", envLookup(h.ranEnv, "GOMAXPROCS"))
-	assert.Equal(t, "2", envLookup(h.ranEnv, "CARGO_BUILD_JOBS"))
-	assert.Equal(t, "2", envLookup(h.ranEnv, "RAYON_NUM_THREADS"))
-	assert.Equal(t, "2", envLookup(h.ranEnv, "CMAKE_BUILD_PARALLEL_LEVEL"))
-	assert.True(t, h.f.idle())
-}
-
-func TestCIHolderKeepsNormalOSPriority(t *testing.T) {
-	t.Parallel()
-	h := newHarness(t)
-	h.setCap(t, 16, 64, 16)
-	assert.Equal(t, 0, run([]string{"--dir", h.dir, "--holder", "ci", "--needs", "cpu 4, memory 8", "--", "go", "test"}, h.w))
-	assert.False(t, h.ranLower, "CI holds must not lower OS priority")
-	assert.Equal(t, "4", envLookup(h.ranEnv, "NOVA_RESERVE_CPUS"))
-}
-
-func TestHoldVerbPrintsHELDAndReleasesOnEOF(t *testing.T) {
-	t.Parallel()
-	h := newHarness(t)
-	h.setCap(t, 16, 32, 8)
-	var sawHeld bool
-	h.w.waitEOF = func(io.Reader) {
-		st := h.sibling(99)
-		require.Equal(t, 0, run([]string{"status", "--dir", h.dir}, st.w))
-		sawHeld = strings.Contains(st.out.String(), "hold 1 state=held")
-	}
-	assert.Equal(t, 0, run([]string{"hold", "--dir", h.dir, "--needs", "cpu 8, memory 8"}, h.w))
-	assert.True(t, sawHeld)
-	assert.Equal(t, "HELD cpu=8 memory=8 cores=4 pid=42\n", h.out.String())
-	assert.True(t, h.f.idle())
-}
-
-func TestDeadHoldLockIsIgnoredByStatusAndReapedByNextCaller(t *testing.T) {
-	t.Parallel()
-	h := newHarness(t)
-	h.setCap(t, 4, 8, 4)
-
-	// Simulate a SIGKILLed holder: .lock and .json left on disk with NO kernel flock held!
-	lp, jp := seqFiles(h.dir, "holds", 1)
-	require.NoError(t, os.WriteFile(lp, nil, 0o666))
-	rec := holdRecord{Seq: 1, PID: 42, Holder: "bench", Consumer: "dead@1", Label: "work", Priority: "normal", Needs: map[string]int{"cpu": 4, "memory": 8}, Cores: 4}
-	b, _ := json.Marshal(rec)
-	require.NoError(t, writeRecord(jp, b, 42))
-
-	// Even though PID 42 is alive (PID-reuse simulation!), LOCK_SH succeeds so status sees 0 holds!
-	require.Equal(t, 0, run([]string{"status", "--json", "--dir", h.dir}, h.w))
-	var sj statusJSON
-	require.NoError(t, json.Unmarshal(h.out.Bytes(), &sj))
-	assert.Empty(t, sj.HeldSprint)
-	assert.Empty(t, sj.SprintConsumers)
-
-	// Next mutator reaps the dead files and acquires all 4 CPUs cleanly!
-	h.out.Reset()
-	assert.Equal(t, 0, run([]string{"--dir", h.dir, "--needs", "cpu 4, memory 8", "--nowait", "--", "make"}, h.w))
-	assert.Equal(t, []string{"make"}, h.ran)
-}
-
-func TestRefusals(t *testing.T) {
-	t.Parallel()
-	for _, c := range []struct {
-		args []string
-		line string
-	}{
-		{[]string{}, "nova-reserve: no command: nova-reserve [flags] -- <cmd> [args...]; run: nova-reserve -h"},
-		{[]string{"--needs", "", "--", "x"}, `nova-reserve: --needs wants a comma-separated resource/tag list like "cpu 4, memory 8", not ""; run: nova-reserve -h`},
-		{[]string{"--needs", "cpu 0", "--", "x"}, `nova-reserve: --needs wants a comma-separated resource/tag list like "cpu 4, memory 8", not "cpu 0"; run: nova-reserve -h`},
-		{[]string{"--needs", "cpu 2, cpu 4", "--", "x"}, `nova-reserve: --needs wants a comma-separated resource/tag list like "cpu 4, memory 8", not "cpu 2, cpu 4"; run: nova-reserve -h`},
-		{[]string{"--wait", "-1s", "--", "x"}, `nova-reserve: --wait wants a duration above 0, like 90s or 15m, not "-1s"; run: nova-reserve -h`},
-		{[]string{"--wait", "0s", "--", "x"}, `nova-reserve: --wait wants a duration above 0, like 90s or 15m, not "0s"; run: nova-reserve -h`},
-		{[]string{"--nowait", "--wait", "1s", "--", "x"}, "nova-reserve: --nowait and --wait cannot both be given; run: nova-reserve -h"},
-		{[]string{"--exclusive", "--needs", "cpu 2", "--", "x"}, "nova-reserve: --exclusive takes every resource; --needs does not apply; run: nova-reserve -h"},
-		{[]string{"--exclusive=yes", "--", "x"}, `nova-reserve: --exclusive takes no value, not "yes"; run: nova-reserve -h`},
-		{[]string{"--holder", "nope", "--", "x"}, `nova-reserve: --holder wants one of bench, friend, ci, person, not "nope"; run: nova-reserve -h`},
-		{[]string{"--priority", "urgent", "--", "x"}, `nova-reserve: --priority wants one of low, normal, high, read, critical, blocker, not "urgent"; run: nova-reserve -h`},
-		{[]string{"--bogus", "--", "x"}, "nova-reserve: unknown flag --bogus; run: nova-reserve -h"},
-		{[]string{"status", "--wait", "1s"}, "nova-reserve status: status takes no --wait; it takes --json, --dir; run: nova-reserve status -h"},
-		{[]string{"set"}, "nova-reserve set: set wants at least one of --cpu, --memory, --cores, --tags, --resources; run: nova-reserve set -h"},
-		{[]string{"set", "--cpu", "2", "--exclusive"}, "nova-reserve set: set takes no --exclusive; it takes --cpu, --memory, --cores, --tags, --resources, --dir; run: nova-reserve set -h"},
-		{[]string{"hold", "--", "x"}, `nova-reserve hold: hold takes no command, not "x"; run: nova-reserve hold -h`},
-		{[]string{"status", "extra"}, `nova-reserve status: unexpected "extra"; a command goes after --; run: nova-reserve status -h`},
-		{[]string{"--why", "", "--", "x"}, `nova-reserve: --why wants text, not ""; run: nova-reserve -h`},
-		{[]string{"help", "nope"}, `nova-reserve help: help takes one of run, hold, measure, set, status, not "nope"; run: nova-reserve -h`},
-		{[]string{"no-such-verb"}, `nova-reserve: unknown verb "no-such-verb"; verbs: run, hold, measure, set, status, help; a command goes after --: nova-reserve -- no-such-verb; run: nova-reserve help`},
-	} {
+	for _, tc := range badCases {
 		h := newHarness(t)
-		h.dir = filepath.Join(h.dir, "never")
-		assert.Equal(t, 2, run(c.args, h.w), "%q", c.args)
-		assert.Equal(t, c.line+"\n", h.err.String(), "%q", c.args)
-		assert.Empty(t, h.out.String(), "%q", c.args)
-		assert.Nil(t, h.ran, "%q", c.args)
-		assert.NoDirExists(t, h.dir, "%q: refusal touches nothing", c.args)
+		assert.Equal(t, 2, run(tc, h.w), "case %v", tc)
+		assert.NotEmpty(t, h.err.String())
+		assert.Empty(t, h.out.String())
 	}
 }
 
-func TestVerbHelp(t *testing.T) {
+func TestEngineMultiHostFleetAnyAndHostPinnedAdmission(t *testing.T) {
 	t.Parallel()
-	for _, args := range [][]string{
-		{"help"}, {"-h"}, {"--help"},
-		{"help", "run"}, {"run", "-h"}, {"--needs", "cpu 2", "--help", "--", "x"},
-		{"help", "hold"}, {"hold", "-h"}, {"hold", "--help"},
-		{"help", "measure"}, {"measure", "-h"}, {"measure", "--help"},
-		{"help", "set"}, {"set", "-h"}, {"set", "--help"},
-		{"help", "status"}, {"status", "-h"}, {"status", "--help"},
-	} {
-		h := newHarness(t)
-		h.dir = filepath.Join(h.dir, "never")
-		assert.Equal(t, 0, run(args, h.w), "%q", args)
-		assert.Contains(t, h.out.String(), "nova-reserve", "%q", args)
-		assert.Empty(t, h.err.String(), "%q", args)
-		assert.NoDirExists(t, h.dir, "%q", args)
-	}
+	eng := NewEngine([]MachineSpec{
+		{Host: "b1", Address: "100.64.0.1", User: "op", Online: true, Tags: []string{"linux", "amd64", "ps5-sdk"}, UsableCores: 16, Resources: map[string]int{"cpu": 8, "memory": 16, "ps5": 1}},
+		{Host: "b2", Address: "100.64.0.2", User: "op", Online: true, Tags: []string{"linux", "amd64"}, UsableCores: 32, Resources: map[string]int{"cpu": 24, "memory": 64}},
+		{Host: "m1", Address: "100.64.0.3", User: "op", Online: true, Tags: []string{"mac", "arm64", "metal"}, UsableCores: 12, Resources: map[string]int{"cpu": 12, "memory": 32}},
+	}, 1_000, 0)
+
+	// Contradictory tags ("linux, metal") refuse immediately with code="impossible".
+	msgs := eng.Request(1, ClientFrame{Op: "request", ReqID: "r0", Mode: "any", Needs: NeedsSpec{Raw: "cpu 2, linux, metal"}}, 1_000)
+	require.Equal(t, "refused", msgs[0].Frame.Op)
+	assert.Equal(t, "impossible", msgs[0].Frame.Code)
+
+	// Fleet-any linux request picks b2 (highest CPU headroom: 24-4=20 vs 8-4=4).
+	msgs = eng.Request(1, ClientFrame{Op: "request", ReqID: "r1", Mode: "any", Needs: NeedsSpec{Raw: "cpu 4, memory 8, linux"}, Holder: "friend", Source: "alice"}, 1_000)
+	require.Equal(t, "granted", msgs[0].Frame.Op)
+	assert.Equal(t, "b2", msgs[0].Frame.Host)
+	assert.Equal(t, 5, msgs[0].Frame.Cores) // floor(4 * 32 / 24) = 5
+
+	// Bare countable hardware resource "ps5" means amount 1 and routes to b1; a second ps5 queues!
+	msgs = eng.Request(2, ClientFrame{Op: "request", ReqID: "r2", Mode: "any", Needs: NeedsSpec{Raw: "cpu 2, ps5"}, Holder: "friend", Source: "bob"}, 1_000)
+	require.Equal(t, "granted", msgs[0].Frame.Op)
+	assert.Equal(t, "b1", msgs[0].Frame.Host)
+	assert.Equal(t, 1, msgs[0].Frame.Needs["ps5"])
+
+	msgs = eng.Request(3, ClientFrame{Op: "request", ReqID: "r3", Mode: "any", Needs: NeedsSpec{Raw: "ps5"}, Holder: "friend", Source: "carol"}, 1_000)
+	require.Equal(t, "queued", msgs[0].Frame.Op)
+
+	// Releasing conn 2 immediately grants queued r3 on b1!
+	out := eng.CloseConn(2, 1_500)
+	require.True(t, slices.ContainsFunc(out, func(m OutMsg) bool {
+		return m.ConnID == 3 && m.Frame.Op == "granted" && m.Frame.Host == "b1"
+	}))
 }
 
-func TestCommandIsResolvedBeforeTaking(t *testing.T) {
+func TestEngineCIPauseVictimOrderAndPausedParentSubleaseGate(t *testing.T) {
 	t.Parallel()
-	for _, c := range []struct {
-		name string
-		err  error
-		code int
-		line string
-	}{
-		{"mkae", &exec.Error{Name: "mkae", Err: exec.ErrNotFound}, 127, "nova-reserve: mkae: command not found on PATH=/usr/bin:/bin\n"},
-		{"./mkae", &exec.Error{Name: "./mkae", Err: fs.ErrNotExist}, 127, "nova-reserve: ./mkae: no such file\n"},
-		{"mkae", &exec.Error{Name: "mkae", Err: fs.ErrPermission}, 126, "nova-reserve: mkae: not executable\n"},
-	} {
-		h := newHarness(t)
-		h.dir = filepath.Join(h.dir, "never")
-		h.w.resolve = func(string) (string, error) { return "", c.err }
-		assert.Equal(t, c.code, run([]string{"--dir", h.dir, "--", c.name, "-j4"}, h.w))
-		assert.Equal(t, c.line, h.err.String())
-		assert.Nil(t, h.ran)
-		assert.NoDirExists(t, h.dir)
+	eng := NewEngine([]MachineSpec{
+		{Host: "h1", Online: true, Tags: []string{"linux"}, UsableCores: 16, Resources: map[string]int{"cpu": 8, "memory": 16}},
+	}, 1_000, 0)
+
+	// Conn 1 (high prio, cpu 4), Conn 2 (normal prio older, cpu 2), Conn 3 (normal prio younger, cpu 2).
+	m1 := eng.Request(1, ClientFrame{Op: "request", ReqID: "r1", Host: "h1", Needs: NeedsSpec{Raw: "cpu 4, memory 4"}, Holder: "bench", Source: "w1", Priority: "high"}, 1_000)
+	l1 := m1[0].Frame.LeaseID
+	m2 := eng.Request(2, ClientFrame{Op: "request", ReqID: "r2", Host: "h1", Needs: NeedsSpec{Raw: "cpu 2, memory 4"}, Holder: "bench", Source: "w2", Priority: "normal"}, 1_000)
+	l2 := m2[0].Frame.LeaseID
+	m3 := eng.Request(3, ClientFrame{Op: "request", ReqID: "r3", Host: "h1", Needs: NeedsSpec{Raw: "cpu 2, memory 4"}, Holder: "bench", Source: "w3", Priority: "normal"}, 1_000)
+	l3 := m3[0].Frame.LeaseID
+
+	// Queued blocker request (Conn 4) arrives while h1 is full.
+	m4 := eng.Request(4, ClientFrame{Op: "request", ReqID: "r4", Host: "h1", Needs: NeedsSpec{Raw: "cpu 2, memory 2"}, Holder: "friend", Source: "alice", Priority: "blocker"}, 1_000)
+	require.Equal(t, "queued", m4[0].Frame.Op)
+
+	// CI arrives needing cpu 3: MUST pause youngest normal victim (l3) then older normal victim (l2), keeping high-prio l1 unpaused!
+	ciMsgs := eng.Request(5, ClientFrame{Op: "request", ReqID: "ci1", Host: "h1", Needs: NeedsSpec{Raw: "cpu 3, memory 4"}, Holder: "ci"}, 1_100)
+	var pausedIDs []string
+	var ciID string
+	for _, m := range ciMsgs {
+		if m.Frame.Op == "state" && m.Frame.State == "paused" {
+			pausedIDs = append(pausedIDs, m.Frame.LeaseID)
+		}
+		if m.Frame.Op == "granted" {
+			ciID = m.Frame.LeaseID
+		}
 	}
+	assert.Equal(t, []string{l3, l2}, pausedIDs)
+	assert.False(t, eng.findLease(l1).Paused)
+
+	// While l2 is paused, an inner sub-step carrying ParentLease=l2 yields at the command boundary (queued, NOT granted and NOT deadlocked!).
+	subMsgs := eng.Request(6, ClientFrame{Op: "request", ReqID: "sub2", Host: "h1", Needs: NeedsSpec{Raw: "cpu 1, memory 2"}, ParentLease: l2, Holder: "bench", Source: "w2"}, 1_200)
+	require.Equal(t, "queued", subMsgs[0].Frame.Op)
+
+	// When CI releases, l2 and l3 MUST resume ahead of queued blocker r4, AND sub2 wakes immediately as a 0-debit sublease of l2!
+	relMsgs, ok := eng.Release(5, ciID, 1_500)
+	require.True(t, ok)
+	assert.False(t, eng.findLease(l2).Paused)
+	assert.False(t, eng.findLease(l3).Paused)
+	assert.True(t, slices.ContainsFunc(relMsgs, func(m OutMsg) bool {
+		return m.ConnID == 6 && m.Frame.Op == "granted" && m.Frame.Sublease
+	}))
+	// Queued r4 is STILL waiting because resumed l1+l2+l3 occupy all 8 CPUs!
+	assert.Len(t, eng.queue, 1)
+	assert.Equal(t, "r4", eng.queue[0].ReqID)
 }
 
-func TestDirAndPermissionRefusals(t *testing.T) {
+func TestEngineSubleasePPIDAndTwoHostABBADeadlock(t *testing.T) {
+	t.Parallel()
+	eng := NewEngine([]MachineSpec{
+		{Host: "b1", Online: true, Tags: []string{"linux"}, UsableCores: 8, Resources: map[string]int{"cpu": 4, "memory": 8, "ps5": 1}},
+		{Host: "b2", Online: true, Tags: []string{"linux"}, UsableCores: 8, Resources: map[string]int{"cpu": 4, "memory": 8, "gpu": 1}},
+	}, 1_000, 0)
+
+	// Lease A on b1 holds ps5=1 (PID 500).
+	aMsgs := eng.Request(1, ClientFrame{Op: "request", ReqID: "a", Host: "b1", Needs: NeedsSpec{Raw: "cpu 2, memory 4, ps5"}, Holder: "friend", Source: "alice", Why: "ps5 suite", PID: 500}, 1_000)
+	la := aMsgs[0].Frame.LeaseID
+
+	// Env-scrubbed descendant (ParentLease="", Ancestors=[501, 500]) asking for cpu 1, memory 2 on b1 recovers ParentLease via PPID chain and gets a 0-debit sublease!
+	sub := eng.Request(10, ClientFrame{Op: "request", ReqID: "sub", Host: "b1", Needs: NeedsSpec{Raw: "cpu 1, memory 2"}, Holder: "script", Source: "alice", PID: 502, Ancestors: []int{501, 500}}, 1_050)
+	require.Equal(t, "granted", sub[0].Frame.Op)
+	assert.True(t, sub[0].Frame.Sublease)
+	assert.Equal(t, 2, eng.sumUnpausedOn("b1")["cpu"]) // still 2 (0 extra host debit!)
+
+	// Lease B on b2 holds gpu=1.
+	bMsgs := eng.Request(2, ClientFrame{Op: "request", ReqID: "b", Host: "b2", Needs: NeedsSpec{Raw: "cpu 2, memory 4, gpu"}, Holder: "friend", Source: "bob", Why: "gpu bench"}, 1_100)
+	lb := bMsgs[0].Frame.LeaseID
+
+	// Child of A asks for gpu on b2 -> NOT a cycle yet (B is not waiting on anything), so it queues cleanly!
+	aChild := eng.Request(11, ClientFrame{Op: "request", ReqID: "a-wants-gpu", Host: "b2", Needs: NeedsSpec{Raw: "gpu"}, ParentLease: la, Holder: "friend", Source: "alice"}, 1_200)
+	require.Equal(t, "queued", aChild[0].Frame.Op)
+
+	// Now child of B asks for ps5 on b1 -> closes 2-party AB-BA cycle (B -> b-wants-ps5 -> A -> a-wants-gpu -> B)! Refused immediately!
+	bChild := eng.Request(12, ClientFrame{Op: "request", ReqID: "b-wants-ps5", Host: "b1", Needs: NeedsSpec{Raw: "ps5"}, ParentLease: lb, Holder: "friend", Source: "bob"}, 1_300)
+	require.Equal(t, "refused", bChild[0].Frame.Op)
+	assert.Equal(t, "deadlock", bChild[0].Frame.Code)
+	assert.Contains(t, bChild[0].Frame.Message, "RESERVE DEADLOCK:")
+
+	// Fleet-any non-deadlock check: if A holds all of b1 (cpu 4), and independent Conn 9 holds all of b2 (cpu 4),
+	// a child of A asking for fleet-any "cpu 4, linux" does NOT deadlock because Conn 9 on b2 is unstuck and will finish!
+	eng.CloseConn(11, 1_400)
+	eng.CloseConn(2, 1_400)
+	eng.Request(13, ClientFrame{Op: "request", ReqID: "fill-b1", Host: "b1", Needs: NeedsSpec{Raw: "cpu 2, memory 4"}, Holder: "bench", Source: "w1"}, 1_410)
+	eng.Request(9, ClientFrame{Op: "request", ReqID: "fill-b2", Host: "b2", Needs: NeedsSpec{Raw: "cpu 4, memory 8"}, Holder: "bench", Source: "w2"}, 1_420)
+	anyChild := eng.Request(14, ClientFrame{Op: "request", ReqID: "a-any", Mode: "any", Needs: NeedsSpec{Raw: "cpu 4, linux"}, ParentLease: la, Holder: "friend", Source: "alice"}, 1_430)
+	require.Equal(t, "queued", anyChild[0].Frame.Op)
+}
+
+func TestEngineSoftClaimsDeadPeerExpiryAndShrinkSafeReload(t *testing.T) {
+	t.Parallel()
+	eng := NewEngine([]MachineSpec{
+		{Host: "space", Online: true, Tags: []string{"linux"}, UsableCores: 16, Resources: map[string]int{"cpu": 16, "memory": 32}},
+	}, 1_000, 0)
+	eng.RegisterConn(1, 1_000)
+
+	// Active lease holds cpu 12, memory 24.
+	g := eng.Request(1, ClientFrame{Op: "request", ReqID: "r1", Host: "space", Needs: NeedsSpec{Raw: "cpu 12, memory 24"}, Holder: "bench", Source: "w1"}, 1_000)
+	require.Equal(t, "granted", g[0].Frame.Op)
+
+	// Operator places soft claim for cpu 12, memory 24 (10s TTL): succeeds immediately, free headroom goes negative (-8), active lease NOT killed!
+	cl := eng.PlaceClaim(2, ClientFrame{Op: "claim", ReqID: "c1", Host: "space", Needs: NeedsSpec{Raw: "cpu 12, memory 24"}, TTLMs: 10_000, Source: "op", Why: "profiling"}, 1_500)
+	require.Equal(t, "granted", cl[0].Frame.Op)
+	snap := eng.Snapshot("space", 1_500)
+	assert.Equal(t, -8, snap.Machines[0].Free["cpu"])
+
+	// Live config reload shrinks space down to cpu 8, memory 16 while 12-CPU lease is still running: active lease preserved!
+	eng.UpdateMachines([]MachineSpec{
+		{Host: "space", Online: true, Tags: []string{"linux"}, UsableCores: 8, Resources: map[string]int{"cpu": 8, "memory": 16}},
+	}, 2_000)
+	assert.Len(t, eng.leases, 1)
+
+	// Claim expires at t = 11_500; silent Conn 1 expires after 15s (t = 16_000) -> host completely free!
+	eng.Tick(11_500)
+	assert.Empty(t, eng.claims)
+	eng.Tick(16_000)
+	assert.Empty(t, eng.leases)
+	snap2 := eng.Snapshot("space", 16_000)
+	assert.Equal(t, 8, snap2.Machines[0].Free["cpu"])
+}
+
+func TestCLIFleetRunSSHClaimReleaseAndStatusOverPipe(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
-	missing := filepath.Join(h.dir, "no-such-dir")
-	assert.Equal(t, 2, run([]string{"status", "--dir", missing}, h.w))
-	assert.Equal(t, "nova-reserve status: --dir "+missing+" is not a reservation directory (no reservation was taken there); run: nova-reserve status -h\n", h.err.String())
+	h.startInMemoryFleetServer(t, "s3cr3t", []MachineSpec{
+		{Host: "space", Address: "100.64.0.9", User: "op", Online: true, Tags: []string{"linux", "amd64"}, UsableCores: 16, Resources: map[string]int{"cpu": 16, "memory": 32}},
+	})
 
-	h.err.Reset()
-	gone := filepath.Join(h.dir, "no", "x")
-	assert.Equal(t, 2, run([]string{"--dir", gone, "--why", "a b", "--", "make"}, h.w))
-	assert.Regexp(t, `^nova-reserve: --dir .*: parent .* does not exist; run: mkdir -p .* && nova-reserve --dir .* --why 'a b' -- make\n$`, h.err.String())
+	// 1. nova-reserve ssh routes fleet-any to space, invokes ssh op@100.64.0.9 with env steering!
+	require.Equal(t, 0, run([]string{"ssh", "--needs", "cpu 4, memory 8, linux", "--holder", "friend", "--source", "alice", "--", "go", "test", "./..."}, h.w), h.err.String())
+	assert.Equal(t, "/usr/bin/ssh", h.lastCmd[0])
+	assert.Equal(t, "op@100.64.0.9", h.lastCmd[4])
+	assert.Contains(t, h.lastCmd[5], "NOVA_RESERVE_HOST=space")
+	assert.Contains(t, h.lastCmd[5], "NOVA_RESERVE_CPUS=4")
+	assert.Contains(t, h.lastCmd[5], "GOMAXPROCS=4")
+	assert.Contains(t, h.lastCmd[5], "MAKEFLAGS=-j4")
+	assert.False(t, h.lowered)
 
-	h.err.Reset()
-	file := filepath.Join(h.dir, "f")
-	require.NoError(t, os.WriteFile(file, nil, 0o644))
-	assert.Equal(t, 2, run([]string{"--dir", file, "--", "make"}, h.w))
-	assert.Equal(t, "nova-reserve: --dir "+file+" is a file, not a directory; run: ls -ld "+shellQuote(file)+"\n", h.err.String())
-
-	if os.Geteuid() != 0 && runtime.GOOS != "windows" {
-		h.err.Reset()
-		ro := filepath.Join(h.dir, "ro")
-		require.NoError(t, os.Mkdir(ro, 0o500))
-		t.Cleanup(func() { _ = os.Chmod(ro, 0o700) })
-		assert.Equal(t, 2, run([]string{"set", "--cpu", "2", "--memory", "4", "--dir", filepath.Join(ro, "r")}, h.w))
-		assert.Contains(t, h.err.String(), "not writable by this user")
-	}
-}
-
-func TestCorruptCapacityIsRefusedAndRepairedByMeasureOrSet(t *testing.T) {
-	t.Parallel()
-	h := newHarness(t)
-	require.NoError(t, ensureLayout(h.dir, "--dir", "nova-reserve"))
-	require.NoError(t, os.WriteFile(capPath(h.dir), []byte("not-json\n"), 0o644))
-
-	assert.Equal(t, 2, run([]string{"--dir", h.dir, "--", "make"}, h.w))
-	assert.Contains(t, h.err.String(), "invalid JSON")
-	h.err.Reset()
-
-	assert.Equal(t, 0, run([]string{"status", "--dir", h.dir}, h.w))
-	assert.Contains(t, h.out.String(), "capacity=? # corrupt:")
+	// 2. nova-reserve claim + status --json + status + release.
 	h.out.Reset()
+	h.err.Reset()
+	require.Equal(t, 0, run([]string{"claim", "--host", "space", "--needs", "cpu 8, memory 16", "--ttl", "1h", "--why", "kernel test"}, h.w), h.err.String())
+	assert.Contains(t, h.out.String(), "CLAIMED lease_id=C-1 host=space")
 
-	assert.Equal(t, 0, run([]string{"set", "--dir", h.dir, "--cpu", "4", "--memory", "8"}, h.w))
-	assert.Contains(t, h.out.String(), "CAPACITY SET cpu=4 memory=8")
-}
+	h.out.Reset()
+	require.Equal(t, 0, run([]string{"status", "--json"}, h.w), h.err.String())
+	var sf ServerFrame
+	require.NoError(t, json.Unmarshal(h.out.Bytes(), &sf))
+	assert.Equal(t, "snapshot", sf.Op)
+	require.Len(t, sf.Machines, 1)
+	assert.Len(t, sf.Machines[0].Claims, 1)
+	assert.Equal(t, 8, sf.Machines[0].Free["cpu"])
 
-func TestEscAndShellQuote(t *testing.T) {
-	t.Parallel()
-	assert.Equal(t, `two\swords\ttab\nnl\x07\\`, esc("two words\ttab\nnl\x07\\"))
-	assert.Equal(t, "plain", esc("plain"))
-	assert.Equal(t, "/var/tmp/x", shellQuote("/var/tmp/x"))
-	assert.Equal(t, `'C:\jobs'`, shellQuote(`C:\jobs`))
-	assert.Equal(t, `'it'\''s'`, shellQuote("it's"))
-	assert.Equal(t, "''", shellQuote(""))
+	h.out.Reset()
+	require.Equal(t, 0, run([]string{"status"}, h.w), h.err.String())
+	assert.Contains(t, h.out.String(), "claim C-1 host=space")
+
+	h.out.Reset()
+	require.Equal(t, 0, run([]string{"release", "C-1"}, h.w), h.err.String())
+	assert.Equal(t, "RELEASED lease_id=C-1\n", h.out.String())
+
+	// 3. Bad password refuses with exit 2.
+	h.out.Reset()
+	h.err.Reset()
+	h.envs["NOVA_RESERVE_PASSWORD"] = "wrong-pass"
+	assert.Equal(t, 2, run([]string{"status"}, h.w))
+	assert.Contains(t, h.err.String(), "authentication failed")
 }

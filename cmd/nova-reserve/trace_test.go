@@ -1,716 +1,809 @@
 package main
 
 import (
-	"bytes"
-	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
+	"maps"
 	"math/rand/v2"
 	"os"
-	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
-	"sync"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 )
 
-// Seeded deterministic walks of the real acquire, release, and setCapacity
-// functions over an in-memory flock table and on-disk JSON records, bound to
-// tla/Reserve.tla via tla/ReserveTrace.tla and tla/ReserveLog.tla.
+// Deterministic walks of Engine (cmd/nova-reserve/engine.go) bound directly to
+// tla/Arbitrator.tla via tla/ArbitratorTrace.tla and tla/ArbitratorLog.tla.
+// Every state variable is read off the live Engine fields after each step.
 
-const (
-	trProcs     = 4
-	trMaxCap    = 2
-	trMaxStarts = 16
-	trMaxCrash  = 3
-	trMaxSet    = 2
-	trWalks     = 16
-)
-
-func procName(i int) string { return "p" + strconv.Itoa(i+1) }
-
-type killed struct{}
-
-const (
-	stepGo = iota
-	stepDie
-	stepQuit
-)
-
-type tproc struct {
-	name        string
-	pc          string // "idle", "wait", "paused", "run", "between", "done"
-	kind        string // "work" or "ci"
-	prio        int    // 1 ("normal") or 2 ("high")
-	cpu, mem    int
-	tag         bool
-	stepsLeft   int
-	wasPaused   bool
-	parked      bool
-	clockOffset time.Duration
-	holding     *activeHold
-	resume      chan int
-	yield       chan string // "parked", "held", "refused", "died"
+var traceRequiredOps = []string{
+	"RequestWork", "RequestCI", "UnpauseStep", "AdmitQueued", "Release",
+	"ClearRefused", "PlaceClaim", "ExpireClaim", "ServerRestart", "Reconnect", "EndReconnect",
 }
 
-type twalk struct {
-	t       *testing.T
-	dir     string
-	procs   []*tproc
-	mu      sync.Mutex
-	ex      map[string]string
-	sh      map[string]map[string]bool
-	clock   time.Time
-	starts  int
-	crashes int
-	sets    int
-	recs    []string
+type actorMeta struct {
+	refusedDeadlock bool
+	mode            string
+	reqHost         int
+	needsCPU        int
+	needsMem        int
+	prio            int
+	parent          int
+	lastSeq         uint64
+	starts          int
 }
 
-type traceWatcher struct {
-	w *twalk
-	p *tproc
+type pendingReconnect struct {
+	rl      ReconnectLease
+	mode    string
+	reqHost int
+	prio    int
+	parent  int
+	seq     uint64
+	paused  bool
+	sub     bool
 }
 
-func (tw traceWatcher) drain() {}
-func (tw traceWatcher) close() {}
-func (tw traceWatcher) wait(_ []int, _ time.Duration) {
-	tw.w.yieldProc(tw.p, "parked")
+type arbWalk struct {
+	t          *testing.T
+	eng        *Engine
+	nowMs      int64
+	actors     [6]actorMeta
+	inFlight   map[int]pendingReconnect
+	claimsUsed int
+	restartSeq uint64
+	restarts   int
+	recs       []string
 }
 
-func newWalk(t *testing.T) *twalk {
-	w := &twalk{
-		t:     t,
-		dir:   t.TempDir(),
-		ex:    map[string]string{},
-		sh:    map[string]map[string]bool{},
-		clock: epoch,
+func newArbWalk(t *testing.T) *arbWalk {
+	t.Helper()
+	machines := []MachineSpec{
+		{Host: "h1", Online: true, Tags: []string{"linux", "amd64"}, UsableCores: 2, Resources: map[string]int{"cpu": 2, "memory": 2}},
+		{Host: "h2", Online: true, Tags: []string{"linux", "amd64"}, UsableCores: 2, Resources: map[string]int{"cpu": 2, "memory": 2}},
 	}
-	for i := range trProcs {
-		w.procs = append(w.procs, &tproc{
-			name: procName(i), pc: "idle", kind: "work", prio: 1, cpu: 1, mem: 1,
-		})
+	eng := NewEngine(machines, 1_000, 0)
+	for cid := uint64(1); cid <= 5; cid++ {
+		eng.RegisterConn(cid, 1_000)
 	}
-	require.NoError(t, ensureLayout(w.dir, "--dir", "nova-reserve"))
-	require.NoError(t, writeCapacity(w.dir, capRecord{
-		Tags:        []string{"amd64", "linux"},
-		UsableCores: 2,
-		Resources:   map[string]int{"cpu": trMaxCap, "memory": trMaxCap},
-		SetByPID:    1,
-		SetAt:       epoch.Format(time.RFC3339),
-	}, 1))
+	w := &arbWalk{
+		t:        t,
+		eng:      eng,
+		nowMs:    1_000,
+		inFlight: map[int]pendingReconnect{},
+	}
+	for p := 1; p <= 4; p++ {
+		w.actors[p] = actorMeta{mode: "none", prio: 1}
+	}
+	w.actors[5] = actorMeta{mode: "none", prio: 3}
+	w.record("Init", 0, "none", 0, 0, 0, 1, 0)
 	return w
 }
 
-func (w *twalk) lockFor(owner string) tryLock {
-	return func(path string, exclusive bool) (func(), bool, error) {
-		if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) && !exclusive {
-			return nil, false, os.ErrNotExist
-		}
-		if exclusive {
-			if f, err := openIn(path, os.O_RDWR|os.O_CREATE); err == nil {
-				_ = f.Close()
-			}
-		}
-		w.mu.Lock()
-		defer w.mu.Unlock()
-		if w.ex[path] != "" || (exclusive && len(w.sh[path]) > 0) {
-			return nil, false, nil
-		}
-		if exclusive {
-			w.ex[path] = owner
-			var once sync.Once
-			return func() {
-				once.Do(func() {
-					w.mu.Lock()
-					if w.ex[path] == owner {
-						delete(w.ex, path)
-					}
-					w.mu.Unlock()
-				})
-			}, true, nil
-		}
-		if w.sh[path] == nil {
-			w.sh[path] = map[string]bool{}
-		}
-		w.sh[path][owner] = true
-		var once sync.Once
-		return func() {
-			once.Do(func() {
-				w.mu.Lock()
-				delete(w.sh[path], owner)
-				w.mu.Unlock()
-			})
-		}, true, nil
-	}
-}
-
-func (w *twalk) worldFor(p *tproc, pid int) world {
-	return world{
-		env:     func(k string) string { return map[string]string{"PATH": "/usr/bin:/bin"}[k] },
-		environ: func() []string { return nil },
-		lock:    w.lockFor(p.name),
-		watch:   func(string) watcher { return traceWatcher{w: w, p: p} },
-		now:     func() time.Time { return w.clock.Add(p.clockOffset) },
-		sleep:   func(time.Duration) {},
-		resolve: func(name string) (string, error) { return "/bin/" + name, nil },
-		exec:    func(string, []string, []string, bool) int { return 0 },
-		waitEOF: func(io.Reader) {},
-		running: func(int) bool { return true },
-		bench:   func(int, bool) (int, int, error) { return 2, 2, nil },
-		pid:     pid,
-		cpus:    2,
-		goos:    "linux",
-		goarch:  "amd64",
-		usable:  func() ([]int, error) { return []int{0, 1}, nil },
-		groups:  func([]int) [][]int { return [][]int{{0}, {1}} },
-		pin:     func([]int) error { return nil },
-		stdin:   strings.NewReader(""),
-		stdout:  &bytes.Buffer{},
-		stderr:  &bytes.Buffer{},
-	}
-}
-
-func (w *twalk) yieldProc(p *tproc, status string) {
-	p.yield <- status
-	switch <-p.resume {
-	case stepDie:
-		panic(killed{})
-	case stepQuit:
-		panic(killed{})
-	}
-}
-
-// launchAcquire starts p running acquire in a parked goroutine and runs its first step.
-func (w *twalk) launchAcquire(p *tproc, o options) string {
-	p.resume = make(chan int)
-	p.yield = make(chan string)
-	wd := w.worldFor(p, 100+len(p.name))
-	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				if _, ok := r.(killed); !ok {
-					panic(r)
-				}
-				p.yield <- "died"
-			}
-		}()
-		<-p.resume
-		ah, err := acquire(wd, o)
-		if err != nil {
-			p.holding = nil
-			p.yield <- "refused"
-			return
-		}
-		p.holding = ah
-		p.yield <- "held"
-	}()
-	p.resume <- stepGo
-	res := <-p.yield
-	p.parked = (res == "parked")
-	return res
-}
-
-func (w *twalk) stepParked(p *tproc) string {
-	p.resume <- stepGo
-	res := <-p.yield
-	p.parked = (res == "parked")
-	return res
-}
-
-func (w *twalk) quitAll() {
-	for _, p := range w.procs {
-		if p.parked {
-			p.parked = false
-			p.resume <- stepQuit
-			<-p.yield
-		}
-	}
-}
-
-// syncFromDisk updates process views off the actual files in w.dir and the lock table,
-// and drains any continuing process whose hold was unpaused on disk by reconcileLocked.
-func (w *twalk) syncFromDisk() {
-	holdMap := map[string]holdRecord{}
-	for _, seq := range seqNumbersIn(filepath.Join(w.dir, "holds")) {
-		_, jp := seqFiles(w.dir, "holds", seq)
-		if line, ok, err := readRecord(jp); err == nil && ok {
-			var h holdRecord
-			if json.Unmarshal(line, &h) == nil {
-				holdMap[h.Why] = h
-			}
-		}
-	}
-	lineMap := map[string]waiterRecord{}
-	for _, seq := range seqNumbersIn(filepath.Join(w.dir, "line")) {
-		_, jp := seqFiles(w.dir, "line", seq)
-		if line, ok, err := readRecord(jp); err == nil && ok {
-			var wr waiterRecord
-			if json.Unmarshal(line, &wr) == nil {
-				lineMap[wr.Why] = wr
-			}
-		}
-	}
-
-	// If reconcileLocked unpaused a parked continuing consumer on disk, step its goroutine
-	// so it picks up its activeHold handle cleanly without changing disk state.
-	for _, p := range w.procs {
-		if p.parked {
-			if h, ok := holdMap[p.name]; ok && !h.Paused && h.BetweenUntil == 0 && w.hasLockFor(p.name) {
-				res := w.stepParked(p)
-				require.Equal(w.t, "held", res)
-			}
-		}
-	}
-
-	for _, p := range w.procs {
-		if p.pc == "idle" || p.pc == "done" {
-			p.kind, p.prio, p.cpu, p.mem, p.tag, p.stepsLeft, p.wasPaused, p.clockOffset = "work", 1, 1, 1, false, 0, false, 0
-			continue
-		}
-		if h, ok := holdMap[p.name]; ok {
-			if h.BetweenUntil > 0 {
-				p.pc = "between"
-			} else if w.hasLockFor(p.name) {
-				if h.Paused {
-					p.pc = "paused"
-				} else {
-					p.pc = "run"
-					p.wasPaused = false
-				}
-			}
-			continue
-		}
-		if _, ok := lineMap[p.name]; ok && w.hasLockFor(p.name) {
-			p.pc = "wait"
-		}
-	}
-}
-
-func (w *twalk) hasLockFor(owner string) bool {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	for path, holder := range w.ex {
-		if holder == owner && filepath.Base(path) != "mutex" {
-			return true
-		}
-	}
-	return false
-}
-
-func (w *twalk) snapshot(action, who string) string {
-	w.syncFromDisk()
-
-	c, have, err := readCapacity(w.dir)
-	require.NoError(w.t, err)
-	require.True(w.t, have)
-
-	var seqVal uint64
-	if line, ok, err := readRecord(filepath.Join(w.dir, "seq")); err == nil && ok {
-		seqVal, _ = strconv.ParseUint(strings.TrimSpace(string(line)), 10, 64)
-	}
-
-	holdSeqByProc := map[string]uint64{}
-	holdInFlight := map[string]bool{}
-	for _, seq := range seqNumbersIn(filepath.Join(w.dir, "holds")) {
-		_, jp := seqFiles(w.dir, "holds", seq)
-		if line, ok, err := readRecord(jp); err == nil && ok {
-			var h holdRecord
-			if json.Unmarshal(line, &h) == nil {
-				holdSeqByProc[h.Why] = h.Seq
-				if h.BetweenUntil == 0 && !h.WaitingStart && w.hasLockFor(h.Why) {
-					holdInFlight[h.Why] = true
-				}
-			}
-		}
-	}
-	lineSeqByProc := map[string]uint64{}
-	for _, seq := range seqNumbersIn(filepath.Join(w.dir, "line")) {
-		_, jp := seqFiles(w.dir, "line", seq)
-		if line, ok, err := readRecord(jp); err == nil && ok {
-			var wr waiterRecord
-			if json.Unmarshal(line, &wr) == nil {
-				lineSeqByProc[wr.Why] = wr.Seq
-			}
-		}
-	}
-
-	fn := func(f func(*tproc) string) string {
-		var parts []string
-		for _, p := range w.procs {
-			parts = append(parts, p.name+" |-> "+f(p))
-		}
-		return "[" + strings.Join(parts, ", ") + "]"
-	}
-	tlaBool := func(b bool) string {
-		if b {
-			return "TRUE"
-		}
-		return "FALSE"
-	}
-
-	var locked, wp []string
-	for _, p := range w.procs {
-		if w.hasLockFor(p.name) {
-			locked = append(locked, strconv.Quote(p.name))
-		}
-		if p.wasPaused {
-			wp = append(wp, strconv.Quote(p.name))
-		}
-	}
-
-	return fmt.Sprintf("R(%q, %q, %s, %s, %s, %s, %s, %s, %s, %d, %d, %s, %s, {%s}, [cpu |-> %d, memory |-> %d], %d, %d, {%s})",
-		action,
-		who,
-		fn(func(p *tproc) string { return strconv.Quote(p.pc) }),
-		fn(func(p *tproc) string { return strconv.Quote(p.kind) }),
-		fn(func(p *tproc) string { return strconv.Itoa(p.prio) }),
-		fn(func(p *tproc) string { return fmt.Sprintf("[cpu |-> %d, memory |-> %d]", p.cpu, p.mem) }),
-		fn(func(p *tproc) string { return tlaBool(p.tag) }),
-		fn(func(p *tproc) string { return strconv.Itoa(p.stepsLeft) }),
-		fn(func(p *tproc) string { return tlaBool(holdInFlight[p.name]) }),
-		w.starts,
-		seqVal,
-		fn(func(p *tproc) string { return strconv.FormatUint(holdSeqByProc[p.name], 10) }),
-		fn(func(p *tproc) string { return strconv.FormatUint(lineSeqByProc[p.name], 10) }),
-		strings.Join(locked, ", "),
-		c.Resources["cpu"],
-		c.Resources["memory"],
-		w.crashes,
-		w.sets,
-		strings.Join(wp, ", "),
-	)
-}
-
-func (w *twalk) record(action, who string) {
-	w.recs = append(w.recs, w.snapshot(action, who))
-}
-
-func (w *twalk) doAcquireWork(p *tproc, prio, cpu, mem int, tag, nowait bool, steps int) {
-	w.starts++
-	p.kind, p.prio, p.cpu, p.mem, p.tag, p.stepsLeft = "work", prio, cpu, mem, tag, steps
-	prioName := map[int]string{1: "normal", 2: "high"}[prio]
-	spec := fmt.Sprintf("cpu %d, memory %d", cpu, mem)
-	if tag {
-		spec += ", metal"
-	}
-	args := []string{"hold", "--dir", w.dir, "--holder", "bench", "--consumer", p.name, "--priority", prioName, "--why", p.name, "--needs", spec}
-	if nowait {
-		args = append(args, "--nowait")
-	} else {
-		args = append(args, "--wait", "5s")
-	}
-	o, err := parse(args)
-	require.NoError(w.t, err)
-	res := w.launchAcquire(p, o)
-	switch res {
-	case "held":
-		p.pc = "run"
-	case "parked":
-		p.pc = "wait"
-	case "refused":
-		p.pc = "done"
-	}
-	w.record("AcquireWork", p.name)
-}
-
-func (w *twalk) ciUsed() (int, int) {
-	var cu, mu int
-	for _, p := range w.procs {
-		if p.pc == "run" && p.kind == "ci" && w.hasLockFor(p.name) {
-			cu += p.cpu
-			mu += p.mem
-		}
-	}
-	return cu, mu
-}
-
-func (w *twalk) doAcquireCI(p *tproc, cpu, mem int, tag bool) bool {
-	c, _, _ := readCapacity(w.dir)
-	cu, mu := w.ciUsed()
-	fits := !tag && cpu <= c.Resources["cpu"] && mem <= c.Resources["memory"]
-	if fits && (cu+cpu > c.Resources["cpu"] || mu+mem > c.Resources["memory"]) {
-		return false // R39a: concurrent CI jobs on a machine fit in its capacity
-	}
-	w.starts++
-	p.kind, p.prio, p.cpu, p.mem, p.tag, p.stepsLeft = "ci", 2, cpu, mem, tag, 0
-	spec := fmt.Sprintf("cpu %d, memory %d", cpu, mem)
-	if tag {
-		spec += ", metal"
-	}
-	o, err := parse([]string{"hold", "--dir", w.dir, "--holder", "ci", "--why", p.name, "--needs", spec})
-	require.NoError(w.t, err)
-	res := w.launchAcquire(p, o)
-	if res == "held" {
-		p.pc = "run"
-	} else {
-		p.pc = "done"
-	}
-	w.record("AcquireCI", p.name)
-	return true
-}
-
-func (w *twalk) doFinish(p *tproc) {
-	require.NotNil(w.t, p.holding)
-	w.syncFromDisk()
-	wasPaused := (p.pc == "paused")
-	st := p.stepsLeft
-	ah := p.holding
-	p.holding = nil
-	ah.release(st == 1)
-	p.stepsLeft = 0
-	switch {
-	case st == 1 && wasPaused:
-		p.pc = "between"
-		p.wasPaused = true
-	case st == 1:
-		p.pc = "idle"
+func hostName(h int) string {
+	switch h {
+	case 1:
+		return "h1"
+	case 2:
+		return "h2"
 	default:
-		p.pc = "done"
+		return ""
 	}
-	w.record("FinishStep", p.name)
 }
 
-func (w *twalk) doContinue(p *tproc) {
-	prioName := map[int]string{1: "normal", 2: "high"}[p.prio]
-	spec := fmt.Sprintf("cpu %d, memory %d", p.cpu, p.mem)
-	o, err := parse([]string{"hold", "--dir", w.dir, "--holder", "bench", "--consumer", p.name, "--priority", prioName, "--why", p.name, "--wait", "5s", "--needs", spec})
-	require.NoError(w.t, err)
-	res := w.launchAcquire(p, o)
-	switch res {
-	case "held":
-		p.pc = "run"
-		p.wasPaused = false
-	case "parked":
-		p.pc = "paused"
-	case "refused":
-		p.pc = "done"
-		p.wasPaused = false
+func hostIdx(name string) int {
+	switch name {
+	case "h1":
+		return 1
+	case "h2":
+		return 2
+	default:
+		return 0
 	}
-	w.record("ContinueStep", p.name)
 }
 
-func (w *twalk) doWakeWaiter(p *tproc) {
-	before := w.recs[len(w.recs)-1]
-	res := w.stepParked(p)
-	switch res {
-	case "held":
-		p.pc = "run"
-		w.record("WakeWaiter", p.name)
-	case "refused":
-		p.pc = "done"
-		w.record("WakeWaiter", p.name)
-	case "parked":
-		// Check whether reaping/reconciling mutated disk state without promoting p.
-		after := w.snapshot("Reap", "none")
-		if stripAct(after) != stripAct(before) {
-			w.recs = append(w.recs, after)
+func actorSourceNum(p int) int {
+	if p == 5 {
+		return 0
+	}
+	if p == 1 || p == 3 {
+		return 1
+	}
+	return 2
+}
+
+func actorSourceStr(p int) string {
+	if p == 5 {
+		return "ci"
+	}
+	return "s" + strconv.Itoa(actorSourceNum(p))
+}
+
+func prioStr(pr int) string {
+	if pr == 2 {
+		return "high"
+	}
+	return "normal"
+}
+
+func srcNumFromStr(s string) int {
+	switch s {
+	case "s1":
+		return 1
+	case "s2":
+		return 2
+	default:
+		return 0
+	}
+}
+
+func tlaBool(b bool) string {
+	if b {
+		return "TRUE"
+	}
+	return "FALSE"
+}
+
+func (w *arbWalk) findLeaseByActor(p int) *leaseEntry {
+	for _, l := range w.eng.leases {
+		if l.ConnID == uint64(p) {
+			return l
 		}
 	}
+	return nil
 }
 
-func stripAct(rec string) string {
-	// Skip `R("Action", "who", ` prefix to compare state tuple.
-	idx := strings.Index(rec, "[")
-	if idx < 0 {
-		return rec
-	}
-	return rec[idx:]
-}
-
-func (w *twalk) doTimeout(p *tproc) {
-	p.clockOffset += 10 * time.Second
-	res := w.stepParked(p)
-	require.Equal(w.t, "refused", res)
-	p.pc = "done"
-	p.wasPaused = false
-	w.record("Timeout", p.name)
-}
-
-func (w *twalk) doCrash(p *tproc) {
-	if p.parked {
-		p.parked = false
-		p.resume <- stepDie
-		<-p.yield
-	}
-	p.holding = nil
-	w.mu.Lock()
-	for path, holder := range w.ex {
-		if holder == p.name {
-			delete(w.ex, path)
+func (w *arbWalk) findWaiterByActor(p int) *waiterEntry {
+	for _, q := range w.eng.queue {
+		if q.ConnID == uint64(p) {
+			return q
 		}
 	}
-	w.mu.Unlock()
-	w.crashes++
-	p.pc = "done"
-	p.wasPaused = false
-	w.record("Crash", p.name)
+	return nil
 }
 
-func (w *twalk) doSetCap(cpu, mem int) bool {
-	c, _, _ := readCapacity(w.dir)
-	if c.Resources["cpu"] == cpu && c.Resources["memory"] == mem {
-		return false
+func (w *arbWalk) actorOfLeaseID(lid string) int {
+	if lid == "" {
+		return 0
 	}
-	w.sets++
-	wd := w.worldFor(w.procs[0], 999)
-	code := run([]string{"set", "--dir", w.dir, "--cpu", strconv.Itoa(cpu), "--memory", strconv.Itoa(mem)}, wd)
-	require.Equal(w.t, 0, code)
-	w.record("SetCap", "none")
-	return true
+	for p, pr := range w.inFlight {
+		if pr.rl.LeaseID == lid {
+			return p
+		}
+	}
+	if l := w.eng.findLease(lid); l != nil {
+		return int(l.ConnID)
+	}
+	return 0
 }
 
-func runSeededWalk(t *testing.T, seed uint64) *twalk {
-	w := newWalk(t)
-	w.record("Init", "none")
-	r := rand.New(rand.NewPCG(seed, 7))
+func (w *arbWalk) record(op string, p int, m string, rh, c, mm, pr, par int) {
+	var stParts, mdParts, rhParts, hoParts, ndParts, prParts, srParts, paParts, sbParts, psParts, sqParts, sttParts []string
+	for id := 1; id <= 5; id++ {
+		st := "idle"
+		md := "none"
+		reqH := 0
+		ho := 0
+		nc, nm := 0, 0
+		prio := w.actors[id].prio
+		src := actorSourceNum(id)
+		parID := 0
+		sub := false
+		psd := false
+		sq := uint64(0)
 
-	// Scripted scenario on seed 1 guarantees ContinueStep, Reap, Timeout, and SetCap coverage.
-	if seed == 1 {
-		w.doAcquireWork(w.procs[0], 2, 2, 2, false, false, 1) // p1 runs step 1 (stepsLeft=1)
-		w.doAcquireWork(w.procs[1], 1, 1, 1, false, false, 0) // p2 queues in line/
-		w.doAcquireCI(w.procs[2], 2, 2, false)                // p3 CI pauses p1
-		w.doFinish(w.procs[0])                                // p1 finishes step 1 paused -> between!
-		w.doContinue(w.procs[0])                              // p1 attaches step 2 -> paused!
-		w.doTimeout(w.procs[1])                               // p2 times out in line/
-		w.doFinish(w.procs[2])                                // p3 CI finishes -> unpauses p1!
-		w.doAcquireWork(w.procs[3], 1, 1, 1, false, false, 0) // p4 queues behind p1
-		w.doCrash(w.procs[0])                                 // p1 crashes holding lock!
-		w.doWakeWaiter(w.procs[3])                            // p4 wakes, reaps p1, and runs!
-		w.doSetCap(1, 2)                                      // live set while p4 runs!
-		w.doFinish(w.procs[3])
-		w.quitAll()
-		return w
-	}
-
-	for step := 0; step < 80; step++ {
-		p := w.procs[r.IntN(len(w.procs))]
-		switch act := r.IntN(12); {
-		case act == 0 && w.crashes < trMaxCrash && (p.holding != nil || p.parked) && w.hasLockFor(p.name):
-			w.doCrash(p)
-		case act == 1 && w.sets < trMaxSet:
-			w.doSetCap(1+r.IntN(trMaxCap), 1+r.IntN(trMaxCap))
-		case p.pc == "between":
-			w.doContinue(p)
-		case p.pc == "idle" && w.starts < trMaxStarts:
-			if r.IntN(4) == 0 {
-				w.doAcquireCI(p, 1+r.IntN(trMaxCap+1), 1+r.IntN(trMaxCap), r.IntN(6) == 0)
+		if infl, ok := w.inFlight[id]; ok {
+			st = "held"
+			md = infl.mode
+			reqH = infl.reqHost
+			ho = hostIdx(infl.rl.Host)
+			nc, nm = infl.rl.Needs["cpu"], infl.rl.Needs["memory"]
+			prio = infl.prio
+			parID = infl.parent
+			sub = infl.sub
+			psd = infl.paused
+			sq = infl.seq
+		} else if l := w.findLeaseByActor(id); l != nil {
+			st = "held"
+			md = w.actors[id].mode
+			reqH = w.actors[id].reqHost
+			ho = hostIdx(l.Host)
+			nc, nm = l.Needs["cpu"], l.Needs["memory"]
+			if id == 5 {
+				prio = 3
 			} else {
-				w.doAcquireWork(p, 1+r.IntN(2), 1+r.IntN(trMaxCap+1), 1+r.IntN(trMaxCap), r.IntN(6) == 0, r.IntN(4) == 0, r.IntN(2))
+				prio = priorityRank(l.Priority)
 			}
-		case (p.pc == "run" || (p.pc == "paused" && p.holding != nil)) && r.IntN(2) == 0:
-			w.doFinish(p)
-		case p.pc == "wait" && p.parked:
-			if r.IntN(5) == 0 {
-				w.doTimeout(p)
-			} else {
-				w.doWakeWaiter(p)
-			}
+			parID = w.actorOfLeaseID(l.ParentLease)
+			sub = l.Sublease
+			psd = l.Paused
+			sq = l.Seq
+			w.actors[id].lastSeq = sq
+		} else if q := w.findWaiterByActor(id); q != nil {
+			st = "queued"
+			md = q.Mode
+			reqH = hostIdx(q.Host)
+			ho = 0
+			nc, nm = q.Needs["cpu"], q.Needs["memory"]
+			prio = priorityRank(q.Priority)
+			parID = w.actorOfLeaseID(q.ParentLease)
+			sub = false
+			psd = false
+			sq = q.Seq
+			w.actors[id].lastSeq = sq
+		} else if w.actors[id].refusedDeadlock {
+			st = "refused_deadlock"
+			md = w.actors[id].mode
+			reqH = w.actors[id].reqHost
+			nc, nm = w.actors[id].needsCPU, w.actors[id].needsMem
+			prio = w.actors[id].prio
+			parID = w.actors[id].parent
+		}
+
+		stParts = append(stParts, fmt.Sprintf("%q", st))
+		mdParts = append(mdParts, fmt.Sprintf("%q", md))
+		rhParts = append(rhParts, strconv.Itoa(reqH))
+		hoParts = append(hoParts, strconv.Itoa(ho))
+		ndParts = append(ndParts, fmt.Sprintf("[cpu |-> %d, mem |-> %d]", nc, nm))
+		prParts = append(prParts, strconv.Itoa(prio))
+		srParts = append(srParts, strconv.Itoa(src))
+		paParts = append(paParts, strconv.Itoa(parID))
+		sbParts = append(sbParts, tlaBool(sub))
+		psParts = append(psParts, tlaBool(psd))
+		sqParts = append(sqParts, strconv.FormatUint(sq, 10))
+		sttParts = append(sttParts, strconv.Itoa(w.actors[id].starts))
+	}
+
+	cl := [3][2]int{}
+	for _, cEntry := range w.eng.claims {
+		hi := hostIdx(cEntry.Host)
+		if hi >= 1 && hi <= 2 {
+			cl[hi][0] += cEntry.Needs["cpu"]
+			cl[hi][1] += cEntry.Needs["memory"]
 		}
 	}
-	w.quitAll()
-	return w
-}
+	claimStr := fmt.Sprintf("<<[cpu |-> %d, mem |-> %d], [cpu |-> %d, mem |-> %d]>>",
+		cl[1][0], cl[1][1], cl[2][0], cl[2][1])
 
-// brokenOverCap constructs a witness walk where CI acquires without displacing p1,
-// violating NeverOver / TraceAccepted.
-func brokenOverCap(t *testing.T) []string {
-	w := newWalk(t)
-	w.record("Init", "none")
-	w.doAcquireWork(w.procs[0], 1, 2, 2, false, false, 0)
-	// Faulted CI record: p2 enters "run" while p1 stays "run" (total cpu 4 > cap 2)!
-	bad := strings.Replace(
-		w.recs[len(w.recs)-1],
-		`R("AcquireWork", "p1", [p1 |-> "run", p2 |-> "idle"`,
-		`R("AcquireCI", "p2", [p1 |-> "run", p2 |-> "run"`,
-		1,
+	rrStr := fmt.Sprintf("<<%d, %d>>",
+		srcNumFromStr(w.eng.rrLast[1]), srcNumFromStr(w.eng.rrLast[2]))
+
+	reconn := w.eng.reconnectUntilMs > w.nowMs
+	var infNums []int
+	for id := range w.inFlight {
+		infNums = append(infNums, id)
+	}
+	slices.Sort(infNums)
+	var infStrs []string
+	for _, id := range infNums {
+		infStrs = append(infStrs, strconv.Itoa(id))
+	}
+	inFlightStr := "{" + strings.Join(infStrs, ", ") + "}"
+
+	rec := fmt.Sprintf("R(%q, %d, %q, %d, %d, %d, %d, %d, <<%s>>, <<%s>>, <<%s>>, <<%s>>, <<%s>>, <<%s>>, <<%s>>, <<%s>>, <<%s>>, <<%s>>, <<%s>>, %d, <<%s>>, %s, %d, %s, %s, %s, %d, %d)",
+		op, p, m, rh, c, mm, pr, par,
+		strings.Join(stParts, ", "),
+		strings.Join(mdParts, ", "),
+		strings.Join(rhParts, ", "),
+		strings.Join(hoParts, ", "),
+		strings.Join(ndParts, ", "),
+		strings.Join(prParts, ", "),
+		strings.Join(srParts, ", "),
+		strings.Join(paParts, ", "),
+		strings.Join(sbParts, ", "),
+		strings.Join(psParts, ", "),
+		strings.Join(sqParts, ", "),
+		w.eng.nextSeq,
+		strings.Join(sttParts, ", "),
+		claimStr,
+		w.claimsUsed,
+		rrStr,
+		tlaBool(reconn),
+		inFlightStr,
+		w.restartSeq,
+		w.restarts,
 	)
-	bad = strings.Replace(bad, `p2 |-> "work"`, `p2 |-> "ci"`, 1)
-	bad = strings.Replace(bad, `p2 |-> 1, p3`, `p2 |-> 2, p3`, 1)
-	bad = strings.Replace(bad, `p2 |-> FALSE, p3`, `p2 |-> TRUE, p3`, 2)
-	bad = strings.Replace(bad, `, 1, 1, [p1 |-> 1, p2 |-> 0`, `, 2, 2, [p1 |-> 1, p2 |-> 2`, 1)
-	bad = strings.Replace(bad, `{"p1"}`, `{"p1", "p2"}`, 1)
-	w.quitAll()
-	return append(slices.Clone(w.recs), bad)
+	w.recs = append(w.recs, rec)
 }
 
-// brokenCutPause constructs a witness walk where queued waiter p2 cuts into "run"
-// while p1 is still paused, violating UnpauseFirst / TraceAccepted.
-func brokenCutPause(t *testing.T) []string {
-	w := newWalk(t)
-	w.record("Init", "none")
-	w.doAcquireWork(w.procs[0], 2, 2, 2, false, false, 0) // p1 holds cpu 2
-	w.doAcquireWork(w.procs[1], 1, 1, 1, false, false, 0) // p2 waits in line/ for cpu 1
-	w.doAcquireCI(w.procs[2], 1, 1, false)                // p3 CI holds cpu 1, pauses p1 (1 spare cpu!)
-	// Faulted WakeWaiter: p2 grabs the 1 spare CPU while p1 is still paused!
-	last := w.recs[len(w.recs)-1]
-	bad := strings.Replace(last, `R("AcquireCI", "p3"`, `R("WakeWaiter", "p2"`, 1)
-	bad = strings.Replace(bad, `p2 |-> "wait"`, `p2 |-> "run"`, 1)
-	bad = strings.Replace(bad, `p2 |-> FALSE, p3 |-> TRUE`, `p2 |-> TRUE, p3 |-> TRUE`, 1)
-	bad = strings.Replace(bad, `, 3, 3, [p1 |-> 1, p2 |-> 0, p3 |-> 3, p4 |-> 0], [p1 |-> 0, p2 |-> 2`, `, 3, 4, [p1 |-> 1, p2 |-> 4, p3 |-> 3, p4 |-> 0], [p1 |-> 0, p2 |-> 0`, 1)
-	w.quitAll()
-	return append(slices.Clone(w.recs), bad)
-}
-
-var traceActions = []string{
-	"AcquireWork", "AcquireCI", "WakeWaiter", "FinishStep", "ContinueStep", "Timeout", "Crash", "SetCap",
-}
-
-const reserveLogHead = `(* Execution walks of cmd/nova-reserve/trace_test.go (TestTracesAreBehavioursOfTheModels), *)
-(* read off the real capacity.json, holds/*.json, line/*.json, and lock table.             *)
-(* ReserveTrace.tla verifies every walk is a valid behaviour of Reserve.tla, and rejects   *)
-(* BrokenOverCap and BrokenCutPause. Rewrite with RESERVE_UPDATE_LOG=1.                    *)
-R(a, p, pc, kind, prio, reqNeeds, reqTag, stepsLeft, inFlight, starts, seq, holdSeq, lineSeq, lockHeld, cap, crashes, sets, wasPausedStep) ==
-    [a |-> a, p |-> p, pc |-> pc, kind |-> kind, prio |-> prio, reqNeeds |-> reqNeeds, reqTag |-> reqTag,
-     stepsLeft |-> stepsLeft, inFlight |-> inFlight, starts |-> starts, seq |-> seq, holdSeq |-> holdSeq,
-     lineSeq |-> lineSeq, lockHeld |-> lockHeld, cap |-> cap, crashes |-> crashes, sets |-> sets,
-     wasPausedStep |-> wasPausedStep]`
-
-func renderTraceModule(module, head string, defs map[string][][]string) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "%s MODULE %s %s\n%s\n", strings.Repeat("-", 30), module, strings.Repeat("-", 30), head)
-	var keys []string
-	for k := range defs {
-		keys = append(keys, k)
-	}
-	slices.Sort(keys)
-	for _, name := range keys {
-		var walks []string
-		for _, recs := range defs[name] {
-			walks = append(walks, "<<\n        "+strings.Join(recs, ",\n        ")+"\n    >>")
+func (w *arbWalk) drainSchedule() {
+	for {
+		l, _ := w.eng.unpauseOne(w.nowMs)
+		if l == nil {
+			break
 		}
-		fmt.Fprintf(&b, "%s == <<\n    %s\n>>\n", name, strings.Join(walks, ",\n    "))
+		p := int(l.ConnID)
+		w.record("UnpauseStep", p, "none", 0, 0, 0, 1, 0)
 	}
+	for {
+		l, _ := w.eng.admitOne(w.nowMs)
+		if l == nil {
+			break
+		}
+		p := int(l.ConnID)
+		w.record("AdmitQueued", p, "none", hostIdx(l.Host), 0, 0, 1, 0)
+	}
+}
+
+func (w *arbWalk) stepRequestWork(p int, m string, rh, c, mm, pr, par int) string {
+	parentLease := ""
+	if par != 0 {
+		pl := w.findLeaseByActor(par)
+		require.NotNil(w.t, pl, "parent actor %d must hold a lease", par)
+		parentLease = pl.LeaseID
+	}
+	w.actors[p].mode = m
+	w.actors[p].reqHost = rh
+	w.actors[p].needsCPU = c
+	w.actors[p].needsMem = mm
+	w.actors[p].prio = pr
+	w.actors[p].parent = par
+	w.actors[p].starts++
+
+	msgs := w.eng.Request(uint64(p), ClientFrame{
+		Op:          "request",
+		ReqID:       fmt.Sprintf("r-%d-%d", p, w.actors[p].starts),
+		Mode:        m,
+		Host:        hostName(rh),
+		Needs:       NeedsSpec{Map: map[string]int{"cpu": c, "memory": mm}},
+		ParentLease: parentLease,
+		Holder:      "friend",
+		Source:      actorSourceStr(p),
+		Priority:    prioStr(pr),
+	}, w.nowMs)
+
+	outcome := ""
+	for _, msg := range msgs {
+		if msg.Broadcast || msg.ConnID != uint64(p) {
+			continue
+		}
+		outcome = msg.Frame.Op
+		if msg.Frame.Op == "refused" && msg.Frame.Code == "deadlock" {
+			w.actors[p].refusedDeadlock = true
+			outcome = "refused_deadlock"
+		}
+	}
+	w.record("RequestWork", p, m, rh, c, mm, pr, par)
+	return outcome
+}
+
+func (w *arbWalk) stepClearRefused(p int) {
+	require.True(w.t, w.actors[p].refusedDeadlock)
+	w.actors[p].refusedDeadlock = false
+	w.actors[p].mode = "none"
+	w.actors[p].reqHost = 0
+	w.actors[p].needsCPU = 0
+	w.actors[p].needsMem = 0
+	w.actors[p].parent = 0
+	w.record("ClearRefused", p, "none", 0, 0, 0, 1, 0)
+}
+
+func (w *arbWalk) stepRequestCI(h, c, mm int) {
+	w.actors[5].mode = "host"
+	w.actors[5].reqHost = h
+	w.actors[5].needsCPU = c
+	w.actors[5].needsMem = mm
+	w.actors[5].prio = 3
+	w.actors[5].starts++
+
+	msgs := w.eng.Request(5, ClientFrame{
+		Op:     "request",
+		ReqID:  fmt.Sprintf("ci-%d", w.actors[5].starts),
+		Mode:   "host",
+		Host:   hostName(h),
+		Needs:  NeedsSpec{Map: map[string]int{"cpu": c, "memory": mm}},
+		Holder: "ci",
+		Source: "ci",
+	}, w.nowMs)
+	require.True(w.t, slices.ContainsFunc(msgs, func(m OutMsg) bool { return m.Frame.Op == "granted" }))
+	w.record("RequestCI", 5, "host", h, c, mm, 3, 0)
+}
+
+func (w *arbWalk) stepRelease(p int) {
+	l := w.findLeaseByActor(p)
+	require.NotNil(w.t, l)
+	w.eng.removeLeaseCascade(l.LeaseID, w.nowMs, "released")
+	w.actors[p].mode = "none"
+	w.actors[p].reqHost = 0
+	w.actors[p].needsCPU = 0
+	w.actors[p].needsMem = 0
+	w.actors[p].parent = 0
+	w.record("Release", p, "none", 0, 0, 0, 1, 0)
+	w.drainSchedule()
+}
+
+func (w *arbWalk) stepPlaceClaim(h, amt int) string {
+	w.claimsUsed++
+	msgs := w.eng.PlaceClaim(99, ClientFrame{
+		Op:    "claim",
+		ReqID: fmt.Sprintf("cl-%d", w.claimsUsed),
+		Host:  hostName(h),
+		Needs: NeedsSpec{Map: map[string]int{"cpu": amt, "memory": amt}},
+		TTLMs: 60_000,
+	}, w.nowMs)
+	var cid string
+	for _, m := range msgs {
+		if m.Frame.Op == "granted" {
+			cid = m.Frame.LeaseID
+		}
+	}
+	require.NotEmpty(w.t, cid)
+	w.record("PlaceClaim", 0, "host", h, amt, amt, 1, 0)
+	return cid
+}
+
+func (w *arbWalk) stepExpireClaim(h int) {
+	hn := hostName(h)
+	w.eng.claims = slices.DeleteFunc(w.eng.claims, func(c *claimEntry) bool { return c.Host == hn })
+	w.record("ExpireClaim", 0, "host", h, 0, 0, 1, 0)
+	w.drainSchedule()
+}
+
+func (w *arbWalk) stepServerRestart() {
+	require.Empty(w.t, w.eng.queue)
+	require.Empty(w.t, w.eng.claims)
+	require.Nil(w.t, w.findLeaseByActor(5))
+
+	savedSeq := w.eng.nextSeq
+	w.restartSeq = savedSeq
+	w.restarts++
+	w.inFlight = map[int]pendingReconnect{}
+	for p := 1; p <= 4; p++ {
+		l := w.findLeaseByActor(p)
+		if l == nil {
+			continue
+		}
+		w.inFlight[p] = pendingReconnect{
+			rl: ReconnectLease{
+				LeaseID:     l.LeaseID,
+				Host:        l.Host,
+				Needs:       maps.Clone(l.Needs),
+				ParentLease: l.ParentLease,
+				Holder:      l.Holder,
+				Source:      l.Source,
+				Label:       l.Label,
+				Priority:    l.Priority,
+				Cores:       l.Cores,
+			},
+			mode:    w.actors[p].mode,
+			reqHost: w.actors[p].reqHost,
+			prio:    priorityRank(l.Priority),
+			parent:  w.actorOfLeaseID(l.ParentLease),
+			seq:     l.Seq,
+			paused:  l.Paused,
+			sub:     l.Sublease,
+		}
+	}
+	require.NotEmpty(w.t, w.inFlight)
+
+	w.nowMs += 1_000
+	machines := []MachineSpec{
+		{Host: "h1", Online: true, Tags: []string{"linux", "amd64"}, UsableCores: 2, Resources: map[string]int{"cpu": 2, "memory": 2}},
+		{Host: "h2", Online: true, Tags: []string{"linux", "amd64"}, UsableCores: 2, Resources: map[string]int{"cpu": 2, "memory": 2}},
+	}
+	w.eng = NewEngine(machines, w.nowMs, defaultReconnectMs)
+	w.eng.SetNextSeq(savedSeq)
+	for cid := uint64(1); cid <= 5; cid++ {
+		w.eng.RegisterConn(cid, w.nowMs)
+	}
+	w.record("ServerRestart", 0, "none", 0, 0, 0, 1, 0)
+}
+
+func (w *arbWalk) stepReconnect(p int) {
+	pr, ok := w.inFlight[p]
+	require.True(w.t, ok)
+	delete(w.inFlight, p)
+	msgs := w.eng.Reconnect(uint64(p), ClientFrame{
+		Op:     "reconnect",
+		Leases: []ReconnectLease{pr.rl},
+	}, w.nowMs)
+	require.True(w.t, slices.ContainsFunc(msgs, func(m OutMsg) bool { return m.Frame.Op == "granted" }))
+	w.record("Reconnect", p, "none", 0, 0, 0, 1, 0)
+}
+
+func (w *arbWalk) stepEndReconnect() {
+	require.Empty(w.t, w.inFlight)
+	w.eng.reconnectUntilMs = 0
+	w.record("EndReconnect", 0, "none", 0, 0, 0, 1, 0)
+	w.drainSchedule()
+}
+
+// walkVictimAndUnpause exercises multi-host routing, CI victim selection
+// (lowest-priority / youngest paused first), and unpause ahead of queued work.
+func walkVictimAndUnpause(t *testing.T) []string {
+	w := newArbWalk(t)
+	// Actor 1 (high prio) & Actor 2 (normal prio) each take cpu 1 on h1; Actor 3 queues on h1.
+	w.stepRequestWork(1, "host", 1, 1, 1, 2, 0)
+	w.stepRequestWork(2, "host", 1, 1, 1, 1, 0)
+	w.stepRequestWork(3, "host", 1, 1, 1, 2, 0) // queued despite prio 2 because h1 is full
+	// CI arrives on h1 needing cpu 1: MUST pause Actor 2 (prio 1), keeping Actor 1 (prio 2) active!
+	w.stepRequestCI(1, 1, 1)
+	require.False(t, w.findLeaseByActor(1).Paused)
+	require.True(t, w.findLeaseByActor(2).Paused)
+	// CI finishes: Actor 2 MUST unpause ahead of queued Actor 3!
+	w.stepRelease(5)
+	require.False(t, w.findLeaseByActor(2).Paused)
+	require.NotNil(w.t, w.findWaiterByActor(3))
+	// Release Actor 1 -> Actor 3 admitted; then clean up.
+	w.stepRelease(1)
+	w.stepRelease(2)
+	w.stepRelease(3)
+	return w.recs
+}
+
+// walkRoundRobinAndHoL exercises --source round-robin alternation and
+// head-of-line capacity reservation preventing starvation of large requests.
+func walkRoundRobinAndHoL(t *testing.T) []string {
+	w := newArbWalk(t)
+	// Actor 1 (source s1) takes full h1 (cpu 2, mem 2), setting rrLast[1] = s1.
+	w.stepRequestWork(1, "host", 1, 2, 2, 1, 0)
+	// Actor 3 (source s1) queues first, then Actor 2 (source s2) queues at same priority.
+	w.stepRequestWork(3, "host", 1, 2, 2, 1, 0)
+	w.stepRequestWork(2, "host", 1, 2, 2, 1, 0)
+	// When Actor 1 releases, round-robin MUST pick Actor 2 (s2) ahead of Actor 3 (s1)!
+	w.stepRelease(1)
+	require.NotNil(t, w.findLeaseByActor(2))
+	require.NotNil(t, w.findWaiterByActor(3))
+	// Actor 2 releases -> Actor 3 (cpu 2, mem 2) runs; then test HoL reservation with partial host usage.
+	w.stepRelease(2)
+	w.stepRelease(3)
+
+	// HoL check: Actor 1 holds cpu 1 on h1; Actor 2 queues needing cpu 2 on h1; Actor 4 arrives needing cpu 1 on h1.
+	// Even though cpu 1 is free right now, Actor 4 MUST NOT cut in front of HoL Actor 2!
+	w.stepRequestWork(1, "host", 1, 1, 1, 1, 0)
+	w.stepRequestWork(2, "host", 1, 2, 2, 1, 0)
+	w.stepRequestWork(4, "host", 1, 1, 1, 1, 0)
+	require.NotNil(t, w.findWaiterByActor(4))
+	w.stepRelease(1)
+	w.stepRelease(2)
+	w.stepRelease(4)
+	return w.recs
+}
+
+// walkSubleaseDeadlockClaimAndRestart exercises 0-debit sub-leases, wait-for
+// cycle refusal (RESERVE DEADLOCK), timed soft claims, and 15s reconnect window.
+func walkSubleaseDeadlockClaimAndRestart(t *testing.T) []string {
+	w := newArbWalk(t)
+	// Actor 1 holds cpu 2, mem 2 on h1; Actor 2 takes a 0-debit sub-lease (cpu 1, mem 1) inside Actor 1!
+	w.stepRequestWork(1, "host", 1, 2, 2, 1, 0)
+	w.stepRequestWork(2, "host", 1, 1, 1, 1, 1)
+	require.True(t, w.findLeaseByActor(2).Sublease)
+	// Actor 3 (also child of Actor 1) asks for cpu 2, mem 2 on h1 (exceeds remaining sublease budget 1,1
+	// and h1 is blocked by parent Actor 1) -> immediate RESERVE DEADLOCK refusal!
+	out := w.stepRequestWork(3, "host", 1, 2, 2, 1, 1)
+	require.Equal(t, "refused_deadlock", out)
+	w.stepClearRefused(3)
+	w.stepRelease(2)
+
+	// Server restarts while Actor 1 holds h1!
+	w.stepServerRestart()
+	// Actor 4 arrives during reconnect window asking for h2 -> queued (held back by reconnect window).
+	w.stepRequestWork(4, "host", 2, 1, 1, 1, 0)
+	require.NotNil(t, w.findWaiterByActor(4))
+	// Actor 1 reconnects its live lease on h1; reconnect window ends -> Actor 4 admitted on h2!
+	w.stepReconnect(1)
+	w.stepEndReconnect()
+	require.NotNil(t, w.findLeaseByActor(4))
+	w.stepRelease(1)
+	w.stepRelease(4)
+
+	// Soft claim on h1 (cpu 2, mem 2) blocks new work until expired.
+	w.stepPlaceClaim(1, 2)
+	w.stepRequestWork(1, "host", 1, 1, 1, 1, 0)
+	require.NotNil(t, w.findWaiterByActor(1))
+	w.stepExpireClaim(1)
+	require.NotNil(t, w.findLeaseByActor(1))
+	w.stepRelease(1)
+	return w.recs
+}
+
+// runSeededArbWalk runs a pseudo-random multi-actor scenario within MaxStarts=4, MaxRestarts=2.
+func runSeededArbWalk(t *testing.T, seed uint64) []string {
+	w := newArbWalk(t)
+	rng := rand.New(rand.NewPCG(seed, seed^0x9e3779b97f4a7c15))
+
+	for range 32 {
+		// Clear any deadlock refusal first.
+		cleared := false
+		for p := 1; p <= 4; p++ {
+			if w.actors[p].refusedDeadlock {
+				w.stepClearRefused(p)
+				cleared = true
+				break
+			}
+		}
+		if cleared {
+			continue
+		}
+		// If reconnecting, reconnect an in-flight lease or close the window.
+		if w.eng.reconnectUntilMs > w.nowMs {
+			if len(w.inFlight) > 0 {
+				var ids []int
+				for id := range w.inFlight {
+					ids = append(ids, id)
+				}
+				slices.Sort(ids)
+				w.stepReconnect(ids[rng.IntN(len(ids))])
+			} else {
+				w.stepEndReconnect()
+			}
+			continue
+		}
+
+		choice := rng.IntN(10)
+		switch {
+		case choice < 4:
+			var idle []int
+			for p := 1; p <= 4; p++ {
+				if w.findLeaseByActor(p) == nil && w.findWaiterByActor(p) == nil && w.actors[p].starts < 4 {
+					idle = append(idle, p)
+				}
+			}
+			if len(idle) == 0 {
+				break
+			}
+			p := idle[rng.IntN(len(idle))]
+			m := "host"
+			rh := 1 + rng.IntN(2)
+			if rng.IntN(3) == 0 {
+				m, rh = "any", 0
+			}
+			c := 1 + rng.IntN(2)
+			mm := 1 + rng.IntN(2)
+			pr := 1 + rng.IntN(2)
+			par := 0
+			if (p == 2 || p == 3) && rng.IntN(3) == 0 {
+				if l1 := w.findLeaseByActor(1); l1 != nil && !l1.Sublease {
+					par = 1
+				}
+			}
+			w.stepRequestWork(p, m, rh, c, mm, pr, par)
+
+		case choice == 4:
+			if w.findLeaseByActor(5) == nil && w.actors[5].starts < 4 {
+				w.stepRequestCI(1+rng.IntN(2), 1+rng.IntN(2), 1+rng.IntN(2))
+			}
+
+		case choice == 5:
+			if w.claimsUsed < 4 && len(w.eng.claims) == 0 {
+				w.stepPlaceClaim(1, 1+rng.IntN(2))
+			} else if len(w.eng.claims) > 0 {
+				w.stepExpireClaim(1)
+			}
+
+		case choice == 6:
+			if w.restarts < 2 && len(w.eng.queue) == 0 && len(w.eng.claims) == 0 && w.findLeaseByActor(5) == nil {
+				hasLive := false
+				for p := 1; p <= 4; p++ {
+					if w.findLeaseByActor(p) != nil {
+						hasLive = true
+					}
+				}
+				if hasLive {
+					w.stepServerRestart()
+				}
+			}
+
+		default:
+			var releasable []int
+			for p := 1; p <= 5; p++ {
+				if w.findLeaseByActor(p) == nil {
+					continue
+				}
+				hasChild := false
+				for c := 1; c <= 4; c++ {
+					if cl := w.findLeaseByActor(c); cl != nil && w.actorOfLeaseID(cl.ParentLease) == p {
+						hasChild = true
+					}
+					if cq := w.findWaiterByActor(c); cq != nil && w.actorOfLeaseID(cq.ParentLease) == p {
+						hasChild = true
+					}
+				}
+				if !hasChild {
+					releasable = append(releasable, p)
+				}
+			}
+			if len(releasable) > 0 {
+				w.stepRelease(releasable[rng.IntN(len(releasable))])
+			}
+		}
+	}
+
+	// Cleanly drain any remaining state so every walk ends idle.
+	for p := 1; p <= 4; p++ {
+		if w.actors[p].refusedDeadlock {
+			w.stepClearRefused(p)
+		}
+	}
+	if w.eng.reconnectUntilMs > w.nowMs {
+		var ids []int
+		for id := range w.inFlight {
+			ids = append(ids, id)
+		}
+		slices.Sort(ids)
+		for _, id := range ids {
+			w.stepReconnect(id)
+		}
+		w.stepEndReconnect()
+	}
+	if len(w.eng.claims) > 0 {
+		w.stepExpireClaim(1)
+	}
+	for range 10 {
+		progressed := false
+		for _, p := range []int{5, 2, 3, 4, 1} {
+			if w.findLeaseByActor(p) == nil {
+				continue
+			}
+			hasChild := false
+			for c := 1; c <= 4; c++ {
+				if cl := w.findLeaseByActor(c); cl != nil && w.actorOfLeaseID(cl.ParentLease) == p {
+					hasChild = true
+				}
+				if cq := w.findWaiterByActor(c); cq != nil && w.actorOfLeaseID(cq.ParentLease) == p {
+					hasChild = true
+				}
+			}
+			if !hasChild {
+				w.stepRelease(p)
+				progressed = true
+			}
+		}
+		if !progressed {
+			break
+		}
+	}
+	return w.recs
+}
+
+const arbitratorLogHead = `(* Execution walks of cmd/nova-reserve/trace_test.go (TestTracesAreBehavioursOfTheModels), *)
+(* read directly off the deterministic Go Engine. ArbitratorTrace.tla verifies every walk  *)
+(* is a valid behaviour of Arbitrator.tla and rejects BrokenVictimOrder, BrokenRoundRobin, *)
+(* and BrokenDeadlockQueue. Rewrite with RESERVE_UPDATE_LOG=1.                             *)
+R(op, p, m, rh, c, mm, pr, par, state, mode, reqHost, hostOf, needs, prio, source, parent,
+  sublease, paused, seq, nextSeq, starts, claim, claimsUsed, rrLast, reconnecting,
+  inFlight, restartSeq, restarts) ==
+    [op |-> op, p |-> p, m |-> m, rh |-> rh, c |-> c, mm |-> mm, pr |-> pr, par |-> par,
+     state |-> state, mode |-> mode, reqHost |-> reqHost, hostOf |-> hostOf, needs |-> needs,
+     prio |-> prio, source |-> source, parent |-> parent, sublease |-> sublease, paused |-> paused,
+     seq |-> seq, nextSeq |-> nextSeq, starts |-> starts, claim |-> claim, claimsUsed |-> claimsUsed,
+     rrLast |-> rrLast, reconnecting |-> reconnecting, inFlight |-> inFlight,
+     restartSeq |-> restartSeq, restarts |-> restarts]`
+
+func renderTraceModule(module, head string, walks [][]string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s MODULE %s %s\n%s\n", strings.Repeat("-", 28), module, strings.Repeat("-", 29), head)
+	var rendered []string
+	for _, recs := range walks {
+		rendered = append(rendered, "<<\n        "+strings.Join(recs, ",\n        ")+"\n    >>")
+	}
+	fmt.Fprintf(&b, "TraceWalks == <<\n    %s\n>>\n", strings.Join(rendered, ",\n    "))
 	b.WriteString(strings.Repeat("=", 77) + "\n")
 	return b.String()
 }
 
 func TestTracesAreBehavioursOfTheModels(t *testing.T) {
 	t.Parallel()
-	var walks [][]string
-	for s := range uint64(trWalks) {
-		walks = append(walks, runSeededWalk(t, s+1).recs)
+	walks := [][]string{
+		walkVictimAndUnpause(t),
+		walkRoundRobinAndHoL(t),
+		walkSubleaseDeadlockClaimAndRestart(t),
 	}
-	for _, act := range traceActions {
+	for s := uint64(1); s <= 6; s++ {
+		walks = append(walks, runSeededArbWalk(t, s))
+	}
+	for _, op := range traceRequiredOps {
 		found := slices.ContainsFunc(walks, func(recs []string) bool {
 			return slices.ContainsFunc(recs, func(r string) bool {
-				return strings.HasPrefix(r, fmt.Sprintf("R(%q,", act))
+				return strings.HasPrefix(r, fmt.Sprintf("R(%q,", op))
 			})
 		})
-		require.True(t, found, "no walk exercised action %s", act)
+		require.True(t, found, "no walk exercised action %s", op)
 	}
 
-	got := renderTraceModule("ReserveLog", reserveLogHead, map[string][][]string{
-		"Walks":          walks,
-		"BrokenOverCap":  {brokenOverCap(t)},
-		"BrokenCutPause": {brokenCutPause(t)},
-	})
-	const file = "tla/ReserveLog.tla"
+	got := renderTraceModule("ArbitratorLog", arbitratorLogHead, walks)
+	const file = "tla/ArbitratorLog.tla"
 	if os.Getenv("RESERVE_UPDATE_LOG") == "1" {
 		require.NoError(t, os.WriteFile(file, []byte(got), 0o644))
 		return

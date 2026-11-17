@@ -24,19 +24,19 @@ func TestFunctionalRunPinsDisjointCPUsAndSteersEnv(t *testing.T) {
 	require.NoError(t, err, "%s", out)
 
 	want := max(1, min(2, len(usable)))
-	run1 := holdCmd(t, bin, dir, "cpus", "--needs", "cpu "+strconv.Itoa(want)+", memory 1")
+	run1 := runChildCmd(t, bin, dir, "cpus", "--needs", "cpu "+strconv.Itoa(want)+", memory 1")
 	var stderr bytes.Buffer
 	run1.Stderr = &stderr
 	stdout, err := run1.Output()
 	require.NoError(t, err, "%s", stderr.String())
 	wStr := strconv.Itoa(want)
 	assert.Equal(t, wStr+" "+wStr+" "+wStr, strings.TrimSpace(string(stdout)))
-	assert.Contains(t, stderr.String(), "HELD cpu="+wStr+" memory=1 cores="+wStr+" pid=")
+	assert.Contains(t, stderr.String(), "cpu="+wStr+" memory=1 cores="+wStr+" pid=")
 	assert.Contains(t, stderr.String(), " cpus=")
 
 	// Exclusive run gets all usable CPUs.
 	stderr.Reset()
-	ex := holdCmd(t, bin, dir, "cpus", "--exclusive")
+	ex := runChildCmd(t, bin, dir, "cpus", "--exclusive")
 	ex.Stderr = &stderr
 	stdout, err = ex.Output()
 	require.NoError(t, err, "%s", stderr.String())

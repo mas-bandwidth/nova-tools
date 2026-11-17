@@ -15,3 +15,5 @@ func hostMemoryBytes() uint64 {
 	}
 	return n
 }
+
+func parentPID(int) int { return 0 }

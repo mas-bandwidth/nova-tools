@@ -65,6 +65,20 @@
 			"ip": [
 				"*"
 			]
+		},
+		{
+			"src": [
+				"tag:nova",
+				"tag:runner",
+				"tag:control"
+			],
+			"dst": [
+				"tag:nova",
+				"tag:control"
+			],
+			"ip": [
+				"tcp:7680"
+			]
 		}
 	],
 	"ssh": [

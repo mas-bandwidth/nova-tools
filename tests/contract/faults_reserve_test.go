@@ -13,7 +13,7 @@ func init() {
 		dir(e)
 		e.Exec("reserve", "", "set", "--dir", "{r}", "--cpu", "4", "--memory", "8", "--cores", "4")
 	}
-	receipts := regexp.MustCompile(`^nova-reserve: (HELD|CAPACITY SET|MEASURE OK)`)
+	receipts := regexp.MustCompile(`^nova-reserve: (HELD|CAPACITY SET|BENCH OK)`)
 	killed := func(sig string) []string {
 		return []string{"run", "--dir", "{r}", "--", "sh", "-c", "kill -" + sig + " $$"}
 	}

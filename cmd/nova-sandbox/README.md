@@ -160,7 +160,10 @@ If the command is killed by signal N, stderr gains
 
 ### What the command receives
 
-`PATH`, `HOME`, `LANG` and `TERM` are kept. `--env <name>` passes another
+`PATH`, `HOME`, `LANG` and `TERM` are kept, along with validated `nova-reserve`
+steering tokens (`NOVA_RESERVE_LEASE`, `NOVA_RESERVE_HOST`, positive-integer
+`NOVA_RESERVE_CPUS`, `GOMAXPROCS`, `CARGO_BUILD_JOBS`, `RAYON_NUM_THREADS`,
+`CMAKE_BUILD_PARALLEL_LEVEL`, and `MAKEFLAGS=-j<N>`). `--env <name>` passes another
 variable by name; the value is never an argument. A name that is not letters,
 digits and underscores, or that is unset, is `bad_env` (exit 2), and
 it is reported together with every other problem. A Go build passes `TMPDIR`, `GOCACHE`,

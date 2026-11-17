@@ -72,7 +72,7 @@ func TestFunctionalCommandReadsTheTerminal(t *testing.T) {
 	bin, dir := build(t), t.TempDir()
 	initCap(t, bin, dir, 1, 2)
 	master, seen, _, done := onTerminal(t, bin, "--dir", dir, "--", "sh", "-c", "read x; echo got:$x")
-	require.Eventually(t, seen("HELD cpu=1 memory=1"), patience, 20*time.Millisecond)
+	require.Eventually(t, seen("cpu=1 memory=1"), patience, 20*time.Millisecond)
 	_, err := master.Write([]byte("hi\n"))
 	require.NoError(t, err)
 	select {

@@ -84,29 +84,18 @@ func TestTempCapacityThroughALinkIsRefused(t *testing.T) {
 	assert.NoFileExists(t, target)
 }
 
-func TestSubdirectoryThroughALinkIsRefused(t *testing.T) {
-	t.Parallel()
-	h := newHarness(t)
-	target := t.TempDir()
-	require.NoError(t, os.Symlink(target, filepath.Join(h.dir, "holds")))
-	assert.Equal(t, 2, run([]string{"set", "--dir", h.dir, "--cpu", "4", "--memory", "8"}, h.w))
-	assert.Contains(t, h.err.String(), "is a symbolic link")
-}
-
 func TestLockAndDirectoryAndFIFOThroughSpecialFilesAreRefused(t *testing.T) {
 	t.Parallel()
 	target, same := private(t)
-	link := filepath.Join(t.TempDir(), "mutex")
+	link := filepath.Join(t.TempDir(), "serve.lock")
 	require.NoError(t, os.Symlink(target, link))
-	_, ok, err := osLock(link, true)
-	assert.False(t, ok)
+	_, err := openIn(link, os.O_RDWR|os.O_CREATE)
 	requireOdd(t, err, link)
 	same()
 
-	dirLock := filepath.Join(t.TempDir(), "mutex")
+	dirLock := filepath.Join(t.TempDir(), "serve.lock")
 	require.NoError(t, os.Mkdir(dirLock, 0o755))
-	_, ok, err = osLock(dirLock, true)
-	assert.False(t, ok)
+	_, err = openIn(dirLock, os.O_RDWR|os.O_CREATE)
 	requireOdd(t, err, dirLock)
 
 	h := newHarness(t)
@@ -128,10 +117,9 @@ func TestHardLinkedCapacityAndLockAreRefused(t *testing.T) {
 	assert.Equal(t, "nova-reserve: "+linked(p)+"\n", h.err.String())
 	same()
 
-	lp := filepath.Join(t.TempDir(), "1.lock")
+	lp := filepath.Join(t.TempDir(), "serve.lock")
 	sameLock := hardLink(t, lp)
-	_, ok, err := osLock(lp, true)
-	assert.False(t, ok)
+	_, err := openIn(lp, os.O_RDWR|os.O_CREATE)
 	var e *exitError
 	require.ErrorAs(t, err, &e)
 	assert.Equal(t, exitError{2, linked(lp)}, *e)
@@ -154,20 +142,8 @@ func TestMadeFilesAreForEveryUser(t *testing.T) {
 	old := syscall.Umask(0o077)
 	defer syscall.Umask(old)
 	h := newHarness(t)
-	h.w.lock = osLock
 	h.setCap(t, 2, 4, 2)
-	mode := func(rel string) os.FileMode {
-		fi, err := os.Stat(filepath.Join(h.dir, rel))
-		require.NoError(t, err)
-		return fi.Mode().Perm()
-	}
-	h.w.exec = func(string, []string, []string, bool) int {
-		assert.Equal(t, os.FileMode(0o666), mode(filepath.Join("holds", "1.lock")))
-		assert.Equal(t, os.FileMode(0o666), mode(filepath.Join("holds", "1.json")))
-		return 0
-	}
-	require.Equal(t, 0, run([]string{"--dir", h.dir, "--", "make"}, h.w), h.err.String())
-	for _, rel := range []string{"capacity.json", "mutex", "seq", "notify"} {
-		assert.Equal(t, os.FileMode(0o666), mode(rel), rel)
-	}
+	fi, err := os.Stat(filepath.Join(h.dir, "capacity.json"))
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o666), fi.Mode().Perm())
 }

@@ -1,0 +1,34 @@
+# purpose: the nova-reserve serve arbitrator, on each machine of the services group
+#
+# reserve.yml: provisions the central fleet resource arbitrator (nova-reserve serve)
+# on each machine of the `services` group (or -e nova_store_hosts, e.g. studio or
+# the control/services host), listening on the host's Tailscale IPv4 address at
+# tcp:7680 and authenticating peer connections via NOVA_RESERVE_PASSWORD.
+#
+# Generates <nova_reserve_dir>/reserve.pass (0600) once on the machine; when
+# nova_seal_store, nova_seal_seat and nova_seal_key are given, seals the password
+# into that seat as NOVA_RESERVE_PASSWORD via the seal role.
+#
+#   nova-fleet reserve --check --diff
+#   nova-fleet reserve -- -e nova_seal_store=S -e nova_seal_seat=SEAT -e nova_seal_key=K
+- name: the fleet's resource arbitrator
+  hosts: "{{ nova_store_hosts | default('services') }}"
+  gather_facts: true
+  gather_subset: [min]
+  pre_tasks:
+    - name: the seal's refusals, before anything changes
+      ansible.builtin.include_role: { name: seal, tasks_from: check }
+
+    - name: the control node has what the run needs
+      ansible.builtin.include_role: { name: preflight }
+      vars:
+        preflight_control: "{{ ([{'cmd': nova_control_secrets, 'for': 'the seal'}, {'cmd': nova_control_sops, 'for': 'the seal'}] if nova_seal_store is defined else []) }}"
+  roles:
+    - reserve
+  tasks:
+    - name: the arbitrator password, sealed into a seat
+      ansible.builtin.include_role:
+        name: seal
+      vars:
+        seal_file: "{{ nova_reserve_dir }}/reserve.pass"
+        seal_name: "{{ nova_reserve_seal_name }}"

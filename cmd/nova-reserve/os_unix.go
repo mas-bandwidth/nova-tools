@@ -20,7 +20,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// systemDir is the default reservation directory on a machine.
+// systemDir is the default local state directory on a standalone machine.
 const systemDir = "/var/tmp/nova-reserve"
 
 // ensureDir creates path if absent and verifies it is a real directory,
@@ -61,19 +61,6 @@ func ensureDir(path, dirFrom, retryCmd string) error {
 	return nil
 }
 
-func ensureLayout(dir, dirFrom, retryCmd string) error {
-	if err := ensureDir(dir, dirFrom, retryCmd); err != nil {
-		return err
-	}
-	for _, sub := range []string{"holds", "line"} {
-		p := filepath.Join(dir, sub)
-		if err := ensureDir(p, "subdirectory", "sudo rm -rf "+shellQuote(p)+" && "+retryCmd); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 // openIn opens a regular file inside the reservation directory, following no
 // symbolic link, waiting on no FIFO, and refusing any file with a second hard link.
 func openIn(path string, flag int) (*os.File, error) {
@@ -101,37 +88,6 @@ func openIn(path string, flag int) (*os.File, error) {
 	return f, nil
 }
 
-// osLock takes a non-blocking flock(2) on path. Exclusive locks open O_RDWR so
-// Linux inotify emits IN_CLOSE_WRITE even if the holder dies via SIGKILL;
-// shared probes open O_RDONLY without creating missing files.
-func osLock(path string, exclusive bool) (func(), bool, error) {
-	mode := os.O_RDONLY
-	if exclusive {
-		mode = os.O_RDWR
-	}
-	f, err := openIn(path, mode)
-	if errors.Is(err, os.ErrNotExist) && exclusive {
-		f, err = openIn(path, mode|os.O_CREATE)
-	}
-	if err != nil {
-		return nil, false, err
-	}
-	how := syscall.LOCK_SH
-	if exclusive {
-		how = syscall.LOCK_EX
-	}
-	if err := syscall.Flock(int(f.Fd()), how|syscall.LOCK_NB); err != nil {
-		// ignored: no lock is held on this descriptor
-		_ = f.Close()
-		if errors.Is(err, syscall.EWOULDBLOCK) {
-			return nil, false, nil
-		}
-		return nil, false, err
-	}
-	// ignored: closing the descriptor releases the kernel flock unconditionally
-	return func() { _ = f.Close() }, true, nil
-}
-
 // readRecord reads the first line of a regular file in the reservation directory.
 func readRecord(path string) ([]byte, bool, error) {
 	f, err := openIn(path, os.O_RDONLY)
@@ -153,9 +109,7 @@ func readRecord(path string) ([]byte, bool, error) {
 	return b, true, nil
 }
 
-// writeRecord writes a single-line record ending in '\n'. It prefers atomic
-// rename of a synced temp file and falls back to offset-0 overwrite + truncate
-// when a sticky directory forbids replacing another user's file.
+// writeRecord writes a single-line record ending in '\n'.
 func writeRecord(path string, line []byte, pid int) error {
 	rec := append(bytes.TrimRight(line, "\n"), '\n')
 	tmp := path + "." + strconv.Itoa(pid) + ".tmp"
@@ -183,6 +137,25 @@ func writeRecord(path string, line []byte, pid int) error {
 	}
 	_, werr := f.WriteAt(rec, 0)
 	return errors.Join(werr, f.Truncate(int64(len(rec))), f.Sync(), f.Close())
+}
+
+// readPPIDChain walks up to 32 ancestor PIDs starting at pid's parent so nested
+// nova-reserve invocations discover their enclosing local lease even when an
+// intermediate process scrubbed environment variables.
+func readPPIDChain(pid int) []int {
+	var chain []int
+	seen := map[int]bool{pid: true}
+	cur := pid
+	for range 32 {
+		pp := parentPID(cur)
+		if pp <= 1 || seen[pp] {
+			break
+		}
+		seen[pp] = true
+		chain = append(chain, pp)
+		cur = pp
+	}
+	return chain
 }
 
 // tie starts cmd in its own process group with OS lifecycle ties (Pdeathsig, watchdog).

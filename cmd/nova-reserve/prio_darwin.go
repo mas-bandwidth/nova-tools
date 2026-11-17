@@ -23,3 +23,11 @@ func hostMemoryBytes() uint64 {
 	}
 	return n
 }
+
+func parentPID(pid int) int {
+	kp, err := unix.SysctlKinfoProc("kern.proc.pid", pid)
+	if err != nil || kp == nil {
+		return 0
+	}
+	return int(kp.Eproc.Ppid)
+}

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"path/filepath"
 	"runtime"
 	"slices"
 	"strconv"
@@ -132,47 +131,23 @@ func readProcStat(path string) (busy, total uint64, ok bool) {
 	return total - idle, total, total > 0
 }
 
-type inotifyWatcher struct {
-	fd int
-}
-
-func newOSWatcher(dir string) watcher {
-	fd, err := unix.InotifyInit1(unix.IN_CLOEXEC | unix.IN_NONBLOCK)
+func parentPID(pid int) int {
+	b, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
 	if err != nil {
-		return fallbackWatcher{}
+		return 0
 	}
-	const mask = unix.IN_CLOSE_WRITE | unix.IN_MOVED_TO | unix.IN_CREATE | unix.IN_DELETE | unix.IN_MODIFY | unix.IN_ATTRIB
-	for _, p := range []string{dir, filepath.Join(dir, "holds"), filepath.Join(dir, "line")} {
-		// ignored: fallback timeout bounds wait if a watch fails
-		_, _ = unix.InotifyAddWatch(fd, p, mask)
+	s := string(b)
+	rparen := strings.LastIndexByte(s, ')')
+	if rparen < 0 || rparen+1 >= len(s) {
+		return 0
 	}
-	return &inotifyWatcher{fd: fd}
-}
-
-func (w *inotifyWatcher) drain() {
-	var buf [4096]byte
-	for {
-		if _, err := unix.Read(w.fd, buf[:]); err != nil {
-			return
-		}
+	fields := strings.Fields(s[rparen+1:])
+	if len(fields) < 2 {
+		return 0
 	}
-}
-
-func (w *inotifyWatcher) wait(_ []int, d time.Duration) {
-	if d <= 0 {
-		return
+	pp, err := strconv.Atoi(fields[1])
+	if err != nil || pp <= 0 {
+		return 0
 	}
-	ms := int(min(d, 2*time.Second).Milliseconds())
-	if ms <= 0 {
-		ms = 1
-	}
-	pfd := []unix.PollFd{{Fd: int32(w.fd), Events: unix.POLLIN}}
-	// ignored: EINTR or timeout returns to caller which re-checks deadline and state
-	_, _ = unix.Poll(pfd, ms)
-	w.drain()
-}
-
-func (w *inotifyWatcher) close() {
-	// ignored: closing inotify descriptor at end of acquire
-	_ = unix.Close(w.fd)
+	return pp
 }

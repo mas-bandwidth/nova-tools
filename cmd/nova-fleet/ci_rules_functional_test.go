@@ -157,23 +157,42 @@ func TestCIRulesHoldPausesWorkAndReleasesOnCompleted(t *testing.T) {
 	code, out := ciRun(t, sh, hooks, "", env, "started")
 	require.Equal(t, 0, code, out)
 
-	// Verify CI hold took over immediately and marked bench hold paused.
+	// Verify CI hold took over immediately and marked bench hold paused in snapshot JSON.
 	statusBytes, err := exec.Command(realReserve, "status", "--dir", resDir, "--json").Output()
 	require.NoError(t, err)
-	var st struct {
-		AnyPaused       bool                      `json:"any_paused"`
-		HeldByLabel     map[string]map[string]int `json:"held_by_label"`
-		PausedByLabel   map[string]map[string]int `json:"paused_by_label"`
-		SprintConsumers []string                  `json:"sprint_consumers"`
-		PausedConsumers []string                  `json:"paused_consumers"`
+	type snapView struct {
+		Op       string `json:"op"`
+		Machines []struct {
+			Leases []struct {
+				Holder   string         `json:"holder"`
+				Label    string         `json:"label"`
+				Consumer string         `json:"consumer"`
+				Paused   bool           `json:"paused"`
+				Needs    map[string]int `json:"needs"`
+			} `json:"leases"`
+		} `json:"machines"`
 	}
+	var st snapView
 	require.NoError(t, json.Unmarshal(statusBytes, &st))
-	assert.True(t, st.AnyPaused)
-	assert.Equal(t, 4, st.HeldByLabel["ci"]["cpu"])
-	assert.Equal(t, 4, st.PausedByLabel["work"]["cpu"])
-	assert.Equal(t, []string{"card-1.w1@1"}, st.PausedConsumers)
+	require.Equal(t, "snapshot", st.Op)
+	require.Len(t, st.Machines, 1)
+	require.Len(t, st.Machines[0].Leases, 2)
+	var ciCPU, pausedWorkCPU int
+	var pausedConsumers []string
+	for _, l := range st.Machines[0].Leases {
+		if l.Holder == "ci" && !l.Paused {
+			ciCPU += l.Needs["cpu"]
+		}
+		if l.Label == "work" && l.Paused {
+			pausedWorkCPU += l.Needs["cpu"]
+			pausedConsumers = append(pausedConsumers, l.Consumer)
+		}
+	}
+	assert.Equal(t, 4, ciCPU)
+	assert.Equal(t, 4, pausedWorkCPU)
+	assert.Equal(t, []string{"card-1.w1@1"}, pausedConsumers)
 
-	// Completed disarms ci-hold; wait briefly for flock release and verify bench hold unpauses.
+	// Completed disarms ci-hold; verify CI lease drops and bench hold unpauses.
 	code, out = ciRun(t, sh, hooks, "", env, "completed")
 	require.Equal(t, 0, code, out)
 
@@ -182,10 +201,11 @@ func TestCIRulesHoldPausesWorkAndReleasesOnCompleted(t *testing.T) {
 		if err != nil {
 			return false
 		}
-		var cur struct {
-			AnyPaused       bool     `json:"any_paused"`
-			SprintConsumers []string `json:"sprint_consumers"`
+		var cur snapView
+		if json.Unmarshal(b, &cur) != nil || len(cur.Machines) != 1 || len(cur.Machines[0].Leases) != 1 {
+			return false
 		}
-		return json.Unmarshal(b, &cur) == nil && !cur.AnyPaused && len(cur.SprintConsumers) == 1
+		l := cur.Machines[0].Leases[0]
+		return !l.Paused && l.Consumer == "card-1.w1@1"
 	}, 3*time.Second, 25*time.Millisecond)
 }

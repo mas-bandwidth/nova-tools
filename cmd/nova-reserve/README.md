@@ -1,27 +1,27 @@
 # nova-reserve
 
-nova-reserve coordinates shared resources on one machine across local commands,
-continuous integration jobs, and background workers. Each caller takes a **hold**
-naming the **tags** and whole-number **resources** (`cpu`, `memory`, and custom
-devices) it needs; when resources do not fit, later arrivals wait in arrival
-order. A machine's tags, usable cores, and resource totals live in
-`capacity.json`.
+nova-reserve arbitrates shared compute and hardware resources across peer
+callers — friends, bench workers, CI runners, operators, scripts, and
+`nova-sprint` — either across a fleet over Tailscale TCP (`nova-reserve serve`)
+or on a standalone machine over a local Unix domain socket (`--local`,
+auto-started on demand when `NOVA_RESERVE_ADDR` is unset).
+
+Each request names the **tags** (`linux`, `mac`, `amd64`, `arm64`, `ps5-sdk`)
+and whole-number **resources** (`cpu`, `memory`, `ps5`, `gpu`) it needs. Both
+transports run the exact same deterministic arbitrator and newline-delimited
+JSON protocol; see [docs/RESOURCES.md](../../docs/RESOURCES.md).
 
 ## Install and try
 
 [Install one tool](../../docs/README.md#install-one-tool), choosing `reserve`.
-It needs no server or database. Callers that share a machine point `--dir` at
-the same local directory (`/var/tmp/nova-reserve` by default). `nova-reserve help run`
+On a standalone machine it needs no external database: local callers point
+`--dir` at a shared directory (`/var/tmp/nova-reserve` by default) and
+`nova-reserve` starts `nova-reserve serve --local` automatically. `nova-reserve help run`
 prints the command syntax and changes nothing.
-
-The examples use a POSIX shell on Linux or macOS with a disposable reservation
-directory:
 
 ```sh
 reserve_dir=$(mktemp -d)
 ```
-
-The directory is created if absent, while its parent must already exist.
 
 ## Measure or set the capacity
 
@@ -29,21 +29,21 @@ Measure CPU units with the built-in compiler/test benchmark and read usable
 memory (bounded by Linux cgroup `memory.max` when set, else physical GiB):
 
 ```sh
-nova-reserve measure --force --dir "$reserve_dir"
+nova-reserve bench --force --dir "$reserve_dir"
 ```
 
 ```text
-MEASURE OK cpu=8 memory=32 cores=8
+BENCH OK cpu=8 memory=32 cores=8
 ```
 
-`measure` holds the whole directory while running and refuses when background
-CPU load exceeds 25% unless `--force` is given. On the default directory
-`/var/tmp/nova-reserve`, the first `run` or `hold` runs `measure` automatically
-when `capacity.json` is absent; custom `--dir` directories require `measure` or
-`set` first.
+`bench` refuses when background CPU load exceeds 25% unless `--force` is given;
+pass `--write-config` on a fleet bench to record `--cpu`, `--memory`, and
+`--cores` in `nova-config`. On `/var/tmp/nova-reserve`, the first `run` or
+`hold` runs `bench` automatically if `capacity.json` is absent; custom `--dir`
+paths require `bench` or `set` first.
 
 Use `set` to record tags, custom whole-number devices, or explicit resource
-totals atomically, even while holds are active:
+totals atomically, even while leases are active:
 
 ```sh
 nova-reserve set --dir "$reserve_dir" --cpu 8 --memory 32 --cores 8 --tags gpu --resources ps5=1
@@ -53,88 +53,95 @@ nova-reserve set --dir "$reserve_dir" --cpu 8 --memory 32 --cores 8 --tags gpu -
 CAPACITY SET cpu=8 memory=32 cores=8
 ```
 
-Repeating the identical values prints `CAPACITY SET cpu=8 memory=32 cores=8 note=unchanged`.
 Operating-system (`linux`, `mac`) and architecture (`amd64`, `arm64`) tags are
-included automatically.
+derived automatically.
 
-## Run a command
+## Fleet server and peer modes
+
+In fleet mode, `nova-reserve serve` runs on the control host, reading
+`config.machines` from `NOVA_PG_DSN` and authenticating TCP peers via
+`NOVA_RESERVE_PASSWORD`:
 
 ```sh
+nova-reserve serve --listen :7680
+```
+
+Peers set `NOVA_RESERVE_ADDR` and `NOVA_RESERVE_PASSWORD` and request leases
+either **fleet-any** (no `--host`, routing to the best fitting machine or
+waiting in one central fleet queue for whichever machine frees room first) or
+**host-pinned** (`--host <machine>`, or `nova-reserve run` on the local host):
+
+```sh
+nova-reserve hold --needs "cpu 8, memory 16, linux" --holder friend --source alice --why "tlc check" </dev/null
+nova-reserve ssh --needs "cpu 4, memory 8, linux" --holder friend --source alice -- make test
 nova-reserve --dir "$reserve_dir" --needs "cpu 2, memory 4, gpu" --wait 15m --why "unit tests" -- sleep 1
 ```
 
 ```text
-nova-reserve: HELD cpu=2 memory=4 cores=2 pid=811078
+nova-reserve: HELD lease_id=L-1 host=local cpu=2 memory=4 cores=2 pid=811078
 ```
 
-When `--needs` is omitted, a hold asks for `cpu 1, memory 1`. Bare resource
+When `--needs` is omitted, a request asks for `cpu 1, memory 1`. Bare resource
 names mean `1` (`ps5` means `ps5 1`), and bare tag names require that tag on the
-machine. A request for a missing tag or more of any resource than the machine
-has in all exits 1 immediately without waiting.
+machine. `--exclusive` requests the machine's entire resource vector.
 
-Once the hold is granted, nova-reserve sets `NOVA_RESERVE_DIR`,
-`NOVA_RESERVE_CPUS`, `GOMAXPROCS`, `CARGO_BUILD_JOBS`, `RAYON_NUM_THREADS`, and
-`CMAKE_BUILD_PARALLEL_LEVEL` to the hold's core share (`cpu_held * usable_cores / total_cpu`,
-at least 1). Nested `nova-reserve` calls targeting the same `NOVA_RESERVE_DIR`
-run directly without taking a second hold.
+Once granted, `nova-reserve` exports `NOVA_RESERVE_LEASE`, `NOVA_RESERVE_HOST`,
+`NOVA_RESERVE_CPUS`, `GOMAXPROCS`, `CARGO_BUILD_JOBS`, `RAYON_NUM_THREADS`,
+`CMAKE_BUILD_PARALLEL_LEVEL`, and `MAKEFLAGS=-j<cores>`. On Linux, non-`ci`
+commands enter `SCHED_IDLE` + `nice 19` and pin to disjoint physical cores / SMT
+sibling groups (`cpus=0,4`); on macOS, non-`ci` commands run under background
+QoS (`PRIO_DARWIN_BG`).
 
-On Linux, non-`ci` holds lower their scheduling priority (`SCHED_IDLE` and
-`nice 19`) and pin to disjoint physical cores and SMT sibling groups from the
-usable CPU mask (`cpus=0-1` on the `HELD` line); on macOS, non-`ci` holds enter
-`PRIO_DARWIN_BG` (or `nice 19`). The pin is advisory steering, not a kernel
-sandbox.
+## Nested leases and deadlock detection
 
-`--nowait` exits 1 immediately (`NO ROOM`) when resources are busy. `--wait D`
-bounds how long a caller waits in line (`90s`, `15m`); the default waits until
-room opens. `--exclusive` holds every resource on the machine.
+Commands running inside an active lease inherit `NOVA_RESERVE_LEASE` (with an OS
+`PPID`-chain walk fallback if an intermediate program scrubbed its environment):
+- Same-host nested requests that fit within their parent's remaining un-subleased
+  grant receive an immediate **`0`-debit sub-lease** (`sublease=true`).
+- Nested requests that exceed their parent's grant check the directed wait-for
+  graph; any request that would form a self-deadlock or multi-lease cycle exits
+  `1` immediately (`RESERVE DEADLOCK`).
 
-## Hold over standard input
+## CI priority, soft user claims, and fairness
 
-`hold` acquires the same reservation without spawning a child command, flushes
-one `HELD` line on stdout, and keeps the hold until stdin reaches EOF or
-`SIGINT`/`SIGTERM` arrives:
-
-```sh
-nova-reserve hold --dir "$reserve_dir" --needs "cpu 2, memory 4" </dev/null
-```
-
-```text
-HELD cpu=2 memory=4 cores=2 pid=811080
-```
-
-## CI priority and between-command pause
-
-A continuous integration job passes `--holder ci`:
+CI jobs pass `--holder ci`:
 
 ```sh
 nova-reserve --dir "$reserve_dir" --holder ci --needs "cpu 4, memory 8" -- sleep 1
 ```
 
-`--holder ci` acquires immediately without waiting behind queued work. When
-active non-`ci` holds plus the CI hold would exceed capacity on any resource,
-nova-reserve marks the lowest-priority active holds (`low`, `normal`, `high`,
-`read`, `critical`, `blocker`; youngest first on ties) as `paused` until
-unpaused holds plus CI fit within every resource. In-flight child processes are
-never stopped or killed; they finish their running step at low OS priority.
+- **CI wins immediately:** `--holder ci` never waits; overlapping non-`ci`
+  leases transition to `paused` in lowest-priority / youngest-first order while
+  finishing their in-flight command under low OS slice priority, yield at the
+  next command boundary, and unpause ahead of all queued work as soon as CI
+  finishes. If the fleet server is unreachable within `3s`, `--holder ci` logs a
+  warning and fails open so CI never breaks on a control-plane blip.
+- **Timed soft user claims:** Operators reserve or drain capacity gracefully
+  without killing active work (default `--ttl 4h`):
 
-A multi-step caller passes `--consumer ID` across steps. When a paused step
-finishes while CI still holds or waiters are lined up, its next step waits
-before starting and resumes ahead of queued waiters (highest priority first) as
-soon as CI finishes and its needed resources fit. While any hold is `paused`,
-queued waiters do not cut ahead.
+```sh
+nova-reserve claim --dir "$reserve_dir" --needs "cpu 4, memory 8" --ttl 4h --why "profiling"
+nova-reserve release C-1 --dir "$reserve_dir"
+```
 
-## Read the state
+- **Fairness and anti-starvation:** Queued requests schedule by priority class,
+  alternate round-robin across `--source` callers within each priority tier, and
+  reserve capacity on the draining host for large head-of-line waiters.
+- **Server restart resilience:** On startup, `nova-reserve serve` opens a `15s`
+  `reconnect` window while live clients re-present their active leases over
+  keepalive reconnect loops before new non-`ci` queue grants proceed.
+
+## Observe and subscribe
 
 ```sh
 nova-reserve status --dir "$reserve_dir"
 nova-reserve status --json --dir "$reserve_dir"
+nova-reserve subscribe --dir "$reserve_dir"
 ```
 
-`status` prints the capacity line, each active or paused hold, each queued
-waiter in arrival order, and free amounts per resource (`free cpu=8/8 memory=32/32 ps5=1/1 paused=0 waiting=0`).
-`--json` prints machine-readable totals, `held_sprint`, `held_other`,
-`held_by_label`, `paused_by_label`, `any_paused`, `sprint_consumers`, and
-`paused_consumers`.
+`status` prints machine capacities, active/paused leases, timed claims, and per-host
+free vectors; `--json` prints one `snapshot` JSON object; `subscribe` streams
+the initial `snapshot` frame followed by live `event` frames.
 
 ## Refusals and what to do next
 
@@ -143,44 +150,20 @@ Every refusal is one line on stderr.
 | You see | Exit | What to do |
 |---|---|---|
 | `no hold within 1s: ...` | 1 | Needed resources stayed busy for the whole `--wait`. Run `nova-reserve status`, then retry or wait longer. |
-| `NO ROOM: ...` | 1 | `--nowait` found resources busy or a hold paused. Retry later or drop `--nowait`. |
+| `NO ROOM: ...` | 1 | `--nowait` found resources busy or paused. Retry later or drop `--nowait`. |
+| `RESERVE DEADLOCK: ...` | 1 | A nested `nova-reserve` call asked for resources blocked by its own enclosing lease cycle. Size the outer lease to cover its children, or release before re-acquiring. |
 | `needs cpu 64 exceeds machine capacity 8; run: nova-reserve status ...` | 1 | Request fits within the machine's capacity, or pick a larger machine. |
 | `machine lacks tag or resource "gpu"; run: nova-reserve status ...` | 1 | Run on a machine that carries the tag or custom resource, or register it with `set`. |
-| `machine is busy (60% CPU in use); stop other work or pass --force; run: nova-reserve measure --force ...` | 1 | Wait for background work to finish so measurement is clean, or pass `--force`. |
-| `--dir DIR has no capacity.json; measure or set capacity first; run: nova-reserve measure --force --dir DIR` | 2 | Measure or set the custom directory's capacity first. |
-| `NAME: command not found on PATH=...` | 127 | Fix PATH or give the full path. A name with a slash prints `NAME: no such file`. No hold was taken. |
-| `NAME: not executable` | 126 | Fix the file's permissions. No hold was taken. |
+| `machine is busy (60% CPU in use); stop other work or pass --force; run: nova-reserve bench --force ...` | 1 | Wait for background work to finish so measurement is clean, or pass `--force`. |
+| `--dir DIR has no capacity.json; measure or set capacity first; run: nova-reserve bench --force --dir DIR` | 2 | Measure or set the custom directory's capacity first. |
+| `NAME: command not found on PATH=...` | 127 | Fix PATH or give the full path. A name with a slash prints `NAME: no such file`. No lease was taken. |
+| `NAME: not executable` | 126 | Fix the file's permissions. No lease was taken. |
 | `--dir DIR: parent PARENT does not exist; run: mkdir -p PARENT && ...` | 2 | Run the printed `mkdir` and repeat the command. |
 | `--dir DIR is a file, not a directory; run: ls -ld DIR` | 2 | Give a directory, or a path that does not exist yet. |
-| `... status could not show this hold; run: sudo rm -f FILE` | 2 | A holder file another user owns cannot be replaced or written. Run the printed command. No hold is kept. |
 | `... is not a reservation directory ...` | 2 | `status` found no reservation directory there. Pass the `--dir` your jobs share. |
-| `capacity=? # corrupt: ...` | 0 | `capacity.json` is damaged. Run `measure --force` or `set` to replace it. |
 
-A bad or repeated flag, a missing command, a non-positive resource integer, or a
-`--wait` not above zero exits 2; `nova-reserve help run` (or `hold`, `measure`,
-`set`, `status`) shows the usage. A run that starts returns the command's own
-status; if a signal ended it, 128 plus the signal number, and stderr says so:
+A bad or repeated flag, a missing command, a non-positive resource integer, or
+an authentication failure exits 2; `nova-reserve help run` shows the usage. A
+run that starts returns the command's own status; if a signal ended it, 128 plus
+the signal number, and stderr says so:
 `nova-reserve: make ended by signal SIGKILL; exit 137`.
-
-## Guarantees and limits
-
-Guarantees:
-- Unpaused holds plus CI holds never exceed the machine's capacity on any
-  resource, and an exclusive hold takes all of them.
-- Each hold and queued waiter owns an open kernel `flock` descriptor, so the
-  operating system releases it automatically on exit or `SIGKILL` without PID
-  reuse races or a background daemon.
-- Waiters wake on `inotify` (Linux) or `kqueue` (macOS/BSD) events and advance
-  in arrival order behind any unpausing holds.
-- `set` replaces `capacity.json` atomically while holds are active.
-
-Limits:
-- Only cooperating commands that share `--dir` on a local filesystem participate
-  in the ledger.
-- Resource counts and CPU affinity steer build parallelism and scheduling
-  priority; they do not enforce memory limits or sandbox untrusted code.
-- On Linux, macOS, and the BSDs, an internal watchdog process and Linux
-  `Pdeathsig` clean up the child process group if `nova-reserve` dies by
-  `SIGKILL`.
-- Release builds cover Linux amd64 and arm64 and macOS arm64; on Windows hosts,
-  invoke the Linux binary inside WSL2 so one Unix ledger governs the machine.
