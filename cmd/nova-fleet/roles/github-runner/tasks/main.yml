@@ -53,6 +53,32 @@
   tags: [deploy-keys]
   when: github_runner_deploy_keys | length > 0
 
+# The CPUs each Linux unit names (github_runner_cpus): the online ones less the kernel's isolated ones. A kernel without
+# the isolated file isolates none. Read in --check too, so a plan shows the affinity it would write.
+- name: the online and isolated CPUs (Linux)
+  ansible.builtin.slurp: { src: "/sys/devices/system/cpu/{{ item }}" }
+  loop: [online, isolated]
+  register: github_runner_cpu_files
+  # ignored: a missing isolated file is read as none (below); a missing online file leaves no CPU, refused below
+  failed_when: false
+  when: ansible_facts['system'] == 'Linux'
+
+- name: the CPUs the runners may use (Linux)
+  ansible.builtin.set_fact:
+    github_runner_cpus_online: "{{ (github_runner_cpu_files.results[0].content | default('') | b64decode) | trim }}"
+    github_runner_cpus_isolated: "{{ (github_runner_cpu_files.results[1].content | default('') | b64decode) | trim }}"
+  when: ansible_facts['system'] == 'Linux'
+
+- name: some CPU is left to the runners (Linux)
+  ansible.builtin.assert:
+    quiet: true
+    that: github_runner_cpus_isolated == '' or github_runner_cpus | string | length > 0
+    fail_msg: >-
+      github-runner: {{ inventory_hostname }} isolates CPUs {{ github_runner_cpus_isolated }} of its online
+      {{ github_runner_cpus_online or 'none' }}, which leaves its runners no CPU the scheduler balances; run: cat
+      /proc/cmdline (on {{ inventory_hostname }}), then leave CPUs outside isolcpus
+  when: ansible_facts['system'] == 'Linux'
+
 - name: one url, named with -e github_runner_url
   ansible.builtin.include_tasks: scope.yml
   when: github_runner_url is defined

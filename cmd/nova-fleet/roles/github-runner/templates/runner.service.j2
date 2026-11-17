@@ -32,6 +32,11 @@ Environment=RUNNER_MANUALLY_TRAP_SIG=1
 LimitMEMLOCK=infinity
 CPUWeight=10000
 IOWeight=10000
+{% if github_runner_cpus | string | length > 0 %}
+# the CPUs the scheduler balances (github_runner_cpus): never one the kernel isolates (isolcpus), where every thread of
+# a job would share one core
+CPUAffinity={{ github_runner_cpus }}
+{% endif %}
 Nice=-10
 ExecStart={{ github_runner_dir }}/run.sh
 Restart=always

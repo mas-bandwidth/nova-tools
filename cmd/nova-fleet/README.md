@@ -423,7 +423,11 @@ passes the stop to its listener as SIGINT and waits for it (a running job is can
 `KillMode=mixed` kills whatever is left in the unit once `run.sh` exits, or after `TimeoutStopSec` (5 minutes). On macOS
 launchd kills what is left of the job's process group.
 A Linux unit sets `LimitMEMLOCK=infinity`: the kernel charges locked memory (io_uring rings) to the login across all its
-runners, and systemd's 8 MiB default refuses that. It also sets `TMPDIR`, by default `<home>/.cache/runner-tmp`
+runners, and systemd's 8 MiB default refuses that. On a host whose kernel isolates CPUs from the scheduler
+(`isolcpus`, listed in `/sys/devices/system/cpu/isolated`) the unit sets `CPUAffinity=` to the online CPUs less the
+isolated ones (`github_runner_cpus`), so neither the runner nor anything its jobs start lands on an isolated CPU, where
+the scheduler never balances it and every thread placed there shares one core; systemd otherwise starts every unit on
+all CPUs. A host that isolates none gets no affinity line. It also sets `TMPDIR`, by default `<home>/.cache/runner-tmp`
 (`github_runner_tmpdir`), one directory for all the login's runners that the play makes (the login's, `0700`) before
 the units start: a job's temporary files land there and not in `/tmp`, and the health play's disk clean reads the
 directory from the units. A macOS daemon gets no `TMPDIR` unless `github_runner_env` names one, so its jobs use `/tmp`,

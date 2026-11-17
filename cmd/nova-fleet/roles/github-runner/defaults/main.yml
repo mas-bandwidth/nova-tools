@@ -73,6 +73,22 @@ github_runner_bin_dir: "{{ nova_bin_dir if github_runner_user == ansible_facts['
 github_runner_default_path_linux: "{{ github_runner_bin_dir }}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin"
 github_runner_default_path_darwin: "{{ nova_bin_dir }}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
+# The CPUs a Linux runner and everything its jobs start run on (the unit's CPUAffinity=), space-separated: the online
+# CPUs less those the kernel isolates from the scheduler (isolcpus), read from /sys/devices/system/cpu/{online,isolated}
+# by tasks/main.yml. A task on an isolated CPU is never balanced off it, so every thread a job places there shares that
+# one core; systemd starts every unit on all CPUs, isolated or not. Empty where the kernel isolates none: the unit then
+# names no affinity.
+github_runner_cpus: >-
+  {%- set gone = [] -%}
+  {%- for r in (github_runner_cpus_isolated | default('') | string | trim).split(',') if r -%}
+  {%- for c in range(r.split('-')[0] | int, r.split('-')[-1] | int + 1) -%}{%- set _ = gone.append(c) -%}{%- endfor -%}
+  {%- endfor -%}
+  {%- set kept = [] -%}
+  {%- for r in (github_runner_cpus_online | default('') | string | trim).split(',') if r and gone -%}
+  {%- for c in range(r.split('-')[0] | int, r.split('-')[-1] | int + 1) if c not in gone -%}{%- set _ = kept.append(c) -%}{%- endfor -%}
+  {%- endfor -%}
+  {{ kept | join(' ') }}
+
 # Linux only: run the runner's bin/installdependencies.sh (system packages) once per
 # release on the host.
 github_runner_install_dependencies: true
