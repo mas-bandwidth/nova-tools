@@ -830,7 +830,11 @@ switch ($Action) {
     $s = Service-Of $Dir
     if (-not $s) { "NO-SERVICE $Dir"; exit 0 }
     $did = 'ok'
-    if ($s.StartMode -ne 'Auto') { Set-Service -Name $s.Name -StartupType Automatic; $did = 'started' }
+    $delayed = (Get-ItemProperty -LiteralPath "HKLM:\SYSTEM\CurrentControlSet\Services\$($s.Name)" -Name DelayedAutostart -ErrorAction SilentlyContinue).DelayedAutostart
+    if ($s.StartMode -ne 'Auto' -or $delayed -eq 1) {
+      & sc.exe config $s.Name start= auto | Out-Null
+      $did = 'started'
+    }
     if ($s.State -ne 'Running') { Start-Service -Name $s.Name; $did = 'started' }
     "SERVICE $Dir $did $($s.Name)"
   }
@@ -838,18 +842,35 @@ switch ($Action) {
     Need-Admin
     if ($MachineId -notmatch '^[0-9a-f]{32}$' -or $User -notmatch '^[a-z_][a-z0-9_-]*$') { 'BAD-ARGS -MachineId -User'; exit 2 }
     # The running distros (wsl.exe writes UTF-16) and the one whose /etc/machine-id is this machine's: never a stopped
-    # one, which reading its files would start.
-    $enc = [Console]::OutputEncoding
-    [Console]::OutputEncoding = [Text.Encoding]::Unicode
-    try { $running = @(& wsl.exe --list --running --quiet | ForEach-Object { "$_".Trim() } | Where-Object { $_ }) } finally { [Console]::OutputEncoding = $enc }
+    # one, which reading its files would start. Prefer C:\Program Files\WSL\wsl.exe over the per-user System32 stub so
+    # S4U at cold boot starts WSL with nobody signed in, and bound wsl.exe --list with WaitForExit.
+    $wslExe = if (Test-Path -LiteralPath 'C:\Program Files\WSL\wsl.exe' -PathType Leaf) { 'C:\Program Files\WSL\wsl.exe' } else { 'C:\Windows\System32\wsl.exe' }
+    $psi = New-Object Diagnostics.ProcessStartInfo($wslExe, '--list --running --quiet')
+    $psi.UseShellExecute = $false; $psi.CreateNoWindow = $true; $psi.RedirectStandardOutput = $true
+    $psi.StandardOutputEncoding = [Text.Encoding]::Unicode
+    $proc = [Diagnostics.Process]::Start($psi)
+    $outTask = $proc.StandardOutput.ReadToEndAsync()
+    if (-not $proc.WaitForExit(15000)) { try { $proc.Kill() } catch { }; 'WSL-LIST-TIMEOUT'; exit 6 }
+    $proc.WaitForExit()
+    $rawList = $outTask.GetAwaiter().GetResult()
+    $running = @($rawList -split '\r?\n' | ForEach-Object { ("$_" -replace '\0', '').Trim() } | Where-Object { $_ })
     $distro = $running | Where-Object {
       try { (Get-Content -LiteralPath "\\wsl.localhost\$_\etc\machine-id" -TotalCount 1 -ErrorAction Stop).Trim() -eq $MachineId } catch { $false }
     } | Select-Object -First 1
     if (-not $distro -or $distro -notmatch '^[A-Za-z0-9._-]+$') { "NO-DISTRO machine-id=$MachineId running=$(@($running) -join ',')"; exit 6 }
     $name = "WSL2 keepalive ($distro)"
-    $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    $sidObj = [Security.Principal.WindowsIdentity]::GetCurrent().User
+    $sid = $sidObj.Value
+    Add-AccountApi
+    $bin = New-Object byte[] $sidObj.BinaryLength
+    $sidObj.GetBinaryForm($bin, 0)
+    $batchGranted = $false
+    if (@([NovaAccount]::Rights($bin)) -notcontains 'SeBatchLogonRight') {
+      [NovaAccount]::Grant($bin, 'SeBatchLogonRight')
+      $batchGranted = $true
+    }
     $exe = 'C:\Windows\System32\conhost.exe'
-    $arg = "--headless C:\Windows\System32\wsl.exe -d $distro -u $User --exec /bin/sleep infinity"
+    $arg = "--headless `"$wslExe`" -d $distro -u $User --exec /bin/sleep infinity"
     $xml = @"
 <?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.3" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
@@ -860,6 +881,7 @@ switch ($Action) {
     <Principal id="Author">
       <UserId>$sid</UserId>
       <LogonType>S4U</LogonType>
+      <RunLevel>HighestAvailable</RunLevel>
     </Principal>
   </Principals>
   <Settings>
@@ -891,6 +913,7 @@ switch ($Action) {
       $d = { param($v, $def) if ($null -eq $v -or "$v" -eq '') { $def } else { "$v" } }
       @(
         "user=$($x.Task.Principals.Principal.UserId)", "logon=$($x.Task.Principals.Principal.LogonType)",
+        "level=$(& $d $x.Task.Principals.Principal.RunLevel 'LeastPrivilege')",
         "triggers=$(@($x.Task.Triggers.ChildNodes | ForEach-Object { $_.LocalName }) -join ',')",
         "every=$($x.Task.Triggers.BootTrigger.Repetition.Interval)",
         "exec=$(@($x.Task.Actions.Exec | ForEach-Object { "$($_.Command) $($_.Arguments)" }) -join ';')",
@@ -899,6 +922,7 @@ switch ($Action) {
       ) -join ' '
     }
     $did = @()
+    if ($batchGranted) { $did += 'batch-right' }
     $have = ''
     if (Get-ScheduledTask -TaskPath '\' -TaskName $name -ErrorAction SilentlyContinue) {
       $have = Keepalive-Of ([xml](Export-ScheduledTask -TaskPath '\' -TaskName $name))

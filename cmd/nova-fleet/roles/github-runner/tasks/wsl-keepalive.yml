@@ -35,7 +35,7 @@
         -User {{ ansible_user_id | quote }} </dev/null
       args: { executable: /bin/sh }
       register: github_runner_keepalive
-      changed_when: github_runner_keepalive.stdout is search('^KEEPALIVE \S+ \S*(set|started)', multiline=True)
+      changed_when: github_runner_keepalive.stdout is search('^KEEPALIVE \S+ \S*(set|started|batch-right)', multiline=True)
       when: not ansible_check_mode
 
     - name: the keepalive's receipt
