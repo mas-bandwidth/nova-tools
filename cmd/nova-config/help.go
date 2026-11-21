@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"fmt"
 	"slices"
 	"strings"
@@ -8,8 +9,11 @@ import (
 
 var kindOps = []string{"list", "show", "add", "set", "remove"}
 
+// kindOrder is the kinds in the order help names them.
+var kindOrder = []string{"machine", "service", "friend", "provider", "model", "rented"}
+
 // verbs are the root verbs, for an unknown-verb refusal.
-const verbs = "machine, service, friend, rented, history, inventory, schema, help"
+const verbs = "machine, service, friend, provider, model, rented, history, inventory, schema, help"
 
 const writeLine = "[--actor <name>] [--reason <line>] [--dry-run]"
 
@@ -22,15 +26,18 @@ NOVA_PG_PASSWORD). Exit codes: 0 done, 1 refused, 2 could not run.
 // usage is the root help: every verb path by name, from the kind tables.
 var usage = func() string {
 	var b strings.Builder
-	b.WriteString("nova-config: a fleet's machines, services, friends and rented boxes, kept as rows in PostgreSQL.\n\n")
-	for _, n := range []string{"machine", "service", "friend", "rented"} {
+	b.WriteString("nova-config: a fleet's machines, services, friends, model providers, models and rented boxes, kept as rows in PostgreSQL.\n\n")
+	for _, n := range kindOrder {
 		for _, op := range kindOps {
 			b.WriteString("  " + kinds[n].opLine(op) + "\n")
 		}
 	}
-	return b.String() + "  " + historyLine + "\n  nova-config inventory [--list | --host <name>]\n  nova-config schema\n  nova-config help [<verb>]\n\n" +
-		kinds["machine"].fieldsLine() + "\n" + kinds["service"].fieldsLine() + "\n" + kinds["friend"].fieldsLine() + "\n" + kinds["rented"].fieldsLine() + "\n" +
-		`Every verb takes -h or --help. Use inventory as an Ansible script: #!/bin/sh, then: exec nova-config inventory "$@".
+	b.WriteString("  " + historyLine + "\n  nova-config inventory [--list | --host <name>]\n  nova-config schema\n  nova-config help [<verb>]\n\n")
+	for _, n := range kindOrder {
+		b.WriteString(kinds[n].fieldsLine() + "\n")
+	}
+	return b.String() + `A model's harness speaks its provider's api (claude: anthropic; opencode, codex: openai).
+Every verb takes -h or --help. Use inventory as an Ansible script: #!/bin/sh, then: exec nova-config inventory "$@".
 Make a store current with: nova-config schema | PGPASSWORD="$NOVA_PG_PASSWORD" psql "$NOVA_PG_DSN"
 ` + trailer
 }()
@@ -38,7 +45,7 @@ Make a store current with: nova-config schema | PGPASSWORD="$NOVA_PG_PASSWORD" p
 var placeholders = map[string]string{"int": "<n>", "bool": "<true|false>", "list": "<a,b>", "argv": "<json-array>",
 	"env": "<json-object>", "path": "<path>", "ref": "<machine>", "public": "<addr>",
 	"scopes": "<url=n[:label+label],...>", "admins": "<url=account:label[+label]@workflow,...>",
-	"price": "<usd-per-hour>", "time": "<rfc3339>"}
+	"price": "<usd-per-hour>", "time": "<rfc3339>", "url": "<url>", "secret": "<secret-name>"}
 
 // opLine is the usage line of a kind's verb, from its field table.
 func (k *kind) opLine(op string) string {
@@ -53,12 +60,9 @@ func (k *kind) opLine(op string) string {
 	}
 	fl := ""
 	for _, f := range k.fields {
-		p := placeholders[f.typ]
+		p := cmp.Or(f.hint, placeholders[f.typ], "<text>")
 		if f.typ == "word" {
 			p = "<" + strings.Trim(f.word.String(), "^()$") + ">"
-		}
-		if p == "" {
-			p = "<text>"
 		}
 		s := "--" + f.name + " " + p
 		if !f.required || op == "set" {

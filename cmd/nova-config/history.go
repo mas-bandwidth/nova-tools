@@ -11,10 +11,7 @@ import (
 	"time"
 )
 
-const historyHint = "history takes [<kind> [<name>]] --since <duration|RFC3339> --max <n> --json --pg <dsn>; kinds: machine, service, friend, rented"
-
-// historyKinds are the kinds the history table holds.
-var historyKinds = []string{"machine", "service", "friend", "rented"}
+const historyHint = "history takes [<kind> [<name>]] --since <duration|RFC3339> --max <n> --json --pg <dsn>; kinds: machine, service, friend, provider, model, rented"
 
 // parseSince is a duration back from now (90m, 24h, 7d) or an RFC 3339 time.
 func parseSince(s string, now time.Time) (time.Time, error) {
@@ -49,7 +46,7 @@ func runHistory(ctx context.Context, args []string, d deps, stdout io.Writer) er
 		q.Name = words[1]
 		fallthrough
 	case len(words) == 1:
-		if q.Kind = words[0]; !slices.Contains(historyKinds, q.Kind) {
+		if q.Kind = words[0]; !slices.Contains(kindOrder, q.Kind) {
 			return usagef("history", historyHint, "unknown kind %q", q.Kind)
 		}
 	}

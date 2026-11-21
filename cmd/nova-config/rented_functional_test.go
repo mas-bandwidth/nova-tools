@@ -15,8 +15,8 @@ import (
 
 // TestFunctionalOldStore (short: macOS caps the socket path, which holds the test name, at 103 bytes): a store made
 // before the rented table (testdata/before-rented.sql, the schema.sql of the release before it) takes schema.sql,
-// which leaves every table that release reads exactly as it was; a rented aws box lands in no row such a release
-// reads, so its inventory cannot hold it; an older tool's writes still go through.
+// which leaves every column that release reads exactly as it was (machines gains routes); a rented aws box lands in
+// no row such a release reads, so its inventory cannot hold it; an older tool's writes still go through.
 func TestFunctionalOldStore(t *testing.T) {
 	t.Parallel()
 	dsn := startPG(t, "testdata/before-rented.sql")
@@ -25,7 +25,7 @@ func TestFunctionalOldStore(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = c.Close(ctx) }() // ignored: closing the check connection
 	columns := func() []string {
-		rows, err := c.Query(ctx, `SELECT table_name || '.' || column_name || ' ' || data_type || ' ' || coalesce(column_default, '') FROM information_schema.columns WHERE table_schema = 'config' AND table_name <> 'rented' ORDER BY table_name, ordinal_position`)
+		rows, err := c.Query(ctx, `SELECT table_name || '.' || column_name || ' ' || data_type || ' ' || coalesce(column_default, '') FROM information_schema.columns WHERE table_schema = 'config' AND table_name NOT IN ('rented', 'providers', 'models') AND (table_name, column_name) <> ('machines', 'routes') ORDER BY table_name, ordinal_position`)
 		require.NoError(t, err)
 		out, err := pgx.CollectRows(rows, pgx.RowTo[string])
 		require.NoError(t, err)

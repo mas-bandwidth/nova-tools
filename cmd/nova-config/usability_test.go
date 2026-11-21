@@ -18,7 +18,7 @@ func TestVerbHelp(t *testing.T) {
 	h := newHarness()
 	h.env = map[string]string{}
 	paths := [][]string{{"machine"}, {"service"}, {"friend"}, {"history"}, {"inventory"}, {"schema"}, {"help"}}
-	for _, k := range []string{"machine", "service", "friend"} {
+	for _, k := range []string{"machine", "service", "friend", "provider", "model"} {
 		for _, op := range kindOps {
 			paths = append(paths, []string{k, op})
 		}
@@ -33,7 +33,7 @@ func TestVerbHelp(t *testing.T) {
 		}
 	}
 	_, out, _ := h.run(t, "machine", "add", "--help")
-	assert.Contains(t, out, "machine fields: name, address, public, user, os, arch, cores, roles, runners, runner_scopes, windows_runners, windows_admin_runners, runner_env, note")
+	assert.Contains(t, out, "machine fields: name, address, public, user, os, arch, cores, roles, routes, runners, runner_scopes, windows_runners, windows_admin_runners, runner_env, note")
 	assert.Contains(t, out, "--user <text>")
 	for _, p := range paths[6:] { // the banner names each verb path
 		assert.Contains(t, usage, "nova-config "+strings.Join(p, " "))
@@ -57,7 +57,7 @@ func TestUsageErrorsAreOneLine(t *testing.T) {
 		assert.Contains(t, errs, "; run: nova-config", "%v", args)
 	}
 	_, _, errs := h.run(t, "nonsense")
-	assert.Contains(t, errs, "machine, service, friend, rented, history, inventory, schema, help; run: nova-config help")
+	assert.Contains(t, errs, "machine, service, friend, provider, model, rented, history, inventory, schema, help; run: nova-config help")
 }
 
 // What is printed can be pasted back: argv is JSON, = is never escaped, free text is a JSON string.
@@ -212,7 +212,7 @@ func TestSetNamesOnlyTheValuesGiven(t *testing.T) {
 		args []string
 		want string
 	}{
-		{[]string{"friend", "set", "friend-a", "--width", "abc", "--actor", "t"}, `nova-config friend set: --width "abc": want a non-negative integer; ` + kinds["friend"].fieldsLine() + "; run: nova-config friend set -h\n"},
+		{[]string{"friend", "set", "friend-a", "--enabled", "abc", "--actor", "t"}, `nova-config friend set: --enabled "abc": want true or false; ` + kinds["friend"].fieldsLine() + "; run: nova-config friend set -h\n"},
 		{[]string{"service", "set", "member-b", "--keepalive", "true", "--env", "nope", "--actor", "t"},
 			`nova-config service set: --env: want a JSON object of NAME to value strings: '{"NAME":"value"}'; ` + kinds["service"].fieldsLine() + "; run: nova-config service set -h\n"},
 	} {

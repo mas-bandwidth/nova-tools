@@ -24,7 +24,8 @@ import (
 // env (a JSON object of NAME to value), path (an absolute or ~/ path), ref
 // (the name of a machine row, NULL when empty), public (a public IP literal
 // or a DNS name), scopes (GitHub Actions runners per repository or organization,
-// see canonicalScopes) or admins (Windows runners run as a local administrator, see canonicalAdmins).
+// see canonicalScopes), admins (Windows runners run as a local administrator, see canonicalAdmins),
+// url (an http or https URL) or secret (the name of a secret, never its value).
 type field struct {
 	name, typ string
 	required  bool
@@ -33,6 +34,7 @@ type field struct {
 	cut       bool // cut to 60 characters in list lines
 	free      bool // free text: always printed as a JSON string
 	word      *regexp.Regexp
+	hint      string // the value's placeholder in help, when its type's is not enough
 }
 
 type kind struct {
@@ -49,7 +51,10 @@ var (
 	roleWord    = regexp.MustCompile(`^(bench|runner|services)$`)
 	keyWord     = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 	envName     = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
-	tierWord    = regexp.MustCompile(`^(flash|pro|heavy|frontier)$`)
+	apiWord     = regexp.MustCompile(`^(openai|anthropic)$`)
+	harnessWord = regexp.MustCompile(`^(opencode|claude|codex)$`)
+	// a model's name: its provider's name, a slash, then the model id as its harness names it
+	modelName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*/[A-Za-z0-9_.:-]+(/[A-Za-z0-9_.:-]+)*$`)
 	// a box rented by the hour comes from a provider; one at AWS is on demand or spot
 	providerWord  = regexp.MustCompile(`^(latitude|aws)$`)
 	marketWord    = regexp.MustCompile(`^(on-demand|spot)$`)
@@ -67,6 +72,7 @@ var kinds = map[string]*kind{
 			{name: "arch", typ: "text"},
 			{name: "cores", typ: "int", null: true},
 			{name: "roles", typ: "list", def: "bench", word: roleWord},
+			{name: "routes", typ: "list", word: namePattern},
 			{name: "runners", typ: "int"},
 			{name: "runner_scopes", typ: "scopes"},
 			{name: "windows_runners", typ: "scopes"},
@@ -86,13 +92,31 @@ var kinds = map[string]*kind{
 			{name: "env", typ: "env", def: "{}"},
 			{name: "log", typ: "path"},
 		}},
-	"friend": {name: "friend", table: "friends", check: checkFriend,
+	"friend": {name: "friend", table: "friends",
 		fields: []field{
 			{name: "harness", typ: "text", required: true},
 			{name: "model", typ: "text"},
-			{name: "width", typ: "int", def: "1"},
-			{name: "tiers", typ: "list", def: "flash,frontier,heavy,pro", word: tierWord},
 			{name: "pronouns", typ: "text", null: true},
+			{name: "note", typ: "text", cut: true, free: true},
+			{name: "enabled", typ: "bool", def: "true"},
+		}},
+	"provider": {name: "provider", table: "providers",
+		fields: []field{
+			{name: "url", typ: "url", required: true},
+			{name: "api", typ: "word", required: true, word: apiWord},
+			{name: "key", typ: "secret"},
+			{name: "models_url", typ: "url"},
+			{name: "balance_url", typ: "url"},
+			{name: "concurrency", typ: "int"},
+			{name: "note", typ: "text", cut: true, free: true},
+			{name: "enabled", typ: "bool", def: "true"},
+		}},
+	"model": {name: "model", table: "models",
+		fields: []field{
+			{name: "harness", typ: "word", def: "opencode", word: harnessWord},
+			{name: "price_in", typ: "int", null: true, hint: "<micro-usd-per-mtok|default>"},
+			{name: "price_out", typ: "int", null: true, hint: "<micro-usd-per-mtok|default>"},
+			{name: "machine", typ: "ref"},
 			{name: "note", typ: "text", cut: true, free: true},
 			{name: "enabled", typ: "bool", def: "true"},
 		}},
@@ -118,7 +142,7 @@ var kinds = map[string]*kind{
 
 // fieldsLine names a kind's fields on one line, for a usage error and for help.
 func (k *kind) fieldsLine() string {
-	names := []string{"name"}
+	names := []string{map[bool]string{true: "name (<provider>/<model id>)", false: "name"}[k.name == "model"]}
 	for _, f := range k.fields {
 		names = append(names, f.name)
 	}
@@ -179,8 +203,20 @@ func (f field) canonical(raw string) (string, error) {
 	case "admins":
 		return canonicalAdmins(f, raw)
 	case "word":
+		if raw == "" && f.def != "" {
+			return "", fmt.Errorf("--%s: want one of %s", f.name, strings.Trim(f.word.String(), "^()$"))
+		}
 		if raw != "" && !f.word.MatchString(raw) {
 			return "", fmt.Errorf("--%s %q: want one of %s", f.name, raw, strings.Trim(f.word.String(), "^()$"))
+		}
+	case "url": // never quoted back: a refused one may carry a password or a key
+		if u, err := url.Parse(raw); raw != "" && (err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" ||
+			u.User != nil || u.RawQuery != "" || u.Fragment != "" || strings.ContainsAny(raw, " \t")) {
+			return "", fmt.Errorf("--%s: want an http or https URL with a host and no user, query or fragment, such as https://api.example.com", f.name)
+		}
+	case "secret": // never quoted back: a refused one may be the secret's value
+		if raw != "" && !keyWord.MatchString(raw) {
+			return "", fmt.Errorf("--%s: want the name of the secret that holds it (letters, digits and underscores, not starting with a digit), never its value", f.name)
 		}
 	case "price":
 		if raw != "" && !priceText.MatchString(raw) {
@@ -442,8 +478,12 @@ func (k *kind) newRow(name string, raw map[string]string) (Row, error) {
 		empty.F[f.name] = f.zero()
 	}
 	r, err := k.merge(empty, raw)
-	if len(name) > 128 || !namePattern.MatchString(name) {
-		return Row{}, valueError{strings.TrimSuffix(fmt.Sprintf("name %q: want lower-case letters, digits and dashes, starting with a letter or digit; %v", name, err), "; <nil>")}
+	pattern, want := namePattern, "want lower-case letters, digits and dashes, starting with a letter or digit"
+	if k.name == "model" {
+		pattern, want = modelName, "want <provider>/<model id>: a provider's name, a slash, then the model id as its harness names it (letters, digits, and . _ : - with / between parts)"
+	}
+	if len(name) > 128 || !pattern.MatchString(name) {
+		return Row{}, valueError{strings.TrimSuffix(fmt.Sprintf("name %q: %s; %v", name, want, err), "; <nil>")}
 	}
 	return r, err
 }
@@ -622,20 +662,6 @@ func adminClashes(rows []Row, only string) []adminClash {
 		}
 	}
 	return out
-}
-
-func checkFriend(r Row) error {
-	var p []string
-	if r.F["width"] == "0" {
-		p = append(p, fmt.Sprintf("friend %s has --width 0; a friend works at least one card at once: --width 1 or more", r.Name))
-	}
-	if r.F["tiers"] == "" {
-		p = append(p, fmt.Sprintf("friend %s has no --tiers; want a comma list of flash, pro, heavy, frontier", r.Name))
-	}
-	if len(p) > 0 {
-		return fmt.Errorf("%s", strings.Join(p, "; "))
-	}
-	return nil
 }
 
 // dsnPassword says a postgres URI carries a password, in its user part or its query.

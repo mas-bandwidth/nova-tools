@@ -1,8 +1,8 @@
 # nova-config
 
-nova-config keeps your machines, the programs they run, and the friends (the
-AIs that work on the fleet) as rows in a PostgreSQL database, with a history row
-for every change. It prints the machines and programs as an Ansible inventory
+nova-config keeps your machines, the programs they run, the friends (the AIs
+that work on the fleet), and the model providers and models the fleet can call
+as rows in a PostgreSQL database, with a history row for every change. It prints the machines and programs as an Ansible inventory
 that plays can use, and Go programs read the same rows through its library.
 
 ## Install
@@ -54,6 +54,7 @@ optional (`--dry-run` runs the write and rolls it back, so it refuses what the w
 | `windows_admin_runners` | A WSL machine's Windows-side runners that run as a local administrator account, one per entry: `<url>=<account>:<label>[+<label>]@<workflow>`, comma-separated. `<workflow>` is required: the file name (`<name>.yml` or `.yaml`) in the repository's `.github/workflows` of the one workflow the runner runs; its job-started hook refuses every other job, and every job but a push, schedule or workflow_dispatch of `refs/heads/main`. The url is a repository, `https://github.com/<owner>/<repo>` (an organization is refused); the account a lower-case letter then at most 19 lower-case letters, digits and dashes (a Windows user name), never a Windows built-in account (`administrator`, `guest`, `defaultaccount`, `wdagutilityaccount`) or the machine's `user`, each account once, and no two entries whose `<owner>-<repo>-<account>` (compared without case) would share a runner directory; at least one label, never one GitHub gives runners (`self-hosted`, `windows`, `x64`, `linux`, `macos`, in any case), nor a label a job of the same repository could select on another runner (the machine's name and every label of its `windows_runners` and `runner_scopes`, with its roles, os and arch where it has `runner_scopes`; on any machine with a runner of the repository or its owner, that runner's labels and the machine's name; any other admin runner's label of the repository), refused on this write and on a write to the other runner, and the runner carries only these (GitHub adds `self-hosted`, `Windows` and `X64`). Its password is the nova-secrets value `NOVA_WINRUNNER_<ACCOUNT>_PASSWORD` (`-` as `_`) in the machine's seat. Stored sorted by url, then account, with labels sorted; `''` is none. nova-fleet's `windows-runners` play converges them (cmd/nova-fleet/README.md, "Windows runners run as a local administrator"). |
 | `runner_env` | The environment the machine's GitHub Actions runners' services start with (every job inherits it): a JSON object of string values, default `{}`; a name is letters, digits and underscores, not starting with a digit. Values are literal, written per machine (`/home/alice/sdk/bin`, never `~` or a template). nova-fleet's `github-runners` play reads it from the inventory. |
 | `roles` | Comma-separated `bench`, `runner`, `services`; default `bench`. |
+| `routes` | The devices or tools the machine has that a piece of work may need (a headset, a GPU, a phone on USB): comma-separated names of lower-case letters, digits and dashes, stored sorted; `''` is none. nova-config only records them; a scheduler such as nova-sprint reads them. |
 
 ```sh
 nova-config machine add bench-a --user nova --os linux --arch amd64 --cores 16 --roles bench,services --actor ops --reason 'First machine'
@@ -67,7 +68,7 @@ CONFIG ADD kind=machine name=bench-a rev=1
 next: nova-fleet join bench-a
 CONFIG SET kind=machine name=bench-a rev=2 changed=note
 CONFIG SET kind=machine name=bench-a changed=none rev=unchanged
-MACHINE name=bench-a address=- public=- user=nova os=linux arch=amd64 cores=16 roles=bench,services runners=0 runner_scopes=- windows_runners=- windows_admin_runners=- runner_env={} note="Example host" created=2026-11-05T23:51:58Z updated=2026-11-05T23:51:58Z services=-
+MACHINE name=bench-a address=- public=- user=nova os=linux arch=amd64 cores=16 roles=bench,services routes=- runners=0 runner_scopes=- windows_runners=- windows_admin_runners=- runner_env={} note="Example host" created=2026-11-05T23:51:58Z updated=2026-11-05T23:51:58Z services=-
 ```
 
 `rev` is the history ID; `changed=` lists only the fields whose value differs.
@@ -114,19 +115,66 @@ machines.
 |---|---|
 | `harness` | What it runs in: `claude`, `codex`, `antigravity`, `grok`, `muse`, ...; required. |
 | `model`, `note` | A label; one line of notes. |
-| `width` | How many cards it works at once; default 1, at least 1. |
-| `tiers` | Comma-separated `flash`, `pro`, `heavy`, `frontier`; default all four, at least one. |
 | `pronouns` | Text; empty (stored as NULL) when unstated. |
 | `enabled` | Default true. |
 
+How many cards a friend works at once, and which, is a sprint's business: nova-sprint keeps it in its own store.
+
 ```text
-nova-config friend add <friend> --harness <harness> --model <model> --width 4 --tiers pro,heavy --pronouns she/her --actor ops
+nova-config friend add <friend> --harness <harness> --model <model> --pronouns she/her --actor ops
 nova-config friend show <friend>
 ```
 
 ```text
 CONFIG ADD kind=friend name=<friend> rev=4
-FRIEND name=<friend> harness=<harness> model=<model> width=4 tiers=heavy,pro pronouns=she/her note=- enabled=true created=2026-11-07T01:55:27Z updated=2026-11-07T01:55:27Z
+FRIEND name=<friend> harness=<harness> model=<model> pronouns=she/her note=- enabled=true created=2026-11-07T01:55:27Z updated=2026-11-07T01:55:27Z
+```
+
+## Providers
+
+A provider is a model API endpoint the fleet can call, named with lower-case letters, digits and dashes. Same verbs as
+machines.
+
+| Field | Meaning |
+|---|---|
+| `url` | The API base URL requests go to: `http` or `https`, with a host and no user, query or fragment; required. |
+| `api` | The wire protocol it speaks: `openai` or `anthropic`; required. |
+| `key` | The name of the secret holding its API key (letters, digits and underscores), never the key; `''` for none (a local endpoint). |
+| `models_url`, `balance_url` | Where its model list and its balance are read, URLs as `url`; `''` for none. |
+| `concurrency` | The most runs it takes at once; default 0, no cap. |
+| `note`, `enabled` | One line of notes; default true. |
+
+A refused `url` or `key` is never printed back: it may carry a password or be the key itself.
+
+```sh
+nova-config provider add provider-a --url https://api.example.com --api openai --key PROVIDER_A_API_KEY --models_url https://api.example.com/models --concurrency 8 --actor ops
+```
+
+## Models
+
+A model the fleet can run, named `<provider>/<model id>` exactly as a harness names it: the part before the first `/`
+is a provider's name, and the model id may itself hold `/`, `.`, `:`, `_` and `-` (`provider-a/org/model-1.5:q4`).
+Same verbs as machines.
+
+| Field | Meaning |
+|---|---|
+| `harness` | The harness it runs in: `opencode` (the default), `claude` or `codex`. It must speak its provider's `api`: `claude` speaks `anthropic`; `opencode` and `codex` speak `openai`. |
+| `price_in`, `price_out` | Micro-dollars per million input and output tokens (US$3 per million is `3000000`). Left out, a price is unpriced, printed `-` (`null` in JSON), never 0; `0` is free; `default` unsets it. |
+| `machine` | The one machine that serves it (a local model), an existing machine; `''` for any. |
+| `note`, `enabled` | One line of notes; default true. |
+
+A model's provider must exist, so add the provider first; a provider goes, and its `api` changes, only once no model
+names it, and a machine goes only once it serves no model. The store holds the provider and machine a model names,
+whoever writes.
+
+```sh
+nova-config model add provider-a/org/model-1.5:q4 --price_in 3000000 --price_out 15000000 --actor ops
+nova-config model show provider-a/org/model-1.5:q4
+```
+
+```text
+CONFIG ADD kind=model name=provider-a/org/model-1.5:q4 rev=6
+MODEL name=provider-a/org/model-1.5:q4 harness=opencode price_in=3000000 price_out=15000000 machine=- note=- enabled=true created=2026-11-21T14:00:00Z updated=2026-11-21T14:00:00Z
 ```
 
 ## Rented boxes
@@ -169,10 +217,11 @@ nova-config rented add spill-1 --provider aws --provider_id i-0abc --market spot
 This source tree provides `github.com/mas-bandwidth/nova-tools/v2/modules/config`
 (package `config`). When importing a released module, use the package path
 documented by that release. The package reads the rows through the same query
-the `list` verbs run: `Open(ctx, dsn, password)`, then `Machines`, `Friends`
-or `Services` on the `*Store`. The row
-types carry the field names `--json` prints. It only reads; write through
-nova-config, which keeps the history.
+the `list` verbs run: `Open(ctx, dsn, password)`, then `Machines`, `Friends`,
+`Services`, `Providers` or `Models` on the `*Store`, or `Snapshot` for all five
+from one instant. The row types carry the field names `--json` prints; a
+model's unset price is a nil `*int`. It only reads; write through nova-config,
+which keeps the history.
 
 ```go
 st, err := config.Open(ctx, os.Getenv("NOVA_PG_DSN"), os.Getenv("NOVA_PG_PASSWORD"))
@@ -195,7 +244,7 @@ HISTORY at=2026-11-05T23:51:58Z actor=ops kind=machine name=bench-a op=set rev=2
 CONFIG HISTORY rows=1 more=true
 ```
 
-Filter by `machine`, `service` or `friend`, then by name. `--since` takes `90m`, `7d` or
+Filter by `machine`, `service`, `friend`, `provider`, `model` or `rented`, then by name. `--since` takes `90m`, `7d` or
 an RFC 3339 time. `--max` defaults to 20; 0 means all. `more=true` means the cap
 left some writes out.
 
@@ -229,7 +278,9 @@ connection failure. Missing or invalid flags and the store DSN are checked toget
 | `service add: service x has neither --every nor --keepalive; ...` (2) | Give exactly one of them. |
 | `service add: service x names secrets (--keys A) and no --seat ...` (2) | Add `--seat` or drop `--keys`. |
 | `service add: service x fetches on a clock (git pull with --loop); fetch on an event (a push) or once per job, never on a clock ...` (2; `set` 1) | Drop the loop flag and `--every`; run the fetch from the job or the push hook that needs it. |
-| `friend set: friend <friend> has --width 0; ...` (1) | Give `--width 1` or more. |
+| `model add: model provider-b/model-1: no provider provider-b; ...` (1) | Add the provider first. |
+| `model add: model provider-a/model-1: harness claude speaks anthropic and provider provider-a speaks openai; ...` (1) | Give a harness that speaks the provider's api, as the line says. |
+| `provider remove: provider provider-a is still named by models provider-a/model-1; ...` (1) | Remove those models first; a `set --api` their harnesses do not speak is refused the same way. |
 | `friend remove: friend <friend> is still named by config.sprint; ...` (1) | Change the row that names it first. |
 | `friend set: friend <friend> was changed or removed by another write since it was read; nothing written; run: nova-config friend show <friend>, then repeat the set` (1; also `remove`, any kind) | Read the row again, then repeat the write if it still applies. |
 | `machine list: NOVA_PG_DSN carries a password; ...` (2) | Move the password to `NOVA_PG_PASSWORD`. |
@@ -253,6 +304,8 @@ nova-config friend remove <friend> --actor ops
 ```
 
 ```sh
+nova-config model remove provider-a/org/model-1.5:q4 --actor ops
+nova-config provider remove provider-a --actor ops
 nova-config service remove hello --actor ops
 nova-config machine remove bench-a --actor ops
 pg_ctl -D "$work/pg" -m fast stop

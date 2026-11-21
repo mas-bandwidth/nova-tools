@@ -1,5 +1,6 @@
-// Command nova-config keeps a fleet's machines and services, and the friends
-// that work on it, as rows in PostgreSQL, each write with a history row, and
+// Command nova-config keeps a fleet's machines and services, the friends that
+// work on it, and the model providers and models it can call, as rows in
+// PostgreSQL, each write with a history row, and
 // prints the machines and services as an Ansible inventory. Other programs
 // read the same rows through package github.com/mas-bandwidth/nova-tools/v2/modules/config.
 package main
@@ -297,6 +298,9 @@ func runKind(ctx context.Context, k *kind, verb string, args []string, d deps, s
 				return err
 			}
 		}
+	}
+	if err := related(ctx, st, k, op, name, after); err != nil {
+		return err
 	}
 	if k.name == "machine" && op != "remove" { // an admin runner label is checked against every machine's runners, the row as written
 		fleetRows := []Row{after}

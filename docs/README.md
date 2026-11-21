@@ -28,7 +28,7 @@ and [how our team uses the message bus for reviews across models](https://rowans
 | Share a machine without running too many jobs at once | [nova-reserve](../cmd/nova-reserve/README.md) | Local file locks; no server. Only jobs using the same reservation directory share the limit. |
 | Restrict the files and network a command can access | [nova-sandbox](../cmd/nova-sandbox/README.md) | Linux with Landlock (5.13+) or macOS. Run `probe` on the host; CPU, memory, process count and disk use are not limited. |
 | Give a command only the secrets it needs | [nova-secrets](../cmd/nova-secrets/README.md) | sops, age and git, with a key and encrypted store. Secret values go through stdin or the command's environment. |
-| Keep machines, services and AI friends as rows, with change history | [nova-config](../cmd/nova-config/README.md) | PostgreSQL. Rows and Ansible inventory describe machines; writing a row starts no service. |
+| Keep machines, services, AI friends and the models they call as rows, with change history | [nova-config](../cmd/nova-config/README.md) | PostgreSQL. Rows and Ansible inventory describe machines; writing a row starts no service. |
 | Set up machines, services and GitHub Actions runners together | [nova-fleet](../cmd/nova-fleet/README.md) | Ansible, Tailscale, PostgreSQL, Redis and SSH access to the machines. Applying plays changes those machines. |
 
 Start with `nova-bus` for messaging. If you want a local trial with no server,
@@ -526,19 +526,21 @@ on Linux, or a launchd job under `~/Library/LaunchAgents` on macOS, for each
 row and starts it.
 
 The same store keeps the **friends**, the AIs that work on the fleet, one row
-each. In the current source tree, Go programs read every kind through
+each, and the **providers** and **models** the fleet can call: a provider is a
+model API endpoint, a model is named `<provider>/<model id>`. In the current
+source tree, Go programs read every kind through
 `github.com/mas-bandwidth/nova-tools/v2/modules/config` (`Machines`, `Friends`,
-`Services`) rather than keeping a copy; `Snapshot` reads all three inside one
-read-only REPEATABLE READ transaction, so machines and friends come from the
+`Services`, `Providers`, `Models`) rather than keeping a copy; `Snapshot` reads
+all five inside one read-only REPEATABLE READ transaction, so they come from the
 same instant. When importing a released module, use the package path
 documented by that release:
 
 ```text
-nova-config friend add <friend> --harness <harness> --width 4 --actor you
+nova-config friend add <friend> --harness <harness> --pronouns they/them --actor you
 ```
 
 That prints `CONFIG ADD kind=friend name=<friend> rev=3`; `nova-config friend list`
-then shows `width=4` and the default `tiers=flash,frontier,heavy,pro`.
+then shows it with the default `enabled=true`.
 
 The refusal you will meet first is
 `NOVA_PG_DSN carries a password; remove it and set NOVA_PG_PASSWORD` (exit 2):
@@ -869,7 +871,7 @@ own status). Redis must still be up for `nova-bus who`.
 ```sh
 first() { local out rc; out=$("$@"); rc=$?; printf '%s\n' "${out%%$'\n'*}"; return $rc; }
 first nova-bus -h           # nova-bus: messages between named inboxes, kept in Redis.
-first nova-config -h        # nova-config: a fleet's machines, services and friends, kept as rows in PostgreSQL.
+first nova-config -h        # nova-config: a fleet's machines, services, friends, model providers, models and rented boxes, kept as rows in PostgreSQL.
 first nova-secrets -h       # nova-secrets: sops-encrypted secrets in a git store, handed to one command at a time.
 first nova-reserve status   # capacity=<n> set_by_pid=<pid> set_at=<time>
 first nova-sandbox check    # CHECK OK backend=landlock ... (Linux) or backend=sandbox-exec ... (macOS)

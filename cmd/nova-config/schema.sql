@@ -27,7 +27,9 @@ CREATE INDEX IF NOT EXISTS history_kind_name ON config.history (kind, name, id);
 -- windows_admin_runners is a WSL machine's Windows-side runners run as a local
 -- administrator account, one per <url>=<account>:<label>[+<label>]@<workflow>,
 -- comma-separated ('' is none). runner_env is the environment its runners'
--- services start with, a JSON object of NAME to value ('{}' is none).
+-- services start with, a JSON object of NAME to value ('{}' is none). routes
+-- names the devices or tools it has that a piece of work may need, a comma
+-- list of names ('' is none).
 CREATE TABLE IF NOT EXISTS config.machines (
     name       text PRIMARY KEY CONSTRAINT machines_name_pattern CHECK (name ~ '^[a-z0-9][a-z0-9-]*$'),
     "user"     text NOT NULL,
@@ -45,7 +47,8 @@ CREATE TABLE IF NOT EXISTS config.machines (
     runner_scopes text NOT NULL DEFAULT '',
     windows_runners text NOT NULL DEFAULT '',
     windows_admin_runners text NOT NULL DEFAULT '',
-    runner_env text NOT NULL DEFAULT '{}' CHECK (runner_env LIKE '{%}')
+    runner_env text NOT NULL DEFAULT '{}' CHECK (runner_env LIKE '{%}'),
+    routes     text NOT NULL DEFAULT '' CHECK (routes ~ '^([a-z0-9][a-z0-9-]*(,[a-z0-9][a-z0-9-]*)*)?$')
 );
 -- A machines table made before the runner_env column gets it here; on one that has it this does nothing.
 ALTER TABLE config.machines ADD COLUMN IF NOT EXISTS runner_env text NOT NULL DEFAULT '{}' CHECK (runner_env LIKE '{%}');
@@ -53,6 +56,8 @@ ALTER TABLE config.machines ADD COLUMN IF NOT EXISTS runner_env text NOT NULL DE
 ALTER TABLE config.machines ADD COLUMN IF NOT EXISTS runner_scopes text NOT NULL DEFAULT '';
 -- A machines table made before the windows_admin_runners column gets it here ('': none); on one that has it this does nothing.
 ALTER TABLE config.machines ADD COLUMN IF NOT EXISTS windows_admin_runners text NOT NULL DEFAULT '';
+-- A machines table made before the routes column gets it here ('': none); on one that has it this does nothing.
+ALTER TABLE config.machines ADD COLUMN IF NOT EXISTS routes text NOT NULL DEFAULT '' CHECK (routes ~ '^([a-z0-9][a-z0-9-]*(,[a-z0-9][a-z0-9-]*)*)?$');
 
 -- A service: a program one machine keeps running; with every n seconds it runs
 -- every n seconds instead of staying up.
@@ -73,8 +78,10 @@ CREATE TABLE IF NOT EXISTS config.services (
 );
 CREATE INDEX IF NOT EXISTS services_machine ON config.services (machine, name);
 
--- A friend: an AI that works on the fleet, named by its bus name; width is
--- the cards it works at once, tiers a comma list of flash, frontier, heavy, pro.
+-- A friend: an AI that works on the fleet, named by its bus name. width and
+-- tiers are unused by nova-config: an older nova-sprint still reads them, and
+-- nova-sprint copies them into its own store; they are dropped in a later
+-- release, once every nova-sprint reads them from there.
 CREATE TABLE IF NOT EXISTS config.friends (
     name       text PRIMARY KEY CONSTRAINT friends_name_pattern CHECK (name ~ '^[a-z0-9][a-z0-9-]*$'),
     harness    text NOT NULL DEFAULT '',
@@ -88,6 +95,45 @@ CREATE TABLE IF NOT EXISTS config.friends (
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now()
 );
+
+-- A provider: a model API endpoint the fleet can call. url is the base URL
+-- requests go to; api the wire protocol it speaks; key the name of the secret
+-- holding its API key, never the key ('' for none); models_url and balance_url
+-- where its model list and balance are read ('' for none); concurrency the most
+-- runs it takes at once (0 is no cap).
+CREATE TABLE IF NOT EXISTS config.providers (
+    name       text PRIMARY KEY CONSTRAINT providers_name_pattern CHECK (name ~ '^[a-z0-9][a-z0-9-]*$'),
+    url        text NOT NULL CHECK (url ~ '^https?://[^/?#@[:space:]]+'),
+    api        text NOT NULL CHECK (api IN ('openai', 'anthropic')),
+    key        text NOT NULL DEFAULT '' CHECK (key ~ '^([A-Za-z_][A-Za-z0-9_]*)?$'),
+    models_url text NOT NULL DEFAULT '' CHECK (models_url ~ '^(https?://[^/?#@[:space:]]+.*)?$'),
+    balance_url text NOT NULL DEFAULT '' CHECK (balance_url ~ '^(https?://[^/?#@[:space:]]+.*)?$'),
+    concurrency integer NOT NULL DEFAULT 0 CHECK (concurrency >= 0),
+    note       text NOT NULL DEFAULT '',
+    enabled    boolean NOT NULL DEFAULT true,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+-- A model the fleet can run, named <provider>/<model id> as its harness names
+-- it; provider, the part before the first '/', is a provider row. harness is the
+-- harness it runs in; price_in and price_out micro-dollars per million input and
+-- output tokens, NULL when unpriced (never free); machine the one machine that
+-- serves it, NULL for any.
+CREATE TABLE IF NOT EXISTS config.models (
+    name       text PRIMARY KEY CONSTRAINT models_name_pattern CHECK (name ~ '^[a-z0-9][a-z0-9-]*/[A-Za-z0-9_.:-]+(/[A-Za-z0-9_.:-]+)*$'),
+    provider   text NOT NULL GENERATED ALWAYS AS (split_part(name, '/', 1)) STORED REFERENCES config.providers (name),
+    harness    text NOT NULL DEFAULT 'opencode' CHECK (harness IN ('opencode', 'claude', 'codex')),
+    price_in   integer CHECK (price_in >= 0),
+    price_out  integer CHECK (price_out >= 0),
+    machine    text REFERENCES config.machines (name),
+    note       text NOT NULL DEFAULT '',
+    enabled    boolean NOT NULL DEFAULT true,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS models_provider ON config.models (provider, name);
+CREATE INDEX IF NOT EXISTS models_machine ON config.models (machine, name);
 
 -- A box rented by the hour (nova-fleet rent), in a table of its own: a nova-config that predates it never reads it,
 -- so a box no play may reach (one at aws, or one not created yet) is in no inventory, whichever release builds it.
