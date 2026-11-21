@@ -43,10 +43,10 @@ func oldListSQL(table string, columns []string) string {
 	return "SELECT " + strings.Join(cols, ", ") + " FROM config." + table + " ORDER BY name"
 }
 
-// TestFunctionalV1ProvidersMoveAside: a store still holding the v1 tools' config.providers, and a v1 table whose
+// TestFunctionalV1Aside: a store still holding the v1 tools' config.providers, and a v1 table whose
 // foreign key names it, takes schema.sql: the old table moves to config.providers_v1 with its rows, and providers
 // and models work.
-func TestFunctionalV1ProvidersMoveAside(t *testing.T) {
+func TestFunctionalV1Aside(t *testing.T) {
 	t.Parallel()
 	dsn := startPG(t, "testdata/before-providers.sql")
 	ctx := context.Background()
