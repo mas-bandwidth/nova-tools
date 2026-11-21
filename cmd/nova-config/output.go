@@ -8,6 +8,8 @@ import (
 	"slices"
 	"strings"
 	"unicode"
+
+	config "github.com/mas-bandwidth/nova-tools/v2/modules/config"
 )
 
 // Output grammar. A line is TOKEN then key=value fields. A value is bare when it
@@ -67,6 +69,11 @@ func jsonValue(f field, v string) string {
 		var a []string
 		if json.Unmarshal([]byte(v), &a) == nil {
 			return oddEscapes.Replace(marshal(a))
+		}
+	case "startup":
+		var s config.FriendStartup
+		if json.Unmarshal([]byte(v), &s) == nil {
+			return oddEscapes.Replace(marshal(s))
 		}
 	case "env":
 		var m map[string]string

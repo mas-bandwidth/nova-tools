@@ -5,9 +5,11 @@ import (
 	"cmp"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"maps"
 	"net/netip"
 	"net/url"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"sort"
@@ -103,6 +105,7 @@ var kinds = map[string]*kind{
 			{name: "pronouns", typ: "text", null: true},
 			{name: "note", typ: "text", cut: true, free: true},
 			{name: "enabled", typ: "bool", def: "true"},
+			{name: "startup", typ: "startup", def: "{}", free: true, hint: "<json-object>"},
 		},
 		extra: []field{
 			{name: "width", typ: "int"},
@@ -187,6 +190,26 @@ func (f field) canonical(raw string) (string, error) {
 			}
 		}
 		return strings.Join(words, ","), nil
+	case "startup":
+		var s config.FriendStartup
+		dec := json.NewDecoder(strings.NewReader(raw))
+		dec.DisallowUnknownFields()
+		if !strings.HasPrefix(raw, "{") || !json.Valid([]byte(raw)) || dec.Decode(&s) != nil {
+			return "", fmt.Errorf("--startup: want a JSON object with repository, home, prefix and files")
+		}
+		if strings.TrimSpace(raw[1:len(raw)-1]) == "" {
+			return "{}", nil
+		}
+		if _, err := (field{name: "repository", typ: "url"}).canonical(s.Repository); err != nil || s.Repository == "" ||
+			!filepath.IsAbs(s.Home) || strings.ContainsRune(s.Home, 0) || strings.TrimSpace(s.Prefix) == "" || strings.ContainsRune(s.Prefix, 0) || len(s.Files) == 0 {
+			return "", fmt.Errorf("--startup: give a repository URL, absolute checkout, opening prefix and ordered files")
+		}
+		for _, file := range s.Files {
+			if !fs.ValidPath(file) || file == "." || strings.ContainsAny(file, "\\\x00") {
+				return "", fmt.Errorf("--startup: each file must be a relative path below home")
+			}
+		}
+		return marshal(s), nil
 	case "argv":
 		var words []string
 		dec := json.NewDecoder(strings.NewReader(raw))
@@ -507,6 +530,12 @@ func (k *kind) merge(cur Row, raw map[string]string) (Row, error) {
 			if c, err := f.canonical(v); err != nil {
 				problems = append(problems, err.Error())
 			} else {
+				// jsonb reorders keys and spaces. Keep the database spelling for a no-op set.
+				if f.typ == "startup" {
+					if old, err := f.canonical(cur.F[f.name]); err == nil && old == c {
+						continue
+					}
+				}
 				next.F[f.name] = c
 			}
 		}

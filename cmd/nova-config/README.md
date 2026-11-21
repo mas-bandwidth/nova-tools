@@ -134,6 +134,11 @@ CONFIG ADD kind=friend name=<friend> rev=4
 FRIEND name=<friend> harness=<harness> model=<model> pronouns=she/her note=- enabled=true created=2026-11-07T01:55:27Z updated=2026-11-07T01:55:27Z
 ```
 
+A friend's optional `--startup` object specifies its home repository URL (`repository`), absolute checkout path
+(`home`), opening instructions (`prefix`) and ordered list of relative document paths (`files`). For example,
+`--startup '{"repository":"https://example.org/team/reviewer","home":"/srv/reviewer","prefix":"Read the standing instructions.","files":["README.md"]}'`.
+Use `--startup '{}'` to clear it. The registry stores the references. Session launchers read the documents at startup.
+
 ## Providers
 
 A provider is a model API endpoint the fleet can call, named with lower-case letters, digits and dashes. Same verbs as

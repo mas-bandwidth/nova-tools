@@ -94,9 +94,13 @@ CREATE TABLE IF NOT EXISTS config.friends (
     pronouns   text,
     note       text NOT NULL DEFAULT '',
     enabled    boolean NOT NULL DEFAULT true,
+    startup    jsonb NOT NULL DEFAULT '{}',
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now()
 );
+
+-- Existing clients name their columns and can continue to edit other friend fields.
+ALTER TABLE config.friends ADD COLUMN IF NOT EXISTS startup jsonb NOT NULL DEFAULT '{}';
 
 -- A provider: a model API endpoint the fleet can call. url is the base URL
 -- requests go to; api the wire protocol it speaks; key the name of the secret

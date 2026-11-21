@@ -41,16 +41,26 @@ type Machine struct {
 	Updated   string            `json:"updated"`
 }
 
+// FriendStartup describes the home checkout and ordered documents read at session startup.
+// An empty object means this friend has no startup definition.
+type FriendStartup struct {
+	Repository string   `json:"repository,omitempty"`
+	Home       string   `json:"home,omitempty"`
+	Prefix     string   `json:"prefix,omitempty"`
+	Files      []string `json:"files,omitempty"`
+}
+
 // Friend is an AI that works on the fleet, named by its bus name.
 type Friend struct {
-	Name     string `json:"name"`
-	Harness  string `json:"harness"` // claude, codex, antigravity, grok, muse, ...
-	Model    string `json:"model"`
-	Pronouns string `json:"pronouns"` // "" when unstated
-	Note     string `json:"note"`
-	Enabled  bool   `json:"enabled"`
-	Created  string `json:"created"`
-	Updated  string `json:"updated"`
+	Name     string        `json:"name"`
+	Harness  string        `json:"harness"` // claude, codex, antigravity, grok, muse, ...
+	Model    string        `json:"model"`
+	Pronouns string        `json:"pronouns"` // "" when unstated
+	Note     string        `json:"note"`
+	Enabled  bool          `json:"enabled"`
+	Startup  FriendStartup `json:"startup"`
+	Created  string        `json:"created"`
+	Updated  string        `json:"updated"`
 }
 
 // Service is a program one machine keeps running, or runs every Every seconds.
