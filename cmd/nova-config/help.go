@@ -59,7 +59,7 @@ func (k *kind) opLine(op string) string {
 		return head + " <name> " + writeLine
 	}
 	fl := ""
-	for _, f := range k.fields {
+	for _, f := range append(slices.Clip(k.fields), k.extra...) {
 		p := cmp.Or(f.hint, placeholders[f.typ], "<text>")
 		if f.typ == "word" {
 			p = "<" + strings.Trim(f.word.String(), "^()$") + ">"
@@ -87,7 +87,7 @@ func helpText(path []string) (string, bool) {
 		default:
 			return "", false
 		}
-		return "usage: " + strings.Join(lines, "\n       ") + "\n" + k.fieldsLine() + "\n", true
+		return "usage: " + strings.Join(lines, "\n       ") + "\n" + k.fieldsLine() + "\n" + k.note, true
 	}
 	if len(path) != 1 {
 		return "", false

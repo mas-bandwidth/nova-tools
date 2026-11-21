@@ -78,6 +78,7 @@ var docRefusals = map[string]refusalCase{
 	`service add: service x has neither --every nor --keepalive; ...`:                                                                                                    {tool: "config", why: needsStore},
 	`service add: service x names secrets (--keys A) and no --seat ...`:                                                                                                  {tool: "config", why: needsStore},
 	`service add: service x fetches on a clock (git pull with --loop); fetch on an event (a push) or once per job, never on a clock ...`:                                 {tool: "config", why: needsStore},
+	`friend set: friend <friend> has --width 0; ...`:                                                                                                                     {tool: "config", why: needsStore},
 	`model add: model provider-b/model-1: no provider provider-b; ...`:                                                                                                   {tool: "config", why: needsStore},
 	`model add: model provider-a/model-1: harness claude speaks anthropic and provider provider-a speaks openai; ...`:                                                    {tool: "config", why: needsStore},
 	`provider remove: provider provider-a is still named by models provider-a/model-1; ...`:                                                                              {tool: "config", why: needsStore},

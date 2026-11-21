@@ -80,9 +80,14 @@ func TestFriendRefusals(t *testing.T) {
 		{1, []string{"friend", "show", "nope"}, "friend nope not found; run: nova-config friend list"},
 		{1, []string{"friend", "set", "nope", "--model", "m", "--actor", "a"}, "friend nope not found"},
 		{1, []string{"friend", "remove", "nope", "--actor", "a"}, "friend nope not found"},
-		// width and tiers are a sprint's own, kept by nova-sprint: no friend flag sets them
-		{2, []string{"friend", "set", "alex", "--width", "2", "--actor", "a"}, "unknown flag --width; friend fields: name, harness, model, pronouns, note, enabled"},
-		{2, []string{"friend", "add", "f8", "--harness", "claude", "--tiers", "pro", "--actor", "a"}, "unknown flag --tiers; friend fields:"},
+		// --width and --tiers write their columns, with their old checks
+		{1, []string{"friend", "set", "alex", "--width", "0", "--actor", "a"}, "friend alex has --width 0; a friend works at least one card at once: --width 1 or more"},
+		{2, []string{"friend", "add", "f8", "--harness", "claude", "--width", "0", "--actor", "a"}, "friend f8 has --width 0"},
+		{1, []string{"friend", "set", "alex", "--tiers", "", "--actor", "a"}, "friend alex has no --tiers; want a comma list of flash, pro, heavy, frontier"},
+		{2, []string{"friend", "set", "alex", "--tiers", "pro,ultra", "--actor", "a"}, `--tiers "ultra": want a comma list of words matching`},
+		{2, []string{"friend", "set", "alex", "--width", "-1", "--actor", "a"}, `--width "-1": want a non-negative integer`},
+		{2, []string{"friend", "set", "alex", "--width", "2147483648", "--actor", "a"}, `--width "2147483648": want a non-negative integer`}, // the column is a 32-bit integer
+		{2, []string{"friend", "show", "alex", "--width", "2"}, "unknown flag --width"},                                                      // a read verb takes no write flag
 		{2, []string{"friend", "set", "alex", "--enabled", "maybe", "--actor", "a"}, `--enabled "maybe": want true or false`},
 		{2, []string{"friend", "set", "alex", "--harness", "", "--actor", "a"}, "--harness: want a value"},
 		{2, []string{"friend", "set", "alex", "--slots", "4", "--actor", "a"}, "unknown flag --slots; friend fields:"},
@@ -112,6 +117,35 @@ func TestFriendUnstatedPronounsWriteNull(t *testing.T) {
 	q, args := writeSQL(kinds["friend"], "add", "f1", Row{}, row)
 	assert.Equal(t, `INSERT INTO config.friends (name, "harness", "model", "pronouns", "note", "enabled") VALUES ($1, $2, $3, $4, $5, $6)`, q, "width and tiers keep their column defaults")
 	assert.Equal(t, []any{"f1", "claude", "", nil, "", true}, args)
+}
+
+// --width and --tiers write config.friends' width and tiers, which an older nova-sprint reads, and nothing reads them
+// back: no line, JSON or library row shows them. Given, they are named in the write; left out, an add leaves the
+// columns' defaults and a set leaves them as they are.
+func TestFriendWidthAndTiersAreWriteOnly(t *testing.T) {
+	t.Parallel()
+	h := friends(t)
+	assert.Equal(t, "CONFIG ADD kind=friend name=f4 rev=3\n", h.ok(t, "friend", "add", "f4", "--harness", "claude", "--width", "4", "--tiers", "pro,heavy", "--actor", "a1"))
+	assert.Equal(t, "4", h.st.history[2].after["width"])
+	assert.Equal(t, "heavy,pro", h.st.history[2].after["tiers"], "stored sorted, as before")
+	assert.Equal(t, "CONFIG SET kind=friend name=alex rev=4 changed=tiers,width\n", h.ok(t, "friend", "set", "alex", "--width", "2", "--tiers", "frontier", "--actor", "a1"))
+	list := h.ok(t, "friend", "list")
+	assert.Contains(t, list, "FRIEND name=f4 harness=claude model=- pronouns=- note=- enabled=true\n")
+	assert.NotContains(t, list, "width", "list shows neither")
+	assert.NotContains(t, h.ok(t, "friend", "show", "f4", "--json"), "width")
+	assert.Contains(t, h.ok(t, "help", "friend", "set"), "[--width <n>] [--tiers <flash,frontier,heavy,pro>]")
+	assert.Contains(t, h.ok(t, "help", "friend", "set"), "kept only until nova-sprint reads widths and tiers from its own store")
+
+	row := Row{Name: "f1", F: map[string]string{"harness": "claude", "model": "", "pronouns": "", "note": "", "enabled": "true", "width": "4", "tiers": "pro"}}
+	q, args := writeSQL(kinds["friend"], "add", "f1", Row{}, row)
+	assert.Equal(t, `INSERT INTO config.friends (name, "harness", "model", "pronouns", "note", "enabled", "width", "tiers") VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`, q)
+	assert.Equal(t, []any{"f1", "claude", "", nil, "", true, int64(4), "pro"}, args)
+	old := Row{Name: "f1", F: map[string]string{"harness": "claude", "model": "", "pronouns": "", "note": "", "enabled": "true"}}
+	q, args = writeSQL(kinds["friend"], "set", "f1", old, row)
+	assert.Equal(t, `UPDATE config.friends SET "harness" = $2, "model" = $3, "pronouns" = $4, "note" = $5, "enabled" = $6, "width" = $7, "tiers" = $8, updated_at = now() WHERE name = $1`+
+		` AND jsonb_build_object('harness', coalesce("harness"::text, ''), 'model', coalesce("model"::text, ''), 'pronouns', coalesce("pronouns"::text, ''), 'note', coalesce("note"::text, ''), 'enabled', coalesce("enabled"::text, '')) = $9::jsonb`, q,
+		"a set matches the row only on the columns it reads")
+	assert.Len(t, args, 9)
 }
 
 func TestDiagnoseFriendStillNamed(t *testing.T) {

@@ -61,12 +61,21 @@ func TestFunctionalLibrary(t *testing.T) {
 		`INSERT INTO config.models (name, price_in) VALUES ('p1/m-4', -1)`,     // a negative price
 		`INSERT INTO config.providers (name, url, api) VALUES ('p2', 'ftp://h', 'openai')`,
 		`INSERT INTO config.providers (name, url, api, key) VALUES ('p2', 'https://h', 'openai', 'sk-1')`,
+		// a URL with a user, a password, a query or a fragment, in any of the three columns, whoever writes
+		`INSERT INTO config.providers (name, url, api) VALUES ('p2', 'https://u@h', 'openai')`,
+		`INSERT INTO config.providers (name, url, api) VALUES ('p2', 'https://h/v1?key=k', 'openai')`,
+		`INSERT INTO config.providers (name, url, api, models_url) VALUES ('p2', 'https://h', 'openai', 'https://u:pw@h/models')`,
+		`INSERT INTO config.providers (name, url, api, models_url) VALUES ('p2', 'https://h', 'openai', 'https://h/models#x')`,
+		`INSERT INTO config.providers (name, url, api, balance_url) VALUES ('p2', 'https://h', 'openai', 'https://u:pw@h/balance')`,
+		`INSERT INTO config.providers (name, url, api, balance_url) VALUES ('p2', 'https://h', 'openai', 'https://h/balance?k=1')`,
 		`UPDATE config.machines SET routes = 'route:quest' WHERE name = 'm1'`,
 		`DELETE FROM config.providers WHERE name = 'p1'`, // a model still names it
 	} {
 		_, err := st.Conn().Exec(ctx, stmt)
 		assert.Error(t, err, stmt)
 	}
+	_, err = st.Conn().Exec(ctx, `INSERT INTO config.providers (name, url, api, models_url, balance_url) VALUES ('p3', 'http://bench-1.tail:8080/v1', 'openai', 'https://h/v1/models', 'https://h/user/balance')`)
+	assert.NoError(t, err, "a host with a port and a path is a URL the store takes")
 	code, _, errs := realRun(t, env, "provider", "remove", "p1", "--actor", "a")
 	assert.Equal(t, 1, code)
 	assert.Contains(t, errs, "provider p1 is still named by models p1/org/m-1.5:q4; remove them first")

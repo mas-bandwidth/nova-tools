@@ -1,7 +1,9 @@
 -- The tables nova-config reads and writes, in the schema config:
 -- nova-config schema | PGPASSWORD="$NOVA_PG_PASSWORD" psql "$NOVA_PG_DSN"
 -- Every statement is idempotent, so a store that has them already is left as
--- it is.
+-- it is. A statement that waits more than 5 seconds for a lock (behind a slow
+-- transaction) fails rather than queueing every reader behind it; apply again.
+SET lock_timeout = '5s';
 CREATE SCHEMA IF NOT EXISTS config;
 
 -- One row per write of any row: before and after are the row's fields as
@@ -103,11 +105,11 @@ CREATE TABLE IF NOT EXISTS config.friends (
 -- runs it takes at once (0 is no cap).
 CREATE TABLE IF NOT EXISTS config.providers (
     name       text PRIMARY KEY CONSTRAINT providers_name_pattern CHECK (name ~ '^[a-z0-9][a-z0-9-]*$'),
-    url        text NOT NULL CHECK (url ~ '^https?://[^/?#@[:space:]]+'),
+    url        text NOT NULL CHECK (url ~ '^https?://[^/?#@[:space:]]+(/[^?#[:space:]]*)?$'),
     api        text NOT NULL CHECK (api IN ('openai', 'anthropic')),
     key        text NOT NULL DEFAULT '' CHECK (key ~ '^([A-Za-z_][A-Za-z0-9_]*)?$'),
-    models_url text NOT NULL DEFAULT '' CHECK (models_url ~ '^(https?://[^/?#@[:space:]]+.*)?$'),
-    balance_url text NOT NULL DEFAULT '' CHECK (balance_url ~ '^(https?://[^/?#@[:space:]]+.*)?$'),
+    models_url text NOT NULL DEFAULT '' CHECK (models_url ~ '^(https?://[^/?#@[:space:]]+(/[^?#[:space:]]*)?)?$'),
+    balance_url text NOT NULL DEFAULT '' CHECK (balance_url ~ '^(https?://[^/?#@[:space:]]+(/[^?#[:space:]]*)?)?$'),
     concurrency integer NOT NULL DEFAULT 0 CHECK (concurrency >= 0),
     note       text NOT NULL DEFAULT '',
     enabled    boolean NOT NULL DEFAULT true,

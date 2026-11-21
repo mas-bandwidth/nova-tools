@@ -40,7 +40,10 @@ type field struct {
 type kind struct {
 	name, table string
 	fields      []field
-	check       func(Row) error
+	// extra are write-only columns: an add or set writes one only when its flag is given, and nothing reads it back
+	extra []field
+	note  string // a line of help about the kind
+	check func(Row) error
 }
 
 // Row is one row: its name, its fields as text, and its stamps (RFC 3339).
@@ -51,6 +54,7 @@ var (
 	roleWord    = regexp.MustCompile(`^(bench|runner|services)$`)
 	keyWord     = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 	envName     = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+	tierWord    = regexp.MustCompile(`^(flash|pro|heavy|frontier)$`)
 	apiWord     = regexp.MustCompile(`^(openai|anthropic)$`)
 	harnessWord = regexp.MustCompile(`^(opencode|claude|codex)$`)
 	// a model's name: its provider's name, a slash, then the model id as its harness names it
@@ -92,14 +96,19 @@ var kinds = map[string]*kind{
 			{name: "env", typ: "env", def: "{}"},
 			{name: "log", typ: "path"},
 		}},
-	"friend": {name: "friend", table: "friends",
+	"friend": {name: "friend", table: "friends", check: checkFriend,
 		fields: []field{
 			{name: "harness", typ: "text", required: true},
 			{name: "model", typ: "text"},
 			{name: "pronouns", typ: "text", null: true},
 			{name: "note", typ: "text", cut: true, free: true},
 			{name: "enabled", typ: "bool", def: "true"},
-		}},
+		},
+		extra: []field{
+			{name: "width", typ: "int"},
+			{name: "tiers", typ: "list", word: tierWord, hint: "<flash,frontier,heavy,pro>"},
+		},
+		note: "--width (at least 1) and --tiers write the width and tiers columns nova-sprint reads, and nothing shows them; each is kept only until nova-sprint reads widths and tiers from its own store, and is removed in the release that drops the columns.\n"},
 	"provider": {name: "provider", table: "providers",
 		fields: []field{
 			{name: "url", typ: "url", required: true},
@@ -492,7 +501,7 @@ func (k *kind) newRow(name string, raw map[string]string) (Row, error) {
 func (k *kind) merge(cur Row, raw map[string]string) (Row, error) {
 	next := Row{Name: cur.Name, F: maps.Clone(cur.F)}
 	var problems []string // of the values given
-	for _, f := range k.fields {
+	for _, f := range append(slices.Clip(k.fields), k.extra...) {
 		if v, ok := raw[f.name]; ok {
 			if c, err := f.canonical(v); err != nil {
 				problems = append(problems, err.Error())
@@ -662,6 +671,21 @@ func adminClashes(rows []Row, only string) []adminClash {
 		}
 	}
 	return out
+}
+
+// checkFriend refuses a width or tiers a write gives that the columns' readers cannot take.
+func checkFriend(r Row) error {
+	var p []string
+	if w, ok := r.F["width"]; ok && w == "0" {
+		p = append(p, fmt.Sprintf("friend %s has --width 0; a friend works at least one card at once: --width 1 or more", r.Name))
+	}
+	if t, ok := r.F["tiers"]; ok && t == "" {
+		p = append(p, fmt.Sprintf("friend %s has no --tiers; want a comma list of flash, pro, heavy, frontier", r.Name))
+	}
+	if len(p) > 0 {
+		return fmt.Errorf("%s", strings.Join(p, "; "))
+	}
+	return nil
 }
 
 // dsnPassword says a postgres URI carries a password, in its user part or its query.

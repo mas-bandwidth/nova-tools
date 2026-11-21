@@ -118,7 +118,11 @@ machines.
 | `pronouns` | Text; empty (stored as NULL) when unstated. |
 | `enabled` | Default true. |
 
-How many cards a friend works at once, and which, is a sprint's business: nova-sprint keeps it in its own store.
+How many cards a friend works at once, and which, is a sprint's business, kept by nova-sprint. `add` and `set` take
+`--width <n>` (at least 1) and `--tiers <list>` (comma-separated `flash`, `frontier`, `heavy`, `pro`, at least one),
+which write the `width` and `tiers` columns of `config.friends` that nova-sprint reads; nothing in nova-config shows
+them. Each flag is kept only until nova-sprint reads widths and tiers from its own store, and is removed in the release
+that drops the columns.
 
 ```text
 nova-config friend add <friend> --harness <harness> --model <model> --pronouns she/her --actor ops
@@ -278,6 +282,7 @@ connection failure. Missing or invalid flags and the store DSN are checked toget
 | `service add: service x has neither --every nor --keepalive; ...` (2) | Give exactly one of them. |
 | `service add: service x names secrets (--keys A) and no --seat ...` (2) | Add `--seat` or drop `--keys`. |
 | `service add: service x fetches on a clock (git pull with --loop); fetch on an event (a push) or once per job, never on a clock ...` (2; `set` 1) | Drop the loop flag and `--every`; run the fetch from the job or the push hook that needs it. |
+| `friend set: friend <friend> has --width 0; ...` (1) | Give `--width 1` or more. |
 | `model add: model provider-b/model-1: no provider provider-b; ...` (1) | Add the provider first. |
 | `model add: model provider-a/model-1: harness claude speaks anthropic and provider provider-a speaks openai; ...` (1) | Give a harness that speaks the provider's api, as the line says. |
 | `provider remove: provider provider-a is still named by models provider-a/model-1; ...` (1) | Remove those models first; a `set --api` their harnesses do not speak is refused the same way. |
