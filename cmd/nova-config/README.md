@@ -164,6 +164,7 @@ Same verbs as machines.
 |---|---|
 | `harness` | The harness it runs in: `opencode` (the default), `claude` or `codex`. It must speak its provider's `api`: `claude` speaks `anthropic`; `opencode` and `codex` speak `openai`. |
 | `price_in`, `price_out` | Micro-dollars per million input and output tokens (US$3 per million is `3000000`). Left out, a price is unpriced, printed `-` (`null` in JSON), never 0; `0` is free; `default` unsets it. |
+| `price_cache_read` | Micro-dollars per million input tokens read from the provider's cache; left out, they are billed at `price_in`. `default` unsets it. |
 | `machine` | The one machine that serves it (a local model), an existing machine; `''` for any. |
 | `note`, `enabled` | One line of notes; default true. |
 
@@ -178,7 +179,7 @@ nova-config model show provider-a/org/model-1.5:q4
 
 ```text
 CONFIG ADD kind=model name=provider-a/org/model-1.5:q4 rev=6
-MODEL name=provider-a/org/model-1.5:q4 harness=opencode price_in=3000000 price_out=15000000 machine=- note=- enabled=true created=2026-11-21T14:00:00Z updated=2026-11-21T14:00:00Z
+MODEL name=provider-a/org/model-1.5:q4 harness=opencode price_in=3000000 price_out=15000000 price_cache_read=- machine=- note=- enabled=true created=2026-11-21T14:00:00Z updated=2026-11-21T14:00:00Z
 ```
 
 ## Rented boxes

@@ -38,12 +38,12 @@ func TestModelRows(t *testing.T) {
 	t.Parallel()
 	h := providers(t)
 	assert.Equal(t, "CONFIG ADD kind=model name=p1/org/m-1.5:q4 rev=4\n", h.ok(t, "model", "add", "p1/org/m-1.5:q4", "--actor", "t"))
-	h.ok(t, "model", "add", "p2/m_2", "--harness", "claude", "--price_in", "3000000", "--price_out", "0", "--machine", "bench-a", "--note", "local", "--actor", "t")
-	assert.Equal(t, "MODEL name=p1/org/m-1.5:q4 harness=opencode price_in=- price_out=- machine=- note=- enabled=true\n"+
-		`MODEL name=p2/m_2 harness=claude price_in=3000000 price_out=0 machine=bench-a note="local" enabled=true`+"\n"+
+	h.ok(t, "model", "add", "p2/m_2", "--harness", "claude", "--price_in", "3000000", "--price_out", "0", "--price_cache_read", "30000", "--machine", "bench-a", "--note", "local", "--actor", "t")
+	assert.Equal(t, "MODEL name=p1/org/m-1.5:q4 harness=opencode price_in=- price_out=- price_cache_read=- machine=- note=- enabled=true\n"+
+		`MODEL name=p2/m_2 harness=claude price_in=3000000 price_out=0 price_cache_read=30000 machine=bench-a note="local" enabled=true`+"\n"+
 		"CONFIG LIST kind=model rows=2\n", h.ok(t, "model", "list"))
-	assert.Contains(t, h.ok(t, "model", "list", "--json"), `{"name":"p1/org/m-1.5:q4","harness":"opencode","price_in":null,"price_out":null,"machine":"","note":"","enabled":true}`)
-	assert.Contains(t, h.ok(t, "model", "show", "p2/m_2", "--json"), `"price_in":3000000,"price_out":0,"machine":"bench-a"`, "0 is free, and prints as a number")
+	assert.Contains(t, h.ok(t, "model", "list", "--json"), `{"name":"p1/org/m-1.5:q4","harness":"opencode","price_in":null,"price_out":null,"price_cache_read":null,"machine":"","note":"","enabled":true}`)
+	assert.Contains(t, h.ok(t, "model", "show", "p2/m_2", "--json"), `"price_in":3000000,"price_out":0,"price_cache_read":30000,"machine":"bench-a"`, "0 is free, and prints as a number")
 	h.ok(t, "model", "set", "p2/m_2", "--price_in", "default", "--machine", "", "--actor", "t")
 	assert.Equal(t, "", h.st.rows["model"]["p2/m_2"].F["price_in"], "default unsets a price")
 	assert.Equal(t, "", h.st.rows["model"]["p2/m_2"].F["machine"])

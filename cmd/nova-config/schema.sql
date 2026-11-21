@@ -120,14 +120,16 @@ CREATE TABLE IF NOT EXISTS config.providers (
 -- A model the fleet can run, named <provider>/<model id> as its harness names
 -- it; provider, the part before the first '/', is a provider row. harness is the
 -- harness it runs in; price_in and price_out micro-dollars per million input and
--- output tokens, NULL when unpriced (never free); machine the one machine that
--- serves it, NULL for any.
+-- output tokens, NULL when unpriced (never free); price_cache_read the same for
+-- input tokens read from the provider's cache, NULL to bill them at price_in;
+-- machine the one machine that serves it, NULL for any.
 CREATE TABLE IF NOT EXISTS config.models (
     name       text PRIMARY KEY CONSTRAINT models_name_pattern CHECK (name ~ '^[a-z0-9][a-z0-9-]*/[A-Za-z0-9_.:-]+(/[A-Za-z0-9_.:-]+)*$'),
     provider   text NOT NULL GENERATED ALWAYS AS (split_part(name, '/', 1)) STORED REFERENCES config.providers (name),
     harness    text NOT NULL DEFAULT 'opencode' CHECK (harness IN ('opencode', 'claude', 'codex')),
     price_in   integer CHECK (price_in >= 0),
     price_out  integer CHECK (price_out >= 0),
+    price_cache_read integer CHECK (price_cache_read >= 0),
     machine    text REFERENCES config.machines (name),
     note       text NOT NULL DEFAULT '',
     enabled    boolean NOT NULL DEFAULT true,

@@ -125,6 +125,7 @@ var kinds = map[string]*kind{
 			{name: "harness", typ: "word", def: "opencode", word: harnessWord},
 			{name: "price_in", typ: "int", null: true, hint: "<micro-usd-per-mtok|default>"},
 			{name: "price_out", typ: "int", null: true, hint: "<micro-usd-per-mtok|default>"},
+			{name: "price_cache_read", typ: "int", null: true, hint: "<micro-usd-per-mtok|default>"},
 			{name: "machine", typ: "ref"},
 			{name: "note", typ: "text", cut: true, free: true},
 			{name: "enabled", typ: "bool", def: "true"},

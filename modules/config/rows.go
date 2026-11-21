@@ -91,11 +91,14 @@ type Model struct {
 	Harness  string `json:"harness"`   // the harness it runs in: opencode, claude or codex
 	PriceIn  *int   `json:"price_in"`  // micro-dollars per million input tokens; nil is unpriced, never free
 	PriceOut *int   `json:"price_out"` // micro-dollars per million output tokens; nil is unpriced, never free
-	Machine  string `json:"machine"`   // the one machine that serves it (a local model); "" for any
-	Note     string `json:"note"`
-	Enabled  bool   `json:"enabled"`
-	Created  string `json:"created"`
-	Updated  string `json:"updated"`
+	// PriceCacheRead is micro-dollars per million input tokens read from the provider's cache; nil bills them at
+	// PriceIn.
+	PriceCacheRead *int   `json:"price_cache_read"`
+	Machine        string `json:"machine"` // the one machine that serves it (a local model); "" for any
+	Note           string `json:"note"`
+	Enabled        bool   `json:"enabled"`
+	Created        string `json:"created"`
+	Updated        string `json:"updated"`
 }
 
 // Machines returns config.machines in name order.
