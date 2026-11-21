@@ -332,6 +332,25 @@ func TestSDKToolchainMacPins(t *testing.T) {
 	assert.Contains(t, otp.Darwin.Build, "--disable-dynamic-ssl-lib", "otp: crypto reaches no library outside the SDK")
 }
 
+// modernize runs in the lints of every bench, the Macs among them (a Mac bench without it ran a stand-in), so it is
+// installed on both platforms, from the same package at the same version.
+func TestSDKToolchainModernizeOnEveryPlatform(t *testing.T) {
+	t.Parallel()
+	d := readSDKDefaults(t)
+	for _, tool := range d.Tools {
+		if tool.Name != "modernize" {
+			continue
+		}
+		require.NotNil(t, tool.Linux, "modernize has a linux pin")
+		require.NotNil(t, tool.Darwin, "modernize has a darwin pin")
+		assert.Equal(t, "go", tool.Kind)
+		assert.Equal(t, *tool.Linux, *tool.Darwin, "the Mac installs the same package at the same version")
+		assert.Equal(t, "v"+tool.Version, tool.Darwin.Version)
+		return
+	}
+	t.Fatal("modernize is not in the defaults")
+}
+
 // The role follows every symlink in nova_sdk_dir before it uses it, so env.sh and every link it writes name the real
 // directory; every task, the template and the defaults use the resolved sdk_dir, never nova_sdk_dir itself.
 func TestSDKToolchainResolvesTheSDKDirectory(t *testing.T) {
