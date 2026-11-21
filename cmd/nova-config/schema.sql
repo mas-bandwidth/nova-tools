@@ -103,6 +103,21 @@ CREATE TABLE IF NOT EXISTS config.friends (
 -- holding its API key, never the key ('' for none); models_url and balance_url
 -- where its model list and balance are read ('' for none); concurrency the most
 -- runs it takes at once (0 is no cap).
+--
+-- A store from the v1 tools holds an older config.providers (base_url, key_env,
+-- billing, ...): it moves aside to config.providers_v1, rows and all, so the
+-- table below is made; nothing reads it.
+DO $$
+BEGIN
+    IF to_regclass('config.providers_v1') IS NULL AND EXISTS (
+        SELECT 1 FROM pg_attribute
+        WHERE attrelid = to_regclass('config.providers') AND attname = 'key_env' AND NOT attisdropped
+    ) THEN
+        ALTER TABLE config.providers RENAME TO providers_v1;
+        ALTER INDEX config.providers_pkey RENAME TO providers_v1_pkey;
+    END IF;
+END
+$$;
 CREATE TABLE IF NOT EXISTS config.providers (
     name       text PRIMARY KEY CONSTRAINT providers_name_pattern CHECK (name ~ '^[a-z0-9][a-z0-9-]*$'),
     url        text NOT NULL CHECK (url ~ '^https?://[^/?#@[:space:]]+(/[^?#[:space:]]*)?$'),
