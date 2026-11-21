@@ -87,15 +87,16 @@ type Provider struct {
 // Model is a model the fleet can run, named <provider>/<model id> as a harness names it: the part before the first
 // "/" is a Provider's name, and the model id may itself hold "/".
 type Model struct {
-	Name     string `json:"name"`
-	Harness  string `json:"harness"`   // the harness it runs in: opencode, claude or codex
-	PriceIn  *int   `json:"price_in"`  // micro-dollars per million input tokens; nil is unpriced, never free
-	PriceOut *int   `json:"price_out"` // micro-dollars per million output tokens; nil is unpriced, never free
-	Machine  string `json:"machine"`   // the one machine that serves it (a local model); "" for any
-	Note     string `json:"note"`
-	Enabled  bool   `json:"enabled"`
-	Created  string `json:"created"`
-	Updated  string `json:"updated"`
+	Name           string `json:"name"`
+	Harness        string `json:"harness"`          // the harness it runs in: opencode, claude or codex
+	PriceIn        *int   `json:"price_in"`         // micro-dollars per million input tokens; nil is unpriced, never free
+	PriceOut       *int   `json:"price_out"`        // micro-dollars per million output tokens; nil is unpriced, never free
+	PriceCacheRead *int   `json:"price_cache_read"` // micro-dollars per million cached input tokens; nil bills them at PriceIn
+	Machine        string `json:"machine"`          // the one machine that serves it (a local model); "" for any
+	Note           string `json:"note"`
+	Enabled        bool   `json:"enabled"`
+	Created        string `json:"created"`
+	Updated        string `json:"updated"`
 }
 
 // Machines returns config.machines in name order.

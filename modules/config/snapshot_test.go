@@ -71,7 +71,7 @@ func TestSnapshotReadsAllFiveInOneTransaction(t *testing.T) {
 		"friends":   {append([]string{"alice", "claude", "opus", "she/her", "", "true"}, stamp...)},
 		"services":  {append([]string{"s1", "m1", `["/p"]`, "", "", "60", "false", "true", "{}", ""}, stamp...)},
 		"providers": {append([]string{"p1", "https://api.example.com", "openai", "P1_API_KEY", "", "", "4", "", "true"}, stamp...)},
-		"models":    {append([]string{"p1/org/m-1.5:q4", "opencode", "250000", "", "m1", "", "true"}, stamp...)},
+		"models":    {append([]string{"p1/org/m-1.5:q4", "opencode", "250000", "", "2500", "m1", "", "true"}, stamp...)},
 	}}
 	snap, err := snapshotStore(tx).Snapshot(context.Background())
 	require.NoError(t, err)
@@ -81,8 +81,8 @@ func TestSnapshotReadsAllFiveInOneTransaction(t *testing.T) {
 	assert.Equal(t, Friend{Name: "alice", Harness: "claude", Model: "opus", Pronouns: "she/her", Enabled: true, Created: stamp[0], Updated: stamp[1]}, snap.Friends[0])
 	assert.Equal(t, []string{"/p"}, snap.Services[0].Argv)
 	assert.Equal(t, Provider{Name: "p1", URL: "https://api.example.com", API: "openai", Key: "P1_API_KEY", Concurrency: 4, Enabled: true, Created: stamp[0], Updated: stamp[1]}, snap.Providers[0])
-	price := 250000
-	assert.Equal(t, Model{Name: "p1/org/m-1.5:q4", Harness: "opencode", PriceIn: &price, Machine: "m1", Enabled: true, Created: stamp[0], Updated: stamp[1]}, snap.Models[0])
+	price, cacheRead := 250000, 2500
+	assert.Equal(t, Model{Name: "p1/org/m-1.5:q4", Harness: "opencode", PriceIn: &price, PriceCacheRead: &cacheRead, Machine: "m1", Enabled: true, Created: stamp[0], Updated: stamp[1]}, snap.Models[0])
 	assert.Equal(t, []string{listSQL("machines", Columns[Machine]()), listSQL("friends", Columns[Friend]()), listSQL("services", Columns[Service]()),
 		listSQL("providers", Columns[Provider]()), listSQL("models", Columns[Model]())}, tx.queries, "the scanners' own queries, all on the transaction")
 	assert.True(t, tx.committed)

@@ -43,6 +43,41 @@ func oldListSQL(table string, columns []string) string {
 	return "SELECT " + strings.Join(cols, ", ") + " FROM config." + table + " ORDER BY name"
 }
 
+// TestFunctionalV1Aside: a store still holding the v1 tools' config.providers, and a v1 table whose
+// foreign key names it, takes schema.sql: the old table moves to config.providers_v1 with its rows, and providers
+// and models work.
+func TestFunctionalV1Aside(t *testing.T) {
+	t.Parallel()
+	dsn := startPG(t, "testdata/before-providers.sql")
+	ctx := context.Background()
+	c, err := pgx.Connect(ctx, dsn)
+	require.NoError(t, err)
+	defer func() { _ = c.Close(ctx) }() // ignored: closing the check connection
+	exec := func(stmt string) {
+		t.Helper()
+		_, err := c.Exec(ctx, stmt)
+		require.NoError(t, err, stmt)
+	}
+	exec(`CREATE TABLE config.providers (name text PRIMARY KEY CONSTRAINT providers_name_pattern CHECK (name ~ '^[a-z0-9][a-z0-9-]*$'), billing text NOT NULL, base_url text NOT NULL DEFAULT '', key_env text NOT NULL DEFAULT '')`)
+	exec(`CREATE TABLE config.routes (name text PRIMARY KEY, provider text NOT NULL REFERENCES config.providers (name))`)
+	exec(`INSERT INTO config.providers (name, billing, base_url, key_env) VALUES ('minimax', 'metered', 'https://api.minimax.io/anthropic/v1', 'MINIMAX_API_KEY')`)
+	exec(`INSERT INTO config.routes VALUES ('r1', 'minimax')`)
+
+	schema, err := os.ReadFile("schema.sql")
+	require.NoError(t, err)
+	exec(string(schema))
+	exec(string(schema)) // twice: the move happens once
+
+	var keyEnv string
+	require.NoError(t, c.QueryRow(ctx, `SELECT key_env FROM config.providers_v1 WHERE name = 'minimax'`).Scan(&keyEnv))
+	assert.Equal(t, "MINIMAX_API_KEY", keyEnv, "the v1 rows are kept")
+	env := map[string]string{"NOVA_PG_DSN": dsn}
+	code, _, errs := realRun(t, env, "provider", "add", "minimax", "--url", "https://api.minimax.io/anthropic", "--api", "anthropic", "--key", "MINIMAX_API_KEY", "--actor", "a")
+	require.Equal(t, 0, code, errs)
+	code, _, errs = realRun(t, env, "model", "add", "minimax/m-1", "--harness", "claude", "--actor", "a")
+	require.Equal(t, 0, code, errs)
+}
+
 // TestFunctionalOldReaders: a store made by v2.0.75 (testdata/before-providers.sql, its schema.sql), holding rows its
 // tool wrote, takes schema.sql. Every query an older release's library runs on machines, friends and services then
 // reads the same rows with the same values; an older tool's writes, width and tiers included, still go through; and

@@ -15,7 +15,7 @@ func TestColumns(t *testing.T) {
 	assert.Equal(t, []string{"harness", "model", "pronouns", "note", "enabled"}, Columns[Friend]())
 	assert.Equal(t, []string{"machine", "argv", "seat", "keys", "every", "keepalive", "enabled", "env", "log"}, Columns[Service]())
 	assert.Equal(t, []string{"url", "api", "key", "models_url", "balance_url", "concurrency", "note", "enabled"}, Columns[Provider]())
-	assert.Equal(t, []string{"harness", "price_in", "price_out", "machine", "note", "enabled"}, Columns[Model]())
+	assert.Equal(t, []string{"harness", "price_in", "price_out", "price_cache_read", "machine", "note", "enabled"}, Columns[Model]())
 }
 
 // TestListSQLNamesItsColumns: no *, and none of the old columns, so a store
@@ -77,5 +77,5 @@ func TestJSONIsTheCLIFields(t *testing.T) {
 	assert.JSONEq(t, `{"name":"alex","harness":"codex","model":"","pronouns":"","note":"","enabled":true,"created":"","updated":""}`, string(b))
 	b, err = json.Marshal(Model{Name: "p1/m-1", Harness: "opencode", Enabled: true})
 	require.NoError(t, err)
-	assert.JSONEq(t, `{"name":"p1/m-1","harness":"opencode","price_in":null,"price_out":null,"machine":"","note":"","enabled":true,"created":"","updated":""}`, string(b))
+	assert.JSONEq(t, `{"name":"p1/m-1","harness":"opencode","price_in":null,"price_out":null,"price_cache_read":null,"machine":"","note":"","enabled":true,"created":"","updated":""}`, string(b))
 }
