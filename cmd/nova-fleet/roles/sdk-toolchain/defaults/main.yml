@@ -49,6 +49,11 @@ nova_sdk_env_files:
   MOO_CHECKED: moo-v1.3.0-checked/bin/moo
   RUBY_FLOOR: ruby-3.4.12/bin/ruby
   RUBY: ruby-4.0.9/bin/ruby
+  # schema's Python leg (make/python-toolchain.mk, internal/codegen/python/pyrun): a `go test` run outside make reads
+  # these and fails, never skips, without them; MYPY is the floor's, as the leg's default names it
+  PYTHON_FLOOR: python-3.11.18/bin/python3.11
+  PYTHON: python-3.15.2/bin/python3.15
+  MYPY: python-3.11.18/bin/mypy
   GOOSE: goose-v2026.2/goose
   LOBSTER: lobster-v2026.8/bin/lobster
   # cargo runs a wasm32-wasip1 binary (cargo run, cargo test) under this; a test that runs one reads it too
