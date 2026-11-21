@@ -165,6 +165,13 @@ func writeSQL(k *kind, op, name string, before, after Row) (string, []any) {
 		cols, marks, sets = append(cols, ident(f.name)), append(marks, n), append(sets, ident(f.name)+" = "+n)
 		olds = append(olds, "'"+f.name+"', coalesce("+ident(f.name)+"::text, '')")
 	}
+	for _, f := range k.extra { // write-only: named only when given, so an add leaves the column's default; never in the match
+		if v, ok := after.F[f.name]; ok {
+			args = append(args, arg(f, v))
+			n := "$" + strconv.Itoa(len(args))
+			cols, marks, sets = append(cols, ident(f.name)), append(marks, n), append(sets, ident(f.name)+" = "+n)
+		}
+	}
 	same := " AND jsonb_build_object(" + strings.Join(olds, ", ") + ") = $%d::jsonb"
 	switch op {
 	case "add":

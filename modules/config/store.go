@@ -1,6 +1,7 @@
 // Package config reads a fleet's configuration from the PostgreSQL store
-// nova-config keeps: its machines, the friends that work on it and the
-// services it runs, the rows of the schema config (nova-config schema). It
+// nova-config keeps: its machines, the friends that work on it, the services
+// it runs, and the model providers and models it can call, the rows of the
+// schema config (nova-config schema). It
 // reads them through the same query nova-config's list verbs run, so a
 // program that imports it sees exactly what nova-config prints; writes go
 // through nova-config, which records each one in the history.
@@ -190,7 +191,7 @@ func listSQL(table string, columns []string) string {
 }
 
 // Rows reads the given columns of every row of config.<table>, in name order:
-// the one query behind nova-config's list verbs and Machines, Friends and Services.
+// the one query behind nova-config's list verbs and the row readers (Machines, Friends, ...).
 func (s *Store) Rows(ctx context.Context, table string, columns []string) ([]Row, error) {
 	got, err := s.Text(ctx, listSQL(table, columns))
 	var out []Row

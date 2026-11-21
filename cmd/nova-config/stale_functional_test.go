@@ -65,11 +65,11 @@ func TestFunctionalStaleWrite(t *testing.T) {
 		args []string
 		want string
 	}{
-		{"DELETE FROM config.friends WHERE name = 'f1'", []string{"friend", "set", "f1", "--width", "3", "--actor", "a1"},
+		{"DELETE FROM config.friends WHERE name = 'f1'", []string{"friend", "set", "f1", "--model", "m3", "--actor", "a1"},
 			"nova-config friend set: friend f1 was changed or removed by another write since it was read; nothing written; run: nova-config friend show f1, then repeat the set\n"},
 		{"UPDATE config.friends SET model = 'b' WHERE name = 'f2'", []string{"friend", "set", "f2", "--note", "hi", "--actor", "a1"},
 			"nova-config friend set: friend f2 was changed or removed by another write since it was read; nothing written; run: nova-config friend show f2, then repeat the set\n"},
-		{"UPDATE config.friends SET width = 5 WHERE name = 'f3'", []string{"friend", "remove", "f3", "--actor", "a1"},
+		{"UPDATE config.friends SET note = 'changed' WHERE name = 'f3'", []string{"friend", "remove", "f3", "--actor", "a1"},
 			"nova-config friend remove: friend f3 was changed or removed by another write since it was read; nothing written; run: nova-config friend show f3, then repeat the remove\n"},
 	} {
 		code, out, errs := racing(tc.stmt, tc.args...)

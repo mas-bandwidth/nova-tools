@@ -10,7 +10,7 @@ import (
 
 // The row types. Their json tags are the column names and the field names
 // nova-config's --json prints, so json.Marshal of a row is the "fields"
-// object of nova-config <kind> show --json. A list (roles, tiers, keys) is
+// object of nova-config <kind> show --json. A list (roles, routes, keys) is
 // a sorted comma list, as the store keeps it.
 
 // Machine is a machine of the fleet, named by its tailnet host.
@@ -23,6 +23,9 @@ type Machine struct {
 	Arch    string `json:"arch"`
 	Cores   *int   `json:"cores"` // nil when unknown
 	Roles   string `json:"roles"` // of bench, runner, services
+	// Routes names the devices or tools the machine has that a piece of work may need: a comma list of
+	// names (lower-case letters, digits and dashes); "" for none
+	Routes  string `json:"routes"`
 	Runners int    `json:"runners"`
 	// RunnerScopes is its Linux and macOS GitHub Actions runners: <url>=<count>[:<label>+<label>], comma-separated
 	RunnerScopes string `json:"runner_scopes"`
@@ -43,8 +46,6 @@ type Friend struct {
 	Name     string `json:"name"`
 	Harness  string `json:"harness"` // claude, codex, antigravity, grok, muse, ...
 	Model    string `json:"model"`
-	Width    int    `json:"width"`    // the cards it works at once
-	Tiers    string `json:"tiers"`    // of flash, frontier, heavy, pro
 	Pronouns string `json:"pronouns"` // "" when unstated
 	Note     string `json:"note"`
 	Enabled  bool   `json:"enabled"`
@@ -68,6 +69,35 @@ type Service struct {
 	Updated   string            `json:"updated"`
 }
 
+// Provider is a model API endpoint the fleet can call.
+type Provider struct {
+	Name        string `json:"name"`
+	URL         string `json:"url"`         // the API base URL requests go to
+	API         string `json:"api"`         // the wire protocol it speaks: openai or anthropic
+	Key         string `json:"key"`         // the name of the secret holding its API key, never the key; "" for none
+	ModelsURL   string `json:"models_url"`  // where its model list is read; "" for none
+	BalanceURL  string `json:"balance_url"` // where its balance is read; "" for none
+	Concurrency int    `json:"concurrency"` // the most runs it takes at once; 0 is no cap
+	Note        string `json:"note"`
+	Enabled     bool   `json:"enabled"`
+	Created     string `json:"created"`
+	Updated     string `json:"updated"`
+}
+
+// Model is a model the fleet can run, named <provider>/<model id> as a harness names it: the part before the first
+// "/" is a Provider's name, and the model id may itself hold "/".
+type Model struct {
+	Name     string `json:"name"`
+	Harness  string `json:"harness"`   // the harness it runs in: opencode, claude or codex
+	PriceIn  *int   `json:"price_in"`  // micro-dollars per million input tokens; nil is unpriced, never free
+	PriceOut *int   `json:"price_out"` // micro-dollars per million output tokens; nil is unpriced, never free
+	Machine  string `json:"machine"`   // the one machine that serves it (a local model); "" for any
+	Note     string `json:"note"`
+	Enabled  bool   `json:"enabled"`
+	Created  string `json:"created"`
+	Updated  string `json:"updated"`
+}
+
 // Machines returns config.machines in name order.
 func (s *Store) Machines(ctx context.Context) ([]Machine, error) {
 	return read[Machine](ctx, s, "machines")
@@ -83,15 +113,27 @@ func (s *Store) Services(ctx context.Context) ([]Service, error) {
 	return read[Service](ctx, s, "services")
 }
 
-// Snapshot is every row of the three kinds, read at one instant.
-type Snapshot struct {
-	Machines []Machine
-	Friends  []Friend
-	Services []Service
+// Providers returns config.providers in name order.
+func (s *Store) Providers(ctx context.Context) ([]Provider, error) {
+	return read[Provider](ctx, s, "providers")
 }
 
-// Snapshot reads Machines, Friends and Services inside one read-only
-// REPEATABLE READ transaction, so all three are from the same instant.
+// Models returns config.models in name order.
+func (s *Store) Models(ctx context.Context) ([]Model, error) {
+	return read[Model](ctx, s, "models")
+}
+
+// Snapshot is every row of the five kinds, read at one instant.
+type Snapshot struct {
+	Machines  []Machine
+	Friends   []Friend
+	Services  []Service
+	Providers []Provider
+	Models    []Model
+}
+
+// Snapshot reads Machines, Friends, Services, Providers and Models inside one
+// read-only REPEATABLE READ transaction, so all five are from the same instant.
 func (s *Store) Snapshot(ctx context.Context) (Snapshot, error) {
 	tx, err := s.begin(ctx)
 	if err != nil {
@@ -107,6 +149,12 @@ func (s *Store) Snapshot(ctx context.Context) (Snapshot, error) {
 		return Snapshot{}, err
 	}
 	if snap.Services, err = view.Services(ctx); err != nil {
+		return Snapshot{}, err
+	}
+	if snap.Providers, err = view.Providers(ctx); err != nil {
+		return Snapshot{}, err
+	}
+	if snap.Models, err = view.Models(ctx); err != nil {
 		return Snapshot{}, err
 	}
 	return snap, s.Err(tx.Commit(ctx), "read")

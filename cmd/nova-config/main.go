@@ -1,5 +1,6 @@
-// Command nova-config keeps a fleet's machines and services, and the friends
-// that work on it, as rows in PostgreSQL, each write with a history row, and
+// Command nova-config keeps a fleet's machines and services, the friends that
+// work on it, and the model providers and models it can call, as rows in
+// PostgreSQL, each write with a history row, and
 // prints the machines and services as an Ansible inventory. Other programs
 // read the same rows through package github.com/mas-bandwidth/nova-tools/v2/modules/config.
 package main
@@ -185,7 +186,7 @@ func runKind(ctx context.Context, k *kind, verb string, args []string, d deps, s
 		fs.String("actor", cmp.Or(d.getenv("NOVA_ACTOR"), d.getenv("USER"), d.getenv("LOGNAME")), "the name the write is recorded under")
 		fs.String("reason", "", "why: one line, recorded in the history row")
 		fs.Bool("dry-run", false, "print the change and write nothing")
-		for _, f := range k.fields {
+		for _, f := range append(slices.Clip(k.fields), k.extra...) {
 			if op != "remove" {
 				fs.String(f.name, "", f.typ)
 			}
@@ -196,7 +197,7 @@ func runKind(ctx context.Context, k *kind, verb string, args []string, d deps, s
 	}
 	given := map[string]string{} // the field flags on the line
 	fs.Visit(func(f *flag.Flag) {
-		if slices.ContainsFunc(k.fields, func(x field) bool { return x.name == f.Name }) {
+		if slices.ContainsFunc(append(slices.Clip(k.fields), k.extra...), func(x field) bool { return x.name == f.Name }) {
 			given[f.Name] = f.Value.String()
 		}
 	})
@@ -230,7 +231,7 @@ func runKind(ctx context.Context, k *kind, verb string, args []string, d deps, s
 		} else if op == "add" {
 			after, err = k.newRow(name, given)
 		} else if op == "set" { // the values given, with no check of the row: it is checked whole once they are on the row the store holds
-			_, err = (&kind{fields: k.fields}).merge(Row{F: map[string]string{}}, given) // no check, so any error is a valueError
+			_, err = (&kind{fields: k.fields, extra: k.extra}).merge(Row{F: map[string]string{}}, given) // no check, so any error is a valueError
 		}
 		if err != nil {
 			problems = append(problems, err.Error())
@@ -297,6 +298,9 @@ func runKind(ctx context.Context, k *kind, verb string, args []string, d deps, s
 				return err
 			}
 		}
+	}
+	if err := related(ctx, st, k, op, name, after); err != nil {
+		return err
 	}
 	if k.name == "machine" && op != "remove" { // an admin runner label is checked against every machine's runners, the row as written
 		fleetRows := []Row{after}
