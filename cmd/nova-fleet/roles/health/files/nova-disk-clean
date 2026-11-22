@@ -7,6 +7,8 @@
 #     A root that is /, the home or above it, or under a runner's _work or actions-runner* directory is refused whole.
 #   DISK_CLEAN_CACHES (colon-separated; Go's build cache): a cache file unchanged for the age is removed. Go refreshes
 #     an entry's mtime when it uses one more than an hour old and rebuilds a missing one, so a build loses nothing.
+#   DISK_CLEAN_GOCACHE_MAX_GB: a Go build cache over this many GB is trimmed oldest-first until it fits (0: no cap).
+#   DISK_CLEAN_WORK_*: old work clones in the home, removed whole (see the section below).
 # The age is DISK_CLEAN_AGE_MIN minutes, or DISK_CLEAN_PRESSED_MIN on a filesystem over DISK_WARN_PCT used. One CLEAN
 # line per removal and a CLEAN-DONE line, in the journal (DISK_NO_LOG unset) and on stdout; DISK_CLEAN_DRY=1 removes
 # nothing and says WOULD.
@@ -84,4 +86,77 @@ for c in "${caches[@]}"; do
   freed=$((freed + kb))
   say "$verb $c ${n} files ${kb}KiB unchanged ${age}m"
 done
+
+# Go build cache size cap: over DISK_CLEAN_GOCACHE_MAX_GB the files unchanged longest go first (age steps down until it fits;
+# the last step empties it, as `go clean -cache` does). A removed entry is rebuilt on the next use, so a build loses time, not work.
+cap_kb=$(( ${DISK_CLEAN_GOCACHE_MAX_GB:-0} * 1048576 ))
+if [ "$cap_kb" -gt 0 ]; then
+  for c in "${caches[@]}"; do
+    [ -d "$c" ] && [ "$(basename "$c")" = go-build ] || continue
+    sz=$(du -sxk "$c" 2>/dev/null | cut -f1)
+    [ "${sz:-0}" -gt "$cap_kb" ] || continue
+    for a in 1440 360 60 0; do
+      del=-delete
+      [ "$verb" = CLEAN ] || del=-true
+      read -r n kb < <(find "$c" -xdev -mindepth 2 -maxdepth 2 -path "$c/??/*" -type f -mmin "+$a" -printf '%k\n' "$del" 2>/dev/null |
+        awk '{n++; s += $1} END {print n + 0, s + 0}')
+      freed=$((freed + kb))
+      say "$verb $c cap ${DISK_CLEAN_GOCACHE_MAX_GB}GB: ${n} files ${kb}KiB unchanged ${a}m (was ${sz}KiB)"
+      [ "$verb" = CLEAN ] || break # a dry run does not shrink it: one step shows
+      sz=$(du -sxk "$c" 2>/dev/null | cut -f1)
+      [ "${sz:-0}" -gt "$cap_kb" ] || break
+    done
+  done
+fi
+
+# Work clones and scratch dirs in the login's home (DISK_CLEAN_WORK_HOME): a top-level directory whose name matches one of
+# DISK_CLEAN_WORK_NAMES (colon-separated globs; the names Rowan and her children give their clones) is removed whole when
+# nothing under it changed (ctime) for DISK_CLEAN_WORK_AGE_MIN, no process of the login works in it, runs from it, maps it or
+# holds a file under it open, and it is not a mount, a runner or a service dir. A DISK_CLEAN_WORK_CONTAINERS directory is never
+# removed itself: each directory inside it is judged the same way. DISK_CLEAN_WORK_NEVER globs (sdk, runners, a friend's work:
+# emma-*, stella-*, ...) are never touched, at either level. Git repositories are NOT kept here: a clone is the point.
+work_home=${DISK_CLEAN_WORK_HOME:-}
+if [ -n "$work_home" ] && [ -d "$work_home" ]; then
+  wage=${DISK_CLEAN_WORK_AGE_MIN:-360}
+  IFS=: read -r -a wnames <<< "${DISK_CLEAN_WORK_NAMES:-}"
+  IFS=: read -r -a wconts <<< "${DISK_CLEAN_WORK_CONTAINERS:-}"
+  IFS=: read -r -a wnever <<< "${DISK_CLEAN_WORK_NEVER:-}"
+  matches() { local n=$1 p; shift; for p in "$@"; do [ -n "$p" ] && [[ $n == $p ]] && return 0; done; return 1; }
+  wkeeps() { # changed within the age, or a socket or FIFO under it (tmux, an agent)
+    [ -n "$(find "$1" -xdev \( -cmin "-$wage" -o -type s -o -type p \) -print -quit 2>/dev/null)" ]
+  }
+  work_one() {
+    local e=$1 kb real
+    real=$(realpath -e "$e" 2>/dev/null) || return 0
+    [ -L "$e" ] && return 0
+    mountpoint -q "$real" 2>/dev/null && return 0
+    is_held "$real" && return 0
+    wkeeps "$e" && return 0
+    kb=$(du -sxk "$e" 2>/dev/null | cut -f1)
+    snapshot
+    { is_held "$real" || wkeeps "$e"; } && return 0
+    [ "$verb" = CLEAN ] && chmod -R u+w -- "$e" 2>/dev/null # a Go module cache is read-only
+    if [ "$verb" = CLEAN ] && ! rm -rf --one-file-system -- "$e" 2>/dev/null; then
+      # a root-run job (sudo) leaves root-owned files the login cannot remove: say so, it is not a held file
+      say "CLEAN-FAIL $e: rm -rf left part of it; $(find "$e" -xdev ! -user "$(id -u)" 2>/dev/null | wc -l) entries not owned by this login (remove with: sudo rm -rf $e)"
+      return 0
+    fi
+    freed=$((freed + ${kb:-0}))
+    say "$verb $e ${kb:-0}KiB work unchanged ${wage}m"
+  }
+  snapshot
+  while IFS= read -r -d '' e; do
+    n=$(basename "$e")
+    matches "$n" "${wnever[@]}" && continue
+    if matches "$n" "${wconts[@]}"; then
+      while IFS= read -r -d '' ce; do
+        cn=$(basename "$ce")
+        matches "$cn" "${wnever[@]}" && continue
+        work_one "$ce"
+      done < <(find "$e" -xdev -mindepth 1 -maxdepth 1 -type d -user "$(id -u)" -print0 2>/dev/null)
+    elif matches "$n" "${wnames[@]}"; then
+      work_one "$e"
+    fi
+  done < <(find "$work_home" -xdev -mindepth 1 -maxdepth 1 -type d -user "$(id -u)" -print0 2>/dev/null)
+fi
 say "$verb-DONE $(hostname -s) ${freed}KiB"

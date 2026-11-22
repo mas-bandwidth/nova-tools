@@ -1395,6 +1395,10 @@ applying it restarts only the daemon it configures, never the login's units. A d
   `CLEAN-DONE` line in the journal. A runner login of its own (github-runners, "The runner login") gets its own
   `nova-disk-clean-<login>.timer`, run as it, for `/tmp`, its runners' `TMPDIR`s and its Go build cache: the clean
   removes only what its user owns.
+- The same hourly run (fleet login only) removes old work clones in the home (`nova_health_disk_clean_work_*`): a top-level
+  directory by a work name (`rowan-*`, `w*`, `fix*`, `green-*`, ...) or a child of a container (`work`, `rowan-jobs`, ...) with nothing
+  changed under it for 6 hours and no process in or holding it, never `sdk`, runners, services or a friend's (`emma-*`, ...). It also
+  holds the Go build cache to `nova_health_disk_clean_gocache_max_gb` (20), oldest files first. `DISK-WARN` is at 85% used (under 15% free).
 
 ```
 nova-fleet health --check --diff

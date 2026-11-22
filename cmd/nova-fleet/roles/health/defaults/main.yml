@@ -35,7 +35,7 @@ nova_health_user_slice_weight: 1
 # The disk report: every 6 hours one DISK line in the journal for /, the home
 # filesystem and swap, DISK-WARN (priority warning) over this percent.
 nova_health_disk_report: true
-nova_health_disk_warn_pct: 80
+nova_health_disk_warn_pct: 85   # DISK-WARN when under 15% is free
 nova_health_disk_on_calendar: "*-*-* 00/6:00:00"
 
 # The disk clean: every hour, as the login, what jobs leave and nothing else removes (files/nova-disk-clean): a
@@ -48,3 +48,14 @@ nova_health_disk_clean_caches: ["{{ nova_home }}/.cache/go-build"]
 nova_health_disk_clean_age_min: 2880
 nova_health_disk_clean_pressed_min: 360
 nova_health_disk_clean_on_calendar: hourly
+
+# Old work clones in the login's home (files/nova-disk-clean, 2026-11-22, a bench filled to 99%): a top-level directory
+# matching a name here, unchanged (ctime, whole tree) for the age and held by no process, is removed whole each run; a
+# container's children are judged one by one and the container stays. The NEVER globs are never touched: toolchains, runners,
+# services and anything named for another person. Empty names turn it off.
+nova_health_disk_clean_work: true
+nova_health_disk_clean_work_age_min: 360
+nova_health_disk_clean_work_names: ["rowan-*", "bench-rowan*", "bench-*", "w", "w[0-9]*", "w-*", "wr-*", "work*", "fix*", "green-*", "fg*", "c-*", "sch*", "r[0-9]*", "rr", "scratch-*", "dead-bytes-*", "read-*", "rev[0-9]*", "specgap-*", "absent-rows", "silent-scripts-*", "svm*", "f[0-9]*"]
+nova_health_disk_clean_work_containers: [work, w, rowan-jobs, rowan-bench, rowan-work, rowan-scratch, bench, bench-rowan, scratch]
+nova_health_disk_clean_work_never: [sdk, "actions-runner*", "*runner*", "*service*", "services", "go", "cache", "bin", "tmp", "jobs", "nova-*", "emma-*", "johnny-*", "stella-*", "alex-*", "freddy-*", "zhi-*", "aurora-*", "cairn-*", "terra-*", "glenn-*", "rowan-new", "rowan-working", "rowan-tools", "serialize*"]
+nova_health_disk_clean_gocache_max_gb: 20

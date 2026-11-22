@@ -383,6 +383,7 @@
 - name: the cleans' units and timers
   vars:
     clean_dirs: "{{ item.0.dirs | unique | join(':') }}"
+    health_clean_work_env: "{{ ('Environment=\"DISK_CLEAN_WORK_HOME=' ~ nova_home ~ '\"\nEnvironment=DISK_CLEAN_WORK_AGE_MIN=' ~ nova_health_disk_clean_work_age_min ~ '\nEnvironment=\"DISK_CLEAN_WORK_NAMES=' ~ (nova_health_disk_clean_work_names | join(':')) ~ '\"\nEnvironment=\"DISK_CLEAN_WORK_CONTAINERS=' ~ (nova_health_disk_clean_work_containers | join(':')) ~ '\"\nEnvironment=\"DISK_CLEAN_WORK_NEVER=' ~ (nova_health_disk_clean_work_never | join(':')) ~ '\"') if (nova_health_disk_clean_work | bool and item.0.unit == 'nova-disk-clean') else '# work clean: not for this login' }}"
     health_clean_service: |
       # managed by Ansible (fleet/health.yml)
       [Unit]
@@ -397,6 +398,8 @@
       Environment=DISK_CLEAN_PRESSED_MIN={{ nova_health_disk_clean_pressed_min }}
       Environment="DISK_CLEAN_DIRS={{ clean_dirs }}"
       Environment="DISK_CLEAN_CACHES={{ item.0.caches | join(':') }}"
+      Environment=DISK_CLEAN_GOCACHE_MAX_GB={{ nova_health_disk_clean_gocache_max_gb }}
+      {{ health_clean_work_env }}
       ExecStart=/usr/local/sbin/nova-disk-clean
     health_clean_timer: |
       # managed by Ansible (fleet/health.yml)
