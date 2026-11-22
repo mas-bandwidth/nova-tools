@@ -238,3 +238,43 @@ func TestFunctionalDiskCleanRefusesHomeAndResolvesSymlinkedRoots(t *testing.T) {
 		t.Errorf("stale kept under a symlinked root (%v): %s", err, out)
 	}
 }
+
+// The work-clone clean: a home entry by a work name goes whole when nothing under it changed and nothing holds it; a
+// container stays and its children are judged one by one; a friend's, sdk and a held clone stay. Age 0 reaches "old" (ctime).
+func TestFunctionalDiskCleanWorkClones(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS != "linux" {
+		t.Skip("nova-disk-clean reads /proc and uses GNU find: Linux only")
+	}
+	home := t.TempDir()
+	for _, d := range []string{"rowan-old/.git", "rowan-held", "emma-work", "sdk", "other", "work/child-a", "work/emma-x"} {
+		if err := os.MkdirAll(filepath.Join(home, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sleeper := exec.Command("sleep", "60")
+	sleeper.Dir = filepath.Join(home, "rowan-held")
+	if err := sleeper.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = sleeper.Process.Kill(); _ = sleeper.Wait() }) // ignored: the test is over
+	env := []string{"DISK_CLEAN_WORK_HOME=" + home, "DISK_CLEAN_WORK_AGE_MIN=0", "DISK_CLEAN_WORK_NAMES=rowan-*:w",
+		"DISK_CLEAN_WORK_CONTAINERS=work", "DISK_CLEAN_WORK_NEVER=emma-*:sdk"}
+	if out := runClean(t, append(env, "DISK_CLEAN_DRY=1")...); !strings.Contains(out, "WOULD "+filepath.Join(home, "rowan-old")+" ") {
+		t.Errorf("dry run does not name rowan-old: %s", out)
+	}
+	if _, err := os.Stat(filepath.Join(home, "rowan-old")); err != nil {
+		t.Errorf("dry run removed rowan-old: %v", err)
+	}
+	out := runClean(t, env...)
+	for p, want := range map[string]bool{"rowan-old": false, "work/child-a": false, "work": true, "rowan-held": true,
+		"emma-work": true, "work/emma-x": true, "sdk": true, "other": true} {
+		if _, err := os.Stat(filepath.Join(home, p)); (err == nil) != want {
+			t.Errorf("%s present=%v, want %v: %s", p, err == nil, want, out)
+		}
+	}
+	fresh := runClean(t, "DISK_CLEAN_WORK_HOME="+home, "DISK_CLEAN_WORK_AGE_MIN=60", "DISK_CLEAN_WORK_NAMES=*", "DISK_CLEAN_WORK_NEVER=sdk")
+	if strings.Contains(fresh, "CLEAN /") {
+		t.Errorf("a tree changed just now went at a 60-minute age: %s", fresh)
+	}
+}
