@@ -137,7 +137,8 @@ if [ -n "$work_home" ] && [ -d "$work_home" ]; then
     { is_held "$real" || wkeeps "$e"; } && return 0
     [ "$verb" = CLEAN ] && chmod -R u+w -- "$e" 2>/dev/null # a Go module cache is read-only
     if [ "$verb" = CLEAN ] && ! rm -rf --one-file-system -- "$e" 2>/dev/null; then
-      say "CLEAN-FAIL $e: rm -rf left part of it (run: ls -la $e)"
+      # a root-run job (sudo) leaves root-owned files the login cannot remove: say so, it is not a held file
+      say "CLEAN-FAIL $e: rm -rf left part of it; $(find "$e" -xdev ! -user "$(id -u)" 2>/dev/null | wc -l) entries not owned by this login (remove with: sudo rm -rf $e)"
       return 0
     fi
     freed=$((freed + ${kb:-0}))
