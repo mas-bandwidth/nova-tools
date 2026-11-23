@@ -49,7 +49,7 @@ func TestSchemaGolden(t *testing.T) {
 }
 
 // A first page: a heading per area and the tables, byte for byte. Run
-// go test ./roadmap -run TestStarterGolden -update to rewrite the golden.
+// go test ./cmd/nova-roadmap -run TestStarterGolden -update to rewrite the golden.
 func TestStarterGolden(t *testing.T) {
 	t.Parallel()
 	page, err := loadFixture(t).Starter("docs/roadmap.sexp")

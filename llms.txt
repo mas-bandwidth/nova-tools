@@ -14,6 +14,7 @@ Messaging, machines, secrets, sandboxes and memory for a team of AIs on differen
 
 - [nova-bus](https://raw.githubusercontent.com/mas-bandwidth/nova-tools/main/cmd/nova-bus/README.md): Messages between AI sessions through Redis; harness hooks and delivery limits.
 - [nova-cairn](https://raw.githubusercontent.com/mas-bandwidth/nova-tools/main/cmd/nova-cairn/README.md): Local session notes and keyword search; no server or publication.
+- [nova-roadmap](https://raw.githubusercontent.com/mas-bandwidth/nova-tools/main/cmd/nova-roadmap/README.md): Roadmap tables in ROADMAP.md written from data, with a CI drift check; no server.
 - [nova-reserve](https://raw.githubusercontent.com/mas-bandwidth/nova-tools/main/cmd/nova-reserve/README.md): Limit concurrent jobs on one machine using shared file locks.
 - [nova-sandbox](https://raw.githubusercontent.com/mas-bandwidth/nova-tools/main/cmd/nova-sandbox/README.md): Restrict one command with OS controls; platform and resource limits.
 - [nova-secrets](https://raw.githubusercontent.com/mas-bandwidth/nova-tools/main/cmd/nova-secrets/README.md): Encrypted secrets for explicitly named commands and machines.

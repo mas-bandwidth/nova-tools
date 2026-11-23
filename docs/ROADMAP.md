@@ -37,6 +37,7 @@ Ideas and future work for nova-tools. Nothing here is scheduled; the owner decid
 | Gap, needs the owner's go-ahead: no check finds per-commit jobs whose cold build exceeds the runner hook's 120 s limit, which overrides a job's timeout-minutes, so each fails only when GitHub evicts its cache (serialize.moo 2026-11-21, cache unused 7 days, worked around by a daily run in serialize.moo#35) | ❌ |
 | Measurement for ci-cold-build-limit: under fleet load with bench work on the CI hosts, schema's lang-clean (elixir) was cancelled by the 120 s limit in 5 of 11 per-commit runs on 2026-11-21 (one after its last test printed OK); its green runs took 78-109 s | ❌ |
 | Question for the owner: a runner service's environment exports MOO and MOO_ANALYZE (~/sdk/moo-v1.3.0), which a repository's Makefile takes with ?= over the moo its job just built, so serialize.moo's ARM64 job tested the runner's moo on 2026-11-21; should runner-wide variables exist for tools repositories build themselves | ❌ |
+| nova-roadmap meets the command-line contract: one-line refusals ending in run: nova-roadmap <verb> -h, no Go flag-package text, an entry in toolSpecs and a faults_roadmap_test.go; this changes its stderr, never a rendered page | ❌ |
 | complete | 0% |
 
 [Source data](roadmap.sexp)

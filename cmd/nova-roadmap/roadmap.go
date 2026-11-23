@@ -283,7 +283,7 @@ func decodeNode(file, at string, nf Form) (*Node, error) {
 	if t, ok := m["type"]; ok && t.Kind == Keyword {
 		n.Type = t.Value
 	}
-	n.Title, _ = strVal(m, "title")
+	n.Title, _ = strVal(m, "title") // ignored: a missing or non-string :title is an empty title
 	if impl, ok := m["implementation"]; !isNil(impl, ok) {
 		ev, err := strList(file, at, m, "implementation-evidence")
 		valid := err == nil && impl.Kind == Keyword && (impl.Value == "implemented" || impl.Value == "partial" || impl.Value == "unsupported") && len(ev) > 0
@@ -533,7 +533,7 @@ func (rm *Roadmap) ApplyEvidence(file string, data []byte) (int, error) {
 		if err != nil {
 			return 0, err
 		}
-		id, _ := strVal(m, "id")
+		id, _ := strVal(m, "id") // ignored: a missing :id is blank, refused below
 		if !nonBlank(id) {
 			return 0, problem(file, "%s: want a non-empty string :id", at)
 		}
