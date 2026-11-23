@@ -284,8 +284,8 @@ nova_service_path: "{{ nova_bin_dir }}:/usr/local/bin:/usr/bin:/bin"
 
 ## install
 
-A release is a git tag `v*` on this repository: seven binaries (nova-bus, nova-cairn, nova-config, nova-sandbox,
-nova-secrets, nova-reserve, nova-fleet) for linux/amd64, linux/arm64 and darwin/arm64, each asset
+A release is a git tag `v*` on this repository: eight binaries (nova-bus, nova-cairn, nova-config, nova-sandbox,
+nova-secrets, nova-reserve, nova-fleet, nova-roadmap) for linux/amd64, linux/arm64 and darwin/arm64, each asset
 `<tool>_<tag>_<os>_<arch>`, with one `SHA256SUMS`. The play reads `SHA256SUMS`, downloads each asset and checks
 its digest before putting it in place. A binary that already holds the digest is left alone, so a second run changes
 nothing and `--check --diff` is clean. There is no default version, and a platform the release does not ship is
@@ -294,7 +294,7 @@ refused before anything is written.
 | Variable | Default | |
 |---|---|---|
 | `nova_tools_version` | none, required | the tag, `vX.Y.Z` |
-| `nova_tools_names` | the seven tools | which tools to install (and which `argv[0]` services prefixes) |
+| `nova_tools_names` | the eight tools | which tools to install (and which `argv[0]` services prefixes) |
 | `nova_bin_dir` | `~/.local/bin` | where they go; v2 binaries replace v1's of the same name there, so a v1 sprint still running from it stops working after `up` (accepted) |
 | `nova_tools_repo` | `mas-bandwidth/nova-tools` | whose release (`--repo`); `--names` is `nova_tools_names`, empty for every binary listed |
 | `nova_tools_release_url` | `nova_tools_repo`'s GitHub releases | `<base>/<tag>/<asset>` |
@@ -307,8 +307,9 @@ refused before anything is written.
 nova-fleet install --check --repo mas-bandwidth/nova-sprint --tag v2.0.0 --names nova-sprint,nova-sprint-dash bench
 ```
 
-A release from before nova-fleet shipped has no nova-fleet asset; install one with
-`-e '{"nova_tools_names":["nova-bus","nova-cairn","nova-config","nova-sandbox","nova-secrets","nova-reserve"]}'`.
+A release from before nova-roadmap shipped has no nova-roadmap asset; install one with
+`-e '{"nova_tools_names":["nova-bus","nova-cairn","nova-config","nova-sandbox","nova-secrets","nova-reserve","nova-fleet"]}'`.
+A release from before nova-fleet shipped also has no nova-fleet asset; leave `"nova-fleet"` out of that list too.
 
 **A local build.** With no release yet, or to try a change, build the binaries on the control node laid out as a
 release is and install from that directory (Linux and macOS hosts; each file is checked against its `SHA256SUMS` line
@@ -316,7 +317,7 @@ before it is copied):
 
 ```
 v=local; mkdir -p dist
-for t in bus cairn config fleet reserve sandbox secrets; do
+for t in bus cairn config fleet reserve roadmap sandbox secrets; do
   for p in linux/amd64 linux/arm64 darwin/arm64; do
     GOOS=${p%/*} GOARCH=${p#*/} CGO_ENABLED=0 go build -trimpath -o dist/nova-${t}_${v}_${p%/*}_${p#*/} ./cmd/nova-$t
   done
