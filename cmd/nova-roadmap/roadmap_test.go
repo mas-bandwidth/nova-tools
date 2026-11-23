@@ -1,8 +1,11 @@
 package main
 
 import (
+	"compress/gzip"
 	"flag"
+	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -29,9 +32,13 @@ func loadFixture(t *testing.T) *Roadmap {
 // DRIFT), so render.lisp's output is the reference. Every table is emptied
 // first, so each one is re-rendered here, and the hand-written text around
 // them is kept.
+// The data is kept gzipped (2.2 MB plain, past the repository's 1 MiB file
+// bound) and is read through a plain copy in the test's own directory.
 func TestSchemaGolden(t *testing.T) {
 	t.Parallel()
-	rm, files, entries, err := Load("testdata/schema/docs/roadmap.sexp", "")
+	data := filepath.Join(t.TempDir(), "roadmap.sexp")
+	gunzipTo(t, "testdata/schema/docs/roadmap.sexp.gz", data)
+	rm, files, entries, err := Load(data, "testdata/schema/docs/roadmap-evidence")
 	require.NoError(t, err)
 	require.Positive(t, files)
 	require.Positive(t, entries)
@@ -220,4 +227,20 @@ func TestLoadEvidenceDirectory(t *testing.T) {
 	require.ErrorContains(t, err, "--evidence testdata/no-such-dir is not a directory")
 	_, _, _, err = Load("testdata/no-such.sexp", "")
 	require.ErrorContains(t, err, "reading testdata/no-such.sexp")
+}
+
+// gunzipTo writes the gzip file src, uncompressed, to dst.
+func gunzipTo(t *testing.T, src, dst string) {
+	t.Helper()
+	in, err := os.Open(src)
+	require.NoError(t, err)
+	defer in.Close()
+	zr, err := gzip.NewReader(in)
+	require.NoError(t, err)
+	out, err := os.Create(dst)
+	require.NoError(t, err)
+	_, err = io.Copy(out, zr)
+	require.NoError(t, err)
+	require.NoError(t, out.Close())
+	require.NoError(t, zr.Close())
 }
