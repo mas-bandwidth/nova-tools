@@ -1,48 +1,46 @@
-/*
-Package roadmap reads a roadmap's data (docs/roadmap.sexp and the evidence
-overlay docs/roadmap-evidence/*.sexp) and writes its feature tables into
-ROADMAP.md.
+// This file reads a roadmap's data (docs/roadmap.sexp and the evidence
+// overlay docs/roadmap-evidence/*.sexp) and writes its feature tables into
+// ROADMAP.md.
+//
+// It renders schema's ROADMAP.md from schema's data byte for byte as
+// schema's tools/roadmap/render.lisp does (roadmap_test.go holds it to that).
+//
+// The page is a series of areas. Each area is a table with one row per feature a
+// user would recognize, one ✅/❌ cell per column (a single "done" column, or an
+// axis such as languages or platforms), a "complete" row and a link to the source
+// data. Each table sits between two marker lines in ROADMAP.md:
+//
+// 	<!-- nova-work:<area id>:start -->
+// 	<!-- nova-work:<area id>:end -->
+//
+// and only the bytes between them are generated. Everything else on the page (the
+// title, the headings and every paragraph) is written by hand and kept exactly as
+// it is. The data holds tables and evidence only; prose in the data is refused.
+//
+// The data is one restricted plist, read as data and never evaluated:
+//
+// 	(:schema 1
+// 	 :root "<id of the node every area is reached from>"
+// 	 :page (:roadmaps ("<area id>" ...))             ; the areas, in page order
+// 	 :nodes
+// 	 ((:id "<id>" :type :task :title "..." :state :done :evidence ("<test or commit>" ...))
+// 	  (:id "<id>" :type :task :title "..." :state :todo)   ; :unknown :todo :doing :done
+// 	  (:id "<id>" :type :work-set :children ("<id>" ...))  ; a cell may need several tasks
+// 	  (:id "<area id>" :type :roadmap :title "<heading>"
+// 	   :rows (("<row id>" "<feature>") ("<row id>" "<feature>" :later t) ...)
+// 	   :columns (("done" "done"))                         ; or one per language, platform ...
+// 	   :cells (("<row id>" "<column id>" "<task or work-set id>") ...))))
+//
+// A cell is ✅ only when every task under its node is :done, and a :done task must
+// carry non-blank :evidence. Nodes may carry any other keys (notes, metadata);
+// they are kept for people and other tools and are not rendered. A row marked
+// :later t renders "(later)" after its name and still counts in the complete row.
+//
+// The evidence overlay, roadmap-evidence/*.sexp beside the data, holds any number
+// of (:id "<task id>" :state :done :evidence (...)) forms, applied in file-name
+// order and held to the same rule; one bad entry refuses the whole load.
 
-It is a Go port of schema's tools/roadmap/render.lisp, and it renders schema's
-committed ROADMAP.md byte for byte from schema's data (roadmap_test.go holds it
-to that).
-
-The page is a series of areas. Each area is a table with one row per feature a
-user would recognise, one ✅/❌ cell per column (a single "done" column, or an
-axis such as languages or platforms), a "complete" row and a link to the source
-data. Each table sits between two marker lines in ROADMAP.md:
-
-	<!-- nova-work:<area id>:start -->
-	<!-- nova-work:<area id>:end -->
-
-and only the bytes between them are generated. Everything else on the page (the
-title, the headings and every paragraph) is written by hand and kept exactly as
-it is. The data holds tables and evidence only; prose in the data is refused.
-
-The data is one restricted plist, read as data and never evaluated:
-
-	(:schema 1
-	 :root "<id of the node every area is reached from>"
-	 :page (:roadmaps ("<area id>" ...))             ; the areas, in page order
-	 :nodes
-	 ((:id "<id>" :type :task :title "..." :state :done :evidence ("<test or commit>" ...))
-	  (:id "<id>" :type :task :title "..." :state :todo)   ; :unknown :todo :doing :done
-	  (:id "<id>" :type :work-set :children ("<id>" ...))  ; a cell may need several tasks
-	  (:id "<area id>" :type :roadmap :title "<heading>"
-	   :rows (("<row id>" "<feature>") ("<row id>" "<feature>" :later t) ...)
-	   :columns (("done" "done"))                         ; or one per language, platform ...
-	   :cells (("<row id>" "<column id>" "<task or work-set id>") ...))))
-
-A cell is ✅ only when every task under its node is :done, and a :done task must
-carry non-blank :evidence. Nodes may carry any other keys (notes, metadata);
-they are kept for people and other tools and are not rendered. A row marked
-:later t renders "(later)" after its name and still counts in the complete row.
-
-The evidence overlay, roadmap-evidence/*.sexp beside the data, holds any number
-of (:id "<task id>" :state :done :evidence (...)) forms, applied in file-name
-order and held to the same rule; one bad entry refuses the whole load.
-*/
-package roadmap
+package main
 
 import (
 	"errors"
@@ -52,13 +50,11 @@ import (
 	"slices"
 	"sort"
 	"strings"
-
-	"github.com/mas-bandwidth/nova-roadmap/internal/sexp"
 )
 
-// Limits bounds a read: 5 MiB per file (schema's graph, the largest known, is
+// readLimits bounds a read: 5 MiB per file (schema's graph, the largest known, is
 // about 2.2 MB), nesting with room to spare and at most one atom per byte.
-var Limits = sexp.Limits{MaxBytes: 5 << 20, MaxDepth: 64, MaxNodes: 5 << 20}
+var readLimits = Limits{MaxBytes: 5 << 20, MaxDepth: 64, MaxNodes: 5 << 20}
 
 const (
 	// MaxNodes bounds the graph's node count.
@@ -103,10 +99,10 @@ func problem(file, format string, a ...any) error {
 	return fmt.Errorf("roadmap: file=%s %s", file, fmt.Sprintf(format, a...))
 }
 
-func read(file string, data []byte) (sexp.Form, error) {
-	top, err := sexp.Read(file, data, Limits)
+func read(file string, data []byte) (Form, error) {
+	top, err := Read(file, data, readLimits)
 	if err != nil {
-		var r *sexp.Refusal
+		var r *Refusal
 		if errors.As(err, &r) {
 			return top, fmt.Errorf("roadmap: file=%s: %s", file, r.Reason)
 		}
@@ -116,14 +112,14 @@ func read(file string, data []byte) (sexp.Form, error) {
 }
 
 // plist reads a (:key value ...) list: an even length, keyword keys, none twice.
-func plist(file, at string, f sexp.Form) (map[string]sexp.Form, error) {
-	if f.Kind != sexp.List || len(f.List)%2 != 0 {
+func plist(file, at string, f Form) (map[string]Form, error) {
+	if f.Kind != List || len(f.List)%2 != 0 {
 		return nil, problem(file, "%s: want a (:key value ...) property list", at)
 	}
-	out := map[string]sexp.Form{}
+	out := map[string]Form{}
 	for i := 0; i < len(f.List); i += 2 {
 		k := f.List[i]
-		if k.Kind != sexp.Keyword {
+		if k.Kind != Keyword {
 			return nil, problem(file, "%s: want a :key at byte=%d", at, k.Offset)
 		}
 		if _, dup := out[k.Value]; dup {
@@ -135,8 +131,8 @@ func plist(file, at string, f sexp.Form) (map[string]sexp.Form, error) {
 }
 
 // isNil is an absent value: no key, the symbol nil, or ().
-func isNil(f sexp.Form, ok bool) bool {
-	return !ok || (f.Kind == sexp.Symbol && strings.EqualFold(f.Value, "nil")) || (f.Kind == sexp.List && len(f.List) == 0)
+func isNil(f Form, ok bool) bool {
+	return !ok || (f.Kind == Symbol && strings.EqualFold(f.Value, "nil")) || (f.Kind == List && len(f.List) == 0)
 }
 
 // isBlank is the whitespace text is trimmed and joined on: blank, tab, newline,
@@ -148,26 +144,26 @@ func nonBlank(s string) bool { return strings.TrimFunc(s, isBlank) != "" }
 // flatText joins every run of blank into one and trims the ends.
 func flatText(s string) string { return strings.Join(strings.FieldsFunc(s, isBlank), " ") }
 
-func strVal(m map[string]sexp.Form, k string) (string, bool) {
+func strVal(m map[string]Form, k string) (string, bool) {
 	f, ok := m[k]
-	if !ok || f.Kind != sexp.String {
+	if !ok || f.Kind != String {
 		return "", false
 	}
 	return f.Value, true
 }
 
 // strList returns the list of strings under k; nil when absent.
-func strList(file, at string, m map[string]sexp.Form, k string) ([]string, error) {
+func strList(file, at string, m map[string]Form, k string) ([]string, error) {
 	f, ok := m[k]
 	if isNil(f, ok) {
 		return nil, nil
 	}
-	if f.Kind != sexp.List {
+	if f.Kind != List {
 		return nil, problem(file, "%s: :%s wants a list of strings", at, k)
 	}
 	out := make([]string, 0, len(f.List))
 	for _, s := range f.List {
-		if s.Kind != sexp.String {
+		if s.Kind != String {
 			return nil, problem(file, "%s: :%s wants a list of strings", at, k)
 		}
 		out = append(out, s.Value)
@@ -194,8 +190,8 @@ func checkTask(file string, n *Node) error {
 }
 
 // pair reads ("<id>" "<title>" ...) for a row or a column.
-func pair(file, at string, f sexp.Form) (id, title string, rest []sexp.Form, err error) {
-	if f.Kind != sexp.List || len(f.List) < 2 || f.List[0].Kind != sexp.String || f.List[1].Kind != sexp.String {
+func pair(file, at string, f Form) (id, title string, rest []Form, err error) {
+	if f.Kind != List || len(f.List) < 2 || f.List[0].Kind != String || f.List[1].Kind != String {
 		return "", "", nil, problem(file, "%s: want (\"<id>\" \"<title>\")", at)
 	}
 	id, title = f.List[0].Value, f.List[1].Value
@@ -217,7 +213,7 @@ func Decode(file string, data []byte) (*Roadmap, error) {
 	if err != nil {
 		return nil, err
 	}
-	if f, ok := root["schema"]; !ok || f.Kind != sexp.Integer || f.Int != 1 {
+	if f, ok := root["schema"]; !ok || f.Kind != Integer || f.Int != 1 {
 		return nil, problem(file, "top: want :schema 1")
 	}
 	rm := &Roadmap{Nodes: map[string]*Node{}}
@@ -225,7 +221,7 @@ func Decode(file string, data []byte) (*Roadmap, error) {
 		return nil, problem(file, "top: want a non-empty string :root")
 	}
 	nodes, ok := root["nodes"]
-	if !ok || nodes.Kind != sexp.List || len(nodes.List) == 0 {
+	if !ok || nodes.Kind != List || len(nodes.List) == 0 {
 		return nil, problem(file, "top: :nodes must be a non-empty list")
 	}
 	if len(nodes.List) > MaxNodes {
@@ -274,7 +270,7 @@ func Decode(file string, data []byte) (*Roadmap, error) {
 	return rm, nil
 }
 
-func decodeNode(file, at string, nf sexp.Form) (*Node, error) {
+func decodeNode(file, at string, nf Form) (*Node, error) {
 	m, err := plist(file, at, nf)
 	if err != nil {
 		return nil, err
@@ -284,13 +280,13 @@ func decodeNode(file, at string, nf sexp.Form) (*Node, error) {
 		return nil, problem(file, "%s: want a non-empty string :id", at)
 	}
 	at = fmt.Sprintf("node %q", n.ID)
-	if t, ok := m["type"]; ok && t.Kind == sexp.Keyword {
+	if t, ok := m["type"]; ok && t.Kind == Keyword {
 		n.Type = t.Value
 	}
 	n.Title, _ = strVal(m, "title")
 	if impl, ok := m["implementation"]; !isNil(impl, ok) {
 		ev, err := strList(file, at, m, "implementation-evidence")
-		valid := err == nil && impl.Kind == sexp.Keyword && (impl.Value == "implemented" || impl.Value == "partial" || impl.Value == "unsupported") && len(ev) > 0
+		valid := err == nil && impl.Kind == Keyword && (impl.Value == "implemented" || impl.Value == "partial" || impl.Value == "unsupported") && len(ev) > 0
 		for _, e := range ev {
 			valid = valid && nonBlank(e)
 		}
@@ -300,7 +296,7 @@ func decodeNode(file, at string, nf sexp.Form) (*Node, error) {
 	}
 	switch n.Type {
 	case "task":
-		if s, ok := m["state"]; ok && s.Kind == sexp.Keyword {
+		if s, ok := m["state"]; ok && s.Kind == Keyword {
 			n.State = s.Value
 		}
 		if n.Evidence, err = strList(file, at, m, "evidence"); err != nil {
@@ -328,10 +324,10 @@ func decodeNode(file, at string, nf sexp.Form) (*Node, error) {
 	return n, nil
 }
 
-func decodeArea(file, at string, m map[string]sexp.Form, n *Node) error {
-	list := func(k string) ([]sexp.Form, error) {
+func decodeArea(file, at string, m map[string]Form, n *Node) error {
+	list := func(k string) ([]Form, error) {
 		f, ok := m[k]
-		if !ok || f.Kind != sexp.List || len(f.List) == 0 {
+		if !ok || f.Kind != List || len(f.List) == 0 {
 			return nil, problem(file, "%s: an area wants a non-empty :%s", at, k)
 		}
 		return f.List, nil
@@ -360,7 +356,7 @@ func decodeArea(file, at string, m map[string]sexp.Form, n *Node) error {
 		rowIDs[id] = true
 		r := Row{ID: id, Title: title}
 		if len(rest) > 0 {
-			opts, err := plist(file, at+" row "+id, sexp.Form{Kind: sexp.List, List: rest})
+			opts, err := plist(file, at+" row "+id, Form{Kind: List, List: rest})
 			if err != nil {
 				return err
 			}
@@ -386,7 +382,7 @@ func decodeArea(file, at string, m map[string]sexp.Form, n *Node) error {
 	}
 	seen := map[[2]string]bool{}
 	for _, f := range cells {
-		if f.Kind != sexp.List || len(f.List) < 3 || f.List[0].Kind != sexp.String || f.List[1].Kind != sexp.String || f.List[2].Kind != sexp.String {
+		if f.Kind != List || len(f.List) < 3 || f.List[0].Kind != String || f.List[1].Kind != String || f.List[2].Kind != String {
 			return problem(file, "%s: want a cell (\"<row>\" \"<column>\" \"<work node>\")", at)
 		}
 		c := [3]string{f.List[0].Value, f.List[1].Value, f.List[2].Value}
@@ -412,7 +408,7 @@ func decodeArea(file, at string, m map[string]sexp.Form, n *Node) error {
 // decodePage checks :page: it holds :roadmaps only, naming areas reachable from
 // :root once each, none of which carries :text. Headings and prose live in
 // ROADMAP.md, written by hand.
-func decodePage(file string, root map[string]sexp.Form, rm *Roadmap) error {
+func decodePage(file string, root map[string]Form, rm *Roadmap) error {
 	pf, ok := root["page"]
 	if !ok {
 		return problem(file, "top: want :page (:roadmaps (\"<area id>\" ...)), the areas in page order")
@@ -549,7 +545,7 @@ func (rm *Roadmap) ApplyEvidence(file string, data []byte) (int, error) {
 			return 0, problem(file, "%s: id %q is a %s, not a task", at, id, n.Type)
 		}
 		s, ok := m["state"]
-		if isNil(s, ok) || s.Kind != sexp.Keyword {
+		if isNil(s, ok) || s.Kind != Keyword {
 			return 0, problem(file, "%s: id %q carries no :state", at, id)
 		}
 		ev, err := strList(file, at, m, "evidence")

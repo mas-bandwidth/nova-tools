@@ -1,4 +1,4 @@
-package roadmap
+package main
 
 import (
 	"flag"

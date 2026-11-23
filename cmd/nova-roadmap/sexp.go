@@ -1,19 +1,17 @@
-/*
-Package sexp is the bounded reader for a restricted-Lisp data file such as
-docs/roadmap.sexp. It was copied from nova-tools' pkg/sexp so this module
-depends on nothing outside itself.
+// This file is the bounded reader for a restricted-Lisp data file such as
+// docs/roadmap.sexp.
+//
+// A file is data the reader returns, never a program it evaluates. The grammar is
+// one s-expression made only of lists, keywords, strings, integers and bare
+// symbols, with every evaluation form refused at the boundary and three bounds
+// enforced as the reader runs: bytes, nesting depth and node count. There is no
+// eval, and a dispatch macro is a refusal with the byte offset that owes it, not a
+// form the reader will run.
+//
+// Every refusal is a *Refusal, so the command that opens a file can print one line
+// and stop, never a partial parse.
 
-A file is data the reader returns, never a program it evaluates. The grammar is
-one s-expression made only of lists, keywords, strings, integers and bare
-symbols, with every evaluation form refused at the boundary and three bounds
-enforced as the reader runs: bytes, nesting depth and node count. There is no
-eval, and a dispatch macro is a refusal with the byte offset that owes it, not a
-form the reader will run.
-
-Every refusal is a *Refusal, so the command that opens a file can print one line
-and stop, never a partial parse.
-*/
-package sexp
+package main
 
 import (
 	"fmt"

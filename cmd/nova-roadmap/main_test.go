@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-roadmap/roadmap"
 	"github.com/stretchr/testify/require"
 )
 
@@ -23,7 +22,7 @@ func call(dir string, args ...string) result {
 	return result{code, out.String(), errb.String()}
 }
 
-func read(t *testing.T, path string) string {
+func readFile(t *testing.T, path string) string {
 	t.Helper()
 	b, err := os.ReadFile(path)
 	require.NoError(t, err)
@@ -61,7 +60,7 @@ func TestHelpFormExampleIsRealData(t *testing.T) {
 	end := strings.Index(r.stdout[start:], "\n\n")
 	require.Positive(t, end)
 	data := strings.ReplaceAll(r.stdout[start:start+end], "\n  ", "\n")
-	rm, err := roadmap.Decode("help", []byte(data))
+	rm, err := Decode("help", []byte(data))
 	require.NoError(t, err)
 	page, err := rm.Starter("docs/roadmap.sexp")
 	require.NoError(t, err)
@@ -87,7 +86,7 @@ func TestFirstRunFromTheBanner(t *testing.T) {
 		}
 	}
 	require.Len(t, lines, 3)
-	page := read(t, filepath.Join(dir, "ROADMAP.md"))
+	page := readFile(t, filepath.Join(dir, "ROADMAP.md"))
 	require.True(t, strings.HasPrefix(page, "# Roadmap\n"))
 	require.Contains(t, page, "## Protocol\n\n<!-- nova-work:protocol:start -->\n\n| feature | done |\n")
 	require.Contains(t, page, "## Clients\n")
@@ -112,7 +111,7 @@ func TestRenderAndCheck(t *testing.T) {
 	require.Equal(t, 0, r.code, r.stderr)
 	require.Contains(t, r.stdout, "wrote a starter ROADMAP.md")
 	pagePath := filepath.Join(dir, "ROADMAP.md")
-	page := strings.Replace(read(t, pagePath), "# Roadmap\n", "# My project\n\nWritten by hand.\n", 1)
+	page := strings.Replace(readFile(t, pagePath), "# Roadmap\n", "# My project\n\nWritten by hand.\n", 1)
 	require.NoError(t, os.WriteFile(pagePath, []byte(page), 0o644))
 	require.Equal(t, 0, call(dir, "check").code, "hand-written text is not drift")
 
@@ -122,16 +121,16 @@ func TestRenderAndCheck(t *testing.T) {
 	r = call(dir, "check")
 	require.Equal(t, 1, r.code)
 	require.Contains(t, r.stderr, "DRIFT: a table in ROADMAP.md differs from what docs/roadmap.sexp renders (areas: protocol); run: nova-roadmap render")
-	require.Equal(t, page, read(t, pagePath), "check writes nothing")
+	require.Equal(t, page, readFile(t, pagePath), "check writes nothing")
 
 	r = call(dir, "render")
 	require.Equal(t, 0, r.code, r.stderr)
 	require.Contains(t, r.stdout, "spliced the tables into ROADMAP.md")
 	require.Contains(t, r.stdout, "1 evidence files, 1 entries")
-	got := read(t, pagePath)
+	got := readFile(t, pagePath)
 	require.True(t, strings.HasPrefix(got, "# My project\n\nWritten by hand.\n"))
 	require.Contains(t, got, "| IPv6 (later) | ✅ |\n| complete | 100% |\n")
-	require.Equal(t, roadmap.HandWritten(page), roadmap.HandWritten(got))
+	require.Equal(t, HandWritten(page), HandWritten(got))
 	require.Equal(t, 0, call(dir, "check").code)
 	require.Contains(t, call(dir, "render").stdout, "is up to date")
 }
@@ -145,7 +144,7 @@ func TestSourceLinkIsRelativeToThePage(t *testing.T) {
 	file, out := filepath.Join(dir, "docs", "roadmap.sexp"), filepath.Join(dir, "ROADMAP.md")
 	r := call("", "render", "--file", file, "--out", out)
 	require.Equal(t, 0, r.code, r.stderr)
-	require.Contains(t, read(t, out), "[Source data](docs/roadmap.sexp)")
+	require.Contains(t, readFile(t, out), "[Source data](docs/roadmap.sexp)")
 	require.Equal(t, 0, call(dir, "check", "--file", "./docs/roadmap.sexp", "--out", "./ROADMAP.md").code)
 	require.Equal(t, 0, call(filepath.Join(dir, "docs"), "check", "--file", "roadmap.sexp", "--out", "../ROADMAP.md").code)
 }
@@ -174,7 +173,7 @@ func TestRefusalsExitTwo(t *testing.T) {
 		require.Contains(t, r.stderr, want, args)
 		require.Contains(t, r.stderr, "run: nova-roadmap help", args)
 	}
-	require.Equal(t, "# A page\n", read(t, filepath.Join(dir, "NOMARKERS.md")), "a refusal writes nothing")
+	require.Equal(t, "# A page\n", readFile(t, filepath.Join(dir, "NOMARKERS.md")), "a refusal writes nothing")
 }
 
 // example --dry-run writes nothing; example makes the directory it needs.
@@ -187,5 +186,5 @@ func TestExample(t *testing.T) {
 	require.True(t, os.IsNotExist(err))
 	r = call(dir, "example", "--out", "a/b/roadmap.sexp")
 	require.Equal(t, 0, r.code, r.stderr)
-	require.Equal(t, exampleData, read(t, filepath.Join(dir, "a", "b", "roadmap.sexp")))
+	require.Equal(t, exampleData, readFile(t, filepath.Join(dir, "a", "b", "roadmap.sexp")))
 }

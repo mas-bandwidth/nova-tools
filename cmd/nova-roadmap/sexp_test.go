@@ -1,11 +1,10 @@
-package sexp_test
+package main
 
 import (
 	"fmt"
 	"strings"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-roadmap/internal/sexp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -22,7 +21,7 @@ func TestReader(t *testing.T) {
 		data := []byte("(:plan :version 1 :goal #.(error \"x\"))\n")
 		offset := strings.Index(string(data), "#")
 		require.GreaterOrEqual(t, offset, 0, "fixture has no dispatch macro")
-		_, err := sexp.Read("roadmap.sexp", data, testLimits())
+		_, err := Read("roadmap.sexp", data, testLimits())
 		require.Error(t, err, "a #. dispatch macro was read instead of refused")
 		ref := assertRefusal(t, err)
 		msg := ref.Error()
@@ -37,14 +36,14 @@ func TestReader(t *testing.T) {
 	// bound and the file, never truncated.
 	t.Run("enforces-the-three-bounds", func(t *testing.T) {
 		t.Parallel()
-		wide := sexp.Limits{MaxBytes: 1 << 20, MaxDepth: 64, MaxNodes: 4096}
+		wide := Limits{MaxBytes: 1 << 20, MaxDepth: 64, MaxNodes: 4096}
 
 		t.Run("max-bytes", func(t *testing.T) {
 			t.Parallel()
 			data := []byte("(:plan :version 1 (:node :id \"n1\" :kind docs))")
 			limits := wide
 			limits.MaxBytes = 8
-			_, err := sexp.Read("roadmap.sexp", data, limits)
+			_, err := Read("roadmap.sexp", data, limits)
 			assertBound(t, err, "max-bytes")
 		})
 		t.Run("max-depth", func(t *testing.T) {
@@ -52,7 +51,7 @@ func TestReader(t *testing.T) {
 			data := []byte("(:plan (:a (:b (:c (:d)))))")
 			limits := wide
 			limits.MaxDepth = 2
-			_, err := sexp.Read("roadmap.sexp", data, limits)
+			_, err := Read("roadmap.sexp", data, limits)
 			assertBound(t, err, "max-depth")
 		})
 		t.Run("max-nodes", func(t *testing.T) {
@@ -60,7 +59,7 @@ func TestReader(t *testing.T) {
 			data := []byte("(:plan :version 1 :clip :per-node)")
 			limits := wide
 			limits.MaxNodes = 2
-			_, err := sexp.Read("roadmap.sexp", data, limits)
+			_, err := Read("roadmap.sexp", data, limits)
 			assertBound(t, err, "max-nodes")
 		})
 	})
@@ -81,13 +80,13 @@ func TestReader(t *testing.T) {
 			t.Run(c.name, func(t *testing.T) {
 				t.Parallel()
 				data := []byte("(tree " + c.tok + "x)")
-				_, err := sexp.Read("tree.lisp", data, testLimits())
+				_, err := Read("tree.lisp", data, testLimits())
 				require.Error(t, err, "%q in code position was read instead of refused", c.tok)
 				msg := assertRefusal(t, err).Error()
 				assert.Contains(t, msg, c.name, "refusal for %q does not name %q at byte=6: %s", c.tok, c.name, msg)
 				assert.Contains(t, msg, "byte=6", "refusal for %q does not name %q at byte=6: %s", c.tok, c.name, msg)
 				opaque := []byte("(tree \"a" + c.tok + "b\" ; " + c.tok + "\n 1)")
-				_, err = sexp.Read("tree.lisp", opaque, testLimits())
+				_, err = Read("tree.lisp", opaque, testLimits())
 				assert.NoError(t, err, "%q inside a string or a comment was refused: %v", c.tok, err)
 			})
 		}
@@ -98,10 +97,10 @@ func TestReader(t *testing.T) {
 	t.Run("reads-the-five-kinds", func(t *testing.T) {
 		t.Parallel()
 		data := []byte("(a :k \"s\\\"q\" -12 ())")
-		f, err := sexp.Read("tree.lisp", data, testLimits())
+		f, err := Read("tree.lisp", data, testLimits())
 		require.NoError(t, err)
-		kinds := []sexp.Kind{sexp.Symbol, sexp.Keyword, sexp.String, sexp.Integer, sexp.List}
-		require.Equal(t, sexp.List, f.Kind, "form = %#v", f)
+		kinds := []Kind{Symbol, Keyword, String, Integer, List}
+		require.Equal(t, List, f.Kind, "form = %#v", f)
 		require.Len(t, f.List, len(kinds), "form = %#v", f)
 		for i, k := range kinds {
 			assert.Equal(t, k, f.List[i].Kind, "element %d is kind %d, want %d", i, f.List[i].Kind, k)
@@ -122,7 +121,7 @@ func TestReader(t *testing.T) {
 			{13, 16},       // integer -12
 			{17, 19},       // empty list ()
 		}
-		forms := append([]sexp.Form{f}, f.List...)
+		forms := append([]Form{f}, f.List...)
 		for i, sp := range spans {
 			assert.Equal(t, sp.off, forms[i].Offset, "element %d offset = %d, want %d", i, forms[i].Offset, sp.off)
 			assert.Equal(t, sp.end, forms[i].End, "element %d end = %d, want %d", i, forms[i].End, sp.end)
@@ -136,31 +135,31 @@ func TestReader(t *testing.T) {
 		for _, src := range []string{"(a b", "(a) (b)", "(a \"b)", "", ":", "12x"} {
 			t.Run(src, func(t *testing.T) {
 				t.Parallel()
-				_, err := sexp.Read("tree.lisp", []byte(src), testLimits())
+				_, err := Read("tree.lisp", []byte(src), testLimits())
 				require.Error(t, err, "%q was read instead of refused", src)
 				_ = assertRefusal(t, err) // ignored: the helper asserts the refusal's shape; this caller needs nothing from it
 			})
 		}
 		t.Run("zero-limits", func(t *testing.T) {
 			t.Parallel()
-			_, err := sexp.Read("tree.lisp", []byte("(a)"), sexp.Limits{})
+			_, err := Read("tree.lisp", []byte("(a)"), Limits{})
 			assert.Error(t, err, "a zero Limits was accepted")
 		})
 	})
 }
 
 // testLimits is 64 KiB, depth 64 and 4096 nodes.
-func testLimits() sexp.Limits {
-	return sexp.Limits{MaxBytes: 65536, MaxDepth: 64, MaxNodes: 4096}
+func testLimits() Limits {
+	return Limits{MaxBytes: 65536, MaxDepth: 64, MaxNodes: 4096}
 }
 
-// assertRefusal checks the shape every refusal shares: it is a *sexp.Refusal
+// assertRefusal checks the shape every refusal shares: it is a *Refusal
 // naming why.
-func assertRefusal(t testing.TB, err error) *sexp.Refusal {
+func assertRefusal(t testing.TB, err error) *Refusal {
 	t.Helper()
 	require.Error(t, err, "want a refusal, got nil")
-	var ref *sexp.Refusal
-	require.ErrorAs(t, err, &ref, "want *sexp.Refusal, got %T: %v", err, err)
+	var ref *Refusal
+	require.ErrorAs(t, err, &ref, "want *Refusal, got %T: %v", err, err)
 	return ref
 }
 
@@ -179,15 +178,15 @@ func TestTheReaderRefusesAnIntegerThatOverflowsInt64(t *testing.T) {
 	t.Parallel()
 
 	// 9223372036854775807 (math.MaxInt64) succeeds.
-	f, err := sexp.Read("tree.lisp", []byte("9223372036854775807"), testLimits())
+	f, err := Read("tree.lisp", []byte("9223372036854775807"), testLimits())
 	require.NoError(t, err)
-	assert.Equal(t, sexp.Integer, f.Kind)
+	assert.Equal(t, Integer, f.Kind)
 	assert.Equal(t, int64(9223372036854775807), f.Int)
 
 	// -9223372036854775808 (math.MinInt64) succeeds.
-	fMin, err := sexp.Read("tree.lisp", []byte("-9223372036854775808"), testLimits())
+	fMin, err := Read("tree.lisp", []byte("-9223372036854775808"), testLimits())
 	require.NoError(t, err)
-	assert.Equal(t, sexp.Integer, fMin.Kind)
+	assert.Equal(t, Integer, fMin.Kind)
 	assert.Equal(t, int64(-9223372036854775808), fMin.Int)
 
 	// Small numbers unchanged.
@@ -202,9 +201,9 @@ func TestTheReaderRefusesAnIntegerThatOverflowsInt64(t *testing.T) {
 		{"123456789", 123456789},
 		{"-123456789", -123456789},
 	} {
-		fSmall, err := sexp.Read("tree.lisp", []byte(small.raw), testLimits())
+		fSmall, err := Read("tree.lisp", []byte(small.raw), testLimits())
 		require.NoError(t, err, "reading %s failed: %v", small.raw, err)
-		assert.Equal(t, sexp.Integer, fSmall.Kind)
+		assert.Equal(t, Integer, fSmall.Kind)
 		assert.Equal(t, small.val, fSmall.Int)
 	}
 
@@ -221,7 +220,7 @@ func TestTheReaderRefusesAnIntegerThatOverflowsInt64(t *testing.T) {
 	for _, raw := range overflowCases {
 		t.Run("standalone/"+raw, func(t *testing.T) {
 			t.Parallel()
-			_, err := sexp.Read("tree.lisp", []byte(raw), testLimits())
+			_, err := Read("tree.lisp", []byte(raw), testLimits())
 			require.Error(t, err, "%s was read instead of refused", raw)
 			ref := assertRefusal(t, err)
 			assert.Contains(t, ref.Error(), "forbidden token at byte=0", "refusal for %s: %s", raw, ref.Error())
@@ -230,7 +229,7 @@ func TestTheReaderRefusesAnIntegerThatOverflowsInt64(t *testing.T) {
 		t.Run("in-list/"+raw, func(t *testing.T) {
 			t.Parallel()
 			src := "(num " + raw + ")"
-			_, err := sexp.Read("tree.lisp", []byte(src), testLimits())
+			_, err := Read("tree.lisp", []byte(src), testLimits())
 			require.Error(t, err, "%s in list was read instead of refused", raw)
 			ref := assertRefusal(t, err)
 			assert.Contains(t, ref.Error(), "forbidden token at byte=5", "refusal for %s: %s", src, ref.Error())

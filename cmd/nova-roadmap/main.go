@@ -16,8 +16,6 @@ import (
 	"path/filepath"
 	"runtime/debug"
 	"strings"
-
-	"github.com/mas-bandwidth/nova-roadmap/roadmap"
 )
 
 // version is set at build time (-ldflags "-X main.version=v1.2.3"); otherwise
@@ -166,7 +164,7 @@ func (a *app) render(args []string, check bool) int {
 	if ev != "" {
 		ev = a.path(ev)
 	}
-	rm, files, entries, err := roadmap.Load(a.path(*file), ev)
+	rm, files, entries, err := Load(a.path(*file), ev)
 	if err != nil {
 		return a.refuse("%v", err)
 	}
