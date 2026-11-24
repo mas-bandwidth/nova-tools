@@ -461,6 +461,16 @@ login in four runs, each `--check --diff` first: `install` (the shared tools and
 `sdk-toolchain` (the shared SDK, while `~/sdk` stays in use until it is whole), `runner-packages`, then `github-runners`
 once the record's `runner_env` names the runner login's paths.
 
+**Case-folding scratch.** A test that needs a file system that takes `Probe` and `probe` for one name, as macOS and
+Windows do, runs on a Linux runner in `/srv/casefold/scratch` (`github_runner_casefold_dir`). The play makes root's
+sparse ext4 image with the casefold feature (`github_runner_casefold_image`, `/opt/nova/casefold.img`, at most
+`github_runner_casefold_size`, 1G), loop-mounts it at that directory from `/etc/fstab` (`nosuid,nodev,noexec`), and
+makes `scratch` in it root's, 1777 like `/tmp`, with the casefold attribute (`chattr +F`), which every directory made
+in it inherits. The scan of what the runner login can write leaves the volume out, as it does `/tmp`. The run fails
+with `CASEFOLD-MISSING` unless a directory the runner login makes there folds `Probe` and `probe` to one entry; a
+kernel without ext4 casefold (`/sys/fs/ext4/features/casefold`) or an image without the feature fails it before. A
+host with no case-folding scratch sets `github_runner_casefold_dir: ''` in its `host_vars` file.
+
 **Deploy keys.** A job that fetches a private repository with the runner's own git (a submodule a workflow names
 by its https URL) needs the runner login to hold a way in, and no job token or workflow secret carries it.
 `github_runner_deploy_keys` lists read-only deploy keys, each `{url: https://<host>/<owner>/<repo>.git, secret: <NAME>}`:
