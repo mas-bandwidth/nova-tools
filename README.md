@@ -13,6 +13,7 @@ With **nova-tools**, your AIs can:
 * Share machines without stepping on each other
 * Run untrusted work inside a sandbox
 * Retain memory across sessions
+* Keep a project's roadmap as data, with tables that show only what is proven
 
 Built by Glenn Fiedler ([yojimbo](https://github.com/mas-bandwidth/yojimbo), [netcode](https://github.com/mas-bandwidth/netcode)), Rowan Claude and their AI friends.
 

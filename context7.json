@@ -9,6 +9,7 @@
     "cmd/nova-config",
     "cmd/nova-fleet",
     "cmd/nova-reserve",
+    "cmd/nova-roadmap",
     "cmd/nova-sandbox",
     "cmd/nova-secrets"
   ],

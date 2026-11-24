@@ -284,8 +284,8 @@ nova_service_path: "{{ nova_bin_dir }}:/usr/local/bin:/usr/bin:/bin"
 
 ## install
 
-A release is a git tag `v*` on this repository: seven binaries (nova-bus, nova-cairn, nova-config, nova-sandbox,
-nova-secrets, nova-reserve, nova-fleet) for linux/amd64, linux/arm64 and darwin/arm64, each asset
+A release is a git tag `v*` on this repository: eight binaries (nova-bus, nova-cairn, nova-config, nova-sandbox,
+nova-secrets, nova-reserve, nova-fleet, nova-roadmap) for linux/amd64, linux/arm64 and darwin/arm64, each asset
 `<tool>_<tag>_<os>_<arch>`, with one `SHA256SUMS`. The play reads `SHA256SUMS`, downloads each asset and checks
 its digest before putting it in place. A binary that already holds the digest is left alone, so a second run changes
 nothing and `--check --diff` is clean. There is no default version, and a platform the release does not ship is
@@ -294,7 +294,7 @@ refused before anything is written.
 | Variable | Default | |
 |---|---|---|
 | `nova_tools_version` | none, required | the tag, `vX.Y.Z` |
-| `nova_tools_names` | the seven tools | which tools to install (and which `argv[0]` services prefixes) |
+| `nova_tools_names` | the eight tools | which tools to install (and which `argv[0]` services prefixes) |
 | `nova_bin_dir` | `~/.local/bin` | where they go; v2 binaries replace v1's of the same name there, so a v1 sprint still running from it stops working after `up` (accepted) |
 | `nova_tools_repo` | `mas-bandwidth/nova-tools` | whose release (`--repo`); `--names` is `nova_tools_names`, empty for every binary listed |
 | `nova_tools_release_url` | `nova_tools_repo`'s GitHub releases | `<base>/<tag>/<asset>` |
@@ -307,8 +307,9 @@ refused before anything is written.
 nova-fleet install --check --repo mas-bandwidth/nova-sprint --tag v2.0.0 --names nova-sprint,nova-sprint-dash bench
 ```
 
-A release from before nova-fleet shipped has no nova-fleet asset; install one with
-`-e '{"nova_tools_names":["nova-bus","nova-cairn","nova-config","nova-sandbox","nova-secrets","nova-reserve"]}'`.
+A release from before nova-roadmap shipped has no nova-roadmap asset; install one with
+`-e '{"nova_tools_names":["nova-bus","nova-cairn","nova-config","nova-sandbox","nova-secrets","nova-reserve","nova-fleet"]}'`.
+A release from before nova-fleet shipped also has no nova-fleet asset; leave `"nova-fleet"` out of that list too.
 
 **A local build.** With no release yet, or to try a change, build the binaries on the control node laid out as a
 release is and install from that directory (Linux and macOS hosts; each file is checked against its `SHA256SUMS` line
@@ -316,7 +317,7 @@ before it is copied):
 
 ```
 v=local; mkdir -p dist
-for t in bus cairn config fleet reserve sandbox secrets; do
+for t in bus cairn config fleet reserve roadmap sandbox secrets; do
   for p in linux/amd64 linux/arm64 darwin/arm64; do
     GOOS=${p%/*} GOARCH=${p#*/} CGO_ENABLED=0 go build -trimpath -o dist/nova-${t}_${v}_${p%/*}_${p#*/} ./cmd/nova-$t
   done
@@ -459,6 +460,19 @@ for it; a host with no VM tier sets `nova_runner_vm_kernel: false` in its `host_
 login in four runs, each `--check --diff` first: `install` (the shared tools and the shared SDK's directory),
 `sdk-toolchain` (the shared SDK, while `~/sdk` stays in use until it is whole), `runner-packages`, then `github-runners`
 once the record's `runner_env` names the runner login's paths.
+
+**Case-folding scratch.** A test that needs a file system that takes `Probe` and `probe` for one name, as macOS and
+Windows do, runs on a Linux runner in `/srv/casefold/scratch` (`github_runner_casefold_dir`, a directory at least two
+levels below `/`; anything else fails the run with `CASEFOLD-DIR`). The play makes root's sparse ext4 image with the
+casefold feature (`github_runner_casefold_image`, `/opt/nova/casefold.img`, at most `github_runner_casefold_size`,
+1G), loop-mounts it at that directory from `/etc/fstab` (`nosuid,nodev,noexec,nofail,x-systemd.mount-timeout=10s`,
+so a missing image never stops a boot), and makes `scratch` in it root's, 1777 like `/tmp`, with the casefold
+attribute (`chattr +F`), which every directory made in it inherits. The scan of what the runner login can write
+leaves out `<dir>/scratch`, and only while `<dir>` is the image's own loop mount. A kernel without ext4 casefold
+(`/sys/fs/ext4/features/casefold`, read under `--check` too) fails the run with `CASEFOLD-KERNEL`, an image without
+the feature fails it, and the run fails with `CASEFOLD-MISSING` unless a directory the runner login makes there folds
+`Probe` and `probe` to one entry. A host with no case-folding scratch sets `github_runner_casefold_dir: ''` in its
+`host_vars` file.
 
 **Deploy keys.** A job that fetches a private repository with the runner's own git (a submodule a workflow names
 by its https URL) needs the runner login to hold a way in, and no job token or workflow secret carries it.
@@ -1395,6 +1409,12 @@ applying it restarts only the daemon it configures, never the login's units. A d
   `CLEAN-DONE` line in the journal. A runner login of its own (github-runners, "The runner login") gets its own
   `nova-disk-clean-<login>.timer`, run as it, for `/tmp`, its runners' `TMPDIR`s and its Go build cache: the clean
   removes only what its user owns.
+- The same hourly run (fleet login only) removes old work clones in the home (`nova_health_disk_clean_work_*`): a top-level
+  directory by a work name (`rowan-*`, `w*`, `fix*`, `green-*`, ...) or a child of a container (`work`, `rowan-jobs`, ...) with nothing
+  changed under it for 6 hours and no process in or holding it, never `sdk`, runners, services or a friend's (`emma-*`, ...). It also
+  holds the Go build cache to `nova_health_disk_clean_gocache_max_gb` (20), oldest files first, the age stepping down from
+  a day to `nova_health_disk_clean_pressed_min` and never below it: Go refreshes an entry it uses only past an hour, so a younger
+  file may belong to a running build. A cache still over the cap there stays and says `CLEAN-OVER-CAP` at priority warning. `DISK-WARN` is at 85% used (under 15% free).
 
 ```
 nova-fleet health --check --diff
@@ -1764,7 +1784,7 @@ version bump installs the new directory beside the old and moves the links.
 | `nova_sdk_rustup` | rustup 1.29.1; `1.98.1` with `clippy` and `rustfmt`, and `nightly-2026-10-01` | `version`, the `linux` rustup-init `url`, `sha256` and `host`, the `toolchains` (each `name`, `components`, `targets`; the first is on PATH) and the commands `links` puts in `~/sdk/bin` |
 | `nova_sdk_cargo_tools` | `cargo-fuzz` 0.13.1 | crates built with `cargo install --locked` |
 | `nova_sdk_env` | `DART`, `NODE`, `JAVA`, `JAVAC`, `ELIXIR`, `MIX` set to their commands | make variables `env.sh` exports |
-| `nova_sdk_env_files` | `SQ`: `squirrel-3.2-double/bin/sq`; `LUA`, `LUAU`, `LUAU_ANALYZE`, `MOO`, `MOO_ANALYZE`, `MOO_CHECKED`, `GOOSE`, `LOBSTER`, `RUBY_FLOOR`, `RUBY`: each the interpreter or analyzer under its tool's directory; `NOVA_SDK`: `.` (the SDK directory, for a Makefile that stages a pinned toolchain from `~/sdk/<tool>-<version>` instead of downloading it) | make variables naming a file under the SDK; `env.sh` exports each only where that file is executable |
+| `nova_sdk_env_files` | `SQ`: `squirrel-3.2-double/bin/sq`; `LUA`, `LUAU`, `LUAU_ANALYZE`, `MOO`, `MOO_ANALYZE`, `MOO_CHECKED`, `GOOSE`, `LOBSTER`, `RUBY_FLOOR`, `RUBY`, `PYTHON_FLOOR`, `PYTHON`, `MYPY`: each the interpreter or analyzer under its tool's directory; `NOVA_SDK`: `.` (the SDK directory, for a Makefile that stages a pinned toolchain from `~/sdk/<tool>-<version>` instead of downloading it) | make variables naming a file under the SDK; `env.sh` exports each only where that file is executable |
 | `nova_sdk_shell_rc` | `true` | Linux: `~/.bashrc` sources `env.sh` on its first line, unless a line of it already names `sdk/env.sh` |
 
 **Check.** `SDK-TOOLCHAIN host=<machine> platform=<linux|darwin> tools=<n> present=<n> installed=<n> dotnet=<runtimes>`,

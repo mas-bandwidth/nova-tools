@@ -633,7 +633,7 @@ func TestSDKToolchainEnvFilesNameInstalledFiles(t *testing.T) {
 		Env map[string]string `yaml:"nova_sdk_env_files"`
 	}
 	require.NoError(t, yaml.Unmarshal(b, &files))
-	for _, k := range []string{"SQ", "LUA", "LUAU", "LUAU_ANALYZE", "MOO", "MOO_ANALYZE", "MOO_CHECKED", "GOOSE", "LOBSTER", "RUBY_FLOOR", "RUBY"} {
+	for _, k := range []string{"SQ", "LUA", "LUAU", "LUAU_ANALYZE", "MOO", "MOO_ANALYZE", "MOO_CHECKED", "GOOSE", "LOBSTER", "RUBY_FLOOR", "RUBY", "PYTHON_FLOOR", "PYTHON", "MYPY"} {
 		assert.Contains(t, files.Env, k, "env.sh exports %s where its file is", k)
 	}
 	d := readSDKDefaults(t)
