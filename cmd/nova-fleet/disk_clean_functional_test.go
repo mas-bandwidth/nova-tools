@@ -278,3 +278,86 @@ func TestFunctionalDiskCleanWorkClones(t *testing.T) {
 		t.Errorf("a tree changed just now went at a 60-minute age: %s", fresh)
 	}
 }
+
+// The Go build cache cap steps the age down to the floor (DISK_CLEAN_PRESSED_MIN) and never below it: a file a running
+// build may use (Go refreshes an entry's mtime only past an hour) stays, and a cache still over the cap says so. Time is
+// an argument: DISK_CLEAN_NOW is a fixed instant and every file is dated back from it, so no clock is read.
+// hetzner2, 2026-11-24: the old last step, "unchanged 0m", removed 53,420 files under a running `go run`.
+func TestFunctionalDiskCleanGoCacheCapKeepsTheFloor(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS != "linux" {
+		t.Skip("nova-disk-clean reads /proc and uses GNU find: Linux only")
+	}
+	const now = 3_000_000_000 // seconds since the epoch, after the real now: the hourly age clean (real clock) passes them by
+	at := func(minutesAgo int) time.Time { return time.Unix(now-int64(minutesAgo)*60, 0) }
+	files := map[string]int{"ab/day-d": 2000, "ab/old-d": 400, "ab/live-d": 59, "ab/fresh-d": 5} // minutes before now
+	build := func(t *testing.T) string {
+		cache := filepath.Join(t.TempDir(), "go-build")
+		if err := os.MkdirAll(filepath.Join(cache, "ab"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		for p, ago := range files {
+			f := filepath.Join(cache, p)
+			if err := os.WriteFile(f, make([]byte, 64<<10), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chtimes(f, at(ago), at(ago)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return cache
+	}
+	env := func(cache, capKB, floor string) []string {
+		return []string{"DISK_CLEAN_CACHES=" + cache, "DISK_WARN_PCT=100", "DISK_CLEAN_AGE_MIN=2880",
+			"DISK_CLEAN_PRESSED_MIN=" + floor, "DISK_CLEAN_GOCACHE_MAX_KB=" + capKB, "DISK_CLEAN_NOW=3000000000"}
+	}
+	present := func(cache string) map[string]bool {
+		got := map[string]bool{}
+		for p := range files {
+			_, err := os.Stat(filepath.Join(cache, p))
+			got[p] = err == nil
+		}
+		return got
+	}
+
+	// a cap no step can meet: down to the floor (360m) and no further, then CLEAN-OVER-CAP
+	cache := build(t)
+	out := runClean(t, env(cache, "1", "360")...)
+	for p, want := range map[string]bool{"ab/day-d": false, "ab/old-d": false, "ab/live-d": true, "ab/fresh-d": true} {
+		if present(cache)[p] != want {
+			t.Errorf("over an unmeetable cap, %s present=%v, want %v (never below the 360m floor): %s", p, !want, want, out)
+		}
+	}
+	if !strings.Contains(out, "CLEAN-OVER-CAP "+cache+" ") || !strings.Contains(out, "within 360m") {
+		t.Errorf("a cache left over the cap at the floor was not said: %s", out)
+	}
+	for _, low := range []string{"unchanged 60m", "unchanged 0m"} {
+		if strings.Contains(out, low) {
+			t.Errorf("a cap step ran below the floor (%s): %s", low, out)
+		}
+	}
+
+	// a cap the day step meets: nothing younger than a day goes and nothing over the cap is said
+	cache = build(t)
+	out = runClean(t, env(cache, "230", "360")...)
+	for p, want := range map[string]bool{"ab/day-d": false, "ab/old-d": true, "ab/live-d": true, "ab/fresh-d": true} {
+		if present(cache)[p] != want {
+			t.Errorf("cap met at 1440m, %s present=%v, want %v: %s", p, !want, want, out)
+		}
+	}
+	if strings.Contains(out, "CLEAN-OVER-CAP") || strings.Contains(out, "unchanged 360m") {
+		t.Errorf("the cap was met at 1440m and the clean went on: %s", out)
+	}
+
+	// a floor under 120m is refused and nothing goes
+	cache = build(t)
+	out = runClean(t, env(cache, "1", "60")...)
+	if !strings.Contains(out, "CLEAN-REFUSED cap 1KiB") {
+		t.Errorf("a 60m floor was not refused: %s", out)
+	}
+	for p, ok := range present(cache) {
+		if !ok {
+			t.Errorf("a refused cap removed %s: %s", p, out)
+		}
+	}
+}

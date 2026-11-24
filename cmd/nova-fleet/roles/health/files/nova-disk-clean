@@ -7,7 +7,8 @@
 #     A root that is /, the home or above it, or under a runner's _work or actions-runner* directory is refused whole.
 #   DISK_CLEAN_CACHES (colon-separated; Go's build cache): a cache file unchanged for the age is removed. Go refreshes
 #     an entry's mtime when it uses one more than an hour old and rebuilds a missing one, so a build loses nothing.
-#   DISK_CLEAN_GOCACHE_MAX_GB: a Go build cache over this many GB is trimmed oldest-first until it fits (0: no cap).
+#   DISK_CLEAN_GOCACHE_MAX_GB: a Go build cache over this many GB is trimmed oldest-first toward it (0: no cap), never
+#     below DISK_CLEAN_PRESSED_MIN: a cache still over the cap after that says CLEAN-OVER-CAP (priority warning) and stays.
 #   DISK_CLEAN_WORK_*: old work clones in the home, removed whole (see the section below).
 # The age is DISK_CLEAN_AGE_MIN minutes, or DISK_CLEAN_PRESSED_MIN on a filesystem over DISK_WARN_PCT used. One CLEAN
 # line per removal and a CLEAN-DONE line, in the journal (DISK_NO_LOG unset) and on stdout; DISK_CLEAN_DRY=1 removes
@@ -87,25 +88,47 @@ for c in "${caches[@]}"; do
   say "$verb $c ${n} files ${kb}KiB unchanged ${age}m"
 done
 
-# Go build cache size cap: over DISK_CLEAN_GOCACHE_MAX_GB the files unchanged longest go first (age steps down until it fits;
-# the last step empties it, as `go clean -cache` does). A removed entry is rebuilt on the next use, so a build loses time, not work.
+# Go build cache size cap: over DISK_CLEAN_GOCACHE_MAX_GB the files unchanged longest go first, the age stepping down from a
+# day to the floor, DISK_CLEAN_PRESSED_MIN, and never below it. Go refreshes an entry's mtime only when it uses one more than
+# an hour old, so a file a running build has used or will use again can look up to an hour plus that build's run time old:
+# a step to 60m or 0m removed files a running `go run` then failed to open (hetzner2, 2026-11-24, 53,420 files at 0m). A
+# cache still over the cap at the floor is kept and said (CLEAN-OVER-CAP, priority warning): over the cap is a disk to
+# watch, a removed live entry is a failed job. A floor under 120m is refused. DISK_CLEAN_NOW (seconds since the epoch, for
+# tests) is the time the ages count back from; unset, it is now.
+warn() {
+  [ -n "${DISK_NO_LOG:-}" ] || logger -t nova-disk-clean -p user.warning "$1"
+  echo "$1"
+}
 cap_kb=$(( ${DISK_CLEAN_GOCACHE_MAX_GB:-0} * 1048576 ))
+cap_name="${DISK_CLEAN_GOCACHE_MAX_GB:-0}GB"
+if [ -n "${DISK_CLEAN_GOCACHE_MAX_KB:-}" ]; then cap_kb=$DISK_CLEAN_GOCACHE_MAX_KB; cap_name="${cap_kb}KiB"; fi # tests: a cap under a GB
+cap_floor=$PRESSED
+cap_now=${DISK_CLEAN_NOW:-$(date +%s)}
+if [ "$cap_kb" -gt 0 ] && [ "$cap_floor" -lt 120 ]; then
+  warn "CLEAN-REFUSED cap ${cap_name}: the floor DISK_CLEAN_PRESSED_MIN=${cap_floor}m is under 120m (Go's 60m refresh plus an hour of a running build); no cap step ran"
+  cap_kb=0
+fi
 if [ "$cap_kb" -gt 0 ]; then
+  steps=()
+  [ "$cap_floor" -lt 1440 ] && steps+=(1440)
+  steps+=("$cap_floor")
   for c in "${caches[@]}"; do
     [ -d "$c" ] && [ "$(basename "$c")" = go-build ] || continue
     sz=$(du -sxk "$c" 2>/dev/null | cut -f1)
     [ "${sz:-0}" -gt "$cap_kb" ] || continue
-    for a in 1440 360 60 0; do
+    for a in "${steps[@]}"; do
       del=-delete
       [ "$verb" = CLEAN ] || del=-true
-      read -r n kb < <(find "$c" -xdev -mindepth 2 -maxdepth 2 -path "$c/??/*" -type f -mmin "+$a" -printf '%k\n' "$del" 2>/dev/null |
+      read -r n kb < <(find "$c" -xdev -mindepth 2 -maxdepth 2 -path "$c/??/*" -type f ! -newermt "@$((cap_now - a * 60))" -printf '%k\n' "$del" 2>/dev/null |
         awk '{n++; s += $1} END {print n + 0, s + 0}')
       freed=$((freed + kb))
-      say "$verb $c cap ${DISK_CLEAN_GOCACHE_MAX_GB}GB: ${n} files ${kb}KiB unchanged ${a}m (was ${sz}KiB)"
+      say "$verb $c cap ${cap_name}: ${n} files ${kb}KiB unchanged ${a}m (was ${sz}KiB)"
       [ "$verb" = CLEAN ] || break # a dry run does not shrink it: one step shows
       sz=$(du -sxk "$c" 2>/dev/null | cut -f1)
       [ "${sz:-0}" -gt "$cap_kb" ] || break
     done
+    [ "$verb" = CLEAN ] && [ "${sz:-0}" -gt "$cap_kb" ] &&
+      warn "CLEAN-OVER-CAP $c ${sz}KiB over the cap ${cap_name}: every file left changed within ${cap_floor}m (the floor) and a running build may use it; kept"
   done
 fi
 
