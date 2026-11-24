@@ -6,6 +6,6 @@ cmd/nova-sandbox  1861
 cmd/nova-secrets  1809
 cmd/nova-fleet  2376
 cmd/nova-roadmap  1643
-cmd/nova-testguard  1102
+cmd/nova-testguard  1256
 tests/boundary  400
 tests/contract  50

@@ -206,7 +206,7 @@ usage:
   gap       TABLE   ROW   COLUMN   REASON  a pair allowed to be uncovered
   baseline  DIR                            required: DIR/SUITE/TEST is an empty file for each test
                                            that runs, SUITE and TEST escaped (letters, digits, _,
-                                           - and inner dots stay; any other byte is %XX; a long
+                                           - and inner dots stay; any other byte is percent-escaped; a long
                                            name is cut and ends in ~ and a hash); a count suite's
                                            DIR/SUITE/#count holds the fewest tests it may run
 --write-baseline  add the entries the run lacks (unlisted tests, count floors), when those are
