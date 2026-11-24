@@ -45,15 +45,17 @@ A result file's format comes from its extension, or from a prefix on its path
 |---|---|---|---|---|---|
 | JUnit XML | `.xml` | each `<testsuite>`'s name, nested to any depth, in every root of the file; a suite with no name takes its parent's, or the file's | `CLASSNAME.NAME`, or `NAME` when the class is the suite | a `<skipped>` child, or a status of `skipped`, `notrun` or `disabled` | a `<failure>` or `<error>` child |
 | `go test -json` | `.json`, `.jsonl` | the package | the test, subtests included (`TestA/sub`) | a `skip` in any iteration | a `fail`, or a `run` with no end (a panic); a package `fail` is an incomplete run |
-| TAP | `.tap` | the file's name without its extension | the description, or the number when there is none; a subtest is `PARENT/NAME` | a directive starting `skip` or `todo`, in any case | `not ok` without one; a missing or unmet plan, a repeated number or `Bail out!` is an incomplete run |
+| TAP | `.tap` | the file's name without its extension | the description, or the number when there is none; a subtest, indented four spaces a level, is `PARENT/NAME` | a directive starting `skip` or `todo`, in any case | `not ok` without one; a missing, unmet or second plan, a repeated number, an unended YAML block or `Bail out!` is an incomplete run |
 | `ran N, failed M` | `.log`, `.txt`, `.out` | the text before the colon (`cards (lua): ran 7, failed 0`), or the file's name | none: a count | none | `failed M` above 0 |
 
-A count file holds count lines and nothing else: a count line found in a longer
-log is no evidence the run ended there, so write the harness's count line to a
-file of its own. A count suite has no test names, so the skip and baseline
-checks do not reach it; the empty-suite and failure checks do. Unparseable
-JUnit, text after its last root, and a line that is not a go test event are
-refused.
+A count log's last line that is not blank is its count line: the line a
+harness prints as it ends, so a log that ends in anything else is refused (the
+run died after it counted, or never counted). A count suite has no test names,
+so the skip check does not reach it; its floor in the baseline does (below).
+TAP YAML blocks (`---` to `...`) are skipped; a TAP line at an indent that is
+not a multiple of four spaces, or holds a tab, is refused. Unparseable JUnit,
+text after its last root, a `<testcase>` with no name, and a line that is not a
+go test event are refused.
 
 ## The config
 
@@ -88,19 +90,31 @@ failure anywhere in it fails it, and its standard output is the list.
 ## The baseline
 
 The baseline is a directory with one empty file per test that runs:
-`DIR/SUITE/TEST`, the suite and the test each escaped as a URL path segment (a
-leading dot escaped too), for example `tests/testguard/example.com%2Fwire/TestA%2Fsub`.
-A test listed there that does not run is red (`vanished`), and a test that runs
-with no entry is red (`unlisted`). A pull request that adds a test adds its file;
-one that removes a test deletes its file. Each test is its own file, so pull
-requests landing side by side conflict only when they add or remove the same
-test, and there is no refresh step. On a filesystem that ignores case, two tests
-whose names differ only in case share an entry.
+`DIR/SUITE/TEST`, for example `tests/testguard/example.com%2Fwire/TestA%2Fsub`.
+The suite and the test are each escaped so every filesystem git checks out on
+can hold them: letters, digits, `_`, `-` and dots inside the name stay, every
+other byte is `%XX` (so `/ \ : * ? " < > |` and blanks never reach a file name),
+a name Windows reserves (`CON`, `NUL`, `COM1`, ...) has its first letter
+escaped, and a name longer than 200 bytes is cut and ends in `~` and 16 hex
+digits of its SHA-256. A test listed there that does not run is red
+(`vanished`), and a test that runs with no entry is red (`unlisted`). A pull
+request that adds a test adds its file; one that removes a test deletes its
+file. Each test is its own file, so pull requests landing side by side conflict
+only when they add or remove the same test, and there is no refresh step. On a
+filesystem that ignores case, two tests whose names differ only in case share an
+entry.
+
+A count suite names no tests, so its entry is `DIR/SUITE/#count`, holding the
+fewest tests its count line may report: fewer is red (`vanished`), and a count
+suite with no floor is red (`unlisted`). Raise the floor as tests are added;
+lower it in the change that removes them.
 
 `--write-baseline` bootstraps it: when the run's only findings are unlisted
-tests, it writes their entries; with any other finding it writes nothing. It
-never removes an entry. Anything in the directory that is not a registered
-suite's test entry is red (`baseline`).
+tests and missing floors, it writes them, making the directory if it is missing;
+with any other finding it writes nothing. It never removes an entry, and it
+always exits 1, so a workflow that passes it can never go green: commit what it
+wrote and check again without it. A `.gitkeep` is never an entry; anything else
+in the directory that is not a registered suite's entry is red (`baseline`).
 
 ## Check
 
@@ -130,8 +144,8 @@ The rules a finding names:
 | `unregistered-suite` | a suite that ran tests and is not registered |
 | `uncovered` | a table pair no test covers and no gap holds; an empty rows or columns list; a covered pair outside the table |
 | `stale-gap` | a gap whose pair is covered, or that names no row or column of the table |
-| `vanished` | a test the baseline lists that did not run |
-| `unlisted` | a test that ran and that the baseline does not list |
+| `vanished` | a test the baseline lists that did not run; a count below its floor |
+| `unlisted` | a test that ran and that the baseline does not list; a count suite with no floor |
 | `baseline` | an entry in the baseline that is not a registered suite's test |
 
 Exit codes: 0 every test that should run ran and passed; 1 findings; 2 refused.

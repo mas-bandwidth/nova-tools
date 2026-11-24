@@ -172,8 +172,8 @@ It reads test result files and the repository's checked-in config, and finds:
   baseline     an entry in the baseline that is no registered suite's test
 
 Result formats, chosen by extension or a FORMAT: prefix, never by content: JUnit XML (.xml,
-junit:), go test -json (.json, .jsonl, gojson:), TAP (.tap, tap:) and files of "ran N, failed M"
-lines (.log, .txt, .out, count:). A file of no format, a config that registers no suite or names
+junit:), go test -json (.json, .jsonl, gojson:), TAP (.tap, tap:) and logs whose last
+line is "ran N, failed M" (.log, .txt, .out, count:). A file of no format, a config that registers no suite or names
 no baseline, and a run of 0 tests are refused.
 
 usage:
@@ -205,16 +205,21 @@ usage:
                                            stdout is the list.
   gap       TABLE   ROW   COLUMN   REASON  a pair allowed to be uncovered
   baseline  DIR                            required: DIR/SUITE/TEST is an empty file for each test
-                                           that runs, SUITE and TEST escaped as URL path segments
---write-baseline  add an entry for each unlisted test, when unlisted tests are the run's only
-                  findings; with any other finding it writes nothing. It never removes an entry.
+                                           that runs, SUITE and TEST escaped (letters, digits, _,
+                                           - and inner dots stay; any other byte is %XX; a long
+                                           name is cut and ends in ~ and a hash); a count suite's
+                                           DIR/SUITE/#count holds the fewest tests it may run
+--write-baseline  add the entries the run lacks (unlisted tests, count floors), when those are
+                  its only findings; with any other finding it writes nothing. It never removes
+                  an entry, makes DIR if it is missing, and always exits 1: a write is never a
+                  pass, so commit what it wrote and check again without it.
 RESULT            a result file, its format chosen by extension or a prefix (junit:, gojson:,
                   tap:, count:)
 
 A test is SUITE<TAB>TEST, as a skip line holds it. The suite is: a go package; a JUnit
 testsuite's name (a test is CLASSNAME.NAME); a TAP file's name without its extension (a test
-is its description, or its number; a subtest is PARENT/NAME); a count line's prefix before the
-colon, or its file's name (counts only: no tests, skips or baseline entries).
+is its description, or its number; a subtest is PARENT/NAME); a count log's last line, its prefix
+before the colon or else the file's name (a count names no tests or skips; its floor is #count).
 
 Findings print as
   RED <rule> <test or table>: <what>; fix: <what to change>

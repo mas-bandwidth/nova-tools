@@ -56,7 +56,7 @@ var probes2 = map[string]struct {
 	"fmt-junit-prefix-on-log":            {results: []string{"junit:r.log"}, code: 0, want: "OK:"},
 	"fmt-no-ext":                         {results: []string{"results"}, code: 2, want: "results has no format"},
 	"fmt-tap-prefix-on-junit":            {results: []string{"tap:r.xml"}, code: 2, want: "the result files hold 0 tests that ran"},
-	"fmt-unknown-prefix":                 {results: []string{"xunit:r.xml"}, code: 2, want: "xunit:r.xml has no format"},
+	"fmt-unknown-prefix":                 {results: []string{"xunit:r.xml"}, code: 2, want: "reading a result file: open"}, // .xml is JUnit, and no file is named xunit:r.xml
 	"fmt-upper-ext":                      {results: []string{"R.XML"}, code: 0, want: "OK:"},
 	"tab-nohdr":                          {code: 2, want: `s.tap:2 is a TAP line indented by "\t"`},
 	"tap-comment-between-sub-and-parent": {code: 0, want: "OK:"},
