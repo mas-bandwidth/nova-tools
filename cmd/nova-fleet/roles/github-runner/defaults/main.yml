@@ -89,6 +89,13 @@ github_runner_cpus: >-
   {%- endfor -%}
   {{ kept | join(' ') }}
 
+# Linux: the case-folding scratch volume (tasks/casefold.yml) for a test that needs names folded by case: an ext4 image
+# with casefold, loop-mounted at github_runner_casefold_dir from /etc/fstab, its shared scratch <dir>/scratch (1777,
+# chattr +F). An empty dir (host_vars) gives a host none. The size is the sparse image's ceiling, a guess, not measured.
+github_runner_casefold_dir: /srv/casefold
+github_runner_casefold_image: "{{ nova_shared_dir }}/casefold.img"
+github_runner_casefold_size: 1G
+
 # Linux only: run the runner's bin/installdependencies.sh (system packages) once per
 # release on the host.
 github_runner_install_dependencies: true

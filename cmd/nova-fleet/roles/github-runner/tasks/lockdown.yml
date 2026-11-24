@@ -52,7 +52,7 @@
 # The proof, as the runner login, over every local filesystem (findmnt --real, network ones aside): each path it can
 # write or owns, but its home, the kernel's (/proc, /sys, /dev), each snap image's /dev (device nodes such as
 # /snap/core24/<rev>/dev/null in a read-only squashfs that snapd mounts nodev, so none of them opens), the scratch places
-# every login shares (/tmp, /var/tmp)
+# every login shares (/tmp, /var/tmp, and <github_runner_casefold_dir>/scratch while that is the image's mount)
 # and the ones the system keeps a login's own files in (/var/crash, /var/lib/php/sessions, /var/mail/<login>). In /run
 # (a tmpfs) the same but for sockets, which systemd and dbus give every login and guard themselves, and for the shared
 # /run/lock, /run/screen and the login's own /run/user/<uid>; a container engine's socket it can write is named. Any
@@ -69,12 +69,22 @@
       mounts="$mounts $m"
     done
     [ -n "$mounts" ]
+    # the case-folding scratch (casefold.yml) is shared scratch only while its directory is the image's own loop
+    # mount; then <dir>/scratch alone is pruned, never <dir> or above it
+    cf={{ github_runner_casefold_dir | quote }}
+    scratch=/nonexistent
+    if [ -n "$cf" ] && mountpoint -q "$cf"; then
+      src=$(findmnt -n -o SOURCE --mountpoint "$cf")
+      case "$src" in
+        /dev/loop*) if [ "$(losetup -n -O BACK-FILE "$src")" = {{ github_runner_casefold_image | quote }} ]; then scratch="$cf/scratch"; fi ;;
+      esac
+    fi
     cd /
     timeout 1800 runuser -u {{ github_runner_user | quote }} -- sh -c '
-      home=$1; shift
+      home=$1; scratch=$2; shift 2
       me=$(id -un); uid=$(id -u)
       find "$@" -xdev \( -path /proc -o -path /sys -o -path /dev -o -path /run -o -path /tmp -o -path /var/tmp \
-          -o -path /var/crash -o -path /var/lib/php/sessions -o -path "/var/mail/$me" -o -path "$home" \
+          -o -path /var/crash -o -path /var/lib/php/sessions -o -path "/var/mail/$me" -o -path "$home" -o -path "$scratch" \
           -o -path "/snap/*/*/dev" \) -prune \
         -o \( -writable -o -user "$me" \) ! -type l -print 2>/dev/null
       r1=$?
@@ -84,7 +94,7 @@
       for s in /run/docker.sock /run/podman/podman.sock /run/containerd/containerd.sock; do
         if [ -S "$s" ] && [ -w "$s" ]; then echo "$s"; fi
       done
-      [ $r1 -le 1 ] && [ $r2 -le 1 ] && echo SCAN-DONE' sh {{ github_runner_home | quote }} $mounts
+      [ $r1 -le 1 ] && [ $r2 -le 1 ] && echo SCAN-DONE' sh {{ github_runner_home | quote }} "$scratch" $mounts
   args: { executable: /bin/sh }
   become: true
   register: github_runner_writable
