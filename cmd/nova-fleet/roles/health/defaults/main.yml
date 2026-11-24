@@ -58,4 +58,6 @@ nova_health_disk_clean_work_age_min: 360
 nova_health_disk_clean_work_names: ["rowan-*", "bench-rowan*", "bench-*", "w", "w[0-9]*", "w-*", "wr-*", "work*", "fix*", "green-*", "fg*", "c-*", "sch*", "r[0-9]*", "rr", "scratch-*", "dead-bytes-*", "read-*", "rev[0-9]*", "specgap-*", "absent-rows", "silent-scripts-*", "svm*", "f[0-9]*"]
 nova_health_disk_clean_work_containers: [work, w, rowan-jobs, rowan-bench, rowan-work, rowan-scratch, bench, bench-rowan, scratch]
 nova_health_disk_clean_work_never: [sdk, "actions-runner*", "*runner*", "*service*", "services", "go", "cache", "bin", "tmp", "jobs", "nova-*", "emma-*", "johnny-*", "stella-*", "alex-*", "freddy-*", "zhi-*", "aurora-*", "cairn-*", "terra-*", "glenn-*", "rowan-new", "rowan-working", "rowan-tools", "serialize*"]
+# The Go build cache cap (2026-11-24): oldest files first, never younger than nova_health_disk_clean_pressed_min (a
+# running build may use a younger one); still over it, CLEAN-OVER-CAP at priority warning and the cache stays.
 nova_health_disk_clean_gocache_max_gb: 20

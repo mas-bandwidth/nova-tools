@@ -1412,7 +1412,9 @@ applying it restarts only the daemon it configures, never the login's units. A d
 - The same hourly run (fleet login only) removes old work clones in the home (`nova_health_disk_clean_work_*`): a top-level
   directory by a work name (`rowan-*`, `w*`, `fix*`, `green-*`, ...) or a child of a container (`work`, `rowan-jobs`, ...) with nothing
   changed under it for 6 hours and no process in or holding it, never `sdk`, runners, services or a friend's (`emma-*`, ...). It also
-  holds the Go build cache to `nova_health_disk_clean_gocache_max_gb` (20), oldest files first. `DISK-WARN` is at 85% used (under 15% free).
+  holds the Go build cache to `nova_health_disk_clean_gocache_max_gb` (20), oldest files first, the age stepping down from
+  a day to `nova_health_disk_clean_pressed_min` and never below it: Go refreshes an entry it uses only past an hour, so a younger
+  file may belong to a running build. A cache still over the cap there stays and says `CLEAN-OVER-CAP` at priority warning. `DISK-WARN` is at 85% used (under 15% free).
 
 ```
 nova-fleet health --check --diff
