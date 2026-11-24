@@ -69,8 +69,9 @@
       mounts="$mounts $m"
     done
     [ -n "$mounts" ]
-    # the case-folding scratch (casefold.yml) is shared scratch only while its directory is the image's own loop
-    # mount; then <dir>/scratch alone is pruned, never <dir> or above it
+    # the case-folding scratch (casefold.yml) is shared scratch only while its directory is the loop mount of the
+    # image itself; then <dir>/scratch alone is pruned, never <dir> or above it (no apostrophe in this script:
+    # Ansible splits the text of a shell task on its quotes before the shell sees it)
     cf={{ github_runner_casefold_dir | quote }}
     scratch=/nonexistent
     if [ -n "$cf" ] && mountpoint -q "$cf"; then
