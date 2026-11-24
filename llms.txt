@@ -19,6 +19,7 @@ Messaging, machines, secrets, sandboxes and memory for a team of AIs on differen
 - [nova-sandbox](https://raw.githubusercontent.com/mas-bandwidth/nova-tools/main/cmd/nova-sandbox/README.md): Restrict one command with OS controls; platform and resource limits.
 - [nova-secrets](https://raw.githubusercontent.com/mas-bandwidth/nova-tools/main/cmd/nova-secrets/README.md): Encrypted secrets for explicitly named commands and machines.
 - [nova-config](https://raw.githubusercontent.com/mas-bandwidth/nova-tools/main/cmd/nova-config/README.md): PostgreSQL machine, service and friend records; Ansible inventory.
+- [nova-testguard](https://raw.githubusercontent.com/mas-bandwidth/nova-tools/main/cmd/nova-testguard/README.md): Fails a CI run whose tests did not really run or pass: failures, unledgered skips, empty suites, coverage gaps, a per-test baseline.
 - [nova-fleet](https://raw.githubusercontent.com/mas-bandwidth/nova-tools/main/cmd/nova-fleet/README.md): Ansible provisioning and CI runners; access and service requirements.
 
 ## Project

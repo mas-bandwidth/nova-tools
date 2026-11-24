@@ -30,8 +30,8 @@ import (
 )
 
 var (
-	docTool    = regexp.MustCompile(`^nova-(bus|cairn|config|fleet|reserve|roadmap|sandbox|secrets)$`)
-	docRefusal = regexp.MustCompile(`^(nova-(?:bus|cairn|config|fleet|reserve|roadmap|sandbox|secrets))((?: [a-z][a-z-]*)*): (.*)$`)
+	docTool    = regexp.MustCompile(`^nova-(bus|cairn|config|fleet|reserve|roadmap|sandbox|secrets|testguard)$`)
+	docRefusal = regexp.MustCompile(`^(nova-(?:bus|cairn|config|fleet|reserve|roadmap|sandbox|secrets|testguard))((?: [a-z][a-z-]*)*): (.*)$`)
 	docReceipt = regexp.MustCompile(`^[A-Z]+ [a-z_]+=`) // nova-reserve: HELD mode=... is a receipt, not a refusal
 	shellLangs = map[string]bool{"sh": true, "bash": true, "shell": true, "console": true}
 	notAVerb   = regexp.MustCompile(`[<>\[\]{}|*$]|\.\.\.|^[A-Z_]+$`)
@@ -59,6 +59,7 @@ const (
 	needsHeld  = "a machine whose slots another process holds"
 	needsSeat  = "a secrets store sealed by sops"
 	needsData  = "a roadmap data file with that problem; the unit tests in cmd/nova-roadmap reach it"
+	needsGuard = "a config with that entry; the unit tests in cmd/nova-testguard reach it"
 )
 
 // docRefusals is every refusal the docs quote, by its quoted text. A new one in a doc fails
@@ -126,11 +127,18 @@ var docRefusals = map[string]refusalCase{
 	`not_found`:      {tool: "sandbox", argv: []string{"--", "nosuchcmd-for-the-doc-test"}},
 	`not_executable`: {tool: "sandbox", argv: []string{"--read", "@tmp", "--", "@tmp/plain"}, files: []string{"plain"}},
 	`no_sandbox`:     {tool: "sandbox", why: "a host without Landlock or sandbox-exec"},
-	`usage: seat add <seat> <age1...>; the seat is letters, digits, - and _`:        {tool: "secrets", argv: []string{"seat", "add", "bad/seat", "age1x", "--store", "@tmp"}},
-	`set: empty or multi-line value on stdin; the value must be one non-empty line`: {tool: "secrets", why: needsSeat},
-	`nova-secrets set: value is over 65536 bytes; a secret is a key or token`:       {tool: "secrets", why: needsSeat},
-	`<NAME> is empty (null or "") in <seat>'s files`:                                {tool: "secrets", why: needsSeat},
-	`"bad-key" is not an environment variable name, or its value holds a NUL`:       {tool: "secrets", why: needsSeat},
+	`usage: seat add <seat> <age1...>; the seat is letters, digits, - and _`:                                                                 {tool: "secrets", argv: []string{"seat", "add", "bad/seat", "age1x", "--store", "@tmp"}},
+	`set: empty or multi-line value on stdin; the value must be one non-empty line`:                                                          {tool: "secrets", why: needsSeat},
+	`nova-secrets set: value is over 65536 bytes; a secret is a key or token`:                                                                {tool: "secrets", why: needsSeat},
+	`<NAME> is empty (null or "") in <seat>'s files`:                                                                                         {tool: "secrets", why: needsSeat},
+	`"bad-key" is not an environment variable name, or its value holds a NUL`:                                                                {tool: "secrets", why: needsSeat},
+	`nova-testguard check: wants --config and result files (none were read, and reading none is never a pass); run: nova-testguard check -h`: {tool: "testguard", argv: []string{"check"}},
+	`nova-testguard check: <file> has no format: ...; run: nova-testguard check -h`:                                                          {tool: "testguard", argv: []string{"check", "--config", "@tmp/c.tsv", "@tmp/r.md"}, files: []string{"r.md"}},
+	`nova-testguard check: the result files hold 0 tests that ran; a run of nothing is never a pass; run: ls -l <files>`:                     {tool: "testguard", why: needsGuard},
+	`nova-testguard check: <config> has no suite line (a config that registers nothing checks nothing) and no baseline line; run: nova-testguard help check`: {tool: "testguard",
+		argv: []string{"check", "--config", "@tmp/c.tsv", "@tmp/r.xml"}, files: []string{"c.tsv"}},
+	`nova-testguard check: the baseline <dir> cannot be read: ...; run: ls -ld <dir>`:                 {tool: "testguard", why: needsGuard},
+	`nova-testguard check: table <table> <axis>: the command "<command>" failed: ...; run: <command>`: {tool: "testguard", why: needsGuard},
 	`git not found on PATH`: {tool: "secrets", why: "a PATH without git, which the store commands look up first"},
 	`key file K does not exist`: {tool: "secrets", argv: []string{"exec", "--only", "X", "--store", "@tmp", "--key", "K", "--as", "s", "--", "true"},
 		files: []string{"s.yaml"}, vars: []string{"K"}, needs: "sops"},
@@ -253,7 +261,7 @@ func TestFunctionalGuideBuildLines(t *testing.T) {
 			continue
 		}
 		found++
-		for _, tool := range []string{"bus", "cairn", "config", "fleet", "reserve", "roadmap", "sandbox", "secrets"} {
+		for _, tool := range []string{"bus", "cairn", "config", "fleet", "reserve", "roadmap", "sandbox", "secrets", "testguard"} {
 			t.Run("line"+itoa(i+1)+"/"+tool, func(t *testing.T) {
 				t.Parallel()
 				work := t.TempDir()

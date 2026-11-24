@@ -11,7 +11,8 @@
     "cmd/nova-reserve",
     "cmd/nova-roadmap",
     "cmd/nova-sandbox",
-    "cmd/nova-secrets"
+    "cmd/nova-secrets",
+    "cmd/nova-testguard"
   ],
   "excludeFolders": [
     "docs/assets",

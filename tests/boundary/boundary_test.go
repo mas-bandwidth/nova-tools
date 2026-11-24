@@ -34,7 +34,7 @@ var libraryDirs = map[string]bool{"pkg": true, "internal": true}
 
 // mainTools are the tools that are one package main and import nothing from
 // this module.
-var mainTools = []string{"bus", "config", "sandbox", "secrets", "reserve", "cairn", "fleet", "roadmap"}
+var mainTools = []string{"bus", "config", "sandbox", "secrets", "reserve", "cairn", "fleet", "roadmap", "testguard"}
 
 // allowedTools is the exact set of tool directives permitted in go.mod.
 var allowedTools = []string{

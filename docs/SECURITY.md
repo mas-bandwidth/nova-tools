@@ -15,6 +15,7 @@ Read its guide before relying on a restriction.
 | [reserve](../cmd/nova-reserve/README.md) | File locks coordinate cooperating callers. They do not impose CPU, memory or process limits on a command. |
 | [cairn](../cmd/nova-cairn/README.md) | Saved session records and notes are plain files protected by filesystem permissions. A receipt reads a record back; search and note checks do not establish its truth or detect all edits. Publish policy is a recorded label; the tool sends nothing. |
 | [roadmap](../cmd/nova-roadmap/README.md) | Reads roadmap data as data, never as a program, under size, depth and node bounds. Writes only between the markers of the page it is given, and nothing when a check, a dry run or a refusal. A ✅ shows that a `:done` task names evidence; the tool does not run or verify that evidence. |
+| [testguard](../cmd/nova-testguard/README.md) | Reads result files and its config as data. Runs each coverage command its config names under `bash -e -o pipefail -c`, with the caller's permissions: the config is trusted input, like a Makefile. Writes only with `--write-baseline`, into the directory given. A pass shows the results agree with the config; it does not run or check the tests themselves. |
 | [fleet](../cmd/nova-fleet/README.md) | Ansible installs binaries and supervised commands on the selected hosts. Inventory, program arguments, variables and release sources are trusted inputs. |
 
 Restrict access to the Redis and PostgreSQL services and to the files and keys

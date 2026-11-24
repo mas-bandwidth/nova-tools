@@ -105,7 +105,7 @@ func buildTools() error {
 	os.MkdirAll(binDir, 0o755)
 	var wg sync.WaitGroup
 	errs := make(chan error, 16)
-	for _, tool := range []string{"bus", "cairn", "config", "fleet", "reserve", "roadmap", "sandbox", "secrets"} {
+	for _, tool := range []string{"bus", "cairn", "config", "fleet", "reserve", "roadmap", "sandbox", "secrets", "testguard"} {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()

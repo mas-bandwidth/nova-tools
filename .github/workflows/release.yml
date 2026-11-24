@@ -43,7 +43,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist
-          for tool in bus cairn config sandbox secrets reserve fleet roadmap; do
+          for tool in bus cairn config sandbox secrets reserve fleet roadmap testguard; do
             # main.version is set only for a main that declares it
             flags="-s -w"
             if grep -q '^var version ' "cmd/nova-$tool/main.go"; then flags="$flags -X main.version=$TAG"; fi

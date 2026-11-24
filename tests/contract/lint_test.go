@@ -28,7 +28,7 @@ import (
 	"testing"
 )
 
-var lintTools = []string{"bus", "cairn", "config", "fleet", "reserve", "roadmap", "sandbox", "secrets"}
+var lintTools = []string{"bus", "cairn", "config", "fleet", "reserve", "roadmap", "sandbox", "secrets", "testguard"}
 
 // Files that break rule 1 or 2 today and how many places each has.
 var knownDiscards = map[string]int{
