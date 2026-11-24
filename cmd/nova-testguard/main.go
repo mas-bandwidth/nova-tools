@@ -135,6 +135,9 @@ func check(dir string, args []string, stdout, stderr io.Writer, sh shellFunc) in
 		fmt.Fprintf(stdout, "RED: %d findings (%s); %s\n", len(rep.findings), rep.byRule(), rep.stats)
 		return exitFindings
 	}
+	if *write {
+		return exitFindings // the WROTE line said why: a write is never a pass
+	}
 	fmt.Fprintf(stdout, "OK: every test that should run ran and passed; %s\n", rep.stats)
 	return exitOK
 }

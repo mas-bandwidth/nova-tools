@@ -81,6 +81,8 @@ func TestJUnitRefusals(t *testing.T) {
 	refusedWith(t, "r.xml", `<testsuite name="s"/><<<`, "r.xml is not JUnit XML")
 	refusedWith(t, "r.xml", `<html/>`, "r.xml has a root <html>")
 	refusedWith(t, "r.xml", `  `, "r.xml holds no <testsuites> or <testsuite>")
+	refusedWith(t, "r.xml", `<testsuite name="s"><testcase name=""/><testcase name="t"/></testsuite>`, "r.xml has a <testcase> with no name")
+	refusedWith(t, "r.xml", `<testsuites><testsuite name="o"><testsuite name="i"><testcase/></testsuite></testsuite></testsuites>`, "r.xml has a <testcase> with no name")
 }
 
 func TestGoJSONTestsSubtestsSkipsFailuresAndEmptyPackages(t *testing.T) {
@@ -173,23 +175,48 @@ func TestTAPIncompleteRuns(t *testing.T) {
 	refusedWith(t, "s.tap", "1..1\nok\n", "s.tap:2 is a test line with neither a number nor a description")
 }
 
-func TestCountLines(t *testing.T) {
+func TestTAPSecondPlanIsIncomplete(t *testing.T) {
 	t.Parallel()
-	r := read(t, "logs/packet.log", "cards (lua): ran 7, failed 0\n\nran 3, failed 1\r\n")
-	assert.Equal(t, 7, r["cards (lua)"].tests())
-	assert.Equal(t, 3, r["packet"].tests())
-	assert.Equal(t, 1, r["packet"].countFailed)
-	assert.True(t, r["packet"].countOnly)
-	assert.Len(t, r, 2)
+	r := read(t, "s.tap", "1..3\nok - a\n1..1\n")
+	assert.Contains(t, strings.Join(r["s"].problems, "\n"), "a second plan line at line 3")
+	assert.Contains(t, strings.Join(r["s"].problems, "\n"), "the plan is 3 tests and 1 were reported")
 }
 
-func TestCountFileHoldsCountLinesAndNothingElse(t *testing.T) {
+func TestTAPYAMLBlocksAreNotTAP(t *testing.T) {
 	t.Parallel()
-	refusedWith(t, "cards.log", "building...\nran 40, failed 0\n", `cards.log:1 is not a "[SUITE: ]ran N, failed M" line`)
-	refusedWith(t, "cards.log", "ran 40, failed 0\nharness: segfault\n", "cards.log:2 is not")
-	refusedWith(t, "cards.log", "we ran 9, failed 0 today\n", "cards.log:1 is not")
-	refusedWith(t, "cards.log", "ok, building cards\n", "cards.log:1 is not")
-	refusedWith(t, "cards.log", "", `cards.log holds no "ran N, failed M" line`)
+	r := read(t, "s.tap", "TAP version 13\n1..2\nok 1 - a\n  ---\n  ok: true\n  1..1\n  not ok 9 - x\n  ...\nok 2 - b\n")
+	assert.Equal(t, map[string]bool{"a": true, "b": true}, r["s"].ran)
+	assert.Empty(t, r["s"].problems)
+	r = read(t, "s.tap", "1..1\nok 1 - a\n  ---\n  message: cut off\n")
+	assert.Contains(t, strings.Join(r["s"].problems, "\n"), "the YAML block opened at line 3 never ends")
+}
+
+func TestTAPLineAtAnUnknownIndentIsRefused(t *testing.T) {
+	t.Parallel()
+	refusedWith(t, "s.tap", "1..1\n\tok 1 - i # SKIP no gpu\n\tnot ok 2 - j\nok 1 - a\n", `s.tap:2 is a TAP line indented by "\t"`)
+	refusedWith(t, "s.tap", "1..1\n# Subtest: a\n  ok 1 - i\n  1..1\nok 1 - a\n", `s.tap:3 is a TAP line indented by "  "`)
+	r := read(t, "s.tap", "1..1\n  some harness chatter\nok 1 - a\n")
+	assert.Equal(t, map[string]bool{"a": true}, r["s"].ran, "a line that is not TAP may sit at any indent")
+}
+
+func TestCountLineEndsTheLog(t *testing.T) {
+	t.Parallel()
+	r := read(t, "logs/schema_test.log", "schema_test: seeding 412 vectors\nOK\nschema_test: ran 412, failed 0 \n\n")
+	assert.Equal(t, 412, r["schema_test"].tests())
+	assert.True(t, r["schema_test"].countOnly)
+	assert.Len(t, r, 1)
+	r = read(t, "logs/packet.log", "cards (lua): ran 7, failed 0\nran 3, failed 1\r\n")
+	assert.Equal(t, 3, r["packet"].tests(), "only the last line counts")
+	assert.Equal(t, 1, r["packet"].countFailed)
+	assert.Nil(t, r["cards (lua)"])
+}
+
+func TestCountLogThatEndsOtherwiseIsRefused(t *testing.T) {
+	t.Parallel()
+	refusedWith(t, "cards.log", "ran 40, failed 0\nharness: segfault\n", `cards.log:2, its last line, is not a "[SUITE: ]ran N, failed M" line`)
+	refusedWith(t, "cards.log", "we ran 9, failed 0 today\n", "cards.log:1, its last line, is not")
+	refusedWith(t, "cards.log", "ok, building cards\n", "cards.log:1, its last line, is not")
+	refusedWith(t, "cards.log", "\n \n", `cards.log holds no "ran N, failed M" line`)
 }
 
 func TestCLIHelpAndRefusals(t *testing.T) {

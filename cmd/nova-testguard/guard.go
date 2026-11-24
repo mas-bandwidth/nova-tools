@@ -2,11 +2,15 @@ package main
 
 import (
 	"fmt"
+	"crypto/sha256"
+	"encoding/hex"
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -239,26 +243,33 @@ func guard(dir, configPath string, args []string, write bool, sh shellFunc) (*re
 		pairs += n
 	}
 
-	// 4. The baseline.
-	unlisted, err := c.checkBaseline(res, rep)
+	// 4. The baseline. A bootstrap makes its directory: git holds no empty one.
+	if write {
+		if err := os.MkdirAll(c.at(c.baseline), 0o755); err != nil {
+			return nil, refuse("ls -ld "+c.baseline, "making the baseline: %v", err)
+		}
+	}
+	additions, err := c.checkBaseline(res, rep)
 	if err != nil {
 		return nil, err
 	}
+	// A write is never a pass: it ends red either way, so a workflow that
+	// passes the flag can never absorb new tests into a green run.
 	if write {
 		if len(rep.findings) > rep.rules["unlisted"] {
-			rep.notes = append(rep.notes, "nothing written: --write-baseline adds tests only to a run whose only findings are unlisted tests")
+			rep.notes = append(rep.notes, "nothing written: --write-baseline adds entries only to a run whose only findings are unlisted")
 		} else {
-			for _, k := range unlisted {
-				p := c.at(c.entry(k[0], k[1]))
+			for _, a := range additions {
+				p := c.at(a.path)
 				if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 					return nil, refuse("ls -ld "+c.baseline, "writing the baseline: %v", err)
 				}
-				if err := os.WriteFile(p, nil, 0o644); err != nil {
+				if err := os.WriteFile(p, []byte(a.body), 0o644); err != nil {
 					return nil, refuse("ls -ld "+filepath.Dir(p), "writing the baseline: %v", err)
 				}
 			}
 			rep.findings, rep.rules = nil, map[string]int{}
-			rep.notes = append(rep.notes, fmt.Sprintf("wrote %d baseline entries under %s; commit them", len(unlisted), c.baseline))
+			rep.notes = append(rep.notes, fmt.Sprintf("WROTE: %d baseline entries under %s; commit them, then check without --write-baseline (a write is never a pass)", len(additions), c.baseline))
 		}
 	}
 	rep.stats = fmt.Sprintf("read %d result files: %d suites, %d tests run, %d skipped; %d coverage tables, %d pairs",
@@ -338,44 +349,113 @@ func (c *config) cover(name string, rep *report, sh shellFunc) (int, error) {
 	return len(rows) * len(cols), nil
 }
 
-// escape makes a suite or test name one path segment: URL path escaping, with
-// a leading dot escaped too, so "." and ".." stay names.
+// maxEntry is the longest entry name written: well under the 255 bytes most
+// filesystems allow, since escaping can triple a name.
+const maxEntry = 200
+
+// Names Windows will not create, with or without an extension.
+var reserved = regexp.MustCompile(`(?i)^(CON|PRN|AUX|NUL|COM[0-9]|LPT[0-9])(\.|$)`)
+
+// escape makes a suite or test name one path segment that every filesystem git
+// checks out on can hold: letters, digits, _ and - stay, a dot stays unless it
+// starts or ends the name, and every other byte is %XX (so / \ : * ? " < > |
+// and blanks never reach a file name). A name Windows reserves (CON, NUL, ...)
+// has its first letter escaped. A name longer than maxEntry is cut, at a whole
+// %XX, and ends in ~ and 16 hex digits of its SHA-256; ~ is escaped everywhere
+// else, so a hashed name is never another name's escape.
 func escape(name string) string {
-	e := url.PathEscape(name)
-	if strings.HasPrefix(e, ".") {
-		e = "%2E" + e[1:]
+	var b strings.Builder
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		plain := 'a' <= c && c <= 'z' || 'A' <= c && c <= 'Z' || '0' <= c && c <= '9' || c == '_' || c == '-' ||
+			c == '.' && i > 0 && i < len(name)-1
+		if plain {
+			b.WriteByte(c)
+		} else {
+			fmt.Fprintf(&b, "%%%02X", c)
+		}
+	}
+	e := b.String()
+	if reserved.MatchString(e) {
+		e = fmt.Sprintf("%%%02X", e[0]) + e[1:]
+	}
+	if len(e) > maxEntry {
+		cut := maxEntry - 17
+		if p := strings.LastIndexByte(e[:cut], '%'); p > cut-3 {
+			cut = p
+		}
+		sum := sha256.Sum256([]byte(name))
+		e = e[:cut] + "~" + hex.EncodeToString(sum[:8])
 	}
 	return e
 }
 
-func unescape(seg string) string {
-	s, err := url.PathUnescape(seg)
+// display is how a finding names an entry: its name, or the entry itself when
+// it is hashed.
+func display(entry string) string {
+	if strings.Contains(entry, "~") {
+		return entry
+	}
+	s, err := url.PathUnescape(entry)
 	if err != nil {
-		return seg
+		return entry
 	}
 	return s
 }
+
+var entryName = regexp.MustCompile(`^(?:[A-Za-z0-9_.-]|%[0-9A-F]{2})+(?:~[0-9a-f]{16})?$`)
+
+// validEntry says whether a file name is one escape could have written.
+func validEntry(f string) bool {
+	if !entryName.MatchString(f) {
+		return false
+	}
+	if strings.Contains(f, "~") {
+		return len(f) <= maxEntry
+	}
+	return escape(display(f)) == f
+}
+
+// keep is a file git needs to hold an empty directory; it is never an entry,
+// and no escaped name starts with a dot.
+const keep = ".gitkeep"
+
+// countEntry holds a count suite's floor: the fewest tests its count line may
+// report. Escaping writes # as %23, so it is never a test's entry.
+const countEntry = "#count"
 
 // entry is a test's file in the baseline: DIR/SUITE/TEST, each escaped.
 func (c *config) entry(suite, test string) string {
 	return filepath.Join(c.baseline, escape(suite), escape(test))
 }
 
+// addition is one baseline file --write-baseline adds.
+type addition struct{ path, body string }
+
 // checkBaseline holds the run to the baseline: one empty file per test that
-// runs, under a directory per suite. A listed test that did not run vanished;
-// a test that ran with no entry is unlisted. A suite read from a "ran N,
-// failed M" line names no tests and has no entries. It returns the unlisted
-// tests.
-func (c *config) checkBaseline(res results, rep *report) ([][2]string, error) {
+// runs, under a directory per suite, and for a suite read from "ran N, failed
+// M" lines, which name no tests, a file #count holding the fewest it may run.
+// A listed test that did not run vanished, and so did a count below its
+// floor; a test that ran with no entry, or a count suite with no floor, is
+// unlisted. It returns what --write-baseline would add.
+func (c *config) checkBaseline(res results, rep *report) ([]addition, error) {
 	dirs, err := os.ReadDir(c.at(c.baseline))
 	if err != nil {
 		return nil, refuse("ls -ld "+c.baseline, "the baseline %s cannot be read: %v", c.baseline, err)
 	}
-	listed := map[[2]string]bool{}
+	suiteOf := map[string]string{}
+	for s := range c.suites {
+		suiteOf[escape(s)] = s
+	}
+	listed := map[string]map[string]bool{} // suite -> entry names
+	floors := map[string]int{}
 	for _, d := range dirs {
+		if d.Name() == keep && !d.IsDir() {
+			continue
+		}
 		p := filepath.Join(c.baseline, d.Name())
-		suite := unescape(d.Name())
-		if !d.IsDir() || !c.suites[suite] || escape(suite) != d.Name() {
+		suite, ok := suiteOf[d.Name()]
+		if !d.IsDir() || !ok {
 			rep.add("baseline", p, "is not the directory of a registered suite", "delete it, or register its suite in "+c.path)
 			continue
 		}
@@ -383,37 +463,64 @@ func (c *config) checkBaseline(res results, rep *report) ([][2]string, error) {
 		if err != nil {
 			return nil, refuse("ls -ld "+p, "the baseline %s cannot be read: %v", p, err)
 		}
+		listed[suite] = map[string]bool{}
 		for _, f := range files {
-			test := unescape(f.Name())
-			if f.IsDir() || escape(test) != f.Name() {
-				rep.add("baseline", filepath.Join(p, f.Name()), "is not a test entry (a file named for an escaped test name)", "delete it")
-				continue
+			fp := filepath.Join(p, f.Name())
+			switch {
+			case f.Name() == keep && !f.IsDir():
+			case f.Name() == countEntry && !f.IsDir():
+				data, err := os.ReadFile(c.at(fp))
+				if err != nil {
+					return nil, refuse("ls -l "+fp, "the baseline %s cannot be read: %v", fp, err)
+				}
+				n, err := strconv.Atoi(strings.TrimSpace(string(data)))
+				if err != nil || n < 1 {
+					rep.add("baseline", fp, "does not hold a count of 1 or more", "write the fewest tests the suite's count line may report into it")
+					continue
+				}
+				floors[suite] = n
+			case f.IsDir() || !validEntry(f.Name()):
+				rep.add("baseline", fp, "is not a test entry (a file named for an escaped test name)", "delete it")
+			default:
+				listed[suite][f.Name()] = true
 			}
-			listed[[2]string{suite, test}] = true
 		}
 	}
-	for _, k := range sortedPairs(listed) {
-		s := res[k[0]]
+	var writes []addition
+	for _, name := range sortedKeys(c.suites) {
+		s := res[name]
 		if s == nil || s.tests() == 0 {
 			continue // missing-suite or empty-suite names it once
 		}
-		if !s.ran[k[1]] {
-			rep.add("vanished", id(k[0], k[1]), "ran on the baseline and did not run here", "make it run, or delete "+c.entry(k[0], k[1])+" in this change")
+		floor, hasFloor := floors[name]
+		switch {
+		case s.countOnly && !hasFloor:
+			p := filepath.Join(c.baseline, escape(name), countEntry)
+			writes = append(writes, addition{p, strconv.Itoa(s.count) + "\n"})
+			rep.add("unlisted", name, fmt.Sprintf("ran %d tests by its count line, and the baseline holds no floor for it", s.count), fmt.Sprintf("write %d into %s in this change", s.count, p))
+		case s.countOnly && s.count < floor:
+			rep.add("vanished", name, fmt.Sprintf("ran %d tests by its count line, and its floor is %d", s.count, floor), "make them run, or lower the count in "+filepath.Join(c.baseline, escape(name), countEntry)+" in this change")
+		case !s.countOnly && hasFloor:
+			rep.add("baseline", filepath.Join(c.baseline, escape(name), countEntry), "is a count floor, and the suite reported no count line", "delete it")
 		}
-	}
-	var unlisted [][2]string
-	for _, name := range sortedKeys(res) {
-		if !c.suites[name] {
-			continue
+		ran := map[string]string{}
+		for t := range s.ran {
+			ran[escape(t)] = t
 		}
-		for _, t := range sortedKeys(res[name].ran) {
-			if k := [2]string{name, t}; !listed[k] {
-				unlisted = append(unlisted, k)
-				rep.add("unlisted", id(name, t), "ran, and the baseline does not list it", "add the empty file "+c.entry(name, t)+" in this change")
+		for _, e := range sortedKeys(listed[name]) {
+			if _, ok := ran[e]; !ok {
+				rep.add("vanished", id(name, display(e)), "ran on the baseline and did not run here", "make it run, or delete "+filepath.Join(c.baseline, escape(name), e)+" in this change")
+			}
+		}
+		for _, e := range sortedKeys(ran) {
+			if !listed[name][e] {
+				p := c.entry(name, ran[e])
+				writes = append(writes, addition{p, ""})
+				rep.add("unlisted", id(name, ran[e]), "ran, and the baseline does not list it", "add the empty file "+p+" in this change")
 			}
 		}
 	}
-	return unlisted, nil
+	return writes, nil
 }
 
 func set(list []string) map[string]bool {

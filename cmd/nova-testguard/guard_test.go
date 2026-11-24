@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -323,13 +324,14 @@ func TestWriteBaselineBootstrapsAndNeverDropsOrAbsorbs(t *testing.T) {
 	t.Parallel()
 	w := newWorld(t)
 	require.NoError(t, os.RemoveAll(filepath.Join(w.dir, "bl")))
-	require.NoError(t, os.Mkdir(filepath.Join(w.dir, "bl"), 0o755))
 	results := w.file("go.json", goGreen)
 
-	// A first run: every test is unlisted, and that is all; the entries are written.
+	// A first run, with no baseline directory (git holds no empty one): every
+	// test is unlisted, and that is all; the entries are written, and the run
+	// is still red, so the flag can never make a gate green.
 	code, out, _ := w.check("--config", w.config(""), "--write-baseline", results)
-	assert.Equal(t, exitOK, code, out)
-	assert.Contains(t, out, "wrote 3 baseline entries under bl; commit them\n")
+	assert.Equal(t, exitFindings, code, out)
+	assert.Contains(t, out, "WROTE: 3 baseline entries under bl; commit them, then check without --write-baseline (a write is never a pass)\n")
 	for _, f := range []string{"TestOne", "TestTwo", "TestTwo%2Fsub"} {
 		_, err := os.Stat(filepath.Join(w.dir, "bl/ex%2Fa", f))
 		assert.NoError(t, err, f)
@@ -345,7 +347,7 @@ func TestWriteBaselineBootstrapsAndNeverDropsOrAbsorbs(t *testing.T) {
 	code, out, _ = w.check("--config", w.config(""), "--write-baseline", w.file("added.json", added))
 	assert.Equal(t, exitFindings, code)
 	assert.Contains(t, out, "RED vanished ex/a\tTestGone")
-	assert.Contains(t, out, "nothing written: --write-baseline adds tests only to a run whose only findings are unlisted tests\n")
+	assert.Contains(t, out, "nothing written: --write-baseline adds entries only to a run whose only findings are unlisted\n")
 	_, err := os.Stat(filepath.Join(w.dir, "bl/ex%2Fa/TestNew"))
 	assert.ErrorIs(t, err, os.ErrNotExist)
 	_, err = os.Stat(filepath.Join(w.dir, "bl/ex%2Fa/TestGone"))
@@ -376,10 +378,62 @@ func TestMissingSuiteIsNamedOnceNotPerBaselineTest(t *testing.T) {
 	assert.NotContains(t, out, "vanished")
 }
 
-func TestEscapeKeepsDotNamesAndSlashes(t *testing.T) {
+func TestEscapeMakesOneSegmentEveryFilesystemHolds(t *testing.T) {
 	t.Parallel()
-	for name, want := range map[string]string{"..": "%2E.", ".": "%2E", "a/b": "a%2Fb", "50%": "50%25", "x y": "x%20y"} {
+	for name, want := range map[string]string{
+		"..": "%2E%2E", ".": "%2E", "a/b": "a%2Fb", "50%": "50%25", "x y": "x%20y", "v1.2": "v1.2",
+		"codec::tests::roundtrip": "codec%3A%3Atests%3A%3Aroundtrip", `a<b>c"d|e?f*g\h`: "a%3Cb%3Ec%22d%7Ce%3Ff%2Ag%5Ch",
+		"ends.": "ends%2E", "ends ": "ends%20", "CON": "%43ON", "nul.txt": "%6Eul.txt", "COM1": "%43OM1", "CONSOLE": "CONSOLE",
+		"~home": "%7Ehome", "#count": "%23count",
+	} {
 		assert.Equal(t, want, escape(name), name)
-		assert.Equal(t, name, unescape(want), name)
+		assert.Equal(t, name, display(want), name)
+		assert.True(t, validEntry(want), name)
 	}
+	long := escape(strings.Repeat("a b", 100))
+	assert.LessOrEqual(t, len(long), maxEntry)
+	assert.Regexp(t, `^(a%20b)+(a|a%20)?~[0-9a-f]{16}$`, long, "cut at a whole %XX, then the hash")
+	assert.True(t, validEntry(long))
+	assert.NotEqual(t, long, escape(strings.Repeat("a b", 101)), "a hash tells long names apart")
+	for _, bad := range []string{".gitkeep2", "a b", "a:b", "%2e", "CON", "x~zz"} {
+		assert.False(t, validEntry(bad), bad)
+	}
+}
+
+func TestCountSuiteFloor(t *testing.T) {
+	t.Parallel()
+	w := newWorld(t)
+	cfg := w.config("suite\tcards\n")
+	logs := func(n int) []string {
+		return []string{w.file("go.json", goGreen), w.file("cards.log", fmt.Sprintf("seeding\ncards: ran %d, failed 0 \n\n", n))}
+	}
+	code, out, _ := w.check(append([]string{"--config", cfg}, logs(40)...)...)
+	assert.Equal(t, exitFindings, code)
+	assert.Contains(t, out, "RED unlisted cards: ran 40 tests by its count line, and the baseline holds no floor for it; fix: write 40 into bl/cards/#count in this change\n")
+	code, out, _ = w.check(append([]string{"--config", cfg, "--write-baseline"}, logs(40)...)...)
+	assert.Equal(t, exitFindings, code)
+	assert.Contains(t, out, "WROTE: 1 baseline entries")
+	data, err := os.ReadFile(filepath.Join(w.dir, "bl/cards/#count"))
+	require.NoError(t, err)
+	assert.Equal(t, "40\n", string(data))
+	code, out, _ = w.check(append([]string{"--config", cfg}, logs(41)...)...)
+	assert.Equal(t, exitOK, code, out)
+	code, out, _ = w.check(append([]string{"--config", cfg}, logs(1)...)...)
+	assert.Equal(t, exitFindings, code)
+	assert.Contains(t, out, "RED vanished cards: ran 1 tests by its count line, and its floor is 40;")
+	w.file("bl/cards/#count", "zero\n")
+	w.file("bl/ex%2Fa/#count", "3\n")
+	code, out, _ = w.check(append([]string{"--config", cfg}, logs(40)...)...)
+	assert.Equal(t, exitFindings, code)
+	assert.Contains(t, out, "RED baseline bl/cards/#count: does not hold a count of 1 or more;")
+	assert.Contains(t, out, "RED baseline bl/ex%2Fa/#count: is a count floor, and the suite reported no count line;")
+}
+
+func TestGitkeepIsNeverAnEntry(t *testing.T) {
+	t.Parallel()
+	w := newWorld(t)
+	w.file("bl/.gitkeep", "")
+	w.file("bl/ex%2Fa/.gitkeep", "")
+	code, out, _ := w.check("--config", w.config(""), w.file("go.json", goGreen))
+	assert.Equal(t, exitOK, code, out)
 }

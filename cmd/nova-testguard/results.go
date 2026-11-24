@@ -10,6 +10,7 @@ import (
 	"io"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -70,35 +71,36 @@ func base(name string) string {
 
 var countLine = regexp.MustCompile(`^(?:(.*\S):\s+)?ran (\d+), failed (\d+)$`)
 
-// readCount reads a file of "[SUITE: ]ran N, failed M" lines and nothing else:
-// a count line inside a longer log is no evidence the run ended there. A line
-// with no suite counts for the file's name.
+// readCount reads a harness log whose last line that is not blank is
+// "[SUITE: ]ran N, failed M": the line a harness prints as it ends, so a run
+// that died after it printed something else is no count. A line with no suite
+// counts for the file's name.
 func readCount(r results, name string, data []byte) error {
-	n := 0
-	for i, l := range strings.Split(string(data), "\n") {
-		l = strings.TrimRight(l, "\r")
-		if strings.TrimSpace(l) == "" {
-			continue
+	lines := strings.Split(string(data), "\n")
+	last, n := "", 0
+	for i := len(lines) - 1; i >= 0; i-- {
+		if last = strings.TrimSpace(lines[i]); last != "" {
+			n = i + 1
+			break
 		}
-		m := countLine.FindStringSubmatch(l)
-		if m == nil {
-			return refuse(fmt.Sprintf("sed -n %dp %s", i+1, name), "%s:%d is not a \"[SUITE: ]ran N, failed M\" line; a count file holds those lines and nothing else", name, i+1)
-		}
-		suiteName := m[1]
-		if suiteName == "" {
-			suiteName = base(name)
-		}
-		ran, _ := strconv.Atoi(m[2])    // ignored: the pattern holds only digits
-		failed, _ := strconv.Atoi(m[3]) // ignored: the pattern holds only digits
-		s := r.get(suiteName)
-		s.count += ran
-		s.countFailed += failed
-		s.countOnly = true
-		n++
 	}
-	if n == 0 {
+	if last == "" {
 		return refuse("head -5 "+name, "%s holds no \"ran N, failed M\" line", name)
 	}
+	m := countLine.FindStringSubmatch(last)
+	if m == nil {
+		return refuse(fmt.Sprintf("sed -n %dp %s", n, name), "%s:%d, its last line, is not a \"[SUITE: ]ran N, failed M\" line; a count log ends with the harness's count line", name, n)
+	}
+	suiteName := m[1]
+	if suiteName == "" {
+		suiteName = base(name)
+	}
+	ran, _ := strconv.Atoi(m[2])    // ignored: the pattern holds only digits
+	failed, _ := strconv.Atoi(m[3]) // ignored: the pattern holds only digits
+	s := r.get(suiteName)
+	s.count += ran
+	s.countFailed += failed
+	s.countOnly = true
 	return nil
 }
 
@@ -203,6 +205,9 @@ func readJUnit(r results, name string, data []byte) error {
 			if err := d.DecodeElement(&s, &t); err != nil {
 				return refuse("tail -5 "+name, "%s is not JUnit XML: %v", name, err)
 			}
+			if s.unnamed() {
+				return refuse("grep -n 'name=\"\"' "+name, "%s has a <testcase> with no name, so no test can be held to it", name)
+			}
 			r.junitWalk(s, base(name))
 			roots++
 		case xml.CharData:
@@ -215,6 +220,15 @@ func readJUnit(r results, name string, data []byte) error {
 		return refuse("head -5 "+name, "%s holds no <testsuites> or <testsuite>", name)
 	}
 	return nil
+}
+
+func (s junitSuite) unnamed() bool {
+	for _, c := range s.Cases {
+		if strings.TrimSpace(c.Name) == "" {
+			return true
+		}
+	}
+	return slices.ContainsFunc(s.Suites, junitSuite.unnamed)
 }
 
 func (r results) junitWalk(s junitSuite, inherited string) {
@@ -305,13 +319,31 @@ func readTAP(r results, name string, data []byte) error {
 			}
 		}
 	}
+	yaml := 0 // the line a YAML block opened on, while inside one
 	for i, raw := range strings.Split(string(data), "\n") {
 		raw = strings.TrimRight(raw, "\r")
-		line := strings.TrimLeft(raw, " ")
+		line := strings.TrimLeft(raw, " \t")
 		if line == "" {
 			continue
 		}
-		depth := (len(raw) - len(line)) / 4
+		// A YAML block (---, then ... on a line of its own) follows a test
+		// line and is its diagnostics, never TAP.
+		if yaml > 0 {
+			if strings.TrimRight(line, " \t") == "..." {
+				yaml = 0
+			}
+			continue
+		}
+		if strings.TrimRight(line, " \t") == "---" {
+			yaml = i + 1
+			continue
+		}
+		indent := raw[:len(raw)-len(line)]
+		depth := len(indent) / 4
+		tapLine := strings.HasPrefix(line, "Bail out!") || tapSubtest.MatchString(line) || tapTest.MatchString(line) || tapPlan.MatchString(line)
+		if tapLine && (strings.Contains(indent, "\t") || len(indent)%4 != 0) {
+			return refuse(fmt.Sprintf("sed -n %dp %s | cat -t", i+1, name), "%s:%d is a TAP line indented by %q; a subtest is indented four spaces a level, and a line at any other indent cannot be placed", name, i+1, indent)
+		}
 		if strings.HasPrefix(line, "Bail out!") {
 			levels[0].problems = append(levels[0].problems, "the run bailed out: "+line)
 			continue
@@ -324,10 +356,13 @@ func readTAP(r results, name string, data []byte) error {
 			open(m[1])
 			continue
 		}
+		m := tapTest.FindStringSubmatch(line)
+		if m == nil && !tapPlan.MatchString(line) {
+			continue // a comment or other output opens and closes nothing
+		}
 		for len(levels) < depth+1 {
 			open("") // a subtest with no header line, named by the line that closes it
 		}
-		m := tapTest.FindStringSubmatch(line)
 		if m != nil && m[2] == "" && strings.TrimSpace(m[3]) == "" {
 			return refuse(fmt.Sprintf("sed -n %dp %s", i+1, name), "%s:%d is a test line with neither a number nor a description", name, i+1)
 		}
@@ -341,11 +376,12 @@ func readTAP(r results, name string, data []byte) error {
 		closeTo(depth, desc)
 		l := levels[depth]
 		if p := tapPlan.FindStringSubmatch(line); p != nil {
+			if l.planned {
+				l.problems = append(l.problems, fmt.Sprintf("a second plan line at line %d (one stream has one plan)", i+1))
+				continue
+			}
 			l.plan, _ = strconv.Atoi(p[1]) // ignored: the pattern holds only digits
 			l.planned = true
-			continue
-		}
-		if m == nil {
 			continue
 		}
 		l.tests++
@@ -360,6 +396,9 @@ func readTAP(r results, name string, data []byte) error {
 	}
 	closeTo(0, "")
 	top := levels[0]
+	if yaml > 0 {
+		top.problems = append(top.problems, fmt.Sprintf("the YAML block opened at line %d never ends (no ... line)", yaml))
+	}
 	if !top.planned {
 		top.problems = append(top.problems, "the file has no plan line (1..N)")
 	} else if top.plan != top.tests {

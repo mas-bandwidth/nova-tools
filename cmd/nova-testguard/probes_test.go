@@ -32,9 +32,9 @@ var probes = map[string]struct {
 	"config-no-baseline-line-test-vanished": {code: 2, want: "c.tsv has no baseline line"},
 	"config-no-suites-empty-results":        {code: 2, want: "c.tsv has no suite line"},
 	"count-failed":                          {code: 1, want: "RED failed cards: reports 3 failed"},
-	"count-log-with-ok-line":                {code: 2, want: `cards.log:1 is not a "[SUITE: ]ran N, failed M" line`},
+	"count-log-with-ok-line":                {code: 2, want: "the result files hold 0 tests that ran"},
 	"count-ran-0":                           {code: 2, want: "the result files hold 0 tests that ran"},
-	"count-stray-line-in-build-log":         {code: 2, want: `cards.log:1 is not a "[SUITE: ]ran N, failed M" line`},
+	"count-stray-line-in-build-log":         {code: 2, want: "cards.log:3, its last line, is not"},
 	"cover-pairs-cmd-fails-late":            {code: 2, want: "table t pairs: the command"},
 	"cover-static-pairs-no-tests":           {code: 0, want: "OK:"}, // a pairs file is the repository's claim; the command that derives it is the check
 	"cover-uncovered-control":               {code: 1, want: "RED uncovered t r1 x c1"},
@@ -70,10 +70,10 @@ var probes = map[string]struct {
 	"tap-plan-short":                        {code: 1, want: "RED incomplete s: the plan is 5 tests and 1 were reported"},
 	"tap-skipping":                          {code: 1, want: "RED skip s\tb"},
 	"tap-subtest-skip":                      {code: 1, want: "RED skip s\ta/inner"},
-	"unknown-format":                        {code: 2, want: `r.txt:1 is not a "[SUITE: ]ran N, failed M" line`},
+	"unknown-format":                        {code: 2, want: "r.txt:1, its last line, is not"},
 	"vanished-control":                      {code: 1, want: "RED vanished s\tu"},
 	"write-baseline-absorbs-vanish":         {args: []string{"--config", "c.tsv", "--write-baseline", "r.xml"}, code: 1, want: "nothing written"},
-	"x-count-unprefixed":                    {code: 2, want: `cards.log:1 is not a "[SUITE: ]ran N, failed M" line`},
+	"x-count-unprefixed":                    {code: 2, want: "cards.log:4, its last line, is not"},
 }
 
 // copyProbe copies one case into dir, translating it as the comment above says,
