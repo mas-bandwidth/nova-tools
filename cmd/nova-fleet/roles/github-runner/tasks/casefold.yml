@@ -2,15 +2,28 @@
 # The case-folding scratch volume of a Linux runner host (github_runner_casefold_dir): a test that needs a file system
 # that takes Probe and probe for one name (as macOS and Windows do) runs on Linux in <dir>/scratch. An ext4 image with
 # the casefold feature (root's, github_runner_casefold_image, sparse, github_runner_casefold_size) is loop-mounted at
-# <dir> from /etc/fstab (nosuid, nodev, noexec), so it is there after a reboot; <dir>/scratch is root's, 1777 like /tmp,
-# with the casefold attribute (chattr +F), which every directory made in it inherits. The run fails, naming the cause,
-# on a kernel without ext4 casefold, an image without the feature, a scratch directory that cannot take the attribute,
-# or a probe, made as the runner login, that does not fold.
+# <dir> from /etc/fstab (nosuid, nodev, noexec; nofail with a 10 s device timeout, so a missing image never stops a
+# boot), so it is there after a reboot; <dir>/scratch is root's, 1777 like /tmp, with the casefold attribute
+# (chattr +F), which every directory made in it inherits. The run fails, naming the cause, on a kernel without ext4
+# casefold (checked under --check too), an image without the feature, a scratch directory that cannot take the
+# attribute, or a probe, made as the runner login, that does not fold.
+- name: the kernel has ext4 casefold
+  ansible.builtin.stat: { path: /sys/fs/ext4/features/casefold, get_checksum: false }
+  register: github_runner_casefold_kernel
+  check_mode: false
+
+- name: a kernel without ext4 casefold fails the run
+  ansible.builtin.fail:
+    msg: >-
+      CASEFOLD-KERNEL {{ inventory_hostname }}: kernel {{ ansible_facts['kernel'] }} has no ext4 casefold
+      (/sys/fs/ext4/features/casefold is missing); boot a kernel built with CONFIG_UNICODE, or give the host no
+      case-folding scratch: github_runner_casefold_dir: '' in host_vars/{{ inventory_hostname }}.yml beside the inventory
+  when: not github_runner_casefold_kernel.stat.exists
+
 - name: the case-folding image (ext4, casefold)
   ansible.builtin.shell: |
     set -eu
     img={{ github_runner_casefold_image | quote }}
-    [ -e /sys/fs/ext4/features/casefold ] || { echo "kernel $(uname -r) has no ext4 casefold (/sys/fs/ext4/features/casefold is missing)" >&2; exit 1; }
     if [ ! -e "$img" ]; then
       mkdir -p "$(dirname "$img")"
       rm -f "$img.new"
@@ -36,7 +49,7 @@
     path: "{{ github_runner_casefold_dir }}"
     src: "{{ github_runner_casefold_image }}"
     fstype: ext4
-    opts: loop,nosuid,nodev,noexec
+    opts: loop,nosuid,nodev,noexec,nofail,x-systemd.device-timeout=10s
     state: mounted
   become: true
   when: not ansible_check_mode
@@ -63,15 +76,16 @@
   changed_when: "'SET' in github_runner_casefold_scratch.stdout"
   when: not ansible_check_mode
 
-# The proof, as the runner login: a directory it makes in the scratch folds Probe and probe to one entry.
+# The proof, as the runner login: a directory it makes in the scratch folds Probe and probe to one entry. The trap
+# removes the probe however the script ends.
 - name: the scratch folds names for the runner login
   ansible.builtin.shell: |
     runuser -u {{ github_runner_user | quote }} -- sh -c '
       set -eu
       p=$(mktemp -d "$1/probe.XXXXXX")
+      trap "rm -rf -- \"\$p\"" EXIT
       mkdir "$p/Probe"
       if [ -d "$p/probe" ]; then r=FOLDS; else r="Probe and probe are two entries"; fi
-      rm -rf "$p"
       echo "$r"' sh {{ (github_runner_casefold_dir ~ '/scratch') | quote }}
   args: { executable: /bin/sh, chdir: / }
   become: true
