@@ -38,6 +38,8 @@
      ("ci-limit-under-load" "Measurement for ci-cold-build-limit: under fleet load with bench work on the CI hosts, schema's lang-clean (elixir) was cancelled by the 120 s limit in 5 of 11 per-commit runs on 2026-11-21 (one after its last test printed OK); its green runs took 78-109 s")
      ("ci-runner-toolchain-env" "Question for the owner: a runner service's environment exports MOO and MOO_ANALYZE (~/sdk/moo-v1.3.0), which a repository's Makefile takes with ?= over the moo its job just built, so serialize.moo's ARM64 job tested the runner's moo on 2026-11-21; should runner-wide variables exist for tools repositories build themselves")
      ("roadmap-cli-contract" "nova-roadmap meets the command-line contract: one-line refusals ending in run: nova-roadmap <verb> -h, no Go flag-package text, an entry in toolSpecs and a faults_roadmap_test.go; this changes its stderr, never a rendered page")
+     ("casefold-teardown" "nova-fleet github-runners: a host whose github_runner_casefold_dir is turned off ('' in host_vars) has its case-folding scratch taken down: the fstab line removed, the loop mount unmounted once no job holds it, and the image deleted; today turning it off leaves all three in place")
+     ("casefold-scratch-cleanup" "nova-fleet: a cleanup rule for the case-folding scratch (/srv/casefold/scratch): directories a job left behind (a killed test skips its own cleanup) are removed by age, as the health play's disk clean does for a runner's TMPDIR, so the 1G image cannot fill")
      )
    :columns (("done" "done"))
    :cells (
@@ -73,6 +75,8 @@
      ("ci-limit-under-load" "done" "t-ci-limit-under-load")
      ("ci-runner-toolchain-env" "done" "t-ci-runner-toolchain-env")
      ("roadmap-cli-contract" "done" "t-roadmap-cli-contract")
+     ("casefold-teardown" "done" "t-casefold-teardown")
+     ("casefold-scratch-cleanup" "done" "t-casefold-scratch-cleanup")
      ))
   (:id "t-reserve-slots-are-cores" :type :task :title "nova-reserve slots bound CPU, so N one-slot jobs cannot saturate a bench" :state :todo)
   (:id "t-fleet-placement" :type :task :title "Place one heavy job on the quietest bench fleet-wide" :state :todo)
@@ -112,4 +116,6 @@
   (:id "t-ci-runner-toolchain-env" :type :task :title "Question for the owner: a runner service's environment exports MOO and MOO_ANALYZE (~/sdk/moo-v1.3.0), which a repository's Makefile takes with ?= over the moo its job just built, so serialize.moo's ARM64 job tested the runner's moo on 2026-11-21; should runner-wide variables exist for tools repositories build themselves" :state :todo
    :note "Evidence: serialize.moo run 44909006657, job test on the pinned moo (ARM64) on the macOS runner studio-2. That runner's launchd plist holds MOO and MOO_ANALYZE naming ~/sdk/moo-v1.3.0/bin/moo and moo-analyze, beside every other SDK variable env.sh exports. serialize.moo's Makefile: MOO ?= $(MOO_DIST)/moo and MOO_ANALYZE ?= $(MOO_DIST)/moo-analyze. Where the values come from: cmd/nova-fleet/roles/sdk-toolchain/defaults/main.yml nova_sdk_env_files (MOO, MOO_ANALYZE, MOO_CHECKED), exported by roles/sdk-toolchain/templates/env.sh.j2; the service environment is the machine record's runner_env (github_runner_env in roles/github-runner/defaults/main.yml), written into the plist by roles/github-runner/templates/runner.plist.j2 and into the Linux unit by runner.service.j2. The two binaries were byte-identical that day, so the result stood, but the job did not test what it built. Deciding or building anything here needs the owner's go-ahead.")
   (:id "t-roadmap-cli-contract" :type :task :title "nova-roadmap meets the command-line contract" :state :todo
-   :note "Today a refusal is two lines, nova-roadmap: REFUSED: <reason> then run: nova-roadmap help, and an unknown flag prints the flag package's text; TestCLIContract checks A3, A4 and A5 against one line naming the verb. The move into nova-tools kept every byte of output, so the change is its own step.")))
+   :note "Today a refusal is two lines, nova-roadmap: REFUSED: <reason> then run: nova-roadmap help, and an unknown flag prints the flag package's text; TestCLIContract checks A3, A4 and A5 against one line naming the verb. The move into nova-tools kept every byte of output, so the change is its own step.")
+  (:id "t-casefold-teardown" :type :task :title "nova-fleet github-runners: a host whose github_runner_casefold_dir is turned off ('' in host_vars) has its case-folding scratch taken down: the fstab line removed, the loop mount unmounted once no job holds it, and the image deleted; today turning it off leaves all three in place" :state :todo)
+  (:id "t-casefold-scratch-cleanup" :type :task :title "nova-fleet: a cleanup rule for the case-folding scratch (/srv/casefold/scratch): directories a job left behind (a killed test skips its own cleanup) are removed by age, as the health play's disk clean does for a runner's TMPDIR, so the 1G image cannot fill" :state :todo)))

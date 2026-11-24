@@ -38,6 +38,8 @@ Ideas and future work for nova-tools. Nothing here is scheduled; the owner decid
 | Measurement for ci-cold-build-limit: under fleet load with bench work on the CI hosts, schema's lang-clean (elixir) was cancelled by the 120 s limit in 5 of 11 per-commit runs on 2026-11-21 (one after its last test printed OK); its green runs took 78-109 s | ❌ |
 | Question for the owner: a runner service's environment exports MOO and MOO_ANALYZE (~/sdk/moo-v1.3.0), which a repository's Makefile takes with ?= over the moo its job just built, so serialize.moo's ARM64 job tested the runner's moo on 2026-11-21; should runner-wide variables exist for tools repositories build themselves | ❌ |
 | nova-roadmap meets the command-line contract: one-line refusals ending in run: nova-roadmap <verb> -h, no Go flag-package text, an entry in toolSpecs and a faults_roadmap_test.go; this changes its stderr, never a rendered page | ❌ |
+| nova-fleet github-runners: a host whose github_runner_casefold_dir is turned off ('' in host_vars) has its case-folding scratch taken down: the fstab line removed, the loop mount unmounted once no job holds it, and the image deleted; today turning it off leaves all three in place | ❌ |
+| nova-fleet: a cleanup rule for the case-folding scratch (/srv/casefold/scratch): directories a job left behind (a killed test skips its own cleanup) are removed by age, as the health play's disk clean does for a runner's TMPDIR, so the 1G image cannot fill | ❌ |
 | complete | 0% |
 
 [Source data](roadmap.sexp)
