@@ -465,7 +465,7 @@ once the record's `runner_env` names the runner login's paths.
 Windows do, runs on a Linux runner in `/srv/casefold/scratch` (`github_runner_casefold_dir`, a directory at least two
 levels below `/`; anything else fails the run with `CASEFOLD-DIR`). The play makes root's sparse ext4 image with the
 casefold feature (`github_runner_casefold_image`, `/opt/nova/casefold.img`, at most `github_runner_casefold_size`,
-1G), loop-mounts it at that directory from `/etc/fstab` (`nosuid,nodev,noexec,nofail,x-systemd.device-timeout=10s`,
+1G), loop-mounts it at that directory from `/etc/fstab` (`nosuid,nodev,noexec,nofail,x-systemd.mount-timeout=10s`,
 so a missing image never stops a boot), and makes `scratch` in it root's, 1777 like `/tmp`, with the casefold
 attribute (`chattr +F`), which every directory made in it inherits. The scan of what the runner login can write
 leaves out `<dir>/scratch`, and only while `<dir>` is the image's own loop mount. A kernel without ext4 casefold

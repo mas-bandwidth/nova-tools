@@ -2,7 +2,7 @@
 # The case-folding scratch volume of a Linux runner host (github_runner_casefold_dir): a test that needs a file system
 # that takes Probe and probe for one name (as macOS and Windows do) runs on Linux in <dir>/scratch. An ext4 image with
 # the casefold feature (root's, github_runner_casefold_image, sparse, github_runner_casefold_size) is loop-mounted at
-# <dir> from /etc/fstab (nosuid, nodev, noexec; nofail with a 10 s device timeout, so a missing image never stops a
+# <dir> from /etc/fstab (nosuid, nodev, noexec; nofail with a 10 s mount timeout, so a missing image never stops a
 # boot), so it is there after a reboot; <dir>/scratch is root's, 1777 like /tmp, with the casefold attribute
 # (chattr +F), which every directory made in it inherits. The run fails, naming the cause, on a kernel without ext4
 # casefold (checked under --check too), an image without the feature, a scratch directory that cannot take the
@@ -49,7 +49,7 @@
     path: "{{ github_runner_casefold_dir }}"
     src: "{{ github_runner_casefold_image }}"
     fstype: ext4
-    opts: loop,nosuid,nodev,noexec,nofail,x-systemd.device-timeout=10s
+    opts: loop,nosuid,nodev,noexec,nofail,x-systemd.mount-timeout=10s
     state: mounted
   become: true
   when: not ansible_check_mode

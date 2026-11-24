@@ -1,9 +1,11 @@
 package main
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // With a runner login of its own the machine is locked down for it (roles/github-runner/tasks/lockdown.yml): the fleet
@@ -46,13 +48,20 @@ func TestRunnerLoginLockdown(t *testing.T) {
 	assert.Contains(t, sh, "for m in $(findmnt --real -rn -o TARGET -t nonfs,nfs4,cifs,smb3,9p,fuse.sshfs); do", "every local filesystem")
 	assert.Contains(t, sh, `[ -d "$m" ] || { echo "a mount the scan cannot start from: $m" >&2; exit 1; }`, "a mount find cannot start from never passes")
 	assert.Contains(t, sh, "timeout 1800 runuser -u {{ github_runner_user | quote }} -- sh -c '")
-	for _, pruned := range []string{"-path /proc", "-path /sys", "-path /dev", "-path /run", "-path /tmp", "-path /var/tmp", "-path /var/crash",
-		"-path /var/lib/php/sessions", `-path "/var/mail/$me"`, `-path "$home"`, `-path "$scratch"`, `-path "/snap/*/*/dev"`, `-path "/run/user/$uid"`, "-path /run/lock", "-path /run/screen"} {
-		assert.Contains(t, sh, pruned)
-	}
-	assert.Contains(t, sh, `-o \( -writable -o -user "$me" \) ! -type l -print`, "what it can write, and what it owns")
+	// the two find expressions whole: a prune added, widened or dropped on any line is red
+	findAt := strings.Index(sh, `  find "$@" -xdev`)
+	require.GreaterOrEqual(t, findAt, 0, "the scan's find over the local mounts")
+	findEnd := strings.Index(sh[findAt:], "  r2=$?\n")
+	require.GreaterOrEqual(t, findEnd, 0, "the scan's find over /run")
+	assert.Equal(t, `  find "$@" -xdev \( -path /proc -o -path /sys -o -path /dev -o -path /run -o -path /tmp -o -path /var/tmp \
+      -o -path /var/crash -o -path /var/lib/php/sessions -o -path "/var/mail/$me" -o -path "$home" -o -path "$scratch" \
+      -o -path "/snap/*/*/dev" \) -prune \
+    -o \( -writable -o -user "$me" \) ! -type l -print 2>/dev/null
+  r1=$?
+  find /run -xdev \( -path "/run/user/$uid" -o -path /run/lock -o -path /run/screen \) -prune \
+    -o \( -writable -o -user "$me" \) ! -type l ! -type s -print 2>/dev/null
+`, sh[findAt:findAt+findEnd], "what it can write and what it owns, but its home, the kernel's, the named scratch places and /run's sockets")
 	assert.NotContains(t, sh, "-perm -1002", "no sticky directory is shared scratch but the named ones")
-	assert.Contains(t, sh, `-o \( -writable -o -user "$me" \) ! -type l ! -type s -print`, "/run but its sockets")
 	assert.Contains(t, sh, "for s in /run/docker.sock /run/podman/podman.sock /run/containerd/containerd.sock; do")
 	assert.Contains(t, sh, "[ $r1 -le 1 ] && [ $r2 -le 1 ] && echo SCAN-DONE")
 	assert.Equal(t, false, scan["check_mode"], "read under --check too")

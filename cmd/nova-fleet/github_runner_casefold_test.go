@@ -84,10 +84,10 @@ func TestRunnerCasefoldScratch(t *testing.T) {
 	assert.Equal(t, "{{ github_runner_casefold_dir }}", mount["path"])
 	assert.Equal(t, "{{ github_runner_casefold_image }}", mount["src"])
 	assert.Equal(t, "ext4", mount["fstype"])
-	assert.Equal(t, "loop,nosuid,nodev,noexec,nofail,x-systemd.device-timeout=10s", mount["opts"])
+	assert.Equal(t, "loop,nosuid,nodev,noexec,nofail,x-systemd.mount-timeout=10s", mount["opts"])
 	opts := strings.Split(asText(mount["opts"]), ",")
 	assert.Contains(t, opts, "nofail", "a missing image does not stop the boot")
-	assert.Contains(t, opts, "x-systemd.device-timeout=10s", "nor hold it up for systemd's default 90 s")
+	assert.Contains(t, opts, "x-systemd.mount-timeout=10s", "nor hold it up for systemd's default 90 s (a file source has no device unit, so device-timeout would be ignored)")
 	assert.Equal(t, "mounted", mount["state"], "in /etc/fstab and mounted now")
 
 	scratch := asText(runnerTask(t, tasks, "the shared case-folding scratch directory (root's, 1777, chattr +F)")["ansible.builtin.shell"])
