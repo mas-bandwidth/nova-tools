@@ -50,6 +50,8 @@ type FriendStartup struct {
 	Files          []string `json:"files,omitempty"`
 	WritableDirs   []string `json:"writable_dirs,omitempty"`
 	ReadableDirs   []string `json:"readable_dirs,omitempty"`
+	BusListener    string   `json:"bus_listener,omitempty"`
+	BusOwner       string   `json:"bus_owner,omitempty"`
 	GitHubSSHAlias string   `json:"github_ssh_alias,omitempty"`
 }
 

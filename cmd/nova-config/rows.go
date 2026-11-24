@@ -206,6 +206,15 @@ func (f field) canonical(raw string) (string, error) {
 			!filepath.IsAbs(s.Home) || strings.ContainsRune(s.Home, 0) || strings.TrimSpace(s.Prefix) == "" || strings.ContainsRune(s.Prefix, 0) || len(s.Files) == 0 {
 			return "", fmt.Errorf("--startup: give a repository URL, absolute checkout, opening prefix and ordered files")
 		}
+		if s.BusOwner != "" && (s.BusOwner != "nexus-server" || s.BusListener == "") {
+			return "", fmt.Errorf("--startup: bus_owner must be nexus-server with a bus_listener endpoint, or omitted")
+		}
+		if s.BusListener != "" {
+			port, err := strconv.Atoi(strings.TrimPrefix(s.BusListener, "127.0.0.1:"))
+			if err != nil || port < 1 || port > 65535 || s.BusListener != "127.0.0.1:"+strconv.Itoa(port) {
+				return "", fmt.Errorf("--startup: bus_listener requires a loopback Redis endpoint such as 127.0.0.1:6379")
+			}
+		}
 		if s.GitHubSSHAlias != "" && (!namePattern.MatchString(s.GitHubSSHAlias) || !githubRepository.MatchString(s.Repository)) {
 			return "", fmt.Errorf("--startup: github_ssh_alias requires a host alias and a GitHub repository URL")
 		}

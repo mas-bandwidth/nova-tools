@@ -164,6 +164,14 @@ func TestFriendStartup(t *testing.T) {
 	h.ok(t, "friend", "set", "alex", "--startup", src, "--actor", "a")
 	assert.Contains(t, h.ok(t, "friend", "show", "alex", "--json"), `"startup":`+src)
 	f := kinds["friend"].findField("startup")
+	bus := strings.TrimSuffix(src, "}") + `,"bus_listener":"127.0.0.1:6379","bus_owner":"nexus-server"}`
+	got, err := f.canonical(bus)
+	require.NoError(t, err)
+	assert.JSONEq(t, bus, got)
+	for _, bad := range []string{strings.Replace(bus, "nexus-server", "unknown", 1), strings.Replace(bus, "127.0.0.1:6379", "", 1)} {
+		_, err := f.canonical(bad)
+		assert.Error(t, err)
+	}
 	for _, dirs := range []string{`[]`, `["/shared/build","/shared/cache"]`} {
 		value := strings.TrimSuffix(src, "}") + `,"writable_dirs":` + dirs + "}"
 		got, err := f.canonical(value)
