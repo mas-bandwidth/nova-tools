@@ -164,6 +164,20 @@ func TestFriendStartup(t *testing.T) {
 	h.ok(t, "friend", "set", "alex", "--startup", src, "--actor", "a")
 	assert.Contains(t, h.ok(t, "friend", "show", "alex", "--json"), `"startup":`+src)
 	f := kinds["friend"].findField("startup")
+	for _, dirs := range []string{`[]`, `["/shared/build","/shared/cache"]`} {
+		value := strings.TrimSuffix(src, "}") + `,"writable_dirs":` + dirs + "}"
+		got, err := f.canonical(value)
+		require.NoError(t, err)
+		if dirs == "[]" {
+			assert.Equal(t, src, got)
+		} else {
+			assert.Equal(t, value, got)
+		}
+	}
+	for _, dir := range []string{"relative", "/", "/cache/../else", "/cache/*"} {
+		_, err := f.canonical(strings.TrimSuffix(src, "}") + `,"writable_dirs":["` + dir + `"]}`)
+		assert.Error(t, err)
+	}
 	for _, bad := range []string{`null`, `{"extra":true}`, strings.Replace(src, "docs/start.md", "../outside", 1), strings.Replace(src, "/srv/review", "relative", 1)} {
 		_, err := f.canonical(bad)
 		assert.Error(t, err)

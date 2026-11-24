@@ -322,3 +322,7 @@ nova-config machine remove bench-a --actor ops
 pg_ctl -D "$work/pg" -m fast stop
 rm -rf "$work"
 ```
+
+A friend startup object can include `writable_dirs`, an array of additional absolute workspace directories. An omitted or empty array grants only the working directory for project writes. Configure shared build or sprint directories on each friend that uses them.
+
+Within a friend startup object, `readable_dirs` grants read-only workshop directories. `github_ssh_alias` grants Git fetch and push for the configured GitHub repository through the named SSH host identity. The host retains the private key. Both grants are optional.

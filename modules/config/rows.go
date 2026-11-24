@@ -44,10 +44,13 @@ type Machine struct {
 // FriendStartup describes the home checkout and ordered documents read at session startup.
 // An empty object means this friend has no startup definition.
 type FriendStartup struct {
-	Repository string   `json:"repository,omitempty"`
-	Home       string   `json:"home,omitempty"`
-	Prefix     string   `json:"prefix,omitempty"`
-	Files      []string `json:"files,omitempty"`
+	Repository     string   `json:"repository,omitempty"`
+	Home           string   `json:"home,omitempty"`
+	Prefix         string   `json:"prefix,omitempty"`
+	Files          []string `json:"files,omitempty"`
+	WritableDirs   []string `json:"writable_dirs,omitempty"`
+	ReadableDirs   []string `json:"readable_dirs,omitempty"`
+	GitHubSSHAlias string   `json:"github_ssh_alias,omitempty"`
 }
 
 // Friend is an AI that works on the fleet, named by its bus name.

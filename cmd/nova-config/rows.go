@@ -51,6 +51,8 @@ type kind struct {
 // Row is one row: its name, its fields as text, and its stamps (RFC 3339).
 type Row = config.Row
 
+var githubRepository = regexp.MustCompile(`^https://github[.]com/[a-zA-Z0-9_-]+/[a-zA-Z0-9_.-]+$`)
+
 var (
 	namePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 	roleWord    = regexp.MustCompile(`^(bench|runner|services)$`)
@@ -203,6 +205,14 @@ func (f field) canonical(raw string) (string, error) {
 		if _, err := (field{name: "repository", typ: "url"}).canonical(s.Repository); err != nil || s.Repository == "" ||
 			!filepath.IsAbs(s.Home) || strings.ContainsRune(s.Home, 0) || strings.TrimSpace(s.Prefix) == "" || strings.ContainsRune(s.Prefix, 0) || len(s.Files) == 0 {
 			return "", fmt.Errorf("--startup: give a repository URL, absolute checkout, opening prefix and ordered files")
+		}
+		if s.GitHubSSHAlias != "" && (!namePattern.MatchString(s.GitHubSSHAlias) || !githubRepository.MatchString(s.Repository)) {
+			return "", fmt.Errorf("--startup: github_ssh_alias requires a host alias and a GitHub repository URL")
+		}
+		for _, dir := range slices.Concat(s.WritableDirs, s.ReadableDirs) {
+			if !filepath.IsAbs(dir) || filepath.Clean(dir) != dir || dir == "/" || strings.ContainsAny(dir, "\x00\r\n*?[]") {
+				return "", fmt.Errorf("--startup: workspace grants require clean absolute directory paths below the root")
+			}
 		}
 		for _, file := range s.Files {
 			if !fs.ValidPath(file) || file == "." || strings.ContainsAny(file, "\\\x00") {
