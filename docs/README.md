@@ -43,7 +43,7 @@ also used by the fleet walkthrough; release publishing checks that it matches
 the tag. In a Bash shell, choose a tool and make a temporary installation:
 
 ```sh
-NOVA_TOOLS_VERSION=v2.0.82
+NOVA_TOOLS_VERSION=v2.0.83
 tool=bus  # bus, cairn, config, fleet, reserve, roadmap, sandbox or secrets
 work=$(mktemp -d)
 mkdir -p "$work/bin"

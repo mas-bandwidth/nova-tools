@@ -392,7 +392,10 @@ machine that no scope wants (a directory under `<home>/actions-runner` or a `git
 read from its `.runner`, and prints `RUNNER-STRAY <machine> <slug>-<i> url=<url>`. Then GitHub's list of every scope the
 fleet's records name is read: an entry named `<machine>-<i>` that the record does not want is deleted from GitHub when
 it is offline (its machine side is gone) and left when online, each printing `GITHUB-STRAY <machine> <name> <path>
-<status>`. Each machine ends with `RUNNERS-RECORD <machine> scopes=<n> want=<n> retired=<names>`. A record with
+<status>`. A scope with a set (`@<set>[/<group>]`) is a second set of runners on its url, named
+`<machine>-<set>-<i>` in directories `<slug>-<set>-<i>` and registered into GitHub runner group `<group>` (else the
+default group; a registered runner keeps its group); an offline GitHub entry of a set is not deleted by this check, only
+with its directory. Each machine ends with `RUNNERS-RECORD <machine> scopes=<n> want=<n> retired=<names>`. A record with
 `runners` above 0 and no `runner_scopes` is refused, not read as none. A Linux unit is the whole of its service: a
 drop-in directory beside it (`<unit>.service.d`) is removed. Before a runner is stopped or restarted onto a changed
 unit, the job it is running ends and no new one is handed to it (`tasks/wait-idle.yml`). A listener takes the next

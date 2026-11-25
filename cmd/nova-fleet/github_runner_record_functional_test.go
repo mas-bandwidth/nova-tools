@@ -211,3 +211,32 @@ exit 1`
 	out, err = runTasksLocally(t, tasks, map[string]any{"github_runner_dir": "/r/x-1", "github_runner_idle_retries": 2, "github_runner_idle_delay": 0}, map[string]string{"pgrep": "echo 4242"})
 	require.Error(t, err, out, "a runner that stays busy fails the run")
 }
+
+// A set (@<set>) is a second set of runners on a url: wanted as <slug>-<set>-<i> beside the url's plain <slug>-<i>, so a
+// record with both retires neither, and a set's directory above its count is a stray like any other.
+func TestFunctionalRecordWantsASetBesideItsURL(t *testing.T) {
+	t.Parallel()
+	base, units := t.TempDir(), t.TempDir()
+	for _, d := range []string{"o-r-1", "o-r-2", "o-r-nightly-1", "o-r-nightly-2", "org-1"} {
+		require.NoError(t, os.MkdirAll(filepath.Join(base, d), 0o755))
+	}
+	require.NoError(t, os.WriteFile(filepath.Join(units, "github-runner-o-r-nightly-1.service"), nil, 0o644))
+	scopes := append(slices.Clone(recordScopes), map[string]any{"url": "https://github.com/o/r", "count": 1, "labels": []any{"n"}, "set": "nightly", "group": "g"})
+	tasks := append(taskRange(t, "roles/github-runner/tasks/record.yml", "the runners the record wants", "retire each runner"),
+		map[string]any{"name": "print", "ansible.builtin.debug": map[string]any{"msg": "STRAYS={{ github_runner_record_strays | join(',') }} WANT={{ github_runner_record_want | join(',') }}"}})
+	out, err := runTasksLocally(t, tasks, map[string]any{"nova_runner_scopes": scopes, "github_runner_base_dir": base, "github_runner_unit_dir": units}, nil)
+	require.NoError(t, err, out)
+	assert.Contains(t, out, "STRAYS=o-r-nightly-2 WANT=o-r-1,o-r-2,org-1,o-r-nightly-1")
+}
+
+// A set's runners are named <host>-<set>-<i> in <slug>-<set>-<i>; a plain scope's are <host>-<i> in <slug>-<i>.
+func TestFunctionalScopeNamesASet(t *testing.T) {
+	t.Parallel()
+	tasks := append(taskRange(t, "roles/github-runner/tasks/scope.yml", "the platform, the names and the labels", "the runner count"),
+		map[string]any{"name": "print", "ansible.builtin.debug": map[string]any{"msg": "SLUG={{ github_runner_slug }} STEM={{ github_runner_name_stem }}"}})
+	for set, want := range map[string]string{"": "SLUG=o-r STEM=localhost", "nightly": "SLUG=o-r-nightly STEM=localhost-nightly"} {
+		out, err := runTasksLocally(t, tasks, map[string]any{"github_runner_url": "https://github.com/o/r", "github_runner_set": set}, nil)
+		require.NoError(t, err, out)
+		assert.Contains(t, out, want, set)
+	}
+}
