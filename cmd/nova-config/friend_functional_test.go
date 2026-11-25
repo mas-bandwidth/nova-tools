@@ -4,6 +4,8 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"testing"
 
 	config "github.com/mas-bandwidth/nova-tools/v2/modules/config"
@@ -81,4 +83,47 @@ func TestFunctionalLibrary(t *testing.T) {
 	assert.Contains(t, errs, "provider p1 is still named by models p1/org/m-1.5:q4; remove them first")
 	_, err = st.Conn().Exec(ctx, "SELECT 1")
 	require.NoError(t, err, "the snapshot's transaction is over: the connection is idle again")
+}
+
+func TestFunctionalFriendWatchTracksCommittedEdits(t *testing.T) {
+	t.Parallel()
+	env := map[string]string{"NOVA_PG_DSN": startPG(t)}
+	ctx, cancel := context.WithTimeout(context.Background(), wait)
+	defer cancel()
+	st, err := config.Open(ctx, env["NOVA_PG_DSN"], "")
+	require.NoError(t, err)
+	defer st.Close()
+	write := func(args ...string) {
+		code, _, why := realRun(t, env, append(args, "--actor", "ops")...)
+		require.Equal(t, 0, code, why)
+	}
+	done := errors.New("verified three snapshots")
+	count := 0
+	err = st.WatchFriends(ctx, func(snapshot any) error {
+		raw, err := json.Marshal(snapshot)
+		require.NoError(t, err)
+		var dir struct {
+			Friends map[string]struct {
+				Harness string
+				Enabled bool
+			}
+			Providers map[string]string
+		}
+		require.NoError(t, json.Unmarshal(raw, &dir))
+		count++
+		switch count {
+		case 1:
+			require.Empty(t, dir.Friends)
+			write("friend", "add", "example", "--harness", "engine")
+		case 2:
+			require.Equal(t, "engine", dir.Friends["example"].Harness)
+			require.True(t, dir.Friends["example"].Enabled)
+			write("harness", "add", "engine", "--display_name", "Example Service")
+		case 3:
+			require.Equal(t, "Example Service", dir.Providers["engine"])
+			return done
+		}
+		return nil
+	})
+	require.ErrorIs(t, err, done)
 }
