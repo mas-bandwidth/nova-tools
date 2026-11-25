@@ -8,6 +8,12 @@
 # github_runner_url:
 # github_runner_scope: repo | org
 github_runner_labels: []
+# A second set of runners on the same url (the record's @<set>[/<group>]): set names its runners <host>-<set>-<i> in
+# directories <slug>-<set>-<i>, apart from the url's plain ones; group is the GitHub runner group they register into
+# (config.sh --runnergroup), '' for GitHub's default. The group is read at registration only: a registered runner is
+# not moved to another group by a later run.
+github_runner_set: ""
+github_runner_group: ""
 # The labels every runner gets: on Linux and macOS before the machine's roles, os and arch, on the Windows side of a WSL
 # machine before its name (github_runner_wsl_labels). A job selects any fleet runner of its os with
 # runs-on: [self-hosted, Linux, fleet].
