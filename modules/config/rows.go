@@ -143,20 +143,16 @@ func (s *Store) Snapshot(ctx context.Context) (Snapshot, error) {
 	defer func() { _ = tx.Rollback(ctx) }() // ignored: a no-op after the commit; on failure the failure is returned
 	view := &Store{user: s.user, q: tx}
 	var snap Snapshot
-	if snap.Machines, err = view.Machines(ctx); err != nil {
-		return Snapshot{}, err
-	}
-	if snap.Friends, err = view.Friends(ctx); err != nil {
-		return Snapshot{}, err
-	}
-	if snap.Services, err = view.Services(ctx); err != nil {
-		return Snapshot{}, err
-	}
-	if snap.Providers, err = view.Providers(ctx); err != nil {
-		return Snapshot{}, err
-	}
-	if snap.Models, err = view.Models(ctx); err != nil {
-		return Snapshot{}, err
+	for _, load := range []func() error{
+		func() (e error) { snap.Machines, e = view.Machines(ctx); return },
+		func() (e error) { snap.Friends, e = view.Friends(ctx); return },
+		func() (e error) { snap.Services, e = view.Services(ctx); return },
+		func() (e error) { snap.Providers, e = view.Providers(ctx); return },
+		func() (e error) { snap.Models, e = view.Models(ctx); return },
+	} {
+		if err = load(); err != nil {
+			return Snapshot{}, err
+		}
 	}
 	return snap, s.Err(tx.Commit(ctx), "read")
 }

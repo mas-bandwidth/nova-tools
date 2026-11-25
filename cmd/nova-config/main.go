@@ -303,12 +303,7 @@ func runKind(ctx context.Context, k *kind, verb string, args []string, d deps, s
 		return err
 	}
 	if k.name == "machine" && op != "remove" { // an admin runner label is checked against every machine's runners, the row as written
-		fleetRows := []Row{after}
-		for _, r := range rows {
-			if r.Name != name {
-				fleetRows = append(fleetRows, r)
-			}
-		}
+		fleetRows := append([]Row{after}, slices.DeleteFunc(slices.Clone(rows), func(r Row) bool { return r.Name == name })...)
 		if cs := adminClashes(fleetRows, name); len(cs) > 0 {
 			msgs := []string{}
 			for _, c := range cs {

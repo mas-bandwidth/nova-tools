@@ -52,7 +52,6 @@ type Row = config.Row
 var (
 	namePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 	roleWord    = regexp.MustCompile(`^(bench|runner|services)$`)
-	keyWord     = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 	envName     = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 	tierWord    = regexp.MustCompile(`^(flash|pro|heavy|frontier)$`)
 	apiWord     = regexp.MustCompile(`^(openai|anthropic)$`)
@@ -89,7 +88,7 @@ var kinds = map[string]*kind{
 			{name: "machine", typ: "ref", required: true},
 			{name: "argv", typ: "argv", required: true},
 			{name: "seat", typ: "text"},
-			{name: "keys", typ: "list", word: keyWord},
+			{name: "keys", typ: "list", word: envName},
 			{name: "every", typ: "int"},
 			{name: "keepalive", typ: "bool"},
 			{name: "enabled", typ: "bool", def: "true"},
@@ -225,7 +224,7 @@ func (f field) canonical(raw string) (string, error) {
 			return "", fmt.Errorf("--%s: want an http or https URL with a host and no user, query or fragment, such as https://api.example.com", f.name)
 		}
 	case "secret": // never quoted back: a refused one may be the secret's value
-		if raw != "" && !keyWord.MatchString(raw) {
+		if raw != "" && !envName.MatchString(raw) {
 			return "", fmt.Errorf("--%s: want the name of the secret that holds it (letters, digits and underscores, not starting with a digit), never its value", f.name)
 		}
 	case "price":
@@ -485,18 +484,19 @@ func marshal(v any) string {
 	return strings.TrimSuffix(b.String(), "\n")
 }
 
-func (f field) zero() string {
-	switch {
-	case f.null:
-		return ""
-	case f.def != "":
-		return f.def
-	case f.typ == "int":
-		return "0"
-	case f.typ == "bool":
-		return "false"
+// joined is the problems as one error, nil when there are none.
+func joined(p []string) error {
+	if len(p) == 0 {
+		return nil
 	}
-	return ""
+	return fmt.Errorf("%s", strings.Join(p, "; "))
+}
+
+func (f field) zero() string {
+	if f.null {
+		return ""
+	}
+	return cmp.Or(f.def, map[string]string{"int": "0", "bool": "false"}[f.typ])
 }
 
 // valueError is a flag value the row refuses to take: a malformed invocation.
@@ -585,8 +585,7 @@ func fetchOnClock(argv []string) (fetcher, loop string) {
 }
 
 func checkService(r Row) error {
-	var p []string
-	var argv []string
+	var p, argv []string
 	_ = json.Unmarshal([]byte(r.F["argv"]), &argv) // ignored: canonical checked the field; a bad value has no words
 	every, _ := strconv.Atoi(r.F["every"])
 	if f, loop := fetchOnClock(argv); f != "" && (loop != "" || every > 0) {
@@ -601,10 +600,7 @@ func checkService(r Row) error {
 	if r.F["keys"] != "" && r.F["seat"] == "" {
 		p = append(p, fmt.Sprintf("service %s names secrets (--keys %s) and no --seat to open them from", r.Name, r.F["keys"]))
 	}
-	if len(p) > 0 {
-		return fmt.Errorf("%s", strings.Join(p, "; "))
-	}
-	return nil
+	return joined(p)
 }
 
 // checkMachine refuses an admin runner whose account is the machine's login, or whose label another runner of the
@@ -623,10 +619,7 @@ func checkMachine(r Row) error {
 	for _, c := range adminClashes([]Row{r}, "") {
 		p = append(p, c.msg)
 	}
-	if len(p) > 0 {
-		return fmt.Errorf("%s", strings.Join(p, "; "))
-	}
-	return nil
+	return joined(p)
 }
 
 // adminClash is one admin runner label another runner carries: machine is the admin runner's.
@@ -706,10 +699,7 @@ func checkFriend(r Row) error {
 	if t, ok := r.F["tiers"]; ok && t == "" {
 		p = append(p, fmt.Sprintf("friend %s has no --tiers; want a comma list of flash, pro, heavy, frontier", r.Name))
 	}
-	if len(p) > 0 {
-		return fmt.Errorf("%s", strings.Join(p, "; "))
-	}
-	return nil
+	return joined(p)
 }
 
 // dsnPassword says a postgres URI carries a password, in its user part or its query.
@@ -751,10 +741,7 @@ func checkRented(r Row) error {
 	if v["spot_request"] != "" && v["market"] != "spot" {
 		p = append(p, fmt.Sprintf("rented %s: --spot_request is a spot box's, and its --market is %q; set --market spot or --spot_request ''", r.Name, v["market"]))
 	}
-	if len(p) > 0 {
-		return fmt.Errorf("%s", strings.Join(p, "; "))
-	}
-	return nil
+	return joined(p)
 }
 
 // rentHandles names what a rented record still holds at its provider that can bill (its box, its spot request), or
