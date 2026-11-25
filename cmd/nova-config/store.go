@@ -159,17 +159,18 @@ func arg(f field, v string) any {
 func writeSQL(k *kind, op, name string, before, after Row) (string, []any) {
 	args := []any{name}
 	var cols, marks, sets, olds []string
-	for _, f := range k.fields {
-		args = append(args, arg(f, after.F[f.name]))
+	put := func(f field, v string) {
+		args = append(args, arg(f, v))
 		n := "$" + strconv.Itoa(len(args))
 		cols, marks, sets = append(cols, ident(f.name)), append(marks, n), append(sets, ident(f.name)+" = "+n)
+	}
+	for _, f := range k.fields {
+		put(f, after.F[f.name])
 		olds = append(olds, "'"+f.name+"', coalesce("+ident(f.name)+"::text, '')")
 	}
 	for _, f := range k.extra { // write-only: named only when given, so an add leaves the column's default; never in the match
 		if v, ok := after.F[f.name]; ok {
-			args = append(args, arg(f, v))
-			n := "$" + strconv.Itoa(len(args))
-			cols, marks, sets = append(cols, ident(f.name)), append(marks, n), append(sets, ident(f.name)+" = "+n)
+			put(f, v)
 		}
 	}
 	same := " AND jsonb_build_object(" + strings.Join(olds, ", ") + ") = $%d::jsonb"
@@ -188,10 +189,7 @@ func (p pgStore) Write(ctx context.Context, k *kind, op string, before, after Ro
 		return 0, p.Err(err, op)
 	}
 	defer func() { _ = tx.Rollback(ctx) }() // ignored: a no-op after the commit; on failure the failure is returned
-	name := after.Name
-	if name == "" {
-		name = before.Name
-	}
+	name := cmp.Or(after.Name, before.Name)
 	q, args := writeSQL(k, op, name, before, after)
 	tag, err := tx.Exec(ctx, q, args...)
 	if err != nil {

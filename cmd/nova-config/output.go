@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -57,10 +58,7 @@ func value(s string) string {
 func jsonValue(f field, v string) string {
 	switch f.typ {
 	case "int":
-		if v == "" {
-			return "null"
-		}
-		return v
+		return cmp.Or(v, "null")
 	case "bool":
 		return v
 	case "argv":
