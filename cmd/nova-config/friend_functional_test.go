@@ -85,7 +85,9 @@ func TestFunctionalLibrary(t *testing.T) {
 	require.NoError(t, err, "the snapshot's transaction is over: the connection is idle again")
 }
 
-func TestFunctionalFriendWatchTracksCommittedEdits(t *testing.T) {
+// TestFunctionalWatch (short: macOS caps the socket path, which holds the test name, at 103 bytes): friend watch emits
+// the directory, then again after each committed friend or harness write.
+func TestFunctionalWatch(t *testing.T) {
 	t.Parallel()
 	env := map[string]string{"NOVA_PG_DSN": startPG(t)}
 	ctx, cancel := context.WithTimeout(context.Background(), wait)
