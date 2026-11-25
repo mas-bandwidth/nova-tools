@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -32,7 +33,7 @@ type change struct {
 }
 
 func newFake() *fake {
-	return &fake{rows: map[string]map[string]Row{"machine": {}, "service": {}, "friend": {}, "rented": {}, "provider": {}, "model": {}}}
+	return &fake{rows: map[string]map[string]Row{"machine": {}, "service": {}, "friend": {}, "rented": {}, "provider": {}, "model": {}, "harness": {}}}
 }
 
 func (f *fake) List(_ context.Context, k *kind) ([]Row, error) {
@@ -92,6 +93,23 @@ func (f *fake) History(_ context.Context, q HistoryQuery) ([]HistoryEntry, error
 }
 
 func (f *fake) Close() {}
+
+// WatchFriends emits the directory of the friend rows twice, as a write between them would, then ends as a store
+// that went away does: with f.failure, or errStoreGone.
+func (f *fake) WatchFriends(_ context.Context, emit func(any) error) error {
+	for range 2 {
+		friends := map[string]any{}
+		for n, r := range f.rows["friend"] {
+			friends[n] = map[string]any{"harness": r.F["harness"], "enabled": r.F["enabled"] == "true"}
+		}
+		if err := emit(map[string]any{"friends": friends, "providers": map[string]string{}}); err != nil {
+			return err
+		}
+	}
+	return cmp.Or(f.failure, errStoreGone)
+}
+
+var errStoreGone = errors.New("postgres: connection refused")
 
 // harness runs nova-config against one fake store, with NOVA_PG_DSN set.
 type harness struct {
@@ -392,7 +410,8 @@ func TestKindsAreTheLibraryColumns(t *testing.T) {
 		}
 		assert.Equal(t, cols, fields, name)
 	}
-	assert.Len(t, kinds, 6, "the five above and rented, which no library reader needs")
+	assert.Equal(t, "display_name", kinds["harness"].fields[0].name)
+	assert.Len(t, kinds, 7, "the five above plus rented and harness")
 }
 
 // TestSQLNamesItsColumns holds the writes to the fields they know, so a store
@@ -446,4 +465,36 @@ func TestUnknownOldRoleIsRead(t *testing.T) {
 	assert.Contains(t, h.ok(t, "inventory"), `"bench": {`+"\n"+`    "hosts": [`+"\n"+`      "bench-a"`)
 	h.ok(t, "machine", "set", "bench-a", "--note", "n", "--actor", "a")
 	assert.Equal(t, "bench,coordination", h.st.rows["machine"]["bench-a"].F["roles"], "a set that leaves roles alone keeps them")
+}
+
+// friend watch prints one JSON line per directory, or with --output leaves the file holding the last one and no
+// temporary file beside it; it ends with the store's failure (exit 2), for a service manager to restart it.
+func TestFriendWatch(t *testing.T) {
+	h := newHarness()
+	h.ok(t, "friend", "add", "stella", "--harness", "codex", "--actor", "t")
+	code, out, errs := h.run(t, "friend", "watch")
+	assert.Equal(t, 2, code)
+	assert.Equal(t, "nova-config friend watch: postgres: connection refused\n", errs)
+	lines := strings.Split(strings.TrimSuffix(out, "\n"), "\n")
+	require.Len(t, lines, 2)
+	assert.JSONEq(t, `{"friends":{"stella":{"harness":"codex","enabled":true}},"providers":{}}`, lines[1])
+
+	dir := t.TempDir()
+	path := dir + "/nova-friends.json"
+	code, out, _ = h.run(t, "friend", "watch", "--output", path)
+	assert.Equal(t, 2, code)
+	assert.Empty(t, out)
+	b, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.JSONEq(t, lines[1], string(b))
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	assert.Len(t, entries, 1, "the temporary file was renamed over the output")
+
+	code, _, errs = h.run(t, "friend", "watch", "extra")
+	assert.Equal(t, 2, code)
+	assert.Contains(t, errs, "nova-config friend watch: takes no arguments")
+	code, _, errs = h.run(t, "friend", "watch", "--output", dir+"/missing/x.json")
+	assert.Equal(t, 2, code, "an output it cannot write ends the watch")
+	assert.Contains(t, errs, "no such file or directory")
 }

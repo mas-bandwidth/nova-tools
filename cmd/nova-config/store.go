@@ -25,6 +25,8 @@ type Store interface {
 	Write(ctx context.Context, k *kind, op string, before, after Row, actor, reason string, dry bool) (int64, error)
 	// History returns history rows, newest first.
 	History(ctx context.Context, q HistoryQuery) ([]HistoryEntry, error)
+	// WatchFriends emits the friend directory now and after each committed friend or harness write (config.Store.WatchFriends).
+	WatchFriends(ctx context.Context, emit func(any) error) error
 	Close()
 }
 
@@ -79,11 +81,7 @@ func openPG(ctx context.Context, dsn, password string) (Store, error) {
 }
 
 func (p pgStore) List(ctx context.Context, k *kind) ([]Row, error) {
-	var cols []string
-	for _, f := range k.fields {
-		cols = append(cols, f.name)
-	}
-	return p.Rows(ctx, k.table, cols)
+	return p.Rows(ctx, k.table, k.names())
 }
 
 // historySQL reads the history, newest first; $1 and $2 are a kind and a name

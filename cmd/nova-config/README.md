@@ -124,6 +124,15 @@ which write the `width` and `tiers` columns of `config.friends` that nova-sprint
 them. Each flag is kept only until nova-sprint reads widths and tiers from its own store, and is removed in the release
 that drops the columns.
 
+A friend’s `harness` names its sign-in provider. Store the display name once with
+`nova-config harness add <harness> --display_name '<display name>'`. Change it with
+`nova-config harness set`. The harness ID supplies the label when no mapping exists.
+
+`nova-config friend watch` streams a JSON directory immediately and after committed friend or harness
+edits. It includes friend names, harness IDs, models, enabled flags and a shared provider-name map.
+With `--output <path>` it atomically replaces a snapshot file. Run it under a service manager to
+reconnect after a database outage. A new connection receives the complete current directory.
+
 ```text
 nova-config friend add <friend> --harness <harness> --model <model> --pronouns she/her --actor ops
 nova-config friend show <friend>

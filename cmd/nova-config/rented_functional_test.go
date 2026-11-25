@@ -25,7 +25,7 @@ func TestFunctionalOldStore(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = c.Close(ctx) }() // ignored: closing the check connection
 	columns := func() []string {
-		rows, err := c.Query(ctx, `SELECT table_name || '.' || column_name || ' ' || data_type || ' ' || coalesce(column_default, '') FROM information_schema.columns WHERE table_schema = 'config' AND table_name NOT IN ('rented', 'providers', 'models') AND (table_name, column_name) <> ('machines', 'routes') ORDER BY table_name, ordinal_position`)
+		rows, err := c.Query(ctx, `SELECT table_name || '.' || column_name || ' ' || data_type || ' ' || coalesce(column_default, '') FROM information_schema.columns WHERE table_schema = 'config' AND table_name NOT IN ('rented', 'providers', 'models', 'harnesses') AND (table_name, column_name) <> ('machines', 'routes') ORDER BY table_name, ordinal_position`)
 		require.NoError(t, err)
 		out, err := pgx.CollectRows(rows, pgx.RowTo[string])
 		require.NoError(t, err)
