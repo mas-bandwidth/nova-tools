@@ -270,18 +270,17 @@ func canonicalEnv(f field, raw string) (string, error) {
 }
 
 // scopeTarget is where a runner registers (a repository or an organization on github.com); scopeLabel one label;
-// scopeSet a runner set's name; scopeGroup a GitHub runner group's name.
+// scopeSet a second set's name, never win... (the Windows side's runners are <machine>-win-...), then its group's.
 var (
 	scopeTarget = regexp.MustCompile(`^https://github\.com/[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)?$`)
 	scopeLabel  = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 	scopeSet    = regexp.MustCompile(`^[a-z][a-z0-9-]{0,30}[a-z0-9]$`)
-	scopeGroup  = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
+	scopeGroup  = regexp.MustCompile(`^(/[A-Za-z0-9._-]+)?$`)
 )
 
 // runnerScope is one target of runner_scopes or windows_runners: count runners on url (a repository or an
-// organization), and the labels added to the ones the role always gives. Set, when given, is a second set of runners
-// on the same url, named <machine>-<set>-<i> in directories <owner>[-<repo>]-<set>-<i>; Group, when given, is the
-// GitHub runner group the set registers into (else GitHub's default group). Its json is the inventory's
+// organization), and the labels added to the ones the role always gives; Set a second set of runners on the url
+// (<machine>-<set>-<i>, in <owner>[-<repo>]-<set>-<i>), and Group the runner group it joins. Its json is the inventory's
 // nova_runner_scopes or nova_windows_runners entry.
 type runnerScope struct {
 	URL    string   `json:"url"`
@@ -291,13 +290,12 @@ type runnerScope struct {
 	Group  string   `json:"group,omitempty"`
 }
 
-// dir is the stem of the runner directories and services the play gives the scope: <owner>[-<repo>][-<set>].
+// dir is the stem of the play's runner directories for the scope; suffix its @<set>[/<group>] as written.
 func (w runnerScope) dir() string {
-	d := strings.ReplaceAll(strings.TrimPrefix(w.URL, "https://github.com/"), "/", "-")
-	if w.Set != "" {
-		d += "-" + w.Set
-	}
-	return strings.ToLower(d)
+	return strings.ToLower(strings.ReplaceAll(strings.TrimPrefix(w.URL, "https://github.com/"), "/", "-") + strings.TrimSuffix("-"+w.Set, "-"))
+}
+func (w runnerScope) suffix() string {
+	return strings.TrimSuffix("@"+w.Set+strings.TrimSuffix("/"+w.Group, "/"), "@")
 }
 
 // parseScopes reads `<url>=<count>[:<label>+<label>...][@<set>[/<group>]]`, comma-separated: the targets sorted by
@@ -322,46 +320,31 @@ func parseScopes(raw string) ([]runnerScope, error) {
 				return nil, fmt.Errorf("%q: label %q: want letters, digits, dot, dash and underscore", e, l)
 			}
 		}
-		if at {
-			var slash bool
-			w.Set, w.Group, slash = strings.Cut(set, "/")
-			if !scopeSet.MatchString(w.Set) || strings.HasPrefix(w.Set, "win") || (slash && !scopeGroup.MatchString(w.Group)) {
-				return nil, fmt.Errorf("%q: want @<set>[/<group>], the set 2 to 32 lower-case letters, digits and dashes, starting with a letter, ending with a letter or digit, and not with win (the Windows side's runners are <machine>-win-...), the group letters, digits, dot, dash and underscore", e)
-			}
-			if slash && strings.Count(w.URL, "/") == 4 {
-				return nil, fmt.Errorf("%q: a runner group (/<group>) is an organization's; a repository's runners have none", e)
-			}
+		w.Set, w.Group, _ = strings.Cut(set, "/")
+		if at && (!scopeSet.MatchString(w.Set) || strings.HasPrefix(w.Set, "win") || !scopeGroup.MatchString(strings.TrimPrefix(set, w.Set)) || (w.Group != "" && strings.Count(w.URL, "/") == 4)) {
+			return nil, fmt.Errorf("%q: want @<set>[/<group>], the set 2 to 32 lower-case letters, digits and dashes, from a letter to a letter or digit, never win...; the group letters, digits, dot, dash and underscore, an organization's only", e)
 		}
 		slices.Sort(w.Labels)
 		w.Labels = slices.Compact(w.Labels)
 		if i := slices.IndexFunc(out, func(o runnerScope) bool { return o.dir() == w.dir() }); i >= 0 {
-			if strings.EqualFold(out[i].URL, w.URL) && out[i].Set == w.Set {
-				return nil, fmt.Errorf("%s is named twice; give each url once, or a second set of runners with @<set>", w.URL+strings.TrimSuffix("@"+w.Set, "@"))
-			}
-			return nil, fmt.Errorf("%s and %s would share the runner directories %s-<i>; give the set another name", out[i].URL+strings.TrimSuffix("@"+out[i].Set, "@"), w.URL+strings.TrimSuffix("@"+w.Set, "@"), w.dir())
+			return nil, fmt.Errorf("%s and %s are named twice (runners %s-<i>); give each url once, a second set its own @<set>", out[i].URL+out[i].suffix(), w.URL+w.suffix(), w.dir())
 		}
 		out = append(out, w)
 	}
-	slices.SortFunc(out, func(a, b runnerScope) int {
-		return cmp.Or(strings.Compare(a.URL, b.URL), strings.Compare(a.Set, b.Set))
-	})
+	slices.SortFunc(out, func(a, b runnerScope) int { return cmp.Compare(a.URL+" "+a.Set, b.URL+" "+b.Set) })
 	return out, nil
 }
 
-// canonicalScopes is a runner_scopes or windows_runners value as it is stored: parseScopes' targets, written back. A
-// set is for runner_scopes only: the windows-runners play names one set per url.
+// canonicalScopes is a runner_scopes or windows_runners value as it is stored: parseScopes' targets, written back; a set
+// is runner_scopes' only (the windows-runners play names one per url).
 func canonicalScopes(f field, raw string) (string, error) {
 	ws, err := parseScopes(raw)
 	parts := []string{}
 	for _, w := range ws {
 		if w.Set != "" && f.name != "runner_scopes" {
-			err = cmp.Or(err, fmt.Errorf("%s@%s: a set of runners (@<set>) is for runner_scopes only", w.URL, w.Set))
+			err = cmp.Or(err, fmt.Errorf("%s%s: a set (@<set>) is runner_scopes' only", w.URL, w.suffix()))
 		}
-		p := w.URL + "=" + strconv.Itoa(w.Count) + strings.TrimSuffix(":"+strings.Join(w.Labels, "+"), ":")
-		if w.Set != "" {
-			p += "@" + w.Set + strings.TrimSuffix("/"+w.Group, "/")
-		}
-		parts = append(parts, p)
+		parts = append(parts, w.URL+"="+strconv.Itoa(w.Count)+strings.TrimSuffix(":"+strings.Join(w.Labels, "+"), ":")+w.suffix())
 	}
 	if err != nil {
 		return "", fmt.Errorf("--%s %v", f.name, err)
