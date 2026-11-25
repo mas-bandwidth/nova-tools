@@ -325,8 +325,11 @@ func parseScopes(raw string) ([]runnerScope, error) {
 		if at {
 			var slash bool
 			w.Set, w.Group, slash = strings.Cut(set, "/")
-			if !scopeSet.MatchString(w.Set) || (slash && !scopeGroup.MatchString(w.Group)) {
-				return nil, fmt.Errorf("%q: want @<set>[/<group>], the set a lower-case letter then lower-case letters, digits and dashes (2 to 32), the group letters, digits, dot, dash and underscore", e)
+			if !scopeSet.MatchString(w.Set) || strings.HasPrefix(w.Set, "win") || (slash && !scopeGroup.MatchString(w.Group)) {
+				return nil, fmt.Errorf("%q: want @<set>[/<group>], the set 2 to 32 lower-case letters, digits and dashes, starting with a letter, ending with a letter or digit, and not with win (the Windows side's runners are <machine>-win-...), the group letters, digits, dot, dash and underscore", e)
+			}
+			if slash && strings.Count(w.URL, "/") == 4 {
+				return nil, fmt.Errorf("%q: a runner group (/<group>) is an organization's; a repository's runners have none", e)
 			}
 		}
 		slices.Sort(w.Labels)
@@ -335,7 +338,7 @@ func parseScopes(raw string) ([]runnerScope, error) {
 			if strings.EqualFold(out[i].URL, w.URL) && out[i].Set == w.Set {
 				return nil, fmt.Errorf("%s is named twice; give each url once, or a second set of runners with @<set>", w.URL+strings.TrimSuffix("@"+w.Set, "@"))
 			}
-			return nil, fmt.Errorf("%s and %s would share the runner directories %s-<i>; give the set another name", out[i].URL+"@"+out[i].Set, w.URL+strings.TrimSuffix("@"+w.Set, "@"), w.dir())
+			return nil, fmt.Errorf("%s and %s would share the runner directories %s-<i>; give the set another name", out[i].URL+strings.TrimSuffix("@"+out[i].Set, "@"), w.URL+strings.TrimSuffix("@"+w.Set, "@"), w.dir())
 		}
 		out = append(out, w)
 	}
