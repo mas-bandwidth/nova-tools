@@ -44,6 +44,7 @@ type Machine struct {
 // FriendStartup describes the home checkout and ordered documents read at session startup.
 // An empty object means this friend has no startup definition.
 type FriendStartup struct {
+	NoSandbox      bool     `json:"no_sandbox,omitempty"`
 	Repository     string   `json:"repository,omitempty"`
 	Home           string   `json:"home,omitempty"`
 	Prefix         string   `json:"prefix,omitempty"`
