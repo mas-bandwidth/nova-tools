@@ -57,7 +57,7 @@ func TestFunctionalSDKAsideNamesHandEntriesAndThePlaysOwn(t *testing.T) {
 func TestFunctionalSDKAsideMovesEachEntryAndNeverOverwrites(t *testing.T) {
 	t.Parallel()
 	if runtime.GOOS != "linux" {
-		t.Skip("the script reads GNU stat; the shared SDK is Linux only")
+		t.Skip("the script runs GNU stat and mv -T; the shared SDK is Linux only")
 	}
 	tmp := t.TempDir()
 	sdk, aside := filepath.Join(tmp, "sdk"), filepath.Join(tmp, "aside")
@@ -87,6 +87,9 @@ func TestFunctionalSDKAsideMovesEachEntryAndNeverOverwrites(t *testing.T) {
 
 func TestFunctionalSDKShareHeldMoveKeepsEachPath(t *testing.T) {
 	t.Parallel()
+	if runtime.GOOS != "linux" {
+		t.Skip("the script runs GNU mv -T; the shared SDK is Linux only")
+	}
 	tmp := t.TempDir()
 	own, aside := filepath.Join(tmp, "sdk"), filepath.Join(tmp, "aside")
 	makeTree(t, own, []string{"rustup-1.29.1/toolchains/stable/lib", "opam/default/lib/extra", "go1.26.6/bin"}, []string{"go1.26.6/bin/go"}, nil)
