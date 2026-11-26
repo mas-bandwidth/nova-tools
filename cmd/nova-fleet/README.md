@@ -1729,7 +1729,9 @@ built from in `~/sdk/moo-v<version>/PIN` and, beside the analyzer, `bin/PIN`; an
 wheels (`python3.11`, `python3.15`, as `~/sdk/python-<version>`), CRuby 3.4 (the floor) and 4.0 built from source with YJIT
 and psych against a pinned libyaml source, each with RuboCop, Steep and RBS from hash-locked source gems (`ruby3.4`, `ruby4.0`,
 as `~/sdk/ruby-<version>`, named by `RUBY_FLOOR` and `RUBY`), serialize v2.1.1's release tree, the family corpus, as
-`~/sdk/serialize-v2.1.1` (its commit in `PIN`, nothing built or linked), clang-format, LLVM (as `~/sdk/llvm`, not on PATH), cppcheck, AFL++ and Frama-C with Alt-Ergo and Why3 in their own opam root (`~/sdk/opam`). A Mac gets the tools
+`~/sdk/serialize-v2.1.1` (its commit in `PIN`, nothing built or linked), clang-format, LLVM (as `~/sdk/llvm`, not on PATH), cppcheck, AFL++, Frama-C with Alt-Ergo and Why3 in their own opam root (`~/sdk/opam`), MrDocs, FFmpeg (built from
+its release tarball), KataGo with its networks, a gtp config and `~/sdk/katago/katago.env`, and SharpFuzz's command line
+(a wrapper on the SDK's dotnet). A Mac gets the tools
 with a `darwin` pin: Go, Node, Dart, Erlang/OTP, Elixir, the JDK, .NET, Lua, StyLua, Luau, moo, Goose, Lobster, the
 double Squirrel, CPython 3.11 and 3.15 with mypy, CRuby 3.4 and 4.0 with their analyzers, the checked moo, serialize's tree, and Rust. Erlang/OTP there is built from the release's source (hex.pm
 publishes no macOS build), with crypto and ssl linked statically against Homebrew's `openssl@3` or `openssl@4`, one of which must be on the
