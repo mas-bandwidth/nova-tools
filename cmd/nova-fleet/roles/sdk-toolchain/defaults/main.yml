@@ -22,6 +22,11 @@ nova_sdk_dir: "{{ ansible_facts['user_dir'] }}/sdk"
 # nova_sdk_dir stays in use; once every tool is in place nova_sdk_dir becomes a link to it and the old one is deleted.
 nova_sdk_shared: "{{ ansible_facts['system'] == 'Linux' and 'runner' in group_names and github_runner_user != ansible_facts['user_id'] }}"
 
+# nova_sdk_shared: where what no pin names is moved, each entry under its own name, rather than failing the run
+# (SDK-TOOLCHAIN UNPINNED for a hand entry in the shared SDK, SHARE-HELD for what only the old ~/sdk holds); an absolute
+# directory outside the SDK, given for one run (-e nova_sdk_aside_dir=/home/nova/sdk-aside-<date>). Empty: nothing moves.
+nova_sdk_aside_dir: ""
+
 # Linux: ~/.bashrc sources env.sh on its first line (before any early return for a non-interactive shell), unless a
 # line of it already names sdk/env.sh. A Mac's shell files are left as they are.
 nova_sdk_shell_rc: true

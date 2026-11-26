@@ -14,6 +14,46 @@
   changed_when: "'SET' in github_runner_home_closed.stdout"
   when: not ansible_check_mode
 
+# A snap whose service leaves a socket every login may write (github_runner_snaps_off): Canonical's hwctl
+# certification client puts a world-writable /var/snap/hwctl/common/hwctl.varlink in front of a root daemon, which the
+# scan below refuses (RUNNER-LOGIN-WRITABLE). Its services are stopped and disabled (snap stop --disable; undo: snap
+# start --enable <snap>), then the socket file goes once nothing listens on it. A machine without the snap is left as it is.
+- name: the services of each snap a runner login must not reach (a read)
+  ansible.builtin.shell: |
+    command -v snap >/dev/null 2>&1 || { echo ABSENT; exit 0; }
+    snap list {{ item.snap | quote }} >/dev/null 2>&1 || { echo ABSENT; exit 0; }
+    snap services {{ item.snap | quote }} | awk 'NR > 1 && ($2 == "enabled" || $3 == "active") { on = 1 } END { print (on ? "ON" : "OFF") }'
+  args: { executable: /bin/sh }
+  become: true
+  register: github_runner_snaps
+  changed_when: false
+  check_mode: false
+  loop: "{{ github_runner_snaps_off }}"
+  loop_control: { label: "{{ item.snap }}" }
+
+- name: each such snap's services are stopped and disabled
+  ansible.builtin.command: { argv: [snap, stop, --disable, "{{ item.item.snap }}"] }
+  become: true
+  loop: "{{ github_runner_snaps.results }}"
+  loop_control: { label: "{{ item.item.snap }}" }
+  when: (item.stdout | trim) == 'ON'
+
+- name: each such snap's socket file goes once nothing listens on it
+  ansible.builtin.shell: |
+    set -eu
+    s={{ item.socket | quote }}
+    [ -S "$s" ] || { echo ABSENT; exit 0; }
+    if ss -xlnH | awk -v s="$s" '$5 == s { found = 1 } END { exit !found }'; then echo "LISTENING $s"; exit 0; fi
+    rm -f -- "$s"
+    echo REMOVED
+  args: { executable: /bin/sh }
+  become: true
+  register: github_runner_snap_socket
+  changed_when: "'REMOVED' in github_runner_snap_socket.stdout"
+  loop: "{{ github_runner_snaps_off }}"
+  loop_control: { label: "{{ item.socket }}" }
+  when: not ansible_check_mode
+
 # cloud-init (cloud images: EC2's Ubuntu among them) keeps root's temporary files in /run/cloud-init/tmp, and when it
 # finds that directory missing at boot it makes it 1777 (temp_utils._tempfile_dir_arg: makedirs, then chmod 0o1777); it
 # never changes one that is there. Every login could then plant files a root process reads, which the scan below

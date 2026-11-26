@@ -220,3 +220,17 @@ github_runner_windows_path:
   - 'C:\Windows\System32\Wbem'
   - 'C:\Windows\System32\WindowsPowerShell\v1.0'
   - 'C:\Windows\System32\OpenSSH'
+
+# Linux, a runner login of its own (lockdown.yml): snaps whose services leave a socket every login may write, each
+# stopped and disabled and its socket file removed once nothing listens on it. hwctl is Canonical's certification
+# client, preinstalled on some OEM Ubuntu images (amd-1, amd-2, amd-3, intel).
+github_runner_snaps_off:
+  - { snap: hwctl, socket: /var/snap/hwctl/common/hwctl.varlink }
+
+# Linux, a runner login of its own (unix-login.yml): an account already named github_runner_user with a uid below 1000
+# (one made by hand before the play) is refused unless this is true for the run. Then it is retired only when nothing
+# uses it (no process, systemd unit, sudoers or cron entry, ssh key in use, login record or file outside its home): its
+# home is archived to /var/backups/<user>-old-home-<date>-<machine>.tgz (0600, every entry checked), the account is
+# deleted (userdel, never -r) and the home moved to /var/backups/<user>-old-home-dir-<machine> (0700). Undo: useradd
+# with the old uid and move the home back.
+github_runner_retire_stale_login: false
