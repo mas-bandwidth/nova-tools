@@ -832,6 +832,108 @@ nova_sdk_tools:
       [ -e "$HOME/.why3.conf" ] || opam exec --switch=default -- why3 config detect >/dev/null 2>&1 || true
     linux: {}
 
+  # MrDocs, for rocketnet's C++ API reference (tools/docs/mrdocs.sh takes the mrdocs on PATH at its pinned version).
+  # The digest is the release asset's on GitHub.
+  - name: mrdocs
+    version: "2026.9.29"
+    dir: mrdocs-2026.9.29
+    probe: bin/mrdocs
+    links: [bin/mrdocs]
+    linux:
+      url: https://github.com/cppalliance/mrdocs/releases/download/2026.9.29/MrDocs-2026.9.29-Linux.tar.gz
+      sha256: dc7e066cda9a16471d59ac5e72a41f8dc908af4ca544856bd9a2223c54c9ccfd
+
+  # FFmpeg and ffprobe, for the Virtual Go and pingpong render checks: built from the ffmpeg.org release tarball (its
+  # sha256 pinned once its signature verified against the FFmpeg release key, FCF986EA15E6E293A5644F10B4322F04D67658D8),
+  # with no library but zlib (--disable-autodetect; nasm and zlib1g-dev come from runner-packages).
+  - name: ffmpeg
+    version: "9.0.2"
+    dir: ffmpeg-9.0.2
+    probe: bin/ffmpeg
+    links: [bin/ffmpeg, bin/ffprobe]
+    build: |
+      mv "$dest" "$stage/s"
+      cd "$stage/s"
+      { ./configure --prefix="$dest" --disable-doc --disable-ffplay --disable-autodetect --enable-zlib \
+          && nice -n 15 make -j"$jobs" && make install DESTDIR="$stage/d"; } >"$stage/build.log" 2>&1 || { tail -40 "$stage/build.log"; exit 1; }
+      mv "$stage/d$dest" "$dest"
+    linux:
+      url: https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz
+      sha256: 8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e
+
+  # KataGo, the Virtual Go opponent: the CPU (Eigen, AVX2) build of the release, its digest the release asset's.
+  - name: katago
+    version: "1.18.1"
+    dir: katago-1.18.1-eigenavx2
+    probe: katago
+    links: [katago]
+    build: chmod 0755 katago
+    linux:
+      url: https://github.com/lightvector/KataGo/releases/download/v1.18.1/katago-v1.18.1-eigenavx2-linux-x64.zip
+      sha256: 33e79780dbe3bf6ee859e16f64952cdfc90f7210c8f71ad978ffcba85ad20d79
+
+  # KataGo's networks and settings, in <sdk>/katago where Virtual Go's script/test/functional/vs_ai_katago.sh reads
+  # katago.env (KATAGO_BIN, KATAGO_MODEL, KATAGO_CONFIG): the kata1 b18 network from katagotraining.org and the b18
+  # human network from KataGo's v1.15.0 release, each held to its sha256 (the human network's publisher gives none: it
+  # is the file's, recorded when it was first pinned), and a gtp config.
+  - name: katago-nets
+    version: "s9996604416"
+    dir: katago
+    probe: nets/kata1-b18c384nbt-s9996604416-d4316597426.bin.gz
+    kind: script
+    build: |
+      mkdir -p "$stage/k/nets"
+      get() { curl -fsSL --retry 3 -o "$stage/k/nets/$2" "$1" && echo "$3  $stage/k/nets/$2" | sha256sum -c --quiet -; }
+      get https://media.katagotraining.org/uploaded/networks/models/kata1/kata1-b18c384nbt-s9996604416-d4316597426.bin.gz \
+        kata1-b18c384nbt-s9996604416-d4316597426.bin.gz 9d7a6afed8ff5b74894727e156f04f0cd36060a24824892008fbb6e0cba51f1d
+      get https://github.com/lightvector/KataGo/releases/download/v1.15.0/b18c384nbt-humanv0.bin.gz \
+        b18c384nbt-humanv0.bin.gz 637746e44f0efe00ad1245a50aa9bbf0716efe364c43965ead97bd6835d84ab5
+      chmod 0644 "$stage"/k/nets/*
+      cat >"$stage/k/gtp.cfg" <<'EOF'
+      # written by the sdk-toolchain role (nova-fleet sdk-toolchain)
+      logAllGTPCommunication = false
+      logSearchInfo = false
+      logToStderr = false
+      ponderingEnabled = false
+      numSearchThreads = 8
+      numEigenThreadsPerModel = 8
+      maxVisits = 800
+      rules = japanese
+      allowResignation = true
+      resignThreshold = -0.90
+      resignConsecTurns = 3
+      EOF
+      cat >"$stage/k/katago.env" <<'EOF'
+      # written by the sdk-toolchain role (nova-fleet sdk-toolchain): . {{ sdk_dir }}/katago/katago.env
+      export KATAGO_BIN="{{ sdk_dir }}/bin/katago"
+      export KATAGO_MODEL="{{ sdk_dir }}/katago/nets/kata1-b18c384nbt-s9996604416-d4316597426.bin.gz"
+      export KATAGO_CONFIG="{{ sdk_dir }}/katago/gtp.cfg"
+      EOF
+      mv "$stage/k" "$dest"
+    linux: {}
+
+  # SharpFuzz's command line, which instruments a .NET assembly for AFL++ and libFuzzer: a dotnet tool from nuget.org,
+  # installed by the SDK's dotnet (dotnet-10.0.403, bumped with it) and held to the package's sha512 as nuget.org
+  # published it. <sdk>/bin/sharpfuzz is a wrapper: the tool targets net8.0, run on the SDK's dotnet.
+  - name: sharpfuzz
+    version: "2.2.0"
+    dir: sharpfuzz-2.2.0
+    probe: .store/sharpfuzz.commandline/2.2.0/sharpfuzz.commandline/2.2.0/tools/net8.0/any/SharpFuzz.CommandLine.dll
+    kind: script
+    build: |
+      export DOTNET_CLI_HOME="$stage/home" NUGET_PACKAGES="$stage/nuget" DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1
+      "$sdk/dotnet-10.0.403/dotnet" tool install SharpFuzz.CommandLine --version 2.2.0 --tool-path "$stage/out" \
+        --add-source https://api.nuget.org/v3/index.json >"$stage/install.log" 2>&1 || { tail -20 "$stage/install.log"; exit 1; }
+      got=$(cat "$stage/out/.store/sharpfuzz.commandline/2.2.0/sharpfuzz.commandline/2.2.0/sharpfuzz.commandline.2.2.0.nupkg.sha512")
+      want=cazWjAeHj8LeLlkdsI/kOVHNq4/AhSCaj0Mimc7M5qVicyS/FLrRT6a9xh53st7TgW5th5d8/HWEavAbuJqiBA==
+      [ "$got" = "$want" ] || { echo "SDK-TOOLCHAIN sharpfuzz: the package's sha512 is $got, pinned $want"; exit 1; }
+      mv "$stage/out" "$dest"
+    wrapper: |
+      #!/bin/sh
+      # Written by the sdk-toolchain role: SharpFuzz's command line on the SDK's dotnet (the tool targets net8.0).
+      DOTNET_ROLL_FORWARD=Major exec "{{ sdk_dir }}/bin/dotnet" "{{ sdk_dir }}/sharpfuzz-2.2.0/.store/sharpfuzz.commandline/2.2.0/sharpfuzz.commandline/2.2.0/tools/net8.0/any/SharpFuzz.CommandLine.dll" "$@"
+    linux: {}
+
 # More .NET SDKs, each unpacked into the dotnet tool's directory beside its own SDK (its dotnet host is kept, the newer
 # one). An SDK brings its runtimes: 8.0's is what a net8.0 target runs on, rather than rolling forward to 10.0.
 nova_sdk_dotnet_more:
