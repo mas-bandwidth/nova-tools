@@ -1107,6 +1107,10 @@ one. On a Mac machine, open the Tailscale app once at its console and approve it
    is installed the job also holds `nova_tailscale_ssh_hold` in its hold directory, so netwatch does not reboot the
    machine inside the window. A reboot or a kill of the job there by anything else ends the job before its revert:
    Tailscale SSH stays off, and sshd, checked above, is the way in.
+   On Debian and Ubuntu where systemd-resolved runs, `/etc/resolv.conf` is resolved's stub
+   (`nova_resolved_stub`, `/run/systemd/resolve/stub-resolv.conf`): when it is a plain file or leads elsewhere, the play
+   links the stub and restarts `tailscaled` so it hands the tailnet's DNS to resolved (a plain file naming only the
+   MagicDNS resolver leaves every name outside the tailnet unresolved). A machine already on the stub changes nothing.
 3. Records `Self.DNSName` (`<machine>.<tailnet>.ts.net`) as the machine's address: `nova-config machine set <name>
    --address <dns name>`, then reads the inventory again, so the firewall play, every run after it, the bus and the
    services reach the machine by that name.
