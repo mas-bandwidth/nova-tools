@@ -56,3 +56,22 @@ func TestHostWithIsolatedCPUsSharesTheRest(t *testing.T) {
 	}
 	assert.Equal(t, []string{"0,16-20", "21-26", "27-32", "33-38", "39-44", "45-50", "51-56", "57-63"}, got)
 }
+
+func TestReadSMTGroupsReadsSysfsThreadSiblings(t *testing.T) {
+	t.Parallel()
+	sysfs := t.TempDir()
+	for c := 0; c < 4; c++ {
+		for _, cpu := range []int{c, c + 4} {
+			dir := filepath.Join(sysfs, "cpu"+itoaTest(cpu), "topology")
+			require.NoError(t, os.MkdirAll(dir, 0o755))
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "thread_siblings_list"),
+				[]byte(itoaTest(c)+","+itoaTest(c+4)+"\n"), 0o644))
+		}
+	}
+	groups := readSMTGroups(span(0, 7), sysfs)
+	assert.Equal(t, [][]int{{0, 4}, {1, 5}, {2, 6}, {3, 7}}, groups)
+	assert.Equal(t, "0-1,4-5", cpuList(slotShare(span(0, 7), groups, 2, 1)))
+	assert.Equal(t, "2-3,6-7", cpuList(slotShare(span(0, 7), groups, 2, 2)))
+}
+
+func itoaTest(n int) string { return cpuList([]int{n}) }

@@ -37,6 +37,7 @@ func TestPlaysTargetTheirGroups(t *testing.T) {
 		"tailscale":       {"{{ nova_join_host | default('all:!windows') }}"},
 		"secrets-refresh": {"all:!windows"},
 		"ssh-names":       {"all:!windows"},
+		"prompt":          {"all:!windows"},
 		"windows-runners": {workers + ":windows"}, // and plain Windows hosts, which are in group windows only
 	}
 	for _, name := range plays(tree) {

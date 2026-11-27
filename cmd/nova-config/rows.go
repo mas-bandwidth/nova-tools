@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"cmp"
+	"context"
 	"encoding/json"
 	"fmt"
 	"maps"
@@ -24,7 +25,8 @@ import (
 // env (a JSON object of NAME to value), path (an absolute or ~/ path), ref
 // (the name of a machine row, NULL when empty), public (a public IP literal
 // or a DNS name), scopes (GitHub Actions runners per repository or organization,
-// see canonicalScopes) or admins (Windows runners run as a local administrator, see canonicalAdmins).
+// see canonicalScopes), admins (Windows runners run as a local administrator, see canonicalAdmins),
+// url (an http or https URL) or secret (the name of a secret, never its value).
 type field struct {
 	name, typ string
 	required  bool
@@ -33,12 +35,16 @@ type field struct {
 	cut       bool // cut to 60 characters in list lines
 	free      bool // free text: always printed as a JSON string
 	word      *regexp.Regexp
+	hint      string // the value's placeholder in help, when its type's is not enough
 }
 
 type kind struct {
 	name, table string
 	fields      []field
-	check       func(Row) error
+	// extra are write-only columns: an add or set writes one only when its flag is given, and nothing reads it back
+	extra []field
+	note  string // a line of help about the kind
+	check func(Row) error
 }
 
 // Row is one row: its name, its fields as text, and its stamps (RFC 3339).
@@ -47,9 +53,12 @@ type Row = config.Row
 var (
 	namePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 	roleWord    = regexp.MustCompile(`^(bench|runner|services)$`)
-	keyWord     = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 	envName     = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 	tierWord    = regexp.MustCompile(`^(flash|pro|heavy|frontier)$`)
+	apiWord     = regexp.MustCompile(`^(openai|anthropic)$`)
+	harnessWord = regexp.MustCompile(`^(opencode|claude|codex)$`)
+	// a model's name: its provider's name, a slash, then the model id as its harness names it
+	modelName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*/[A-Za-z0-9_.:-]+(/[A-Za-z0-9_.:-]+)*$`)
 	// a box rented by the hour comes from a provider; one at AWS is on demand or spot
 	providerWord  = regexp.MustCompile(`^(latitude|aws)$`)
 	marketWord    = regexp.MustCompile(`^(on-demand|spot)$`)
@@ -67,6 +76,7 @@ var kinds = map[string]*kind{
 			{name: "arch", typ: "text"},
 			{name: "cores", typ: "int", null: true},
 			{name: "roles", typ: "list", def: "bench", word: roleWord},
+			{name: "routes", typ: "list", word: namePattern},
 			{name: "runners", typ: "int"},
 			{name: "runner_scopes", typ: "scopes"},
 			{name: "windows_runners", typ: "scopes"},
@@ -79,20 +89,46 @@ var kinds = map[string]*kind{
 			{name: "machine", typ: "ref", required: true},
 			{name: "argv", typ: "argv", required: true},
 			{name: "seat", typ: "text"},
-			{name: "keys", typ: "list", word: keyWord},
+			{name: "keys", typ: "list", word: envName},
 			{name: "every", typ: "int"},
 			{name: "keepalive", typ: "bool"},
 			{name: "enabled", typ: "bool", def: "true"},
 			{name: "env", typ: "env", def: "{}"},
 			{name: "log", typ: "path"},
 		}},
+	"harness": {name: "harness", table: "harnesses",
+		fields: []field{{name: "display_name", typ: "text", required: true, free: true}}},
 	"friend": {name: "friend", table: "friends", check: checkFriend,
 		fields: []field{
 			{name: "harness", typ: "text", required: true},
 			{name: "model", typ: "text"},
-			{name: "width", typ: "int", def: "1"},
-			{name: "tiers", typ: "list", def: "flash,frontier,heavy,pro", word: tierWord},
 			{name: "pronouns", typ: "text", null: true},
+			{name: "note", typ: "text", cut: true, free: true},
+			{name: "enabled", typ: "bool", def: "true"},
+		},
+		extra: []field{
+			{name: "width", typ: "int"},
+			{name: "tiers", typ: "list", word: tierWord, hint: "<flash,frontier,heavy,pro>"},
+		},
+		note: "--width (at least 1) and --tiers write the width and tiers columns nova-sprint reads, and nothing shows them; each is kept only until nova-sprint reads widths and tiers from its own store, and is removed in the release that drops the columns.\n"},
+	"provider": {name: "provider", table: "providers",
+		fields: []field{
+			{name: "url", typ: "url", required: true},
+			{name: "api", typ: "word", required: true, word: apiWord},
+			{name: "key", typ: "secret"},
+			{name: "models_url", typ: "url"},
+			{name: "balance_url", typ: "url"},
+			{name: "concurrency", typ: "int"},
+			{name: "note", typ: "text", cut: true, free: true},
+			{name: "enabled", typ: "bool", def: "true"},
+		}},
+	"model": {name: "model", table: "models",
+		fields: []field{
+			{name: "harness", typ: "word", def: "opencode", word: harnessWord},
+			{name: "price_in", typ: "int", null: true, hint: "<micro-usd-per-mtok|default>"},
+			{name: "price_out", typ: "int", null: true, hint: "<micro-usd-per-mtok|default>"},
+			{name: "price_cache_read", typ: "int", null: true, hint: "<micro-usd-per-mtok|default>"},
+			{name: "machine", typ: "ref"},
 			{name: "note", typ: "text", cut: true, free: true},
 			{name: "enabled", typ: "bool", def: "true"},
 		}},
@@ -116,13 +152,18 @@ var kinds = map[string]*kind{
 		}},
 }
 
+// names are the names of a kind's fields, in order: the columns it reads.
+func (k *kind) names() (out []string) {
+	for _, f := range k.fields {
+		out = append(out, f.name)
+	}
+	return out
+}
+
 // fieldsLine names a kind's fields on one line, for a usage error and for help.
 func (k *kind) fieldsLine() string {
-	names := []string{"name"}
-	for _, f := range k.fields {
-		names = append(names, f.name)
-	}
-	return k.name + " fields: " + strings.Join(names, ", ")
+	name := map[bool]string{true: "name (<provider>/<model id>)", false: "name"}[k.name == "model"]
+	return k.name + " fields: " + strings.Join(append([]string{name}, k.names()...), ", ")
 }
 
 func (f field) canonical(raw string) (string, error) {
@@ -179,8 +220,17 @@ func (f field) canonical(raw string) (string, error) {
 	case "admins":
 		return canonicalAdmins(f, raw)
 	case "word":
-		if raw != "" && !f.word.MatchString(raw) {
-			return "", fmt.Errorf("--%s %q: want one of %s", f.name, raw, strings.Trim(f.word.String(), "^()$"))
+		if raw == "" && f.def != "" || raw != "" && !f.word.MatchString(raw) { // the value is quoted back unless empty
+			return "", fmt.Errorf("--%s%s: want one of %s", f.name, strings.TrimSuffix(fmt.Sprintf(" %q", raw), ` ""`), strings.Trim(f.word.String(), "^()$"))
+		}
+	case "url": // never quoted back: a refused one may carry a password or a key
+		if u, err := url.Parse(raw); raw != "" && (err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" ||
+			u.User != nil || u.RawQuery != "" || u.Fragment != "" || strings.ContainsAny(raw, " \t")) {
+			return "", fmt.Errorf("--%s: want an http or https URL with a host and no user, query or fragment, such as https://api.example.com", f.name)
+		}
+	case "secret": // never quoted back: a refused one may be the secret's value
+		if raw != "" && !envName.MatchString(raw) {
+			return "", fmt.Errorf("--%s: want the name of the secret that holds it (letters, digits and underscores, not starting with a digit), never its value", f.name)
 		}
 	case "price":
 		if raw != "" && !priceText.MatchString(raw) {
@@ -223,33 +273,48 @@ func canonicalEnv(f field, raw string) (string, error) {
 	return marshal(m), nil
 }
 
-// scopeTarget is where a runner registers (a repository or an organization on github.com); scopeLabel one label.
+// scopeTarget is where a runner registers (a repository or an organization on github.com); scopeLabel one label;
+// scopeSet a second set's name, never win... (the Windows side's runners are <machine>-win-...), then its group's.
 var (
 	scopeTarget = regexp.MustCompile(`^https://github\.com/[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)?$`)
 	scopeLabel  = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
+	scopeSet    = regexp.MustCompile(`^[a-z][a-z0-9-]{0,30}[a-z0-9]$`)
+	scopeGroup  = regexp.MustCompile(`^(/[A-Za-z0-9._-]+)?$`)
 )
 
 // runnerScope is one target of runner_scopes or windows_runners: count runners on url (a repository or an
-// organization), and the labels added to the ones the role always gives. Its json is the inventory's
+// organization), and the labels added to the ones the role always gives; Set a second set of runners on the url
+// (<machine>-<set>-<i>, in <owner>[-<repo>]-<set>-<i>), and Group the runner group it joins. Its json is the inventory's
 // nova_runner_scopes or nova_windows_runners entry.
 type runnerScope struct {
 	URL    string   `json:"url"`
 	Count  int      `json:"count"`
 	Labels []string `json:"labels"`
+	Set    string   `json:"set,omitempty"`
+	Group  string   `json:"group,omitempty"`
 }
 
-// parseScopes reads `<url>=<count>[:<label>+<label>...]`, comma-separated: the targets sorted by url, each url
-// once, labels sorted and unique; empty is none.
+// dir is the stem of the play's runner directories for the scope; suffix its @<set>[/<group>] as written.
+func (w runnerScope) dir() string {
+	return strings.ToLower(strings.ReplaceAll(strings.TrimPrefix(w.URL, "https://github.com/"), "/", "-") + strings.TrimSuffix("-"+w.Set, "-"))
+}
+func (w runnerScope) suffix() string {
+	return strings.TrimSuffix("@"+w.Set+strings.TrimSuffix("/"+w.Group, "/"), "@")
+}
+
+// parseScopes reads `<url>=<count>[:<label>+<label>...][@<set>[/<group>]]`, comma-separated: the targets sorted by
+// url then set, each url and set once and no two sharing a runner directory, labels sorted and unique; empty is none.
 func parseScopes(raw string) ([]runnerScope, error) {
 	out := []runnerScope{}
 	for _, e := range strings.FieldsFunc(raw, func(r rune) bool { return r == ',' || unicode.IsSpace(r) }) {
-		rest, https := strings.CutPrefix(e, "https://")
+		body, set, at := strings.Cut(e, "@")
+		rest, https := strings.CutPrefix(body, "https://")
 		target, labels, colon := strings.Cut(rest, ":")
 		u, n, eq := strings.Cut(target, "=")
 		w := runnerScope{URL: "https://" + strings.TrimSuffix(u, "/"), Labels: []string{}}
 		count, err := strconv.Atoi(n)
 		if !https || !eq || !scopeTarget.MatchString(w.URL) || err != nil || count < 1 || count > 99 {
-			return nil, fmt.Errorf("%q: want <url>=<count>[:<label>+<label>], the url https://github.com/<owner>[/<repo>], the count 1 to 99", e)
+			return nil, fmt.Errorf("%q: want <url>=<count>[:<label>+<label>][@<set>[/<group>]], the url https://github.com/<owner>[/<repo>], the count 1 to 99", e)
 		}
 		if w.Count = count; colon {
 			w.Labels = strings.Split(labels, "+")
@@ -259,23 +324,31 @@ func parseScopes(raw string) ([]runnerScope, error) {
 				return nil, fmt.Errorf("%q: label %q: want letters, digits, dot, dash and underscore", e, l)
 			}
 		}
+		w.Set, w.Group, _ = strings.Cut(set, "/")
+		if at && (!scopeSet.MatchString(w.Set) || strings.HasPrefix(w.Set, "win") || !scopeGroup.MatchString(strings.TrimPrefix(set, w.Set)) || (w.Group != "" && strings.Count(w.URL, "/") == 4)) {
+			return nil, fmt.Errorf("%q: want @<set>[/<group>], the set 2 to 32 lower-case letters, digits and dashes, from a letter to a letter or digit, never win...; the group letters, digits, dot, dash and underscore, an organization's only", e)
+		}
 		slices.Sort(w.Labels)
 		w.Labels = slices.Compact(w.Labels)
-		if slices.ContainsFunc(out, func(o runnerScope) bool { return strings.EqualFold(o.URL, w.URL) }) {
-			return nil, fmt.Errorf("%s is named twice; give each url once", w.URL)
+		if i := slices.IndexFunc(out, func(o runnerScope) bool { return o.dir() == w.dir() }); i >= 0 {
+			return nil, fmt.Errorf("%s and %s are named twice (runners %s-<i>); give each url once, a second set its own @<set>", out[i].URL+out[i].suffix(), w.URL+w.suffix(), w.dir())
 		}
 		out = append(out, w)
 	}
-	slices.SortFunc(out, func(a, b runnerScope) int { return strings.Compare(a.URL, b.URL) })
+	slices.SortFunc(out, func(a, b runnerScope) int { return cmp.Compare(a.URL+" "+a.Set, b.URL+" "+b.Set) })
 	return out, nil
 }
 
-// canonicalScopes is a runner_scopes or windows_runners value as it is stored: parseScopes' targets, written back.
+// canonicalScopes is a runner_scopes or windows_runners value as it is stored: parseScopes' targets, written back; a set
+// is runner_scopes' only (the windows-runners play names one per url).
 func canonicalScopes(f field, raw string) (string, error) {
 	ws, err := parseScopes(raw)
 	parts := []string{}
 	for _, w := range ws {
-		parts = append(parts, w.URL+"="+strconv.Itoa(w.Count)+strings.TrimSuffix(":"+strings.Join(w.Labels, "+"), ":"))
+		if w.Set != "" && f.name != "runner_scopes" {
+			err = cmp.Or(err, fmt.Errorf("%s%s: a set (@<set>) is runner_scopes' only", w.URL, w.suffix()))
+		}
+		parts = append(parts, w.URL+"="+strconv.Itoa(w.Count)+strings.TrimSuffix(":"+strings.Join(w.Labels, "+"), ":")+w.suffix())
 	}
 	if err != nil {
 		return "", fmt.Errorf("--%s %v", f.name, err)
@@ -416,18 +489,19 @@ func marshal(v any) string {
 	return strings.TrimSuffix(b.String(), "\n")
 }
 
-func (f field) zero() string {
-	switch {
-	case f.null:
-		return ""
-	case f.def != "":
-		return f.def
-	case f.typ == "int":
-		return "0"
-	case f.typ == "bool":
-		return "false"
+// joined is the problems as one error, nil when there are none.
+func joined(p []string) error {
+	if len(p) == 0 {
+		return nil
 	}
-	return ""
+	return fmt.Errorf("%s", strings.Join(p, "; "))
+}
+
+func (f field) zero() string {
+	if f.null {
+		return ""
+	}
+	return cmp.Or(f.def, map[string]string{"int": "0", "bool": "false"}[f.typ])
 }
 
 // valueError is a flag value the row refuses to take: a malformed invocation.
@@ -442,8 +516,12 @@ func (k *kind) newRow(name string, raw map[string]string) (Row, error) {
 		empty.F[f.name] = f.zero()
 	}
 	r, err := k.merge(empty, raw)
-	if len(name) > 128 || !namePattern.MatchString(name) {
-		return Row{}, valueError{strings.TrimSuffix(fmt.Sprintf("name %q: want lower-case letters, digits and dashes, starting with a letter or digit; %v", name, err), "; <nil>")}
+	pattern, want := namePattern, "want lower-case letters, digits and dashes, starting with a letter or digit"
+	if k.name == "model" {
+		pattern, want = modelName, "want <provider>/<model id>: a provider's name, a slash, then the model id as its harness names it (letters, digits, and . _ : - with / between parts)"
+	}
+	if len(name) > 128 || !pattern.MatchString(name) {
+		return Row{}, valueError{strings.TrimSuffix(fmt.Sprintf("name %q: %s; %v", name, want, err), "; <nil>")}
 	}
 	return r, err
 }
@@ -452,7 +530,7 @@ func (k *kind) newRow(name string, raw map[string]string) (Row, error) {
 func (k *kind) merge(cur Row, raw map[string]string) (Row, error) {
 	next := Row{Name: cur.Name, F: maps.Clone(cur.F)}
 	var problems []string // of the values given
-	for _, f := range k.fields {
+	for _, f := range append(slices.Clip(k.fields), k.extra...) {
 		if v, ok := raw[f.name]; ok {
 			if c, err := f.canonical(v); err != nil {
 				problems = append(problems, err.Error())
@@ -512,8 +590,7 @@ func fetchOnClock(argv []string) (fetcher, loop string) {
 }
 
 func checkService(r Row) error {
-	var p []string
-	var argv []string
+	var p, argv []string
 	_ = json.Unmarshal([]byte(r.F["argv"]), &argv) // ignored: canonical checked the field; a bad value has no words
 	every, _ := strconv.Atoi(r.F["every"])
 	if f, loop := fetchOnClock(argv); f != "" && (loop != "" || every > 0) {
@@ -528,10 +605,7 @@ func checkService(r Row) error {
 	if r.F["keys"] != "" && r.F["seat"] == "" {
 		p = append(p, fmt.Sprintf("service %s names secrets (--keys %s) and no --seat to open them from", r.Name, r.F["keys"]))
 	}
-	if len(p) > 0 {
-		return fmt.Errorf("%s", strings.Join(p, "; "))
-	}
-	return nil
+	return joined(p)
 }
 
 // checkMachine refuses an admin runner whose account is the machine's login, or whose label another runner of the
@@ -550,10 +624,7 @@ func checkMachine(r Row) error {
 	for _, c := range adminClashes([]Row{r}, "") {
 		p = append(p, c.msg)
 	}
-	if len(p) > 0 {
-		return fmt.Errorf("%s", strings.Join(p, "; "))
-	}
-	return nil
+	return joined(p)
 }
 
 // adminClash is one admin runner label another runner carries: machine is the admin runner's.
@@ -624,18 +695,16 @@ func adminClashes(rows []Row, only string) []adminClash {
 	return out
 }
 
+// checkFriend refuses a width or tiers a write gives that the columns' readers cannot take.
 func checkFriend(r Row) error {
 	var p []string
-	if r.F["width"] == "0" {
+	if w, ok := r.F["width"]; ok && w == "0" {
 		p = append(p, fmt.Sprintf("friend %s has --width 0; a friend works at least one card at once: --width 1 or more", r.Name))
 	}
-	if r.F["tiers"] == "" {
+	if t, ok := r.F["tiers"]; ok && t == "" {
 		p = append(p, fmt.Sprintf("friend %s has no --tiers; want a comma list of flash, pro, heavy, frontier", r.Name))
 	}
-	if len(p) > 0 {
-		return fmt.Errorf("%s", strings.Join(p, "; "))
-	}
-	return nil
+	return joined(p)
 }
 
 // dsnPassword says a postgres URI carries a password, in its user part or its query.
@@ -677,10 +746,7 @@ func checkRented(r Row) error {
 	if v["spot_request"] != "" && v["market"] != "spot" {
 		p = append(p, fmt.Sprintf("rented %s: --spot_request is a spot box's, and its --market is %q; set --market spot or --spot_request ''", r.Name, v["market"]))
 	}
-	if len(p) > 0 {
-		return fmt.Errorf("%s", strings.Join(p, "; "))
-	}
-	return nil
+	return joined(p)
 }
 
 // rentHandles names what a rented record still holds at its provider that can bill (its box, its spot request), or
@@ -720,4 +786,79 @@ func handleFixed(cur, after Row) error {
 		return nil
 	}
 	return refused("rented %s holds %s at %s, which may bill: %s; return it; run: nova-fleet rented", cur.Name, held, cur.F["provider"], strings.Join(p, "; "))
+}
+
+// speaks is the wire protocol each harness speaks, and spokenBy the harnesses that speak each api (the default
+// first): a model's harness speaks its provider's api.
+var (
+	speaks   = map[string]string{"claude": "anthropic", "opencode": "openai", "codex": "openai"}
+	spokenBy = map[string][]string{"anthropic": {"claude"}, "openai": {"opencode", "codex"}}
+)
+
+// rowNames are the rows' names, comma-separated, or (none).
+func rowNames(rows []Row) string {
+	var out []string
+	for _, r := range rows {
+		out = append(out, r.Name)
+	}
+	return cmp.Or(strings.Join(out, ","), "(none)")
+}
+
+// related refuses a write that breaks a rule between kinds, each refusal naming the fix: a model names an existing
+// provider whose api its harness speaks and, when it names one, an existing machine; a provider keeps the api its
+// models' harnesses speak and goes only once no model names it; a machine goes only once it serves no model. The store
+// holds the provider and machine a model names (foreign keys) whoever writes.
+func related(ctx context.Context, st Store, k *kind, op, name string, after Row) error {
+	if k.name == "model" && op != "remove" {
+		providers, err := st.List(ctx, kinds["provider"])
+		if err != nil {
+			return err
+		}
+		p, _, _ := strings.Cut(name, "/") // the provider a model names: the part before the first "/"
+		i := slices.IndexFunc(providers, func(r Row) bool { return r.Name == p })
+		if i < 0 {
+			return refused("model %s: no provider %s; the providers are %s; run: nova-config provider add %s --url <url> --api <openai|anthropic> --actor <you>", name, p, rowNames(providers), p)
+		}
+		if h, api := after.F["harness"], providers[i].F["api"]; speaks[h] != api {
+			ok := spokenBy[api]
+			return refused("model %s: harness %s speaks %s and provider %s speaks %s; give --harness %s; run: nova-config model %s %s --harness %s --actor <you>", name, h, speaks[h], p, api, strings.Join(ok, " or "), op, name, ok[0])
+		}
+		if m := after.F["machine"]; m != "" {
+			machines, err := st.List(ctx, kinds["machine"])
+			if err != nil {
+				return err
+			}
+			if !slices.ContainsFunc(machines, func(r Row) bool { return r.Name == m }) {
+				return refused("model %s: no machine %s; the machines are %s; run: nova-config machine add %s --user <user>", name, m, rowNames(machines), m)
+			}
+		}
+		return nil
+	}
+	if k.name != "provider" && (k.name != "machine" || op != "remove") || op == "add" {
+		return nil
+	}
+	models, err := st.List(ctx, kinds["model"])
+	if err != nil {
+		return err
+	}
+	var named []Row
+	for _, m := range models {
+		switch {
+		case k.name == "machine" && m.F["machine"] == name:
+		case k.name == "provider" && strings.HasPrefix(m.Name, name+"/") && (op == "remove" || speaks[m.F["harness"]] != after.F["api"]):
+		default:
+			continue
+		}
+		named = append(named, m)
+	}
+	switch {
+	case len(named) == 0:
+		return nil
+	case k.name == "machine":
+		return refused("machine %s still serves models %s; clear their machine first; run: nova-config model set %s --machine '' --actor <you>", name, rowNames(named), named[0].Name)
+	case op == "remove":
+		return refused("provider %s is still named by models %s; remove them first; run: nova-config model remove %s --actor <you>", name, rowNames(named), named[0].Name)
+	}
+	api := speaks[named[0].F["harness"]]
+	return refused("provider %s keeps api %s while models %s run on it with a harness that speaks %s; remove them first; run: nova-config model remove %s --actor <you>", name, api, rowNames(named), api, named[0].Name)
 }

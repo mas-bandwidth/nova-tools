@@ -91,6 +91,27 @@ func TestRunnerEnvPathStillWins(t *testing.T) {
 	assert.Equal(t, 1, strings.Count(plist, "<key>PATH</key>"))
 }
 
+// The Linux unit names the online CPUs less the kernel's isolated ones (a host booted with isolcpus=1-15), and no
+// affinity where none is isolated, so every other host's unit is unchanged.
+func TestRunnerServiceKeepsOffIsolatedCPUs(t *testing.T) {
+	t.Parallel()
+	if _, err := exec.LookPath("ansible-playbook"); err != nil {
+		t.Skip("ansible-core is not installed on this machine; TestRunnerUnitNamesTheBalancedCPUs still runs")
+	}
+	service, plist, _ := renderRunnerUnits(t, "-e", "github_runner_cpus_online=0-31", "-e", "github_runner_cpus_isolated=1-15")
+	assert.Contains(t, service, "\nCPUAffinity=0 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31\n")
+	assert.Equal(t, 1, strings.Count(service, "CPUAffinity="))
+	assert.NotContains(t, plist, "CPUAffinity")
+
+	service, _, _ = renderRunnerUnits(t, "-e", "github_runner_cpus_online=0-7,16-23", "-e", "github_runner_cpus_isolated=2,4-7,16")
+	assert.Contains(t, service, "\nCPUAffinity=0 1 3 17 18 19 20 21 22 23\n")
+
+	service, _, _ = renderRunnerUnits(t, "-e", "github_runner_cpus_online=0-31", "-e", "github_runner_cpus_isolated=")
+	assert.NotContains(t, service, "CPUAffinity", "a host that isolates no CPU keeps the scheduler's default")
+	service, _, _ = renderRunnerUnits(t)
+	assert.NotContains(t, service, "CPUAffinity", "nothing read: no affinity")
+}
+
 // The Linux unit's TMPDIR is the login's runner-tmp unless the environment names one; the environment is the machine
 // record's (the inventory's nova_runner_env) when no -e replaces it. The plist sets none by default.
 func TestRunnerTmpdirAndTheRecordsEnvironmentRender(t *testing.T) {
@@ -119,11 +140,11 @@ func TestRunnerTmpdirAndTheRecordsEnvironmentRender(t *testing.T) {
 	assert.Contains(t, service, "\nEnvironment=TMPDIR=/home/ghrunner-t/.cache/runner-tmp\n")
 	assert.Contains(t, service, "\nEnvironment=PATH=/opt/nova/bin:/usr/local/sbin:")
 	assert.Contains(t, service, "\nRequires=nova-runner-login-net.service\nAfter=nova-runner-login-net.service\n")
-	// its own rustup and cargo homes, set once, unless the environment names them
-	assert.Contains(t, service, "\nEnvironment=RUSTUP_HOME=/home/ghrunner-t/.rustup\nEnvironment=CARGO_HOME=/home/ghrunner-t/.cargo\n")
+	// this runner's own rustup and cargo homes, set once, whatever the environment names
+	assert.Contains(t, service, "\nEnvironment=RUSTUP_HOME=/home/ghrunner-t/.rust-homes/o-r-1/rustup\nEnvironment=CARGO_HOME=/home/ghrunner-t/.rust-homes/o-r-1/cargo\n")
 	assert.Equal(t, 1, strings.Count(service, "RUSTUP_HOME="))
 	service, _, _ = renderRunnerUnits(t, "-e", "github_runner_user=ghrunner-t", "-e", `{"github_runner_env": {"RUSTUP_HOME": "/r", "CARGO_HOME": "/c"}}`)
-	assert.Contains(t, service, "\nEnvironment=RUSTUP_HOME=/r\nEnvironment=CARGO_HOME=/c\n")
+	assert.Contains(t, service, "\nEnvironment=RUSTUP_HOME=/home/ghrunner-t/.rust-homes/o-r-1/rustup\nEnvironment=CARGO_HOME=/home/ghrunner-t/.rust-homes/o-r-1/cargo\n", "a record's login-wide home would be shared by every runner")
 	assert.Equal(t, 1, strings.Count(service, "RUSTUP_HOME="))
 	assert.Equal(t, 1, strings.Count(service, "CARGO_HOME="))
 	// the fleet login's runners keep the rustup home their environment gives them

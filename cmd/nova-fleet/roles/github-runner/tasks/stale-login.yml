@@ -1,0 +1,90 @@
+---
+# github_runner_retire_stale_login (defaults/main.yml): an account named github_runner_user with a uid below 1000, made
+# by hand before the play, is retired so the play can make the runner login. Only when nothing uses it: no process, no
+# systemd unit run as it, no sudoers or cron line naming it, no ssh key in its home, no login on record, and no file of
+# its outside its home (every local filesystem, as the lockdown scan reads them). Then its home is archived and every
+# entry of the archive checked against the home, the account deleted (never with its home), and the home moved under
+# /var/backups. Nothing is deleted; nothing already in /var/backups is written over.
+- name: a stale account is in no group but its own and kvm
+  ansible.builtin.assert:
+    quiet: true
+    that:
+      - github_runner_existing.stdout_lines[1].split() | difference([github_runner_user, 'kvm']) | length == 0
+    fail_msg: >-
+      RUNNER-LOGIN-STALE {{ inventory_hostname }} {{ github_runner_user }}: uid {{ github_runner_existing.stdout_lines[0] }}
+      is in groups {{ github_runner_existing.stdout_lines[1] }}: an account with groups beyond its own and kvm is never
+      retired by the play
+
+- name: what still uses the stale account
+  ansible.builtin.shell: |
+    set -u
+    u={{ github_runner_user | quote }}
+    uid=$(id -u "$u")
+    home=$(getent passwd "$u" | cut -d: -f6)
+    [ -n "$home" ] && [ "$home" != / ] || { echo "HOME none"; exit 0; }
+    p=$(pgrep -u "$uid" | head -5 | tr '\n' ' ')
+    [ -z "$p" ] || echo "PROCESS $p"
+    for d in /etc/systemd/system /lib/systemd/system /usr/lib/systemd/system /run/systemd/system; do
+      [ -d "$d" ] || continue
+      grep -rlsE "^[[:space:]]*User=($u|$uid)[[:space:]]*$" "$d" | head -5 | sed 's/^/UNIT /'
+    done
+    grep -rlsw -- "$u" /etc/sudoers /etc/sudoers.d | sed 's/^/SUDOERS /'
+    for c in /var/spool/cron/crontabs/"$u" /var/spool/cron/"$u"; do [ -e "$c" ] && echo "CRONTAB $c"; done
+    grep -rlsw -- "$u" /etc/crontab /etc/cron.d | sed 's/^/CRON /'
+    for k in "$home/.ssh/authorized_keys" "$home/.ssh/authorized_keys2"; do [ -s "$k" ] && echo "SSHKEY $k"; done
+    if command -v lastlog >/dev/null 2>&1; then
+      lastlog -u "$u" 2>/dev/null | tail -n +2 | grep -qv 'Never logged in' && echo "LOGIN lastlog"
+    fi
+    if command -v last >/dev/null 2>&1; then
+      [ -z "$(last -w "$u" 2>/dev/null | awk -v u="$u" '$1 == u' | head -1)" ] || echo "LOGIN wtmp"
+    fi
+    for m in $(findmnt --real -rn -o TARGET -t nonfs,nfs4,cifs,smb3,9p,fuse.sshfs); do
+      timeout 1800 find "$m" -xdev \( -path /proc -o -path /sys -o -path /dev -o -path /run -o -path "$home" \) -prune \
+        -o -uid "$uid" -print 2>/dev/null | head -5 | sed 's/^/FILE /'
+    done
+    echo "HOME $home"
+  args: { executable: /bin/sh }
+  become: true
+  register: github_runner_stale_use
+  changed_when: false
+  check_mode: false
+
+- name: a stale account still in use is not retired
+  ansible.builtin.fail:
+    msg: >-
+      RUNNER-LOGIN-STALE-IN-USE {{ inventory_hostname }} {{ github_runner_user }}:
+      {{ github_runner_stale_use.stdout_lines | reject('match', '^HOME /') | list | join('; ') }}. Nothing was changed.
+  when: github_runner_stale_use.stdout_lines | reject('match', '^HOME /') | list | length > 0
+
+- name: the retirement, planned
+  ansible.builtin.debug:
+    msg: >-
+      RUNNER-LOGIN-STALE-RETIRE {{ inventory_hostname }} {{ github_runner_user }} uid={{ github_runner_existing.stdout_lines[0] }}
+      {{ github_runner_stale_use.stdout_lines | last }} -> /var/backups/{{ github_runner_user }}-old-home-<date>-{{ inventory_hostname }}.tgz,
+      userdel, home -> /var/backups/{{ github_runner_user }}-old-home-dir-{{ inventory_hostname }}
+      {{ '(check: nothing changed)' if ansible_check_mode else '' }}
+  changed_when: ansible_check_mode
+
+- name: the stale account is archived, deleted and its home moved under /var/backups
+  ansible.builtin.shell: |
+    set -eu
+    u={{ github_runner_user | quote }}
+    host={{ inventory_hostname | quote }}
+    home=$(getent passwd "$u" | cut -d: -f6)
+    tgz="/var/backups/$u-old-home-$(date -u +%F)-$host.tgz"
+    dir="/var/backups/$u-old-home-dir-$host"
+    for f in "$tgz" "$dir"; do [ ! -e "$f" ] || { echo "$f is in the way: nothing changed" >&2; exit 1; }; done
+    umask 077
+    tar -C "$(dirname -- "$home")" -czf "$tgz" "$(basename -- "$home")"
+    chmod 0600 "$tgz"
+    want=$(find "$home" | wc -l)
+    got=$(tar -tzf "$tgz" | wc -l)
+    [ "$want" = "$got" ] || { echo "the archive holds $got entries, the home $want: the account is kept" >&2; exit 1; }
+    userdel "$u"
+    mv -T -- "$home" "$dir"
+    chmod 0700 "$dir"
+    echo "RETIRED $u entries=$got archive=$tgz home=$dir"
+  args: { executable: /bin/sh }
+  become: true
+  register: github_runner_stale_retired
+  when: not ansible_check_mode

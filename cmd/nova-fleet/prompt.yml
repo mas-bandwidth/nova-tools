@@ -1,0 +1,24 @@
+# purpose: each login's shell prompt, the networknext relay prompt: the machine's fleet name and kind in cyan, then the directory and # (all machines)
+#
+# prompt.yml (cmd/nova-fleet/README.md, "prompt"). On each machine, as its login and never root, one managed block at
+# the end of ~/.bashrc, and of ~/.zshrc when the login's shell is zsh (the Macs):
+#
+#   bash   PS1='\[\033[36m\]<machine> [<kind>] \[\033[00m\]\w # '
+#   zsh    PS1='%F{cyan}<machine> [<kind>] %f%~ # '
+#
+# as networknext's relays set it (networknext/next scripts/setup_relay.sh): <machine> is the record's name for the
+# machine (the inventory name, never hostname), <kind> is linux, mac or wsl2, and the # is literal for every user. The
+# block sits between the lines "# BEGIN nova-fleet prompt ..." and "# END nova-fleet prompt ...": a run writes only
+# what is between them (the block at the end of the file the first time, the file made if there is none, through a
+# symlink to the file it names); nothing else in the file changes. A second run changes nothing. One line per machine:
+# PROMPT host=<machine> kind=<kind> files=<the rc files>.
+#
+#   nova-fleet prompt --check --diff
+#   nova-fleet prompt
+- name: each login's shell prompt
+  hosts: all:!windows   # a plain Windows host (group windows) runs only windows-runners
+  gather_facts: true
+  gather_subset: [min]
+  become: false
+  roles:
+    - prompt

@@ -271,15 +271,17 @@ type tryLock func(path string, exclusive bool) (release func(), ok bool, err err
 // world is everything run touches outside itself, so the unit tests fake it.
 type world struct {
 	env            func(string) string
+	environ        func() []string
 	lock           tryLock
 	now            func() time.Time
 	sleep          func(d time.Duration)
 	resolve        func(name string) (string, error) // exec.LookPath
-	exec           func(path string, argv []string) int
+	exec           func(path string, argv, env []string) int
 	running        func(pid int) bool
 	pid            int
 	cpus           int
 	usable         func() ([]int, error) // the CPUs a command may be pinned to; none where the OS pins none
+	groups         func([]int) [][]int   // physical-core SMT sibling sets; none where the OS has none
 	pin            func(cpus []int) error
 	stdout, stderr io.Writer
 }
@@ -289,8 +291,8 @@ type world struct {
 const poll = time.Second
 
 func main() {
-	os.Exit(run(os.Args[1:], world{os.Getenv, osLock, time.Now, time.Sleep,
-		exec.LookPath, runCommand, running, os.Getpid(), runtime.NumCPU(), usableCPUs, pin, os.Stdout, os.Stderr}))
+	os.Exit(run(os.Args[1:], world{os.Getenv, os.Environ, osLock, time.Now, time.Sleep,
+		exec.LookPath, runCommand, running, os.Getpid(), runtime.NumCPU(), usableCPUs, smtGroups, pin, os.Stdout, os.Stderr}))
 }
 
 func run(args []string, w world) int {
@@ -353,7 +355,7 @@ func do(o options, w world) error {
 		if errors.Is(err, fs.ErrPermission) {
 			return refuse(2, "%s %s: parent %s is not writable by this user; run: ls -ld %s", o.dirFrom, o.dir, parent, shellQuote(parent))
 		}
-		return refuse(2, "%s %s: %v; run: ls -ld %s", o.dirFrom, o.dir, errors.Unwrap(err), shellQuote(parent))
+		return refuse(2, "%s %s: %v; run: ls -ld %s", o.dirFrom, o.dir, cmp.Or(errors.Unwrap(err), err), shellQuote(parent))
 	}
 	// the directory itself is opened, following no link, and its mode is set
 	// on what is open; the files in it are still reached by path
@@ -393,9 +395,13 @@ func do(o options, w world) error {
 	if t.capSet > 0 {
 		fmt.Fprintf(w.stderr, "nova-reserve: CAPACITY SET slots=%d\n", t.capSet)
 	}
-	cpus := t.pin()
+	cpus, pinned := t.pin()
 	fmt.Fprintf(w.stderr, "nova-reserve: HELD %s%s\n", t.describe(), cpus)
-	if code := w.exec(path, o.argv); code != 0 {
+	var baseEnv []string
+	if w.environ != nil {
+		baseEnv = w.environ()
+	}
+	if code := w.exec(path, o.argv, holdEnv(baseEnv, t.slotCores(pinned))); code != 0 {
 		return &exitError{code: code}
 	}
 	return nil
@@ -754,13 +760,17 @@ func (t *taker) describe() string {
 
 // pin starts the command on its slot's share of the usable CPUs, or all of
 // them for an exclusive hold, so tools that size themselves by the CPUs they
-// may use (nproc, Go) count that share. It returns " cpus=LIST", or
-// "" where the OS pins nothing. A failure is one stderr line; the command
-// then runs unpinned.
-func (t *taker) pin() string {
+// may use (nproc, Go) count that share. It returns " cpus=LIST" and the pinned
+// count, or "", 0 where the OS pins nothing. A failure is one stderr line; the
+// command then runs unpinned.
+func (t *taker) pin() (string, int) {
 	cpus, err := t.w.usable()
-	if !t.o.exclusive {
-		cpus = share(cpus, t.cap, t.slot)
+	if err == nil && !t.o.exclusive && len(cpus) > 0 {
+		var groups [][]int
+		if t.w.groups != nil {
+			groups = t.w.groups(cpus)
+		}
+		cpus = slotShare(cpus, groups, t.cap, t.slot)
 	}
 	if err == nil && len(cpus) > 0 {
 		err = t.w.pin(cpus)
@@ -769,9 +779,81 @@ func (t *taker) pin() string {
 	case err != nil:
 		fmt.Fprintf(t.w.stderr, "nova-reserve: running unpinned: %v\n", err)
 	case len(cpus) > 0:
-		return " cpus=" + cpuList(cpus)
+		return " cpus=" + cpuList(cpus), len(cpus)
 	}
-	return ""
+	return "", 0
+}
+
+func (t *taker) slotCores(pinned int) int {
+	if pinned > 0 {
+		return pinned
+	}
+	if t.o.exclusive {
+		return max(1, t.w.cpus)
+	}
+	return max(1, t.w.cpus/max(1, t.cap))
+}
+
+var parallelVars = []string{
+	"NOVA_RESERVE_CPUS", "GOMAXPROCS", "CARGO_BUILD_JOBS",
+	"RAYON_NUM_THREADS", "CMAKE_BUILD_PARALLEL_LEVEL",
+}
+
+// holdEnv exports the slot's CPU count in the build-parallelism variables that
+// are unset or empty in base, keeping any caller-provided override untouched.
+func holdEnv(base []string, cores int) []string {
+	have := map[string]bool{}
+	out := make([]string, 0, len(base)+len(parallelVars))
+	for _, kv := range base {
+		k, v, ok := strings.Cut(kv, "=")
+		if ok && v == "" && slices.Contains(parallelVars, k) {
+			continue
+		}
+		if ok && v != "" {
+			have[k] = true
+		}
+		out = append(out, kv)
+	}
+	cs := strconv.Itoa(max(1, cores))
+	for _, k := range parallelVars {
+		if !have[k] {
+			out = append(out, k+"="+cs)
+		}
+	}
+	return out
+}
+
+// slotShare orders usable by physical-core SMT sibling groups, takes slot k's
+// share, and returns it in ascending CPU order.
+func slotShare(usable []int, groups [][]int, n, k int) []int {
+	s := slices.Clone(share(orderSMT(usable, groups, n), n, k))
+	slices.Sort(s)
+	return s
+}
+
+// orderSMT orders usable CPUs from their physical-core sibling groups for n
+// slots: when n <= len(groups) each core's siblings stay adjacent so contiguous
+// shares claim whole physical cores; when n > len(groups) pass p takes the p-th
+// sibling of each core so slots 1..len(groups) claim distinct physical cores first.
+func orderSMT(usable []int, groups [][]int, n int) []int {
+	if len(groups) == 0 {
+		return usable
+	}
+	out := make([]int, 0, len(usable))
+	if n <= len(groups) {
+		for _, g := range groups {
+			out = append(out, g...)
+		}
+		return out
+	}
+	for pass := 0; len(out) < len(usable); pass++ {
+		for _, g := range groups {
+			if pass < len(g) {
+				out = append(out, g[pass])
+			}
+		}
+	}
+	return out
 }
 
 // share is slot k's part (k in 1..n) of the usable CPUs, in ascending order:
@@ -931,25 +1013,36 @@ func esc(s string) string {
 // to this process so it cannot outlive the slot (tie, per OS), forwards
 // interrupts to it, and returns its exit status (128+signal when a signal
 // ended it; 126 when it was found but could not be started).
-func runCommand(path string, argv []string) int {
+func runCommand(path string, argv, env []string) int {
 	cmd := exec.Command(path, argv[1:]...)
 	cmd.Args[0] = argv[0]
+	if len(env) > 0 {
+		cmd.Env = env
+	}
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	sigs := make(chan os.Signal, 2)
+	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
 	untie, err := tie(cmd)
 	if err != nil {
+		signal.Stop(sigs)
 		fmt.Fprintln(os.Stderr, "nova-reserve:", err)
 		return 126
 	}
 	defer untie()
-	sigs := make(chan os.Signal, 1)
-	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
+	done := make(chan struct{})
 	go func() {
-		for s := range sigs {
-			forward(cmd, s)
+		for {
+			select {
+			case s := <-sigs:
+				forward(cmd, s)
+			case <-done:
+				return
+			}
 		}
 	}()
 	ws, err := wait(cmd)
 	signal.Stop(sigs)
+	close(done)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "nova-reserve:", err)
 		return 126

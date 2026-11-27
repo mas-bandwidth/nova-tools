@@ -1,4 +1,4 @@
-# purpose: a WSL machine held running from boot, and its Windows-side GitHub Actions runners from its record's windows_runners, through WSL interop
+# purpose: a WSL machine held running from boot with its SYSTEM self-heal watchdog, unattended Windows settings, out-of-band Windows OpenSSH, and any Windows-side GitHub Actions runners
 #
 # Every WSL machine with interop gets the keepalive: a scheduled task that holds its distro running from boot, with
 # nobody logged in, and starts it again within a minute when WSL stops (cmd/nova-fleet/README.md, "WSL held running from
@@ -24,6 +24,12 @@
       ansible.builtin.include_role:
         name: github-runner
         tasks_from: wsl-keepalive.yml
+      when: (nova_os | default('') | lower) != 'windows'
+
+    - name: WSL self-heal watchdog, unattended Windows settings, and out-of-band Windows OpenSSH
+      ansible.builtin.include_role:
+        name: github-runner
+        tasks_from: wsl-watchdog.yml
       when: (nova_os | default('') | lower) != 'windows'
 
     - name: the Windows page file at a fixed size (-e nova_windows_pagefile_mb=<n>; none by default)

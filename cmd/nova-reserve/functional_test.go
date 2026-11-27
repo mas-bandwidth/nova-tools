@@ -35,6 +35,14 @@ func TestMain(m *testing.M) {
 	case "cpus":
 		fmt.Println(runtime.NumCPU()) // as nproc counts: the CPUs it may run on
 		os.Exit(0)
+	case "env":
+		fmt.Printf("%s %s %s %s %s\n",
+			os.Getenv("NOVA_RESERVE_CPUS"),
+			os.Getenv("GOMAXPROCS"),
+			os.Getenv("CARGO_BUILD_JOBS"),
+			os.Getenv("RAYON_NUM_THREADS"),
+			os.Getenv("CMAKE_BUILD_PARALLEL_LEVEL"))
+		os.Exit(0)
 	}
 	os.Exit(m.Run())
 }
@@ -275,4 +283,29 @@ func TestFunctionalSignalledCommandIsNamed(t *testing.T) {
 	require.ErrorAs(t, err, &ee)
 	assert.Equal(t, 143, ee.ExitCode())
 	assert.True(t, strings.HasSuffix(stderr.String(), "\nnova-reserve: sh ended by signal SIGTERM; exit 143\n"), stderr.String())
+}
+
+func TestFunctionalRunExportsSlotParallelismEnv(t *testing.T) {
+	t.Parallel()
+	bin, dir := build(t), t.TempDir()
+	cmd := slotCmd(t, bin, dir, "env", "--slots", "2")
+	var clean []string
+	for _, kv := range os.Environ() {
+		k, _, _ := strings.Cut(kv, "=")
+		if k != "NOVA_RESERVE_CPUS" && k != "GOMAXPROCS" && k != "CARGO_BUILD_JOBS" && k != "RAYON_NUM_THREADS" && k != "CMAKE_BUILD_PARALLEL_LEVEL" {
+			clean = append(clean, kv)
+		}
+	}
+	cmd.Env = append(clean, "NOVA_RESERVE_CHILD=env", "GOMAXPROCS=3")
+	out, err := cmd.Output()
+	require.NoError(t, err)
+	fields := strings.Fields(strings.TrimSpace(string(out)))
+	require.Len(t, fields, 5)
+	assert.Equal(t, "3", fields[1], "caller GOMAXPROCS override kept")
+	n, err := strconv.Atoi(fields[0])
+	require.NoError(t, err)
+	assert.Positive(t, n)
+	assert.Equal(t, fields[0], fields[2])
+	assert.Equal(t, fields[0], fields[3])
+	assert.Equal(t, fields[0], fields[4])
 }

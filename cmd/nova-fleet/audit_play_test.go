@@ -107,6 +107,10 @@ func TestAuditPlayOnlyReads(t *testing.T) {
 			assert.Equal(t, false, task["changed_when"], "task %q", name)
 			assert.Equal(t, false, task["check_mode"], "task %q runs under --check too", name)
 			text := taskText(t, task)
+			if strings.Contains(text, "audit_wsl_ps_encoded") {
+				assert.Contains(t, text, "timeout 60", "the Windows reliability check is bounded")
+				continue
+			}
 			if strings.Contains(text, "audit_job_probe") {
 				job = true
 				assert.Contains(t, text, "cat \"/proc/$pid/environ\"", "the job runs with a runner's own environment")

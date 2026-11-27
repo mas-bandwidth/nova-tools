@@ -153,6 +153,33 @@ disarm() {
 	fi
 }
 
+my_worker() {
+	if [ -n "${NOVA_CI_WORKER_PID:-}" ]; then
+		echo "$NOVA_CI_WORKER_PID"
+		return 0
+	fi
+	[ "$(basename "$here")" = .nova-ci-rules ] && [ -e "$(dirname "$here")/bin/Runner.Worker" ] || return 1
+	procs comm 2>/dev/null | ancestor $$ Runner.Worker
+}
+
+fail_started() {
+	why=$1
+	echo "::error::CI rule: $why"
+	if [ -n "${NOVA_CI_WORKER_PID:-}" ] || { [ "$(basename "$here")" = .nova-ci-rules ] && [ -e "$(dirname "$here")/bin/Runner.Worker" ]; }; then
+		worker=
+		for i in 1 2 3; do
+			worker=$(my_worker) && [ -n "$worker" ] && break
+			worker=
+		done
+		if [ -n "$worker" ]; then
+			kill -9 "$worker" 2>/dev/null || true
+		else
+			echo "::error::CI rule: no Runner.Worker above this hook was found to end, so the job's always() steps may still run; the fleet admin looks"
+		fi
+	fi
+	exit 1
+}
+
 started() {
 	# whatever an earlier job left (a runner that died before its completed hook) never touches this one
 	disarm
@@ -160,23 +187,26 @@ started() {
 	event=${GITHUB_EVENT_NAME:-} ref=${GITHUB_REF:-}
 	if [ "$event" = push ] && ! push_ok "$ref"; then
 		set -f
-		echo "::error::CI rule: push CI runs only on $(echo $branches | sed 's/ /, /g') and tags, not $ref; set on.push.branches to [$(echo $branches | sed "s/[^ ]*/'&'/g; s/ /, /g")] and let this branch get CI through its pull request"
-		exit 1
+		fail_started "push CI runs only on $(echo $branches | sed 's/ /, /g') and tags, not $ref; set on.push.branches to [$(echo $branches | sed "s/[^ ]*/'&'/g; s/ /, /g")] and let this branch get CI through its pull request"
 	fi
 	if command -v pmset >/dev/null 2>&1 && pmset -g batt 2>/dev/null | on_battery; then
-		echo "::error::CI rule: $(hostname -s) is on battery power (pmset -g batt), so it may sleep with this job in flight; the job is refused before it starts; rerun it and another runner takes it"
-		exit 1
+		fail_started "$(hostname -s) is on battery power (pmset -g batt), so it may sleep with this job in flight; the job is refused before it starts; rerun it and another runner takes it"
 	fi
-	chain "${NOVA_CI_CHAIN_JOB_STARTED:-}" || exit $?
+	rc=0
+	chain "${NOVA_CI_CHAIN_JOB_STARTED:-}" || rc=$?
+	if [ "$rc" -ne 0 ]; then
+		worker=$(my_worker) || worker=
+		[ -n "$worker" ] && kill -9 "$worker" 2>/dev/null || true
+		exit "$rc"
+	fi
 	# measuring never fails or delays a job: any error inside is dropped
 	(measure_start) >/dev/null 2>&1 || true
 	if ! limited "$event"; then
 		echo "CI rule: a $event job has no time limit"
 		exit 0
 	fi
-	worker=$(procs comm | ancestor $$ Runner.Worker) || {
-		echo "::error::CI rule: no Runner.Worker above this hook, so the $(limit_text "$limit") limit cannot be enforced; tell the fleet admin"
-		exit 1
+	worker=$(my_worker) || {
+		fail_started "no Runner.Worker above this hook, so the $(limit_text "$limit") limit cannot be enforced; tell the fleet admin"
 	}
 	mkdir -p "$state"
 	deadline=$(($(date +%s) + limit))
@@ -248,7 +278,7 @@ measure_start() {
 	cg=${NOVA_CI_CGROUP:-}
 	[ -n "$cg" ] || { [ -r /proc/self/cgroup ] && cg=/sys/fs/cgroup$(cgroup_of </proc/self/cgroup); }
 	# only inside a job: the sampler ends with the job's Runner.Worker
-	w=$(procs comm | ancestor $$ Runner.Worker) || w=
+	w=$(my_worker) || w=
 	if [ -n "$w" ] && [ -n "$cg" ] && [ -r "$cg/memory.current" ]; then
 		nohup sh "$here/nova-ci-rules.sh" sampler "$cg" "$state/mem" "$w" </dev/null >/dev/null 2>&1 &
 		echo $! >"$state/sampler.pid"
@@ -274,7 +304,7 @@ measure_end() {
 	fi
 	if [ "$secs" -gt 100 ]; then
 		load=$(cut -d' ' -f1 /proc/loadavg 2>/dev/null || sysctl -n vm.loadavg 2>/dev/null | awk '{ print $2 }')
-		holders=$(${NOVA_CI_RESERVE:-nova-reserve} status 2>/dev/null | sed -n 's/^slot[0-9]* held .*why=\([^ ]*\).*$/\1/p')
+		holders=$(${NOVA_CI_RESERVE:-nova-reserve} status 2>/dev/null | sed -En 's/^(slot[0-9]+|all) held .*why=([^ ]*).*$/\2/p')
 		n=$(printf '%s' "$holders" | grep -c . || true)
 		line="JOB-LOAD $id load1=${load:-?} holders=$n why=$(printf '%s' "$holders" | tr '\n' ',' | sed 's/,$//')"
 		echo "$line"

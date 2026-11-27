@@ -6,7 +6,7 @@
 
 # The tools nova-tools ships, by name: install.yml installs them and
 # services.yml prefixes argv[0] with nova_bin_dir when it is one of them.
-nova_tools_names: [nova-bus, nova-cairn, nova-config, nova-sandbox, nova-secrets, nova-reserve, nova-fleet]
+nova_tools_names: [nova-bus, nova-cairn, nova-config, nova-sandbox, nova-secrets, nova-reserve, nova-fleet, nova-roadmap]
 
 # Where a machine keeps the tools: its login's home.
 nova_home: "{{ ansible_facts['env']['HOME'] }}"
@@ -98,7 +98,9 @@ nova_runner_windows_ccache_dir: 'C:\ProgramData\nova\ccache'
 nova_runner_windows_ccache_unix: /mnt/c/ProgramData/nova/ccache
 
 nova_runner_packages:
-  darwin: ["postgresql@18", cmake, libsodium, pkgconf, ccache]
+  # darwin: git is Homebrew's, ahead of /usr/bin on a runner's PATH: /usr/bin/git is the Xcode shim, and exec of git's
+  # shell scripts inside an Xcode copied between Macs can hang at _dyld_start (checkout's `git submodule foreach`).
+  darwin: ["postgresql@18", cmake, libsodium, pkgconf, ccache, gh, git]
   debian:
     # compilers, assemblers, build systems and the tools a build calls
     - build-essential
@@ -122,6 +124,8 @@ nova_runner_packages:
     - xxd
     - jq
     - graphviz
+    # the GitHub CLI a workflow step runs (`gh run download`, `gh api`), on the job's GITHUB_TOKEN
+    - gh
     # libraries the tests link
     - libbpf-dev
     - libcurl4-openssl-dev
@@ -196,6 +200,12 @@ nova_runner_ports_uri: "http://ports.ubuntu.com/ubuntu-ports/"
 # and a run that fails while its VM tier lacks anything.
 nova_runner_vm_kernel: true
 nova_runner_vm_kernel_dir: "{{ ansible_facts['user_dir'] }}/vm-kernels"
+# Debian/Ubuntu: the hosts whose login (the fleet login, as for kvm) joins render, the group a GPU's render node
+# (/dev/dri/renderD*) is open to, so Vulkan finds the GPU and not only lavapipe (debian-gpu.yml). None by default.
+nova_runner_gpu_hosts: []
+# Packages removed where dpkg has them (apt remove, no purge, no autoremove), per OS as nova_runner_packages: one that
+# came on outside the list and must not stay. None by default.
+nova_runner_packages_absent: {}
 # Debian/Ubuntu: TLC's jar (TLA+ tools v1.7.4), root's at this path and readable by every login, pinned by its sha256.
 # A missing one is downloaded from the TLA+ release and checked against the pin before it lands; a jar that differs
 # from the pin is refused, never replaced. An empty sha256 skips it.

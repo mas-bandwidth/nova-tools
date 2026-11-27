@@ -76,6 +76,7 @@ type harness struct {
 	dead     map[int]bool
 	dir      string
 	ran      []string
+	gotEnv   []string
 	code     int
 	out, err bytes.Buffer
 	w        world
@@ -89,8 +90,8 @@ func newHarness(t *testing.T) *harness {
 		now:     h.c.now,
 		sleep:   h.c.sleep,
 		resolve: func(name string) (string, error) { return "/bin/" + name, nil },
-		exec: func(_ string, argv []string) int {
-			h.ran = argv
+		exec: func(_ string, argv, env []string) int {
+			h.ran, h.gotEnv = argv, env
 			return h.code
 		},
 		running: func(pid int) bool { return !h.dead[pid] },
@@ -109,7 +110,7 @@ func (h *harness) sibling(pid int) *harness {
 	s := &harness{f: h.f, c: h.c, dead: h.dead, dir: h.dir}
 	s.w = h.w
 	s.w.pid, s.w.stdout, s.w.stderr = pid, &s.out, &s.err
-	s.w.exec = func(_ string, argv []string) int { s.ran = argv; return s.code }
+	s.w.exec = func(_ string, argv, env []string) int { s.ran, s.gotEnv = argv, env; return s.code }
 	return s
 }
 
@@ -152,7 +153,7 @@ func TestFullSlotsTimeOutNamingTheHolder(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	s := h.sibling(102933)
-	s.w.exec = func(_ string, _ []string) int {
+	s.w.exec = func(_ string, _, _ []string) int {
 		assert.Equal(t, 1, run([]string{"--wait", "1s", "--", "make"}, h.w))
 		return 0
 	}
@@ -344,7 +345,7 @@ func TestOtherCapacityIsRefused(t *testing.T) {
 	h := newHarness(t)
 	h.setCap(t, 1)
 	s := h.sibling(123)
-	s.w.exec = func(_ string, _ []string) int {
+	s.w.exec = func(_ string, _, _ []string) int {
 		assert.Equal(t, 2, run([]string{"--slots", "4", "--dir", h.dir, "--", "make"}, h.w))
 		return 0
 	}
@@ -373,7 +374,7 @@ func TestSetRefusedWhileHeld(t *testing.T) {
 	h := newHarness(t)
 	h.setCap(t, 2)
 	s := h.sibling(102933)
-	s.w.exec = func(_ string, _ []string) int {
+	s.w.exec = func(_ string, _, _ []string) int {
 		assert.Equal(t, 1, run([]string{"set", "--slots", "4", "--dir", h.dir}, h.w))
 		return 0
 	}
@@ -440,7 +441,7 @@ func TestCapacityRewriteCannotLeaveItEmpty(t *testing.T) {
 func statusDuring(t *testing.T, h *harness, args ...string) string {
 	t.Helper()
 	var got string
-	h.w.exec = func(_ string, _ []string) int {
+	h.w.exec = func(_ string, _, _ []string) int {
 		s := h.sibling(9)
 		touched := false
 		s.w.lock = func(string, bool) (func(), bool, error) { touched = true; return nil, false, nil }
@@ -714,10 +715,14 @@ func TestRunPassesTheStatusAndFrees(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	var path string
-	h.w.exec = func(p string, argv []string) int { path, h.ran = p, argv; return 7 }
+	h.w.exec = func(p string, argv, env []string) int { path, h.ran, h.gotEnv = p, argv, env; return 7 }
 	assert.Equal(t, 7, run([]string{"--slots", "2", "--", "make", "-j4"}, h.w))
 	assert.Equal(t, "/bin/make", path)
 	assert.Equal(t, []string{"make", "-j4"}, h.ran)
+	assert.ElementsMatch(t, []string{
+		"NOVA_RESERVE_CPUS=4", "GOMAXPROCS=4", "CARGO_BUILD_JOBS=4",
+		"RAYON_NUM_THREADS=4", "CMAKE_BUILD_PARALLEL_LEVEL=4",
+	}, h.gotEnv)
 	// stderr carries only the tool's own lines
 	for _, l := range strings.Split(strings.TrimSpace(h.err.String()), "\n") {
 		assert.True(t, strings.HasPrefix(l, "nova-reserve: "), l)
@@ -740,4 +745,30 @@ func TestShellQuote(t *testing.T) {
 	assert.Equal(t, `'C:\jobs'`, shellQuote(`C:\jobs`))
 	assert.Equal(t, `'it'\''s'`, shellQuote("it's"))
 	assert.Equal(t, "''", shellQuote(""))
+}
+
+func TestHoldEnvSetsSlotCoreShareAndPreservesCallerOverrides(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.w.cpus = 16
+	h.w.environ = func() []string {
+		return []string{"PATH=/usr/bin:/bin", "GOMAXPROCS=2", "CARGO_BUILD_JOBS=", "NOVA_RESERVE_DIR=/keep"}
+	}
+	require.Equal(t, 0, run([]string{"--slots", "4", "--", "make"}, h.w))
+	assert.Equal(t, []string{
+		"PATH=/usr/bin:/bin",
+		"GOMAXPROCS=2",
+		"NOVA_RESERVE_DIR=/keep",
+		"NOVA_RESERVE_CPUS=4",
+		"CARGO_BUILD_JOBS=4",
+		"RAYON_NUM_THREADS=4",
+		"CMAKE_BUILD_PARALLEL_LEVEL=4",
+	}, h.gotEnv)
+
+	// Exclusive hold exports full machine CPU count when unpinned (e.g. macOS).
+	h2 := newHarness(t)
+	h2.w.cpus = 16
+	require.Equal(t, 0, run([]string{"--exclusive", "--", "make"}, h2.w))
+	assert.Contains(t, h2.gotEnv, "NOVA_RESERVE_CPUS=16")
+	assert.Contains(t, h2.gotEnv, "GOMAXPROCS=16")
 }
