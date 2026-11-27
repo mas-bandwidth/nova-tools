@@ -38,8 +38,10 @@ const banner = `nova-fleet: the fleet's Ansible plays, in one binary
   nova-fleet up [--check] --tools TAG|DIR [--runners URL] <name>=<address>...
                                     from nothing to a fleet, in a fixed order
   nova-fleet rented [--json]        the machines rented by the hour: age, cost, purpose, return-by
+  nova-fleet commit-guard [--rules FILE] [--repo DIR] <revision>... | --pre-push <remote>
+                                    refuse a commit an AI made under a guarded person's address
   nova-fleet <play> [<argument>] [--inventory FILE|SCRIPT] [--check] [--diff] [-- ansible-playbook args]
-  nova-fleet help [plays|show|check|up|rented|<play>]
+  nova-fleet help [plays|show|check|up|rented|commit-guard|<play>]
 
 A run extracts the plays to a private temporary directory, writes an inventory
 script there that execs nova-config inventory (found on PATH; --inventory names
@@ -60,10 +62,11 @@ Print the text of an embedded play (install prints install.yml) or of another
 top-level embedded file by name (tailscale-acl prints tailscale-acl.json). Payload:
 the file's bytes, on stdout.
 `,
-	"up":     upHelp,
-	"check":  checkHelp,
-	"rented": rentedHelp,
-	"help": `nova-fleet help [plays|show|check|up|rented|<play>]
+	"up":           upHelp,
+	"check":        checkHelp,
+	"rented":       rentedHelp,
+	"commit-guard": guardHelp,
+	"help": `nova-fleet help [plays|show|check|up|rented|commit-guard|<play>]
 
 Print the banner, or the help of a verb or a play.
 `,
@@ -267,6 +270,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runCheck(rest, stdout, stderr)
 	case "rented":
 		return runRented(rest, stdout, stderr)
+	case "commit-guard":
+		return runCommitGuard(rest, stdout, stderr)
 	case "plays", "show":
 		if len(rest) > 0 && isHelp(rest[0]) {
 			fmt.Fprint(stdout, verbHelp[verb])
@@ -299,7 +304,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 	if !slices.Contains(all, verb) {
-		fmt.Fprintf(stderr, "nova-fleet: unknown verb or play %s; verbs: plays, show, check, up, rented, help; plays: %s; run: nova-fleet help\n", verb, strings.Join(all, ", "))
+		fmt.Fprintf(stderr, "nova-fleet: unknown verb or play %s; verbs: plays, show, check, up, rented, commit-guard, help; plays: %s; run: nova-fleet help\n", verb, strings.Join(all, ", "))
 		return 2
 	}
 	if verb == "install" {

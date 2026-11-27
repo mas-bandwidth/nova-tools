@@ -81,6 +81,8 @@ var docRefusals = map[string]refusalCase{
 	"entry \"<id>\" is kept, but its log line is not written": {tool: "cairn", why: "a session log this user cannot write"},
 	"stored entry \"<id>\" is corrupt":                        {tool: "cairn", why: "an entry file damaged on disk"},
 	`nova-fleet: want a verb or a play; run: nova-fleet help`: {tool: "fleet", argv: []string{}},
+	"nova-fleet commit-guard: commit <sha> (author <name> <address>, committer <name> <address>) carries the AI marker \"<line>\" under a guarded address; amend it as the seat's own identity (git config user.email <the seat's address>), run: git rebase --exec 'git commit --amend --no-edit --reset-author' <sha>~1": {tool: "fleet",
+		why: "a git repository holding such a commit; cmd/nova-fleet/guard_functional_test.go makes one"},
 	`OPEN FAILED`:   {tool: "cairn", why: "a session opened earlier with another policy"},
 	`APPEND FAILED`: {tool: "cairn", why: "an entry appended earlier with other words"},
 	`machine add: machine bench-a exists; use: nova-config machine set bench-a`:                                                                                          {tool: "config", why: needsStore},

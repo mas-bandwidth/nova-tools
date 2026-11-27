@@ -1,0 +1,7 @@
+# nova-fleet push-guard (nova-tools cmd/nova-fleet push-guard.yml) writes this file; nova-fleet commit-guard reads it.
+{% for p in nova_push_guard_people %}
+person {{ p }}
+{% endfor %}
+{% for m in nova_push_guard_markers %}
+marker {{ m }}
+{% endfor %}
