@@ -39,6 +39,12 @@
      ("ci-runner-toolchain-env" "Question for the owner: a runner service's environment exports MOO and MOO_ANALYZE (~/sdk/moo-v1.3.0), which a repository's Makefile takes with ?= over the moo its job just built, so serialize.moo's ARM64 job tested the runner's moo on 2026-11-21; should runner-wide variables exist for tools repositories build themselves")
      ("roadmap-cli-contract" "nova-roadmap meets the command-line contract: one-line refusals ending in run: nova-roadmap <verb> -h, no Go flag-package text, an entry in toolSpecs and a faults_roadmap_test.go; this changes its stderr, never a rendered page")
      ("reboot-window-idle-only" "The fleet's automatic-reboot window (hand-set 2026-11-05 in /etc/apt/apt.conf.d/52nova-reboot-window, one host per 15 minutes, not yet in any play) fires only when the host is idle: no nova-reserve holder and no runner job running, else it defers; when it lands as a play, remove the temporary hold files /etc/apt/apt.conf.d/53nova-no-auto-reboot-hold put on 2026-11-13 on amd-1, amd-2, amd-3, hulk, hetzner1, hetzner2, intel and space (hulk rebooted itself mid-work at 09:00 UTC)")
+     ("rented-return-by-enforced" "Owed, the owner 2026-11-22 (\"i can be bankrupted by leaving a machine running too long\"): a rented machine past its return_by is returned automatically (runners, IP, record, box) or raises an alarm nobody has to look for; aws-win-ci-20261116 ran five days past its return_by, USD 238 wasted, seen only by reading nova-fleet rented")
+     ("casefold-teardown" "nova-fleet github-runners: a host whose github_runner_casefold_dir is turned off ('' in host_vars) has its case-folding scratch taken down: the fstab line removed, the loop mount unmounted once no job holds it, and the image deleted; today turning it off leaves all three in place")
+     ("casefold-scratch-cleanup" "nova-fleet: a cleanup rule for the case-folding scratch (/srv/casefold/scratch): directories a job left behind (a killed test skips its own cleanup) are removed by age, as the health play's disk clean does for a runner's TMPDIR, so the 1G image cannot fill")
+     ("fleet-hostnames-prompt" "nova-fleet tailscale: every Linux machine's hostname, /etc/hosts and cloud-init match its record name, and every machine gets the fleet's shell prompt (closed PR #6365, branch feature/hostnames)")
+     ("runner-git-probe" "nova-fleet github-runners: an opt-in probe finds runner workspace clones (shallow, promisor tree:0) that make git abort in actions/checkout's fetch (closed draft PR #6421, branch fleet/runner-workspace-git-probe)")
+     ("runner-memory-max" "nova-fleet github-runner: each Linux runner unit gets a MemoryMax bound, so a runaway job is killed inside its own runner (closed draft PR #6407, branch fleet/runner-memory-max)")
      )
    :columns (("done" "done"))
    :cells (
@@ -75,6 +81,12 @@
      ("ci-runner-toolchain-env" "done" "t-ci-runner-toolchain-env")
      ("roadmap-cli-contract" "done" "t-roadmap-cli-contract")
      ("reboot-window-idle-only" "done" "t-reboot-window-idle-only")
+     ("rented-return-by-enforced" "done" "t-rented-return-by-enforced")
+     ("casefold-teardown" "done" "t-casefold-teardown")
+     ("casefold-scratch-cleanup" "done" "t-casefold-scratch-cleanup")
+     ("fleet-hostnames-prompt" "done" "t-fleet-hostnames-prompt")
+     ("runner-git-probe" "done" "t-runner-git-probe")
+     ("runner-memory-max" "done" "t-runner-memory-max")
      ))
   (:id "t-reserve-slots-are-cores" :type :task :title "nova-reserve slots bound CPU, so N one-slot jobs cannot saturate a bench" :state :todo)
   (:id "t-fleet-placement" :type :task :title "Place one heavy job on the quietest bench fleet-wide" :state :todo)
@@ -116,4 +128,13 @@
   (:id "t-roadmap-cli-contract" :type :task :title "nova-roadmap meets the command-line contract" :state :todo
    :note "Today a refusal is two lines, nova-roadmap: REFUSED: <reason> then run: nova-roadmap help, and an unknown flag prints the flag package's text; TestCLIContract checks A3, A4 and A5 against one line naming the verb. The move into nova-tools kept every byte of output, so the change is its own step.")
   (:id "t-reboot-window-idle-only" :type :task :title "The automatic-reboot window fires only when the host is idle (no nova-reserve holder, no runner job), and the temporary hold files are removed when it lands as a play" :state :todo
-   :note "Hand-set 2026-11-05 in /etc/apt/apt.conf.d/52nova-reboot-window (one host per 15 minutes, in no play). Hold files /etc/apt/apt.conf.d/53nova-no-auto-reboot-hold were put on 2026-11-13 on amd-1, amd-2, amd-3, hulk, hetzner1, hetzner2, intel and space after hulk rebooted itself mid-work at 09:00 UTC.")))
+   :note "Hand-set 2026-11-05 in /etc/apt/apt.conf.d/52nova-reboot-window (one host per 15 minutes, in no play). Hold files /etc/apt/apt.conf.d/53nova-no-auto-reboot-hold were put on 2026-11-13 on amd-1, amd-2, amd-3, hulk, hetzner1, hetzner2, intel and space after hulk rebooted itself mid-work at 09:00 UTC.")
+  (:id "t-rented-return-by-enforced" :type :task :state :todo :title "A rented machine past its return_by is returned automatically or raises an alarm nobody has to look for (the owner, 2026-11-22)")
+  (:id "t-casefold-teardown" :type :task :title "nova-fleet github-runners: a host whose github_runner_casefold_dir is turned off ('' in host_vars) has its case-folding scratch taken down: the fstab line removed, the loop mount unmounted once no job holds it, and the image deleted; today turning it off leaves all three in place" :state :todo)
+  (:id "t-casefold-scratch-cleanup" :type :task :title "nova-fleet: a cleanup rule for the case-folding scratch (/srv/casefold/scratch): directories a job left behind (a killed test skips its own cleanup) are removed by age, as the health play's disk clean does for a runner's TMPDIR, so the 1G image cannot fill" :state :todo)
+  (:id "t-fleet-hostnames-prompt" :type :task :title "nova-fleet tailscale sets hostname, /etc/hosts, cloud-init preserve_hostname, WSL hostname and a fleet shell prompt to match the machine name" :state :todo
+   :note "Work in closed PR #6365, branch feature/hostnames (kept). It conflicted with main when closed. It renames Linux hostnames, rewrites /etc/hosts to one 127.0.1.1 line, adds 99-nova-hostname.cfg, writes ~/.config/nova/prompt.{bash,zsh} and a source line into the shell rc files (Macs too), adds the refusal HOSTNAME <machine> drift-refused and removes join.yml's own hostname task; each of those needs the owner's go-ahead.")
+  (:id "t-runner-git-probe" :type :task :title "nova-fleet github-runners probes workspace clones that make git abort in checkout" :state :todo
+   :note "Draft in closed PR #6421, branch fleet/runner-workspace-git-probe (kept). A shallow promisor (tree:0) workspace clone made git abort in actions/checkout's fetch (BUG: builtin/pack-objects.c: should_include_obj, pack-objects died of signal 6). The draft adds tasks/git-probe.yml, off by default (-e nova_runner_git_probe=true), Linux only, printing GIT-PROBE receipts; finishing it means bringing it up to main and the owner agreeing to the new variable and receipts.")
+  (:id "t-runner-memory-max" :type :task :title "nova-fleet github-runner bounds each Linux runner's memory with MemoryMax" :state :todo
+   :note "Draft in closed PR #6407, branch fleet/runner-memory-max (kept). It adds github_runner_memory_max_pct (default 50, 0 for no bound) rendered as MemoryMax in the runner unit, beside main's OOMPolicy=continue. Evidence then: single CI processes at 25 GB to 127 GB caused global OOMs that killed other runners' jobs. Finishing it means bringing it up to main and the owner agreeing to cap every Linux runner by default.")))
