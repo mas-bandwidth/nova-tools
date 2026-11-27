@@ -252,6 +252,10 @@
         ts_self: "{{ (ts_after.stdout | from_json).Self }}"
       when: ts_up is not skipped or ts_set is changed
 
+- name: resolv.conf is resolved's stub (Linux with systemd-resolved)
+  ansible.builtin.include_tasks: dns.yml
+  when: ts_os == 'debian'
+
 # ---- the MagicDNS name, recorded as the machine's address ----
 - name: the machine's MagicDNS name
   ansible.builtin.set_fact:

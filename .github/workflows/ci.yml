@@ -178,6 +178,18 @@ jobs:
             [ "$play" = cmd/nova-fleet/requirements.yml ] && continue
             ansible-playbook -i cmd/nova-fleet/ci/inventory --syntax-check "$play"
           done
+      - name: syntax-check every role task file
+        # a play loads an include_tasks file only when a run reaches it, so the step above never parses them:
+        # import each one statically into one play and syntax-check that (a quote Ansible cannot split fails here)
+        shell: bash
+        run: |
+          export PATH="$RUNNER_TEMP/ansible/bin:$PATH"
+          play="$RUNNER_TEMP/role-tasks.yml"
+          {
+            printf -- '- hosts: localhost\n  gather_facts: false\n  tasks:\n'
+            for f in "$PWD"/cmd/nova-fleet/roles/*/tasks/*.yml; do printf '    - import_tasks: %s\n' "$f"; done
+          } > "$play"
+          ansible-playbook -i localhost, --syntax-check "$play"
       - name: services.yml --check against the stub inventory
         shell: bash
         run: |

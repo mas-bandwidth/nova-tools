@@ -36,7 +36,10 @@
 - name: the platform, the names and the labels
   ansible.builtin.set_fact:
     github_runner_path: "{{ github_runner_url | regex_replace('^https://[^/]+/', '') | regex_replace('/$', '') }}"
-    github_runner_slug: "{{ github_runner_url | regex_replace('^https://[^/]+/', '') | regex_replace('/$', '') | replace('/', '-') }}"
+    github_runner_slug: >-
+      {{ github_runner_url | regex_replace('^https://[^/]+/', '') | regex_replace('/$', '') | replace('/', '-')
+         ~ (('-' ~ github_runner_set) if github_runner_set else '') }}
+    github_runner_name_stem: "{{ inventory_hostname ~ (('-' ~ github_runner_set) if github_runner_set else '') }}"
     github_runner_os: >-
       {{ 'osx' if ansible_facts['system'] == 'Darwin' else 'linux' }}
     github_runner_arch: >-
@@ -103,7 +106,7 @@
   failed_when: false
   check_mode: false
   vars:
-    github_runner_online_want: "{{ github_runner_want | map('regex_replace', '^', inventory_hostname ~ '-') | map('regex_replace', '$', ' online') | list }}"
+    github_runner_online_want: "{{ github_runner_want | map('regex_replace', '^', github_runner_name_stem ~ '-') | map('regex_replace', '$', ' online') | list }}"
   until: >-
     ansible_check_mode or github_runner_listed.rc != 0
     or (github_runner_online_want | difference(github_runner_listed.stdout_lines) | length == 0)
@@ -116,8 +119,8 @@
     msg: >-
       RUNNERS {{ inventory_hostname }} want={{ github_runner_want | length }}
       {% if github_runner_listed.rc | default(1) != 0 %}verified=no reason={{ (github_runner_listed.stderr | default(github_runner_listed.msg | default('gh not run'))) | trim | replace('\n', ' ') }}
-      {% else %}online={{ github_runner_want | map('regex_replace', '^', inventory_hostname ~ '-') | map('regex_replace', '$', ' online') | intersect(github_runner_listed.stdout_lines) | length }}
-      listed={{ github_runner_listed.stdout_lines | select('match', '^' ~ inventory_hostname ~ '-[0-9]+ ') | map('split') | map('first') | join(',') }}{% endif %}
+      {% else %}online={{ github_runner_want | map('regex_replace', '^', github_runner_name_stem ~ '-') | map('regex_replace', '$', ' online') | intersect(github_runner_listed.stdout_lines) | length }}
+      listed={{ github_runner_listed.stdout_lines | select('match', '^' ~ github_runner_name_stem ~ '-[0-9]+ ') | map('split') | map('first') | join(',') }}{% endif %}
       {{ '(check: nothing changed)' if ansible_check_mode else '' }}
   when: github_runner_verify | bool and github_runner_want | length > 0
 
@@ -126,7 +129,7 @@
     quiet: true
     that:
       - github_runner_listed.rc == 0
-      - github_runner_want | map('regex_replace', '^', inventory_hostname ~ '-') | map('regex_replace', '$', ' online') | difference(github_runner_listed.stdout_lines) | length == 0
+      - github_runner_want | map('regex_replace', '^', github_runner_name_stem ~ '-') | map('regex_replace', '$', ' online') | difference(github_runner_listed.stdout_lines) | length == 0
     fail_msg: >-
       github-runner: {{ inventory_hostname }}'s runners are not all online in GitHub (see the RUNNERS line);
       check: {{ github_runner_gh }} api {{ 'orgs' if github_runner_scope == 'org' else 'repos' }}/{{ github_runner_path }}/actions/runners
