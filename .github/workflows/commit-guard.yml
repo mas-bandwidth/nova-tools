@@ -1,0 +1,94 @@
+# commit-guard, a reusable workflow: nova-fleet commit-guard over the commits a pull request, a merge group or a push
+# brings, built from the nova-tools commit this workflow file is called at (cmd/nova-fleet/README.md, "Commit guard").
+# A repository calls it from a workflow of its own:
+#
+#   on: [pull_request, merge_group]
+#   jobs:
+#     commit-guard:
+#       uses: mas-bandwidth/nova-tools/.github/workflows/commit-guard.yml@<tag>
+#
+# The rules are the text of a commit-guard rules file: the rules input, else the caller's configuration variable
+# NOVA_COMMIT_GUARD_RULES (an organization variable keeps one copy for every repository). With neither the job fails.
+
+name: commit-guard
+
+on:
+  workflow_call:
+    inputs:
+      rules:
+        description: the rules file's text (person and marker lines); empty reads vars.NOVA_COMMIT_GUARD_RULES
+        type: string
+        default: ""
+      range:
+        description: the revisions to check, such as origin/main..HEAD; empty is what the event brings
+        type: string
+        default: ""
+      runs-on:
+        description: the runner's labels, as a JSON string or array
+        type: string
+        default: '"ubuntu-latest"'
+
+permissions:
+  contents: read
+
+jobs:
+  commit-guard:
+    runs-on: ${{ fromJSON(inputs.runs-on) }}
+    timeout-minutes: 10
+    steps:
+      - name: the caller's history
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          path: caller
+          persist-credentials: false
+      - name: nova-tools at this workflow's commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: mas-bandwidth/nova-tools
+          ref: ${{ job.workflow_sha }}
+          path: nova-tools
+          persist-credentials: false
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: nova-tools/go.mod
+          cache: false
+      - name: build nova-fleet
+        run: go build -C nova-tools -o "$RUNNER_TEMP/nova-fleet" ./cmd/nova-fleet
+      - name: commit-guard
+        shell: bash
+        env:
+          RULES: ${{ inputs.rules || vars.NOVA_COMMIT_GUARD_RULES }}
+          RANGE: ${{ inputs.range }}
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          MG_BASE: ${{ github.event.merge_group.base_sha }}
+          MG_HEAD: ${{ github.event.merge_group.head_sha }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.event.after }}
+          DEFAULT: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          if [ -z "$RULES" ]; then
+            echo "::error::commit-guard has no rules: pass the rules input or set the configuration variable NOVA_COMMIT_GUARD_RULES"
+            exit 2
+          fi
+          printf '%s\n' "$RULES" > "$RUNNER_TEMP/commit-guard"
+          if [ -z "$RANGE" ]; then
+            case "$EVENT" in
+              pull_request) RANGE="$PR_BASE..$PR_HEAD" ;;
+              merge_group) RANGE="$MG_BASE..$MG_HEAD" ;;
+              push)
+                if [ -z "${AFTER//0/}" ]; then echo "a deletion pushes no commit"; exit 0; fi
+                # a new branch, or a force push whose old commit this clone lacks: what the default branch lacks
+                if [ -z "${BEFORE//0/}" ] || ! git -C caller cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+                  RANGE="origin/$DEFAULT..$AFTER"
+                else
+                  RANGE="$BEFORE..$AFTER"
+                fi ;;
+              *) echo "::error::commit-guard: no range for a $EVENT event; pass the range input"; exit 2 ;;
+            esac
+          fi
+          read -ra revs <<< "$RANGE"
+          "$RUNNER_TEMP/nova-fleet" commit-guard --rules "$RUNNER_TEMP/commit-guard" --repo caller "${revs[@]}"

@@ -1,0 +1,25 @@
+# purpose: each seat login's git pre-push hook: a push sending a commit an AI made under a guarded person's address is refused (bench, runner and services groups, but nova_push_guard_skip)
+#
+# push-guard.yml (cmd/nova-fleet/README.md, "push-guard"). On each machine, as its login and never root:
+#
+#   ~/.config/nova-fleet/commit-guard    the rules nova-fleet commit-guard reads: a person line for each address of
+#                                        nova_push_guard_people, a marker line for each of nova_push_guard_markers
+#   ~/.config/nova-fleet/git-hooks/      pre-push runs nova-fleet commit-guard --pre-push on what the push sends,
+#                                        then the repository's own pre-push hook; each other hook name runs the
+#                                        repository's own hook of that name, so its hooks keep working
+#   git config --global core.hooksPath   that directory
+#
+# A machine named in nova_push_guard_skip (one whose login is a person's own) is left as it is. A login whose
+# core.hooksPath already names another directory, or whose nova-fleet has no commit-guard verb, fails before anything
+# is written. A second run changes nothing. One line per machine:
+# PUSH-GUARD host=<machine> login=<login> identity=<its user.email|unset> <changed|unchanged|would-change>.
+#
+#   nova-fleet push-guard --check --diff -- -e @<vars file>
+#   nova-fleet push-guard -- -e @<vars file>
+- name: each seat login's git pre-push hook
+  hosts: bench:runner:services   # where install puts nova-fleet, which the hook runs; a seat-only machine has none
+  gather_facts: true
+  gather_subset: [min]
+  become: false
+  roles:
+    - push-guard
