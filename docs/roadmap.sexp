@@ -38,6 +38,9 @@
      ("ci-limit-under-load" "Measurement for ci-cold-build-limit: under fleet load with bench work on the CI hosts, schema's lang-clean (elixir) was cancelled by the 120 s limit in 5 of 11 per-commit runs on 2026-11-21 (one after its last test printed OK); its green runs took 78-109 s")
      ("ci-runner-toolchain-env" "Question for the owner: a runner service's environment exports MOO and MOO_ANALYZE (~/sdk/moo-v1.3.0), which a repository's Makefile takes with ?= over the moo its job just built, so serialize.moo's ARM64 job tested the runner's moo on 2026-11-21; should runner-wide variables exist for tools repositories build themselves")
      ("roadmap-cli-contract" "nova-roadmap meets the command-line contract: one-line refusals ending in run: nova-roadmap <verb> -h, no Go flag-package text, an entry in toolSpecs and a faults_roadmap_test.go; this changes its stderr, never a rendered page")
+     ("fleet-hostnames-prompt" "nova-fleet tailscale: every Linux machine's hostname, /etc/hosts and cloud-init match its record name, and every machine gets the fleet's shell prompt (closed PR #6365, branch feature/hostnames)")
+     ("runner-git-probe" "nova-fleet github-runners: an opt-in probe finds runner workspace clones (shallow, promisor tree:0) that make git abort in actions/checkout's fetch (closed draft PR #6421, branch fleet/runner-workspace-git-probe)")
+     ("runner-memory-max" "nova-fleet github-runner: each Linux runner unit gets a MemoryMax bound, so a runaway job is killed inside its own runner (closed draft PR #6407, branch fleet/runner-memory-max)")
      )
    :columns (("done" "done"))
    :cells (
@@ -73,6 +76,9 @@
      ("ci-limit-under-load" "done" "t-ci-limit-under-load")
      ("ci-runner-toolchain-env" "done" "t-ci-runner-toolchain-env")
      ("roadmap-cli-contract" "done" "t-roadmap-cli-contract")
+     ("fleet-hostnames-prompt" "done" "t-fleet-hostnames-prompt")
+     ("runner-git-probe" "done" "t-runner-git-probe")
+     ("runner-memory-max" "done" "t-runner-memory-max")
      ))
   (:id "t-reserve-slots-are-cores" :type :task :title "nova-reserve slots bound CPU, so N one-slot jobs cannot saturate a bench" :state :todo)
   (:id "t-fleet-placement" :type :task :title "Place one heavy job on the quietest bench fleet-wide" :state :todo)
@@ -112,4 +118,10 @@
   (:id "t-ci-runner-toolchain-env" :type :task :title "Question for the owner: a runner service's environment exports MOO and MOO_ANALYZE (~/sdk/moo-v1.3.0), which a repository's Makefile takes with ?= over the moo its job just built, so serialize.moo's ARM64 job tested the runner's moo on 2026-11-21; should runner-wide variables exist for tools repositories build themselves" :state :todo
    :note "Evidence: serialize.moo run 44909006657, job test on the pinned moo (ARM64) on the macOS runner studio-2. That runner's launchd plist holds MOO and MOO_ANALYZE naming ~/sdk/moo-v1.3.0/bin/moo and moo-analyze, beside every other SDK variable env.sh exports. serialize.moo's Makefile: MOO ?= $(MOO_DIST)/moo and MOO_ANALYZE ?= $(MOO_DIST)/moo-analyze. Where the values come from: cmd/nova-fleet/roles/sdk-toolchain/defaults/main.yml nova_sdk_env_files (MOO, MOO_ANALYZE, MOO_CHECKED), exported by roles/sdk-toolchain/templates/env.sh.j2; the service environment is the machine record's runner_env (github_runner_env in roles/github-runner/defaults/main.yml), written into the plist by roles/github-runner/templates/runner.plist.j2 and into the Linux unit by runner.service.j2. The two binaries were byte-identical that day, so the result stood, but the job did not test what it built. Deciding or building anything here needs the owner's go-ahead.")
   (:id "t-roadmap-cli-contract" :type :task :title "nova-roadmap meets the command-line contract" :state :todo
-   :note "Today a refusal is two lines, nova-roadmap: REFUSED: <reason> then run: nova-roadmap help, and an unknown flag prints the flag package's text; TestCLIContract checks A3, A4 and A5 against one line naming the verb. The move into nova-tools kept every byte of output, so the change is its own step.")))
+   :note "Today a refusal is two lines, nova-roadmap: REFUSED: <reason> then run: nova-roadmap help, and an unknown flag prints the flag package's text; TestCLIContract checks A3, A4 and A5 against one line naming the verb. The move into nova-tools kept every byte of output, so the change is its own step.")
+  (:id "t-fleet-hostnames-prompt" :type :task :title "nova-fleet tailscale sets hostname, /etc/hosts, cloud-init preserve_hostname, WSL hostname and a fleet shell prompt to match the machine name" :state :todo
+   :note "Work in closed PR #6365, branch feature/hostnames (kept). It conflicted with main when closed. It renames Linux hostnames, rewrites /etc/hosts to one 127.0.1.1 line, adds 99-nova-hostname.cfg, writes ~/.config/nova/prompt.{bash,zsh} and a source line into the shell rc files (Macs too), adds the refusal HOSTNAME <machine> drift-refused and removes join.yml's own hostname task; each of those needs the owner's go-ahead.")
+  (:id "t-runner-git-probe" :type :task :title "nova-fleet github-runners probes workspace clones that make git abort in checkout" :state :todo
+   :note "Draft in closed PR #6421, branch fleet/runner-workspace-git-probe (kept). A shallow promisor (tree:0) workspace clone made git abort in actions/checkout's fetch (BUG: builtin/pack-objects.c: should_include_obj, pack-objects died of signal 6). The draft adds tasks/git-probe.yml, off by default (-e nova_runner_git_probe=true), Linux only, printing GIT-PROBE receipts; finishing it means bringing it up to main and the owner agreeing to the new variable and receipts.")
+  (:id "t-runner-memory-max" :type :task :title "nova-fleet github-runner bounds each Linux runner's memory with MemoryMax" :state :todo
+   :note "Draft in closed PR #6407, branch fleet/runner-memory-max (kept). It adds github_runner_memory_max_pct (default 50, 0 for no bound) rendered as MemoryMax in the runner unit, beside main's OOMPolicy=continue. Evidence then: single CI processes at 25 GB to 127 GB caused global OOMs that killed other runners' jobs. Finishing it means bringing it up to main and the owner agreeing to cap every Linux runner by default.")))
