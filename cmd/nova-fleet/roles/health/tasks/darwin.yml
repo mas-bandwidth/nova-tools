@@ -1,5 +1,5 @@
 ---
-# The health role on a Mac (cmd/nova-fleet/health.yml): only the Go build cache's trim. The cache is the one
+# The health role on a Mac (cmd/nova-fleet/health.yml): the Go build cache's trim, and the open-files watch below. The cache is the one
 # `go env GOCACHE` names for the login (its login shell's environment); files/nova-go-cache-clean runs hourly from a
 # LaunchDaemon as the login, with the Linux clean's ages. No temp or working directory is touched.
 - name: the login's Go build cache (go env GOCACHE, in its login shell)
@@ -90,4 +90,87 @@
       {%- if not nova_health_disk_clean | bool %} off (nova_health_disk_clean)
       {%- elif not health_gocache_on | bool %} skipped: go env GOCACHE gave "{{ health_gocache_dir }}" (rc={{ health_gocache.rc | default('-') }}), not a go-build dir outside /Volumes
       {%- else %} cache={{ health_gocache_dir }} hourly, log={{ nova_home }}/Library/Logs/nova-go-cache-clean.log{% endif %}
+  changed_when: false
+
+# The open-files watch: files/nova-files-watch every nova_health_files_watch_interval seconds from a LaunchDaemon run as
+# root (lsof counts every process's descriptors only as root). Under nova_health_files_watch_max it reads one sysctl
+# and writes nothing; at or over it, one FILES line naming the top holders, so a freeze leaves its cause behind.
+- name: the open-files watch script
+  ansible.builtin.copy: { src: nova-files-watch, dest: /usr/local/sbin/nova-files-watch, mode: "0755", owner: root, group: wheel }
+  become: true
+  when: nova_health_files_watch | bool
+
+- name: the open-files watch's LaunchDaemon
+  ansible.builtin.copy:
+    dest: /Library/LaunchDaemons/com.nova.files-watch.plist
+    mode: "0644"
+    owner: root
+    group: wheel
+    content: |
+      <?xml version="1.0" encoding="UTF-8"?>
+      <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+      <!-- managed by Ansible (fleet/health.yml): kern.num_files every {{ nova_health_files_watch_interval }}s, the top holders logged at {{ nova_health_files_watch_max }} -->
+      <plist version="1.0">
+      <dict>
+        <key>Label</key><string>com.nova.files-watch</string>
+        <key>ProgramArguments</key>
+        <array><string>/bin/bash</string><string>/usr/local/sbin/nova-files-watch</string></array>
+        <key>EnvironmentVariables</key>
+        <dict>
+          <key>FILES_WATCH_MAX</key><string>{{ nova_health_files_watch_max }}</string>
+          <key>FILES_WATCH_TOP</key><string>{{ nova_health_files_watch_top }}</string>
+        </dict>
+        <key>StartInterval</key><integer>{{ nova_health_files_watch_interval }}</integer>
+        <key>StandardOutPath</key><string>/Library/Logs/nova-files-watch.log</string>
+        <key>StandardErrorPath</key><string>/Library/Logs/nova-files-watch.log</string>
+      </dict>
+      </plist>
+  become: true
+  register: health_files_plist
+  when: nova_health_files_watch | bool
+
+- name: the open-files watch's log, rotated by newsyslog at 1 MiB, five kept
+  ansible.builtin.copy:
+    dest: /etc/newsyslog.d/nova-files-watch.conf
+    mode: "0644"
+    owner: root
+    group: wheel
+    content: |
+      # managed by Ansible (fleet/health.yml)
+      /Library/Logs/nova-files-watch.log 644 5 1024 * N
+  become: true
+  when: nova_health_files_watch | bool
+
+- name: the open-files watch, loaded (again when its file changed)
+  ansible.builtin.shell: |
+    l=system/com.nova.files-watch
+    if launchctl print "$l" >/dev/null 2>&1; then
+      [ "{{ health_files_plist is changed }}" = True ] || { echo LOADED; exit 0; }
+      launchctl bootout "$l"
+      for n in $(seq 1 50); do launchctl print "$l" >/dev/null 2>&1 || break; sleep 0.2; done
+    fi
+    launchctl bootstrap system /Library/LaunchDaemons/com.nova.files-watch.plist && echo BOOTSTRAPPED
+  become: true
+  register: health_files_load
+  changed_when: "'BOOTSTRAPPED' in health_files_load.stdout"
+  when: nova_health_files_watch | bool and not ansible_check_mode
+
+- name: the open-files watch, gone when switched off
+  ansible.builtin.shell: |
+    l=system/com.nova.files-watch
+    if launchctl print "$l" >/dev/null 2>&1; then launchctl bootout "$l" || { echo "bootout $l failed" >&2; exit 1; }; echo REMOVED; fi
+    for f in /Library/LaunchDaemons/com.nova.files-watch.plist /usr/local/sbin/nova-files-watch /etc/newsyslog.d/nova-files-watch.conf; do
+      if [ -e "$f" ]; then rm -f "$f" && echo REMOVED; fi
+    done
+  become: true
+  register: health_files_unload
+  changed_when: "'REMOVED' in health_files_unload.stdout"
+  when: not nova_health_files_watch | bool and not ansible_check_mode
+
+- name: the open-files watch's receipt
+  ansible.builtin.debug:
+    msg: >-
+      FILES-WATCH {{ inventory_hostname }}
+      {%- if not nova_health_files_watch | bool %} off (nova_health_files_watch)
+      {%- else %} every={{ nova_health_files_watch_interval }}s over={{ nova_health_files_watch_max }} top={{ nova_health_files_watch_top }} log=/Library/Logs/nova-files-watch.log{% endif %}
   changed_when: false

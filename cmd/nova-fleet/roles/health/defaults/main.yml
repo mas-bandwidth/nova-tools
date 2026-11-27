@@ -61,3 +61,11 @@ nova_health_disk_clean_work_never: [sdk, "actions-runner*", "*runner*", "*servic
 # The Go build cache cap (2026-11-24): oldest files first, never younger than nova_health_disk_clean_pressed_min (a
 # running build may use a younger one); still over it, CLEAN-OVER-CAP at priority warning and the cache stays.
 nova_health_disk_clean_gocache_max_gb: 20
+
+# A Mac's open-files watch (darwin.yml): kern.num_files every interval seconds, and at or over max one FILES line in
+# /Library/Logs/nova-files-watch.log naming the top holders. 50,000 is a guess, unmeasured: well under kern.maxfiles
+# (491,520 on a 128 GB Mac) and far over an idle count (about 10,000).
+nova_health_files_watch: true
+nova_health_files_watch_interval: 10
+nova_health_files_watch_max: 50000
+nova_health_files_watch_top: 10
