@@ -94,9 +94,13 @@ CREATE TABLE IF NOT EXISTS config.friends (
     pronouns   text,
     note       text NOT NULL DEFAULT '',
     enabled    boolean NOT NULL DEFAULT true,
+    startup    jsonb NOT NULL DEFAULT '{}',
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now()
 );
+
+-- Existing clients name their columns and can continue to edit other friend fields.
+ALTER TABLE config.friends ADD COLUMN IF NOT EXISTS startup jsonb NOT NULL DEFAULT '{}';
 
 -- Shared sign-in display names for the harness IDs on friend rows.
 CREATE TABLE IF NOT EXISTS config.harnesses (

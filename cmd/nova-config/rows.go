@@ -6,9 +6,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"maps"
 	"net/netip"
 	"net/url"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"sort"
@@ -51,12 +53,13 @@ type kind struct {
 type Row = config.Row
 
 var (
-	namePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
-	roleWord    = regexp.MustCompile(`^(bench|runner|services)$`)
-	envName     = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
-	tierWord    = regexp.MustCompile(`^(flash|pro|heavy|frontier)$`)
-	apiWord     = regexp.MustCompile(`^(openai|anthropic)$`)
-	harnessWord = regexp.MustCompile(`^(opencode|claude|codex)$`)
+	githubRepository = regexp.MustCompile(`^https://github[.]com/[a-zA-Z0-9_-]+/[a-zA-Z0-9_.-]+$`)
+	namePattern      = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
+	roleWord         = regexp.MustCompile(`^(bench|runner|services)$`)
+	envName          = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+	tierWord         = regexp.MustCompile(`^(flash|pro|heavy|frontier)$`)
+	apiWord          = regexp.MustCompile(`^(openai|anthropic)$`)
+	harnessWord      = regexp.MustCompile(`^(opencode|claude|codex)$`)
 	// a model's name: its provider's name, a slash, then the model id as its harness names it
 	modelName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*/[A-Za-z0-9_.:-]+(/[A-Za-z0-9_.:-]+)*$`)
 	// a box rented by the hour comes from a provider; one at AWS is on demand or spot
@@ -105,6 +108,7 @@ var kinds = map[string]*kind{
 			{name: "pronouns", typ: "text", null: true},
 			{name: "note", typ: "text", cut: true, free: true},
 			{name: "enabled", typ: "bool", def: "true"},
+			{name: "startup", typ: "startup", def: "{}", free: true, hint: "<json-object>"},
 		},
 		extra: []field{
 			{name: "width", typ: "int"},
@@ -194,6 +198,43 @@ func (f field) canonical(raw string) (string, error) {
 			}
 		}
 		return strings.Join(words, ","), nil
+	case "startup":
+		var s config.FriendStartup
+		dec := json.NewDecoder(strings.NewReader(raw))
+		dec.DisallowUnknownFields()
+		if !strings.HasPrefix(raw, "{") || !json.Valid([]byte(raw)) || dec.Decode(&s) != nil {
+			return "", fmt.Errorf("--startup: want a JSON object with repository, home, prefix and files")
+		}
+		if strings.TrimSpace(raw[1:len(raw)-1]) == "" {
+			return "{}", nil
+		}
+		if _, err := (field{name: "repository", typ: "url"}).canonical(s.Repository); err != nil || s.Repository == "" ||
+			!filepath.IsAbs(s.Home) || strings.ContainsRune(s.Home, 0) || strings.TrimSpace(s.Prefix) == "" || strings.ContainsRune(s.Prefix, 0) || len(s.Files) == 0 {
+			return "", fmt.Errorf("--startup: give a repository URL, absolute checkout, opening prefix and ordered files")
+		}
+		if s.BusOwner != "" && (s.BusOwner != "nexus-server" || s.BusListener == "") {
+			return "", fmt.Errorf("--startup: bus_owner must be nexus-server with a bus_listener endpoint, or omitted")
+		}
+		if s.BusListener != "" {
+			port, err := strconv.Atoi(strings.TrimPrefix(s.BusListener, "127.0.0.1:"))
+			if err != nil || port < 1 || port > 65535 || s.BusListener != "127.0.0.1:"+strconv.Itoa(port) {
+				return "", fmt.Errorf("--startup: bus_listener requires a loopback Redis endpoint such as 127.0.0.1:6379")
+			}
+		}
+		if s.GitHubSSHAlias != "" && (!namePattern.MatchString(s.GitHubSSHAlias) || !githubRepository.MatchString(s.Repository)) {
+			return "", fmt.Errorf("--startup: github_ssh_alias requires a host alias and a GitHub repository URL")
+		}
+		for _, dir := range slices.Concat(s.WritableDirs, s.ReadableDirs) {
+			if !filepath.IsAbs(dir) || filepath.Clean(dir) != dir || dir == "/" || strings.ContainsAny(dir, "\x00\r\n*?[]") {
+				return "", fmt.Errorf("--startup: workspace grants require clean absolute directory paths below the root")
+			}
+		}
+		for _, file := range s.Files {
+			if !fs.ValidPath(file) || file == "." || strings.ContainsAny(file, "\\\x00") {
+				return "", fmt.Errorf("--startup: each file must be a relative path below home")
+			}
+		}
+		return marshal(s), nil
 	case "argv":
 		var words []string
 		dec := json.NewDecoder(strings.NewReader(raw))
@@ -535,6 +576,12 @@ func (k *kind) merge(cur Row, raw map[string]string) (Row, error) {
 			if c, err := f.canonical(v); err != nil {
 				problems = append(problems, err.Error())
 			} else {
+				// jsonb reorders keys and spaces. Keep the database spelling for a no-op set.
+				if f.typ == "startup" {
+					if old, err := f.canonical(cur.F[f.name]); err == nil && old == c {
+						continue
+					}
+				}
 				next.F[f.name] = c
 			}
 		}

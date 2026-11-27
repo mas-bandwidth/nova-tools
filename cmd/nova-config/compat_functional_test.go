@@ -134,7 +134,7 @@ func TestFunctionalOldReaders(t *testing.T) {
 		return out
 	}
 	assert.Contains(t, ok("machine", "show", "m1"), ` roles=bench routes=- runners=0 `, "an old row has no routes")
-	assert.Equal(t, `FRIEND name=f1 harness=claude model=opus pronouns=she/her note=- enabled=true`, strings.SplitN(ok("friend", "show", "f1"), " created=", 2)[0])
+	assert.Equal(t, `FRIEND name=f1 harness=claude model=opus pronouns=she/her note=- enabled=true startup={}`, strings.SplitN(ok("friend", "show", "f1"), " created=", 2)[0])
 	ok("friend", "set", "f1", "--note", "kin", "--actor", "a")
 	ok("friend", "add", "f3", "--harness", "claude", "--actor", "a")
 	ok("friend", "add", "f4", "--harness", "codex", "--width", "6", "--tiers", "pro,flash", "--actor", "a")

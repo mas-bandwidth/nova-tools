@@ -541,7 +541,7 @@ nova-config friend add <friend> --harness <harness> --pronouns they/them --actor
 ```
 
 That prints `CONFIG ADD kind=friend name=<friend> rev=3`; `nova-config friend list`
-then shows it with the default `enabled=true`.
+then shows it with the default `enabled=true`. Each friend's optional `startup` field names its home repository and checkout, opening instructions and ordered home files. See the [nova-config reference](../cmd/nova-config/README.md).
 
 The refusal you will meet first is
 `NOVA_PG_DSN carries a password; remove it and set NOVA_PG_PASSWORD` (exit 2):

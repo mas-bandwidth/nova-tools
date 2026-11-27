@@ -143,6 +143,11 @@ CONFIG ADD kind=friend name=<friend> rev=4
 FRIEND name=<friend> harness=<harness> model=<model> pronouns=she/her note=- enabled=true created=2026-11-07T01:55:27Z updated=2026-11-07T01:55:27Z
 ```
 
+A friend's optional `--startup` object specifies its home repository URL (`repository`), absolute checkout path
+(`home`), opening instructions (`prefix`) and ordered list of relative document paths (`files`). For example,
+`--startup '{"repository":"https://example.org/team/reviewer","home":"/srv/reviewer","prefix":"Read the standing instructions.","files":["README.md"]}'`.
+Use `--startup '{}'` to clear it. The registry stores the references. Session launchers read the documents at startup.
+
 ## Providers
 
 A provider is a model API endpoint the fleet can call, named with lower-case letters, digits and dashes. Same verbs as
@@ -326,3 +331,11 @@ nova-config machine remove bench-a --actor ops
 pg_ctl -D "$work/pg" -m fast stop
 rm -rf "$work"
 ```
+
+A friend startup object can include `writable_dirs`, an array of additional absolute workspace directories. An omitted or empty array grants only the working directory for project writes. Configure shared build or sprint directories on each friend that uses them.
+
+Within a friend startup object, `readable_dirs` grants read-only workshop directories. `github_ssh_alias` grants Git fetch and push for the configured GitHub repository through the named SSH host identity. The host retains the private key. Both grants are optional.
+
+A friend startup object may name a loopback Redis endpoint in `bus_listener` to enable the friend’s own nexus message-bus listener on macOS. Set `bus_owner` to `nexus-server` alongside that endpoint when the server owns delivery to the friend's inbox.
+
+Set `startup.no_sandbox` to `true` for a trusted Claude friend to run commands as the Nexus host login. Omitted or false keeps the sandbox enabled.

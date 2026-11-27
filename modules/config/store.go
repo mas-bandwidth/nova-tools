@@ -267,14 +267,30 @@ type Machine struct {
 
 // Friend is an AI that works on the fleet, named by its bus name.
 type Friend struct {
-	Name     string `json:"name"`
-	Harness  string `json:"harness"` // claude, codex, antigravity, grok, muse, ...
-	Model    string `json:"model"`
-	Pronouns string `json:"pronouns"` // "" when unstated
-	Note     string `json:"note"`
-	Enabled  bool   `json:"enabled"`
-	Created  string `json:"created"`
-	Updated  string `json:"updated"`
+	Name     string        `json:"name"`
+	Harness  string        `json:"harness"` // claude, codex, antigravity, grok, muse, ...
+	Model    string        `json:"model"`
+	Pronouns string        `json:"pronouns"` // "" when unstated
+	Note     string        `json:"note"`
+	Enabled  bool          `json:"enabled"`
+	Startup  FriendStartup `json:"startup"`
+	Created  string        `json:"created"`
+	Updated  string        `json:"updated"`
+}
+
+// FriendStartup describes the home checkout and ordered documents read at session startup.
+// An empty object means this friend has no startup definition.
+type FriendStartup struct {
+	NoSandbox      bool     `json:"no_sandbox,omitempty"`
+	Repository     string   `json:"repository,omitempty"`
+	Home           string   `json:"home,omitempty"`
+	Prefix         string   `json:"prefix,omitempty"`
+	Files          []string `json:"files,omitempty"`
+	WritableDirs   []string `json:"writable_dirs,omitempty"`
+	ReadableDirs   []string `json:"readable_dirs,omitempty"`
+	BusListener    string   `json:"bus_listener,omitempty"`
+	BusOwner       string   `json:"bus_owner,omitempty"`
+	GitHubSSHAlias string   `json:"github_ssh_alias,omitempty"`
 }
 
 // Service is a program one machine keeps running, or runs every Every seconds.

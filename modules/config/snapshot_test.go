@@ -68,7 +68,7 @@ func TestSnapshotReadsAllFiveInOneTransaction(t *testing.T) {
 	stamp := []string{"2026-11-06T00:00:00Z", "2026-11-06T00:00:01Z"}
 	tx := &fakeTx{tables: map[string][][]string{
 		"machines":  {append([]string{"m1", "", "", "nova", "linux", "amd64", "8", "bench", "gpu,usb-hub", "0", "", "", "", "{}", ""}, stamp...)},
-		"friends":   {append([]string{"alice", "claude", "opus", "she/her", "", "true"}, stamp...)},
+		"friends":   {append([]string{"alice", "claude", "opus", "she/her", "", "true", "{}"}, stamp...)},
 		"services":  {append([]string{"s1", "m1", `["/p"]`, "", "", "60", "false", "true", "{}", ""}, stamp...)},
 		"providers": {append([]string{"p1", "https://api.example.com", "openai", "P1_API_KEY", "", "", "4", "", "true"}, stamp...)},
 		"models":    {append([]string{"p1/org/m-1.5:q4", "opencode", "250000", "", "2500", "m1", "", "true"}, stamp...)},

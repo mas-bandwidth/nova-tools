@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -21,14 +22,14 @@ func friends(t *testing.T) *harness {
 func TestFriendListAndShow(t *testing.T) {
 	t.Parallel()
 	h := friends(t)
-	assert.Equal(t, "FRIEND name=alex harness=codex model=- pronouns=- note=- enabled=true\n"+
-		`FRIEND name=alice harness=claude model=opus pronouns=she/her note="kin" enabled=false`+"\n"+
+	assert.Equal(t, "FRIEND name=alex harness=codex model=- pronouns=- note=- enabled=true startup={}\n"+
+		`FRIEND name=alice harness=claude model=opus pronouns=she/her note="kin" enabled=false startup={}`+"\n"+
 		"CONFIG LIST kind=friend rows=2\n", h.ok(t, "friend", "list"))
-	assert.Equal(t, `FRIEND name=alice harness=claude model=opus pronouns=she/her note="kin" enabled=false created=2026-01-01T00:00:00Z updated=2026-01-02T00:00:00Z`+"\n",
+	assert.Equal(t, `FRIEND name=alice harness=claude model=opus pronouns=she/her note="kin" enabled=false startup={} created=2026-01-01T00:00:00Z updated=2026-01-02T00:00:00Z`+"\n",
 		h.ok(t, "friend", "show", "alice"), "a friend's show names no services")
 	assert.Equal(t, `{"result":{"verb":"friend list","status":"ok","exit":0},"facts":{"kind":"friend","rows":2},"items":[`+
-		`{"kind":"friend","fields":{"name":"alex","harness":"codex","model":"","pronouns":"","note":"","enabled":true}},`+
-		`{"kind":"friend","fields":{"name":"alice","harness":"claude","model":"opus","pronouns":"she/her","note":"kin","enabled":false}}]}`+"\n",
+		`{"kind":"friend","fields":{"name":"alex","harness":"codex","model":"","pronouns":"","note":"","enabled":true,"startup":{}}},`+
+		`{"kind":"friend","fields":{"name":"alice","harness":"claude","model":"opus","pronouns":"she/her","note":"kin","enabled":false,"startup":{}}}]}`+"\n",
 		h.ok(t, "friend", "list", "--json"))
 	var got struct {
 		Items []struct{ Fields map[string]any }
@@ -43,7 +44,7 @@ func TestFriendWrites(t *testing.T) {
 	h := friends(t)
 	assert.Equal(t, "CONFIG ADD kind=friend name=zhi rev=3\n", h.ok(t, "friend", "add", "zhi", "--harness", "muse", "--actor", "a1"))
 	c := h.st.history[2]
-	assert.Equal(t, map[string]string{"harness": "muse", "model": "", "pronouns": "", "note": "", "enabled": "true"}, c.after)
+	assert.Equal(t, map[string]string{"harness": "muse", "model": "", "pronouns": "", "note": "", "enabled": "true", "startup": "{}"}, c.after)
 	assert.Equal(t, "CONFIG SET kind=friend name=alex rev=4 changed=model\n", h.ok(t, "friend", "set", "alex", "--model", "gpt", "--harness", "codex", "--actor", "a1", "--reason", "newer"))
 	c = h.st.history[3]
 	assert.Equal(t, []string{"friend", "alex", "set", "a1"}, []string{c.kind, c.name, c.op, c.actor})
@@ -74,7 +75,7 @@ func TestFriendRefusals(t *testing.T) {
 		args []string
 		want string
 	}{
-		{2, []string{"friend", "add", "f9", "--actor", "a"}, "missing required flag --harness; friend fields: name, harness, model, pronouns, note, enabled; run: nova-config friend add -h"},
+		{2, []string{"friend", "add", "f9", "--actor", "a"}, "missing required flag --harness; friend fields: name, harness, model, pronouns, note, enabled, startup; run: nova-config friend add -h"},
 		{2, []string{"friend", "add", "Bad_Name", "--harness", "claude", "--actor", "a"}, "want lower-case letters"},
 		{1, []string{"friend", "add", "alex", "--harness", "claude", "--actor", "a"}, "friend alex exists; use: nova-config friend set alex"},
 		{1, []string{"friend", "show", "nope"}, "friend nope not found; run: nova-config friend list"},
@@ -113,10 +114,10 @@ func TestFriendRefusals(t *testing.T) {
 // he/him, they/them) takes a friend whose pronouns are unstated.
 func TestFriendUnstatedPronounsWriteNull(t *testing.T) {
 	t.Parallel()
-	row := Row{Name: "f1", F: map[string]string{"harness": "claude", "model": "", "pronouns": "", "note": "", "enabled": "true"}}
+	row := Row{Name: "f1", F: map[string]string{"harness": "claude", "model": "", "pronouns": "", "note": "", "enabled": "true", "startup": "{}"}}
 	q, args := writeSQL(kinds["friend"], "add", "f1", Row{}, row)
-	assert.Equal(t, `INSERT INTO config.friends (name, "harness", "model", "pronouns", "note", "enabled") VALUES ($1, $2, $3, $4, $5, $6)`, q, "width and tiers keep their column defaults")
-	assert.Equal(t, []any{"f1", "claude", "", nil, "", true}, args)
+	assert.Equal(t, `INSERT INTO config.friends (name, "harness", "model", "pronouns", "note", "enabled", "startup") VALUES ($1, $2, $3, $4, $5, $6, $7)`, q, "width and tiers keep their column defaults")
+	assert.Equal(t, []any{"f1", "claude", "", nil, "", true, "{}"}, args)
 }
 
 // --width and --tiers write config.friends' width and tiers, which an older nova-sprint reads, and nothing reads them
@@ -130,22 +131,22 @@ func TestFriendWidthAndTiersAreWriteOnly(t *testing.T) {
 	assert.Equal(t, "heavy,pro", h.st.history[2].after["tiers"], "stored sorted, as before")
 	assert.Equal(t, "CONFIG SET kind=friend name=alex rev=4 changed=tiers,width\n", h.ok(t, "friend", "set", "alex", "--width", "2", "--tiers", "frontier", "--actor", "a1"))
 	list := h.ok(t, "friend", "list")
-	assert.Contains(t, list, "FRIEND name=f4 harness=claude model=- pronouns=- note=- enabled=true\n")
+	assert.Contains(t, list, "FRIEND name=f4 harness=claude model=- pronouns=- note=- enabled=true startup={}\n")
 	assert.NotContains(t, list, "width", "list shows neither")
 	assert.NotContains(t, h.ok(t, "friend", "show", "f4", "--json"), "width")
 	assert.Contains(t, h.ok(t, "help", "friend", "set"), "[--width <n>] [--tiers <flash,frontier,heavy,pro>]")
 	assert.Contains(t, h.ok(t, "help", "friend", "set"), "kept only until nova-sprint reads widths and tiers from its own store")
 
-	row := Row{Name: "f1", F: map[string]string{"harness": "claude", "model": "", "pronouns": "", "note": "", "enabled": "true", "width": "4", "tiers": "pro"}}
+	row := Row{Name: "f1", F: map[string]string{"harness": "claude", "model": "", "pronouns": "", "note": "", "enabled": "true", "startup": "{}", "width": "4", "tiers": "pro"}}
 	q, args := writeSQL(kinds["friend"], "add", "f1", Row{}, row)
-	assert.Equal(t, `INSERT INTO config.friends (name, "harness", "model", "pronouns", "note", "enabled", "width", "tiers") VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`, q)
-	assert.Equal(t, []any{"f1", "claude", "", nil, "", true, int64(4), "pro"}, args)
-	old := Row{Name: "f1", F: map[string]string{"harness": "claude", "model": "", "pronouns": "", "note": "", "enabled": "true"}}
+	assert.Equal(t, `INSERT INTO config.friends (name, "harness", "model", "pronouns", "note", "enabled", "startup", "width", "tiers") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`, q)
+	assert.Equal(t, []any{"f1", "claude", "", nil, "", true, "{}", int64(4), "pro"}, args)
+	old := Row{Name: "f1", F: map[string]string{"harness": "claude", "model": "", "pronouns": "", "note": "", "enabled": "true", "startup": "{}"}}
 	q, args = writeSQL(kinds["friend"], "set", "f1", old, row)
-	assert.Equal(t, `UPDATE config.friends SET "harness" = $2, "model" = $3, "pronouns" = $4, "note" = $5, "enabled" = $6, "width" = $7, "tiers" = $8, updated_at = now() WHERE name = $1`+
-		` AND jsonb_build_object('harness', coalesce("harness"::text, ''), 'model', coalesce("model"::text, ''), 'pronouns', coalesce("pronouns"::text, ''), 'note', coalesce("note"::text, ''), 'enabled', coalesce("enabled"::text, '')) = $9::jsonb`, q,
+	assert.Equal(t, `UPDATE config.friends SET "harness" = $2, "model" = $3, "pronouns" = $4, "note" = $5, "enabled" = $6, "startup" = $7, "width" = $8, "tiers" = $9, updated_at = now() WHERE name = $1`+
+		` AND jsonb_build_object('harness', coalesce("harness"::text, ''), 'model', coalesce("model"::text, ''), 'pronouns', coalesce("pronouns"::text, ''), 'note', coalesce("note"::text, ''), 'enabled', coalesce("enabled"::text, ''), 'startup', coalesce("startup"::text, '')) = $10::jsonb`, q,
 		"a set matches the row only on the columns it reads")
-	assert.Len(t, args, 9)
+	assert.Len(t, args, 10)
 }
 
 func TestDiagnoseFriendStillNamed(t *testing.T) {
@@ -154,4 +155,39 @@ func TestDiagnoseFriendStillNamed(t *testing.T) {
 	p.TableName = "sprint"
 	assert.EqualError(t, diagnose(p, kinds["friend"], "remove", "coord", Row{}, nil, nil),
 		"friend coord is still named by config.sprint; change that row first, then: nova-config friend remove coord --actor <you>")
+}
+
+func TestFriendStartup(t *testing.T) {
+	t.Parallel()
+	h := friends(t)
+	const src = `{"repository":"https://example.org/f/review","home":"/srv/review","prefix":"Begin here.\nNext line.","files":["README.md","docs/start.md"]}`
+	h.ok(t, "friend", "set", "alex", "--startup", src, "--actor", "a")
+	assert.Contains(t, h.ok(t, "friend", "show", "alex", "--json"), `"startup":`+src)
+	f := kinds["friend"].findField("startup")
+	bus := strings.TrimSuffix(src, "}") + `,"bus_listener":"127.0.0.1:6379","bus_owner":"nexus-server"}`
+	got, err := f.canonical(bus)
+	require.NoError(t, err)
+	assert.JSONEq(t, bus, got)
+	for _, bad := range []string{strings.Replace(bus, "nexus-server", "unknown", 1), strings.Replace(bus, "127.0.0.1:6379", "", 1)} {
+		_, err := f.canonical(bad)
+		assert.Error(t, err)
+	}
+	for _, dirs := range []string{`[]`, `["/shared/build","/shared/cache"]`} {
+		value := strings.TrimSuffix(src, "}") + `,"writable_dirs":` + dirs + "}"
+		got, err := f.canonical(value)
+		require.NoError(t, err)
+		if dirs == "[]" {
+			assert.Equal(t, src, got)
+		} else {
+			assert.Equal(t, value, got)
+		}
+	}
+	for _, dir := range []string{"relative", "/", "/cache/../else", "/cache/*"} {
+		_, err := f.canonical(strings.TrimSuffix(src, "}") + `,"writable_dirs":["` + dir + `"]}`)
+		assert.Error(t, err)
+	}
+	for _, bad := range []string{`null`, `{"extra":true}`, strings.Replace(src, "docs/start.md", "../outside", 1), strings.Replace(src, "/srv/review", "relative", 1)} {
+		_, err := f.canonical(bad)
+		assert.Error(t, err)
+	}
 }
