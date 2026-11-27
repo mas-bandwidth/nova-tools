@@ -25,14 +25,15 @@ and [how our team uses the message bus for reviews across models](https://rowans
 |---|---|---|
 | Let AI sessions on different models or harnesses exchange messages | [nova-bus](../cmd/nova-bus/README.md) | Redis 6.2+. A receiving harness needs its documented hook to wake a session; storing a message is not proof an AI read it. |
 | Keep and search notes across sessions | [nova-cairn](../cmd/nova-cairn/README.md) | Local files; no server. Search matches keywords, not semantic similarity. It publishes nothing. |
+| Keep a project's roadmap as data, with tables that show only what tests and commits prove | [nova-roadmap](../cmd/nova-roadmap/README.md) | Local files; no server. Writes only the tables between its markers in ROADMAP.md; `check` is the CI gate. |
 | Share a machine without running too many jobs at once | [nova-reserve](../cmd/nova-reserve/README.md) | Local file locks; no server. Only jobs using the same reservation directory share the limit. |
 | Restrict the files and network a command can access | [nova-sandbox](../cmd/nova-sandbox/README.md) | Linux with Landlock (5.13+) or macOS. Run `probe` on the host; CPU, memory, process count and disk use are not limited. |
 | Give a command only the secrets it needs | [nova-secrets](../cmd/nova-secrets/README.md) | sops, age and git, with a key and encrypted store. Secret values go through stdin or the command's environment. |
-| Keep machines, services and AI friends as rows, with change history | [nova-config](../cmd/nova-config/README.md) | PostgreSQL. Rows and Ansible inventory describe machines; writing a row starts no service. |
+| Keep machines, services, AI friends and the models they call as rows, with change history | [nova-config](../cmd/nova-config/README.md) | PostgreSQL. Rows and Ansible inventory describe machines; writing a row starts no service. |
 | Set up machines, services and GitHub Actions runners together | [nova-fleet](../cmd/nova-fleet/README.md) | Ansible, Tailscale, PostgreSQL, Redis and SSH access to the machines. Applying plays changes those machines. |
 
 Start with `nova-bus` for messaging. If you want a local trial with no server,
-choose `nova-cairn` or `nova-reserve`. The individual guides are independent
+choose `nova-cairn`, `nova-reserve` or `nova-roadmap`. The individual guides are independent
 of the full walkthrough below.
 
 ## Install one tool
@@ -42,8 +43,8 @@ also used by the fleet walkthrough; release publishing checks that it matches
 the tag. In a Bash shell, choose a tool and make a temporary installation:
 
 ```sh
-NOVA_TOOLS_VERSION=v2.0.62
-tool=bus  # bus, cairn, config, fleet, reserve, sandbox or secrets
+NOVA_TOOLS_VERSION=v2.0.86
+tool=bus  # bus, cairn, config, fleet, reserve, roadmap, sandbox or secrets
 work=$(mktemp -d)
 mkdir -p "$work/bin"
 ```
@@ -148,7 +149,7 @@ for readers that accept a documentation index.
 
 Skip this section if you are trying just one tool. For the full walkthrough,
 use the same Bash session, `$work` and release pin from installation. This
-builds all seven tools and needs Go and git even if you downloaded your first
+builds all eight tools and needs Go and git even if you downloaded your first
 binary. The later sections name their additional dependencies. Only the
 terminal receiver demonstration requires a plain terminal; Codex skips that
 block while keeping the shared walkthrough setup.
@@ -160,10 +161,10 @@ block while keeping the shared walkthrough setup.
   if [ ! -d nova-tools ]; then
     git clone -q --depth 1 --branch "$NOVA_TOOLS_VERSION" https://github.com/mas-bandwidth/nova-tools
   fi
-  for t in bus cairn config fleet reserve sandbox secrets; do
+  for t in bus cairn config fleet reserve roadmap sandbox secrets; do
     go build -C nova-tools -o "$work/bin/nova-$t" "./cmd/nova-$t"
   done
-  for t in bus cairn config fleet reserve sandbox secrets; do
+  for t in bus cairn config fleet reserve roadmap sandbox secrets; do
     "$work/bin/nova-$t" -h > /dev/null
     printf 'nova-%s ok\n' "$t"
   done
@@ -526,19 +527,21 @@ on Linux, or a launchd job under `~/Library/LaunchAgents` on macOS, for each
 row and starts it.
 
 The same store keeps the **friends**, the AIs that work on the fleet, one row
-each. In the current source tree, Go programs read every kind through
+each, and the **providers** and **models** the fleet can call: a provider is a
+model API endpoint, a model is named `<provider>/<model id>`. In the current
+source tree, Go programs read every kind through
 `github.com/mas-bandwidth/nova-tools/v2/modules/config` (`Machines`, `Friends`,
-`Services`) rather than keeping a copy; `Snapshot` reads all three inside one
-read-only REPEATABLE READ transaction, so machines and friends come from the
+`Services`, `Providers`, `Models`) rather than keeping a copy; `Snapshot` reads
+all five inside one read-only REPEATABLE READ transaction, so they come from the
 same instant. When importing a released module, use the package path
 documented by that release:
 
 ```text
-nova-config friend add <friend> --harness <harness> --width 4 --actor you
+nova-config friend add <friend> --harness <harness> --pronouns they/them --actor you
 ```
 
 That prints `CONFIG ADD kind=friend name=<friend> rev=3`; `nova-config friend list`
-then shows `width=4` and the default `tiers=flash,frontier,heavy,pro`.
+then shows it with the default `enabled=true`.
 
 The refusal you will meet first is
 `NOVA_PG_DSN carries a password; remove it and set NOVA_PG_PASSWORD` (exit 2):
@@ -857,6 +860,37 @@ store that exists but has no such session opens the session itself
 
 The whole tool: [cmd/nova-cairn/README.md](../cmd/nova-cairn/README.md).
 
+## Keep a roadmap that proves itself
+
+An **area** is one table on a project's roadmap page: a row per feature and a
+column per language, platform or plain "done". Each cell names the **tasks**
+behind it, and a cell shows ✅ only when every one of them is `:done` with
+`:evidence`, the test or commit that proves it. The data lives in
+`docs/roadmap.sexp`; nova-roadmap writes only the tables in `ROADMAP.md`, and
+every other line of the page is yours:
+
+```sh
+mkdir -p "$work/project" && cd "$work/project"
+nova-roadmap example
+nova-roadmap render
+nova-roadmap check
+cd "$work"
+```
+
+`example` prints `OK: wrote docs/roadmap.sexp` and a `next:` line, `render`
+prints `OK: wrote a starter ROADMAP.md; ...` with two tables, and `check` prints
+`OK: the tables in ROADMAP.md are up to date with docs/roadmap.sexp (2 areas, 4 rows; 0 evidence files, 0 entries)`.
+After a change to the data, `check` prints `DRIFT: ...` on stderr and exits 1
+until `render` is run, so CI can hold the page to the data.
+
+The refusal you will meet first is the page's markers: a `ROADMAP.md` you
+already have is refused (exit 2) until it holds one pair of
+`<!-- nova-work:<area id>:start -->` and `:end -->` lines per area, and the
+refusal prints the lines to paste. The others are in
+[cmd/nova-roadmap/README.md](../cmd/nova-roadmap/README.md#refusals).
+
+The whole tool: [cmd/nova-roadmap/README.md](../cmd/nova-roadmap/README.md).
+
 ## Is it working?
 
 Paste this in the session above, before you clean up. Elsewhere, set
@@ -869,11 +903,12 @@ own status). Redis must still be up for `nova-bus who`.
 ```sh
 first() { local out rc; out=$("$@"); rc=$?; printf '%s\n' "${out%%$'\n'*}"; return $rc; }
 first nova-bus -h           # nova-bus: messages between named inboxes, kept in Redis.
-first nova-config -h        # nova-config: a fleet's machines, services and friends, kept as rows in PostgreSQL.
+first nova-config -h        # nova-config: a fleet's machines, services, friends, model providers, models and rented boxes, kept as rows in PostgreSQL.
 first nova-secrets -h       # nova-secrets: sops-encrypted secrets in a git store, handed to one command at a time.
 first nova-reserve status   # capacity=<n> set_by_pid=<pid> set_at=<time>
 first nova-sandbox check    # CHECK OK backend=landlock ... (Linux) or backend=sandbox-exec ... (macOS)
 first nova-cairn version    # nova-cairn <version> (dev when built from a clone)
+first nova-roadmap -h       # nova-roadmap: writes the feature tables in ROADMAP.md from docs/roadmap.sexp, and checks them for drift
 first nova-bus who          # WHO OK present=0 once the demo hooks are stopped
 first nova-config machine list                                   # MACHINE name=here address=localhost public=- user=<you> ...
 nova-secrets seat list --store "${NOVA_SECRETS_STORE:-$work/store}"  # db file=no rule=yes, here file=yes rule=yes, SECRETS SEAT LIST OK seats=2

@@ -1,0 +1,55 @@
+---
+# The labels wait-idle.yml took off this runner on GitHub (kept in <dir>/.nova-labels-off) are put back once its
+# restart is done; a run that stopped in between left the file, and the next run puts them back here. Nothing to do
+# when the file is absent. --check reads it and says so.
+- name: labels kept while it was made idle ({{ github_runner_dir | basename }})
+  ansible.builtin.slurp: { src: "{{ github_runner_dir }}/.nova-labels-off" }
+  become: "{{ github_runner_other | default(true) }}"
+  register: github_runner_off_file
+  failed_when: false
+  check_mode: false
+
+- name: the runner's registration, for its labels
+  ansible.builtin.slurp: { src: "{{ github_runner_dir }}/.runner" }
+  become: "{{ github_runner_other | default(true) }}"
+  register: github_runner_off_reg
+  failed_when: false
+  check_mode: false
+  when: github_runner_off_file.content is defined
+
+- name: its labels, back on GitHub
+  ansible.builtin.shell: |
+    set -eu
+    r={{ (github_runner_off_api ~ '/' ~ github_runner_off_id) | quote }}
+    args=
+    for l in $(printf '%s' {{ (github_runner_off_file.content | b64decode | trim) | quote }} | tr ',' ' '); do
+      args="$args -f labels[]=$l"
+    done
+    # shellcheck disable=SC2086
+    {{ github_runner_gh | quote }} api -X PUT "$r/labels" $args >/dev/null
+    echo SET
+  args: { executable: /bin/sh }
+  delegate_to: localhost
+  become: false
+  vars:
+    github_runner_off_id: "{{ (github_runner_off_reg.content | b64decode | regex_search('\"agentId\"[ ]*:[ ]*([0-9]+)', '\\1') or ['']) | first }}"
+    github_runner_off_api: >-
+      {%- set u = ((github_runner_off_reg.content | b64decode | regex_search('"gitHubUrl"[ ]*:[ ]*"(https://[^"]+)"', '\\1') or ['']) | first) -%}
+      {%- set p = u | regex_replace('^https://[^/]+/', '') | regex_replace('/$', '') -%}
+      {{ ('repos/' if '/' in p else 'orgs/') ~ p ~ '/actions/runners' }}
+  register: github_runner_off_put
+  changed_when: "'SET' in github_runner_off_put.stdout"
+  when: not ansible_check_mode and github_runner_off_file.content is defined and github_runner_off_reg.content is defined
+
+- name: the kept labels are put back, so the file goes
+  ansible.builtin.file: { path: "{{ github_runner_dir }}/.nova-labels-off", state: absent }
+  become: "{{ github_runner_other | default(true) }}"
+  when: not ansible_check_mode and github_runner_off_put is changed
+
+- name: the kept labels, planned
+  ansible.builtin.debug:
+    msg: >-
+      RUNNER-LABELS-OFF {{ inventory_hostname }} {{ github_runner_dir | basename }}: labels
+      {{ github_runner_off_file.content | b64decode | trim }} kept while it was made idle; a run puts them back (check:
+      nothing changed)
+  when: ansible_check_mode and github_runner_off_file.content is defined

@@ -72,6 +72,14 @@ case "$*" in
 		printf 'LOGON %s set account=.\\%s restart=done acl=protected service=s\r\n' "$(arg -Dir "$@")" "$(arg -Account "$@")"
 	fi
 	exit 0 ;;
+*wsl-watchdog.ps1*"-Action install"*)
+	IFS= read -r sshkey
+	printf 'WATCHDOG machine=%s user=%s port=%s keylen=%s\n' "$(arg -MachineId "$@")" "$(arg -User "$@")" "$(arg -WinSshPort "$@")" "${#sshkey}" >>"$log"
+	[ -f "$d/nodistro" ] && { printf 'NO-DISTRO machine-id=%s running=-\r\n' "$(arg -MachineId "$@")"; exit 6; }
+	printf 'WATCHDOG distro-a set task=WSL2 watchdog (distro-a) limit=PT5M dir=C:\\nova-watchdog\r\n'
+	printf 'UNATTENDED set sleep=off crash_autoreboot=1 wer_noui=1 tailscale_unattended=yes\r\n'
+	printf 'WINSSH set port=%s auth=key-only keys=1 firewall=tailscale service=running admin=winadmin\r\n' "$(arg -WinSshPort "$@")"
+	exit 0 ;;
 *"-Action install"*) printf 'INSTALL %s account=%s path=%s workflow=%s tools=%s\n' "$(arg -Dir "$@")" "$(arg -Account "$@")" "$(arg -PathList "$@")" "$(arg -Workflow "$@")" "$(arg -ToolDirs "$@")" >>"$log"; printf 'OK\r\n'; exit 0 ;;
 *"-Action ensure"*) printf 'OK\r\n'; exit 0 ;;
 *" apply "*) printf 'CI-RULES x hooks=ok restart=no\r\n'; exit 0 ;;
@@ -137,7 +145,7 @@ func newWinRig(t *testing.T, record string, files map[string]string) winRig {
 		"      ansible_python_interpreter: \"{{ ansible_playbook_python }}\""+record+"\n  children:\n    bench: {hosts: {captain: {}}}\n", 0o644)
 	r.write(t, "vars.yml", "github_runner_wsl_interop: "+r.dir+"/interop\ngithub_runner_wsl_powershell: "+r.dir+"/bin/powershell.exe\n"+
 		"github_runner_wsl_stage_unix: "+r.dir+"/stage\ngithub_runner_gh: "+r.dir+"/bin/gh\n"+
-		"github_runner_wsl_machine_id_file: "+r.dir+"/machine-id\ngithub_runner_nova_secrets: "+r.dir+"/bin/nova-secrets\n", 0o644)
+		"github_runner_wsl_machine_id_file: "+r.dir+"/machine-id\ngithub_runner_nova_secrets: "+r.dir+"/bin/nova-secrets\nnova_control_ssh_pubkey: \"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakeControlKey test@control\"\n", 0o644)
 	r.write(t, "machine-id", "0123456789abcdef0123456789abcdef\n", 0o644)
 	for name, body := range files {
 		r.write(t, name, body, 0o644)
@@ -541,14 +549,14 @@ func TestFunctionalStageCheckGuardsEveryElevatedCall(t *testing.T) {
 				t.Errorf("%q ran without the stage proved right before it (after %q)", l, prev)
 			}
 		}
-		if l != "" && !strings.HasPrefix(l, "REGISTER ") && !strings.HasPrefix(l, "KEEPALIVE ") {
+		if l != "" && !strings.HasPrefix(l, "REGISTER ") && !strings.HasPrefix(l, "KEEPALIVE ") && !strings.HasPrefix(l, "WATCHDOG ") {
 			prev = l
 		}
 	}
 	if calls < 3 {
 		t.Errorf("only %d elevated calls logged:\n%s", calls, log)
 	}
-	for _, f := range []string{"runner-windows.ps1", "nova-ci-rules.ps1", "job-started.ps1", "job-completed.ps1"} {
+	for _, f := range []string{"runner-windows.ps1", "wsl-watchdog.ps1", "nova-ci-rules.ps1", "job-started.ps1", "job-completed.ps1"} {
 		if _, err := os.Stat(filepath.Join(r.dir, "stage", f)); err != nil {
 			t.Errorf("%s was not staged: %v", f, err)
 		}
@@ -582,5 +590,36 @@ func TestFunctionalStageCheckGuardsEveryElevatedCall(t *testing.T) {
 				t.Error("a script was staged into a stage the first check refused")
 			}
 		})
+	}
+}
+
+// TestFunctionalWSLWatchdogAndWinSSH: every WSL machine gets the SYSTEM watchdog, unattended Windows settings, and
+// out-of-band Windows OpenSSH on port 2222; --check prints WATCHDOG-PLAN and WINSSH-PLAN without calling Windows.
+func TestFunctionalWSLWatchdogAndWinSSH(t *testing.T) {
+	t.Parallel()
+	r := newWinRig(t, "", nil)
+	out, log, err := r.play(t, "--check")
+	if err != nil {
+		t.Fatalf("--check failed: %v\n%s", err, out)
+	}
+	if strings.Contains(log, "WATCHDOG") || !strings.Contains(out, "WATCHDOG-PLAN captain") || !strings.Contains(out, "WINSSH-PLAN captain port=2222") {
+		t.Errorf("--check must print WATCHDOG-PLAN and WINSSH-PLAN and call nothing:\nlog=%q\n%s", log, out)
+	}
+
+	out, log, err = r.play(t)
+	if err != nil {
+		t.Fatalf("apply failed: %v\n%s", err, out)
+	}
+	if !strings.Contains(log, "WATCHDOG machine=0123456789abcdef0123456789abcdef") || !strings.Contains(log, "port=2222") {
+		t.Errorf("watchdog install was not called with machine-id and port 2222:\n%s", log)
+	}
+	for _, want := range []string{
+		"WATCHDOG captain distro-a set task=WSL2 watchdog (distro-a) limit=PT5M",
+		"UNATTENDED captain set sleep=off crash_autoreboot=1 wer_noui=1",
+		"WINSSH captain set port=2222 auth=key-only keys=1 firewall=tailscale service=running",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output lacks %q:\n%s", want, out)
+		}
 	}
 }

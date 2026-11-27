@@ -65,6 +65,18 @@
 			"ip": [
 				"*"
 			]
+		},
+		{
+			"src": [
+				"tag:control"
+			],
+			"dst": [
+				"tag:nova",
+				"tag:runner"
+			],
+			"ip": [
+				"tcp:2222"
+			]
 		}
 	],
 	"ssh": [

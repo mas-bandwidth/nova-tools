@@ -50,6 +50,8 @@ var toolSpecs = []toolSpec{
 	{dir: "config", verbs: [][]string{
 		{"machine", "list"}, {"machine", "show"}, {"machine", "add"}, {"machine", "set"}, {"machine", "remove"},
 		{"service", "list"}, {"service", "show"}, {"service", "add"}, {"service", "set"}, {"service", "remove"},
+		{"provider", "list"}, {"provider", "show"}, {"provider", "add"}, {"provider", "set"}, {"provider", "remove"},
+		{"model", "list"}, {"model", "show"}, {"model", "add"}, {"model", "set"}, {"model", "remove"},
 		{"history"}, {"inventory"}, {"schema"}},
 		missing: []missingCase{{[]string{"machine", "list"}, []string{"--pg"}}}},
 	{dir: "fleet", verbs: [][]string{{"plays"}, {"show"}, {"check"}, {"up"}, {"rented"}, {"help"}},

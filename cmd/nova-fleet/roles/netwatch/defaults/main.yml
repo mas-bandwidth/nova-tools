@@ -33,7 +33,7 @@ nova_netwatch_control_url: ""
 # Runner.Listener is no job); on a bench, a held reservation (nova-reserve run, which wraps sprint card work).
 nova_netwatch_busy_patterns_by_group:
   runner: ['Runner\.Worker']
-  bench: ['nova-reserve( --dir [^ ]+)? run ']
+  bench: ['nova-reserve(( --dir [^ ]+)? run | .* -- )']
 nova_netwatch_busy_patterns: >-
   {{ group_names | map('extract', nova_netwatch_busy_patterns_by_group) | select('defined') | flatten | unique | list }}
 

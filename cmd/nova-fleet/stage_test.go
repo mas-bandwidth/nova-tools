@@ -51,7 +51,7 @@ func TestStageGuardsEveryElevatedCall(t *testing.T) {
 				continue
 			}
 			rest := cmd[strings.Index(cmd, stageGuard)+len(stageGuard):]
-			if !strings.HasPrefix(rest, "{{ github_runner_wsl_script | quote }}") && !strings.HasPrefix(rest, "{{ github_runner_wsl_ci_script | quote }}") {
+			if !strings.HasPrefix(rest, "{{ github_runner_wsl_script | quote }}") && !strings.HasPrefix(rest, "{{ github_runner_wsl_ci_script | quote }}") && !strings.HasPrefix(rest, "{{ github_runner_wsl_watchdog_script | quote }}") {
 				t.Errorf("%s %q: runs a file that is not staged: %s", file, name, rest)
 			}
 			args, _ := task["args"].(map[string]any)
@@ -69,7 +69,7 @@ func TestStageGuardsEveryElevatedCall(t *testing.T) {
 func TestStageIncludedBeforeEveryCall(t *testing.T) {
 	t.Parallel()
 	all := roleTasks(t)
-	for _, file := range []string{"wsl-windows.yml", "wsl-keepalive.yml", "wsl-pagefile.yml", "ci-rules.yml"} {
+	for _, file := range []string{"wsl-windows.yml", "wsl-keepalive.yml", "wsl-watchdog.yml", "wsl-pagefile.yml", "ci-rules.yml"} {
 		staged := false
 		for _, task := range all[file] {
 			if inc, _ := task["ansible.builtin.include_tasks"].(string); inc == "wsl-stage.yml" {
@@ -155,7 +155,7 @@ func TestStageDirectory(t *testing.T) {
 	if d["github_runner_wsl_stage_dir"] != `C:\nova-stage` || d["github_runner_wsl_stage_unix"] != "/mnt/c/nova-stage" {
 		t.Errorf("stage dir %v, WSL path %v: want C:\\nova-stage, /mnt/c/nova-stage", d["github_runner_wsl_stage_dir"], d["github_runner_wsl_stage_unix"])
 	}
-	for _, k := range []string{"github_runner_wsl_script", "github_runner_wsl_ci_script"} {
+	for _, k := range []string{"github_runner_wsl_script", "github_runner_wsl_ci_script", "github_runner_wsl_watchdog_script"} {
 		if s, _ := d[k].(string); !strings.HasPrefix(s, `{{ github_runner_wsl_stage_dir }}\`) {
 			t.Errorf("%s = %q is not in the stage directory", k, s)
 		}
@@ -206,8 +206,8 @@ func TestStageCheckScript(t *testing.T) {
 		}
 	}
 	sha := strings.Repeat("0", 64)
-	head := "$Make = $false; $Stage = 'C:\\nova-stage'; $Names = @('runner-windows.ps1', 'nova-ci-rules.ps1', 'job-started.ps1', " +
-		"'job-completed.ps1'); $Shas = @('" + strings.Join([]string{sha, sha, sha, sha}, "', '") + "')\n"
+	head := "$Make = $false; $Stage = 'C:\\nova-stage'; $Names = @('runner-windows.ps1', 'wsl-watchdog.ps1', 'nova-ci-rules.ps1', 'job-started.ps1', " +
+		"'job-completed.ps1'); $Shas = @('" + strings.Join([]string{sha, sha, sha, sha, sha}, "', '") + "')\n"
 	u := utf16.Encode([]rune(head + s))
 	raw := make([]byte, 2*len(u))
 	for i, c := range u {

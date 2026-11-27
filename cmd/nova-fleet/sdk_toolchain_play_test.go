@@ -257,6 +257,32 @@ func dirFor(d sdkDefaults, name string) string {
 	return "(no " + name + ")"
 }
 
+// The tools a hand-made ~/sdk held before the shared SDK are pinned here, so the shared SDK lacks none of them and the
+// old one can become its link: MrDocs, FFmpeg, KataGo with its networks and katago.env (naming the SDK's real path,
+// never a login's home), and SharpFuzz, installed by the pinned dotnet's own directory.
+func TestSDKToolchainPinsTheHandSDKTools(t *testing.T) {
+	t.Parallel()
+	d := readSDKDefaults(t)
+	tools := map[string]sdkTool{}
+	for _, tool := range d.Tools {
+		tools[tool.Name] = tool
+	}
+	for _, want := range []string{"mrdocs", "ffmpeg", "katago", "katago-nets", "sharpfuzz"} {
+		require.Contains(t, tools, want, "%s is pinned", want)
+		require.NotNil(t, tools[want].Linux, "%s is a Linux pin", want)
+	}
+	assert.Equal(t, "katago", tools["katago-nets"].Dir, "Virtual Go reads <sdk>/katago/katago.env")
+	nets := tools["katago-nets"].Build
+	for _, v := range []string{"KATAGO_BIN=\"{{ sdk_dir }}/bin/katago\"", "KATAGO_MODEL=\"{{ sdk_dir }}/katago/" + tools["katago-nets"].Probe + "\"",
+		"KATAGO_CONFIG=\"{{ sdk_dir }}/katago/gtp.cfg\""} {
+		assert.Contains(t, nets, v)
+	}
+	assert.NotContains(t, nets, "$HOME", "katago.env names the SDK's real path, which every login reads")
+	assert.Regexp(t, `sha256sum -c`, nets, "each network is held to its sha256")
+	assert.Contains(t, tools["sharpfuzz"].Build, `"$sdk/`+dirFor(d, "dotnet")+`/dotnet" tool install`, "SharpFuzz is installed by the pinned dotnet")
+	assert.Contains(t, tools["sharpfuzz"].Wrapper, `{{ sdk_dir }}/`+tools["sharpfuzz"].Dir+`/`+tools["sharpfuzz"].Probe, "the wrapper runs the installed tool")
+}
+
 // Each CPython is built from source into python-<version> and gets mypy offline: pip takes only the wheels fetched as
 // extras, and the hash lock the build writes names exactly those wheels' sha256s, so pip refuses any other.
 func TestSDKToolchainPythonMypyIsHashLocked(t *testing.T) {
@@ -633,7 +659,7 @@ func TestSDKToolchainEnvFilesNameInstalledFiles(t *testing.T) {
 		Env map[string]string `yaml:"nova_sdk_env_files"`
 	}
 	require.NoError(t, yaml.Unmarshal(b, &files))
-	for _, k := range []string{"SQ", "LUA", "LUAU", "LUAU_ANALYZE", "MOO", "MOO_ANALYZE", "GOOSE", "LOBSTER"} {
+	for _, k := range []string{"SQ", "LUA", "LUAU", "LUAU_ANALYZE", "MOO", "MOO_ANALYZE", "MOO_CHECKED", "GOOSE", "LOBSTER", "RUBY_FLOOR", "RUBY", "PYTHON_FLOOR", "PYTHON", "MYPY"} {
 		assert.Contains(t, files.Env, k, "env.sh exports %s where its file is", k)
 	}
 	d := readSDKDefaults(t)
@@ -660,6 +686,116 @@ func TestSDKToolchainEnvFilesNameInstalledFiles(t *testing.T) {
 		}
 		assert.True(t, installed, "%s=%s is %s's probe or one of its links", k, v, tool.Name)
 	}
+}
+
+// sdkToolNamed is the defaults' tool by name.
+func sdkToolNamed(t *testing.T, d sdkDefaults, name string) sdkTool {
+	t.Helper()
+	for _, tool := range d.Tools {
+		if tool.Name == name {
+			return tool
+		}
+	}
+	t.Fatalf("%s is not in the defaults", name)
+	return sdkTool{}
+}
+
+// The checked moo is moo's own tag and commit built with MOO_OVERFLOW_ERRORS=ON, the CLI only, laid out as
+// `make dist-moo-checked` lays it out (bin/moo with PIN beside it, written last as the probe), and never linked as moo.
+func TestSDKToolchainCheckedMooIsMoosPinWithOverflowErrors(t *testing.T) {
+	t.Parallel()
+	d := readSDKDefaults(t)
+	moo, checked := sdkToolNamed(t, d, "moo"), sdkToolNamed(t, d, "moo-checked")
+	assert.Equal(t, moo.Dir+"-checked", checked.Dir, "beside the release build, named by it")
+	assert.Equal(t, moo.Version, checked.Version)
+	assert.Equal(t, "git", checked.Kind)
+	for platform, p := range checked.platforms() {
+		m := moo.platforms()[platform]
+		require.NotNil(t, m, "moo-checked (%s): moo is pinned there too", platform)
+		assert.Equal(t, *m, *p, "moo-checked (%s): the same repo, tag and commit as moo", platform)
+	}
+	require.NotNil(t, checked.Darwin, "a Mac bench stages it too")
+	assert.Contains(t, checked.Build, "-DMOO_OVERFLOW_ERRORS=ON")
+	assert.Contains(t, checked.Build, "--target Luau.Repl.CLI ")
+	assert.NotContains(t, checked.Build, "Luau.Analyze.CLI", "the CLI only: a checked build runs modules, it does not analyze them")
+	assert.Equal(t, "bin/PIN", checked.Probe)
+	assert.True(t, strings.HasSuffix(strings.TrimSpace(checked.Build), `cp "$dest/PIN" "$dest/bin/PIN"`), "the probe is written last")
+	assert.Equal(t, []any{map[string]any{"name": "moo-checked", "path": "bin/moo"}}, checked.Links, "linked as moo-checked: moo stays the release build")
+}
+
+// Each CRuby is built from source into ruby-<version>, YJIT on where the SDK has a rustc (and rebuilt by its run probe
+// where it did not), psych against libyaml's pinned source, and RuboCop, Steep and RBS from source gems fetched as
+// extras: the lock the build writes names exactly those gems' sha256s, and ANALYZERS, written last, is the probe.
+func TestSDKToolchainRubyAnalyzersAreHashLocked(t *testing.T) {
+	t.Parallel()
+	d := readSDKDefaults(t)
+	var lock []string
+	for _, name := range []string{"ruby3.4", "ruby4.0"} {
+		tool := sdkToolNamed(t, d, name)
+		assert.Equal(t, "ruby-"+tool.Version, tool.Dir, "%s: the directory a Makefile looks for", name)
+		assert.Equal(t, []any{map[string]any{"name": name, "path": "bin/ruby"}}, tool.Links, "%s: linked by its series, never as ruby", name)
+		assert.Equal(t, "ANALYZERS", tool.Probe, "%s: written last, so a build that stopped part way is redone", name)
+		assert.Contains(t, tool.Run, "RubyVM::YJIT.enabled?", "%s: a build without YJIT is redone", name)
+		assert.Contains(t, tool.Build, "--enable-yjit")
+		assert.Contains(t, tool.Build, `--with-libyaml-source-dir="$stage/yaml-0.2.5"`)
+		assert.Contains(t, tool.Build, `"$dest/bin/gem" install --local `)
+		assert.Contains(t, tool.Build, "unset GEM_HOME GEM_PATH RUBYOPT")
+		assert.True(t, strings.HasSuffix(strings.TrimSpace(tool.Build), `mv "$stage/ANALYZERS" "$dest/ANALYZERS"`), "%s: the probe is written last", name)
+		lock = lock[:0]
+		for _, m := range regexp.MustCompile(`'([a-z0-9_-]+) ([0-9][0-9A-Za-z.]*) ([0-9a-f]{64})'`).FindAllStringSubmatch(tool.Build, -1) {
+			lock = append(lock, m[1]+"-"+m[2]+".gem "+m[3])
+		}
+		require.NotNil(t, tool.Darwin, "%s: a Mac bench builds it too", name)
+		for platform, p := range tool.platforms() {
+			assert.Empty(t, p.Build, "%s (%s): one build on every platform", name, platform)
+			assert.True(t, strings.HasPrefix(p.URL, "https://cache.ruby-lang.org/pub/ruby/"), "%s (%s): ruby-lang.org's tarball", name, platform)
+			var gems []string
+			for _, e := range p.Extras {
+				if e.Path == "yaml-0.2.5.tar.gz" {
+					continue
+				}
+				assert.Equal(t, "https://rubygems.org/downloads/"+e.Path, e.URL, "%s (%s): a gem from rubygems.org", name, platform)
+				assert.NotRegexp(t, `-(x86_64|arm64|aarch64)-`, e.Path, "%s (%s): %s is a source gem, the same on every platform", name, platform, e.Path)
+				gems = append(gems, e.Path+" "+e.SHA256)
+			}
+			for _, want := range []string{"rubocop-", "steep-", "rbs-"} {
+				assert.True(t, slices.ContainsFunc(gems, func(g string) bool { return strings.HasPrefix(g, want) }), "%s (%s): %s is locked", name, platform, want)
+			}
+			assert.ElementsMatch(t, gems, lock, "%s (%s): the lock names exactly the gems fetched", name, platform)
+		}
+	}
+	floor, current := sdkToolNamed(t, d, "ruby3.4"), sdkToolNamed(t, d, "ruby4.0")
+	assert.Equal(t, floor.Build, current.Build, "one build for both pins")
+}
+
+// serialize's release tree is staged whole by its tag's commit (the family corpus a port is judged by), with no .git
+// and the commit in PIN, written last: a job with no network reads it under NOVA_SDK.
+func TestSDKToolchainStagesTheSerializeCorpus(t *testing.T) {
+	t.Parallel()
+	d := readSDKDefaults(t)
+	s := sdkToolNamed(t, d, "serialize")
+	assert.Equal(t, "serialize-v"+s.Version, s.Dir)
+	assert.Equal(t, "git", s.Kind)
+	assert.Equal(t, "PIN", s.Probe)
+	assert.Empty(t, s.Links, "nothing on PATH: it is read, not run")
+	require.NotNil(t, s.Linux)
+	require.NotNil(t, s.Darwin)
+	assert.Equal(t, "v"+s.Version, s.Linux.Ref)
+	assert.Equal(t, *s.Linux, *s.Darwin)
+	assert.Contains(t, s.Build, "rm -rf .git")
+	assert.True(t, strings.HasSuffix(strings.TrimSpace(s.Build), `cp "$stage/PIN" "$dest/PIN"`), "the probe is written last")
+}
+
+// env.sh takes the SDK's bin out of PATH by the login's ~/sdk as well as by its real path, and puts back only the real
+// one: where ~/sdk is a link, a sandbox granting the SDK by its real path cannot read through the link.
+func TestSDKToolchainEnvDropsTheLinkedSDKBin(t *testing.T) {
+	t.Parallel()
+	b, err := os.ReadFile(sdkToolchainRole + "/templates/env.sh.j2")
+	require.NoError(t, err)
+	env := string(b)
+	assert.Contains(t, env, `""|"{{ sdk_dir }}/bin"|"{{ ansible_facts['user_dir'] }}/sdk/bin"|`)
+	assert.Contains(t, env, `PATH="{{ sdk_dir }}/bin:{{ ansible_facts['user_dir'] }}/go/bin:{{ ansible_facts['user_dir'] }}/.local/bin${_sdk_path:+:$_sdk_path}"`,
+		"only the real path is put back")
 }
 
 // matchRe is the regexp inside a `<x> is match('<re>')` condition (Python's re; these patterns read the same in RE2).

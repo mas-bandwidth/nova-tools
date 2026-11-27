@@ -140,7 +140,7 @@ func TestFleetFilesNameNoRetiredTool(t *testing.T) {
 	}
 }
 
-// The install defaults: nova-tools' release and the seven tools.
+// The install defaults: nova-tools' release and the eight tools.
 func TestInstallRoleDefaults(t *testing.T) {
 	t.Parallel()
 	b, err := os.ReadFile("roles/nova-tools-install/defaults/main.yml")
@@ -151,7 +151,7 @@ func TestInstallRoleDefaults(t *testing.T) {
 	require.NoError(t, err)
 	var gv map[string]any
 	require.NoError(t, yaml.Unmarshal(g, &gv))
-	assert.Equal(t, []any{"nova-bus", "nova-cairn", "nova-config", "nova-sandbox", "nova-secrets", "nova-reserve", "nova-fleet"}, gv["nova_tools_names"])
+	assert.Equal(t, []any{"nova-bus", "nova-cairn", "nova-config", "nova-sandbox", "nova-secrets", "nova-reserve", "nova-fleet", "nova-roadmap"}, gv["nova_tools_names"])
 	assert.Equal(t, "mas-bandwidth/nova-tools", d["nova_tools_repo"])
 	assert.Equal(t, "https://github.com/{{ nova_tools_repo }}/releases/download", d["nova_tools_release_url"])
 }

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -32,7 +33,7 @@ type change struct {
 }
 
 func newFake() *fake {
-	return &fake{rows: map[string]map[string]Row{"machine": {}, "service": {}, "friend": {}, "rented": {}}}
+	return &fake{rows: map[string]map[string]Row{"machine": {}, "service": {}, "friend": {}, "rented": {}, "provider": {}, "model": {}, "harness": {}}}
 }
 
 func (f *fake) List(_ context.Context, k *kind) ([]Row, error) {
@@ -93,6 +94,23 @@ func (f *fake) History(_ context.Context, q HistoryQuery) ([]HistoryEntry, error
 
 func (f *fake) Close() {}
 
+// WatchFriends emits the directory of the friend rows twice, as a write between them would, then ends as a store
+// that went away does: with f.failure, or errStoreGone.
+func (f *fake) WatchFriends(_ context.Context, emit func(any) error) error {
+	for range 2 {
+		friends := map[string]any{}
+		for n, r := range f.rows["friend"] {
+			friends[n] = map[string]any{"harness": r.F["harness"], "enabled": r.F["enabled"] == "true"}
+		}
+		if err := emit(map[string]any{"friends": friends, "providers": map[string]string{}}); err != nil {
+			return err
+		}
+	}
+	return cmp.Or(f.failure, errStoreGone)
+}
+
+var errStoreGone = errors.New("postgres: connection refused")
+
 // harness runs nova-config against one fake store, with NOVA_PG_DSN set.
 type harness struct {
 	st   *fake
@@ -139,8 +157,8 @@ func TestListAndShowLines(t *testing.T) {
 	h := fleet(t)
 	h.ok(t, "machine", "set", "bench-b", "--note", strings.Repeat("ab ", 30)+"=", "--cores", "4", "--actor", "t")
 	out := h.ok(t, "machine", "list")
-	assert.Equal(t, "MACHINE name=bench-a address=- public=- user=nova os=- arch=- cores=- roles=bench,services runners=0 runner_scopes=- windows_runners=- windows_admin_runners=- runner_env={} note=-\n"+
-		"MACHINE name=bench-b address=bench-b.tail public=- user=nova os=linux arch=amd64 cores=4 roles=bench runners=2 runner_scopes=- windows_runners=- windows_admin_runners=- runner_env={} note="+
+	assert.Equal(t, "MACHINE name=bench-a address=- public=- user=nova os=- arch=- cores=- roles=bench,services routes=- runners=0 runner_scopes=- windows_runners=- windows_admin_runners=- runner_env={} note=-\n"+
+		"MACHINE name=bench-b address=bench-b.tail public=- user=nova os=linux arch=amd64 cores=4 roles=bench routes=- runners=2 runner_scopes=- windows_runners=- windows_admin_runners=- runner_env={} note="+
 		`"`+strings.Repeat("ab ", 20)+`..."`+"\n"+
 		"CONFIG LIST kind=machine rows=2\n", out)
 	out = h.ok(t, "machine", "show", "bench-b")
@@ -203,7 +221,7 @@ func TestDryRunWritesNothing(t *testing.T) {
 	assert.Equal(t, "CONFIG DRY-RUN op=set kind=service name=member-b actor=a1 wrote=nothing\n  every: 0 -> 5\n  keepalive: true -> false\n  reason: \"a b\"\n",
 		h.ok(t, "service", "set", "member-b", "--every", "5", "--keepalive", "false", "--actor", "a1", "--reason", "a b", "--dry-run"))
 	out := h.ok(t, "machine", "remove", "bench-a", "--actor", "a1", "--dry-run") // bench-b runs member-b: its dry-run is refused (TestFunctionalDryRunReal)
-	assert.Equal(t, "CONFIG DRY-RUN op=remove kind=machine name=bench-a actor=a1 wrote=nothing\n  address: \"\"\n  public: \"\"\n  user: \"nova\"\n  os: \"\"\n  arch: \"\"\n  cores: null\n  roles: \"bench,services\"\n  runners: 0\n  runner_scopes: \"\"\n  windows_runners: \"\"\n  windows_admin_runners: \"\"\n  runner_env: {}\n  note: \"\"\n", out)
+	assert.Equal(t, "CONFIG DRY-RUN op=remove kind=machine name=bench-a actor=a1 wrote=nothing\n  address: \"\"\n  public: \"\"\n  user: \"nova\"\n  os: \"\"\n  arch: \"\"\n  cores: null\n  roles: \"bench,services\"\n  routes: \"\"\n  runners: 0\n  runner_scopes: \"\"\n  windows_runners: \"\"\n  windows_admin_runners: \"\"\n  runner_env: {}\n  note: \"\"\n", out)
 	assert.Equal(t, "CONFIG DRY-RUN op=set kind=machine name=bench-a actor=a1 wrote=nothing\n  note: \"\" -> \"the first\"\n",
 		h.ok(t, "machine", "set", "bench-a", "--note", "the first", "--actor", "a1", "--dry-run"))
 	assert.Len(t, h.st.history, n)
@@ -221,10 +239,10 @@ func TestRefusals(t *testing.T) {
 		{1, []string{"service", "set", "nope", "--every", "5", "--actor", "a"}, "service nope not found"},
 		{1, []string{"machine", "add", "bench-a", "--user", "u", "--actor", "a"}, "machine bench-a exists"},
 		{2, []string{"machine", "add", "Bad_Name", "--user", "u", "--actor", "a"}, "want lower-case letters"},
-		{2, []string{"machine", "add", "m9", "--actor", "a"}, "missing required flag --user; machine fields: name, address, public, user, os, arch, cores, roles, runners, runner_scopes, windows_runners, windows_admin_runners, runner_env, note; run: nova-config machine add -h"},
+		{2, []string{"machine", "add", "m9", "--actor", "a"}, "missing required flag --user; machine fields: name, address, public, user, os, arch, cores, roles, routes, runners, runner_scopes, windows_runners, windows_admin_runners, runner_env, note; run: nova-config machine add -h"},
 		{2, []string{"service", "add", "l9"}, "missing required flag --machine, --argv, --actor"},
 		{2, []string{"machine", "set", "bench-a", "--roles", "coordination", "--actor", "a"}, `--roles "coordination"`},
-		{2, []string{"machine", "set", "bench-a", "--slots", "4", "--actor", "a"}, "unknown flag --slots; machine fields: name, address, public, user, os, arch, cores, roles, runners, runner_scopes, windows_runners, windows_admin_runners, runner_env, note; run: nova-config machine set -h"},
+		{2, []string{"machine", "set", "bench-a", "--slots", "4", "--actor", "a"}, "unknown flag --slots; machine fields: name, address, public, user, os, arch, cores, roles, routes, runners, runner_scopes, windows_runners, windows_admin_runners, runner_env, note; run: nova-config machine set -h"},
 		{2, []string{"version"}, `unknown verb "version"`},
 		{2, []string{"machine", "set", "bench-a", "--roles", "bench,chef", "--actor", "a"}, `--roles "chef"`},
 		{2, []string{"service", "set", "member-b", "--argv", "prog", "--actor", "a"}, "want the command as a JSON array"},
@@ -380,35 +398,37 @@ func TestSchemaHoldsEveryField(t *testing.T) {
 }
 
 // TestKindsAreTheLibraryColumns keeps the kinds and the config package's row
-// types in step: a list verb reads exactly the columns Machines, Friends and
-// Services read, in the same order, so the two print the same fields.
+// types in step: a list verb reads exactly the columns the library's readers
+// read, in the same order, so the two print the same fields.
 func TestKindsAreTheLibraryColumns(t *testing.T) {
 	t.Parallel()
-	for name, cols := range map[string][]string{"machine": config.Columns[config.Machine](), "friend": config.Columns[config.Friend](), "service": config.Columns[config.Service]()} {
+	for name, cols := range map[string][]string{"machine": config.Columns[config.Machine](), "friend": config.Columns[config.Friend](), "service": config.Columns[config.Service](),
+		"provider": config.Columns[config.Provider](), "model": config.Columns[config.Model]()} {
 		var fields []string
 		for _, f := range kinds[name].fields {
 			fields = append(fields, f.name)
 		}
 		assert.Equal(t, cols, fields, name)
 	}
-	assert.Len(t, kinds, 4, "the three above and rented, which no library reader needs")
+	assert.Equal(t, "display_name", kinds["harness"].fields[0].name)
+	assert.Len(t, kinds, 7, "the five above plus rented and harness")
 }
 
 // TestSQLNamesItsColumns holds the writes to the fields they know, so a store
 // that still has old columns is written as is.
 func TestSQLNamesItsColumns(t *testing.T) {
 	t.Parallel()
-	row := Row{Name: "m1", F: map[string]string{"user": "u", "address": "", "public": "", "os": "linux", "arch": "", "cores": "", "runners": "2", "roles": "bench", "runner_scopes": "", "windows_runners": "", "windows_admin_runners": "", "runner_env": "{}", "note": ""}}
+	row := Row{Name: "m1", F: map[string]string{"user": "u", "address": "", "public": "", "os": "linux", "arch": "", "cores": "", "runners": "2", "roles": "bench", "routes": "", "runner_scopes": "", "windows_runners": "", "windows_admin_runners": "", "runner_env": "{}", "note": ""}}
 	q, args := writeSQL(kinds["machine"], "add", "m1", Row{}, row)
-	assert.Equal(t, `INSERT INTO config.machines (name, "address", "public", "user", "os", "arch", "cores", "roles", "runners", "runner_scopes", "windows_runners", "windows_admin_runners", "runner_env", "note") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`, q)
-	assert.Equal(t, []any{"m1", "", nil, "u", "linux", "", nil, "bench", int64(2), "", "", "", "{}", ""}, args)
-	old := Row{Name: "m1", F: map[string]string{"user": "u", "address": "", "public": "", "os": "", "arch": "", "cores": "4", "runners": "2", "roles": "bench", "runner_scopes": "", "windows_runners": "", "windows_admin_runners": "", "runner_env": "{}", "note": ""}}
-	same := ` AND jsonb_build_object('address', coalesce("address"::text, ''), 'public', coalesce("public"::text, ''), 'user', coalesce("user"::text, ''), 'os', coalesce("os"::text, ''), 'arch', coalesce("arch"::text, ''), 'cores', coalesce("cores"::text, ''), 'roles', coalesce("roles"::text, ''), 'runners', coalesce("runners"::text, ''), 'runner_scopes', coalesce("runner_scopes"::text, ''), 'windows_runners', coalesce("windows_runners"::text, ''), 'windows_admin_runners', coalesce("windows_admin_runners"::text, ''), 'runner_env', coalesce("runner_env"::text, ''), 'note', coalesce("note"::text, '')) = `
-	oldJSON := `{"address":"","arch":"","cores":"4","note":"","os":"","public":"","roles":"bench","runner_env":"{}","runner_scopes":"","runners":"2","user":"u","windows_admin_runners":"","windows_runners":""}`
+	assert.Equal(t, `INSERT INTO config.machines (name, "address", "public", "user", "os", "arch", "cores", "roles", "routes", "runners", "runner_scopes", "windows_runners", "windows_admin_runners", "runner_env", "note") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`, q)
+	assert.Equal(t, []any{"m1", "", nil, "u", "linux", "", nil, "bench", "", int64(2), "", "", "", "{}", ""}, args)
+	old := Row{Name: "m1", F: map[string]string{"user": "u", "address": "", "public": "", "os": "", "arch": "", "cores": "4", "runners": "2", "roles": "bench", "routes": "", "runner_scopes": "", "windows_runners": "", "windows_admin_runners": "", "runner_env": "{}", "note": ""}}
+	same := ` AND jsonb_build_object('address', coalesce("address"::text, ''), 'public', coalesce("public"::text, ''), 'user', coalesce("user"::text, ''), 'os', coalesce("os"::text, ''), 'arch', coalesce("arch"::text, ''), 'cores', coalesce("cores"::text, ''), 'roles', coalesce("roles"::text, ''), 'routes', coalesce("routes"::text, ''), 'runners', coalesce("runners"::text, ''), 'runner_scopes', coalesce("runner_scopes"::text, ''), 'windows_runners', coalesce("windows_runners"::text, ''), 'windows_admin_runners', coalesce("windows_admin_runners"::text, ''), 'runner_env', coalesce("runner_env"::text, ''), 'note', coalesce("note"::text, '')) = `
+	oldJSON := `{"address":"","arch":"","cores":"4","note":"","os":"","public":"","roles":"bench","routes":"","runner_env":"{}","runner_scopes":"","runners":"2","user":"u","windows_admin_runners":"","windows_runners":""}`
 	q, args = writeSQL(kinds["machine"], "set", "m1", old, row)
-	assert.True(t, strings.HasPrefix(q, `UPDATE config.machines SET "address" = $2, `) && strings.HasSuffix(q, `, updated_at = now() WHERE name = $1`+same+`$15::jsonb`), q)
-	assert.Len(t, args, 15)
-	assert.Equal(t, oldJSON, args[14], "a set matches the row only as it was read")
+	assert.True(t, strings.HasPrefix(q, `UPDATE config.machines SET "address" = $2, `) && strings.HasSuffix(q, `, updated_at = now() WHERE name = $1`+same+`$16::jsonb`), q)
+	assert.Len(t, args, 16)
+	assert.Equal(t, oldJSON, args[15], "a set matches the row only as it was read")
 	q, args = writeSQL(kinds["machine"], "remove", "m1", old, Row{})
 	assert.Equal(t, "DELETE FROM config.machines WHERE name = $1"+same+"$2::jsonb", q)
 	assert.Equal(t, []any{"m1", oldJSON}, args, "a remove matches the row only as it was read")
@@ -445,4 +465,36 @@ func TestUnknownOldRoleIsRead(t *testing.T) {
 	assert.Contains(t, h.ok(t, "inventory"), `"bench": {`+"\n"+`    "hosts": [`+"\n"+`      "bench-a"`)
 	h.ok(t, "machine", "set", "bench-a", "--note", "n", "--actor", "a")
 	assert.Equal(t, "bench,coordination", h.st.rows["machine"]["bench-a"].F["roles"], "a set that leaves roles alone keeps them")
+}
+
+// friend watch prints one JSON line per directory, or with --output leaves the file holding the last one and no
+// temporary file beside it; it ends with the store's failure (exit 2), for a service manager to restart it.
+func TestFriendWatch(t *testing.T) {
+	h := newHarness()
+	h.ok(t, "friend", "add", "stella", "--harness", "codex", "--actor", "t")
+	code, out, errs := h.run(t, "friend", "watch")
+	assert.Equal(t, 2, code)
+	assert.Equal(t, "nova-config friend watch: postgres: connection refused\n", errs)
+	lines := strings.Split(strings.TrimSuffix(out, "\n"), "\n")
+	require.Len(t, lines, 2)
+	assert.JSONEq(t, `{"friends":{"stella":{"harness":"codex","enabled":true}},"providers":{}}`, lines[1])
+
+	dir := t.TempDir()
+	path := dir + "/nova-friends.json"
+	code, out, _ = h.run(t, "friend", "watch", "--output", path)
+	assert.Equal(t, 2, code)
+	assert.Empty(t, out)
+	b, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.JSONEq(t, lines[1], string(b))
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	assert.Len(t, entries, 1, "the temporary file was renamed over the output")
+
+	code, _, errs = h.run(t, "friend", "watch", "extra")
+	assert.Equal(t, 2, code)
+	assert.Contains(t, errs, "nova-config friend watch: takes no arguments")
+	code, _, errs = h.run(t, "friend", "watch", "--output", dir+"/missing/x.json")
+	assert.Equal(t, 2, code, "an output it cannot write ends the watch")
+	assert.Contains(t, errs, "no such file or directory")
 }

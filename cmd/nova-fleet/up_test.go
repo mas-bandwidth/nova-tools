@@ -353,7 +353,7 @@ func TestUpOrder(t *testing.T) {
 		t.Fatalf("exit %d\n%s\n%s", code, out, errs)
 	}
 	want := []string{"tailscale.yml@first.ini", "postgres.yml@first.ini", "redis.yml@first.ini", "join.yml@inventory", "join.yml@inventory",
-		"secrets-refresh.yml@inventory", "health.yml@inventory", "install.yml@inventory", "services.yml@inventory", "github-runners.yml@inventory"}
+		"secrets-refresh.yml@inventory", "health.yml@inventory", "install.yml@inventory", "services.yml@inventory", "windows-runners.yml@inventory", "github-runners.yml@inventory"}
 	if got := f.plays(); !slices.Equal(got, want) {
 		t.Errorf("plays = %v, want %v", got, want)
 	}
@@ -385,9 +385,9 @@ func TestUpOrder(t *testing.T) {
 	}
 	for _, w := range []string{"UP CONTROL OK", "UP REACH first OK root@203.0.113.7", "UP HOSTKEY first OK pinned=1", "UP FIRST first OK pg=first.ts.example:5432 bus=first.ts.example:6379",
 		"UP JOIN first OK", "UP JOIN second OK", "UP GRANT first OK NOVA_BUS_PASSWORD", "UP STORE OK", "UP REFRESH OK " + f.store,
-		"UP HEALTH OK", "UP TOOLS OK v2.0.0", "UP SERVICES OK", "UP RUNNERS OK https://github.com/o/r", "UP BUS OK first.ts.example:6379 present=2",
-		"UP MACHINE first OK address=203.0.113.7 steps=tailnet,postgres,redis,join,grant,refresh,health,tools,services,runners,bus",
-		"UP MACHINE second OK address=203.0.113.8 steps=join,grant,refresh,health,tools,services,runners,bus",
+		"UP HEALTH OK", "UP TOOLS OK v2.0.0", "UP SERVICES OK", "UP WINDOWS-RUNNERS OK", "UP RUNNERS OK https://github.com/o/r", "UP BUS OK first.ts.example:6379 present=2",
+		"UP MACHINE first OK address=203.0.113.7 steps=tailnet,postgres,redis,join,grant,refresh,health,tools,services,windows-runners,runners,bus",
+		"UP MACHINE second OK address=203.0.113.8 steps=join,grant,refresh,health,tools,services,windows-runners,runners,bus",
 		"UP DONE: nova-config and the next nova-fleet up read the fleet from NOVA_PG_DSN\nnext: export NOVA_PG_DSN=postgres://nova_config@first.ts.example:5432/nova"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout lacks %q:\n%s", w, out)
@@ -421,7 +421,7 @@ func TestUpAddsAMachine(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d\n%s\n%s", code, out, errs)
 	}
-	if got := f.plays(); !slices.Equal(got, []string{"join.yml@inventory", "join.yml@inventory", "secrets-refresh.yml@inventory", "health.yml@inventory", "install.yml@inventory", "services.yml@inventory", "github-runners.yml@inventory"}) {
+	if got := f.plays(); !slices.Equal(got, []string{"join.yml@inventory", "join.yml@inventory", "secrets-refresh.yml@inventory", "health.yml@inventory", "install.yml@inventory", "services.yml@inventory", "windows-runners.yml@inventory", "github-runners.yml@inventory"}) {
 		t.Errorf("plays = %v", got)
 	}
 	all := strings.Join(f.calls, "\n")
@@ -441,7 +441,7 @@ func TestUpAddsAMachine(t *testing.T) {
 		t.Errorf("the first machine's plays ran, or a new row was edited:\n%s", all)
 	}
 	for _, w := range []string{"UP REACH second OK ops@second.ts.example", "UP REACH third OK root@203.0.113.9", "UP ROLE second OK runner", "UP BUS OK store-1.ts.example:6379",
-		"UP MACHINE second OK address=203.0.113.8 steps=join,grant,refresh,health,tools,services,runners,bus"} {
+		"UP MACHINE second OK address=203.0.113.8 steps=join,grant,refresh,health,tools,services,windows-runners,runners,bus"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout lacks %q:\n%s", w, out)
 		}
@@ -460,7 +460,7 @@ func TestUpResumes(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d\n%s\n%s", code, out, errs)
 	}
-	if got := f.plays(); !slices.Equal(got, []string{"tailscale.yml@first.ini", "postgres.yml@first.ini", "redis.yml@first.ini", "join.yml@inventory", "join.yml@inventory", "secrets-refresh.yml@inventory", "health.yml@inventory", "install.yml@inventory", "services.yml@inventory"}) {
+	if got := f.plays(); !slices.Equal(got, []string{"tailscale.yml@first.ini", "postgres.yml@first.ini", "redis.yml@first.ini", "join.yml@inventory", "join.yml@inventory", "secrets-refresh.yml@inventory", "health.yml@inventory", "install.yml@inventory", "services.yml@inventory", "windows-runners.yml@inventory"}) {
 		t.Errorf("plays = %v", got)
 	}
 	all := strings.Join(f.calls, "\n")
@@ -534,7 +534,7 @@ func TestUpCheck(t *testing.T) {
 	t.Setenv("NOVA_PG_DSN", "postgres://nova_config@store-1.ts.example:5432/nova")
 	code, out, _ = runArgs("up", "--check", "--grant", "NOVA_BUS_PASSWORD,EXTRA", "--runners", "https://github.com/o/r", "--tools", "v2.0.0", "first=1.1.1.1")
 	all := strings.Join(f.calls, "\n")
-	if code != 0 || len(f.plays()) != 5 || strings.Contains(all, "push") || strings.Contains(all, "nova-bus who") || strings.Contains(all, "nova-secrets grant") ||
+	if code != 0 || len(f.plays()) != 6 || strings.Contains(all, "push") || strings.Contains(all, "nova-bus who") || strings.Contains(all, "nova-secrets grant") ||
 		!strings.Contains(all, "secrets-refresh.yml --check --diff -e nova_seal_store=") || !strings.Contains(all, "nova-secrets exec --only NOVA_BUS_PASSWORD,EXTRA -- true") ||
 		!strings.Contains(all, "machine set first --roles bench,runner --actor control --reason nova-fleet up --runners --dry-run") {
 		t.Errorf("code %d plays %v calls:\n%s", code, f.plays(), all)
@@ -542,7 +542,7 @@ func TestUpCheck(t *testing.T) {
 	for _, w := range []string{"UP REACH first OK nova@first.ts.example", "UP JOIN first WOULD-JOIN (check: nothing changed)", "UP ROLE first WOULD-SET (check: nothing changed) runner",
 		"UP GRANT first WOULD-GRANT NOVA_BUS_PASSWORD,EXTRA to age1fakenova@first.ts.example (check: nothing changed)", "UP STORE WOULD-PUSH",
 		"UP REFRESH WOULD-PUSH (check: nothing changed) " + f.store, "UP RUNNERS WOULD-RUN (check: once the runner role is on the rows)",
-		"UP BUS WOULD-ASK", "UP MACHINE first CHECKED address=1.1.1.1 steps=join,grant,refresh,health,tools,services (check: nothing changed)"} {
+		"UP BUS WOULD-ASK", "UP MACHINE first CHECKED address=1.1.1.1 steps=join,grant,refresh,health,tools,services,windows-runners (check: nothing changed)"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout lacks %q:\n%s", w, out)
 		}
@@ -586,7 +586,7 @@ func TestLocalVersion(t *testing.T) {
 
 // Every play up runs is in the binary.
 func TestUpPlaysAreEmbedded(t *testing.T) {
-	for _, p := range []string{"tailscale", "postgres", "redis", "join", "health", "install", "services", "github-runners"} {
+	for _, p := range []string{"tailscale", "postgres", "redis", "join", "health", "install", "services", "windows-runners", "github-runners"} {
 		if !slices.Contains(plays(tree), p) {
 			t.Errorf("up runs %s.yml, which is not embedded", p)
 		}
@@ -978,7 +978,7 @@ func TestUpControlNodeInTheInventory(t *testing.T) {
 		strings.Contains(all, "nova-secrets grant NOVA_BUS_PASSWORD --to control") || !strings.Contains(all, "nova-secrets grant NOVA_BUS_PASSWORD --to second") ||
 		!strings.Contains(out, "UP REACH control OK ops@control.ts.example") || !strings.Contains(out, "UP JOIN control SKIPPED this control node (tailscale status Self): already joined") ||
 		!strings.Contains(out, "UP GRANT control SKIPPED this control node (tailscale status Self): its own seat holds the values") ||
-		!strings.Contains(out, "UP MACHINE control OK address=203.0.113.5 steps=refresh,health,tools,services,bus") {
+		!strings.Contains(out, "UP MACHINE control OK address=203.0.113.5 steps=refresh,health,tools,services,windows-runners,bus") {
 		t.Errorf("code %d keys %d\n%s\n%s\n%s", code, f.api.keys, out, errs, all)
 	}
 	// with --runners, the control node gets no runner role and no runners: heavy work never defaults onto it
@@ -987,7 +987,7 @@ func TestUpControlNodeInTheInventory(t *testing.T) {
 	code, out, errs = runArgs("up", "--tools", "v2.0.0", "--runners", "https://github.com/o/r", "control=203.0.113.5", "second=203.0.113.8")
 	all = strings.Join(f.calls, "\n")
 	if code != 0 || strings.Contains(all, "machine set control") || !strings.Contains(all, "-e runner_count=cores -l second\n") ||
-		!strings.Contains(out, "UP MACHINE control OK address=203.0.113.5 steps=refresh,health,tools,services,bus") {
+		!strings.Contains(out, "UP MACHINE control OK address=203.0.113.5 steps=refresh,health,tools,services,windows-runners,bus") {
 		t.Errorf("runners: code %d\n%s\n%s\n%s", code, out, errs, all)
 	}
 	// with no row, join cannot be skipped into one: the run stops with the line that adds it

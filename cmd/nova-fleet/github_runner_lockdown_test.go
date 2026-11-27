@@ -1,9 +1,11 @@
 package main
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // With a runner login of its own the machine is locked down for it (roles/github-runner/tasks/lockdown.yml): the fleet
@@ -28,18 +30,38 @@ func TestRunnerLoginLockdown(t *testing.T) {
 		assert.NotContains(t, asText(task["ansible.builtin.shell"]), "chown", "task %q: a file a job planted is never adopted", asText(task["name"]))
 	}
 
+	// cloud-init's root temporary directory: a boot-time tmpfiles rule keeps it 0755 root:root (cloud-init makes it 1777
+	// only when it is missing), corrected now, and only before the scan, which still names anything inside it
+	rule := runnerTask(t, tasks, "cloud-init's root temporary directory is root's at every boot (tmpfiles rule)")
+	copied := rule["ansible.builtin.copy"].(map[string]any)
+	assert.Equal(t, "/etc/tmpfiles.d/nova-cloud-init-tmp.conf", asText(copied["dest"]))
+	assert.Contains(t, asText(copied["content"]), "d /run/cloud-init/tmp 0755 root root -")
+	assert.Equal(t, "github_runner_cloud_init.stat.exists", asText(rule["when"]), "only where cloud-init is")
+	now := runnerTask(t, tasks, "cloud-init's root temporary directory corrected now (systemd-tmpfiles --create)")
+	assert.Equal(t, "systemd-tmpfiles --create /etc/tmpfiles.d/nova-cloud-init-tmp.conf", asText(now["ansible.builtin.command"]))
+	assert.Contains(t, asText(now["when"]), "not ansible_check_mode")
+	assert.Less(t, taskIndex(tasks, "cloud-init's root temporary directory corrected now (systemd-tmpfiles --create)"),
+		taskIndex(tasks, "the runner login can write no system path"), "the scan runs after, on the corrected directory")
+
 	scan := runnerTask(t, tasks, "the runner login can write no system path")
 	sh := asText(scan["ansible.builtin.shell"])
 	assert.Contains(t, sh, "for m in $(findmnt --real -rn -o TARGET -t nonfs,nfs4,cifs,smb3,9p,fuse.sshfs); do", "every local filesystem")
 	assert.Contains(t, sh, `[ -d "$m" ] || { echo "a mount the scan cannot start from: $m" >&2; exit 1; }`, "a mount find cannot start from never passes")
 	assert.Contains(t, sh, "timeout 1800 runuser -u {{ github_runner_user | quote }} -- sh -c '")
-	for _, pruned := range []string{"-path /proc", "-path /sys", "-path /dev", "-path /run", "-path /tmp", "-path /var/tmp", "-path /var/crash",
-		"-path /var/lib/php/sessions", `-path "/var/mail/$me"`, `-path "$home"`, `-path "/snap/*/*/dev"`, `-path "/run/user/$uid"`, "-path /run/lock", "-path /run/screen"} {
-		assert.Contains(t, sh, pruned)
-	}
-	assert.Contains(t, sh, `-o \( -writable -o -user "$me" \) ! -type l -print`, "what it can write, and what it owns")
+	// the two find expressions whole: a prune added, widened or dropped on any line is red
+	findAt := strings.Index(sh, `  find "$@" -xdev`)
+	require.GreaterOrEqual(t, findAt, 0, "the scan's find over the local mounts")
+	findEnd := strings.Index(sh[findAt:], "  r2=$?\n")
+	require.GreaterOrEqual(t, findEnd, 0, "the scan's find over /run")
+	assert.Equal(t, `  find "$@" -xdev \( -path /proc -o -path /sys -o -path /dev -o -path /run -o -path /tmp -o -path /var/tmp \
+      -o -path /var/crash -o -path /var/lib/php/sessions -o -path "/var/mail/$me" -o -path "$home" -o -path "$scratch" \
+      -o -path "/snap/*/*/dev" \) -prune \
+    -o \( -writable -o -user "$me" \) ! -type l -print 2>/dev/null
+  r1=$?
+  find /run -xdev \( -path "/run/user/$uid" -o -path /run/lock -o -path /run/screen \) -prune \
+    -o \( -writable -o -user "$me" \) ! -type l ! -type s -print 2>/dev/null
+`, sh[findAt:findAt+findEnd], "what it can write and what it owns, but its home, the kernel's, the named scratch places and /run's sockets")
 	assert.NotContains(t, sh, "-perm -1002", "no sticky directory is shared scratch but the named ones")
-	assert.Contains(t, sh, `-o \( -writable -o -user "$me" \) ! -type l ! -type s -print`, "/run but its sockets")
 	assert.Contains(t, sh, "for s in /run/docker.sock /run/podman/podman.sock /run/containerd/containerd.sock; do")
 	assert.Contains(t, sh, "[ $r1 -le 1 ] && [ $r2 -le 1 ] && echo SCAN-DONE")
 	assert.Equal(t, false, scan["check_mode"], "read under --check too")

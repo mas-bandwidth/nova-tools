@@ -50,7 +50,9 @@ exit 125, not 2: `<cwd> is outside the wall; cd <granted dir> or add --read <cwd
 Before the command starts, and on that refusal, stderr gets one line.
 `WALL grants=none net=open` means you named no directory and the network is open.
 `net=denied` means you passed `--net-deny`. Reads and writes are listed when you
-named them. The environment kept is `PATH`, `HOME`, `LANG` and `TERM`.
+named them. The environment kept is `PATH`, `HOME`, `LANG` and `TERM` (plus positive-integer
+`NOVA_RESERVE_CPUS`, `GOMAXPROCS`, `CARGO_BUILD_JOBS`, `RAYON_NUM_THREADS` and `CMAKE_BUILD_PARALLEL_LEVEL`
+when set by `nova-reserve`).
 `--env <name>` passes another by name; the value stays in the environment and is
 never an argument. An unset name is refused. Point `HOME` and `TMPDIR` inside a
 `--write`, and pass `TMPDIR` with `--env`.

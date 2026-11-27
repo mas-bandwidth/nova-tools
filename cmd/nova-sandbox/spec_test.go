@@ -227,6 +227,34 @@ func TestPassedEnv(t *testing.T) {
 	assert.NotNil(t, passedEnv(nil, nil), "a nil env would make syscall.Exec inherit every name")
 	assert.Empty(t, passedEnv(nil, []string{"NO_SUCH"}))
 
+	// Positive-integer nova-reserve thread counts pass through automatically; non-positive or non-numeric values are stripped.
+	gotCounts := passedEnv([]string{
+		"PATH=/bin",
+		"NOVA_RESERVE_CPUS=4",
+		"GOMAXPROCS=16",
+		"CARGO_BUILD_JOBS=2",
+		"RAYON_NUM_THREADS=1",
+		"CMAKE_BUILD_PARALLEL_LEVEL=8",
+	}, nil)
+	assert.Equal(t, []string{
+		"PATH=/bin",
+		"NOVA_RESERVE_CPUS=4",
+		"GOMAXPROCS=16",
+		"CARGO_BUILD_JOBS=2",
+		"RAYON_NUM_THREADS=1",
+		"CMAKE_BUILD_PARALLEL_LEVEL=8",
+	}, gotCounts)
+	assert.Equal(t, []string{"PATH=/bin"}, passedEnv([]string{
+		"PATH=/bin",
+		"NOVA_RESERVE_CPUS=0",
+		"GOMAXPROCS=04",
+		"CARGO_BUILD_JOBS=-2",
+		"RAYON_NUM_THREADS=",
+		"CMAKE_BUILD_PARALLEL_LEVEL=4;id",
+	}, nil))
+	assert.Equal(t, []string{"GOMAXPROCS=notanint"}, passedEnv([]string{"GOMAXPROCS=notanint"}, []string{"GOMAXPROCS"}),
+		"explicit --env still passes a named variable verbatim")
+
 	var out, errb strings.Builder
 	code := run([]string{"--env", "NO_SUCH", "--", "true"}, &out, &errb, []string{"PATH=/usr/bin:/bin"})
 	assert.Equal(t, 2, code)

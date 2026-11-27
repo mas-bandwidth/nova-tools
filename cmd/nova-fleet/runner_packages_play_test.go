@@ -85,10 +85,10 @@ func readRunnerPackagesVars(t *testing.T, path string) runnerPackagesVars {
 func TestRunnerPackagesDefaults(t *testing.T) {
 	t.Parallel()
 	vars := readRunnerPackagesVars(t, "group_vars/all.yml")
-	assert.Equal(t, []string{"postgresql@18", "cmake", "libsodium", "pkgconf", "ccache"}, vars.Packages["darwin"])
+	assert.Equal(t, []string{"postgresql@18", "cmake", "libsodium", "pkgconf", "ccache", "gh", "git"}, vars.Packages["darwin"])
 	debian := vars.Packages["debian"]
 	assert.Greater(t, len(debian), 50, "the debian list is the fleet's toolchain, not a stub")
-	for _, want := range []string{"build-essential", "cmake", "clang", "golang-go", "valgrind", "podman", "postgresql-client-18"} {
+	for _, want := range []string{"build-essential", "cmake", "clang", "golang-go", "valgrind", "podman", "postgresql-client-18", "gh"} {
 		assert.Contains(t, debian, want)
 	}
 	assert.Len(t, slices.Compact(slices.Sorted(slices.Values(debian))), len(debian), "a package is listed once")
@@ -250,7 +250,7 @@ func TestRunnerPackagesInstallsOnlyWhatIsMissing(t *testing.T) {
 			command := task["ansible.builtin.command"] != nil || task["ansible.builtin.shell"] != nil
 			apt, _ := task["ansible.builtin.apt"].(map[string]any)
 			installer := (command && (strings.Contains(text, " install ") || strings.Contains(text, " install\n"))) ||
-				(apt != nil && apt["name"] != nil) || task["ansible.builtin.package"] != nil || task["community.general.homebrew"] != nil
+				(apt != nil && apt["name"] != nil && apt["state"] != "absent") || task["ansible.builtin.package"] != nil || task["community.general.homebrew"] != nil
 			if strings.Contains(text, "WOULD-INSTALL") {
 				would++
 				assert.Contains(t, asText(task["when"]), "ansible_check_mode", "%s: task %q", file, name)
@@ -270,6 +270,54 @@ func TestRunnerPackagesInstallsOnlyWhatIsMissing(t *testing.T) {
 	}
 	assert.Equal(t, 2, installs, "one install task per OS (brew on darwin, apt on debian)")
 	assert.Equal(t, 2, would, "one WOULD-INSTALL task per OS")
+}
+
+// TestRunnerPackagesRemovesOnlyTheNamedAbsent pins the removal: only nova_runner_packages_absent's names that dpkg has,
+// apt remove with no purge and no autoremove (nothing else a package pulled in goes with it), skipped under --check with
+// a WOULD-REMOVE twin; none by default.
+func TestRunnerPackagesRemovesOnlyTheNamedAbsent(t *testing.T) {
+	t.Parallel()
+	which := taskNamed(t, "debian.yml", "the packages to remove that dpkg has")
+	sf, _ := which["ansible.builtin.set_fact"].(map[string]any)
+	require.NotNil(t, sf)
+	assert.Equal(t, "{{ nova_runner_packages_absent['debian'] | default([]) | select('in', ansible_facts.packages) | list }}", sf["rp_unwanted"])
+	rm := taskNamed(t, "debian.yml", "apt remove the unwanted packages")
+	apt, _ := rm["ansible.builtin.apt"].(map[string]any)
+	require.NotNil(t, apt)
+	assert.Equal(t, "{{ rp_unwanted }}", apt["name"])
+	assert.Equal(t, "absent", apt["state"])
+	assert.Equal(t, false, apt["purge"])
+	assert.Equal(t, false, apt["autoremove"])
+	assert.Contains(t, asText(rm["when"]), "not ansible_check_mode")
+	would := taskNamed(t, "debian.yml", "would remove the unwanted packages")
+	assert.Contains(t, taskText(t, would), "WOULD-REMOVE")
+	assert.Contains(t, asText(would["when"]), "ansible_check_mode")
+	var vars struct {
+		Absent map[string][]string `yaml:"nova_runner_packages_absent"`
+		GPU    []string            `yaml:"nova_runner_gpu_hosts"`
+	}
+	b, err := os.ReadFile("group_vars/all.yml")
+	require.NoError(t, err)
+	require.NoError(t, yaml.Unmarshal(b, &vars))
+	assert.Empty(t, vars.Absent, "nothing is removed by default")
+	assert.Empty(t, vars.GPU, "no host joins render by default")
+}
+
+// TestRunnerPackagesGPUHostsJoinRender pins the GPU step: only for a host named in nova_runner_gpu_hosts, the fleet login
+// joins render (append: its other groups kept) and nothing else; a named host with no render group is refused.
+func TestRunnerPackagesGPUHostsJoinRender(t *testing.T) {
+	t.Parallel()
+	b, err := os.ReadFile(runnerPackagesRole + "/tasks/main.yml")
+	require.NoError(t, err)
+	assert.Contains(t, string(b), "include_tasks: debian-gpu.yml\n  when: rp_os == 'debian' and inventory_hostname in nova_runner_gpu_hosts")
+	join := taskNamed(t, "debian-gpu.yml", "the login is in render")
+	user, _ := join["ansible.builtin.user"].(map[string]any)
+	require.NotNil(t, user)
+	assert.Equal(t, "{{ ansible_facts['user_id'] }}", user["name"])
+	assert.Equal(t, []any{"render"}, user["groups"])
+	assert.Equal(t, true, user["append"], "joining render keeps the login's other groups")
+	refuse := taskNamed(t, "debian-gpu.yml", "the host has a render group")
+	assert.Contains(t, asText(refuse["ansible.builtin.assert"].(map[string]any)["that"]), "rp_render_group.rc == 0")
 }
 
 // TestRunnerPackagesReportsOneLinePerHost pins the receipt line.

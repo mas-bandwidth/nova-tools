@@ -23,6 +23,6 @@ func ExampleStore_Friends() {
 		return
 	}
 	for _, f := range friends {
-		fmt.Println(f.Name, f.Harness, f.Width, f.Tiers)
+		fmt.Println(f.Name, f.Harness, f.Model)
 	}
 }

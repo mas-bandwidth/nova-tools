@@ -8,6 +8,12 @@
 # github_runner_url:
 # github_runner_scope: repo | org
 github_runner_labels: []
+# A second set of runners on the same url (the record's @<set>[/<group>]): set names its runners <host>-<set>-<i> in
+# directories <slug>-<set>-<i>, apart from the url's plain ones; group is the GitHub runner group they register into
+# (config.sh --runnergroup), '' for GitHub's default. The group is read at registration only: a registered runner is
+# not moved to another group by a later run.
+github_runner_set: ""
+github_runner_group: ""
 # The labels every runner gets: on Linux and macOS before the machine's roles, os and arch, on the Windows side of a WSL
 # machine before its name (github_runner_wsl_labels). A job selects any fleet runner of its os with
 # runs-on: [self-hosted, Linux, fleet].
@@ -49,10 +55,19 @@ github_runner_env: "{{ nova_runner_env | default({}) }}"
 # it from the units and removes what is left. A macOS daemon gets none (its jobs use /tmp, which macOS cleans).
 github_runner_tmpdir: "{{ github_runner_home }}/.cache/runner-tmp"
 
-# A Linux runner login of its own: its rustup and cargo homes when github_runner_env names none, with the shared SDK's
-# pinned toolchains and cargo/bin linked in (tasks/unix-login.yml), so a job's toolchain install writes here.
-github_runner_rustup_home: "{{ github_runner_home }}/.rustup"
-github_runner_cargo_home: "{{ github_runner_home }}/.cargo"
+# A Linux runner login of its own: each runner's own rustup and cargo homes, with the shared SDK's pinned toolchains and
+# cargo/bin linked in (tasks/runner-rust.yml), so a job's toolchain install writes there and no two runners write one
+# home at once. Its unit sets both, whatever the record's runner_env names. github_runner_dir is the runner's own.
+github_runner_rust_homes: "{{ github_runner_home }}/.rust-homes"
+github_runner_rustup_home: "{{ github_runner_rust_homes }}/{{ github_runner_dir | basename }}/rustup"
+github_runner_cargo_home: "{{ github_runner_rust_homes }}/{{ github_runner_dir | basename }}/cargo"
+
+# The channel a job's dtolnay/rust-toolchain installs and makes the login's default (`rustup toolchain install <it>
+# --profile minimal`, then `rustup default <it>`), and the components it always carries in the runner login's rustup
+# home: installed with them when absent, given them when a job installed it without. rustup keeps a toolchain's
+# components when a later job updates it, so every job after the first that names the channel finds them.
+github_runner_rust_channel: stable
+github_runner_rust_channel_components: [clippy, rustfmt]
 
 # The PATH the service starts with when github_runner_env has none; its jobs inherit it, so a step finds the nova
 # tools (`nova-reserve run ...`): github_runner_bin_dir first, then the
@@ -63,6 +78,29 @@ github_runner_cargo_home: "{{ github_runner_home }}/.cargo"
 github_runner_bin_dir: "{{ nova_bin_dir if github_runner_user == ansible_facts['user_id'] else nova_shared_dir ~ '/bin' }}"
 github_runner_default_path_linux: "{{ github_runner_bin_dir }}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin"
 github_runner_default_path_darwin: "{{ nova_bin_dir }}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+
+# The CPUs a Linux runner and everything its jobs start run on (the unit's CPUAffinity=), space-separated: the online
+# CPUs less those the kernel isolates from the scheduler (isolcpus), read from /sys/devices/system/cpu/{online,isolated}
+# by tasks/main.yml. A task on an isolated CPU is never balanced off it, so every thread a job places there shares that
+# one core; systemd starts every unit on all CPUs, isolated or not. Empty where the kernel isolates none: the unit then
+# names no affinity.
+github_runner_cpus: >-
+  {%- set gone = [] -%}
+  {%- for r in (github_runner_cpus_isolated | default('') | string | trim).split(',') if r -%}
+  {%- for c in range(r.split('-')[0] | int, r.split('-')[-1] | int + 1) -%}{%- set _ = gone.append(c) -%}{%- endfor -%}
+  {%- endfor -%}
+  {%- set kept = [] -%}
+  {%- for r in (github_runner_cpus_online | default('') | string | trim).split(',') if r and gone -%}
+  {%- for c in range(r.split('-')[0] | int, r.split('-')[-1] | int + 1) if c not in gone -%}{%- set _ = kept.append(c) -%}{%- endfor -%}
+  {%- endfor -%}
+  {{ kept | join(' ') }}
+
+# Linux: the case-folding scratch volume (tasks/casefold.yml) for a test that needs names folded by case: an ext4 image
+# with casefold, loop-mounted at github_runner_casefold_dir from /etc/fstab, its shared scratch <dir>/scratch (1777,
+# chattr +F). An empty dir (host_vars) gives a host none. The size is the sparse image's ceiling, a guess, not measured.
+github_runner_casefold_dir: /srv/casefold
+github_runner_casefold_image: "{{ nova_shared_dir }}/casefold.img"
+github_runner_casefold_size: 1G
 
 # Linux only: run the runner's bin/installdependencies.sh (system packages) once per
 # release on the host.
@@ -98,6 +136,18 @@ github_runner_ci_limit_seconds: 120
 # other branch gets CI through its pull request. One list for the fleet, like the limit.
 github_runner_ci_push_branches: [main, sprint/*]
 
+# Read-only deploy keys the runner login fetches private repositories with (tasks/deploy-keys.yml; cmd/nova-fleet/README.md,
+# "Deploy keys"): a list of {url: <the https clone URL a workflow or .gitmodules names, ending .git>, secret: <the name in
+# this machine's seat holding the private key, base64 on one line>}. Fetching that URL, and no other, goes through an
+# ssh host alias that offers that key alone; a push to it stays on https. Empty installs nothing and removes nothing.
+github_runner_deploy_keys: []
+# The host keys a deploy key's connection accepts, in known_hosts form: GitHub's, as https://api.github.com/meta
+# publishes them (read 2026-11-16). A host with no line here is refused by ssh.
+github_runner_deploy_known_hosts: |
+  github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl
+  github.com ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBEmKSENjQEezOmxkZMy7opKgwFB9nkt5YRrYMjNuG5N87uRgg6CLrbo5wAdT/y6v0mKV0U2w0WZ2YB/++Tpockg=
+  github.com ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQCj7ndNxQowgcQnjshcLrqPEiiphnt+VTTvDP6mHBL9j1aNUkY4Ue1gvwnGLVlOhGeYrnZaMgRK6+PKCUXaDbC7qtbW8gIkhL7aGCsOr/C56SJMy/BCZfxd1nWzAOxSDPgVsmerOBYfNqltV9/hWCqBywINIR+5dIg6JTJ72pcEpEjcYgXkE2YEFXV1JHnsKgbLWNlhScqb2UmyRkQyytRLtL+38TGxkxCflmO+5Z8CSSNY7GidjMIZ7Q4zMjA2n1nGrlTDkzwDCsw+wqFPGQA179cnfGWOWRVruj16z6XyvxvjJwbz0wQZ75XK5tKSb7FNyeIEs4TT4jk+S4dhPeAUC5y+bDYirYgM4GC7uEnztnZyaVWQ7B381AK4Qdrwt51ZqExKbQpTUNn+EjqoTwvqNj4kqx5QUCI0ThS/YkOxJCXmPUWZbhjpCg56i+2aB6CmK2JGhn57K5mj0MNdBXA4/WnwH6XoPWJzK5Nyu2zB3nAZp+S5hpQs+p1vN1/wsjk=
+
 # ---- The Windows side of a WSL machine (tasks/wsl-windows.yml, the windows-runners play; cmd/nova-fleet/README.md, "Windows
 # runners of a WSL machine"). Its runners are the machine record's windows_runners and windows_admin_runners (the
 # inventory's nova_windows_runners and nova_windows_admin_runners); these are how they are reached and laid out.
@@ -111,6 +161,16 @@ github_runner_wsl_stage_dir: 'C:\nova-stage'
 github_runner_wsl_stage_unix: /mnt/c/nova-stage
 github_runner_wsl_script: '{{ github_runner_wsl_stage_dir }}\runner-windows.ps1'
 github_runner_wsl_ci_script: '{{ github_runner_wsl_stage_dir }}\nova-ci-rules.ps1'
+github_runner_wsl_watchdog_script: '{{ github_runner_wsl_stage_dir }}\wsl-watchdog.ps1'
+github_runner_wsl_watchdog_dir: 'C:\nova-watchdog'
+github_runner_win_sshd_port: 2222
+github_runner_wsl_sshd_port: 22
+github_runner_wsl_watchdog_threshold: 2
+github_runner_wsl_watchdog_backoff: 2
+github_runner_wsl_watchdog_busy_backoff: 2
+github_runner_wsl_watchdog_busy_wait_limit: 2
+github_runner_wsl_watchdog_max_reboots: 2
+github_runner_wsl_watchdog_window: 21600
 # A plain Windows host (its record's os is windows; no WSL): the play reaches it over its OpenSSH as an administrator,
 # PowerShell as the shell (nova-config's inventory sets ansible_shell_type), stages the same scripts in the same
 # directory with tasks/windows-stage.yml and runs them with ansible.windows instead of interop.
@@ -160,3 +220,17 @@ github_runner_windows_path:
   - 'C:\Windows\System32\Wbem'
   - 'C:\Windows\System32\WindowsPowerShell\v1.0'
   - 'C:\Windows\System32\OpenSSH'
+
+# Linux, a runner login of its own (lockdown.yml): snaps whose services leave a socket every login may write, each
+# stopped and disabled and its socket file removed once nothing listens on it. hwctl is Canonical's certification
+# client, preinstalled on some OEM Ubuntu images (amd-1, amd-2, amd-3, intel).
+github_runner_snaps_off:
+  - { snap: hwctl, socket: /var/snap/hwctl/common/hwctl.varlink }
+
+# Linux, a runner login of its own (unix-login.yml): an account already named github_runner_user with a uid below 1000
+# (one made by hand before the play) is refused unless this is true for the run. Then it is retired only when nothing
+# uses it (no process, systemd unit, sudoers or cron entry, ssh key in use, login record or file outside its home): its
+# home is archived to /var/backups/<user>-old-home-<date>-<machine>.tgz (0600, every entry checked), the account is
+# deleted (userdel, never -r) and the home moved to /var/backups/<user>-old-home-dir-<machine> (0700). Undo: useradd
+# with the old uid and move the home back.
+github_runner_retire_stale_login: false
