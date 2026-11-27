@@ -161,8 +161,8 @@ func TestFunctionalPushGuardRefusesAtPush(t *testing.T) {
 	assert.Contains(t, string(rules), "\nperson alice@example.com\nmarker Co-Authored-By: Claude\nmarker Generated with [Claude Code]\n")
 
 	remote, repo := filepath.Join(t.TempDir(), "remote.git"), t.TempDir()
-	gitOK(t, home, env, "init", "-q", "--bare", remote)
-	gitOK(t, repo, env, "init", "-q", "-b", "main")
+	assert.Empty(t, gitOK(t, home, env, "init", "-q", "--bare", remote), "the hooks print nothing while a repository is made")
+	assert.Empty(t, gitOK(t, repo, env, "init", "-q", "-b", "main"), "the hooks print nothing while a repository is made")
 	gitOK(t, repo, env, "remote", "add", "origin", remote)
 	own := filepath.Join(repo, ".git", "hooks")
 	require.NoError(t, os.WriteFile(filepath.Join(own, "pre-push"), []byte("#!/bin/sh\necho OWN-PRE-PUSH \"$1\"; cat >/dev/null\n"), 0o755))
