@@ -1,0 +1,49 @@
+---
+# On a Linux machine that runs systemd-resolved, /etc/resolv.conf is resolved's stub. tailscaled hands the tailnet's
+# DNS to resolved only while it is; a plain file there (nothing but the MagicDNS resolver, which has no upstream to
+# forward other names to) makes every name outside the tailnet fail to resolve. The stub is put back and tailscaled
+# restarted, so it hands DNS to resolved again. A machine whose resolv.conf already is the stub changes nothing.
+- name: systemd-resolved runs
+  ansible.builtin.command: systemctl is-active systemd-resolved
+  register: ts_resolved
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: where /etc/resolv.conf leads
+  ansible.builtin.command: readlink -f /etc/resolv.conf
+  register: ts_resolv
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: the stub resolved serves
+  ansible.builtin.stat:
+    path: "{{ nova_resolved_stub }}"
+  register: ts_stub
+
+- name: resolv.conf is resolved's stub
+  ansible.builtin.file:
+    src: "{{ nova_resolved_stub }}"
+    dest: /etc/resolv.conf
+    state: link
+    force: true
+  become: true
+  register: ts_resolv_link
+  when: ts_resolved.stdout | trim == 'active' and ts_stub.stat.exists and ts_resolv.stdout | trim != nova_resolved_stub
+
+- name: tailscaled restarted, so it hands DNS to resolved
+  ansible.builtin.systemd:
+    name: tailscaled
+    state: restarted
+  become: true
+  when: ts_resolv_link is changed and not ansible_check_mode
+
+- name: the tailnet is back after the restart
+  ansible.builtin.command: "{{ ts_bin }} status --json"
+  register: ts_back
+  until: ts_back.rc == 0 and (ts_back.stdout | from_json).BackendState | default('') == 'Running'
+  retries: 15   # a guess, unmeasured: tailscaled takes a few seconds to come back
+  delay: 2
+  changed_when: false
+  when: ts_resolv_link is changed and not ansible_check_mode

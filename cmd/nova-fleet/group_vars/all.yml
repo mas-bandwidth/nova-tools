@@ -6,7 +6,7 @@
 
 # The tools nova-tools ships, by name: install.yml installs them and
 # services.yml prefixes argv[0] with nova_bin_dir when it is one of them.
-nova_tools_names: [nova-bus, nova-cairn, nova-config, nova-sandbox, nova-secrets, nova-reserve, nova-fleet]
+nova_tools_names: [nova-bus, nova-cairn, nova-config, nova-sandbox, nova-secrets, nova-reserve, nova-fleet, nova-roadmap]
 
 # Where a machine keeps the tools: its login's home.
 nova_home: "{{ ansible_facts['env']['HOME'] }}"
@@ -98,7 +98,9 @@ nova_runner_windows_ccache_dir: 'C:\ProgramData\nova\ccache'
 nova_runner_windows_ccache_unix: /mnt/c/ProgramData/nova/ccache
 
 nova_runner_packages:
-  darwin: ["postgresql@18", cmake, libsodium, pkgconf, ccache, gh]
+  # darwin: git is Homebrew's, ahead of /usr/bin on a runner's PATH: /usr/bin/git is the Xcode shim, and exec of git's
+  # shell scripts inside an Xcode copied between Macs can hang at _dyld_start (checkout's `git submodule foreach`).
+  darwin: ["postgresql@18", cmake, libsodium, pkgconf, ccache, gh, git]
   debian:
     # compilers, assemblers, build systems and the tools a build calls
     - build-essential

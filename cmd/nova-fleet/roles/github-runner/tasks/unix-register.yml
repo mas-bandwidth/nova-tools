@@ -8,7 +8,8 @@
     IFS= read -r ACTIONS_RUNNER_INPUT_TOKEN
     export ACTIONS_RUNNER_INPUT_TOKEN
     exec ./config.sh --unattended --url {{ github_runner_url | quote }} --name {{ github_runner_name | quote }} \
-      --labels {{ github_runner_label_string | quote }} --work _work --replace
+      --labels {{ github_runner_label_string | quote }} --work _work --replace{{
+      (' --runnergroup ' ~ (github_runner_group | quote)) if github_runner_group else '' }}
   args:
     executable: /bin/sh
     chdir: "{{ github_runner_dir }}"

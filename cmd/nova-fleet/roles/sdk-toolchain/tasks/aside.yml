@@ -1,0 +1,127 @@
+---
+# nova_sdk_shared: the shared SDK holds what the play installs and nothing else, so every runner login runs the same
+# pinned tools. A top-level entry no pin names (a tool's directory or short name, bin, dl, env.sh, dotnet-home, the
+# rustup directory, a cargo tool's directory) was put there by hand: a tool installed beside the play, or a link into
+# another login's home. The play's own leftovers (env.sh's dated backups, a <dir>.broken-<time>) are its own and stay.
+# Without nova_sdk_aside_dir the run fails naming the hand entries (SDK-TOOLCHAIN UNPINNED). With it (an absolute path
+# outside the SDK, such as /home/nova/sdk-aside-<date>), each hand entry and each leftover is moved there under its own
+# name, never deleted and never over something already there, once no process of the login runs from
+# it (a rename within one filesystem). Undo: move them back.
+- name: the names the play keeps in the shared SDK
+  ansible.builtin.set_fact:
+    sdk_managed: >-
+      {{ (['bin', 'dl', 'env.sh', 'dotnet-home']
+          + (sdk_specs | map(attribute='dest') | map('basename') | list)
+          + (sdk_specs | map(attribute='alias') | reject('equalto', '') | list)
+          + ((['rustup-' ~ nova_sdk_rustup.version]) if nova_sdk_rustup[sdk_platform] is defined else [])
+          + ((nova_sdk_cargo_tools | map(attribute='name') | zip(nova_sdk_cargo_tools | map(attribute='version')) | map('join', '-') | list)
+             if nova_sdk_rustup[sdk_platform] is defined else []))
+         | unique | sort }}
+
+- name: nova_sdk_aside_dir is an absolute path outside the shared SDK
+  ansible.builtin.assert:
+    quiet: true
+    that:
+      - nova_sdk_aside_dir is match('^/[^ ]+$')
+      - not ((nova_sdk_aside_dir ~ '/') is match('^' ~ (sdk_dir ~ '/') | regex_escape))
+      - not ((sdk_dir ~ '/') is match('^' ~ (nova_sdk_aside_dir ~ '/') | regex_escape))
+    fail_msg: "sdk-toolchain: nova_sdk_aside_dir={{ nova_sdk_aside_dir }} is not an absolute path outside {{ sdk_dir }}"
+  when: nova_sdk_aside_dir | length > 0
+
+# HAND <name> for an entry no pin names, OWN <name> for the play's own leftovers.
+- name: what the shared SDK holds that no pin names
+  ansible.builtin.shell: |
+    set -eu
+    managed={{ (' ' ~ (sdk_managed | join(' ')) ~ ' ') | quote }}
+    cd {{ sdk_dir | quote }}
+    for e in * .[!.]*; do
+      [ -e "$e" ] || [ -L "$e" ] || continue
+      case "$managed" in *" $e "*) continue ;; esac
+      case "$e" in
+        env.sh.*~ | *.broken-[0-9]*) echo "OWN $e" ;;
+        *) echo "HAND $e" ;;
+      esac
+    done
+  args: { executable: /bin/sh }
+  register: sdk_unpinned
+  changed_when: false
+  check_mode: false
+
+- name: the entries
+  ansible.builtin.set_fact:
+    sdk_unpinned_hand: "{{ sdk_unpinned.stdout_lines | select('match', '^HAND ') | map('regex_replace', '^HAND ', '') | list }}"
+    sdk_unpinned_own: "{{ sdk_unpinned.stdout_lines | select('match', '^OWN ') | map('regex_replace', '^OWN ', '') | list }}"
+
+- name: a hand entry in the shared SDK fails the run (no nova_sdk_aside_dir)
+  ansible.builtin.fail:
+    msg: >-
+      SDK-TOOLCHAIN UNPINNED host={{ inventory_hostname }}: {{ sdk_dir }} holds {{ sdk_unpinned_hand | join(', ') }}, which no pin names
+      (roles/sdk-toolchain/defaults/main.yml). Pin what CI uses, then move the rest aside: run again with
+      -e nova_sdk_aside_dir=<an absolute directory outside the SDK>.
+  when: sdk_unpinned_hand | length > 0 and nova_sdk_aside_dir | length == 0
+
+- name: the entries to move aside
+  ansible.builtin.set_fact:
+    sdk_aside_entries: "{{ (sdk_unpinned_hand + sdk_unpinned_own) if nova_sdk_aside_dir | length > 0 else [] }}"
+
+- name: the move, planned
+  ansible.builtin.debug:
+    msg: >-
+      SDK-TOOLCHAIN ASIDE host={{ inventory_hostname }} {{ sdk_dir }} -> {{ nova_sdk_aside_dir }}: {{ sdk_aside_entries | join(', ') }}
+      {{ '(check: nothing changed)' if ansible_check_mode else '' }}
+  when: sdk_aside_entries | length > 0
+
+# As in-use.yml, run as the login (the role never becomes root), so it sees the login's own processes; a runner
+# login's job is not visible to it. The move is a rename inside one filesystem (the script refuses another), so a
+# process that has a file open keeps it; what no pin names is used by no CI job.
+- name: no process of the login runs from an entry to move aside
+  ansible.builtin.command:
+    argv: "{{ ['/bin/sh', '-c', sdk_in_use_script, 'sh', sdk_dir] + sdk_aside_entries }}"
+  vars:
+    sdk_in_use_script: |
+      set -eu
+      root=$(cd "$1" && pwd -P); shift
+      for p in /proc/[0-9]*; do
+        [ "${p#/proc/}" = "$$" ] && continue
+        hit=
+        for e in "$@"; do
+          d="$root/$e"
+          for f in "$p/exe" "$p/cwd" "$p"/fd/*; do
+            t=$(readlink "$f" 2>/dev/null) || continue
+            case "$t" in "$d" | "$d"/*) hit=1; break ;; esac
+          done
+          if [ -z "$hit" ] && grep -q -F " $d/" "$p/maps" 2>/dev/null; then hit=1; fi
+          [ -z "$hit" ] || break
+        done
+        if [ -n "$hit" ]; then echo "${p#/proc/}:$(tr '\0' ' ' < "$p/cmdline" 2>/dev/null | cut -c1-60)"; fi
+      done
+  register: sdk_aside_in_use
+  changed_when: false
+  check_mode: false
+  when: sdk_aside_entries | length > 0
+
+- name: an entry in use is not moved
+  ansible.builtin.fail:
+    msg: >-
+      SDK-TOOLCHAIN SDK-IN-USE host={{ inventory_hostname }} dir={{ sdk_dir }} entries={{ sdk_aside_entries | join(',') }}:
+      {{ sdk_aside_in_use.stdout_lines[:20] | join('; ') }}; nothing is moved while they run. Run again once they have ended.
+  when: sdk_aside_entries | length > 0 and sdk_aside_in_use.stdout_lines | length > 0
+
+# The entry names go to the script as its arguments, never into its text.
+- name: each entry is moved aside under its own name
+  ansible.builtin.command:
+    argv: "{{ ['/bin/sh', '-c', sdk_aside_script, 'sh', sdk_dir, nova_sdk_aside_dir] + sdk_aside_entries }}"
+  vars:
+    sdk_aside_script: |
+      set -eu
+      src=$1; dst=$2; shift 2
+      mkdir -p "$dst"
+      chmod 0750 "$dst"
+      [ "$(stat -c %d "$src")" = "$(stat -c %d "$dst")" ] || { echo "$dst is on another filesystem than $src: nothing moved" >&2; exit 1; }
+      for e in "$@"; do
+        if [ -e "$dst/$e" ] || [ -L "$dst/$e" ]; then echo "$dst/$e is in the way: nothing moved over it" >&2; exit 1; fi
+      done
+      for e in "$@"; do mv -T -- "$src/$e" "$dst/$e"; echo "MOVED $e"; done
+  register: sdk_aside_moved
+  changed_when: sdk_aside_moved.stdout_lines | length > 0
+  when: sdk_aside_entries | length > 0 and not ansible_check_mode

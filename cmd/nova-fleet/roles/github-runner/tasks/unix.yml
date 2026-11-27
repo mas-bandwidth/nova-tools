@@ -94,9 +94,9 @@
   ansible.builtin.debug:
     msg: >-
       RUNNER-PLAN {{ inventory_hostname }} want={{ github_runner_want | length }}
-      register={{ github_runner_need | map('regex_replace', '^', inventory_hostname ~ '-') | join(',') or '-' }}
-      move-registered={{ github_runner_carry | map('regex_replace', '^', inventory_hostname ~ '-') | join(',') or '-' }}
-      retire={{ github_runner_retire | map('regex_replace', '^', inventory_hostname ~ '-') | join(',') or '-' }}
+      register={{ github_runner_need | map('regex_replace', '^', github_runner_name_stem ~ '-') | join(',') or '-' }}
+      move-registered={{ github_runner_carry | map('regex_replace', '^', github_runner_name_stem ~ '-') | join(',') or '-' }}
+      retire={{ github_runner_retire | map('regex_replace', '^', github_runner_name_stem ~ '-') | join(',') or '-' }}
       labels={{ github_runner_label_string }} (check: nothing changed)
   when: ansible_check_mode and (github_runner_need | length > 0 or github_runner_carry | length > 0 or github_runner_retire | length > 0)
 
