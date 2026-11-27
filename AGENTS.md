@@ -52,6 +52,8 @@ and use the build and review rules below.
 
 ## Change discipline
 
+- Before adding a rule, search for a distinctive error, field or operation and read the callers of the existing implementation. A bug fix is also a reason to check whether another copy has the same bug.
+- For a larger change, compare the touched code with neighboring packages using a token-based clone report. For example, from the repository root run `npx --yes jscpd@4.0.8 --format go --ignore '**/*_test.go' --reporters console modules cmd` and inspect matches that touch the diff. Share code when both sites implement a rule that should change together and the package boundary permits it. Keep independent contracts and test oracles separate. Rerun the affected tests after consolidation. [Sloppy describes the review technique](https://strlen.com/sloppy/).
 - Fixes are minimal and surgical: the best code, not the most. No feature creep.
 - Fix a failure at its source and delete the workaround it replaces. Do not add a watcher, side loop or second mechanism around a tool.
 - Commits use the one commit identity the contributor agreement allows.

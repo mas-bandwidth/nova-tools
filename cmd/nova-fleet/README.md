@@ -392,7 +392,10 @@ machine that no scope wants (a directory under `<home>/actions-runner` or a `git
 read from its `.runner`, and prints `RUNNER-STRAY <machine> <slug>-<i> url=<url>`. Then GitHub's list of every scope the
 fleet's records name is read: an entry named `<machine>-<i>` that the record does not want is deleted from GitHub when
 it is offline (its machine side is gone) and left when online, each printing `GITHUB-STRAY <machine> <name> <path>
-<status>`. Each machine ends with `RUNNERS-RECORD <machine> scopes=<n> want=<n> retired=<names>`. A record with
+<status>`. A scope with a set (`@<set>[/<group>]`) is a second set of runners on its url, named
+`<machine>-<set>-<i>` in directories `<slug>-<set>-<i>` and registered into GitHub runner group `<group>` (else the
+default group; a registered runner keeps its group); an offline GitHub entry of a set is not deleted by this check, only
+with its directory. Each machine ends with `RUNNERS-RECORD <machine> scopes=<n> want=<n> retired=<names>`. A record with
 `runners` above 0 and no `runner_scopes` is refused, not read as none. A Linux unit is the whole of its service: a
 drop-in directory beside it (`<unit>.service.d`) is removed. Before a runner is stopped or restarted onto a changed
 unit, the job it is running ends and no new one is handed to it (`tasks/wait-idle.yml`). A listener takes the next
@@ -441,10 +444,13 @@ login root). `-e github_runner_user=<the fleet
 login>` keeps a Linux host's runners as the fleet login for a run (for every run, and every play that reads it, set `github_runner_user` in its `host_vars` file); another name on macOS fails the run. The play makes the login (home
 `/home/<login>`, `github_runner_home`, mode `0750`) with its password locked, in no group but its own and `kvm` (where
 the host has one), refuses an account of that name that is not a runner login already (a uid below 1000, or any other
-group), writes `/etc/ssh/sshd_config.d/90-nova-runner-login.conf` (`DenyUsers <login>`, checked with `sshd -t`, then
+group; `-e github_runner_retire_stale_login=true` retires a hand-made one with a uid below 1000 that nothing uses: no
+process, unit, sudoers or cron line, ssh key, login record or file outside its home, else `RUNNER-LOGIN-STALE-IN-USE`;
+its home archived to `/var/backups/<login>-old-home-<date>-<machine>.tgz`, each entry counted, `userdel` without `-r`,
+the home moved to `/var/backups/<login>-old-home-dir-<machine>`), writes `/etc/ssh/sshd_config.d/90-nova-runner-login.conf` (`DenyUsers <login>`, checked with `sshd -t`, then
 with `sshd -T`), refuses the login's own connections to ssh on any tailnet address (Tailscale SSH reads no
 `DenyUsers`: an nftables table, `/etc/nova-runner-login.nft`, loaded at boot by `nova-runner-login-net.service`), and
-fails the run unless `sudo -l -U <login>` says it is not allowed to run sudo. It refuses a WSL host whose interop is on (any login runs `wsl.exe -u root` through it, `RUNNER-LOGIN-WSL-INTEROP`), closes the fleet login's home (`0750`), and fails the run on any path the login can write or owns outside its home, the kernel's directories, each snap image's /dev (read-only and mounted nodev) and the shared scratch places, on every local filesystem, found by `find` run as the login (`RUNNER-LOGIN-WRITABLE`; nothing found is changed). Where cloud-init is installed, a tmpfiles rule (`/etc/tmpfiles.d/nova-cloud-init-tmp.conf`) makes its root temporary directory `/run/cloud-init/tmp` 0755 root:root at every boot, before cloud-init runs, and corrects it before the scan: cloud-init makes it 1777 only when it finds it missing. The runners'
+fails the run unless `sudo -l -U <login>` says it is not allowed to run sudo. It refuses a WSL host whose interop is on (any login runs `wsl.exe -u root` through it, `RUNNER-LOGIN-WSL-INTEROP`), closes the fleet login's home (`0750`), stops and disables each snap of `github_runner_snaps_off` (hwctl, whose world-writable `hwctl.varlink` fronts a root daemon; `snap start --enable hwctl` undoes it) and removes that socket file once nothing listens on it, and fails the run on any path the login can write or owns outside its home, the kernel's directories, each snap image's /dev (read-only and mounted nodev) and the shared scratch places, on every local filesystem, found by `find` run as the login (`RUNNER-LOGIN-WRITABLE`; nothing found is changed). Where cloud-init is installed, a tmpfiles rule (`/etc/tmpfiles.d/nova-cloud-init-tmp.conf`) makes its root temporary directory `/run/cloud-init/tmp` 0755 root:root at every boot, before cloud-init runs, and corrects it before the scan: cloud-init makes it 1777 only when it finds it missing. The runners'
 directories, release cache and `TMPDIR` are then in its home, written as the login (root follows no link it could
 plant there; root's only act there is deleting a runner directory by name), and the runners' default `PATH` starts
 with `/opt/nova/bin` (`nova_shared_dir`): root's copies of the fleet login's tools and of join's sops, age and age-keygen, which it runs and cannot change (made here, refreshed by `install` on a runner whose runners are another login's). Its `~/sdk` names `/opt/nova/sdk`, the fleet login's shared SDK, once `sdk-toolchain` has put one there (`nova_sdk_shared`, on for a runner whose runners are another login's), so a workflow's `$HOME/sdk` works for it as for the fleet login. A runner whose unit runs it from another directory (the fleet
@@ -460,6 +466,19 @@ for it; a host with no VM tier sets `nova_runner_vm_kernel: false` in its `host_
 login in four runs, each `--check --diff` first: `install` (the shared tools and the shared SDK's directory),
 `sdk-toolchain` (the shared SDK, while `~/sdk` stays in use until it is whole), `runner-packages`, then `github-runners`
 once the record's `runner_env` names the runner login's paths.
+
+**Case-folding scratch.** A test that needs a file system that takes `Probe` and `probe` for one name, as macOS and
+Windows do, runs on a Linux runner in `/srv/casefold/scratch` (`github_runner_casefold_dir`, a directory at least two
+levels below `/`; anything else fails the run with `CASEFOLD-DIR`). The play makes root's sparse ext4 image with the
+casefold feature (`github_runner_casefold_image`, `/opt/nova/casefold.img`, at most `github_runner_casefold_size`,
+1G), loop-mounts it at that directory from `/etc/fstab` (`nosuid,nodev,noexec,nofail,x-systemd.mount-timeout=10s`,
+so a missing image never stops a boot), and makes `scratch` in it root's, 1777 like `/tmp`, with the casefold
+attribute (`chattr +F`), which every directory made in it inherits. The scan of what the runner login can write
+leaves out `<dir>/scratch`, and only while `<dir>` is the image's own loop mount. A kernel without ext4 casefold
+(`/sys/fs/ext4/features/casefold`, read under `--check` too) fails the run with `CASEFOLD-KERNEL`, an image without
+the feature fails it, and the run fails with `CASEFOLD-MISSING` unless a directory the runner login makes there folds
+`Probe` and `probe` to one entry. A host with no case-folding scratch sets `github_runner_casefold_dir: ''` in its
+`host_vars` file.
 
 **Deploy keys.** A job that fetches a private repository with the runner's own git (a submodule a workflow names
 by its https URL) needs the runner login to hold a way in, and no job token or workflow secret carries it.
@@ -1088,6 +1107,10 @@ one. On a Mac machine, open the Tailscale app once at its console and approve it
    is installed the job also holds `nova_tailscale_ssh_hold` in its hold directory, so netwatch does not reboot the
    machine inside the window. A reboot or a kill of the job there by anything else ends the job before its revert:
    Tailscale SSH stays off, and sshd, checked above, is the way in.
+   On Debian and Ubuntu where systemd-resolved runs, `/etc/resolv.conf` is resolved's stub
+   (`nova_resolved_stub`, `/run/systemd/resolve/stub-resolv.conf`): when it is a plain file or leads elsewhere, the play
+   links the stub and restarts `tailscaled` so it hands the tailnet's DNS to resolved (a plain file naming only the
+   MagicDNS resolver leaves every name outside the tailnet unresolved). A machine already on the stub changes nothing.
 3. Records `Self.DNSName` (`<machine>.<tailnet>.ts.net`) as the machine's address: `nova-config machine set <name>
    --address <dns name>`, then reads the inventory again, so the firewall play, every run after it, the bus and the
    services reach the machine by that name.
@@ -1399,7 +1422,9 @@ applying it restarts only the daemon it configures, never the login's units. A d
 - The same hourly run (fleet login only) removes old work clones in the home (`nova_health_disk_clean_work_*`): a top-level
   directory by a work name (`rowan-*`, `w*`, `fix*`, `green-*`, ...) or a child of a container (`work`, `rowan-jobs`, ...) with nothing
   changed under it for 6 hours and no process in or holding it, never `sdk`, runners, services or a friend's (`emma-*`, ...). It also
-  holds the Go build cache to `nova_health_disk_clean_gocache_max_gb` (20), oldest files first. `DISK-WARN` is at 85% used (under 15% free).
+  holds the Go build cache to `nova_health_disk_clean_gocache_max_gb` (20), oldest files first, the age stepping down from
+  a day to `nova_health_disk_clean_pressed_min` and never below it: Go refreshes an entry it uses only past an hour, so a younger
+  file may belong to a running build. A cache still over the cap there stays and says `CLEAN-OVER-CAP` at priority warning. `DISK-WARN` is at 85% used (under 15% free).
 
 ```
 nova-fleet health --check --diff
@@ -1622,7 +1647,7 @@ one). A list without the `:s390x` packages goes with the architecture off, `-e '
 
 | Variable | Default | |
 |---|---|---|
-| `nova_runner_packages` | `darwin`: `postgresql@18`, `cmake`, `libsodium`, `pkgconf`, `ccache`; `debian`: the toolchain above (`group_vars/all.yml`) | another OS with a non-empty list is refused |
+| `nova_runner_packages` | `darwin`: `postgresql@18`, `cmake`, `libsodium`, `pkgconf`, `ccache`, `gh`, `git` (Homebrew's git, ahead of the Xcode shim on a runner's PATH); `debian`: the toolchain above (`group_vars/all.yml`) | another OS with a non-empty list is refused |
 | `nova_runner_windows_ccache`, `nova_runner_windows_ccache_dir` | `4.14.3` and its zip's sha256; `C:\ProgramData\nova\ccache` | **Windows ccache.** On a WSL machine whose record names `windows_runners` or `windows_admin_runners`, ccache's own Windows release, checked and unpacked on the WSL side, then copied through `/mnt/c` into that directory, sealed before and after (owned by `Administrators`, nothing inherited, read and run for Authenticated Users and Users, so no job can change what every job runs; an admin runner's install refuses it otherwise), as `ccache.exe` and `msvc\cl.exe` (the same binary under the compiler's name: MSBuild runs it in place of cl.exe when a build sets `CLToolExe=cl.exe;CLToolPath=<dir>\msvc` in `CMAKE_VS_GLOBALS`, since the Visual Studio generator honours no compiler launcher; ccache then runs the real cl.exe from the PATH MSBuild sets). The version in `VERSION` beside it. Every run compares the directory with the release (the zip kept on the WSL side): anything else in it, a binary that differs or a link, and the directory is removed and made again, sealed in the one call that creates it (`files/ccache-dir.ps1`, which refuses `CCACHE-DIR-PLANTED` a folder a job made in the gap), so a file or a handle a job put there while it was open is never sealed in; one still there after the seal fails the run. An empty version skips it |
 | `nova_runner_foreign_architectures` | `[s390x]` | Ubuntu: dpkg architectures the debian list may name packages of, as `<name>:<arch>` |
 | `nova_runner_ports_uri` | `http://ports.ubuntu.com/ubuntu-ports/` | the archive a foreign architecture comes from |
@@ -1711,9 +1736,11 @@ built from in `~/sdk/moo-v<version>/PIN` and, beside the analyzer, `bin/PIN`; an
 wheels (`python3.11`, `python3.15`, as `~/sdk/python-<version>`), CRuby 3.4 (the floor) and 4.0 built from source with YJIT
 and psych against a pinned libyaml source, each with RuboCop, Steep and RBS from hash-locked source gems (`ruby3.4`, `ruby4.0`,
 as `~/sdk/ruby-<version>`, named by `RUBY_FLOOR` and `RUBY`), serialize v2.1.1's release tree, the family corpus, as
-`~/sdk/serialize-v2.1.1` (its commit in `PIN`, nothing built or linked), clang-format, LLVM (as `~/sdk/llvm`, not on PATH), cppcheck, AFL++ and Frama-C with Alt-Ergo and Why3 in their own opam root (`~/sdk/opam`). A Mac gets the tools
+`~/sdk/serialize-v2.1.1` (its commit in `PIN`, nothing built or linked), clang-format, LLVM (as `~/sdk/llvm`, not on PATH), cppcheck, AFL++, Frama-C with Alt-Ergo and Why3 in their own opam root (`~/sdk/opam`), MrDocs, FFmpeg (built from
+its release tarball), KataGo with its networks, a gtp config and `~/sdk/katago/katago.env`, and SharpFuzz's command line
+(a wrapper on the SDK's dotnet). A Mac gets the tools
 with a `darwin` pin: Go, Node, Dart, Erlang/OTP, Elixir, the JDK, .NET, Lua, StyLua, Luau, moo, Goose, Lobster, the
-double Squirrel, CPython 3.11 and 3.15 with mypy, CRuby 3.4 and 4.0 with their analyzers, the checked moo, serialize's tree, and Rust. Erlang/OTP there is built from the release's source (hex.pm
+double Squirrel, CPython 3.11 and 3.15 with mypy, CRuby 3.4 and 4.0 with their analyzers, the checked moo, serialize's tree, modernize, and Rust. Erlang/OTP there is built from the release's source (hex.pm
 publishes no macOS build), with crypto and ssl linked statically against Homebrew's `openssl@3` or `openssl@4`, one of which must be on the
 host (`postgresql@18` from `runner-packages` brings one), as must the Xcode command-line tools. Rust there is the
 release's standalone installer (`static.rust-lang.org`, held to its `.sha256`) with `clippy` and `rustfmt`, giving the
@@ -1764,6 +1791,7 @@ version bump installs the new directory beside the old and moves the links.
 |---|---|---|
 | `nova_sdk_dir` | `<home>/sdk` | the SDK directory, used by its real path |
 | `nova_sdk_shared` | on for a Linux runner whose runners are another login's (`github_runner_user`) | Linux: the SDK in `/opt/nova/sdk` (`nova_shared_dir`, made by `github-runners` with a runner login of its own), the login's and readable by every login, with `nova_sdk_dir` a link to it, so a runner login of its own runs the same tools. The shared SDK is installed fresh (its files name their own path) while `~/sdk` stays in use; at the end of the run `~/sdk` becomes a link to it (`SDK-TOOLCHAIN SHARE`) and the old one is deleted. Nothing in it is left writable by other logins, and a run fails on anything in it they cannot read; an old `~/sdk` holding what the shared one lacks (an older version a link names, a directory put there by hand) stays in use and the run fails naming it (`SDK-TOOLCHAIN SHARE-HELD`; compared two levels down, and further into rustup's toolchains and cargo tools and each opam switch's packages and commands); and while any process runs from the old `~/sdk` (its executable, working directory, an open or mapped file) nothing is moved or deleted and the run fails naming the processes, which it never stops (`SDK-TOOLCHAIN SDK-IN-USE`) |
+| `nova_sdk_aside_dir` | empty | `nova_sdk_shared`: a top-level entry of the shared SDK that no pin names (a tool or link put there by hand) fails the run (`SDK-TOOLCHAIN UNPINNED`); with this set to an absolute directory outside the SDK (`-e nova_sdk_aside_dir=/home/nova/sdk-aside-<date>`), each such entry, the play's own leftovers (`env.sh` backups, `<dir>.broken-<time>`) and what `SHARE-HELD` names in the old `~/sdk` are moved there under their own paths once no process of any login runs from them (`SDK-TOOLCHAIN ASIDE`, `SHARE-ASIDE`), never over anything there; undo: move them back |
 | `nova_sdk_tools` | the toolchain above | one entry per tool: `name`, `version`, `dir`, `probe`, `links`, `kind`, `build`, `alias`, `wrapper`, `run`, and a `linux` and/or `darwin` pin (a pin's own `build` replaces the tool's on that platform); a list given with `-e` replaces it whole |
 | `nova_sdk_dotnet_more` | the .NET 8.0 SDK | more SDKs in the dotnet directory, each a `version` and a `url` and `sha512` per platform |
 | `nova_sdk_rustup` | rustup 1.29.1; `1.98.1` with `clippy` and `rustfmt`, and `nightly-2026-10-01` | `version`, the `linux` rustup-init `url`, `sha256` and `host`, the `toolchains` (each `name`, `components`, `targets`; the first is on PATH) and the commands `links` puts in `~/sdk/bin` |
