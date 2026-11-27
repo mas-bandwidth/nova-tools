@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -59,10 +60,7 @@ func value(s string) string {
 func jsonValue(f field, v string) string {
 	switch f.typ {
 	case "int":
-		if v == "" {
-			return "null"
-		}
-		return v
+		return cmp.Or(v, "null")
 	case "bool":
 		return v
 	case "argv":
@@ -158,10 +156,7 @@ func printRows(w io.Writer, k *kind, verb string, rows []Row, services []string,
 // for an add or a remove, `name: before -> after` for those a set changes, values
 // as JSON; a "reason" (it rides in the written side) is the last line.
 func changeLines(k *kind, op string, before, after map[string]string) []string {
-	names := []string{}
-	for _, f := range k.fields {
-		names = append(names, f.name)
-	}
+	names := k.names()
 	for _, m := range []map[string]string{before, after} { // then the columns the kind does not know
 		for _, n := range slices.Sorted(maps.Keys(m)) {
 			if !slices.Contains(names, n) && n != "reason" {
@@ -216,4 +211,140 @@ func planLines(k *kind, op, name, actor, reason string, before, after map[string
 	before, after = withReason(before, after, reason)
 	head := "CONFIG DRY-RUN op=" + op + " kind=" + k.name + " name=" + value(name) + " actor=" + value(actor) + " wrote=nothing"
 	return strings.Join(append([]string{head}, changeLines(k, op, before, after)...), "\n")
+}
+
+var kindOps = []string{"list", "show", "add", "set", "remove"}
+
+// kindOrder is the kinds in the order help names them.
+var kindOrder = []string{"machine", "service", "friend", "harness", "provider", "model", "rented"}
+
+// verbHelp is the help of each verb that is no kind's own, in the order help names them: its path, then its usage
+// line and what it does. The root help prints the usage lines and an unknown verb names the root verbs.
+var verbHelp = [][2]string{
+	{"friend watch", "nova-config friend watch [--output <path>]\nPrints the friend directory as one JSON line now and after each committed friend or harness write, until the store fails; --output replaces that file atomically instead.\n"},
+	{"history", "nova-config history [<kind> [<name>]] [--since <duration|RFC3339>] [--max <n>] [--json]\nPrints the writes, newest first, --max of them (default 20, 0 for all; more=true says rows were left out); --since is a duration back from now (90m, 24h, 7d) or an RFC 3339 time.\n"},
+	{"inventory", "nova-config inventory [--list | --host <name>]\nPrints Ansible's dynamic inventory as JSON; the groups are all, bench, runner and services.\n"},
+	{"schema", "nova-config schema\nPrints schema.sql: apply it with: nova-config schema | PGPASSWORD=\"$NOVA_PG_PASSWORD\" psql \"$NOVA_PG_DSN\"\n"},
+	{"help", "nova-config help [<verb>]\n"},
+}
+
+// verbs are the root verbs, for an unknown-verb refusal.
+var verbs = strings.Join(append(slices.Clone(kindOrder), "history", "inventory", "schema", "help"), ", ")
+
+const writeLine = "[--actor <name>] [--reason <line>] [--dry-run]"
+
+const trailer = `Store: --pg <dsn> or NOVA_PG_DSN (postgres://user@host:port/db, no password; the password is read from
+NOVA_PG_PASSWORD). Exit codes: 0 done, 1 refused, 2 could not run.
+`
+
+// usage is the root help: every verb path by name, from the kind tables and verbHelp.
+var usage = func() string {
+	var b strings.Builder
+	b.WriteString("nova-config: a fleet's machines, services, friends, model providers, models and rented boxes, kept as rows in PostgreSQL.\n\n")
+	for _, n := range kindOrder {
+		for _, op := range kindOps {
+			b.WriteString("  " + kinds[n].opLine(op) + "\n")
+		}
+	}
+	for _, h := range verbHelp {
+		b.WriteString("  " + strings.Split(h[1], "\n")[0] + "\n")
+	}
+	b.WriteString("\n")
+	for _, n := range kindOrder {
+		b.WriteString(kinds[n].fieldsLine() + "\n")
+	}
+	return b.String() + `A model's harness speaks its provider's api (claude: anthropic; opencode, codex: openai).
+Every verb takes -h or --help. Use inventory as an Ansible script: #!/bin/sh, then: exec nova-config inventory "$@".
+Make a store current with: nova-config schema | PGPASSWORD="$NOVA_PG_PASSWORD" psql "$NOVA_PG_DSN"
+` + trailer
+}()
+
+var placeholders = map[string]string{"int": "<n>", "bool": "<true|false>", "list": "<a,b>", "argv": "<json-array>",
+	"env": "<json-object>", "path": "<path>", "ref": "<machine>", "public": "<addr>",
+	"scopes": "<url=n[:label+label],...>", "admins": "<url=account:label[+label]@workflow,...>",
+	"price": "<usd-per-hour>", "time": "<rfc3339>", "url": "<url>", "secret": "<secret-name>"}
+
+// opLine is the usage line of a kind's verb, from its field table.
+func (k *kind) opLine(op string) string {
+	head := "nova-config " + k.name + " " + op
+	switch op {
+	case "list":
+		return head + " [--json]"
+	case "show":
+		return head + " <name> [--json]"
+	case "remove":
+		return head + " <name> " + writeLine
+	}
+	fl := ""
+	for _, f := range append(slices.Clip(k.fields), k.extra...) {
+		p := cmp.Or(f.hint, placeholders[f.typ], "<text>")
+		if f.typ == "word" {
+			p = "<" + strings.Trim(f.word.String(), "^()$") + ">"
+		}
+		s := "--" + f.name + " " + p
+		if !f.required || op == "set" {
+			s = "[" + s + "]"
+		}
+		fl += " " + s
+	}
+	return head + " <name>" + fl + " " + writeLine
+}
+
+// helpText is the help of a verb path: its usage line and fields; ok is false for a path that names no verb.
+func helpText(path []string) (string, bool) {
+	for _, h := range verbHelp {
+		if h[0] == strings.Join(path, " ") {
+			return "usage: " + h[1], true
+		}
+	}
+	var lines []string
+	k, ok := kinds[path[0]]
+	switch {
+	case ok && len(path) == 1:
+		for _, op := range kindOps {
+			lines = append(lines, k.opLine(op))
+		}
+	case ok && len(path) == 2 && slices.Contains(kindOps, path[1]):
+		lines = []string{k.opLine(path[1])}
+	default:
+		return "", false
+	}
+	return "usage: " + strings.Join(lines, "\n       ") + "\n" + k.fieldsLine() + "\n" + k.note, true
+}
+
+// usageError is a malformed invocation: exit 2, one line naming what is
+// wrong, what the verb takes, and where its help is.
+type usageError struct{ verb, msg, hint string }
+
+func (u usageError) Error() string {
+	line, run := "nova-config", "nova-config help"
+	if u.verb != "" {
+		line, run = line+" "+u.verb, "nova-config "+u.verb+" -h"
+	}
+	line += ": " + u.msg
+	if u.hint != "" {
+		line += "; " + u.hint
+	}
+	return line + "; run: " + run
+}
+
+func usagef(verb, hint, format string, a ...any) error {
+	return usageError{verb, fmt.Sprintf(format, a...), hint}
+}
+
+// unknownVerb is the usage error of a verb that does not exist.
+func unknownVerb(text string) error {
+	return usageError{"", fmt.Sprintf("unknown verb %q", text), "the verbs are " + verbs}
+}
+
+func wantsHelp(args []string) bool {
+	for _, a := range args {
+		if a == "--" {
+			return false
+		}
+		if a == "-h" || a == "--help" {
+			return true
+		}
+	}
+	return false
 }

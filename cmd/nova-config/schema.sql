@@ -102,6 +102,23 @@ CREATE TABLE IF NOT EXISTS config.friends (
 -- Existing clients name their columns and can continue to edit other friend fields.
 ALTER TABLE config.friends ADD COLUMN IF NOT EXISTS startup jsonb NOT NULL DEFAULT '{}';
 
+-- Shared sign-in display names for the harness IDs on friend rows.
+CREATE TABLE IF NOT EXISTS config.harnesses (
+    name text PRIMARY KEY CHECK (name ~ '^[a-z0-9][a-z0-9-]*$'),
+    display_name text NOT NULL CHECK (length(trim(display_name)) BETWEEN 1 AND 96 AND display_name !~ '[[:cntrl:]]'),
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE OR REPLACE FUNCTION config.notify_friend_directory() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    PERFORM pg_notify('nova_friend_directory', '');
+    RETURN NULL;
+END
+$$;
+CREATE OR REPLACE TRIGGER friend_directory_changed AFTER INSERT ON config.history
+    FOR EACH ROW WHEN (NEW.kind IN ('friend', 'harness')) EXECUTE FUNCTION config.notify_friend_directory();
+
 -- A provider: a model API endpoint the fleet can call. url is the base URL
 -- requests go to; api the wire protocol it speaks; key the name of the secret
 -- holding its API key, never the key ('' for none); models_url and balance_url

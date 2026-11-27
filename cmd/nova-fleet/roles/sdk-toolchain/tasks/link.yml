@@ -5,7 +5,12 @@
 # login's own SDK is moved aside to <nova_sdk_dir>.home and the link made in one command, and the old SDK is deleted
 # (Go's module cache in it is read-only, so it is made writable first). An old SDK holding anything the shared one lacks
 # (an older version a link still names, a directory put there by hand) is left in use and the run fails naming it, and
-# so is one a process still runs from (in-use.yml, before the move and before the delete).
+# so is one a process still runs from (in-use.yml, before the move and before the delete). With nova_sdk_aside_dir
+# (aside.yml) what the old SDK holds that the shared one lacks is moved there under its own path instead, and the run
+# goes on.
+- name: the shared SDK holds what the play installs (aside.yml)
+  ansible.builtin.include_tasks: aside.yml
+
 - name: nothing in the shared SDK is writable by other logins
   ansible.builtin.shell: |
     set -eu
@@ -73,8 +78,40 @@
   ansible.builtin.fail:
     msg: >-
       SDK-TOOLCHAIN SHARE-HELD host={{ inventory_hostname }}: {{ nova_sdk_dir }} holds {{ sdk_dir_extra.stdout_lines | join(', ') }},
-      which {{ nova_shared_dir }}/sdk lacks; it stays in use. Move or delete them (or install them into the shared SDK) and run again.
-  when: sdk_dir_extra.stdout_lines | default([]) | length > 0
+      which {{ nova_shared_dir }}/sdk lacks; it stays in use. Move them aside (-e nova_sdk_aside_dir=<an absolute directory
+      outside the SDK>), or install them into the shared SDK, and run again.
+  when: sdk_dir_extra.stdout_lines | default([]) | length > 0 and nova_sdk_aside_dir | length == 0
+
+- name: what the old SDK holds that the shared one lacks, planned aside (nova_sdk_aside_dir)
+  ansible.builtin.debug:
+    msg: >-
+      SDK-TOOLCHAIN SHARE-ASIDE host={{ inventory_hostname }} {{ nova_sdk_dir }} -> {{ nova_sdk_aside_dir }}: {{ sdk_dir_extra.stdout_lines | join(', ') }}
+      {{ '(check: nothing changed)' if ansible_check_mode else '' }}
+  when: sdk_dir_extra.stdout_lines | default([]) | length > 0 and nova_sdk_aside_dir | length > 0
+
+- name: the old SDK is in use by no process before anything moves out of it (nova_sdk_aside_dir)
+  ansible.builtin.include_tasks: in-use.yml
+  vars: { sdk_in_use_dir: "{{ nova_sdk_dir }}" }
+  when: sdk_dir_extra.stdout_lines | default([]) | length > 0 and nova_sdk_aside_dir | length > 0
+
+# Each path keeps its place below the aside directory (rustup-1.29.1/toolchains/stable lands in
+# <aside>/rustup-1.29.1/toolchains/stable); nothing already there is moved over. The names go as arguments.
+- name: what the old SDK holds that the shared one lacks is moved aside (nova_sdk_aside_dir)
+  ansible.builtin.command:
+    argv: "{{ ['/bin/sh', '-c', sdk_share_aside_script, 'sh', nova_sdk_dir, nova_sdk_aside_dir] + sdk_dir_extra.stdout_lines }}"
+  vars:
+    sdk_share_aside_script: |
+      set -eu
+      src=$1; dst=$2; shift 2
+      mkdir -p "$dst"
+      chmod 0750 "$dst"
+      for e in "$@"; do
+        if [ -e "$dst/$e" ] || [ -L "$dst/$e" ]; then echo "$dst/$e is in the way: nothing moved over it" >&2; exit 1; fi
+      done
+      for e in "$@"; do mkdir -p "$dst/$(dirname -- "$e")"; mv -T -- "$src/$e" "$dst/$e"; echo "MOVED $e"; done
+  register: sdk_share_aside
+  changed_when: sdk_share_aside.stdout_lines | length > 0
+  when: sdk_dir_extra.stdout_lines | default([]) | length > 0 and nova_sdk_aside_dir | length > 0 and not ansible_check_mode
 
 - name: the login's own SDK is in use by no process
   ansible.builtin.include_tasks: in-use.yml
