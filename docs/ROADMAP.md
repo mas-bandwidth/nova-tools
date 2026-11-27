@@ -39,6 +39,11 @@ Ideas and future work for nova-tools. Nothing here is scheduled; the owner decid
 | Question for the owner: a runner service's environment exports MOO and MOO_ANALYZE (~/sdk/moo-v1.3.0), which a repository's Makefile takes with ?= over the moo its job just built, so serialize.moo's ARM64 job tested the runner's moo on 2026-11-21; should runner-wide variables exist for tools repositories build themselves | ❌ |
 | nova-roadmap meets the command-line contract: one-line refusals ending in run: nova-roadmap <verb> -h, no Go flag-package text, an entry in toolSpecs and a faults_roadmap_test.go; this changes its stderr, never a rendered page | ❌ |
 | Owed, the owner 2026-11-22 ("i can be bankrupted by leaving a machine running too long"): a rented machine past its return_by is returned automatically (runners, IP, record, box) or raises an alarm nobody has to look for; aws-win-ci-20261116 ran five days past its return_by, USD 238 wasted, seen only by reading nova-fleet rented | ❌ |
+| nova-fleet github-runners: a host whose github_runner_casefold_dir is turned off ('' in host_vars) has its case-folding scratch taken down: the fstab line removed, the loop mount unmounted once no job holds it, and the image deleted; today turning it off leaves all three in place | ❌ |
+| nova-fleet: a cleanup rule for the case-folding scratch (/srv/casefold/scratch): directories a job left behind (a killed test skips its own cleanup) are removed by age, as the health play's disk clean does for a runner's TMPDIR, so the 1G image cannot fill | ❌ |
+| nova-fleet tailscale: every Linux machine's hostname, /etc/hosts and cloud-init match its record name, and every machine gets the fleet's shell prompt (closed PR #6365, branch feature/hostnames) | ❌ |
+| nova-fleet github-runners: an opt-in probe finds runner workspace clones (shallow, promisor tree:0) that make git abort in actions/checkout's fetch (closed draft PR #6421, branch fleet/runner-workspace-git-probe) | ❌ |
+| nova-fleet github-runner: each Linux runner unit gets a MemoryMax bound, so a runaway job is killed inside its own runner (closed draft PR #6407, branch fleet/runner-memory-max) | ❌ |
 | complete | 0% |
 
 [Source data](roadmap.sexp)
