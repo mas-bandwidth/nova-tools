@@ -1,0 +1,6 @@
+#!/bin/sh
+# nova-fleet push-guard (nova-tools cmd/nova-fleet push-guard.yml): core.hooksPath names this directory, which hides
+# .git/hooks, so this runs the repository's own hook of this file's name, when it has one.
+own="$(git rev-parse --git-common-dir)/hooks/${0##*/}"
+[ -x "$own" ] || exit 0
+exec "$own" "$@"

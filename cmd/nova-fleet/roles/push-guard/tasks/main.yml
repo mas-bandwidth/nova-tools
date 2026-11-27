@@ -1,0 +1,107 @@
+# The push-guard role (cmd/nova-fleet/push-guard.yml): the login's commit-guard rules, its hooks directory and
+# core.hooksPath naming it. Runs as the login; every check comes before the first write.
+- name: a machine left unhooked
+  ansible.builtin.debug:
+    msg: "PUSH-GUARD host={{ inventory_hostname }} SKIPPED (nova_push_guard_skip: a person's own login is never hooked)"
+  when: inventory_hostname in nova_push_guard_skip
+
+- name: end a machine left unhooked
+  ansible.builtin.meta: end_host
+  when: inventory_hostname in nova_push_guard_skip
+
+# a rule is one line of the rules file: a line break in a value would make a second rule
+- name: the rules are given and each is one line
+  ansible.builtin.assert:
+    that:
+      - nova_push_guard_people | length > 0
+      - nova_push_guard_markers | length > 0
+      - nova_push_guard_people | select('match', '^[^\s@]+@[^\s@]+$') | list | length == nova_push_guard_people | length
+      - (nova_push_guard_markers | map('trim') | reject('equalto', '') | reject('search', '\n') | list | length) == nova_push_guard_markers | length
+    fail_msg: >-
+      push-guard: want nova_push_guard_people (addresses) and nova_push_guard_markers (one-line texts), each non-empty;
+      run: nova-fleet push-guard -- -e @<vars file>
+    quiet: true
+
+- name: the login's nova-fleet has commit-guard
+  ansible.builtin.command:
+    argv: ["{{ nova_bin_dir }}/nova-fleet", help, commit-guard]
+  register: push_guard_verb
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: refuse a login whose nova-fleet cannot run the hook
+  ansible.builtin.fail:
+    msg: >-
+      PUSH-GUARD host={{ inventory_hostname }} NO-VERB: {{ nova_bin_dir }}/nova-fleet has no commit-guard
+      (exit {{ push_guard_verb.rc | default('-') }}), so the hook would refuse every push; nothing written;
+      run: nova-fleet install -- -e nova_tools_version=<a release with commit-guard> -l {{ inventory_hostname }}
+  when: push_guard_verb.rc | default(1) != 0
+
+- name: the login's core.hooksPath and user.email
+  ansible.builtin.command:
+    argv: [git, config, --global, --get, "{{ item }}"]
+  loop: [core.hooksPath, user.email]
+  register: push_guard_git
+  changed_when: false
+  failed_when: push_guard_git.rc not in [0, 1]
+  check_mode: false
+
+- name: the login's settings
+  ansible.builtin.set_fact:
+    push_guard_path: "{{ push_guard_git.results[0].stdout | trim }}"
+    push_guard_identity: "{{ push_guard_git.results[1].stdout | trim }}"
+
+- name: refuse a login whose core.hooksPath names another directory
+  ansible.builtin.fail:
+    msg: >-
+      PUSH-GUARD host={{ inventory_hostname }} HOOKS-PATH-TAKEN: core.hooksPath is {{ push_guard_path }}, not
+      {{ nova_push_guard_hooks }}; nothing written; move its hooks into the repositories and run: git config --global
+      --unset core.hooksPath, then nova-fleet push-guard -- -l {{ inventory_hostname }}
+  when: push_guard_path not in ['', nova_push_guard_hooks]
+
+- name: the hooks directory
+  ansible.builtin.file:
+    path: "{{ nova_push_guard_hooks }}"
+    state: directory
+    mode: "0755"
+  register: push_guard_d
+
+- name: the rules commit-guard reads
+  ansible.builtin.template:
+    src: commit-guard.j2
+    dest: "{{ nova_push_guard_rules }}"
+    mode: "0644"
+  register: push_guard_r
+
+- name: the pre-push hook
+  ansible.builtin.template:
+    src: pre-push.j2
+    dest: "{{ nova_push_guard_hooks }}/pre-push"
+    mode: "0755"
+  register: push_guard_p
+
+- name: each other hook runs the repository's own
+  ansible.builtin.copy:
+    src: chain
+    dest: "{{ nova_push_guard_hooks }}/{{ item }}"
+    mode: "0755"
+  loop: "{{ nova_push_guard_chain }}"
+  register: push_guard_c
+
+- name: core.hooksPath names the hooks directory
+  ansible.builtin.command:
+    argv: [git, config, --global, core.hooksPath, "{{ nova_push_guard_hooks }}"]
+  when: push_guard_path != nova_push_guard_hooks
+  register: push_guard_k
+
+- name: the receipt
+  ansible.builtin.debug:
+    msg: >-
+      PUSH-GUARD host={{ inventory_hostname }} login={{ ansible_facts['user_id'] }}
+      identity={{ push_guard_identity or 'unset' }}
+      {{ (('would-change' if ansible_check_mode else 'changed') if (push_guard_d is changed or push_guard_r is changed
+          or push_guard_p is changed or push_guard_c is changed or push_guard_path != nova_push_guard_hooks) else 'unchanged') }}
+      {{ ('WARN this login commits as a guarded address, so the hook refuses its own AI-marked commits; set its own: git config --global user.email <the seat address>'
+          if (push_guard_identity | lower) in (nova_push_guard_people | map('lower') | list) else '') }}
+  changed_when: false

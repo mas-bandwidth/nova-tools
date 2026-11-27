@@ -1,0 +1,18 @@
+---
+# push-guard.yml's defaults (cmd/nova-fleet/README.md, "push-guard").
+
+# The guarded people's commit addresses, one list entry each; required, from a vars file (-e @<file>).
+nova_push_guard_people: []
+# The AI markers: a message line holding one of these, compared without case, marks a commit; required.
+nova_push_guard_markers: []
+# The machines left unhooked, by inventory name: one whose login is a person's own.
+nova_push_guard_skip: []
+
+nova_push_guard_dir: "{{ nova_home }}/.config/nova-fleet"
+nova_push_guard_rules: "{{ nova_push_guard_dir }}/commit-guard"
+nova_push_guard_hooks: "{{ nova_push_guard_dir }}/git-hooks"
+# The hook names besides pre-push that run the repository's own hook: core.hooksPath hides .git/hooks. Left out are
+# push-to-checkout and proc-receive, whose mere presence changes what git does.
+nova_push_guard_chain: [applypatch-msg, pre-applypatch, post-applypatch, pre-commit, pre-merge-commit,
+  prepare-commit-msg, commit-msg, post-commit, pre-rebase, post-checkout, post-merge, post-rewrite, pre-auto-gc,
+  sendemail-validate, post-index-change, reference-transaction, pre-receive, update, post-receive, post-update]
