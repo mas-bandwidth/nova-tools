@@ -63,33 +63,42 @@ func snapshotStore(tx *fakeTx) *Store {
 	return &Store{user: "u", begin: func(context.Context) (transaction, error) { return tx, nil }}
 }
 
-func TestSnapshotReadsAllThreeInOneTransaction(t *testing.T) {
+func TestSnapshotReadsAllFiveInOneTransaction(t *testing.T) {
 	t.Parallel()
 	stamp := []string{"2026-11-06T00:00:00Z", "2026-11-06T00:00:01Z"}
 	tx := &fakeTx{tables: map[string][][]string{
-		"machines": {append([]string{"m1", "", "", "nova", "linux", "amd64", "8", "bench", "0", "", "", "", "{}", ""}, stamp...)},
-		"friends":  {append([]string{"alice", "claude", "opus", "4", "heavy,pro", "she/her", "", "true"}, stamp...)},
-		"services": {append([]string{"s1", "m1", `["/p"]`, "", "", "60", "false", "true", "{}", ""}, stamp...)},
+		"machines":  {append([]string{"m1", "", "", "nova", "linux", "amd64", "8", "bench", "gpu,usb-hub", "0", "", "", "", "{}", ""}, stamp...)},
+		"friends":   {append([]string{"alice", "claude", "opus", "she/her", "", "true"}, stamp...)},
+		"services":  {append([]string{"s1", "m1", `["/p"]`, "", "", "60", "false", "true", "{}", ""}, stamp...)},
+		"providers": {append([]string{"p1", "https://api.example.com", "openai", "P1_API_KEY", "", "", "4", "", "true"}, stamp...)},
+		"models":    {append([]string{"p1/org/m-1.5:q4", "opencode", "250000", "", "2500", "m1", "", "true"}, stamp...)},
 	}}
 	snap, err := snapshotStore(tx).Snapshot(context.Background())
 	require.NoError(t, err)
 	require.Len(t, snap.Machines, 1)
 	assert.Equal(t, 8, *snap.Machines[0].Cores)
-	assert.Equal(t, Friend{Name: "alice", Harness: "claude", Model: "opus", Width: 4, Tiers: "heavy,pro", Pronouns: "she/her", Enabled: true, Created: stamp[0], Updated: stamp[1]}, snap.Friends[0])
+	assert.Equal(t, "gpu,usb-hub", snap.Machines[0].Routes)
+	assert.Equal(t, Friend{Name: "alice", Harness: "claude", Model: "opus", Pronouns: "she/her", Enabled: true, Created: stamp[0], Updated: stamp[1]}, snap.Friends[0])
 	assert.Equal(t, []string{"/p"}, snap.Services[0].Argv)
-	assert.Equal(t, []string{listSQL("machines", Columns[Machine]()), listSQL("friends", Columns[Friend]()), listSQL("services", Columns[Service]())}, tx.queries, "the scanners' own queries, all on the transaction")
+	assert.Equal(t, Provider{Name: "p1", URL: "https://api.example.com", API: "openai", Key: "P1_API_KEY", Concurrency: 4, Enabled: true, Created: stamp[0], Updated: stamp[1]}, snap.Providers[0])
+	price, cacheRead := 250000, 2500
+	assert.Equal(t, Model{Name: "p1/org/m-1.5:q4", Harness: "opencode", PriceIn: &price, PriceCacheRead: &cacheRead, Machine: "m1", Enabled: true, Created: stamp[0], Updated: stamp[1]}, snap.Models[0])
+	assert.Equal(t, []string{listSQL("machines", Columns[Machine]()), listSQL("friends", Columns[Friend]()), listSQL("services", Columns[Service]()),
+		listSQL("providers", Columns[Provider]()), listSQL("models", Columns[Model]())}, tx.queries, "the scanners' own queries, all on the transaction")
 	assert.True(t, tx.committed)
 	assert.Equal(t, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly}, snapshotTx)
 }
 
 func TestSnapshotFailureRollsBack(t *testing.T) {
 	t.Parallel()
-	tx := &fakeTx{tables: map[string][][]string{"machines": nil, "friends": nil, "services": nil}, fail: "friends"}
-	_, err := snapshotStore(tx).Snapshot(context.Background())
-	assert.EqualError(t, err, SchemaMissing)
-	assert.False(t, tx.committed)
-	assert.True(t, tx.failed, "rolled back")
+	for _, table := range []string{"friends", "models"} { // models: a store the schema with providers and models was never applied to
+		tx := &fakeTx{tables: map[string][][]string{"machines": nil, "friends": nil, "services": nil, "providers": nil, "models": nil}, fail: table}
+		_, err := snapshotStore(tx).Snapshot(context.Background())
+		assert.EqualError(t, err, SchemaMissing, table)
+		assert.False(t, tx.committed, table)
+		assert.True(t, tx.failed, "rolled back")
+	}
 	st := &Store{user: "u", begin: func(context.Context) (transaction, error) { return nil, errors.New("down") }}
-	_, err = st.Snapshot(context.Background())
+	_, err := st.Snapshot(context.Background())
 	assert.EqualError(t, err, "postgres: connect failed")
 }

@@ -56,8 +56,8 @@ func TestRentedRowRefusals(t *testing.T) {
 	assert.Empty(t, h.st.rows["rented"], "no refused row was written")
 }
 
-// A rented box is in its own table, which no release before it reads: the machine kind (all an inventory is built
-// from) keeps exactly the columns it had, so a box no play may reach is in no older binary's inventory either.
+// A rented box is in its own table, which no release before it reads: no machine column (all an inventory is built
+// from) records a rented box, so a box no play may reach is in no older binary's inventory either.
 func TestRentedBoxesAreInNoTableAnOlderReleaseReads(t *testing.T) {
 	t.Parallel()
 	older := []string{"machines", "services", "friends", "history"} // v2.0.61's tables
@@ -66,7 +66,7 @@ func TestRentedBoxesAreInNoTableAnOlderReleaseReads(t *testing.T) {
 	for _, f := range kinds["machine"].fields {
 		machine = append(machine, f.name)
 	}
-	assert.Equal(t, "address public user os arch cores roles runners runner_scopes windows_runners windows_admin_runners runner_env note", strings.Join(machine, " "), "v2.0.61's machine columns, unchanged")
+	assert.Equal(t, "address public user os arch cores roles routes runners runner_scopes windows_runners windows_admin_runners runner_env note", strings.Join(machine, " "), "v2.0.61's machine columns and routes")
 	assert.False(t, slices.ContainsFunc(kinds["machine"].fields, func(f field) bool { return f.name == "provider" }))
 }
 

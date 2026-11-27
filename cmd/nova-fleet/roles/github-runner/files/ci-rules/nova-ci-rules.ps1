@@ -108,8 +108,87 @@ function Edit-Env([string]$dir, [string[]]$lines) {
     return $out.ToArray()
 }
 
+function Add-ProcApi {
+    if ('NovaCiProc' -as [type]) { return }
+    Add-Type -TypeDefinition @'
+using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+
+public sealed class CiProcRow {
+  public long Id;
+  public long Parent;
+  public string Text;
+  public long Created;
+}
+
+public static class NovaCiProc {
+  [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+  struct ProcessEntry32 {
+    public uint dwSize;
+    public uint cntUsage;
+    public uint th32ProcessID;
+    public IntPtr th32DefaultHeapID;
+    public uint th32ModuleID;
+    public uint cntThreads;
+    public uint th32ParentProcessID;
+    public int pcPriClassBase;
+    public uint dwFlags;
+    [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)]
+    public string szExeFile;
+  }
+  [DllImport("kernel32.dll", SetLastError = true)] static extern IntPtr CreateToolhelp32Snapshot(uint flags, uint pid);
+  [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)] static extern bool Process32FirstW(IntPtr snap, ref ProcessEntry32 pe);
+  [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)] static extern bool Process32NextW(IntPtr snap, ref ProcessEntry32 pe);
+  [DllImport("kernel32.dll", SetLastError = true)] static extern IntPtr OpenProcess(uint access, bool inherit, int pid);
+  [DllImport("kernel32.dll", SetLastError = true)] static extern bool GetProcessTimes(IntPtr proc, out long created, out long exited, out long kernel, out long user);
+  [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);
+
+  // ListNames: snapshots process IDs, parent IDs, image names and creation FILETIMEs directly from the kernel with no WMI or PEB reads.
+  public static CiProcRow[] ListNames() {
+    IntPtr snap = CreateToolhelp32Snapshot(2u, 0u);
+    if (snap == IntPtr.Zero || snap == new IntPtr(-1)) { return null; }
+    try {
+      ProcessEntry32 pe = new ProcessEntry32();
+      pe.dwSize = (uint)Marshal.SizeOf(typeof(ProcessEntry32));
+      if (!Process32FirstW(snap, ref pe)) { return null; }
+      List<CiProcRow> list = new List<CiProcRow>();
+      do {
+        CiProcRow r = new CiProcRow();
+        r.Id = (long)pe.th32ProcessID;
+        r.Parent = (long)pe.th32ParentProcessID;
+        r.Text = pe.szExeFile ?? "";
+        IntPtr hp = OpenProcess(0x1000u, false, (int)pe.th32ProcessID);
+        if (hp != IntPtr.Zero) {
+          long cr, ex, ke, us;
+          if (GetProcessTimes(hp, out cr, out ex, out ke, out us)) { r.Created = cr; }
+          CloseHandle(hp);
+        }
+        list.Add(r);
+      } while (Process32NextW(snap, ref pe));
+      return list.ToArray();
+    } finally {
+      CloseHandle(snap);
+    }
+  }
+}
+'@
+}
+
 function Get-Rows([string]$what) {
-    Get-CimInstance Win32_Process | ForEach-Object {
+    if ($what -eq 'name') {
+        try {
+            Add-ProcApi
+            $fast = [NovaCiProc]::ListNames()
+            if ($null -ne $fast) { return $fast }
+        } catch { }
+    }
+    $procs = if ($what -eq 'name') {
+        Get-CimInstance Win32_Process -Property ProcessId,ParentProcessId,Name,CreationDate -OperationTimeoutSec 15
+    } else {
+        Get-CimInstance Win32_Process -Property ProcessId,ParentProcessId,CommandLine,CreationDate -OperationTimeoutSec 15
+    }
+    $procs | ForEach-Object {
         [pscustomobject]@{ Id = $_.ProcessId; Parent = $_.ParentProcessId; Text = $(if ($what -eq 'name') { $_.Name } else { [string]$_.CommandLine })
             Created = $(if ($_.CreationDate) { $_.CreationDate.ToUniversalTime().Ticks } else { 0 }) }
     }
@@ -129,10 +208,12 @@ function Invoke-Disarm {
     $pidFile = Join-Path $state 'watchdog.pid'
     if (Test-Path $pidFile) {
         $w = [long](Get-Content -Raw $pidFile).Trim()
-        $p = Get-CimInstance Win32_Process -Filter "ProcessId = $w"
-        if ($p -and ([string]$p.CommandLine).Contains('nova-ci-rules.ps1') -and ([string]$p.CommandLine).Contains('watchdog')) {
-            Stop-Process -Id $w -Force -ErrorAction SilentlyContinue
-        }
+        try {
+            $p = Get-CimInstance Win32_Process -Filter "ProcessId = $w" -Property ProcessId,CommandLine -OperationTimeoutSec 10
+            if ($p -and ([string]$p.CommandLine).Contains('nova-ci-rules.ps1') -and ([string]$p.CommandLine).Contains('watchdog')) {
+                Stop-Process -Id $w -Force -ErrorAction SilentlyContinue
+            }
+        } catch { }
         Remove-Item -Force $pidFile
     }
 }
@@ -208,7 +289,15 @@ function Get-AdminRefusal {
     return $null
 }
 
+function Get-MyWorker {
+    if ($env:NOVA_CI_WORKER_PID) { return [long]$env:NOVA_CI_WORKER_PID }
+    $inRealRunner = ((Split-Path -Leaf $here) -eq '.nova-ci-rules') -and (Test-Path -LiteralPath (Join-Path (Split-Path $here) 'bin\Runner.Worker.exe'))
+    if (-not $inRealRunner) { return $null }
+    return Find-Ancestor $PID 'Runner.Worker' (Get-Rows 'name')
+}
+
 function Invoke-Started {
+    $inRealRunner = [bool]$env:NOVA_CI_WORKER_PID -or (((Split-Path -Leaf $here) -eq '.nova-ci-rules') -and (Test-Path -LiteralPath (Join-Path (Split-Path $here) 'bin\Runner.Worker.exe')))
     # a check that throws is a refusal, never a pass
     try { $why = Get-AdminRefusal }
     catch { $why = "the administrator runner check failed ($($_.Exception.Message)); the fleet admin looks" }
@@ -217,12 +306,15 @@ function Invoke-Started {
         # A failed job-started hook fails the job but does not stop it: the runner adds the hook as a pre-job step, and
         # a step with if: always() or failure() still runs after it, here as an administrator. So the job's
         # Runner.Worker is ended now, before any step of the job runs; a process listing that fails is tried again.
-        $worker = $null
-        for ($i = 0; $i -lt 3 -and -not $worker; $i++) {
-            try { $worker = Find-Ancestor $PID 'Runner.Worker' (Get-Rows 'name') } catch { $worker = $null }
+        if ($inRealRunner) {
+            $worker = $null
+            for ($i = 0; $i -lt 3 -and -not $worker; $i++) {
+                if ($env:NOVA_CI_WORKER_PID) { $worker = [long]$env:NOVA_CI_WORKER_PID }
+                else { try { $worker = Find-Ancestor $PID 'Runner.Worker' (Get-Rows 'name') } catch { $worker = $null } }
+            }
+            if ($worker) { Stop-Process -Id $worker -Force -ErrorAction SilentlyContinue }
+            else { "::error::CI rule: no Runner.Worker above this hook was found to end, so the job's always() steps may still run; the fleet admin looks" }
         }
-        if ($worker) { Stop-Process -Id $worker -Force -ErrorAction SilentlyContinue }
-        else { "::error::CI rule: no Runner.Worker above this hook was found to end, so the job's always() steps may still run; the fleet admin looks" }
         exit 1
     }
     Invoke-Disarm
@@ -231,14 +323,34 @@ function Invoke-Started {
     if ($event -eq 'push' -and -not (Test-PushOk $ref)) {
         $list = @($branches -split '\s+' | Where-Object { $_ })
         "::error::CI rule: push CI runs only on $($list -join ', ') and tags, not $ref; set on.push.branches to [$(($list | ForEach-Object { "'$_'" }) -join ', ')] and let this branch get CI through its pull request"
+        if ($inRealRunner) {
+            $worker = $null
+            for ($i = 0; $i -lt 3 -and -not $worker; $i++) {
+                try { $worker = Get-MyWorker } catch { $worker = $null }
+            }
+            if ($worker) { Stop-Process -Id $worker -Force -ErrorAction SilentlyContinue }
+            else { "::error::CI rule: no Runner.Worker above this hook was found to end, so the job's always() steps may still run; the fleet admin looks" }
+        }
         exit 1
     }
     $rc = Invoke-Chain "$env:NOVA_CI_CHAIN_JOB_STARTED"
-    if ($rc) { exit $rc }
+    if ($rc) {
+        if ($inRealRunner) {
+            try { $worker = Get-MyWorker } catch { $worker = $null }
+            if ($worker) { Stop-Process -Id $worker -Force -ErrorAction SilentlyContinue }
+        }
+        exit $rc
+    }
     if (-not (Test-Limited $event)) { "CI rule: a $event job has no time limit"; exit 0 }
-    $worker = Find-Ancestor $PID 'Runner.Worker' (Get-Rows 'name')
+    $worker = $null
+    for ($i = 0; $i -lt 3 -and -not $worker; $i++) {
+        try { $worker = Get-MyWorker } catch { $worker = $null }
+    }
     if (-not $worker) {
         "::error::CI rule: no Runner.Worker above this hook, so the $(Get-LimitText $limit) limit cannot be enforced; tell the fleet admin"
+        if ($inRealRunner) {
+            "::error::CI rule: no Runner.Worker above this hook was found to end, so the job's always() steps may still run; the fleet admin looks"
+        }
         exit 1
     }
     New-Item -ItemType Directory -Force -Path $state | Out-Null
@@ -277,7 +389,7 @@ function Invoke-Watchdog([long]$worker, [long]$deadline) {
 # apply LIMIT BRANCHES [DIR..]: one line per runner, CI-RULES <dir> hooks=<ok|set> restart=<no|done|busy|stopped|failed>.
 function Invoke-Apply([int]$lim, [string]$br, [string[]]$dirs) {
     if (-not $br) { [Console]::Error.WriteLine('nova-ci-rules: apply wants LIMIT BRANCHES [DIR..]'); exit 2 }
-    $services = @(Get-CimInstance Win32_Service | Where-Object { $_.Name -like 'actions.runner.*' } | ForEach-Object {
+    $services = @(Get-CimInstance Win32_Service -Property Name,PathName -OperationTimeoutSec 10 | Where-Object { $_.Name -like 'actions.runner.*' } | ForEach-Object {
             [pscustomobject]@{ Name = $_.Name; Dir = (Split-Path (Split-Path ($_.PathName.Trim('"')))) }
         })
     if (-not $dirs) { $dirs = @($services | ForEach-Object { $_.Dir } | Sort-Object -Unique) }
@@ -308,16 +420,16 @@ function Invoke-Apply([int]$lim, [string]$br, [string[]]$dirs) {
         $r = 'no'
         if (-not ((Test-Path $applied) -and (Get-Content -Raw $applied) -eq $now)) {
             $svc = $services | Where-Object { $_.Dir -eq $dir } | Select-Object -First 1
-            $listener = Get-CimInstance Win32_Process -Filter "Name = 'Runner.Listener.exe'" | Where-Object { $_.ExecutablePath -eq (Join-Path $dir 'bin\Runner.Listener.exe') } | Select-Object -First 1
+            $listener = Get-CimInstance Win32_Process -Filter "Name = 'Runner.Listener.exe'" -Property ProcessId,ExecutablePath -OperationTimeoutSec 10 | Where-Object { $_.ExecutablePath -eq (Join-Path $dir 'bin\Runner.Listener.exe') } | Select-Object -First 1
             if (-not $svc -or -not $listener) { $r = 'stopped'; Set-Content -Path $applied -Value $now -NoNewline }
-            elseif (Get-CimInstance Win32_Process -Filter "ParentProcessId = $($listener.ProcessId) AND Name = 'Runner.Worker.exe'") { $r = 'busy' }
+            elseif (Get-CimInstance Win32_Process -Filter "ParentProcessId = $($listener.ProcessId) AND Name = 'Runner.Worker.exe'" -Property ProcessId -OperationTimeoutSec 10) { $r = 'busy' }
             else {
                 try {
                     Restart-Service -Name $svc.Name -Force
                     $exe = Join-Path $dir 'bin\Runner.Listener.exe'
                     $seen = $false
                     for ($i = 0; $i -lt 60 -and -not $seen; $i++) {
-                        $seen = [bool](Get-CimInstance Win32_Process -Filter "Name = 'Runner.Listener.exe'" | Where-Object { $_.ExecutablePath -eq $exe -and $_.ProcessId -ne $listener.ProcessId })
+                        $seen = [bool](Get-CimInstance Win32_Process -Filter "Name = 'Runner.Listener.exe'" -Property ProcessId,ExecutablePath -OperationTimeoutSec 10 | Where-Object { $_.ExecutablePath -eq $exe -and $_.ProcessId -ne $listener.ProcessId })
                         if (-not $seen) { Start-Sleep -Seconds 1 }
                     }
                     if (-not $seen) { throw 'no new listener' }

@@ -1,8 +1,87 @@
 ---
 # The runner in github_runner_dir (or github_runner_idle_dir, a runner moving from there) finishes the job it is running
-# before its service is restarted or stopped: a job is a Runner.Worker started from <dir>/bin. Polled every
-# github_runner_idle_delay seconds, github_runner_idle_retries times; a runner still busy then fails the run and is left
-# running, never cancelled. --check does not wait.
+# before its service is restarted or stopped, and is handed no new one in between. A listener that has just finished a
+# job takes the next one within a second, so "no Runner.Worker on the host" alone is no proof: a stop in that second
+# loses the job GitHub has just dispatched (aws-schema-5-4, 2026-11-14: a job completed 21:13:48, the next was
+# dispatched 21:13:49 as the unit stopped; it ran no step and timed out). So, for a registered runner (its .runner names
+# its id and url):
+#   1. its custom labels are taken off on GitHub (read-only ones such as self-hosted cannot be), so no job that names
+#      one of them is dispatched to it; the labels are kept in <dir>/.nova-labels-off, and idle-restore.yml puts them
+#      back once the restart is done (a later run does it if this one stops in between);
+#   2. GitHub shows it busy=false, and then no Runner.Worker started from <dir>/bin runs on the host.
+# Each is polled every github_runner_idle_delay seconds, github_runner_idle_retries times; a runner still busy then
+# fails the run and is left running, never cancelled. --check does not wait and changes no label. A directory with no
+# .runner (never registered) is waited on by its Worker only.
+- name: the runner's registration ({{ github_runner_idle_dir | default(github_runner_dir) | basename }})
+  ansible.builtin.slurp: { src: "{{ github_runner_idle_dir | default(github_runner_dir) }}/.runner" }
+  become: "{{ github_runner_other | default(true) }}"
+  register: github_runner_idle_reg
+  failed_when: false
+  when: not ansible_check_mode
+
+# Set on every pass (empty for a directory with no .runner), so an earlier runner's id is never used for this one.
+- name: the runner's id and scope
+  ansible.builtin.set_fact:
+    github_runner_idle_id: >-
+      {{ ((github_runner_idle_reg.content | b64decode | regex_search('"agentId"[ ]*:[ ]*([0-9]+)', '\1') or ['']) | first)
+         if github_runner_idle_reg.content is defined else '' }}
+    github_runner_idle_api: >-
+      {%- set u = ((github_runner_idle_reg.content | b64decode | regex_search('"gitHubUrl"[ ]*:[ ]*"(https://[^"]+)"', '\\1') or ['']) | first)
+                  if github_runner_idle_reg.content is defined else '' -%}
+      {%- set p = u | regex_replace('^https://[^/]+/', '') | regex_replace('/$', '') -%}
+      {{ (('repos/' if '/' in p else 'orgs/') ~ p ~ '/actions/runners') if p else '' }}
+  when: not ansible_check_mode
+
+- name: no new job is dispatched to it (its custom labels off on GitHub, kept beside it)
+  ansible.builtin.shell: |
+    set -eu
+    r={{ (github_runner_idle_api ~ '/' ~ github_runner_idle_id) | quote }}
+    custom=$({{ github_runner_gh | quote }} api "$r" -q '[.labels[] | select(.type == "custom") | .name] | join(",")')
+    readonly=$({{ github_runner_gh | quote }} api "$r" -q '[.labels[] | select(.type != "custom") | .name | ascii_downcase] | join(",")')
+    echo "custom=$custom"
+    echo "readonly=$readonly"
+    [ -z "$custom" ] || {{ github_runner_gh | quote }} api -X DELETE "$r/labels" >/dev/null
+  args: { executable: /bin/sh }
+  delegate_to: localhost
+  become: false
+  register: github_runner_idle_off
+  changed_when: "github_runner_idle_off.stdout_lines | select('match', '^custom=.+') | list | length > 0"
+  when: not ansible_check_mode and github_runner_idle_id | default('') != '' and github_runner_idle_api | default('') != ''
+
+# The labels to put back: the custom ones GitHub held; when it held none (an earlier run stopped between taking them
+# off and putting them back), those the runner was registered with (<dir>/.labels) less GitHub's read-only ones.
+- name: the labels to put back, kept beside the runner
+  ansible.builtin.shell: |
+    set -eu
+    d={{ github_runner_idle_dir | default(github_runner_dir) | quote }}
+    l={{ (github_runner_idle_off.stdout_lines | select('match', '^custom=') | first | default('custom=') | regex_replace('^custom=', '')) | quote }}
+    ro=,{{ (github_runner_idle_off.stdout_lines | select('match', '^readonly=') | first | default('readonly=') | regex_replace('^readonly=', '')) | quote }},
+    if [ -z "$l" ] && [ -f "$d/.labels" ] && [ ! -f "$d/.nova-labels-off" ]; then
+      for x in $(tr ',' ' ' <"$d/.labels"); do
+        case "$ro" in *",$(printf '%s' "$x" | tr 'A-Z' 'a-z'),"*) continue ;; esac
+        l="${l:+$l,}$x"
+      done
+    fi
+    if [ -n "$l" ] && [ ! -f "$d/.nova-labels-off" ]; then printf '%s\n' "$l" >"$d/.nova-labels-off"; echo KEPT; fi
+  args: { executable: /bin/sh }
+  become: "{{ github_runner_other | default(true) }}"
+  register: github_runner_idle_kept
+  changed_when: "'KEPT' in github_runner_idle_kept.stdout"
+  when: github_runner_idle_off is not skipped and github_runner_idle_off.stdout is defined
+
+- name: GitHub shows it idle ({{ github_runner_idle_dir | default(github_runner_dir) | basename }})
+  ansible.builtin.command:
+    argv: ["{{ github_runner_gh }}", api, "{{ github_runner_idle_api }}/{{ github_runner_idle_id }}", -q, .busy]
+  delegate_to: localhost
+  become: false
+  register: github_runner_idle_busy
+  changed_when: false
+  failed_when: github_runner_idle_busy.rc != 0 or github_runner_idle_busy.stdout | trim != 'false'
+  until: github_runner_idle_busy.rc == 0 and github_runner_idle_busy.stdout | trim == 'false'
+  retries: "{{ github_runner_idle_retries }}"
+  delay: "{{ github_runner_idle_delay }}"
+  when: not ansible_check_mode and github_runner_idle_id | default('') != '' and github_runner_idle_api | default('') != ''
+
 - name: the runner's job ends first ({{ github_runner_idle_dir | default(github_runner_dir) | basename }})
   ansible.builtin.command:
     argv: [pgrep, -f, "{{ github_runner_idle_dir | default(github_runner_dir) }}/bin/[R]unner.Worker"]

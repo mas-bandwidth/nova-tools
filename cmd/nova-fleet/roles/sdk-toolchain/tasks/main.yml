@@ -245,6 +245,12 @@
 - name: env.sh, the SDK's environment
   ansible.builtin.template: { src: env.sh.j2, dest: "{{ sdk_dir }}/env.sh", mode: "0644", backup: true }
 
+# env.sh names the login's own CLI home now, so nothing writes NuGet's user config into the shared SDK again: the one
+# a login's dotnet left there (mode 0600) goes, or the shared SDK's readability check (link.yml) fails on it.
+- name: the shared SDK holds no NuGet user config (nova_sdk_shared)
+  ansible.builtin.file: { path: "{{ sdk_dir }}/dotnet-home/.nuget", state: absent }
+  when: nova_sdk_shared | bool
+
 - name: whether ~/.bashrc already sources env.sh (Linux)
   ansible.builtin.command: { argv: [grep, -q, sdk/env.sh, "{{ ansible_facts['user_dir'] }}/.bashrc"] }
   register: sdk_bashrc

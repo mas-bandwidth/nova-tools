@@ -1,5 +1,6 @@
-// Command nova-config keeps a fleet's machines and services, and the friends
-// that work on it, as rows in PostgreSQL, each write with a history row, and
+// Command nova-config keeps a fleet's machines and services, the friends that
+// work on it, and the model providers and models it can call, as rows in
+// PostgreSQL, each write with a history row, and
 // prints the machines and services as an Ansible inventory. Other programs
 // read the same rows through package github.com/mas-bandwidth/nova-tools/v2/modules/config.
 package main
@@ -16,6 +17,7 @@ import (
 	"os"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -76,6 +78,8 @@ func run(ctx context.Context, args []string, d deps, stdout, stderr io.Writer) i
 	}
 	var err error
 	switch {
+	case name == "friend watch":
+		err = watchFriends(ctx, rest, d, stdout)
 	case isKind && len(path) == 1:
 		err = usagef(name, "the verbs are "+strings.Join(kindOps, ", "), "wants a verb")
 	case isKind && slices.Contains(kindOps, path[1]):
@@ -108,10 +112,7 @@ func fail(stderr io.Writer, verb string, err error) int {
 		return 2
 	}
 	fmt.Fprintf(stderr, "nova-config %s: %s\n", verb, escape(err.Error()))
-	if errors.As(err, &r) {
-		return 1
-	}
-	return 2
+	return map[bool]int{true: 1, false: 2}[errors.As(err, &r)]
 }
 
 var invalidValue = regexp.MustCompile(`^(?:invalid|parse) .*?(?:value )?("[^"]*") for flag -(\S+):`)
@@ -154,10 +155,8 @@ func storeDSN(fs *flag.FlagSet, d deps) (string, string) {
 	switch {
 	case dsn == "":
 		return "", "no store: set NOVA_PG_DSN or --pg (postgres://USER@HOST:PORT/DB?sslmode=disable)"
-	case str(fs, "pg") != "" && dsnPassword(dsn):
-		return "", "--pg carries a password; leave it out and set NOVA_PG_PASSWORD"
 	case dsnPassword(dsn):
-		return "", "NOVA_PG_DSN carries a password; remove it and set NOVA_PG_PASSWORD"
+		return "", map[bool]string{true: "--pg carries a password; leave it out", false: "NOVA_PG_DSN carries a password; remove it"}[str(fs, "pg") != ""] + " and set NOVA_PG_PASSWORD"
 	case config.DSNProblem(dsn) != "":
 		return "", "the postgres dsn is wrong: " + config.DSNProblem(dsn)
 	}
@@ -185,7 +184,7 @@ func runKind(ctx context.Context, k *kind, verb string, args []string, d deps, s
 		fs.String("actor", cmp.Or(d.getenv("NOVA_ACTOR"), d.getenv("USER"), d.getenv("LOGNAME")), "the name the write is recorded under")
 		fs.String("reason", "", "why: one line, recorded in the history row")
 		fs.Bool("dry-run", false, "print the change and write nothing")
-		for _, f := range k.fields {
+		for _, f := range append(slices.Clip(k.fields), k.extra...) {
 			if op != "remove" {
 				fs.String(f.name, "", f.typ)
 			}
@@ -196,7 +195,7 @@ func runKind(ctx context.Context, k *kind, verb string, args []string, d deps, s
 	}
 	given := map[string]string{} // the field flags on the line
 	fs.Visit(func(f *flag.Flag) {
-		if slices.ContainsFunc(k.fields, func(x field) bool { return x.name == f.Name }) {
+		if slices.ContainsFunc(append(slices.Clip(k.fields), k.extra...), func(x field) bool { return x.name == f.Name }) {
 			given[f.Name] = f.Value.String()
 		}
 	})
@@ -230,7 +229,7 @@ func runKind(ctx context.Context, k *kind, verb string, args []string, d deps, s
 		} else if op == "add" {
 			after, err = k.newRow(name, given)
 		} else if op == "set" { // the values given, with no check of the row: it is checked whole once they are on the row the store holds
-			_, err = (&kind{fields: k.fields}).merge(Row{F: map[string]string{}}, given) // no check, so any error is a valueError
+			_, err = (&kind{fields: k.fields, extra: k.extra}).merge(Row{F: map[string]string{}}, given) // no check, so any error is a valueError
 		}
 		if err != nil {
 			problems = append(problems, err.Error())
@@ -298,13 +297,11 @@ func runKind(ctx context.Context, k *kind, verb string, args []string, d deps, s
 			}
 		}
 	}
+	if err := related(ctx, st, k, op, name, after); err != nil {
+		return err
+	}
 	if k.name == "machine" && op != "remove" { // an admin runner label is checked against every machine's runners, the row as written
-		fleetRows := []Row{after}
-		for _, r := range rows {
-			if r.Name != name {
-				fleetRows = append(fleetRows, r)
-			}
-		}
+		fleetRows := append([]Row{after}, slices.DeleteFunc(slices.Clone(rows), func(r Row) bool { return r.Name == name })...)
 		if cs := adminClashes(fleetRows, name); len(cs) > 0 {
 			msgs := []string{}
 			for _, c := range cs {
@@ -345,4 +342,111 @@ func runKind(ctx context.Context, k *kind, verb string, args []string, d deps, s
 		fmt.Fprintln(stdout, "next: nova-fleet services --check")
 	}
 	return nil
+}
+
+// watchFriends prints the friend directory (config.Store.WatchFriends) as one JSON line now and after each committed
+// friend or harness write, or with --output replaces that file with it atomically, until the store fails.
+func watchFriends(ctx context.Context, args []string, d deps, stdout io.Writer) error {
+	fs, words, err := flags("friend watch", "", args, func(fs *flag.FlagSet) { fs.String("output", "", "replace this file atomically") })
+	if err != nil || len(words) > 0 {
+		return cmp.Or(err, usagef("friend watch", "", "takes no arguments"))
+	}
+	ctx = context.WithoutCancel(ctx) // no deadline: it runs until the store fails, for a service manager to restart
+	st, err := open(ctx, fs, d)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	out := str(fs, "output")
+	return st.WatchFriends(ctx, func(dir any) error {
+		if out == "" {
+			_, err := fmt.Fprintln(stdout, marshal(dir))
+			return err
+		}
+		if err := os.WriteFile(out+".tmp", []byte(marshal(dir)+"\n"), 0o600); err != nil {
+			return err
+		}
+		return os.Rename(out+".tmp", out)
+	})
+}
+
+var historyHint = "history takes [<kind> [<name>]] --since <duration|RFC3339> --max <n> --json --pg <dsn>; kinds: " + strings.Join(kindOrder, ", ")
+
+// parseSince is a duration back from now (90m, 24h, 7d) or an RFC 3339 time.
+func parseSince(s string, now time.Time) (time.Time, error) {
+	if t, err := time.Parse(time.RFC3339, s); err == nil {
+		return t, nil
+	}
+	days, isDays := strings.CutSuffix(s, "d")
+	d, err := time.ParseDuration(map[bool]string{true: days + "h", false: s}[isDays])
+	if isDays {
+		d *= 24
+	}
+	if err != nil || d <= 0 {
+		return time.Time{}, fmt.Errorf("--since %q: want a duration such as 90m, 24h or 7d, or an RFC 3339 time", s)
+	}
+	return now.Add(-d), nil
+}
+
+func runHistory(ctx context.Context, args []string, d deps, stdout io.Writer) error {
+	fs, words, err := flags("history", historyHint, args, func(fs *flag.FlagSet) {
+		fs.String("since", "", "only writes since this duration back or RFC 3339 time")
+		fs.Int("max", 20, "the most writes shown; 0 for all")
+		fs.Bool("json", false, "print one JSON object instead of the lines")
+	})
+	if err != nil {
+		return err
+	}
+	q := HistoryQuery{}
+	switch {
+	case len(words) > 2:
+		return usagef("history", historyHint, "unexpected words %q", words[2:])
+	case len(words) == 2:
+		q.Name = words[1]
+		fallthrough
+	case len(words) == 1:
+		if q.Kind = words[0]; !slices.Contains(kindOrder, q.Kind) {
+			return usagef("history", historyHint, "unknown kind %q", q.Kind)
+		}
+	}
+	max, _ := strconv.Atoi(str(fs, "max")) // ignored: the flag package has parsed it as an int
+	if max < 0 {
+		return usagef("history", historyHint, "--max %d: want a number, 0 for all", max)
+	}
+	if max > 0 {
+		q.Limit = max + 1
+	}
+	if s := str(fs, "since"); s != "" {
+		if q.Since, err = parseSince(s, d.now()); err != nil {
+			return usagef("history", historyHint, "%s", err.Error())
+		}
+	}
+	st, err := open(ctx, fs, d)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	entries, err := st.History(ctx, q)
+	if err != nil {
+		return err
+	}
+	more := max > 0 && len(entries) > max
+	if more {
+		entries = entries[:max]
+	}
+	var items []string
+	for _, e := range entries {
+		if str(fs, "json") == "true" {
+			items = append(items, fmt.Sprintf(`{"rev":%d,"at":%s,"actor":%s,"kind":%s,"name":%s,"op":%s,"before":%s,"after":%s}`, e.ID, jsonString(e.At), jsonString(e.Actor), jsonString(e.Kind), jsonString(e.Name), jsonString(e.Op), marshal(e.Before), marshal(e.After)))
+		} else {
+			head := fmt.Sprintf("HISTORY at=%s actor=%s kind=%s name=%s op=%s rev=%d", value(e.At), value(e.Actor), value(e.Kind), value(e.Name), value(e.Op), e.ID)
+			fmt.Fprintln(stdout, strings.Join(append([]string{head}, changeLines(map[bool]*kind{true: kinds[e.Kind], false: {}}[kinds[e.Kind] != nil], e.Op, e.Before, e.After)...), "\n")) // a kind this tool does not know has no fields: every column of its row prints as text
+		}
+	}
+	if str(fs, "json") == "true" {
+		_, err = fmt.Fprintf(stdout, `{"result":{"verb":"history","status":"ok","exit":0},"facts":{"rows":%d,"more":%t},"items":[%s]}`+"\n", len(entries), more, strings.Join(items, ","))
+		return err
+	}
+	_, err = fmt.Fprintf(stdout, "CONFIG HISTORY rows=%d%s\n", len(entries), map[bool]string{true: " more=true"}[more])
+	return err
 }

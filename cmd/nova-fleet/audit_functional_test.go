@@ -159,3 +159,56 @@ func TestFunctionalAuditJobProbeNamesTheStepThatCannotWrite(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, left, "the probe's directory is removed")
 }
+
+// TestFunctionalAuditWslNamesWindowsReliabilityGaps runs audit.yml on Linux with audit_wsl forced true and a fake
+// powershell.exe reporting gaps across the WSL/Windows reliability surface: every gap is named with
+// install=windows-runners and the failure names the pasteable nova-fleet windows-runners command.
+func TestFunctionalAuditWslNamesWindowsReliabilityGaps(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS != "linux" {
+		t.Skip("audit.yml audits Linux/WSL hosts only")
+	}
+	if _, err := exec.LookPath("ansible-playbook"); err != nil {
+		t.Skip("ansible-core is not installed on this machine")
+	}
+	fleet, err := filepath.Abs(".")
+	require.NoError(t, err)
+	dir := t.TempDir()
+	reqs := filepath.Join(dir, "reqs.tsv")
+	require.NoError(t, os.WriteFile(reqs, []byte("met\tany\tbase\ttrue\n"), 0o644))
+	interop := filepath.Join(dir, "WSLInterop")
+	require.NoError(t, os.WriteFile(interop, nil, 0o644))
+	ps := filepath.Join(dir, "powershell.exe")
+	fakeOut := "#!/bin/sh\n" +
+		"echo 'OK wsl-keepalive'\n" +
+		"echo 'MISSING wsl-watchdog task missing'\n" +
+		"echo 'MISSING wsl-sleep AC standby non-zero'\n" +
+		"echo 'OK wsl-crash'\n" +
+		"echo 'OK wsl-tailscale-unattended'\n" +
+		"echo 'MISSING wsl-winssh sshd not running'\n"
+	require.NoError(t, os.WriteFile(ps, []byte(fakeOut), 0o755))
+	inv := filepath.Join(dir, "inventory")
+	require.NoError(t, os.WriteFile(inv, []byte("[bench]\nlocalhost ansible_connection=local\n"), 0o644))
+	home := filepath.Join(dir, "home")
+	require.NoError(t, os.MkdirAll(home, 0o755))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "ansible-playbook", "-i", inv, filepath.Join(fleet, "audit.yml"),
+		"-e", "nova_audit_requirements="+reqs,
+		"-e", "nova_audit_memlock=false", "-e", "nova_audit_job=false",
+		"-e", "audit_wsl=true", "-e", "github_runner_wsl_interop="+interop,
+		"-e", "github_runner_wsl_powershell="+ps)
+	cmd.Env = append(os.Environ(), "ANSIBLE_NOCOLOR=1", "HOME="+home, "ANSIBLE_LOCAL_TEMP="+filepath.Join(dir, "tmp"))
+	b, err := cmd.CombinedOutput()
+	out := string(b)
+	require.Error(t, err, out)
+	for _, want := range []string{
+		"item=wsl-watchdog install=windows-runners",
+		"item=wsl-sleep install=windows-runners",
+		"item=wsl-winssh install=windows-runners",
+		"FLEET-AUDIT FAILED host=localhost missing=wsl-watchdog,wsl-sleep,wsl-winssh; run: nova-fleet windows-runners -- -l localhost",
+	} {
+		assert.Contains(t, out, want)
+	}
+}

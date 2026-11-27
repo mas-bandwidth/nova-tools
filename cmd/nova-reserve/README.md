@@ -56,10 +56,13 @@ nova-reserve exits with its status. The `HELD` line goes to stderr. Process IDs
 and times in these examples will differ on your machine.
 
 On Linux the command runs on its slot's share of the CPUs nova-reserve may
-use, less the kernel's isolated ones (slot k of N gets the k-th of N
-near-equal runs; an exclusive job gets them all), so `nproc`,
+use, less the kernel's isolated ones and grouped by physical-core SMT siblings
+(an exclusive job gets them all), so `nproc`,
 `make -j$(nproc)` and Go count that share, and the `HELD` line ends with them,
-such as `cpus=2-3`. The pin is advisory: a job can widen its own mask again
+such as `cpus=2-3`. On every OS, unset `NOVA_RESERVE_CPUS`, `GOMAXPROCS`,
+`CARGO_BUILD_JOBS`, `RAYON_NUM_THREADS` and `CMAKE_BUILD_PARALLEL_LEVEL` are
+set to the slot's CPU count (keeping any value the caller already set). The pin
+is advisory: a job can widen its own mask again
 (for example with `taskset`), so it steers tools that size themselves by the
 CPUs they may use and is not a limit. If they cannot be set, one stderr line
 says why and the command runs unpinned; macOS and the BSDs do not pin.

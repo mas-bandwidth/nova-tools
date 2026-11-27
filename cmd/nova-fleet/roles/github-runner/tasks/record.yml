@@ -30,7 +30,8 @@
     github_runner_record_want: >-
       {%- set out = [] -%}
       {%- for t in nova_runner_scopes | default([]) -%}
-      {%- set slug = t.url | regex_replace('^https://[^/]+/', '') | regex_replace('/$', '') | replace('/', '-') -%}
+      {%- set slug = t.url | regex_replace('^https://[^/]+/', '') | regex_replace('/$', '') | replace('/', '-')
+             ~ (('-' ~ t.set) if t.set | default('') else '') -%}
       {%- for i in range(1, (t.count | int) + 1) -%}{%- set _ = out.append(slug ~ '-' ~ i) -%}{%- endfor -%}
       {%- endfor -%}
       {{ out }}
@@ -81,12 +82,14 @@
 - name: each scope of the record
   ansible.builtin.include_tasks: scope.yml
   loop: "{{ nova_runner_scopes | default([]) }}"
-  loop_control: { loop_var: github_runner_record_scope, label: "{{ github_runner_record_scope.url }}" }
+  loop_control: { loop_var: github_runner_record_scope, label: "{{ github_runner_record_scope.url }}{{ ('@' ~ github_runner_record_scope.set) if github_runner_record_scope.set | default('') else '' }}" }
   vars:
     github_runner_url: "{{ github_runner_record_scope.url }}"
     github_runner_scope: "{{ 'repo' if '/' in (github_runner_record_scope.url | regex_replace('^https://[^/]+/', '') | regex_replace('/$', '')) else 'org' }}"
     runner_count: "{{ github_runner_record_scope.count }}"
     github_runner_labels: "{{ github_runner_record_scope.labels | default([]) }}"
+    github_runner_set: "{{ github_runner_record_scope.set | default('') }}"
+    github_runner_group: "{{ github_runner_record_scope.group | default('') }}"
 
 - name: GitHub's entries for this host that the record does not want
   ansible.builtin.include_tasks: record-github.yml

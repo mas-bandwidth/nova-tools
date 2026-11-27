@@ -27,3 +27,24 @@
 - name: the count installed
   ansible.builtin.set_fact:
     rp_installed: "{{ 0 if ansible_check_mode else rp_missing | length }}"
+
+# nova_runner_packages_absent.debian: packages that came onto a runner outside this list (a bench's hand install) and
+# must not stay, such as one that enables a unit. Removed (apt remove: no purge, no autoremove) where dpkg has them.
+- name: the packages to remove that dpkg has
+  ansible.builtin.set_fact:
+    rp_unwanted: "{{ nova_runner_packages_absent['debian'] | default([]) | select('in', ansible_facts.packages) | list }}"
+
+- name: apt remove the unwanted packages
+  ansible.builtin.apt:
+    name: "{{ rp_unwanted }}"
+    state: absent
+    purge: false
+    autoremove: false
+  become: true
+  when: not ansible_check_mode and rp_unwanted | length > 0
+
+- name: would remove the unwanted packages
+  ansible.builtin.debug: { msg: "WOULD-REMOVE apt-get remove {{ item }}" }
+  loop: "{{ rp_unwanted }}"
+  changed_when: true
+  when: ansible_check_mode

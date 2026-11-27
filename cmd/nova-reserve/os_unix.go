@@ -28,8 +28,8 @@ func openIn(path string, flag int) (*os.File, error) {
 	odd := refuse(2, "%s is not a regular file; nova-reserve opens no link or special file in its directory; run: sudo rm -f %s", path, shellQuote(path))
 	f, err := os.OpenFile(path, flag|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0o666)
 	if err != nil {
-		// O_NOFOLLOW's error for a link differs by OS; the refusal is the same
-		if fi, lerr := os.Lstat(path); lerr == nil && fi.Mode()&os.ModeSymlink != 0 {
+		// O_NOFOLLOW's error for a link or special file differs by OS; the refusal is the same
+		if fi, lerr := os.Lstat(path); lerr == nil && !fi.Mode().IsRegular() && !fi.Mode().IsDir() {
 			return nil, odd
 		}
 		return nil, err
@@ -141,6 +141,13 @@ func wait(cmd *exec.Cmd) (ws syscall.WaitStatus, err error) {
 			return ws, err
 		}
 		if err == nil {
+			if sid, serr := unix.Getsid(0); serr == nil && sid == self {
+				// session leader on the terminal (ssh -t): no shell above to resume us, so never self-stop
+				passTerminal(self, pid)
+				// ignored: a group that has already ended needs no SIGCONT
+				_ = syscall.Kill(-pid, syscall.SIGCONT)
+				continue
+			}
 			passTerminal(pid, self)
 			conts := make(chan os.Signal, 1) // Drain: no earlier SIGCONT
 			signal.Notify(conts, syscall.SIGCONT)

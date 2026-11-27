@@ -44,7 +44,31 @@ func TestCIRulesWSLStepFailsWhenPowerShellFails(t *testing.T) {
 	assert.Equal(t, "/bin/bash", asText(task["args"].(map[string]any)["executable"]), "pipefail needs bash")
 }
 
-// TestCIRulesCheckSaysItDidNotCheck: --check never runs nova-ci-rules, so its receipt cannot say nothing changed.
+// TestCIRulesWaitForBusyRunners: the github-runners play applies the CI rules again until no runner says
+// restart=busy, so a runner busy during the run is not left on a .env without the hooks; the ci-rules play does not
+// wait, and a runner still busy at the end fails the run.
+func TestCIRulesWaitForBusyRunners(t *testing.T) {
+	t.Parallel()
+	task := roleTask(t, "roles/github-runner/tasks/ci-rules.yml", "apply them to the runners")
+	until := asText(task["until"])
+	assert.Contains(t, until, "'restart=busy' not in ci_rules_applied.stdout")
+	assert.Contains(t, until, "not (ci_rules_wait | default(false) | bool)", "without ci_rules_wait one pass, as before")
+	assert.Contains(t, asText(task["retries"]), "github_runner_idle_retries if ci_rules_wait")
+	assert.Equal(t, "{{ github_runner_idle_delay }}", asText(task["delay"]))
+	assert.Contains(t, asText(task["failed_when"]), "'restart=busy' in ci_rules_applied.stdout")
+
+	tasks := roleFileTasks(t, "roles/github-runner/tasks/unix.yml")
+	i := taskIndex(tasks, "the CI rules on these runners")
+	require.GreaterOrEqual(t, i, 0)
+	vars := tasks[i]["vars"].(map[string]any)
+	assert.Equal(t, true, vars["ci_rules_wait"], "the github-runners play waits for busy runners")
+
+	b, err := os.ReadFile("ci-rules.yml")
+	require.NoError(t, err)
+	assert.NotContains(t, string(b), "ci_rules_wait", "the ci-rules play applies once and says restart=busy")
+}
+
+// TestCIRulesCheckSaysItDidNotCheck:--check never runs nova-ci-rules, so its receipt cannot say nothing changed.
 func TestCIRulesCheckSaysItDidNotCheck(t *testing.T) {
 	t.Parallel()
 	task := roleTask(t, "roles/github-runner/tasks/ci-rules.yml", "the CI rules' receipt")

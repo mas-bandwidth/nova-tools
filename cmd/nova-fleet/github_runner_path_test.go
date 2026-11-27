@@ -66,6 +66,34 @@ func TestRunnerServiceLiftsTheLockedMemoryLimit(t *testing.T) {
 	assert.NotContains(t, s, "sudo")
 }
 
+// A Linux runner's unit names the CPUs the scheduler balances, read from the host's online and isolated lists before any
+// unit is written (in --check too), and only when the kernel isolates some: a job on an isolated CPU is never balanced
+// off it. The render is TestRunnerServiceKeepsOffIsolatedCPUs.
+func TestRunnerUnitNamesTheBalancedCPUs(t *testing.T) {
+	t.Parallel()
+	b, err := os.ReadFile("roles/github-runner/templates/runner.service.j2")
+	require.NoError(t, err)
+	s := string(b)
+	service := s[strings.Index(s, "\n[Service]\n"):strings.Index(s, "\n[Install]\n")]
+	assert.Contains(t, service, "{% if github_runner_cpus | string | length > 0 %}\n")
+	assert.Contains(t, service, "\nCPUAffinity={{ github_runner_cpus }}\n")
+	assert.Equal(t, 1, strings.Count(s, "CPUAffinity="))
+
+	d := runnerDefaults(t)
+	cpus := asText(d["github_runner_cpus"])
+	assert.Contains(t, cpus, "github_runner_cpus_isolated")
+	assert.Contains(t, cpus, "github_runner_cpus_online")
+
+	b, err = os.ReadFile("roles/github-runner/tasks/main.yml")
+	require.NoError(t, err)
+	m := string(b)
+	read := strings.Index(m, `src: "/sys/devices/system/cpu/{{ item }}"`)
+	require.GreaterOrEqual(t, read, 0, "main.yml reads the CPU lists")
+	assert.Contains(t, m, "loop: [online, isolated]")
+	assert.Less(t, read, strings.Index(m, "include_tasks: record.yml"), "read before any unit is written")
+	assert.Less(t, read, strings.Index(m, "include_tasks: scope.yml"), "read before any unit is written")
+}
+
 // Both service files set PATH once: github_runner_env's PATH if it has one, else the default above.
 func TestRunnerServiceFilesSetPath(t *testing.T) {
 	t.Parallel()

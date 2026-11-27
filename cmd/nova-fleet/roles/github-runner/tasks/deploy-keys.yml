@@ -1,0 +1,208 @@
+---
+# Read-only deploy keys for the runner login (cmd/nova-fleet/README.md, "Deploy keys"). For each of
+# github_runner_deploy_keys: the private key from this machine's seat in <home>/.ssh/deploy-key-<owner>-<repo> (0600, the
+# runner login's), an ssh host alias deploy-key-<owner>-<repo> that offers that key alone to the URL's host, checked
+# against github_runner_deploy_known_hosts, and in the login's ~/.gitconfig a rewrite of exactly that URL to the alias for
+# fetching, with a push to the URL kept on it. No credential helper, and nothing another repository's URL reaches. Every
+# file in the login's home is written as the login (root follows no link a job could plant there). Then a git ls-remote
+# of each URL, run as the login, proves it.
+- name: each deploy key is an https clone URL and a secret's name
+  ansible.builtin.assert:
+    quiet: true
+    that:
+      - item.url | default('') is match('^https://[A-Za-z0-9.-]+/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+[.]git$')
+      - item.secret | default('') is match('^[A-Z_][A-Z0-9_]*$')
+    fail_msg: >-
+      DEPLOY-KEYS {{ inventory_hostname }}: {{ item }} is not {url: https://<host>/<owner>/<repo>.git, secret: <NAME>}; run:
+      nova-fleet github-runners -- --tags deploy-keys -e '{"github_runner_deploy_keys": [{"url": "https://github.com/OWNER/REPO.git", "secret": "NAME"}]}'
+  loop: "{{ github_runner_deploy_keys }}"
+  loop_control: { label: "{{ item.url | default('-') }}" }
+
+- name: each deploy key's alias, key file and ssh URL
+  ansible.builtin.set_fact:
+    github_runner_deploy: >-
+      {{ github_runner_deploy | default([]) + [{'url': item.url, 'secret': item.secret, 'host': item.url | urlsplit('hostname'),
+         'alias': github_runner_deploy_alias, 'key': github_runner_home ~ '/.ssh/' ~ github_runner_deploy_alias,
+         'ssh': 'git@' ~ github_runner_deploy_alias ~ ':' ~ (item.url | urlsplit('path'))[1:]}] }}
+  vars:
+    github_runner_deploy_alias: "deploy-key-{{ (item.url | urlsplit('path'))[1:] | regex_replace('[.]git$', '') | replace('/', '-') }}"
+  loop: "{{ github_runner_deploy_keys }}"
+  loop_control: { label: "{{ item.url }}" }
+
+# The names in this machine's own seat (no value is read): every key must be there before anything changes. Read only,
+# so it runs under --check too.
+- name: the names in this machine's seat, for the deploy keys
+  ansible.builtin.command:
+    argv: ["{{ github_runner_nova_secrets }}", names, --store, "{{ nova_secrets_store }}", --as, "{{ nova_seat }}"]
+  register: github_runner_deploy_names
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: every deploy key is in this machine's seat
+  ansible.builtin.fail:
+    msg: >-
+      DEPLOY-KEYS {{ inventory_hostname }}: seat {{ nova_seat }} holds no {{ github_runner_deploy_unsealed | join(', ') }}
+      ({{ (github_runner_deploy_names.stderr_lines | default([]) | last | default('nova-secrets names rc=' ~ github_runner_deploy_names.rc | default('-')))
+          if github_runner_deploy_names.rc | default(0) != 0 else 'nova-secrets names does not list it' }}); nothing was changed.
+      On the control node, run:
+      {% for n in github_runner_deploy_unsealed %}nova-secrets grant {{ n }} --to {{ nova_seat }} --pins {{ nova_seal_pins }}
+      --store {{ nova_seal_store | default('<store>') }} --key {{ nova_seal_key | default('<key>') }} --as {{ nova_seal_seat | default('<seat>') }} &&
+      {% endfor %}git -C {{ nova_seal_store | default('<store>') }} push &&
+      nova-fleet secrets-refresh -- -e nova_seal_store={{ nova_seal_store | default('<store>') }}
+  vars:
+    github_runner_deploy_unsealed: >-
+      {{ github_runner_deploy | map(attribute='secret') | difference(github_runner_deploy_names.stdout_lines | default([])) | list }}
+  when: github_runner_deploy_unsealed | length > 0
+
+- name: the runner login's ~/.ssh
+  ansible.builtin.file: { path: "{{ github_runner_home }}/.ssh", state: directory, mode: "0700" }
+  become: "{{ github_runner_user != ansible_facts['user_id'] }}"
+  become_user: "{{ github_runner_user }}"
+  vars: { ansible_pipelining: true }
+
+# blockinfile, not copy: a module that sends no file runs as an unprivileged login over the pipe alone.
+- name: the host keys a deploy key's connection accepts
+  ansible.builtin.blockinfile:
+    path: "{{ github_runner_home }}/.ssh/deploy-keys.known_hosts"
+    create: true
+    mode: "0644"
+    marker: "# {mark} nova-fleet deploy keys (github-runners)"
+    block: "{{ github_runner_deploy_known_hosts }}"
+  become: "{{ github_runner_user != ansible_facts['user_id'] }}"
+  become_user: "{{ github_runner_user }}"
+  vars: { ansible_pipelining: true }
+
+# First in the file: an earlier Host * block would set what these options set first. Match all closes the last Host
+# block, so every line after the block (ssh-names' Include among them) stays global.
+- name: one ssh host alias per deploy key, offering that key alone
+  ansible.builtin.blockinfile:
+    path: "{{ github_runner_home }}/.ssh/config"
+    create: true
+    mode: "0600"
+    insertbefore: BOF
+    marker: "# {mark} nova-fleet deploy keys (github-runners)"
+    block: |
+      {% for k in github_runner_deploy %}
+      Host {{ k.alias }}
+        HostName {{ k.host }}
+        HostKeyAlias {{ k.host }}
+        User git
+        IdentityFile {{ k.key }}
+        IdentitiesOnly yes
+        UserKnownHostsFile {{ github_runner_home }}/.ssh/deploy-keys.known_hosts
+        StrictHostKeyChecking yes
+        BatchMode yes
+      {% endfor %}
+      Match all
+  become: "{{ github_runner_user != ansible_facts['user_id'] }}"
+  become_user: "{{ github_runner_user }}"
+  vars: { ansible_pipelining: true }
+
+# insteadOf matches the URL as a prefix, so the whole clone URL, .git included, is the key: another repository's URL
+# is not rewritten, and the key reads its own repository only whatever reaches the alias.
+# pushInsteadOf rewriting the URL to itself keeps a push to it on https (the deploy key is read-only).
+- name: each deploy key's URL fetched through its alias
+  ansible.builtin.blockinfile:
+    path: "{{ github_runner_home }}/.gitconfig"
+    create: true
+    marker: "# {mark} nova-fleet deploy keys (github-runners)"
+    block: |
+      {% for k in github_runner_deploy %}
+      [url "{{ k.ssh }}"]
+        insteadOf = {{ k.url }}
+      [url "{{ k.url }}"]
+        pushInsteadOf = {{ k.url }}
+      {% endfor %}
+  become: "{{ github_runner_user != ansible_facts['user_id'] }}"
+  become_user: "{{ github_runner_user }}"
+  vars: { ansible_pipelining: true }
+
+- name: the deploy key files there now
+  ansible.builtin.stat: { path: "{{ item.key }}", get_checksum: false }
+  become: "{{ github_runner_user != ansible_facts['user_id'] }}"
+  become_user: "{{ github_runner_user }}"
+  vars: { ansible_pipelining: true }
+  loop: "{{ github_runner_deploy }}"
+  loop_control: { label: "{{ item.alias }}" }
+  register: github_runner_deploy_stat
+  when: ansible_check_mode
+
+- name: the deploy keys, planned
+  ansible.builtin.debug:
+    msg: >-
+      DEPLOY-KEY-PLAN {{ inventory_hostname }} {{ github_runner_user }} {{ item.item.url }} from={{ item.item.secret }}
+      key={{ 'present' if item.stat.exists | default(false) else 'absent' }} (check: the key is written and compared on a run)
+  loop: "{{ github_runner_deploy_stat.results | default([]) }}"
+  loop_control: { label: "{{ item.item.alias | default('-') }}" }
+  when: ansible_check_mode
+
+# The value leaves the seat only through this pipe: nova-secrets exec hands it to printf in its environment, base64 -d
+# turns it back into the key, and a shell run as the runner login writes it beside the key file, checks it is a private
+# key ssh can read, and replaces the file only when it differs. no_log keeps the whole result out of the output; the
+# receipt prints the shell's own lines, which never carry the value.
+- name: each deploy key, from this machine's seat
+  ansible.builtin.shell: >-
+    set -o pipefail;
+    {{ github_runner_win_secrets_exec }} {{ item.secret | quote }} -- sh -c 'printf "%s" "${{ item.secret }}"' </dev/null | base64 -d |
+    {{ ('sudo -n -u ' ~ (github_runner_user | quote) ~ ' --') if github_runner_user != ansible_facts['user_id'] else '' }}
+    sh -c 'cd / && umask 077 && k=$1 || exit 1; cat > "$k.new" || exit 1;
+    if ! ssh-keygen -y -f "$k.new" >/dev/null 2>&1; then rm -f "$k.new"; echo "DEPLOY-KEY-BAD $2: the value is no private key ssh reads" >&2; exit 1; fi;
+    if cmp -s "$k.new" "$k"; then rm -f "$k.new"; echo "DEPLOY-KEY-SAME $2"; else mv -f "$k.new" "$k" && echo "DEPLOY-KEY-SET $2"; fi'
+    sh {{ item.key | quote }} {{ item.alias | quote }}
+  args: { executable: /bin/bash }
+  loop: "{{ github_runner_deploy }}"
+  loop_control: { label: "{{ item.alias }}" }
+  no_log: true
+  failed_when: false
+  register: github_runner_deploy_set
+  changed_when: github_runner_deploy_set.stdout is search('DEPLOY-KEY-SET ')
+  when: not ansible_check_mode
+
+- name: the deploy keys' receipt
+  ansible.builtin.debug:
+    msg: >-
+      {{ (item.stdout_lines | default([]) | select('match', '^DEPLOY-KEY-') | list
+          + (item.stderr_lines | default([]) | select('match', '^(SECRETS |DEPLOY-KEY-|base64|sudo)') | list)) | join(' ')
+         | default('rc=' ~ item.rc | default('-'), true) }} on {{ inventory_hostname }} as {{ github_runner_user }}
+  loop: "{{ github_runner_deploy_set.results | default([]) }}"
+  loop_control: { label: "{{ item.item.alias | default('-') }}" }
+  when: not ansible_check_mode
+
+- name: every deploy key is in place
+  ansible.builtin.assert:
+    quiet: true
+    that: github_runner_deploy_set.results | default([]) | rejectattr('rc', 'equalto', 0) | list | length == 0
+    fail_msg: "DEPLOY-KEYS {{ inventory_hostname }}: a deploy key could not be written; its receipt is above"
+  when: not ansible_check_mode
+
+# The proof: the URL as a workflow names it, listed by git as the runner login, through the rewrite and the key.
+- name: each deploy key's URL lists as the runner login
+  ansible.builtin.command:
+    argv: [git, ls-remote, "{{ item.url }}", HEAD]
+  environment: { HOME: "{{ github_runner_home }}", GIT_TERMINAL_PROMPT: "0" }
+  become: "{{ github_runner_user != ansible_facts['user_id'] }}"
+  become_user: "{{ github_runner_user }}"
+  vars: { ansible_pipelining: true }
+  loop: "{{ github_runner_deploy }}"
+  loop_control: { label: "{{ item.url }}" }
+  register: github_runner_deploy_ls
+  changed_when: false
+  failed_when: false
+  when: not ansible_check_mode
+
+- name: the deploy keys' proof
+  ansible.builtin.debug:
+    msg: >-
+      DEPLOY-KEY {{ inventory_hostname }} {{ github_runner_user }} {{ item.item.url }}
+      {{ 'ls-remote=ok' if item.rc == 0 and item.stdout is search('HEAD$') else 'ls-remote=failed rc=' ~ item.rc ~ ': ' ~ (item.stderr_lines | default([]) | last | default('')) }}
+  loop: "{{ github_runner_deploy_ls.results | default([]) }}"
+  loop_control: { label: "{{ item.item.url | default('-') }}" }
+  when: not ansible_check_mode
+
+- name: every deploy key's URL lists
+  ansible.builtin.assert:
+    quiet: true
+    that: github_runner_deploy_ls.results | default([]) | rejectattr('rc', 'equalto', 0) | list | length == 0
+    fail_msg: "DEPLOY-KEYS {{ inventory_hostname }}: a URL did not list as {{ github_runner_user }}; its DEPLOY-KEY line is above"
+  when: not ansible_check_mode

@@ -72,3 +72,33 @@ func TestRunnerScopesCorruptRefusesTheInventory(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "nova-config machine set m1 --runner_scopes")
 }
+
+// A second set of runners on a url (@<set>[/<group>]) is stored after the url's plain one, reaches the inventory with its
+// set and group, and is refused where two entries would share runner directories and on windows_runners.
+func TestRunnerScopesSets(t *testing.T) {
+	t.Parallel()
+	f := kinds["machine"].findField("runner_scopes")
+	got, err := f.canonical("https://github.com/o=1:x@nightly/public-group, https://github.com/o=2:b+a, https://github.com/o=1@aa")
+	require.NoError(t, err)
+	assert.Equal(t, "https://github.com/o=2:a+b,https://github.com/o=1@aa,https://github.com/o=1:x@nightly/public-group", got)
+	for _, bad := range []string{
+		"https://github.com/o=1@nn,https://github.com/O=2@nn",       // the url and set twice
+		"https://github.com/o=1@nexus,https://github.com/o/nexus=1", // both would be o-nexus-<i>
+		"https://github.com/o=1@", "https://github.com/o=1@N", "https://github.com/o=1@1a", "https://github.com/o=1@ab/",
+		"https://github.com/o=1@ab/g!g", "https://github.com/o=1@ab/g/h", "https://github.com/o=1@ab-",
+		"https://github.com/o=1@win-x", "https://github.com/o/r=1@ab/g", // a Windows-side name; a repository has no groups
+	} {
+		_, err := f.canonical(bad)
+		assert.ErrorContains(t, err, "--runner_scopes", bad)
+	}
+	_, err = kinds["machine"].findField("windows_runners").canonical("https://github.com/o=1@ab")
+	assert.ErrorContains(t, err, "--windows_runners", "the windows-runners play names one set per url")
+
+	ws, err := parseScopes("https://github.com/o=1:x@nightly/public-group,https://github.com/o=1")
+	require.NoError(t, err)
+	b, err := json.Marshal(ws)
+	require.NoError(t, err)
+	assert.JSONEq(t, `[{"url":"https://github.com/o","count":1,"labels":[]},`+
+		`{"url":"https://github.com/o","count":1,"labels":["x"],"set":"nightly","group":"public-group"}]`, string(b),
+		"a plain scope's json is as before: no set or group")
+}

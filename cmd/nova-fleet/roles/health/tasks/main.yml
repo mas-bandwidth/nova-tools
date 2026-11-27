@@ -153,6 +153,39 @@
   notify: reload the system manager
   when: (nova_health_user_memory_max_pct | int) > 0
 
+# ---- cross-slice CPU and I/O priority: /system.slice (CI runners) outweighs /user.slice (bench work) ----
+- name: the top-level slice drop-in directories
+  ansible.builtin.file: { path: "{{ item }}", state: directory, mode: "0755" }
+  loop: [/etc/systemd/system/system.slice.d, /etc/systemd/system/user.slice.d]
+  become: true
+  when: nova_health_slice_priority | bool and ('bench' in group_names or 'runner' in group_names)
+
+- name: the system slice priority drop-in (CPUWeight, IOWeight)
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/system.slice.d/90-nova-priority.conf
+    mode: "0644"
+    content: |
+      # managed by Ansible (fleet/health.yml): /system.slice (CI runners) outweighs /user.slice under contention
+      [Slice]
+      CPUWeight={{ nova_health_system_slice_weight | int }}
+      IOWeight={{ nova_health_system_slice_weight | int }}
+  become: true
+  notify: reload the system manager
+  when: nova_health_slice_priority | bool and ('bench' in group_names or 'runner' in group_names)
+
+- name: the user slice priority drop-in (CPUWeight, IOWeight)
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/user.slice.d/90-nova-priority.conf
+    mode: "0644"
+    content: |
+      # managed by Ansible (fleet/health.yml): /user.slice (bench services and ssh builds) yields to /system.slice
+      [Slice]
+      CPUWeight={{ nova_health_user_slice_weight | int }}
+      IOWeight={{ nova_health_user_slice_weight | int }}
+  become: true
+  notify: reload the system manager
+  when: nova_health_slice_priority | bool and ('bench' in group_names or 'runner' in group_names)
+
 # ---- the login's user manager may lock nova_service_memlock ----
 # A user unit's LimitMEMLOCK (services.yml writes nova_service_memlock) cannot go past its user manager's, and the
 # manager starts with systemd's 8 MiB. The drop-in sets it from the next start; a running manager's limit is raised in
@@ -350,6 +383,7 @@
 - name: the cleans' units and timers
   vars:
     clean_dirs: "{{ item.0.dirs | unique | join(':') }}"
+    health_clean_work_env: "{{ ('Environment=\"DISK_CLEAN_WORK_HOME=' ~ nova_home ~ '\"\nEnvironment=DISK_CLEAN_WORK_AGE_MIN=' ~ nova_health_disk_clean_work_age_min ~ '\nEnvironment=\"DISK_CLEAN_WORK_NAMES=' ~ (nova_health_disk_clean_work_names | join(':')) ~ '\"\nEnvironment=\"DISK_CLEAN_WORK_CONTAINERS=' ~ (nova_health_disk_clean_work_containers | join(':')) ~ '\"\nEnvironment=\"DISK_CLEAN_WORK_NEVER=' ~ (nova_health_disk_clean_work_never | join(':')) ~ '\"') if (nova_health_disk_clean_work | bool and item.0.unit == 'nova-disk-clean') else '# work clean: not for this login' }}"
     health_clean_service: |
       # managed by Ansible (fleet/health.yml)
       [Unit]
@@ -364,6 +398,8 @@
       Environment=DISK_CLEAN_PRESSED_MIN={{ nova_health_disk_clean_pressed_min }}
       Environment="DISK_CLEAN_DIRS={{ clean_dirs }}"
       Environment="DISK_CLEAN_CACHES={{ item.0.caches | join(':') }}"
+      Environment=DISK_CLEAN_GOCACHE_MAX_GB={{ nova_health_disk_clean_gocache_max_gb }}
+      {{ health_clean_work_env }}
       ExecStart=/usr/local/sbin/nova-disk-clean
     health_clean_timer: |
       # managed by Ansible (fleet/health.yml)

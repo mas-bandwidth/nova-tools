@@ -36,6 +36,7 @@ func TestSharedToolsAreRootsCopies(t *testing.T) {
 		`install -o root -g root -m 0755 "$src" "$shared/bin/.$t.new"`,
 		`mv -f "$shared/bin/.$t.new" "$shared/bin/$t"`,
 		`chmod 0755 "$shared/sdk"`,
+		`for t in {{ nova_tools_names | map('quote') | join(' ') }} sops age age-keygen; do`,
 	} {
 		assert.Contains(t, sh, want)
 	}
@@ -52,14 +53,18 @@ func TestSharedToolsAreRootsCopies(t *testing.T) {
 	link := runnerTask(t, login, "the runner login's ~/sdk names it")
 	assert.Equal(t, "{{ github_runner_user }}", link["become_user"], "the link is the runner login's, made as it")
 	assert.Contains(t, asText(link["ansible.builtin.shell"]), "ln -sfn {{ (nova_shared_dir ~ '/sdk') | quote }} sdk")
-	// its own rustup home, the shared toolchains linked in, made as it after ~/sdk
-	rustup := runnerTask(t, login, "the runner login's rustup home names the shared toolchains")
+	// each runner's own rustup home (no two runners write one at once), the shared toolchains linked in, made as the
+	// login before the runner's unit names it; the unit names the runner's homes, never the login's or the record's
+	rust := roleTaskFile(t, "runner-rust.yml")
+	rustup := runnerTask(t, rust, "this runner's rustup home names the shared toolchains")
 	assert.Equal(t, "{{ github_runner_user }}", rustup["become_user"])
 	rsh := asText(rustup["ansible.builtin.shell"])
 	for _, want := range []string{
 		`src=$(env -u RUSTUP_HOME -u CARGO_HOME "$shared_rustup" show home)`,
-		`rh={{ github_runner_env.get('RUSTUP_HOME', github_runner_rustup_home) | quote }}`,
-		`ch={{ github_runner_env.get('CARGO_HOME', github_runner_cargo_home) | quote }}`,
+		`rh={{ github_runner_rustup_home | quote }}`,
+		`ch={{ github_runner_cargo_home | quote }}`,
+		`keep={{ github_runner_rust_channel | quote }}`,
+		`case $n in "$keep"-*) if [ -L "$l" ]; then rm -f "$l"; set=1; fi; continue ;; esac`,
 		`if [ "$(readlink "$l")" != "$t" ]; then ln -sfn "$t" "$l"; set=1; fi`,
 		`cp "$src/update-hashes/$n" "$rh/update-hashes/$n"`,
 		`if [ -L "$l" ] && [ ! -e "$l" ]; then rm -f "$l"; set=1; fi`,
@@ -69,7 +74,36 @@ func TestSharedToolsAreRootsCopies(t *testing.T) {
 		assert.Contains(t, rsh, want)
 	}
 	assert.NotContains(t, rsh, "rm -rf", "only dangling links of its own are removed")
-	assert.Less(t, taskIndex(login, "the runner login's ~/sdk names it"), taskIndex(login, "the runner login's rustup home names the shared toolchains"))
+	runner := roleTaskFile(t, "unix-runner.yml")
+	include := runnerTask(t, runner, "this runner's own rustup and cargo homes (Linux, a runner login of its own)")
+	assert.Equal(t, "runner-rust.yml", asText(include["ansible.builtin.include_tasks"]))
+	assert.Contains(t, asText(include["when"]), "github_runner_user != ansible_facts['user_id']")
+	assert.Less(t, taskIndex(runner, "this runner's own rustup and cargo homes (Linux, a runner login of its own)"), taskIndex(runner, "the unit (Linux)"), "made before the unit names them")
+	d := runnerDefaults(t)
+	assert.Equal(t, "{{ github_runner_rust_homes }}/{{ github_runner_dir | basename }}/rustup", asText(d["github_runner_rustup_home"]), "one per runner")
+	assert.Equal(t, "{{ github_runner_rust_homes }}/{{ github_runner_dir | basename }}/cargo", asText(d["github_runner_cargo_home"]), "one per runner")
+	unit, err := os.ReadFile("roles/github-runner/templates/runner.service.j2")
+	require.NoError(t, err)
+	assert.Contains(t, string(unit), "Environment=RUSTUP_HOME={{ github_runner_rustup_home }}\n", "the runner's own, never the record's")
+	assert.Contains(t, string(unit), "Environment=CARGO_HOME={{ github_runner_cargo_home }}\n")
+
+	// the channel a job's dtolnay/rust-toolchain installs minimal and makes the default keeps clippy and rustfmt there
+	channelName := "this runner's {{ github_runner_rust_channel }} toolchain carries {{ github_runner_rust_channel_components | join(' and ') }}"
+	channel := runnerTask(t, rust, channelName)
+	assert.Equal(t, "{{ github_runner_user }}", channel["become_user"], "in the runner's own rustup home, as the login")
+	csh := asText(channel["ansible.builtin.shell"])
+	for _, want := range []string{
+		`RUSTUP_HOME={{ github_runner_rustup_home | quote }}`,
+		`CARGO_HOME={{ github_runner_cargo_home | quote }}`,
+		`rustup toolchain install "$ch" --profile minimal --no-self-update{% for c in github_runner_rust_channel_components %} --component {{ c | quote }}{% endfor %}`,
+		`rustup component add --toolchain "$ch" $want`,
+	} {
+		assert.Contains(t, csh, want)
+	}
+	assert.NotContains(t, csh, "rustup default", "the default is the pinned one until a job names another")
+	assert.Less(t, taskIndex(rust, "this runner's rustup home names the shared toolchains"), taskIndex(rust, channelName), "after the homes exist")
+	assert.Equal(t, "stable", asText(d["github_runner_rust_channel"]))
+	assert.Equal(t, []any{"clippy", "rustfmt"}, d["github_runner_rust_channel_components"])
 }
 
 // sdk-toolchain never becomes root: with nova_sdk_shared it checks the shared directory is the login's, moves the
@@ -106,6 +140,29 @@ func TestSDKToolchainSharesTheSDKAsTheLogin(t *testing.T) {
 	assert.Less(t, taskIndex(link, "everything in the shared SDK is readable by other logins"), taskIndex(link, "the login's own SDK is moved aside and nova_sdk_dir names the shared SDK"))
 	assert.Less(t, taskIndex(link, "an old SDK holding what the shared one lacks is kept"), taskIndex(link, "the login's own SDK is moved aside and nova_sdk_dir names the shared SDK"))
 	assert.Less(t, taskIndex(link, "the login's own SDK is moved aside and nova_sdk_dir names the shared SDK"), taskIndex(link, "the SDK moved aside is deleted"))
+	// compared below the top: a toolchain, a cargo tool or an opam package only the old SDK holds is held
+	extra := asText(runnerTask(t, link, "what the login's own SDK holds that the shared one lacks")["ansible.builtin.shell"])
+	assert.Contains(t, extra, `for e in * .[!.]* */* */.[!.]* rustup-*/cargo/bin rustup-*/toolchains/* rustup-*/cargo/bin/* opam/*/lib opam/*/bin opam/*/lib/* opam/*/bin/*; do`)
+	assert.Contains(t, extra, `if [ "$up" = . ]; then echo "$e"; fi`, "each path once, at its highest missing level")
+	// nothing is moved or deleted while a process runs from it, and nothing is stopped
+	for _, step := range [][2]string{
+		{"the login's own SDK is in use by no process", "the login's own SDK is moved aside and nova_sdk_dir names the shared SDK"},
+		{"the SDK moved aside is in use by no process", "the SDK moved aside is deleted"},
+	} {
+		check := runnerTask(t, link, step[0])
+		assert.Equal(t, "in-use.yml", asText(check["ansible.builtin.include_tasks"]))
+		assert.Equal(t, taskIndex(link, step[0])+1, taskIndex(link, step[1]), "the check comes right before %q", step[1])
+	}
+	inUse := taskFileOf(t, sdkToolchainRole+"/tasks/in-use.yml")
+	for _, task := range inUse {
+		assert.NotContains(t, task, "become", "task %q: the SDK is the login's", asText(task["name"]))
+	}
+	scan := asText(runnerTask(t, inUse, "no process runs from {{ sdk_in_use_dir }}")["ansible.builtin.shell"])
+	for _, want := range []string{`for f in "$p/exe" "$p/cwd" "$p"/fd/*; do`, `grep -q -F " $d/" "$p/maps"`} {
+		assert.Contains(t, scan, want)
+	}
+	assert.NotContains(t, scan, "kill")
+	assert.Contains(t, asText(runnerTask(t, inUse, "a directory in use is neither moved nor deleted")["ansible.builtin.fail"].(map[string]any)["msg"]), "SDK-TOOLCHAIN SDK-IN-USE")
 
 	b, err := os.ReadFile(sdkToolchainRole + "/defaults/main.yml")
 	require.NoError(t, err)
