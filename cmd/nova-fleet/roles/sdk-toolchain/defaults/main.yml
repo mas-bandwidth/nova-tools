@@ -230,14 +230,16 @@ nova_sdk_tools:
       url: https://github.com/bytecodealliance/wasmtime/releases/download/v50.0.1/wasmtime-v50.0.1-x86_64-linux.tar.xz
       sha256: 685466455dd42a14774a86c36c8f2e45cbb9bd6d92a850139315df60a75498a5
 
-  # gopls's modernize analyzer as a command, prebuilt so a gate can run it with GOPROXY=off (go run would fetch it)
+  # gopls's modernize analyzer as a command, prebuilt so a gate can run it with GOPROXY=off (go run would fetch it).
+  # On the Macs too: their benches run the same lints, and without it a lint there ran a stand-in.
   - name: modernize
     version: "0.23.0"
     dir: modernize-0.23.0
     probe: modernize
     links: [modernize]
     kind: go
-    linux: { package: golang.org/x/tools/gopls/internal/analysis/modernize/cmd/modernize, version: v0.23.0 }
+    linux: &modernize { package: golang.org/x/tools/gopls/internal/analysis/modernize/cmd/modernize, version: v0.23.0 }
+    darwin: *modernize
 
   - name: esbmc
     version: "8.5"
