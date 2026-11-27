@@ -25,6 +25,8 @@ nova_tailscale_ssh_pending: /var/run/nova-tailscale-ssh-off.pending
 # netwatch does not reboot the machine (and end the job, and its revert) inside the window
 nova_tailscale_ssh_hold: /run/nova-netwatch/hold.d/tailscale-ssh-off
 nova_sshd: /usr/sbin/sshd
+# The file systemd-resolved serves as the machine's resolv.conf (tasks/dns.yml).
+nova_resolved_stub: /run/systemd/resolve/stub-resolv.conf
 
 # The machine's MagicDNS name (<machine>.<tailnet>.ts.net) is written as its
 # address in nova-config, so every later play and the bus reach it there.

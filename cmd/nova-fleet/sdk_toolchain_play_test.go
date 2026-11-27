@@ -257,6 +257,32 @@ func dirFor(d sdkDefaults, name string) string {
 	return "(no " + name + ")"
 }
 
+// The tools a hand-made ~/sdk held before the shared SDK are pinned here, so the shared SDK lacks none of them and the
+// old one can become its link: MrDocs, FFmpeg, KataGo with its networks and katago.env (naming the SDK's real path,
+// never a login's home), and SharpFuzz, installed by the pinned dotnet's own directory.
+func TestSDKToolchainPinsTheHandSDKTools(t *testing.T) {
+	t.Parallel()
+	d := readSDKDefaults(t)
+	tools := map[string]sdkTool{}
+	for _, tool := range d.Tools {
+		tools[tool.Name] = tool
+	}
+	for _, want := range []string{"mrdocs", "ffmpeg", "katago", "katago-nets", "sharpfuzz"} {
+		require.Contains(t, tools, want, "%s is pinned", want)
+		require.NotNil(t, tools[want].Linux, "%s is a Linux pin", want)
+	}
+	assert.Equal(t, "katago", tools["katago-nets"].Dir, "Virtual Go reads <sdk>/katago/katago.env")
+	nets := tools["katago-nets"].Build
+	for _, v := range []string{"KATAGO_BIN=\"{{ sdk_dir }}/bin/katago\"", "KATAGO_MODEL=\"{{ sdk_dir }}/katago/" + tools["katago-nets"].Probe + "\"",
+		"KATAGO_CONFIG=\"{{ sdk_dir }}/katago/gtp.cfg\""} {
+		assert.Contains(t, nets, v)
+	}
+	assert.NotContains(t, nets, "$HOME", "katago.env names the SDK's real path, which every login reads")
+	assert.Regexp(t, `sha256sum -c`, nets, "each network is held to its sha256")
+	assert.Contains(t, tools["sharpfuzz"].Build, `"$sdk/`+dirFor(d, "dotnet")+`/dotnet" tool install`, "SharpFuzz is installed by the pinned dotnet")
+	assert.Contains(t, tools["sharpfuzz"].Wrapper, `{{ sdk_dir }}/`+tools["sharpfuzz"].Dir+`/`+tools["sharpfuzz"].Probe, "the wrapper runs the installed tool")
+}
+
 // Each CPython is built from source into python-<version> and gets mypy offline: pip takes only the wheels fetched as
 // extras, and the hash lock the build writes names exactly those wheels' sha256s, so pip refuses any other.
 func TestSDKToolchainPythonMypyIsHashLocked(t *testing.T) {
@@ -652,7 +678,7 @@ func TestSDKToolchainEnvFilesNameInstalledFiles(t *testing.T) {
 		Env map[string]string `yaml:"nova_sdk_env_files"`
 	}
 	require.NoError(t, yaml.Unmarshal(b, &files))
-	for _, k := range []string{"SQ", "LUA", "LUAU", "LUAU_ANALYZE", "MOO", "MOO_ANALYZE", "MOO_CHECKED", "GOOSE", "LOBSTER", "RUBY_FLOOR", "RUBY"} {
+	for _, k := range []string{"SQ", "LUA", "LUAU", "LUAU_ANALYZE", "MOO", "MOO_ANALYZE", "MOO_CHECKED", "GOOSE", "LOBSTER", "RUBY_FLOOR", "RUBY", "PYTHON_FLOOR", "PYTHON", "MYPY"} {
 		assert.Contains(t, files.Env, k, "env.sh exports %s where its file is", k)
 	}
 	d := readSDKDefaults(t)

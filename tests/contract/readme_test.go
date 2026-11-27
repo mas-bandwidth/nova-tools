@@ -30,8 +30,8 @@ import (
 )
 
 var (
-	docTool    = regexp.MustCompile(`^nova-(bus|cairn|config|fleet|reserve|sandbox|secrets)$`)
-	docRefusal = regexp.MustCompile(`^(nova-(?:bus|cairn|config|fleet|reserve|sandbox|secrets))((?: [a-z][a-z-]*)*): (.*)$`)
+	docTool    = regexp.MustCompile(`^nova-(bus|cairn|config|fleet|reserve|roadmap|sandbox|secrets)$`)
+	docRefusal = regexp.MustCompile(`^(nova-(?:bus|cairn|config|fleet|reserve|roadmap|sandbox|secrets))((?: [a-z][a-z-]*)*): (.*)$`)
 	docReceipt = regexp.MustCompile(`^[A-Z]+ [a-z_]+=`) // nova-reserve: HELD mode=... is a receipt, not a refusal
 	shellLangs = map[string]bool{"sh": true, "bash": true, "shell": true, "console": true}
 	notAVerb   = regexp.MustCompile(`[<>\[\]{}|*$]|\.\.\.|^[A-Z_]+$`)
@@ -58,11 +58,21 @@ const (
 	needsBus   = "a nova-bus Redis and a hook"
 	needsHeld  = "a machine whose slots another process holds"
 	needsSeat  = "a secrets store sealed by sops"
+	needsData  = "a roadmap data file with that problem; the unit tests in cmd/nova-roadmap reach it"
 )
 
 // docRefusals is every refusal the docs quote, by its quoted text. A new one in a doc fails
 // TestDocs until it is added here, and an entry whose text left the docs fails too.
 var docRefusals = map[string]refusalCase{
+	`nova-roadmap: REFUSED: <what is wrong>`:                                                   {tool: "roadmap", why: "the shape every refusal shares, not one refusal"},
+	`nova-roadmap: REFUSED: <file> is there already; example never writes over data`:           {tool: "roadmap", argv: []string{"example", "--out", "@tmp/d.sexp"}, files: []string{"d.sexp"}},
+	`reading <file>: open <file>: no such file or directory`:                                   {tool: "roadmap", argv: []string{"render", "--file", "@tmp/none.sexp"}},
+	`"<verb>" is no verb; the verbs are example, render, check, version and help`:              {tool: "roadmap", argv: []string{"nope"}},
+	`done task "<id>" has no :evidence; name the test or commit that proves it`:                {tool: "roadmap", why: needsData},
+	`task "<id>" has state :<state>; want :unknown, :todo, :doing or :done`:                    {tool: "roadmap", why: needsData},
+	`area "<id>" carries :text; prose lives in ROADMAP.md, written by hand, never in the data`: {tool: "roadmap", why: needsData},
+	`the page carries marker pairs for [...]; ...`:                                             {tool: "roadmap", why: needsData},
+	`nova-roadmap: REFUSED: OTHER.md: the page carries marker pairs for []; the data's :page :roadmaps are ["protocol" "clients"]. Each area needs its own pair of marker lines, each on a line of its own, in this order, wherever its table belongs on the page:`: {tool: "roadmap", why: needsData},
 	`nova-sandbox: bad_read: ...`: {tool: "sandbox", argv: []string{"--read", "@tmp/none", "--", "true"}},
 	`nova-cairn append: store "<dir>" does not exist; open it first, or fix --store`: {tool: "cairn",
 		argv: []string{"append", "--store", "@tmp/none", "--session", "s", "--entry", "e", "--text", "t"}},
@@ -243,7 +253,7 @@ func TestFunctionalGuideBuildLines(t *testing.T) {
 			continue
 		}
 		found++
-		for _, tool := range []string{"bus", "cairn", "config", "fleet", "reserve", "sandbox", "secrets"} {
+		for _, tool := range []string{"bus", "cairn", "config", "fleet", "reserve", "roadmap", "sandbox", "secrets"} {
 			t.Run("line"+itoa(i+1)+"/"+tool, func(t *testing.T) {
 				t.Parallel()
 				work := t.TempDir()

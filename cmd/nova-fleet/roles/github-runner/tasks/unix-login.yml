@@ -61,6 +61,23 @@
   changed_when: false
   check_mode: false
 
+# github_runner_retire_stale_login: a hand-made account of the name with a uid below 1000 is retired first
+# (stale-login.yml), and from here on the name is free (under --check, as if it were).
+- name: whether a stale account of the name is to be retired
+  ansible.builtin.set_fact:
+    github_runner_stale: >-
+      {{ github_runner_retire_stale_login | bool and 'ABSENT' not in github_runner_existing.stdout
+         and github_runner_existing.stdout_lines | length == 2 and github_runner_existing.stdout_lines[0] | int < 1000 }}
+
+- name: a stale account of the name is retired (github_runner_retire_stale_login)
+  ansible.builtin.include_tasks: stale-login.yml
+  when: github_runner_stale | bool
+
+- name: the name is free once the stale account is retired
+  ansible.builtin.set_fact:
+    github_runner_existing: { stdout: ABSENT, stdout_lines: [ABSENT], rc: 0 }
+  when: github_runner_stale | bool
+
 - name: an existing account is a runner login, never an admin's or a system account
   ansible.builtin.assert:
     quiet: true
@@ -71,7 +88,8 @@
     fail_msg: >-
       github-runner: the account {{ github_runner_user }} on {{ inventory_hostname }} exists
       (uid and groups: {{ github_runner_existing.stdout_lines | join('; ') }})
-      and is not a runner login: a uid below 1000, or a group beyond its own and kvm. Name another github_runner_user.
+      and is not a runner login: a uid below 1000, or a group beyond its own and kvm. Name another github_runner_user,
+      or, for a hand-made account nothing uses any more, retire it with -e github_runner_retire_stale_login=true.
   when: "'ABSENT' not in github_runner_existing.stdout"
 
 - name: the runner login (locked, its own group and kvm only)
