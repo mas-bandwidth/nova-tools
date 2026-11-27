@@ -40,6 +40,9 @@ Ideas and future work for nova-tools. Nothing here is scheduled; the owner decid
 | nova-roadmap meets the command-line contract: one-line refusals ending in run: nova-roadmap <verb> -h, no Go flag-package text, an entry in toolSpecs and a faults_roadmap_test.go; this changes its stderr, never a rendered page | ❌ |
 | nova-fleet github-runners: a host whose github_runner_casefold_dir is turned off ('' in host_vars) has its case-folding scratch taken down: the fstab line removed, the loop mount unmounted once no job holds it, and the image deleted; today turning it off leaves all three in place | ❌ |
 | nova-fleet: a cleanup rule for the case-folding scratch (/srv/casefold/scratch): directories a job left behind (a killed test skips its own cleanup) are removed by age, as the health play's disk clean does for a runner's TMPDIR, so the 1G image cannot fill | ❌ |
+| nova-fleet tailscale: every Linux machine's hostname, /etc/hosts and cloud-init match its record name, and every machine gets the fleet's shell prompt (closed PR #6365, branch feature/hostnames) | ❌ |
+| nova-fleet github-runners: an opt-in probe finds runner workspace clones (shallow, promisor tree:0) that make git abort in actions/checkout's fetch (closed draft PR #6421, branch fleet/runner-workspace-git-probe) | ❌ |
+| nova-fleet github-runner: each Linux runner unit gets a MemoryMax bound, so a runaway job is killed inside its own runner (closed draft PR #6407, branch fleet/runner-memory-max) | ❌ |
 | complete | 0% |
 
 [Source data](roadmap.sexp)
