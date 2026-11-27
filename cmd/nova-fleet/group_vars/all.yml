@@ -124,6 +124,8 @@ nova_runner_packages:
     - xxd
     - jq
     - graphviz
+    # the Vulkan shader compiler (GLSL to SPIR-V) a render build calls (pingpong's PP_HOST_RENDER)
+    - glslc
     # the GitHub CLI a workflow step runs (`gh run download`, `gh api`), on the job's GITHUB_TOKEN
     - gh
     # libraries the tests link
