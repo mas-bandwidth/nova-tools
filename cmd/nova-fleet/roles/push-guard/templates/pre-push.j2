@@ -1,0 +1,11 @@
+#!/bin/sh
+# nova-fleet push-guard (nova-tools cmd/nova-fleet push-guard.yml): refuse a push that sends a commit an AI made under
+# a guarded person's address (nova-fleet help commit-guard), then run the repository's own pre-push hook with the same
+# lines on its stdin.
+updates=$(mktemp) || exit
+trap 'rm -f "$updates"' EXIT
+cat > "$updates" || exit
+{{ (nova_bin_dir ~ '/nova-fleet') | quote }} commit-guard --rules {{ nova_push_guard_rules | quote }} --pre-push "$@" < "$updates" || exit
+own="$(git rev-parse --git-common-dir)/hooks/pre-push"
+[ -x "$own" ] || exit 0
+"$own" "$@" < "$updates"

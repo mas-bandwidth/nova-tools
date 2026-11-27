@@ -38,6 +38,7 @@ func TestPlaysTargetTheirGroups(t *testing.T) {
 		"secrets-refresh": {"all:!windows"},
 		"ssh-names":       {"all:!windows"},
 		"prompt":          {"all:!windows"},
+		"push-guard":      {workers},
 		"windows-runners": {workers + ":windows"}, // and plain Windows hosts, which are in group windows only
 	}
 	for _, name := range plays(tree) {

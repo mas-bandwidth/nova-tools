@@ -200,6 +200,52 @@ marks a box kept beyond its `return_by`. `--json` prints the same as one object,
 {...}}`. A record that cannot be read is one line naming nova-config's own error; a nova-config on PATH older than the
 rented rows has no `rented` verb, and its refusal is passed on, never read as a fleet with none rented.
 
+## Commit guard
+
+`commit-guard` refuses a commit an AI made under a person's identity: its author or committer address is one the
+rules guard, and its message carries an AI marker. The person's own commits, with no marker, pass, and so does every
+commit under any other identity. It reads the commits through `git log`, so it runs wherever git does, with no store:
+
+```sh
+nova-fleet commit-guard --rules ~/.config/nova-fleet/commit-guard origin/main..HEAD
+```
+
+The rules file holds one rule a line, `#` a comment, at least one of each kind, both compared without case:
+
+```text
+person alice@example.com
+marker Co-Authored-By: Claude
+marker Generated with [Claude Code]
+```
+
+A `marker` matches a message line that holds its text anywhere. Each refused commit is one line on stderr, then exit 1:
+
+```text
+nova-fleet commit-guard: commit <sha> (author <name> <address>, committer <name> <address>) carries the AI marker "<line>" under a guarded address; amend it as the seat's own identity (git config user.email <the seat's address>), run: git rebase --exec 'git commit --amend --no-edit --reset-author' <sha>~1
+```
+
+A root commit's rebase is `--root`. The rebase resets the author of every later commit too, which is right for a
+seat's own branch; the commit at `HEAD` alone needs only `git commit --amend --no-edit
+--reset-author`, run with the seat's own `user.email`. Otherwise it prints `COMMIT-GUARD OK commits=<n>`, exit 0. Exit 2
+is rules missing or malformed, a bad argument or a failed `git log`, named on one line.
+
+`--pre-push <remote> [<url>]` is the form a pre-push hook runs: it reads the hook's stdin lines and checks what the push
+sends, each pushed commit less what the remote's old commit or any remote-tracking branch reaches (a deletion sends
+nothing). It reads commits with `git --no-replace-objects`, so a local replacement cannot hide what is pushed. The `push-guard` play installs that hook for each seat login. For a repository on GitHub, the reusable
+workflow `.github/workflows/commit-guard.yml` of nova-tools runs it over a pull request's commits (a merge group's, or a
+push's), built from the nova-tools commit it is called at:
+
+```yaml
+on: [pull_request, merge_group]
+jobs:
+  commit-guard:
+    uses: mas-bandwidth/nova-tools/.github/workflows/commit-guard.yml@<tag>
+```
+
+Its inputs are `rules` (the rules file's text; empty reads the caller's configuration variable
+`NOVA_COMMIT_GUARD_RULES`, so an organization variable keeps one copy), `range` (empty is what the event brings) and
+`runs-on` (JSON, default `"ubuntu-latest"`). With no rules the job fails.
+
 ## The plays
 
 | Play | Purpose | Needs |
@@ -213,6 +259,7 @@ rented rows has no `rented` verb, and its refusal is passed on, never read as a 
 | `join` | a new machine joins the fleet: its row, its login, the tailnet, the tools a seat needs, its seat | the machine as the argument; its row's fields; `NOVA_PG_DSN` and `NOVA_PG_PASSWORD` in the environment, and `NOVA_FLEET_AUTHKEY` (`up` mints it) or `TAILSCALE_AUTHKEY` for a machine not on the tailnet |
 | `postgres` | the PostgreSQL nova-config keeps the fleet in, on each machine of the services group | `nova_seal_*` to seal its password |
 | `prompt` | each login's shell prompt, the networknext relay prompt: `<machine> [<linux|mac|wsl2>]` in cyan, then the directory and `#`; a managed block in `~/.bashrc`, and `~/.zshrc` for a zsh login (all machines) | nothing |
+| `push-guard` | each seat login's git pre-push hook, so a push sending a commit an AI made under a guarded person's address is refused (`commit-guard`); the repository's own hooks still run (bench, runner and services groups, but `nova_push_guard_skip`) | `nova_push_guard_people`, `nova_push_guard_markers` (`-e @<vars file>`); `nova-fleet` with `commit-guard` on each machine (`install`) |
 | `redis` | the Redis nova-bus talks to, on each machine of the services group | `nova_seal_*` to seal its password |
 | `runner-packages` | the packages a CI runner's tests need, from `nova_runner_packages` (a CI toolchain by default), on each machine of the bench and runner groups (a sprint card's gate needs what a CI job needs); packages only, nothing started. `join` runs it for a bench or runner | nothing; `-l` the machines |
 | `sdk-toolchain` | the pinned language toolchains in each bench and runner login's `~/sdk` (Go, Node, Dart, Erlang/Elixir, Java, .NET 10 and 8, linters, fuzzers, provers), Rust through a pinned rustup; as the login, only what is missing. `join` runs it for a bench or runner | nothing; `-l` the machines |
@@ -1740,7 +1787,7 @@ as `~/sdk/ruby-<version>`, named by `RUBY_FLOOR` and `RUBY`), serialize v2.1.1's
 its release tarball), KataGo with its networks, a gtp config and `~/sdk/katago/katago.env`, and SharpFuzz's command line
 (a wrapper on the SDK's dotnet). A Mac gets the tools
 with a `darwin` pin: Go, Node, Dart, Erlang/OTP, Elixir, the JDK, .NET, Lua, StyLua, Luau, moo, Goose, Lobster, the
-double Squirrel, CPython 3.11 and 3.15 with mypy, CRuby 3.4 and 4.0 with their analyzers, the checked moo, serialize's tree, and Rust. Erlang/OTP there is built from the release's source (hex.pm
+double Squirrel, CPython 3.11 and 3.15 with mypy, CRuby 3.4 and 4.0 with their analyzers, the checked moo, serialize's tree, modernize, and Rust. Erlang/OTP there is built from the release's source (hex.pm
 publishes no macOS build), with crypto and ssl linked statically against Homebrew's `openssl@3` or `openssl@4`, one of which must be on the
 host (`postgresql@18` from `runner-packages` brings one), as must the Xcode command-line tools. Rust there is the
 release's standalone installer (`static.rust-lang.org`, held to its `.sha256`) with `clippy` and `rustfmt`, giving the
@@ -1845,6 +1892,45 @@ nova-fleet prompt
 machine (`would-change` and `(check: nothing changed)` under `--check`).
 **Rollback.** Delete the lines from `# BEGIN nova-fleet prompt` to `# END nova-fleet prompt` in `~/.bashrc` and
 `~/.zshrc`; the prompt before it comes back in a new shell.
+
+## push-guard
+
+Each seat login's git pre-push hook, so a push that sends a commit an AI made under a guarded person's address is
+refused before it leaves the machine (`commit-guard`, above). On each machine of the bench, runner and services groups
+(where `install` puts `nova-fleet`), as its login and never root:
+
+| Written | What |
+|---|---|
+| `~/.config/nova-fleet/commit-guard` | the rules: a `person` line for each of `nova_push_guard_people`, a `marker` line for each of `nova_push_guard_markers` |
+| `~/.config/nova-fleet/git-hooks/pre-push` | reads git's lines, runs `nova-fleet commit-guard --pre-push` from `nova_bin_dir` on them, and on a pass runs the repository's own `pre-push` with the same lines |
+| `~/.config/nova-fleet/git-hooks/<name>` | for each of `nova_push_guard_chain`, the repository's own hook of that name, when it has one: `core.hooksPath` hides `.git/hooks` |
+| `git config --global core.hooksPath` | that directory |
+
+A machine in `nova_push_guard_skip` (one whose login is a person's own) is left as it is. Before anything is written,
+a login whose `core.hooksPath` already names another directory fails (`HOOKS-PATH-TAKEN`, naming it), and so does one
+whose `nova-fleet` has no `commit-guard` (`NO-VERB`, with the `install` line), since its hook would refuse every push. A
+repository whose own config sets `core.hooksPath` (husky does) runs its own hooks and not these, and a tool that refuses
+a global `core.hooksPath` (`pre-commit install`) needs its hook put in the repository by hand; `git push --no-verify`
+skips any hook. The pull-request workflow is the check a hook cannot be. A second run changes nothing.
+
+```
+nova-fleet push-guard --check --diff -- -e @<vars file>
+nova-fleet push-guard -- -e @<vars file>
+```
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `nova_push_guard_people` | `[]` (required) | the guarded people's commit addresses |
+| `nova_push_guard_markers` | `[]` (required) | the AI markers, each one line |
+| `nova_push_guard_skip` | `[]` | machines left unhooked, by inventory name |
+| `nova_push_guard_chain` | the client hooks and `pre-receive`, `update`, `post-receive`, `post-update` | the hook names that run the repository's own; never `push-to-checkout` or `proc-receive`, whose presence alone changes what git does |
+| `nova_push_guard_dir` | `~/.config/nova-fleet` | where the rules and `git-hooks` go |
+
+**Check.** `PUSH-GUARD host=<machine> login=<login> identity=<its user.email|unset> <changed|unchanged>`, one line per
+machine (`would-change` under `--check`), with a `WARN` when the login's own `user.email` is a guarded address (its
+AI-marked commits are refused until it commits as itself); `PUSH-GUARD host=<machine> SKIPPED` for a skipped one.
+**Rollback.** `git config --global --unset core.hooksPath`, then remove `~/.config/nova-fleet/git-hooks` and
+`~/.config/nova-fleet/commit-guard`; the repositories' own hooks run as before.
 
 ## Refusals
 
