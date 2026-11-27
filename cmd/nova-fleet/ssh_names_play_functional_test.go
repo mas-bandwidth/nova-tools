@@ -454,3 +454,52 @@ func TestSSHNamesLeavesAnIncludeInsideABlock(t *testing.T) {
 	assert.Contains(t, out, "SSH-NAMES bench-1 INCLUDE LEFT ALONE")
 	assert.Contains(t, out, "SSH-NAMES bench-1 machines=3 online=2 config=written known_hosts=written include=inside-a-block")
 }
+
+// sshKeyPair makes an unencrypted ed25519 pair at dir/name and returns its SHA256 fingerprint.
+func sshKeyPair(t *testing.T, dir, name string) string {
+	t.Helper()
+	keygen, err := exec.LookPath("ssh-keygen")
+	if err != nil {
+		t.Skip("ssh-keygen is not installed on this machine")
+	}
+	p := filepath.Join(dir, name)
+	out, err := exec.Command(keygen, "-q", "-t", "ed25519", "-N", "", "-C", name, "-f", p).CombinedOutput()
+	require.NoError(t, err, "%s", out)
+	out, err = exec.Command(keygen, "-l", "-E", "sha256", "-f", p+".pub").Output()
+	require.NoError(t, err)
+	return strings.Fields(string(out))[1]
+}
+
+// A retired fingerprint takes its pair out of every login's ~/.ssh, and only a pair whose private half derives that
+// public key: a .pub carrying a retired key beside another private key is left and said. --check removes nothing.
+func TestSSHNamesRemovesRetiredKeyPairs(t *testing.T) {
+	t.Parallel()
+	f := newSSHNamesFleet(t, nil)
+	macSSH := filepath.Join(f.home["mac-1"], ".ssh")
+	benchSSH := filepath.Join(f.home["bench-1"], ".ssh")
+	retired := sshKeyPair(t, macSSH, "id_ed25519")
+	sshKeyPair(t, macSSH, "deploy-key")
+	sshKeyPair(t, benchSSH, "id_ed25519")
+	pub, err := os.ReadFile(filepath.Join(macSSH, "id_ed25519.pub"))
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(benchSSH, "id_ed25519.pub"), pub, 0o644)) // the retired public half, another private one
+	retire := `{"nova_ssh_retired_keys": ["` + retired + `"]}`
+
+	out, err := f.run(t, "", "--check", "-e", retire)
+	require.NoError(t, err, out)
+	assert.Contains(t, out, "SSH-NAMES mac-1 RETIRED-KEYS would-retire "+filepath.Join(macSSH, "id_ed25519")+" "+retired)
+	assert.FileExists(t, filepath.Join(macSSH, "id_ed25519"))
+
+	out, err = f.run(t, "", "-e", retire)
+	require.NoError(t, err, out)
+	assert.Contains(t, out, "SSH-NAMES mac-1 RETIRED-KEYS retired "+filepath.Join(macSSH, "id_ed25519")+" "+retired)
+	assert.Contains(t, out, "SSH-NAMES bench-1 RETIRED-KEYS left "+filepath.Join(benchSSH, "id_ed25519")+" "+retired+": the private half does not derive")
+	assert.NoFileExists(t, filepath.Join(macSSH, "id_ed25519"))
+	assert.NoFileExists(t, filepath.Join(macSSH, "id_ed25519.pub"))
+	assert.FileExists(t, filepath.Join(macSSH, "deploy-key"), "a pair not retired stays")
+	assert.FileExists(t, filepath.Join(benchSSH, "id_ed25519"), "a private half that derives another key stays")
+
+	out, err = f.run(t, "", "-e", retire)
+	require.NoError(t, err, out)
+	assert.Contains(t, out, "SSH-NAMES mac-1 RETIRED-KEYS none here")
+}

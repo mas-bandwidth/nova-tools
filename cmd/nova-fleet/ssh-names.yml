@@ -230,6 +230,36 @@
       register: ssh_names_config_include
       when: ssh_names_include_inside | int == 0
 
+    # A key pair the fleet retired (nova_ssh_retired_keys: SHA256 fingerprints) leaves the login's ~/.ssh. A pair goes
+    # only when its public half has a retired fingerprint and its private half derives that same public key; a private
+    # half that derives another key, or none (a passphrase), is left and reported. One line per pair:
+    # "<retired|would-retire|left> <path> <fingerprint>[: why]".
+    - name: the retired key pairs in the login's ~/.ssh (nova_ssh_retired_keys)
+      ansible.builtin.shell: |
+        retired=" {{ nova_ssh_retired_keys | default([]) | map('quote') | join(' ') }} "
+        for pub in "$SSH_DIR"/*.pub; do
+          [ -f "$pub" ] || continue
+          fp=$(ssh-keygen -l -E sha256 -f "$pub" 2>/dev/null | awk '{print $2}')
+          case "$retired" in *" $fp "*) ;; *) continue;; esac
+          key=${pub%.pub}
+          if [ -e "$key" ] && [ "$(ssh-keygen -y -P '' -f "$key" 2>/dev/null | awk '{print $2}')" != "$(awk '{print $2}' "$pub")" ]; then
+            echo "left $key $fp: the private half does not derive this public key without a passphrase"; continue
+          fi
+          if [ -n "$CHECK" ]; then echo "would-retire $key $fp"; else rm -f "$key" "$pub" && echo "retired $key $fp"; fi
+        done
+      environment:
+        CHECK: "{{ '1' if ansible_check_mode else '' }}"
+        SSH_DIR: "{{ nova_home }}/.ssh"
+      register: ssh_names_retired
+      changed_when: ssh_names_retired.stdout_lines | select('match', '^retired ') | list | length > 0
+      check_mode: false
+      when: nova_ssh_retired_keys | default([]) | length > 0
+
+    - name: the retired keys' receipt
+      ansible.builtin.debug:
+        msg: "SSH-NAMES {{ inventory_hostname }} RETIRED-KEYS {{ ssh_names_retired.stdout_lines | join('; ') or 'none here' }}"
+      when: ssh_names_retired is not skipped
+
     # Every pair must be refused: a login from one machine to another is a CI job's way to root there. Each line is
     # "<outcome> <target>: <ssh's last line>": open (logged in), hostkey (the target's host key is not the fleet's
     # record: a failure, as a machine answering under another's name is), refused (the remote said so: sshd's

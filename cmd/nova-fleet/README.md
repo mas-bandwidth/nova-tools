@@ -1170,6 +1170,16 @@ three things there:
   file is changed. An `Include` of it inside a `Host` or `Match` block applies to that block only; the file is left
   alone and the run prints `SSH-NAMES <machine> INCLUDE LEFT ALONE` with the line: move it by hand.
 
+A key pair the fleet retired leaves every login's `~/.ssh`: `nova_ssh_retired_keys` (a host or group variable, or
+`-e`) lists SHA256 fingerprints, and a `~/.ssh/*.pub` with one of them goes together with its private half, provided
+that half derives the same public key (`ssh-keygen -y`). A private half that derives another key, or needs a
+passphrase, is left and reported. Each machine prints `SSH-NAMES <machine> RETIRED-KEYS <retired|would-retire|left>
+<path> <fingerprint>` per pair (`none here` when it holds none).
+
+```
+nova-fleet ssh-names --check -- -e '{"nova_ssh_retired_keys": ["SHA256:..."]}'
+```
+
 Before anything is written anywhere, every machine checks the whole record and every key read against the tailnet as
 the control node's `tailscale status --json` shows it, and the run is refused (`SSH-NAMES REFUSED ...`, naming the
 machine and the field) on: an address that is not `<label>.<the tailnet's MagicDNS suffix>` or an IP; a user that is
@@ -1441,6 +1451,19 @@ No temp or working directory is touched; `nova_health_disk_clean: false` turns i
 gets no daemon (launchd cannot read a removable volume without a privacy grant; Go trims its own cache). `DISK_CLEAN_DRY=1` with the
 daemon's environment says `WOULD` and removes nothing.
 
+A Mac also gets the open-files watch: a Mac whose `kern.num_files` reaches `kern.maxfiles` freezes, and the boot after
+keeps no trace of who held them. `/usr/local/sbin/nova-files-watch` runs every `nova_health_files_watch_interval` (10)
+seconds from the LaunchDaemon `com.nova.files-watch`, as root so `lsof` counts every process's descriptors. Under
+`nova_health_files_watch_max` (50,000) open files it reads one sysctl and writes nothing; at or over it, one line in
+`/Library/Logs/nova-files-watch.log` (rotated by newsyslog at 1 MiB, five kept):
+`<time> FILES <machine> open=<n> max=<kern.maxfiles> over=<threshold> top: <command>:<pid>=<descriptors> ...`, the
+`nova_health_files_watch_top` (10) holders of the most numbered descriptors. `nova_health_files_watch: false` removes
+the daemon, the script and the rotation. The receipt is `FILES-WATCH <machine> every=10s over=50000 top=10 log=...`.
+
+```
+tail /Library/Logs/nova-files-watch.log            # a Mac: who held the files
+```
+
 | Variable | Default | |
 |---|---|---|
 | `nova_health_journal`, `nova_health_journal_max_use` | `true`, `4G` | |
@@ -1452,6 +1475,7 @@ daemon's environment says `WOULD` and removes nothing.
 | `nova_health_disk_report`, `nova_health_disk_warn_pct`, `nova_health_disk_on_calendar` | `true`, `80`, every 6 hours | |
 | `nova_health_disk_clean`, `nova_health_disk_clean_dirs`, `nova_health_disk_clean_caches` | `true`, `/tmp`, `~/.cache/go-build` | |
 | `nova_health_disk_clean_age_min`, `nova_health_disk_clean_pressed_min`, `nova_health_disk_clean_on_calendar` | `2880`, `360`, hourly | minutes |
+| `nova_health_files_watch`, `nova_health_files_watch_interval`, `nova_health_files_watch_max`, `nova_health_files_watch_top` | `true`, `10`, `50000`, `10` | a Mac; seconds, open files, processes |
 
 **Check.** `HEALTH <machine> journal=persistent panic=10 ssh_oom=0 slice_max=<bytes> user_memlock=<bytes> | DISK <machine> root=<n>%
 swap=<n>% [i40e=in-tree|out-of-tree zc=yes|no ports=<iface>=<version>,...]`: the last part only on a machine with an Intel

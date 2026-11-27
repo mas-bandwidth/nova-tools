@@ -1,0 +1,23 @@
+#!/bin/bash
+# nova-files-watch (macOS): the health role's watch on the kernel's open files (fleet/health.yml), every
+# FILES_WATCH_INTERVAL seconds from a LaunchDaemon run as root, so every process's files can be counted. A Mac whose
+# kern.num_files reaches kern.maxfiles freezes, and the boot after leaves no trace of who held them; this leaves one.
+# Under FILES_WATCH_MAX open files it reads one sysctl and prints nothing. At or over it, one FILES line on stdout (the
+# daemon's log): the count, the limit and the FILES_WATCH_TOP processes holding the most descriptors, as
+# <command>:<pid>=<descriptors>. FILES_WATCH_COUNT stands in for the sysctl's answer (a test).
+set -u
+MAX=${FILES_WATCH_MAX:-50000}
+TOP=${FILES_WATCH_TOP:-10}
+n=${FILES_WATCH_COUNT:-$(sysctl -n kern.num_files 2>/dev/null)}
+case "$n" in '' | *[!0-9]*) echo "$(date '+%Y-%m-%dT%H:%M:%S%z') FILES-FAIL kern.num_files unreadable: \"$n\" (run: sysctl kern.num_files)"; exit 0;; esac
+[ "$n" -ge "$MAX" ] || exit 0
+limit=$(sysctl -n kern.maxfiles 2>/dev/null)
+# lsof -F pcf: a p line per process, its c line, then an f line per file; only numbered descriptors count (cwd, txt
+# and mapped files are not descriptors)
+holders=$(lsof -n -P -w -F pcf 2>/dev/null | awk '
+  /^p/ {pid = substr($0, 2); next}
+  /^c/ {cmd[pid] = substr($0, 2); next}
+  /^f[0-9]+$/ {fds[pid]++}
+  END {for (p in fds) printf "%d %s:%s\n", fds[p], cmd[p], p}' |
+  sort -rn | head -n "$TOP" | awk '{split($0, a, " "); printf "%s%s=%s", (NR > 1 ? " " : ""), substr($0, length(a[1]) + 2), a[1]}')
+echo "$(date '+%Y-%m-%dT%H:%M:%S%z') FILES $(hostname -s) open=$n max=${limit:-?} over=$MAX top: ${holders:--}"

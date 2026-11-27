@@ -5,7 +5,8 @@
 # files rotated by size with an already flooded one cut down, a memory ceiling on the login's user slice with a user
 # manager that comes back and may lock nova_service_memlock, older tooling's leftovers removed, a DISK line in the journal every 6 hours (DISK-WARN over nova_health_disk_warn_pct), and an
 # hourly clean of what jobs leave in /tmp, the runners' TMPDIRs and the Go build cache.
-# On a Mac only the Go build cache (`go env GOCACHE` of the login) is trimmed, hourly from a LaunchDaemon run as the login.
+# On a Mac only the Go build cache (`go env GOCACHE` of the login) is trimmed, hourly from a LaunchDaemon run as the login,
+# and kern.num_files is watched every 10 s from a LaunchDaemon run as root, the top holders logged past 50,000.
 #
 #   nova-fleet health --check --diff
 #   nova-fleet health
